@@ -567,8 +567,13 @@ mod quest_list_tests {
     }
 
     #[test]
-    fn not_started_biohazard_proves_zero_inside_a_window_with_maximum_nine() {
+    fn not_started_biohazard_cannot_prove_zero_without_colour_authority() {
         let quests = catalog();
+        // Current F-C witness:
+        // scripts/areas/area_ardougne_east/scripts/elena.rs2:132.
+        // Its enclosing case118 and nested choice126-132 are a recorded
+        // producer accuracy follow-up, not evidence of a real reset.
+        assert!(!quests.quest("biohazard").unwrap().colour_authoritative);
         let family = family(1, 1);
         let observed = stamp(run(), 10, 4);
         let snapshot = snapshot(vec![row(String::from("Biohazard"), 0xF80000)], true);
@@ -580,14 +585,16 @@ mod quest_list_tests {
                     &biohazard_window(InclusiveRange { min, max: Some(9) }),
                     observed,
                 ),
-                Truth::True
+                Truth::Unknown
             );
         }
     }
 
     #[test]
-    fn completed_biohazard_is_outside_a_window_below_ten() {
+    fn completed_biohazard_windows_remain_unknown_without_colour_authority() {
         let quests = catalog();
+        // The same conservative elena.rs2:118,126-132 writer analysis applies.
+        assert!(!quests.quest("biohazard").unwrap().colour_authoritative);
         let family = family(1, 1);
         let observed = stamp(run(), 10, 4);
         let snapshot = snapshot(vec![row(String::from("Biohazard"), 0x00F800)], true);
@@ -601,7 +608,7 @@ mod quest_list_tests {
                 }),
                 observed,
             ),
-            Truth::False
+            Truth::Unknown
         );
         assert_eq!(
             provider.test_gate(
@@ -611,13 +618,15 @@ mod quest_list_tests {
                 }),
                 observed,
             ),
-            Truth::True
+            Truth::Unknown
         );
     }
 
     #[test]
-    fn in_progress_biohazard_is_unknown_unless_the_window_covers_its_range() {
+    fn in_progress_biohazard_windows_remain_unknown_without_colour_authority() {
         let quests = catalog();
+        // The same conservative elena.rs2:118,126-132 writer analysis applies.
+        assert!(!quests.quest("biohazard").unwrap().colour_authoritative);
         let family = family(1, 1);
         let observed = stamp(run(), 10, 4);
         let snapshot = snapshot(vec![row(String::from("Biohazard"), 0xF8F800)], true);
@@ -631,7 +640,7 @@ mod quest_list_tests {
                 }),
                 observed,
             ),
-            Truth::True
+            Truth::Unknown
         );
         assert_eq!(
             provider.test_gate(
@@ -691,9 +700,30 @@ mod quest_list_tests {
     }
 
     #[test]
-    fn window_gate_false_on_red() {
-        for (quest, min, max) in [("priestperil", 61, 61), ("druidspirit", 1, 110)] {
-            assert_window_from_colour(&catalog(), quest, 0xF80000, min, max, Truth::False);
+    fn red_window_answers_follow_colour_authority() {
+        // drezel.rs2:147 can write Priest stage61 after completion60.
+        // Keep the authoritative Druid Spirit false control separately.
+        for (quest, min, max, expected) in [
+            ("priestperil", 61, 61, Truth::Unknown),
+            ("druidspirit", 1, 110, Truth::False),
+        ] {
+            assert_window_from_colour(&catalog(), quest, 0xF80000, min, max, expected);
+        }
+    }
+
+    #[test]
+    fn authoritative_colour_windows_keep_positive_and_negative_bounds() {
+        let quests = catalog();
+        assert!(quests.quest("druidspirit").unwrap().colour_authoritative);
+        for (colour, min, max, expected) in [
+            (0xF80000, 0, 9, Truth::True),
+            (0xF80000, 1, 110, Truth::False),
+            (0xF8F800, 1, 109, Truth::True),
+            (0xF8F800, 1, 9, Truth::Unknown),
+            (0x00F800, 1, 109, Truth::False),
+            (0x00F800, 108, 110, Truth::True),
+        ] {
+            assert_window_from_colour(&quests, "druidspirit", colour, min, max, expected);
         }
     }
 
