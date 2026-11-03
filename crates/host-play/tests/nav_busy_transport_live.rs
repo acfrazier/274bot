@@ -22,6 +22,9 @@
 //!   cargo test -p host-play --test nav_busy_transport_live -- --ignored --nocapture --test-threads=1
 //! ```
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
@@ -192,10 +195,10 @@ impl Bot {
             !client.error_loading,
             "R289 client asset initialization failed"
         );
-        assert!(
-            interact::login(&mut client, &name, &name, false),
-            "{name}: login failed"
-        );
+        let mut login = host_play::DirectClientLogin::new(&client);
+        login
+            .login(&mut client, &name, &name, false)
+            .expect("hosted login failed");
         let mut bot = Self {
             name,
             client,
@@ -269,6 +272,7 @@ fn two_bots_cross(shortcut: &Shortcut) {
         (1..=4).contains(&prefix.len()),
         "the prefix leaves room for the role and six digits"
     );
+    let _network_driver = network_composition::ensure_started();
     let (_profile, template) = selected();
     let world = template.world().expect("selected nav world");
     let serial = SystemTime::now()

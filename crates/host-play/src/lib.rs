@@ -159,11 +159,11 @@ use play_login::{
 use play_login::{publish_queue_place, sync_profile_arm, SharedLoginQueue};
 pub use play_login::{DirectClientLogin, LoginLatchReason, SlotArm};
 use play_slots::SlotFrame;
-pub use play_slots::{PlaySpawnError, SlotFrameInput};
 #[cfg(all(test, feature = "js"))]
 use play_slots::{end_slot_session, sync_script_login};
 #[cfg(test)]
 use play_slots::{observe_slot_catalog_and_paired, reset_slot_session_work};
+pub use play_slots::{PlaySpawnError, SlotFrameInput};
 #[cfg(test)]
 use play_status::{
     apply_startup_phase, mark_login_started, publish_session_boundary_status,
