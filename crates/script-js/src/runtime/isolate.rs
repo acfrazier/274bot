@@ -125,13 +125,28 @@ use script::interact::QueuedInteract;
 use script::native::recovery_hints::RecoveryHintsCell;
 use script::native::seat_rows::{HeldWaitFacts, QueuedSeatBatch};
 
+/// What one dispatched `Tick` command does on the isolate thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TickMode {
+    /// A game tick: record the tick, step every machine, run the script.
+    Full,
+    /// An evidence wake: recheck parked waits against the changed snapshot
+    /// without advancing game-tick listeners, machines or the loop.
+    WaitOnly,
+    /// A seat answer wake: step, resume and settle only the native rows
+    /// whose prompt or terminal the posted seat page changed. `release_floor`
+    /// is the seat result sequence at the last accepted dispatch: only
+    /// terminals the seat published after it may release their awaits.
+    SeatPage { release_floor: u64 },
+}
+
 enum IsolateCmd {
     Tick {
         tick: u64,
         generation: u64,
         input_identity: u64,
         evidence_sequence: u64,
-        wait_only: bool,
+        mode: TickMode,
     },
     /// A session boundary. `keep_work`: hold the script's work for the next
     /// logged-in session instead of ending it.
@@ -191,6 +206,16 @@ enum IsolateCmd {
         generation: u64,
     },
     Probe(String, Sender<Result<serde_json::Value, String>>),
+    /// Test seam: hold the isolate thread until the gate opens, after
+    /// telling the caller that the thread reached this command.
+    #[cfg(feature = "test-hooks")]
+    TestBlock {
+        release: std::sync::Arc<(Mutex<bool>, std::sync::Condvar)>,
+        entered: std::sync::Arc<(Mutex<bool>, std::sync::Condvar)>,
+    },
+    /// Test seam: a command that does nothing.
+    #[cfg(feature = "test-hooks")]
+    TestNoop,
     /// Isolate teardown. `invoke_hook` is true for operator join and
     /// self-stop; raw Drop sends false so a dying isolate never runs
     /// `onStop` into a dropped rx.
@@ -369,6 +394,9 @@ pub struct LoadIsolate {
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     /// Per-isolate invoke/finish/worker evidence. Clone before Drop.
     proof: TeardownProof,
+    /// Test seam: the host watchdog never interrupts a slow execution.
+    #[cfg(feature = "test-hooks")]
+    watchdog_suppressed: AtomicBool,
 }
 
 /// ScriptRunner.stop receipt copied off the isolate thread. This is a
@@ -382,6 +410,22 @@ pub enum Ready {
     Pending,
     Ready,
     Failed(String),
+}
+
+/// Holds the isolate thread blocked until it drops (test seam).
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub struct ThreadBlock {
+    gate: std::sync::Arc<(Mutex<bool>, std::sync::Condvar)>,
+}
+
+#[cfg(feature = "test-hooks")]
+impl Drop for ThreadBlock {
+    fn drop(&mut self) {
+        let (lock, cv) = &*self.gate;
+        *lock.lock().unwrap() = true;
+        cv.notify_all();
+    }
 }
 
 enum SetupMessage {
@@ -604,6 +648,8 @@ impl LoadIsolate {
             in_flight: Mutex::new(None),
             teardown,
             proof,
+            #[cfg(feature = "test-hooks")]
+            watchdog_suppressed: AtomicBool::new(false),
         })
     }
 
@@ -699,7 +745,7 @@ impl LoadIsolate {
     /// Dispatch one observed game tick, tagging produced mouse rows with
     /// the native permit identity that was live at production.
     pub fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64) {
-        self.dispatch_tick(snap_tick, input_identity, 0, false);
+        self.dispatch_tick(snap_tick, input_identity, 0, TickMode::Full);
     }
 
     /// Recheck parked waits against a changed snapshot without advancing
@@ -712,7 +758,28 @@ impl LoadIsolate {
         input_identity: u64,
         evidence_sequence: u64,
     ) {
-        self.dispatch_tick(snap_tick, input_identity, evidence_sequence, true);
+        self.dispatch_tick(
+            snap_tick,
+            input_identity,
+            evidence_sequence,
+            TickMode::WaitOnly,
+        );
+    }
+
+    /// Dispatch the page that the host posted for a seat answer: step,
+    /// resume and settle only the native rows that page changed, at the
+    /// latest observed tick, with no tick time or budget advance. Releases
+    /// only the terminals whose seat result sequence is above
+    /// `release_floor`. `false`: the thread is stopped or tearing down, the
+    /// paired page was refused, or the queue is backlogged; nothing was
+    /// queued, so the caller keeps its obligation and retries.
+    pub fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool {
+        self.dispatch_tick(
+            snap_tick,
+            input_identity,
+            0,
+            TickMode::SeatPage { release_floor },
+        )
     }
 
     /// Record a producer delta that carries changed evidence.
@@ -733,15 +800,15 @@ impl LoadIsolate {
         snap_tick: u64,
         input_identity: u64,
         evidence_sequence: u64,
-        wait_only: bool,
-    ) {
+        mode: TickMode,
+    ) -> bool {
         // Before Ready no tick has started, so none can be over budget.
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
         if self.stopped.load(std::sync::atomic::Ordering::Acquire)
             || self.teardown_blocks_dispatch()
         {
-            return;
+            return false;
         }
         let generation = self
             .work_generation
@@ -754,12 +821,20 @@ impl LoadIsolate {
             .snapshot_refused
             .swap(false, std::sync::atomic::Ordering::AcqRel)
             || self.backlogged();
-        self.interrupt_slow_execution(ready);
+        #[cfg(feature = "test-hooks")]
+        let watchdog = !self
+            .watchdog_suppressed
+            .load(std::sync::atomic::Ordering::Acquire);
+        #[cfg(not(feature = "test-hooks"))]
+        let watchdog = true;
+        if watchdog {
+            self.interrupt_slow_execution(ready);
+        }
         if !backlogged {
             *self.in_flight.lock().unwrap() = Some((generation, snap_tick, Instant::now()));
         }
         if backlogged {
-            return;
+            return false;
         }
         #[cfg(feature = "memory-profile")]
         self.dispatched
@@ -769,8 +844,100 @@ impl LoadIsolate {
             generation,
             input_identity,
             evidence_sequence,
-            wait_only,
+            mode,
+        })
+    }
+
+    /// Stop the host watchdog from interrupting a slow execution, so a slow
+    /// test execution ends on its own.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn suppress_execution_watchdog_for_test(&self) {
+        self.watchdog_suppressed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Queue a seat page dispatch directly, without sampling or arming the
+    /// host watchdog, as [`Self::enqueue_tick_without_watchdog_for_test`]
+    /// does for a game tick.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn enqueue_seat_page_without_watchdog_for_test(&self, snap_tick: u64, release_floor: u64) {
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        self.send(IsolateCmd::Tick {
+            tick: snap_tick,
+            generation,
+            input_identity: 0,
+            evidence_sequence: 0,
+            mode: TickMode::SeatPage { release_floor },
         });
+    }
+
+    /// Block the isolate thread until the returned guard drops. Returns
+    /// after the thread has received the blocking command, so every command
+    /// queued after this call waits behind it.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn block_thread_for_test(&self) -> ThreadBlock {
+        let gate = std::sync::Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let entered = std::sync::Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        self.send(IsolateCmd::TestBlock {
+            release: std::sync::Arc::clone(&gate),
+            entered: std::sync::Arc::clone(&entered),
+        });
+        let (lock, cv) = &*entered;
+        let mut seen = lock.lock().unwrap();
+        while !*seen {
+            let (next, timeout) = cv.wait_timeout(seen, Duration::from_secs(10)).unwrap();
+            seen = next;
+            assert!(
+                !timeout.timed_out(),
+                "the isolate thread never reached the test block"
+            );
+        }
+        ThreadBlock { gate }
+    }
+
+    /// Queue one command that does nothing, to fill the isolate's backlog.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn queue_noop_for_test(&self) {
+        self.send(IsolateCmd::TestNoop);
+    }
+
+    /// The backlog counter that the dispatch check compares with its bound.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn queued_commands_for_test(&self) -> usize {
+        self.queued.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// The `SeatPage` commands that passed the early gate and ran.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn executed_seat_pages_for_test(&self) -> u64 {
+        self.teardown.lock().unwrap().executed_seat_pages
+    }
+
+    /// The producer evidence generation of the posted pages: changed seat
+    /// pages may advance it, the seat page command must not.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn snapshot_evidence_sequence_for_test(&self) -> u64 {
+        self.snapshot_evidence_sequence()
+    }
+
+    /// The isolate thread's machine host: rows with their pass counts and
+    /// budget use, and the settled entries with their seat stamps. A round
+    /// trip through the isolate thread, so it also waits for every command
+    /// queued before it.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn machine_host_for_test(&self) -> serde_json::Value {
+        self.probe("JSON.parse(__rs2b0t_test_machine_host())")
+            .expect("the machine host report")
     }
 
     /// Queue a game tick directly, without sampling or arming the host
@@ -791,7 +958,7 @@ impl LoadIsolate {
             generation,
             input_identity: 0,
             evidence_sequence: 0,
-            wait_only: false,
+            mode: TickMode::Full,
         });
     }
 

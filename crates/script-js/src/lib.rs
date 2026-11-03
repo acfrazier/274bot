@@ -45,6 +45,10 @@ pub use runtime::isolate::{
     TeardownProof, ValidationBatch, ValidationError,
 };
 
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub use runtime::isolate::ThreadBlock;
+
 pub use runtime::platform::bootstrap_v8_platform;
 
 pub use library::js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};

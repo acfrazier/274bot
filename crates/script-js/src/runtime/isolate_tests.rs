@@ -272,7 +272,7 @@ fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
         generation: 0,
         input_identity: 0,
         evidence_sequence: 0,
-        wait_only: false,
+        mode: TickMode::Full,
     }));
     assert_eq!(
         iso.probe("globalThis.n || 0").unwrap(),
@@ -3481,3 +3481,6 @@ fn paint_controls_helper_keeps_collected_v8_heap_flat() {
          (hint rows {hint_growth}, slack {SLACK})"
     );
 }
+
+#[path = "isolate_seat_page_tests.rs"]
+mod seat_page;

@@ -66,6 +66,12 @@ pub struct SeatProbe {
     pub results: usize,
     pub reserved_releases: usize,
     pub mirror_revokes_consumed: u64,
+    pub answer_seq: u64,
+    pub answer_dispatched: u64,
+    pub terminal_dispatched: u64,
+    pub result_seq: u64,
+    pub untaken_answers: usize,
+    pub seat_pages: crate::native::seat::SeatPageCounts,
 }
 
 /// The host outcome id uses the producer's namespace. Native ledger walks
@@ -991,6 +997,12 @@ impl SlotScript {
             results: seat.results().len(),
             reserved_releases: seat.reserved_releases(),
             mirror_revokes_consumed: seat.mirror_revokes_consumed(),
+            answer_seq: seat.answer_seq(),
+            answer_dispatched: seat.answer_dispatched(),
+            terminal_dispatched: seat.terminal_dispatched(),
+            result_seq: seat.result_seq(),
+            untaken_answers: seat.untaken_answer_count(),
+            seat_pages: seat.seat_page_counts(),
         })
     }
     /// The host test rig derives its independent session gate from the same
@@ -4116,12 +4128,104 @@ impl SlotScript {
             let input_identity = self.native_input.lock().identity();
             isolate.on_snapshot_change_at(ctx.tick, input_identity);
             self.tick_api(ctx);
-            self.tick_bank(ctx);
+            self.tick_bank_scoped(ctx, bank_seat::BankPoll::All);
             self.capture_native_seat_rows();
             self.settle_api_seat_terminals();
             return;
         }
         self.poll_compiled_frame(ctx);
+    }
+
+    /// The `SeatAnswer` producer: an owed answer page on a seat that is not
+    /// held, for a slot whose surface can receive it. A held seat refuses a
+    /// prompt and a decision, and the bank loop turns a refused prompt into a
+    /// failed row, so nothing runs while held. A slot without a surface
+    /// (a compiled run) has nobody to dispatch to.
+    pub fn seat_answer_owed(&self) -> bool {
+        self.surface.is_some()
+            && self
+                .seat
+                .as_ref()
+                .is_some_and(|seat| !seat.held() && seat.answer_page_owed())
+    }
+
+    /// Poll only the owner runtime of each untaken seat answer, for that
+    /// request. Never dispatches a game tick, an evidence wake or a wait
+    /// settle. Returns whether observe may post the seat page and dispatch
+    /// `SeatPage`.
+    pub fn on_seat_answer(&mut self, ctx: &mut ScriptCtx<'_>) -> bool {
+        self.observe_lifecycle();
+        if !self.dispatch_open()
+            || ctx.compiled.hold
+            || self.surface.is_none()
+            || self.seat.as_ref().is_none_or(|seat| seat.held())
+            || trapped_failure(ctx).is_some()
+        {
+            return false;
+        }
+        if self
+            .seat
+            .as_ref()
+            .is_some_and(|seat| seat.has_untaken_answers())
+        {
+            self.tick_bank_scoped(ctx, bank_seat::BankPoll::Answered);
+            self.capture_native_seat_rows();
+        }
+        debug_assert!(
+            !self
+                .seat
+                .as_ref()
+                .is_some_and(|seat| seat.has_untaken_answers()),
+            "a seat answer has an owner runtime that on_seat_answer polls"
+        );
+        true
+    }
+
+    /// Dispatch the page that observe posted for a seat answer to the rows it
+    /// changed. `release_floor` is [`Self::seat_terminal_dispatched`] as of
+    /// the capture. Returns whether the surface accepted the dispatch.
+    pub fn on_seat_page_at(&self, snap_tick: u64, release_floor: u64) -> bool {
+        let identity = self.native_input.lock().identity();
+        self.surface
+            .as_ref()
+            .is_some_and(|surface| surface.on_seat_page_at(snap_tick, identity, release_floor))
+    }
+
+    /// The seat's answer-page change counter, for the capture before a post.
+    pub fn seat_answer_seq(&self) -> u64 {
+        self.seat.as_ref().map_or(0, |seat| seat.answer_seq())
+    }
+
+    /// The seat's newest result sequence, for the capture before a post.
+    pub fn seat_result_seq(&self) -> u64 {
+        self.seat.as_ref().map_or(0, |seat| seat.result_seq())
+    }
+
+    /// The release floor of the next seat page dispatch.
+    pub fn seat_terminal_dispatched(&self) -> u64 {
+        self.seat
+            .as_ref()
+            .map_or(0, |seat| seat.terminal_dispatched())
+    }
+
+    /// Record an accepted `SeatPage` dispatch: it carried every change up to
+    /// `carried` and every result up to `carried_terminal`.
+    pub fn mark_seat_answer_dispatched(&mut self, carried: u64, carried_terminal: u64) {
+        if let Some(seat) = &mut self.seat {
+            seat.mark_answer_dispatched(carried, carried_terminal);
+        }
+    }
+
+    /// Count one attempted `SeatPage` dispatch for the receipt line and
+    /// return the counts so far.
+    pub fn note_seat_page(
+        &mut self,
+        outcome: crate::native::seat::SeatPageOutcome,
+    ) -> crate::native::seat::SeatPageCounts {
+        self.seat.as_mut().map_or_else(Default::default, |seat| {
+            seat.note_seat_page(outcome);
+            seat.seat_page_counts()
+        })
     }
 
     /// Call only on observed server tick. Dispatches the JS isolate's
@@ -4156,7 +4260,7 @@ impl SlotScript {
                 return;
             }
             self.tick_api(ctx);
-            self.tick_bank(ctx);
+            self.tick_bank_scoped(ctx, bank_seat::BankPoll::All);
             self.capture_native_seat_rows();
             self.settle_api_seat_terminals();
             return;

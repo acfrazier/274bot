@@ -246,6 +246,13 @@ pub trait SurfaceRun: Send {
     fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64);
     /// Report a snapshot change and its input identity.
     fn on_snapshot_change_at(&self, snap_tick: u64, input_identity: u64);
+    /// Dispatch the posted seat page to the rows it changed. Steps, resumes
+    /// and settles those rows only. Releases only terminals whose seat result
+    /// sequence is above `release_floor`. Records no tick and carries every
+    /// budget. Returns whether the surface accepted the dispatch: the slot
+    /// clears its seat-answer obligation only on `true`, and an accepted
+    /// dispatch executes or its page is delivered by a named later dispatch.
+    fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool;
 
     // decoded effects
     /// Drain stamped interactions queued by the surface.

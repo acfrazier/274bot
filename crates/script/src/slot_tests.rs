@@ -1942,3 +1942,170 @@ fn native_only_slot_metrics_count_late_controls_without_logging() {
     );
     assert!(slot.take_pending_logs().is_empty());
 }
+
+fn prompt_on_a_live_bank_request(slot: &mut SlotScript, run: api::selected::RunKey) {
+    slot.arm_seat(run);
+    let id = RequestId::isolate(1).unwrap();
+    let seat = slot.seat.as_mut().unwrap();
+    assert_eq!(
+        seat.start(
+            RequestStamp::new(id, None, None, ExecutionId::first(run)).unwrap(),
+            crate::native::request::NativeKind::BankPlan,
+            false,
+        )
+        .unwrap(),
+        Admission::Admitted
+    );
+    let point = crate::native::PromptPoint::from_contract_row(
+        crate::native::abi::HOOK_CHARACTERIZATIONS
+            .iter()
+            .find(|row| row.families().contains(&"bank_deposit") && row.member() == "match")
+            .expect("frozen bank matcher row"),
+    )
+    .expect("characterized prompt");
+    seat.prompt_with_details(id, point, &[1]).unwrap();
+}
+
+#[test]
+fn seat_answer_owed_is_false_while_the_seat_is_held() {
+    let (mut slot, _factory, _run) = ready_stub_slot();
+    let run = api::selected::RunKey {
+        slot: 1,
+        run: 1,
+        session: 1,
+    };
+    assert!(!slot.seat_answer_owed(), "no seat, nothing owed");
+    prompt_on_a_live_bank_request(&mut slot, run);
+    assert!(slot.seat_answer_owed(), "an undelivered prompt is owed");
+    slot.seat.as_mut().unwrap().hold(true);
+    assert!(
+        !slot.seat_answer_owed(),
+        "a held seat refuses prompts and decisions: nothing may poll"
+    );
+    slot.seat.as_mut().unwrap().hold(false);
+    assert!(slot.seat_answer_owed());
+    slot.seat_guardian_hold(true);
+    assert!(!slot.seat_answer_owed(), "the guardian hold holds the seat");
+    slot.seat_guardian_hold(false);
+    slot.align_seat_session(None);
+    assert!(
+        !slot.seat_answer_owed(),
+        "a session boundary holds the seat until the next session is ready"
+    );
+}
+
+#[test]
+fn a_slot_without_a_surface_owes_no_seat_answer_dispatch() {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(1);
+    let run = api::selected::RunKey {
+        slot: 1,
+        run: 1,
+        session: 1,
+    };
+    prompt_on_a_live_bank_request(&mut slot, run);
+    assert!(
+        !slot.seat_answer_owed(),
+        "a compiled run has no surface to dispatch to"
+    );
+}
+
+#[test]
+fn the_seat_page_dispatch_reaches_the_surface_with_its_floor_and_answers_its_acceptance() {
+    use crate::surface::test_support::StubSurfaceOperation;
+    let (slot, _factory, run) = ready_stub_slot();
+    assert!(slot.on_seat_page_at(7, 3), "the stub accepts by default");
+    run.set_seat_page_acceptance(false);
+    assert!(!slot.on_seat_page_at(8, 5), "a refusal reaches the caller");
+    let dispatches: Vec<_> = run
+        .operations()
+        .into_iter()
+        .filter_map(|operation| match operation {
+            StubSurfaceOperation::OnSeatPageAt {
+                tick,
+                release_floor,
+                ..
+            } => Some((tick, release_floor)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dispatches, vec![(7, 3), (8, 5)]);
+}
+
+/// A seat answer polls only the row that owns the answer: a second live bank
+/// request stays unstarted until a tick or an evidence wake polls it.
+#[test]
+fn seat_answer_wake_polls_only_the_answered_request() {
+    use crate::bank::request::{BankSeatArgs, BankSeatOperation};
+    use crate::native::request::NativeKind;
+    use crate::native::seat_rows::{DecodedSeatBatch, SeatStartArgs, SeatStartInput};
+
+    let selected =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("selected data");
+    let (mut slot, _factory, _run) = ready_stub_slot_with_incarnation(1206);
+    slot.surface_start
+        .as_mut()
+        .expect("surface identity")
+        .game_data = Some(Arc::clone(&selected));
+    let run = slot.seat.as_ref().expect("owned native seat").run();
+    let answered = RequestId::isolate(1).unwrap();
+    let bystander = RequestId::isolate(2).unwrap();
+    let starts = vec![
+        SeatStartInput {
+            id: answered,
+            parent: None,
+            run: run.run,
+            session: run.session,
+            kind: NativeKind::BankPlan,
+            args: SeatStartArgs::Bank(BankSeatArgs::new(BankSeatOperation::DepositMatch)),
+        },
+        SeatStartInput {
+            id: bystander,
+            parent: None,
+            run: run.run,
+            session: run.session,
+            kind: NativeKind::BankNearest,
+            args: SeatStartArgs::Bank(BankSeatArgs::new(BankSeatOperation::BankNearest)),
+        },
+    ];
+    slot.consume_seat_batch(
+        DecodedSeatBatch {
+            consumed_terminal_seq: 0,
+            starts,
+            decisions: Vec::new(),
+            cancels: Vec::new(),
+            mirror_revokes: Vec::new(),
+            reqs: Vec::new(),
+        },
+        0,
+        &[],
+    );
+    assert_eq!(
+        slot.unstarted_bank_rows_for_test(),
+        vec![answered, bystander],
+        "both requests are live bank rows no poll has started"
+    );
+    let point = crate::native::PromptPoint::from_contract_row(
+        crate::native::abi::HOOK_CHARACTERIZATIONS
+            .iter()
+            .find(|row| row.families().contains(&"bank_deposit") && row.member() == "match")
+            .expect("frozen bank matcher row"),
+    )
+    .expect("characterized prompt");
+    let seat = slot.seat.as_mut().unwrap();
+    let sequence = seat.prompt_with_details(answered, point, &[1]).unwrap();
+    assert_eq!(
+        seat.decide_with_answer(answered, sequence, vec![9]),
+        crate::native::seat::SeatDecisionStatus::Consumed
+    );
+
+    let mut driver = NullDriver::default();
+    let mut ctx = compiled_ctx(&mut driver, Some(&selected));
+    ctx.tick = 5;
+    assert!(slot.on_seat_answer(&mut ctx), "the wake may post its page");
+    assert_eq!(
+        slot.unstarted_bank_rows_for_test(),
+        vec![bystander],
+        "the answered row was polled once, the other was not"
+    );
+}

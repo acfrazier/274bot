@@ -159,6 +159,25 @@ pub fn post_snapshot_delta_pages_for_test(
     .expect("active surface run")
 }
 
+/// Run `f` against the real isolate of a slot's JavaScript surface run. Seat
+/// page tests use it to block the isolate thread, fill its queue and count
+/// the dispatches that executed.
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub fn with_isolate_for_test<R>(
+    slot: &mut script::SlotScript,
+    f: impl FnOnce(&LoadIsolate) -> R,
+) -> R {
+    slot.with_surface_run_for_test(|run| {
+        let run = run
+            .as_any_mut()
+            .downcast_mut::<JsSurfaceRun>()
+            .expect("JavaScript surface run");
+        f(&run.isolate)
+    })
+    .expect("active surface run")
+}
+
 impl SurfaceRun for JsSurfaceRun {
     fn poll_ready(&self) -> SurfaceReady {
         match self.isolate.poll_ready() {
@@ -305,6 +324,11 @@ impl SurfaceRun for JsSurfaceRun {
             input_identity,
             self.isolate.snapshot_evidence_sequence(),
         );
+    }
+
+    fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool {
+        self.isolate
+            .on_seat_page_at(snap_tick, input_identity, release_floor)
     }
 
     fn drain_interacts_stamped(&self) -> Vec<QueuedInteract> {

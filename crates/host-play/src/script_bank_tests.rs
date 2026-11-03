@@ -2804,7 +2804,6 @@ mod bank_pick_capture {
 
 #[cfg(feature = "js")]
 #[test]
-#[ignore = "event-driven runtime endpoint (0.2.6): native answers must wake only their consumer and publish its next prompt without another game tick"]
 fn bank_callback_answers_progress_on_unchanged_host_frames_without_game_ticks() {
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
 

@@ -150,6 +150,81 @@ pub(crate) fn delay_ordered_drain_for_test() {
     DELAY_ORDERED_DRAIN.with(|delay| assert!(!delay.replace(true)));
 }
 
+/// Why observe dispatches script work in this frame, and so what the surface
+/// does for it. `Tick` has precedence over `Evidence` over `SeatAnswer`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ObserveWake {
+    /// A PLAYER_INFO edge: a full game tick.
+    Tick,
+    /// A changed iface, inv, stat or chat family, or a host result: parked
+    /// waits and opted-in rows recheck, with no tick time.
+    Evidence,
+    /// A native seat answer, or a prompt or terminal the seat published
+    /// after the last accepted seat dispatch: the answered consumer polls
+    /// and its next prompt or terminal publishes at the same observed tick.
+    SeatAnswer,
+    /// Nothing to dispatch.
+    None,
+}
+
+/// The one place that decides a frame's wake class. `held` is every host
+/// hold that freezes script work: the slot loop's hold, the prayer cleanup
+/// hold and the watchdog's recovery hold. A tick edge posts through a hold,
+/// as it always did; an evidence or seat answer wake never does.
+pub(crate) fn observe_wake(
+    tick_edge: bool,
+    tick: u64,
+    evidence_dirty: bool,
+    host_results_dirty: bool,
+    answer_page_owed: bool,
+    held: bool,
+) -> ObserveWake {
+    if tick_edge {
+        return ObserveWake::Tick;
+    }
+    if tick == 0 || held {
+        return ObserveWake::None;
+    }
+    if evidence_dirty || host_results_dirty {
+        return ObserveWake::Evidence;
+    }
+    if answer_page_owed {
+        return ObserveWake::SeatAnswer;
+    }
+    ObserveWake::None
+}
+
+/// Count one seat answer dispatch and write its receipt line: the observed
+/// tick, the seat counters the page carried, how the surface answered, and
+/// the counts of accepted, refused-page and refused-dispatch attempts so far.
+#[cfg(feature = "js")]
+fn note_seat_page(
+    slot: &mut SlotScript,
+    name: &str,
+    tick: u64,
+    (carried, carried_terminal, floor): (u64, u64, u64),
+    (page_accepted, dispatch_accepted): (bool, bool),
+) {
+    use script::native::seat::SeatPageOutcome;
+    let outcome = match (page_accepted, dispatch_accepted) {
+        (true, true) => SeatPageOutcome::Accepted,
+        (false, _) => SeatPageOutcome::RefusedPage,
+        (true, false) => SeatPageOutcome::RefusedDispatch,
+    };
+    let counts = slot.note_seat_page(outcome);
+    if debug_enabled() {
+        host_log!(
+            Category::Echo,
+            Level::Debug,
+            slot = name,
+            "seat-page tick={tick} answer_seq={carried} result_seq={carried_terminal} floor={floor} outcome={outcome:?} accepted={} refused_page={} refused_dispatch={}",
+            counts.accepted,
+            counts.refused_page,
+            counts.refused_dispatch
+        );
+    }
+}
+
 #[cfg(feature = "js")]
 /// Post the slot's snapshot. Only a post the isolate accepted counts as the
 /// isolate having seen the walk outcome it carries (`walk_seq`), so only
@@ -244,6 +319,34 @@ fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
     for line in logs {
         host_log!(Category::Echo, Level::Debug, slot = name, "{line}");
     }
+    emit_script_paint_title(slot, name);
+}
+
+/// Under `BOT_DEBUG=1`, one echo line each time the script's painted title
+/// changes. A script publishes its status line there (`ClueSolver` paints
+/// `ClueSolver — <status>`), so the live cells' receipts show the status the
+/// script moved to after an event, such as the bank close.
+fn emit_script_paint_title(slot: &SlotScript, name: &str) {
+    static LAST: std::sync::LazyLock<Mutex<HashMap<String, Option<String>>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+    let Some(paint) = slot.paint() else {
+        return;
+    };
+    let mut last = LAST.lock().unwrap();
+    if last
+        .get(name)
+        .is_some_and(|title| title.as_deref() == paint.title.as_deref())
+    {
+        return;
+    }
+    last.insert(name.to_owned(), paint.title.clone());
+    host_log!(
+        Category::Echo,
+        Level::Debug,
+        slot = name,
+        "script-paint title={:?}",
+        paint.title
+    );
 }
 
 /// One observe of a slot's script wiring: gate [`SlotScript::on_is_up`],
@@ -817,19 +920,24 @@ pub(crate) fn script_observe_cached_with_channels(
         // compiled/API/compat machines, never dispatch another JS game tick.
         // Held runs remain frozen, and frames before the first tick cannot
         // obtain an interaction budget.
-        let wake_waits = !tick_edge
-            && tick != 0
-            && (wait_families_dirty || host_results_dirty)
-            && !prayer_cleanup_hold
-            && !hold
-            && !slot.watchdog().holds_script_actions();
+        let recovery_hold = slot.watchdog().holds_script_actions();
+        let wake = observe_wake(
+            tick_edge,
+            tick,
+            wait_families_dirty,
+            host_results_dirty,
+            slot.seat_answer_owed(),
+            prayer_cleanup_hold || hold || recovery_hold,
+        );
+        #[cfg(feature = "js")]
+        let wake_waits = wake == ObserveWake::Evidence;
         // Load Gather owns its own committed permissions; other native
         // ticks use the compiled card's current permissions. Pass the
         // same callback value to selection and route admission.
         walk_permissions = slot
             .api_gather_walk_permissions()
             .or_else(|| slot.native_walk_permissions());
-        if (tick_edge || wake_waits) && slot.state() == script::RunState::Running {
+        if wake != ObserveWake::None && slot.state() == script::RunState::Running {
             // Task 9b: post the FlatBuffer snapshot blob on every tick
             // edge — held or not — so the isolate's
             // Game/Inventory/Skills/Bank/Banking/EventSignal read what
@@ -849,10 +957,10 @@ pub(crate) fn script_observe_cached_with_channels(
             // Guardian `hold` freezes clocks/nav and cancels owned recovery.
             // Recovery hold is host-owned and must still reach the isolate so
             // loop/pump freeze, without being treated as that external freeze.
-            let recovery_hold = slot.watchdog().holds_script_actions();
+            // `recovery_hold` is read above: the watchdog hold is part of the wake gate.
             let isolate_hold = hold || recovery_hold || prayer_cleanup_hold;
             #[cfg(feature = "js")]
-            if slot.surface_active() {
+            let post_page = |slot: &mut SlotScript, wake_waits: bool| -> bool {
                 let (
                     teleports_enabled,
                     walk_seq,
@@ -941,7 +1049,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     canlight,
                 );
 
-                with_script_snapshot_input_shorts(
+                let accepted = with_script_snapshot_input_shorts(
                     tick,
                     here,
                     up,
@@ -979,7 +1087,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     packed.flood.as_deref(),
                     packed.stamp,
                     |input, native| {
-                        post_script_snapshot(&mut slot, navs, name, walk_seq, |slot| {
+                        post_script_snapshot(slot, navs, name, walk_seq, |slot| {
                             if wake_waits {
                                 slot.post_snapshot_wake(
                                     input,
@@ -994,6 +1102,12 @@ pub(crate) fn script_observe_cached_with_channels(
                     },
                 );
                 slot.store_last_world_id(world_id);
+                accepted
+            };
+            // A seat answer posts its page after its poll, below.
+            #[cfg(feature = "js")]
+            if wake != ObserveWake::SeatAnswer && slot.surface_active() {
+                post_page(&mut slot, wake_waits);
             }
             if isolate_hold {
                 if !guardian_hold {
@@ -1098,12 +1212,39 @@ pub(crate) fn script_observe_cached_with_channels(
                 if let Some(gate) = service_gate {
                     slot.align_seat_session(gate.ready());
                 }
-                if wake_waits {
-                    slot.on_snapshot_change(&mut ctx);
-                } else {
-                    slot.on_game_tick(&mut ctx);
+                match wake {
+                    ObserveWake::Tick => slot.on_game_tick(&mut ctx),
+                    ObserveWake::Evidence => slot.on_snapshot_change(&mut ctx),
+                    ObserveWake::SeatAnswer => {
+                        // Poll only the answered consumers, then publish what
+                        // the poll produced as one page and one seat dispatch.
+                        #[cfg(feature = "js")]
+                        if slot.on_seat_answer(&mut ctx) {
+                            let carried = slot.seat_answer_seq();
+                            let carried_terminal = slot.seat_result_seq();
+                            let floor = slot.seat_terminal_dispatched();
+                            let page_accepted = post_page(&mut slot, true);
+                            let dispatch_accepted = slot.on_seat_page_at(tick, floor);
+                            if page_accepted && dispatch_accepted {
+                                slot.mark_seat_answer_dispatched(carried, carried_terminal);
+                            }
+                            note_seat_page(
+                                &mut slot,
+                                name,
+                                tick,
+                                (carried, carried_terminal, floor),
+                                (page_accepted, dispatch_accepted),
+                            );
+                            wrote = true;
+                        }
+                        #[cfg(not(feature = "js"))]
+                        let _ = &mut ctx;
+                    }
+                    ObserveWake::None => {}
                 }
-                wrote = true;
+                if wake != ObserveWake::SeatAnswer {
+                    wrote = true;
+                }
             }
         }
         {
@@ -2268,6 +2409,56 @@ pub(crate) fn deliver_channel_events(
         }
         let _ = slot.post_channel_events(&events);
     }
+}
+
+/// [`script_observe`] for a frame whose wait families (iface, inv, stat or
+/// chat) changed: an evidence wake candidate.
+#[cfg(all(test, feature = "js"))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn script_observe_evidence(
+    driver: &mut dyn Driver,
+    name: &str,
+    tick_edge: bool,
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    snapshot: Option<&GameSnapshot>,
+    scripts: &ScriptWall,
+    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+) -> bool {
+    script_observe_cached_with_channels(
+        driver,
+        name,
+        true,
+        tick_edge,
+        true,
+        tick,
+        here,
+        None,
+        None,
+        snapshot,
+        None,
+        None,
+        None,
+        scripts,
+        cheats,
+        navs,
+        &None,
+        false,
+        false,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        super::script_channels::BrokerWorld::Unavailable,
+        None,
+        None,
+        None,
+        None,
+    )
+    .wrote
 }
 
 #[cfg(test)]

@@ -26,7 +26,22 @@ use serde_json::Value;
 
 pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_machine_start", start_callback)?;
+    #[cfg(feature = "test-hooks")]
+    callback_v8::install(runtime, "__rs2b0t_test_machine_host", test_host_callback)?;
     callback_v8::install(runtime, "__rs2b0t_machine_take", take_callback)
+}
+
+/// Test seam: the machine host as JSON text, for the seat page tests.
+#[cfg(feature = "test-hooks")]
+fn test_host_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    _args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    let text = machine::test_host_report().to_string();
+    if let Some(value) = v8::String::new(scope, &text) {
+        rv.set(value.into());
+    }
 }
 
 /// Step every live machine once, before the tick's other JS. `claimed`
@@ -43,6 +58,22 @@ pub(crate) fn snapshot_step(
     claimed: &dyn Fn() -> bool,
 ) {
     machine::snapshot_step(&mut RuntimeJs { runtime, claimed }, tick, evidence_sequence);
+}
+
+/// Step only the native rows that the posted seat page changed and no pass
+/// has read, keeping the callback budget. Returns the rows it stepped.
+pub(super) fn seat_step(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) -> machine::SteppedRows {
+    machine::seat_step(&mut RuntimeJs { runtime, claimed })
+}
+
+/// After a seat page step and its drain, resume the stepped rows whose
+/// callback promise settled. No other row resumes.
+pub(super) fn resume_callbacks_seat(
+    runtime: &mut Runtime,
+    stepped: &machine::SteppedRows,
+    claimed: &dyn Fn() -> bool,
+) {
+    machine::resume_seat(&mut RuntimeJs { runtime, claimed }, stepped);
 }
 
 /// After the tick's pump, resume rows whose callback promise settled.
@@ -63,6 +94,29 @@ pub(crate) fn settle_waits(
             None,
             "__rs2b0t_settle_machines",
             json_args!(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Settle only the awaits of outcomes whose seat terminal is above
+/// `release_floor`: the terminals the seat published after the last accepted
+/// seat answer dispatch. The handle list lives on the stack; the JS array of
+/// it exists only when a terminal qualifies (once per ended request, not per
+/// wake), and the shim re-parks every other machine wait without taking it.
+pub(super) fn settle_waits_seat(
+    runtime: &mut Runtime,
+    release_floor: u64,
+    claimed: &dyn Fn() -> bool,
+) -> Result<(), rustyscript::Error> {
+    let released = machine::settled_above(release_floor);
+    let handles = released.as_slice();
+    if !handles.is_empty() && !claimed() {
+        super::lineage_v8::call_function_immediate::<()>(
+            runtime,
+            None,
+            "__rs2b0t_settle_machines",
+            &(handles,),
         )?;
     }
     Ok(())

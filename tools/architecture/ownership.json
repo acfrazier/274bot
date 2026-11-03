@@ -1263,6 +1263,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/script_seat_answer_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/script_channels.rs",
       "owner": "T1"
     },
@@ -3932,6 +3936,10 @@
     },
     {
       "path": "crates/script-js/src/runtime/isolate_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script-js/src/runtime/isolate_seat_page_tests.rs",
       "owner": "T1"
     },
     {

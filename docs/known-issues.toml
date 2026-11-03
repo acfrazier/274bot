@@ -231,7 +231,8 @@ text = """`Bank.depositAllMatching` checks about one item per game tick, so larg
   deposits can be slow. A fix is planned for a later release."""
 first = "0.2.4"
 listed = "0.2.5"
-target = "0.2.9"
+fixed = "0.2.9"
+target = "none"
 severity = "medium"
 owner = "event-driven runtime endpoint"
 
@@ -247,7 +248,8 @@ area = "Scripts"
 text = """When Grinch banks, it uses the shared bank trip, which still waits up to a
   fixed time for some bank steps. These waits are planned to become game-timed."""
 first = "0.2.5"
-target = "0.2.9"
+fixed = "0.2.9"
+target = "none"
 severity = "low"
 owner = "shared bank trip (event-driven runtime endpoint)"
 

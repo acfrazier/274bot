@@ -1159,6 +1159,13 @@ impl ObjectOpen {
                 }
                 ObjectPhase::NearRetry { attempt, loc } => {
                     self.retry_beside(attempt, Some(loc), cx);
+                    // A spent action budget leaves the phase at `NearRetry`.
+                    // It resets only with the next observed tick, so wait for
+                    // that tick. Looping here would never end: nothing inside
+                    // this poll can restore the budget.
+                    if matches!(self.phase, ObjectPhase::NearRetry { .. }) {
+                        return Poll::Pending;
+                    }
                 }
                 ObjectPhase::Continue {
                     attempt,
@@ -2285,7 +2292,7 @@ fn selected_bank(facts: &NamedBankFacts, selected: SelectedBank) -> Option<Selec
 mod tests {
     use super::*;
     use crate::native::{ledger, HostEffect};
-    use crate::quester::families::tests::with_tick;
+    use crate::quester::families::tests::{local_player, with_tick, with_tick_reach};
     use api::snapshot::GameSnapshot;
 
     fn duel_chest(open: bool) -> LocView {
@@ -2380,6 +2387,146 @@ mod tests {
             );
         });
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    fn shantay_chest(tile: WorldTile, distance: i32) -> LocView {
+        LocView {
+            id: 2693,
+            name: Some("Shantay chest".into()),
+            actions: vec![Some("Open".into())],
+            tile,
+            distance,
+            ..duel_chest(false)
+        }
+    }
+
+    /// A 3x3 reach window in which only its centre, `stand`, is reachable.
+    fn lone_stand_reach(stand: WorldTile) -> api::query::ReachQueryView {
+        let centre = 4; // lx 1, lz 1: lx * height + lz
+        let mut exact_rank = vec![u16::MAX; 9];
+        exact_rank[centre] = 0;
+        api::query::ReachQueryView {
+            available: true,
+            base_x: stand.x - 1,
+            base_z: stand.z - 1,
+            level: stand.level,
+            width: 3,
+            height: 3,
+            walkable: vec![0],
+            reachable: vec![1 << centre],
+            reachable_adj: vec![1 << centre],
+            exact_rank: exact_rank.clone(),
+            adjacent_rank: exact_rank,
+            step: vec![0; 9],
+            canlight: Vec::new(),
+        }
+    }
+
+    fn queued_effects(ledger: &Option<Box<ledger::Ledger>>) -> Vec<String> {
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        outbox
+            .iter()
+            .map(|action| match &action.effect {
+                HostEffect::Walk(_) => "walk".to_owned(),
+                HostEffect::Interaction(InteractReq::Loc { action, .. }) => {
+                    format!("loc {action}")
+                }
+                _ => "other".to_owned(),
+            })
+            .collect()
+    }
+
+    /// What one chest opening queued, tick by tick.
+    struct ChestRun {
+        /// The poll that follows the log answer in the walk's own tick.
+        wake_pending: bool,
+        /// The effects queued up to and including that tick.
+        after_wake: Vec<String>,
+        /// The effects queued up to and including the next tick.
+        after_next_tick: Vec<String>,
+    }
+
+    /// Hang of `tui.live-jive-kq` (EVENT-RUNTIME-WAKE-HANG): the Shantay chest
+    /// did not open, so the opening walked to its counter stand. The bot
+    /// already stood on that tile, so the walk had arrived at once. The
+    /// walk spent the tick's only action. The log line that announces the
+    /// walk is a script callback, and its answer wakes the seat in the same
+    /// observed tick. The retry click then found the budget spent and parked
+    /// in `NearRetry`, which looped inside one poll for ever.
+    #[test]
+    fn a_retry_click_with_the_tick_budget_spent_waits_for_the_next_tick() {
+        let (done, finished) = std::sync::mpsc::channel();
+        // The poll runs on its own thread so that a loop fails the test
+        // instead of hanging it. A looping thread spins until the process exits.
+        std::thread::spawn(move || {
+            let stand = tile(3308, 3120);
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_local_player(local_player(stand));
+            snapshot.seed_locs(vec![shantay_chest(tile(3309, 3120), 2)]);
+            let reach = lone_stand_reach(stand);
+            let hooks = Arc::new(Mutex::new(TransferHooks::default()));
+            let mut request = BankSeatArgs::new(BankSeatOperation::OpenObject);
+            request.object_access = Some(BankSeatObjectAccess {
+                name: "Shantay chest".into(),
+                op: "Open".into(),
+                open_first_name: None,
+                open_first_op: None,
+            });
+            request.hooks_present = HOOK_LOG;
+            let args = OpeningArgs {
+                request,
+                facts: Arc::new(NamedBankFacts::from_banks(Vec::new())),
+                preferences: BankPreferences::default(),
+                hooks: Arc::clone(&hooks),
+            };
+            let mut ledger = None;
+
+            // Tick 1: the first click on the chest. It never opens the bank.
+            let handle = with_tick_reach(&snapshot, &reach, &mut ledger, 1, |tick| {
+                let handle = tick.actions.begin::<Opening>(args, &mut tick.cx).unwrap();
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                handle
+            });
+            assert_eq!(take_chest_action(&mut ledger), (2693, "Open".into()));
+
+            // Tick 15: the click's 8 s bound has passed. The poll walks to the
+            // stand, which is the bot's own tile, and announces it. The log
+            // call posts on the next poll and the script answers it, all
+            // inside this one observed tick.
+            let wake_pending = with_tick_reach(&snapshot, &reach, &mut ledger, 15, |tick| {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+                {
+                    let mut mailbox = lock_hooks(&hooks);
+                    let call = mailbox.pending.take().expect("the walk log posted");
+                    assert_eq!(call.hook, "log");
+                    mailbox.answer = Some(TransferAnswer::Value(Value::Null));
+                }
+                tick.actions.poll(&handle, &mut tick.cx).is_pending()
+            });
+            let after_wake = queued_effects(&ledger);
+            with_tick_reach(&snapshot, &reach, &mut ledger, 16, |tick| {
+                assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
+            });
+            let after_next_tick = queued_effects(&ledger);
+            done.send(ChestRun {
+                wake_pending,
+                after_wake,
+                after_next_tick,
+            })
+            .ok();
+        });
+        let run = finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the poll after the log answer must return, not loop");
+        assert!(run.wake_pending);
+        assert_eq!(run.after_wake, ["walk"], "no second action in a spent tick");
+        assert_eq!(
+            run.after_next_tick,
+            ["walk", "loc Open"],
+            "the retry click goes out at the next tick"
+        );
     }
 
     #[test]

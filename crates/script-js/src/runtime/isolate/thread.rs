@@ -1265,9 +1265,13 @@ fn extends_stale_window(cmd: &IsolateCmd, generation: u64, latest: &mut u64) -> 
         IsolateCmd::Tick {
             tick,
             generation: g,
+            mode,
             ..
         } => {
-            if *g == generation {
+            // A queued seat page keeps the window open and raises nothing:
+            // the skip drops game ticks and evidence wakes, never the page
+            // that carries an accepted seat answer.
+            if *g == generation && !matches!(mode, TickMode::SeatPage { .. }) {
                 *latest = (*latest).max(*tick);
             }
             true
@@ -1585,8 +1589,13 @@ fn tick_loop(
                 generation,
                 input_identity,
                 evidence_sequence,
-                wait_only,
+                mode,
             } => {
+                let wait_only = mode != TickMode::Full;
+                let seat_page = match mode {
+                    TickMode::SeatPage { release_floor } => Some(release_floor),
+                    TickMode::Full | TickMode::WaitOnly => None,
+                };
                 if !wait_only
                     && session_held
                     && generation == work_generation.load(std::sync::atomic::Ordering::Acquire)
@@ -1620,6 +1629,12 @@ fn tick_loop(
                         report_errors: false,
                     });
                     continue;
+                }
+                #[cfg(feature = "test-hooks")]
+                if seat_page.is_some() {
+                    if let Ok(mut state) = teardown.lock() {
+                        state.executed_seat_pages += 1;
+                    }
                 }
                 let start = Instant::now();
                 let walk_outcome_seq_at_tick = current_observed_walk_outcome_seq();
@@ -1673,24 +1688,34 @@ fn tick_loop(
                         )
                     });
                 }
-                let script_interrupt = if machines_halted(&teardown) {
-                    false
-                } else {
-                    call_interruptible(&mut runtime, &teardown, |runtime| {
-                        runtime.call_function_immediate::<bool>(
-                            None,
-                            "__rs2b0t_interrupt_pending",
-                            json_args!(),
-                        )
-                    })
-                    .unwrap_or(false)
-                };
-                crate::scene::event_signal::set(script_interrupt);
+                // A seat page dispatch runs no script phase: it neither
+                // samples the interrupt flag nor moves the tick's event signal.
+                if seat_page.is_none() {
+                    let script_interrupt = if machines_halted(&teardown) {
+                        false
+                    } else {
+                        call_interruptible(&mut runtime, &teardown, |runtime| {
+                            runtime.call_function_immediate::<bool>(
+                                None,
+                                "__rs2b0t_interrupt_pending",
+                                json_args!(),
+                            )
+                        })
+                        .unwrap_or(false)
+                    };
+                    crate::scene::event_signal::set(script_interrupt);
+                }
                 // Normal ticks step every machine; snapshot-only dispatch
-                // rechecks opted-in rows without advancing tick-owned waits.
+                // rechecks opted-in rows without advancing tick-owned waits;
+                // a seat page steps only the native rows that page changed.
+                let mut stepped = crate::machine::SteppedRows::default();
                 if !machines_halted(&teardown) {
                     let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
-                        if wait_only {
+                        if seat_page.is_some() {
+                            stepped = crate::materialize::machine_v8::seat_step(runtime, &|| {
+                                machines_halted(&teardown)
+                            });
+                        } else if wait_only {
                             crate::materialize::machine_v8::snapshot_step(
                                 runtime,
                                 n,
@@ -1955,6 +1980,9 @@ fn tick_loop(
                     // A callback or operator action claimed this execution:
                     // no later user phase may start through that boundary.
                     Ok(())
+                } else if seat_page.is_some() {
+                    // No pump, listener, loop or runner: the page's rows only.
+                    Ok(())
                 } else if wait_only {
                     call_interruptible(&mut runtime, &teardown, |runtime| {
                         runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))
@@ -2019,18 +2047,35 @@ fn tick_loop(
                 // unrelated to the lifecycle single-flight.
                 if !machines_halted(&teardown) {
                     let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
-                        crate::materialize::machine_v8::resume_callbacks(runtime, &|| {
-                            machines_halted(&teardown)
-                        });
+                        if seat_page.is_some() {
+                            crate::materialize::machine_v8::resume_callbacks_seat(
+                                runtime,
+                                &stepped,
+                                &|| machines_halted(&teardown),
+                            );
+                        } else {
+                            crate::materialize::machine_v8::resume_callbacks(runtime, &|| {
+                                machines_halted(&teardown)
+                            });
+                        }
                         Ok::<(), rustyscript::Error>(())
                     });
                 }
                 // A row that ended here settles its machine wait in this tick.
                 if !machines_halted(&teardown) {
                     let settled = call_interruptible(&mut runtime, &teardown, |runtime| {
-                        crate::materialize::machine_v8::settle_waits(runtime, &|| {
-                            machines_halted(&teardown)
-                        })?;
+                        match seat_page {
+                            Some(release_floor) => {
+                                crate::materialize::machine_v8::settle_waits_seat(
+                                    runtime,
+                                    release_floor,
+                                    &|| machines_halted(&teardown),
+                                )?
+                            }
+                            None => crate::materialize::machine_v8::settle_waits(runtime, &|| {
+                                machines_halted(&teardown)
+                            })?,
+                        }
                         runtime.block_on_event_loop(
                             rustyscript::deno_core::PollEventLoopOptions::default(),
                             Some(Duration::from_millis(10)),
@@ -2044,7 +2089,7 @@ fn tick_loop(
                         });
                     }
                 }
-                if !v2_native && !machines_halted(&teardown) {
+                if !v2_native && seat_page.is_none() && !machines_halted(&teardown) {
                     // A loop that finished in the drain frees the
                     // single-flight for the next tick.
                     let settled = runner.poll(&mut runtime, &out, n, generation);
@@ -2257,7 +2302,7 @@ fn tick_loop(
                         pending.retain(|cmd| {
                             at += 1;
                             at > window
-                                || !matches!(cmd, IsolateCmd::Tick { generation: g, .. } if *g == generation)
+                                || !matches!(cmd, IsolateCmd::Tick { generation: g, mode, .. } if *g == generation && !matches!(mode, TickMode::SeatPage { .. }))
                         });
                         let _ =
                             out.send(ThreadMsg::Log(format!("skipped stale ticks -> {latest}")));
@@ -2539,6 +2584,21 @@ fn tick_loop(
                     crate::materialize::lineage_v8::eval(&mut runtime, expr)
                         .map_err(|e| e.to_string());
                 let _ = reply.send(value);
+            }
+            #[cfg(feature = "test-hooks")]
+            IsolateCmd::TestNoop => {}
+            #[cfg(feature = "test-hooks")]
+            IsolateCmd::TestBlock { release, entered } => {
+                {
+                    let (lock, cv) = &*entered;
+                    *lock.lock().unwrap() = true;
+                    cv.notify_all();
+                }
+                let (lock, cv) = &*release;
+                let mut open = lock.lock().unwrap();
+                while !*open {
+                    open = cv.wait(open).unwrap();
+                }
             }
             IsolateCmd::Stop { invoke_hook } => {
                 crate::scene::event_signal::clear();

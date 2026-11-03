@@ -16,36 +16,28 @@
 use crate::interact::InteractReq;
 use api::snapshot::{ItemView, LocView, NpcView, WorldTile};
 use std::sync::Arc;
-use std::time::Duration;
 
 /// The production world tick duration. Server content advances on the 600 ms
 /// engine tick; observed packet bursts can contain several such ticks at once.
 pub const SERVER_TICK_MS: u64 = 600;
-/// Minimum distinct fresh observed ticks before a transfer may expire; the
-/// elapsed-time floor also requires one 600 ms server interval per tick.
+/// Distinct observed ticks after which a native bank wait expires. Native
+/// banking counts observed game ticks only. The JavaScript seat rows keep the
+/// frozen elapsed-time floor of their `Bank` API (`observed_wait_expired_with_time_bound`).
 pub const TRANSFER_OBSERVED_TICK_LIMIT: u64 = 8;
 /// Round a duration up to the first complete production server tick.
 pub const fn observed_ticks_for_millis(millis: u64) -> u64 {
     millis.saturating_add(SERVER_TICK_MS - 1) / SERVER_TICK_MS
 }
 
-/// A bank wait expires only after both its observed-tick budget and the
-/// corresponding amount of server time have elapsed.
-pub fn observed_wait_expired(
-    started_tick: u64,
-    current_tick: u64,
-    elapsed: Duration,
-    tick_limit: u64,
-) -> bool {
-    observed_wait_expired_with_time_bound(
-        started_tick,
-        current_tick,
-        elapsed >= Duration::from_millis(tick_limit.saturating_mul(SERVER_TICK_MS)),
-        tick_limit,
-    )
+/// A native bank wait expires once `tick_limit` observed ticks have passed
+/// since it started. It never reads a clock (`AGENTS.md` content-timed
+/// waits): every wait checks the awaited state before it checks this.
+pub fn observed_wait_expired(started_tick: u64, current_tick: u64, tick_limit: u64) -> bool {
+    current_tick.saturating_sub(started_tick) >= tick_limit
 }
 
-/// The same dual bound when a pause-aware clock owns the elapsed-time floor.
+/// The dual bound of the JavaScript seat rows, whose pause-aware clock owns
+/// an elapsed-time floor that the frozen `Bank` API states in milliseconds.
 pub fn observed_wait_expired_with_time_bound(
     started_tick: u64,
     current_tick: u64,

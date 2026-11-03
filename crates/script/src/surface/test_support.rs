@@ -81,6 +81,12 @@ pub enum StubSurfaceOperation {
     OnGameTickAt { tick: u64, input_identity: u64 },
     /// The slot reported a snapshot change.
     OnSnapshotChangeAt { tick: u64, input_identity: u64 },
+    /// The slot dispatched a posted seat page.
+    OnSeatPageAt {
+        tick: u64,
+        input_identity: u64,
+        release_floor: u64,
+    },
     /// The slot drained stamped interactions.
     DrainInteractsStamped,
     /// The slot restored stamped interactions.
@@ -238,6 +244,13 @@ impl StubSurfaceHandle {
     pub fn set_channel_events_acceptance(&self, accepted: bool) {
         self.state
             .channel_events_accept
+            .store(accepted, Ordering::Release);
+    }
+
+    /// Set the acceptance result for seat page dispatches.
+    pub fn set_seat_page_acceptance(&self, accepted: bool) {
+        self.state
+            .seat_page_accept
             .store(accepted, Ordering::Release);
     }
 
@@ -550,6 +563,18 @@ impl SurfaceRun for StubSurfaceRun {
         );
     }
 
+    fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool {
+        record(
+            &self.state,
+            StubSurfaceOperation::OnSeatPageAt {
+                tick: snap_tick,
+                input_identity,
+                release_floor,
+            },
+        );
+        self.state.seat_page_accept.load(Ordering::Acquire)
+    }
+
     fn drain_interacts_stamped(&self) -> Vec<QueuedInteract> {
         record(&self.state, StubSurfaceOperation::DrainInteractsStamped);
         std::mem::take(&mut *lock(&self.state.interacts))
@@ -831,6 +856,7 @@ struct StubSurfaceState {
     posted_facts: Mutex<Option<PostedSnapshotFacts>>,
     posted_facts_reads: AtomicUsize,
     channel_events_accept: AtomicBool,
+    seat_page_accept: AtomicBool,
     interacts: Mutex<Vec<QueuedInteract>>,
     seat_batches: Mutex<Vec<QueuedSeatBatch>>,
     lifecycle: Mutex<Vec<InteractReq>>,
@@ -877,6 +903,7 @@ impl StubSurfaceState {
             posted_facts: Mutex::new(None),
             posted_facts_reads: AtomicUsize::new(0),
             channel_events_accept: AtomicBool::new(true),
+            seat_page_accept: AtomicBool::new(true),
             interacts: Mutex::new(Vec::new()),
             seat_batches: Mutex::new(Vec::new()),
             lifecycle: Mutex::new(Vec::new()),
