@@ -98,6 +98,7 @@ fn run_selected_facts<'s>(
         "ranged-item" => ranged_item(scope, args.get(1), args.get(2), args.get(3), args.get(4)),
         "cert-maps" => cert_maps(scope),
         "cert-link" => cert_link(scope, args.get(1), args.get(2)),
+        "obj-records" => obj_records(scope),
         "obj-catalog" => obj_catalog(scope),
         "obj-resolve-by-name" => obj_resolve_by_name(scope, args.get(1), args.get(2), args.get(3)),
         "random-event-casket" => random_event_casket(scope),
@@ -450,6 +451,22 @@ fn obj_resolve_by_name<'s>(
             .ok_or_else(|| "selected facts catalog result".to_string())?;
     }
     Ok(result.into())
+}
+
+/// Frozen adapter `reader.objCatalog()`: every named object, or an empty array without selected data.
+fn obj_records<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let rows = v8::Array::new(scope, 0);
+    let Some(data) = supply_v2::selected_data() else {
+        return Ok(rows.into());
+    };
+    for (index, (item, name)) in crate::market_catalog::records(data.items()).enumerate() {
+        let row = obj_record_row(scope, item, name)?;
+        rows.set_index(scope, index as u32, row.into())
+            .ok_or_else(|| "selected facts obj-records".to_string())?;
+    }
+    Ok(rows.into())
 }
 
 /// Frozen `buildCatalog` minus the cert maps: `byId` holds every named obj

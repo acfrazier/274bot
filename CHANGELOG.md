@@ -90,6 +90,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Selected rs2b0t compatibility helpers now support GatheringBot anchors,
   Jive bank restocking, MarketMaker name resolution, and paint rendering.
 
+- Compat loading now provides every named selected object row to the adapter.
+
 - Compatibility `probeDest` calls now use the host's full route-search
   budget; an upstream `maxExpansions` argument cannot lower it.
 
