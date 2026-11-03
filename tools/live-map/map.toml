@@ -81,6 +81,14 @@ globs = [
 
 exceptions = ["crates/host-play/tests/survivable_admission_live.rs"]
 
+# Host debug stderr is a process sink, not a game action. The failure path is
+# exercised with a refusing writer; no live world can make stderr return ENOSPC.
+[[cover]]
+globs = ["crates/api/src/hostlog.rs"]
+cells = [
+  "api.hostlog-write-failure-headless|${ISOHOME:?} cargo test --locked -p api --lib -- --exact hostlog::tests::a_failed_debug_write_is_dropped_instead_of_panicking",
+]
+
 # Fleet Stop enters the shared command plan, retires the host's script walk,
 # and projects the resulting rows. See README.md "State-gap and refusal paths".
 [[cover]]
