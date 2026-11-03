@@ -501,10 +501,10 @@ pub struct Dialogue {
     /// The bound the lease reports: the phase's own deadline.
     modal_wait_bound: WaitBound,
 }
-// Linux measures 512 B: the pre-lease 472 B plus 16 B Option<ModalWaitLease>,
-// 8 B (u32, u8) epoch and 16 B WaitBound. The epoch mirrors the u8 counter;
-// retaining u64 wasted 8 B. WaitDeadline is 16 B with or without the explicit
-// AwaitingDispatch variant, so that variant adds no bytes. Keep 8 B headroom.
+// Linux measures 520 B: pre-lease 472 B +16 B lease +8 B mirrored epoch
+// +16 B WaitBound +8 B first-page Options (4 B field +4 B alignment).
+// The epoch mirrors the u8 counter; retaining u64 wasted 8 B. WaitDeadline
+// remains 16 B with AwaitingDispatch. Keep 8 B headroom below 528 B.
 // NAV-PREREQ-RUNNER adds the 72 B last-send receipt to the 400 B W1 state.
 // The approach round 3 fix added the route plan (tile, radius, assessment,
 // retries) and separate Talk arrival/message ticks: 56 B over round 2's 336 B.
@@ -513,7 +513,7 @@ pub struct Dialogue {
 // attack-marks baseline (408 B). It pays for the extra bytes by narrowing
 // `gap_rearms_left` from u32 to u8 (it never exceeds `DRIVE_STEPS`, 120) and
 // `gap_rearm_tick` from `Option<u64>` to `Option<u32>`.
-const _: () = assert!(std::mem::size_of::<Dialogue>() <= 520);
+const _: () = assert!(std::mem::size_of::<Dialogue>() <= 528);
 
 impl NativeMachine for Dialogue {
     type Args = DialogueArgs;
