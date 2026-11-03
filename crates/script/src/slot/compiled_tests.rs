@@ -3023,11 +3023,11 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // NAV-PREREQ: measured 8568 B; lease bookkeeping adds Ledger 56 B
-        // (24+8+24) and Owner's 8 B atomic over 8504 B. Keep 8 B headroom.
+        // HOLD-MODEL: measured 8584 B. QuietRead.hold_until adds 16 B in
+        // Ledger (992 -> 1008 B), over the prior 8568 B. Keep 8 B headroom.
         assert!(
-            exclusive <= 8576,
-            "exclusive API seat exceeds 8576 B (8568 measured: Ledger +56 B, Owner +8 B; 8 B headroom)"
+            exclusive <= 8592,
+            "exclusive API seat exceeds 8592 B (8584 measured: QuietRead.hold_until +16 B in Ledger 992 -> 1008; 8 B headroom)"
         );
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
