@@ -211,6 +211,29 @@ Each run preserves `effective-config.json`, `run-manifest.json`, `nav-identity.j
 
 The dedicated Linux G5-E measurement is `TRACK-T1/T1.4/g5e-linux-wss-one.json` (one local rustls/Tungstenite WSS client, explicit fixture-setup, handshake/upgrade, idle, fragmented read/write, and shutdown phases). The connected phase recorded 416 scoped allocation events, a driver-thread requested-byte net of +17,649, a fixture-thread net of -26,093, and a **process** live-requested-byte delta of -8,444 from the no-WSS fixture baseline; the process peak during connection was +16,634. The fragmented read/write phase peaked +65,292 from that baseline. A concurrent fixture worker can release its setup allocations during connection, so a positive process-net assertion would be an invalid per-WSS oracle. The static 1,572,864-byte event recorder and unknown native/OS allocation are not part of these requested-layout numbers. This receipt measures rustls/Tungstenite only, **not** the entire client-adapter endpoint, native usable capacity, or the required 20-connection RSS allowance. Keep those categories explicitly unqualified until the full platform-specific G5-E ledger and candidate/baseline soak are evaluated.
 
+The closeout G5-E adapter census uses two receipts.
+The in-process `g5e_adapter_wss_connection_difference_receipt` holds client
+and server TLS/WebSocket state in one process.
+Its fitted slope across N=1,2,4,8 is a conservative upper bound on
+client retention.
+
+The test-only `g5e_client_only_wss_connection_difference_receipt` starts
+thirteen localhost TLS servers in a separate child process.
+The child sends only a public test CA certificate to the client process.
+The parent measures eight retained adapter WSS lanes and five isolated
+handshakes.
+The allocator requested-layout slope and OS/RSS samples exclude server
+allocations.
+The handshake peak includes client test-harness allocations.
+The test does not isolate ticket parsing.
+
+Gate §8.1 requires measured request and high-water bounds.
+It also requires explicit reports of ambiguous attribution.
+The gate does not require exact private rustls/Tungstenite capacity.
+The 250,760-byte logical reservation is not a client-owned allocation
+measurement.
+An aggregate process peak is not a client-owned allocation measurement.
+
 The authenticated-control fixture assigns a unique connection ID to each WSS connection. Its socket registration, readiness filters and backpressure assertions use that ID as the mio token, as the product endpoint does. A fixed token would discard readiness for the second connection and invalidate the sibling-progress and shared-memory measurements.
 
 The raw TLS peer retains the initial client traffic secret only in memory. After it authenticates a TLS 1.3 KeyUpdate, it derives the next receive key and resets the record sequence. The G5-E recovery check permits authenticated queued application records after the reply, but rejects another handshake reply or a decryption error. A fixture regression checks the updated-key decoder's sequence, tag and inner-padding handling. The direct `ring` dependency is test-only; release products do not gain a dependency edge.

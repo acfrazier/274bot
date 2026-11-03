@@ -3361,9 +3361,9 @@ impl ExternalG5eFixture {
         let (root_hex, ports) = marker
             .split_once('|')
             .expect("fixture readiness includes root DER and ports");
-        let mut pairs = root_hex.as_bytes().chunks_exact(2);
+        let (pairs, remainder) = root_hex.as_bytes().as_chunks::<2>();
         let root = pairs
-            .by_ref()
+            .iter()
             .map(|pair| {
                 u8::from_str_radix(
                     std::str::from_utf8(pair).expect("root DER is ASCII hex"),
@@ -3373,7 +3373,7 @@ impl ExternalG5eFixture {
             })
             .collect::<Vec<_>>();
         assert!(!root.is_empty());
-        assert!(pairs.remainder().is_empty(), "root DER hex has even length");
+        assert!(remainder.is_empty(), "root DER hex has even length");
         let addresses = ports
             .split(',')
             .map(|port| {
