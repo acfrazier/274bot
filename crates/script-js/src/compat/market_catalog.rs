@@ -621,7 +621,10 @@ mod tests {
         assert_eq!(resolve("green dhide body", false), [1135]);
         assert_eq!(resolve("red d body", false), [2501]);
         assert_eq!(resolve("green dleather", false), [1745]);
-        assert_eq!(resolve("sapp ammy", false), [1694]);
+        // Synonym expansion leaves both shared-name variants; alias words disambiguate them.
+        assert_eq!(resolve("sapp ammy", false), [1675, 1694]);
+        assert_eq!(resolve("sapp ammy strung", false), [1694]);
+        assert_eq!(resolve("sapp ammy unstrung", false), [1675]);
         assert_eq!(resolve("dhide", false), [1747, 1749, 1751, 1753]);
         assert_eq!(resolve("guam leaf", false), [249]);
         assert_eq!(resolve("guam herb", false), [199]);

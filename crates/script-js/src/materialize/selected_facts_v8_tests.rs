@@ -3,7 +3,7 @@ use client::io::ClientRevision;
 use rustyscript::{Runtime, RuntimeOptions};
 
 const CHILD_ENV: &str = "SCRIPT_SELECTED_FACTS_SHAPE_TEST_CHILD";
-const TEST_NAME: &str = "materialize::selected_facts_v8::tests::catalog_rows_keep_fast_properties_and_resolver_heap_is_bounded";
+const TEST_NAME: &str = "selected_facts_v8::tests::catalog_rows_keep_fast_properties_and_resolver_heap_is_bounded";
 
 const SETUP: &str = r#"
 const facts = (...args) => globalThis.__rs2b0t_selected_facts(...args);
