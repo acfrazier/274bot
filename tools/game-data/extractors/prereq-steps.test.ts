@@ -3,9 +3,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractQuestIdentityFacts } from './quests.ts';
+import { captureProgressWriterDomains, extractQuestIdentityFacts } from './quests.ts';
 import { assertPrereqJournalPins, assertPrereqStepFacts, extractPrereqStepsFacts, loadPrereqCrossingProjection, prereqStepInputs, PREREQ_STEPS_SCHEMA } from './prereq-steps.ts';
 import { revisions } from '../generate.ts';
+import { parseBody } from './gathering-rs2.ts';
+import { boundedJournalRange } from './prereq-journal-proof.ts';
 
 assert.equal(PREREQ_STEPS_SCHEMA, 3);
 assert.deepEqual(extractPrereqStepsFacts(274), { rows: [], journals: [] });
@@ -19,6 +21,7 @@ assert.deepEqual(facts.rows.map((row) => row.id), ['priestperil:drezel-advice', 
 assert.deepEqual(facts.journals.map((journal) => journal.id), [
     'blackarmgang:phoenixgang-stage',
     'hero:phoenixgang-stage',
+    'priestperil:mausoleum-progress',
 ]);
 assert.deepEqual(facts.journals[0].establishes.values, { min: 10, max: 10 });
 assert.equal(facts.journals[0].establishes.quest, 'blackarmgang');
@@ -29,6 +32,11 @@ assert.deepEqual(facts.journals[0].rules.map((rule) => rule.proves), [
 assert.deepEqual(facts.journals[1].establishes.values, { min: 3, max: 15 });
 assert.deepEqual(facts.journals[1].rules[0].proves, { min: 3, max: 13 });
 assert.deepEqual(quests.rows.find((row) => row.id === 'priestperil')!.stage_domain, { min: 0, max: 61 });
+assert.deepEqual(facts.journals[2].establishes.values, { min: 9, max: 61 });
+assert.deepEqual(facts.journals[2].rules[0].proves, { min: 9, max: 61 });
+assert.deepEqual(facts.journals[2].after, [
+    { proves: { min: 9, max: 61 }, after: { min: 9, max: 61 } },
+]);
 assert.equal(quests.rows.find((row) => row.id === 'priestperil')!.transmission, 'not_transmitted');
 assert.deepEqual(quests.rows.find((row) => row.id === 'druidspirit')!.stage_domain, { min: 0, max: 110 });
 assert.equal(quests.rows.find((row) => row.id === 'druidspirit')!.transmission, 'not_transmitted');
@@ -278,4 +286,67 @@ withProjection(baseEntries(), (overrides) => {
     withProjection(malformed, (overrides) => {
         assert.throws(() => extractPrereqStepsFacts(289, overrides), /must be a list of QuestGate/);
     });
+}
+
+// A bounded complement is authority only after every production writer is known.
+// The proof itself does not borrow a quest colour or completion value.
+{
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prereq-journal-domain-'));
+    try {
+        fs.mkdirSync(path.join(root, 'scripts'));
+        fs.writeFileSync(path.join(root, 'scripts/progress.varp'), '[progress]\nscope=perm\n');
+        fs.writeFileSync(path.join(root, 'scripts/writer.rs2'), '[proc,writer]()()\n%progress = 61;\n');
+        const lines = [
+            'def_string $page;',
+            'if (%progress <= 8) {',
+            '    $page = "Earlier progress";',
+            '} else if (%progress >= 10 & %progress <= 59) {',
+            '    $page = "Bring more essence";',
+            '} else {',
+            '    $page = "Completed reward";',
+            '}',
+            '~quest_journal("Progress", $page);',
+        ];
+        const nodes = parseBody(lines.map((text, index) => ({ line: index + 1, text })));
+        const covered = new Set(lines.map((_, index) => index + 1));
+        const constants = new Map<string, number>();
+        const domain = captureProgressWriterDomains(root)('progress');
+        assert.deepEqual(domain, { min: 0, max: 61 });
+        assert.deepEqual(boundedJournalRange(nodes, 'progress', constants, domain, covered, ['completed reward']), { min: 9, max: 61 });
+
+        fs.writeFileSync(path.join(root, 'scripts/unbounded.rs2'), '[proc,unbounded](int $value)()\n%progress = $value;\n');
+        const unknown = captureProgressWriterDomains(root)('progress');
+        assert.equal(unknown, null, 'one unbounded production writer removes the domain authority');
+        assert.equal(boundedJournalRange(nodes, 'progress', constants, unknown, covered, ['completed reward']), null);
+
+        fs.writeFileSync(path.join(root, 'scripts/unbounded.rs2'), [
+            '[proc,unbounded](int $left)()',
+            'if (%progress >= 61) { return; }',
+            'while ($left > 0) { %progress = add(%progress, 1); $left = sub($left, 1); }',
+        ].join('\n'));
+        assert.equal(captureProgressWriterDomains(root)('progress'), null, 'an entry guard does not bound an arbitrary increment loop');
+        const counted = [
+            '[proc,counted]()()',
+            'def_int $needed = calc(60 - %progress);',
+            'def_int $held = inv_total(inv, essence);',
+            'def_int $left = min($needed, $held);',
+            'while ($left > 0) { %progress = add(%progress, 1); $left = sub($left, 1); }',
+        ].join('\n');
+        fs.writeFileSync(path.join(root, 'scripts/writer.rs2'), '[proc,writer]()()\n%progress = 0;\n');
+        fs.writeFileSync(path.join(root, 'scripts/unbounded.rs2'), counted);
+        assert.deepEqual(captureProgressWriterDomains(root)('progress'), { min: 0, max: 60 }, 'the remaining-needed counter bounds every iteration');
+        fs.writeFileSync(path.join(root, 'scripts/unbounded.rs2'), `${counted} %progress = add(%progress, 1);\n`);
+        assert.equal(captureProgressWriterDomains(root)('progress'), null, 'an extra same-line increment cannot hide behind the counted loop');
+        fs.writeFileSync(path.join(root, 'scripts/writer.rs2'), '[proc,writer]()()\n%progress = 61;\n');
+
+        fs.rmSync(path.join(root, 'scripts/unbounded.rs2'));
+        fs.mkdirSync(path.join(root, 'scripts/_test'));
+        fs.writeFileSync(path.join(root, 'scripts/_test/debug.rs2'), '[proc,debug](int $value)()\n%progress = $value;\n');
+        assert.deepEqual(captureProgressWriterDomains(root)('progress'), domain, 'debug writers are excluded by the production census');
+        const incomplete = new Set(covered);
+        incomplete.delete(4);
+        assert.equal(boundedJournalRange(nodes, 'progress', constants, domain, incomplete, ['completed reward']), null, 'an uncited branch guard cannot authorize a complement');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
 }

@@ -3,6 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { integer, parseJm2LocPlacements, parseJm2NpcPlacements, parseMapsquarePath, parsePack, sourceFile, walkContentFiles, worldFromMapsquare } from './common.ts';
 import { assertPrereqPreservation } from './prereq-preservation.ts';
+import { parseRs2Blocks, stripComment } from './gathering-content.ts';
+import { parseBody } from './gathering-rs2.ts';
+import { captureProgressWriterDomains, type ProgressWriterDomains } from './quests.ts';
+import { boundedJournalRange } from './prereq-journal-proof.ts';
 import type { InputHash } from '../generate.ts';
 
 export const PREREQ_STEPS_SCHEMA = 3;
@@ -101,8 +105,8 @@ function loadAuthoredTemplates(): AuthoredPrereqTemplates {
         throw new Error('prereq_steps: expected the reviewed A1/A2 template rows in route order');
     }
     const journalIds = parsed.journals.map((journal) => (isRecord(journal) ? journal.id : undefined));
-    if (journalIds.join('|') !== 'blackarmgang:phoenixgang-stage|hero:phoenixgang-stage') {
-        throw new Error('prereq_steps: expected the reviewed Black Arm and Heroes journal rows');
+    if (journalIds.join('|') !== 'blackarmgang:phoenixgang-stage|hero:phoenixgang-stage|priestperil:mausoleum-progress') {
+        throw new Error('prereq_steps: expected the reviewed Black Arm, Heroes and Priest journal rows');
     }
     for (const row of parsed.rows) {
         if (!isRecord(row) || !Array.isArray(row.crossings)) throw new Error('prereq_steps: authored row is malformed');
@@ -627,6 +631,7 @@ function journalRuleRange(
     label: string,
     proves: RangeWire,
     needles: readonly string[],
+    boundedProof: () => RangeWire | null,
 ) {
     const pattern = new RegExp(`%${escapeRegExp(signal)}\\s*(<=|>=|==|=|<|>)\\s*\\^([A-Za-z0-9_]+)\\b`, 'g');
     const comparisons = [...source.matchAll(pattern)].flatMap((match) => {
@@ -667,6 +672,8 @@ function journalRuleRange(
         const range = { min: lower.value + 1, max: upper.value };
         if (range.min <= range.max && equalRangeWire(range, proves)) return range;
     }
+    const bounded = boundedProof();
+    if (bounded && equalRangeWire(bounded, proves)) return bounded;
     throw new Error(`prereq_steps: ${label} has no source-pinned stage range [${proves.min},${proves.max}]`);
 }
 
@@ -676,6 +683,7 @@ export function assertPrereqJournalPins(
     journals: readonly PrereqJournalWire[],
     constants: ReadonlyMap<string, number> = scriptConstants(content),
 ) {
+    let writerDomains: ProgressWriterDomains | undefined;
     for (const journal of journals) {
         if (journal.establishes.quest !== journal.quest) {
             throw new Error(`prereq_steps: ${journal.id} journal page and stage window quest disagree`);
@@ -702,7 +710,36 @@ export function assertPrereqJournalPins(
                     throw new Error(`prereq_steps: ${label} needle is not pinned by ${rule.source}`);
                 }
             }
-            journalRuleRange(source, journal.establishes.signal, constants, label, rule.proves, rule.all);
+            journalRuleRange(source, journal.establishes.signal, constants, label, rule.proves, rule.all, () => {
+                const blocks = [...pageFiles].flatMap((file) =>
+                    parseRs2Blocks(file, fs.readFileSync(path.join(content, file), 'utf8')))
+                    .filter((block) => block.kind === 'if_button' && block.name === `questlist:${journal.quest}`);
+                if (blocks.length !== 1 || !isProductionScript(blocks[0].span.file)) return null;
+                const block = blocks[0];
+                const covered = new Set(parseSource(rule.source)
+                    .filter(({ file }) => file === block.span.file).flatMap(({ lines }) => lines));
+                if (block.body.some((line) => stripComment(line.text).trim() && !covered.has(line.line))) return null;
+                let nodes;
+                try {
+                    nodes = parseBody(block.body);
+                } catch {
+                    return null;
+                }
+                const pinnedConstants = new Map<string, number>();
+                for (const match of source.matchAll(/^\s*\^([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*(?:\/\/.*)?$/gm)) {
+                    const value = Number(match[2]);
+                    if (constants.get(match[1]) === value) pinnedConstants.set(match[1], value);
+                }
+                writerDomains ??= captureProgressWriterDomains(content);
+                return boundedJournalRange(
+                    nodes,
+                    journal.establishes.signal,
+                    pinnedConstants,
+                    writerDomains(journal.establishes.signal),
+                    covered,
+                    rule.all,
+                );
+            });
         }
         for (const rule of journal.rules) {
             if (journal.after.filter((after) => equalRangeWire(after.proves, rule.proves)).length !== 1) {
@@ -904,9 +941,9 @@ export function assertPrereqStepFacts(
     if (facts.rows.length !== 2 || facts.rows.map((row) => row.id).join('|') !== 'priestperil:drezel-advice|druidspirit:drezel-start') {
         throw new Error('prereq_steps: expected the reviewed A1/A2 rows in route order');
     }
-    const expectedJournals = 'blackarmgang:phoenixgang-stage|hero:phoenixgang-stage';
+    const expectedJournals = 'blackarmgang:phoenixgang-stage|hero:phoenixgang-stage|priestperil:mausoleum-progress';
     if (facts.journals.map((journal) => journal.id).join('|') !== expectedJournals) {
-        throw new Error('prereq_steps: expected the reviewed Black Arm and Heroes journal facts');
+        throw new Error('prereq_steps: expected the reviewed Black Arm, Heroes and Priest journal facts');
     }
     textPins(content, facts.rows);
     const constants = scriptConstants(content);

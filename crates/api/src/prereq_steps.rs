@@ -560,6 +560,25 @@ mod tests {
     }
 
     #[test]
+    fn priest_journal_range_opens_lower_ladders_but_not_the_holy_barrier() {
+        let established = window("priestperil", "priestperil", 9, 61);
+        for minimum in [5, 8] {
+            assert!(proves(
+                &established,
+                &QuestGate::Window(window("priestperil", "priestperil", minimum, 61))
+            ));
+        }
+        assert!(!proves(
+            &established,
+            &QuestGate::Window(window("priestperil", "priestperil", 61, 61))
+        ));
+        assert!(!proves(
+            &established,
+            &QuestGate::Window(window("druidspirit", "priestperil", 5, 61))
+        ));
+    }
+
+    #[test]
     fn crossing_identity_includes_direction_destination_and_kind() {
         let crossing = CrossingId {
             loc_id: 3507,

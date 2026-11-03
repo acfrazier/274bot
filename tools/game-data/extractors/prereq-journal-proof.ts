@@ -131,7 +131,8 @@ export function boundedJournalRange(
     for (const conditionCase of cases) {
         const state: PathState = { values: new Map(), sinks: [] };
         if (!execute(validated.program, state, conditionCase.outcomes) || state.sinks.length !== 1) return null;
-        if (needles.every((needle) => normalizeJournalText(state.sinks[0]).includes(needle))) {
+        const page = normalizeJournalText(state.sinks[0]);
+        if (needles.every((needle) => page.includes(needle))) {
             min = Math.min(min, conditionCase.values.min);
             max = Math.max(max, conditionCase.values.max);
         }

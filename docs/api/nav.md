@@ -810,6 +810,21 @@ Alfonse the password proves the eligible stage range without starting
 dialogue or changing quest progress. This keeps the kitchen available
 before Heroes' Quest completion as well as after it.
 
+When Priest in Peril's colour cannot prove the lower mausoleum permissions,
+the walker can read its journal before approaching Drezel. The distinctive
+essence reward text proves the conservative range `[9,61]`. It covers the
+ladder windows `[5,61]` and `[8,61]`, but not holy-barrier value `61`.
+The advice conversation still has to establish that final permission.
+The proof uses the complete production-writer upper bound `61`, not colour.
+Quest completion itself is `60`; Drezel can later write barrier access `61`.
+
+The generator verifies bounded journal complements with the full cited page
+handler and every production writer of its signal. It partitions the domain
+at guard thresholds rather than enumerating every value. Unknown writers,
+unknown guards, missing branches or unsupported statements leave no proof.
+Only literal page construction is supported. The existing preservation check
+still decides whether the proved range remains usable after the read.
+
 Before adding a journal row, either use a generator check that proves its
 stage implication or retain a hand proof with the change's evidence.
 The proof must cite the handler guards and exact title and text at a pinned

@@ -18,6 +18,7 @@ import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
 import './extractors/prereq-preservation.test.ts';
+import './extractors/prereq-journal-proof.test.ts';
 import './extractors/prereq-steps.test.ts';
 import './server-ordered.test.ts';
 import './npc-transforms.test.ts';

@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import { integer, parsePack, requireGatherText, walkContentFiles } from './common.ts';
 import { parseRs2Blocks, stripComment, walkContent, type Rs2Block } from './gathering-content.ts';
-import { parseBody, walkStatements, type Node } from './gathering-rs2.ts';
+import { parseBody, walkStatements, type Node, type Stmt } from './gathering-rs2.ts';
 import { postCompletionProgressWriters } from './prereq-preservation.ts';
 export const questIdentityContentFiles = [
     'scripts/general/scripts/quests.rs2',
@@ -513,6 +513,105 @@ function stageDomain(
     }
     if (!sawWriter || !safe) return null;
     return { min: 0, max: maximum };
+}
+
+export type ProgressWriterDomains = (variable: string) => { min: number; max: number } | null;
+
+function counterIncrementBound(nodes: Node[], variable: string, line: number, constants: ReadonlyMap<string, number | null>): number | null {
+    const compact = (text: string) => text.replace(/\s+/g, '');
+    const increment = `%${variable}=add(%${variable},1)`;
+    const occurrences: Stmt[] = [];
+    walkStatements(nodes, (statement) => {
+        if (statement.line === line && compact(statement.text) === increment) occurrences.push(statement);
+    });
+    const boundFor = (items: Node[], wanted: Stmt): number | null => {
+        for (let index = 0; index < items.length; index += 1) {
+            const node = items[index];
+            if (node.kind === 'while' && node.body.includes(wanted)) {
+                if (index < 3) return null;
+                const needed = items[index - 3], available = items[index - 2], counter = items[index - 1];
+                if (needed.kind !== 'stmt' || available.kind !== 'stmt' || counter.kind !== 'stmt') return null;
+                const need = /^def_int(\$[A-Za-z0-9_]+)=calc\((\^[A-Za-z0-9_]+|-?\d+)-%([A-Za-z0-9_]+)\)$/.exec(compact(needed.text));
+                const have = /^def_int(\$[A-Za-z0-9_]+)=inv_total\(inv,([A-Za-z0-9_]+)\)$/.exec(compact(available.text));
+                const count = /^def_int(\$[A-Za-z0-9_]+)=min\((\$[A-Za-z0-9_]+),(\$[A-Za-z0-9_]+)\)$/.exec(compact(counter.text));
+                if (!need || !have || !count || need[3] !== variable
+                    || count[2] !== need[1] || count[3] !== have[1]
+                    || new Set([count[1], need[1], have[1]]).size !== 3
+                    || compact(node.cond) !== `${count[1]}>0`) return null;
+                const bound = need[2].startsWith('^') ? constants.get(need[2].slice(1)) : Number(need[2]);
+                if (typeof bound !== 'number' || !Number.isSafeInteger(bound) || bound < 0 || bound > 0x7fffffff) return null;
+                const first = node.body[0];
+                const inventory = first?.kind === 'stmt' && compact(first.text) === `inv_del(inv,${have[2]},1)`;
+                const offset = inventory ? 1 : 0;
+                const decrement = node.body[offset + 1];
+                if (node.body.length !== offset + 2 || node.body[offset] !== wanted
+                    || decrement?.kind !== 'stmt'
+                    || compact(decrement.text) !== `${count[1]}=sub(${count[1]},1)`) return null;
+                return bound;
+            }
+            const children = node.kind === 'if' ? [node.then, node.els] : node.kind === 'while' ? [node.body] : [];
+            for (const child of children) {
+                const bound = boundFor(child, wanted);
+                if (bound !== null) return bound;
+            }
+        }
+        return null;
+    };
+    let maximum = 0;
+    if (occurrences.length === 0) return null;
+    for (const occurrence of occurrences) {
+        const bound = boundFor(nodes, occurrence);
+        if (bound === null) return null;
+        maximum = Math.max(maximum, bound);
+    }
+    return maximum;
+}
+
+/** Capture every production writer once; an opaque or unbounded write leaves its domain unknown. */
+export function captureProgressWriterDomains(content: string): ProgressWriterDomains {
+    const files = questIdentityAnalysisFiles(content);
+    const constants = progressConstants(content, files);
+    const census = questProgressWriters(content, files);
+    const unaccounted = new Set<string>();
+    const possibleWrites = (text: string) =>
+        [...text.matchAll(/%([A-Za-z0-9_]+)\s*(?:=(?!=)|[+*/-]=|\+\+|--)/g)].map((match) => match[1]);
+    for (const block of census.blocks) {
+        const possible = possibleWrites(block.body.map((line) => stripComment(line.text)).join('\n'));
+        if (possible.length === 0) continue;
+        let nodes: Node[];
+        try {
+            nodes = parseBody(block.body);
+        } catch {
+            for (const variable of possible) unaccounted.add(variable);
+            continue;
+        }
+        walkStatements(nodes, (statement) => {
+            const assignment = /^([%$][A-Za-z0-9_]+(?:\s*,\s*[%$][A-Za-z0-9_]+)*)\s*=\s*(.+)$/.exec(statement.text);
+            const targets = new Set(assignment ? [...assignment[1].matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1]) : []);
+            for (const variable of possibleWrites(statement.text)) {
+                if (!targets.has(variable)) unaccounted.add(variable);
+            }
+        });
+    }
+    return (variable: string) => {
+        const writers = census.byVariable.get(variable) ?? [];
+        if (writers.length === 0 || unaccounted.has(variable) || writers.some((writer) => writer.nodes === null)) return null;
+        let maximum = 0;
+        for (const writer of writers) {
+            const literal = /^-?\d+$/.test(writer.right);
+            const constant = /^\^([A-Za-z0-9_]+)$/.exec(writer.right);
+            let bound: number | null | undefined = literal ? Number(writer.right) : constant ? constants.get(constant[1]) : null;
+            if (!literal && !constant && writer.right.replace(/\s+/g, '') === `add(%${variable},1)`) {
+                // A one-time entry guard cannot bound repeated increments.
+                // Require the counter to start at min(limit-current, held)
+                // and to decrease once for each increment, without a yield.
+                bound = counterIncrementBound(writer.nodes!, variable, writer.line, constants);
+            }
+            if (typeof bound !== 'number' || !Number.isSafeInteger(bound) || bound < 0 || bound > 0x7fffffff) return null;
+            maximum = Math.max(maximum, bound);
+        }
+        return { min: 0, max: maximum };
+    };
 }
 
 function exactColourHelper(questsText: string) {
