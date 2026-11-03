@@ -774,7 +774,8 @@ fn make_receipt(
         assert!(rss_available, "Linux getrusage RSS samples are required");
     }
     let root_lock_digest = Sha256::digest(include_bytes!("../../../Cargo.lock"));
-    let fork_lock_digest = Sha256::digest(include_bytes!("../../../vendor/fr-client-rust/Cargo.lock"));
+    let fork_lock_digest =
+        Sha256::digest(include_bytes!("../../../vendor/fr-client-rust/Cargo.lock"));
     let mut output = String::with_capacity(4_096 + event_count * 256 + adapter_receipt.len());
     output.push_str("{\n  \"schema\": \"t1-g5e-allocator-receipt-v2\",\n  \"gate\": \"T1-GATE r7e G5-E (sections 8 and 8.1, lines 684-717)\",\n");
     output.push_str("  \"root_lock_sha256\": \"");

@@ -3156,8 +3156,7 @@ fn g5e_adapter_wss_connection_difference_receipt() {
         servers.push(ControlServer::spawn(Arc::clone(&server_config)));
     }
     let fixture_only_live = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
-    let fixture_setup_delta =
-        fixture_only_live as i128 - process_after_shared_setup as i128;
+    let fixture_setup_delta = fixture_only_live as i128 - process_after_shared_setup as i128;
     for (index, server) in servers.iter().enumerate() {
         let (attempt, endpoint, handshake) = connect_wss(server, Arc::clone(&client_config));
         assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
@@ -3184,12 +3183,7 @@ fn g5e_adapter_wss_connection_difference_receipt() {
         assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
         drop(handshake);
         let (after, peak) = g5e_allocator_snapshot();
-        handshakes.push((
-            before,
-            after,
-            peak,
-            peak.saturating_sub(before.max(after)),
-        ));
+        handshakes.push((before, after, peak, peak.saturating_sub(before.max(after))));
         endpoint.close(attempt.poll.registry());
         drop(attempt);
         server.stop();

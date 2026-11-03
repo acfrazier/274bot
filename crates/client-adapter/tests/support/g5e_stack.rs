@@ -514,10 +514,7 @@ fn parse_macos_vmmap(text: &str, stack_low: u64, stack_high: u64) -> VmmapStackE
     let (guard_bytes, guard_attribution) = if malformed_guard || adjacent_guard_count > 1 {
         (None, VmmapGuardAttribution::Ambiguous)
     } else if let Some(guard) = matching_guard.filter(|_| adjacent_guard_count == 1) {
-        (
-            Some(guard.high - guard.low),
-            VmmapGuardAttribution::Matched,
-        )
+        (Some(guard.high - guard.low), VmmapGuardAttribution::Matched)
     } else if adjacent_guard_count == 1 {
         (None, VmmapGuardAttribution::Ambiguous)
     } else {
@@ -593,7 +590,9 @@ fn parse_vmmap_region(line: &str) -> VmmapRow {
     let mut thread_index = None;
     while let Some(word) = suffix_words.next() {
         if word == "thread" {
-            thread_index = suffix_words.next().and_then(|index| index.parse::<u64>().ok());
+            thread_index = suffix_words
+                .next()
+                .and_then(|index| index.parse::<u64>().ok());
             break;
         }
     }
@@ -882,9 +881,7 @@ mod tests {
             assert!(source.contains("mincore-resident-only"));
             if source.contains("vmmap(-w,-pages,-resident,-dirty,-swapped)=unique-") {
                 let reserved = reserved.expect("uniquely matched vmmap stack reservation");
-                let committed = sample
-                    .committed_bytes
-                    .expect("vmmap-backed stack bytes");
+                let committed = sample.committed_bytes.expect("vmmap-backed stack bytes");
                 assert!(committed <= reserved);
                 if let Some(guard) = sample.guard_bytes {
                     assert!(guard > 0);
@@ -896,8 +893,7 @@ mod tests {
             } else {
                 assert!(
                     source.contains("vmmap(-w,-pages,-resident,-dirty,-swapped)=unavailable")
-                        || source
-                            .contains("vmmap(-w,-pages,-resident,-dirty,-swapped)=ambiguous")
+                        || source.contains("vmmap(-w,-pages,-resident,-dirty,-swapped)=ambiguous")
                 );
                 assert_eq!(reserved, None);
                 assert_eq!(sample.committed_bytes, None);
@@ -960,11 +956,7 @@ Stack                          a0000-b0000         [ 16 1 1 0] rw-/rwx SM=COW th
         assert_eq!(evidence.committed_bytes, None);
         assert_eq!(evidence.guard_bytes, None);
 
-        let evidence = super::parse_macos_vmmap(
-            "VM page size: 4096 bytes\n",
-            0x10000,
-            0x90000,
-        );
+        let evidence = super::parse_macos_vmmap("VM page size: 4096 bytes\n", 0x10000, 0x90000);
         assert_eq!(evidence.attribution, super::VmmapAttribution::Unavailable);
         assert_eq!(evidence.reserved_bytes, None);
         assert_eq!(evidence.committed_bytes, None);
