@@ -10992,14 +10992,16 @@ mod route_quest_provider_tests {
             ladder.crossing.loc_id = loc_id;
             ladder.crossing.kind = api::prereq_steps::CrossingKind::Ladder;
             assert!(catalog.for_gate(&ladder.gate, &ladder.crossing).is_none());
+            assert!(catalog.for_journal(&ladder.gate).is_some());
             route_gates.push(ladder);
         }
         route_gates.push(barrier.clone());
-        let content = route_prereq_content(&catalog, run(), route_gates.into())
+        let route_gates: Arc<[_]> = route_gates.into();
+        let content = route_prereq_content(&catalog, run(), Arc::clone(&route_gates))
             .expect("proved ladders must not discard the registered barrier's refusal content");
-        assert_eq!(content.gates.as_ref(), std::slice::from_ref(&barrier));
-        assert_eq!(content.gate_groups.len(), 1);
-        assert_eq!(content.gate_groups[0].leg, 7);
+        assert_eq!(content.gates.as_ref(), route_gates.as_ref());
+        assert_eq!(content.gate_groups.len(), 3);
+        assert!(content.gate_groups.iter().map(|group| group.leg).eq([3, 5, 7]));
         assert_eq!(content.crossing_passes.len(), 1);
         assert_eq!(content.crossing_passes[0].crossing, barrier.crossing);
         assert!(!content.refusal_texts.is_empty());

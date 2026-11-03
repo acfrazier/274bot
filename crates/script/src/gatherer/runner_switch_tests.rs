@@ -63,14 +63,8 @@ fn prerequisite_gate() -> (
         .find(|entry| entry.crossing.option > 0)
         .expect("selected row has a supported operation");
     let crossing = entry.crossing;
-    let gate = api::selected::QuestGate::Window(api::selected::StageWindow {
-        quest: row.establishes.quest.clone(),
-        signal: row.establishes.signal.clone(),
-        values: api::selected::InclusiveRange {
-            min: None,
-            max: None,
-        },
-    });
+    // The dialogue fixture needs its actual barrier promise, not any journal interval.
+    let gate = api::selected::QuestGate::Window(row.establishes.clone());
     (
         api::prereq_steps::ActionableGate {
             gate,

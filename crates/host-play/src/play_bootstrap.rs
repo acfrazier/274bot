@@ -227,7 +227,7 @@ mod navigation_preparation_tests {
                 prepare_navigation_families(&data, worker).unwrap();
                 assert!(data.try_quests().is_some());
                 if revision == client::io::ClientRevision::R289 {
-                    assert_eq!(data.try_prereq_steps().unwrap().len(), 4);
+                    assert_eq!(data.try_prereq_steps().unwrap().len(), 5);
                 } else {
                     assert!(data.try_prereq_steps().is_none());
                 }

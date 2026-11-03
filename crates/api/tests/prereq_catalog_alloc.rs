@@ -53,8 +53,8 @@ fn process_catalog_is_bounded_and_warm_preparation_and_queries_allocate_nothing(
     );
     assert_eq!(
         catalog.len(),
-        4,
-        "two dialogue rows and two journal sources"
+        5,
+        "two dialogue rows and three journal sources"
     );
     let (ordinal, row) = catalog.iter().next().expect("A1 exists");
     let crossing = row.crossings[0].crossing;

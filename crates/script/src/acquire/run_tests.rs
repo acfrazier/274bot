@@ -1124,14 +1124,8 @@ fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
         .expect("selected row has a supported operation");
     let crossing = entry.crossing;
     let gate = api::prereq_steps::ActionableGate {
-        gate: api::selected::QuestGate::Window(api::selected::StageWindow {
-            quest: row.establishes.quest.clone(),
-            signal: row.establishes.signal.clone(),
-            values: api::selected::InclusiveRange {
-                min: None,
-                max: None,
-            },
-        }),
+        // The dialogue fixture needs its actual barrier promise, not any journal interval.
+        gate: api::selected::QuestGate::Window(row.establishes.clone()),
         truth: api::selected::Truth::Unknown,
         leg: 0,
         crossing,
