@@ -458,17 +458,33 @@ fn obj_resolve_by_name<'s>(
 
 /// Frozen adapter `reader.objCatalog()`: every named object, or a fresh empty array before data.
 fn obj_records<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
+    Ok(obj_record_rows(scope)?.into())
+}
+
+/// The row array that `obj-records` hands to scripts and `obj-catalog` reads.
+/// A script can reorder or empty the array it receives, so the catalog keys
+/// each entry by the row's own id and a length change rebuilds the array.
+fn obj_record_rows<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<v8::Local<'s, v8::Array>, String> {
     let shapes = scope
         .get_slot::<Rc<SelectedFactsObjectShapes>>()
         .cloned()
         .ok_or_else(|| "selected facts object shape cache is not installed".to_string())?;
-    if let Some(rows) = shapes.obj_records.borrow().as_ref() {
-        return Ok(v8::Local::new(scope, rows).into());
-    }
     let Some(data) = supply_v2::selected_data() else {
-        return Ok(v8::Array::new(scope, 0).into());
+        return Ok(v8::Array::new(scope, 0));
     };
-    let rows = v8::Array::new(scope, 0);
+    let expected = crate::market_catalog::records(data.items()).count();
+    {
+        let cached = shapes.obj_records.borrow();
+        if let Some(rows) = cached.as_ref() {
+            let rows = v8::Local::new(scope, rows);
+            if expected > 0 && rows.length() as usize == expected {
+                return Ok(rows);
+            }
+        }
+    }
+    let rows = v8::Array::new(scope, i32::try_from(expected).unwrap_or(i32::MAX));
     for (index, (item, name)) in crate::market_catalog::records(data.items()).enumerate() {
         let row = obj_record_row(scope, item, name)?;
         rows.set_index(scope, index as u32, row.into())
@@ -477,7 +493,20 @@ fn obj_records<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
     if rows.length() > 0 {
         *shapes.obj_records.borrow_mut() = Some(v8::Global::new(scope, rows));
     }
-    Ok(rows.into())
+    Ok(rows)
+}
+
+/// The row's own `id`, the key the frozen `buildCatalog` uses.
+fn obj_row_id<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    row: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let row = row
+        .to_object(scope)
+        .ok_or_else(|| "selected facts obj-record row is not an object".to_string())?;
+    let key = v8_str(scope, "id")?;
+    row.get(scope, key)
+        .ok_or_else(|| "selected facts obj-record id".to_string())
 }
 
 /// Frozen `buildCatalog` minus the cert maps: `byId` holds every named obj
@@ -495,15 +524,14 @@ fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
         return Ok(catalog.into());
     };
     let market = crate::market_catalog::market_index(&data);
-    let rows = v8::Local::<v8::Array>::try_from(obj_records(scope)?)
-        .map_err(|_| "selected facts obj-records array".to_string())?;
-    for (index, (item, _name)) in crate::market_catalog::records(data.items()).enumerate() {
+    let rows = obj_record_rows(scope)?;
+    for index in 0..rows.length() {
         let row = rows
-            .get_index(scope, index as u32)
+            .get_index(scope, index)
             .ok_or_else(|| "selected facts obj-records item".to_string())?;
-        let id = v8::Integer::new(scope, item.id);
+        let id = obj_row_id(scope, row)?;
         by_id
-            .set(scope, id.into(), row)
+            .set(scope, id, row)
             .ok_or_else(|| "selected facts catalog byId".to_string())?;
     }
     let items = v8::Array::new(
