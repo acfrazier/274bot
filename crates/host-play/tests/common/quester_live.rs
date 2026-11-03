@@ -3855,6 +3855,7 @@ mod tests {
             phase: NativePhase::Blocked,
             active_settings: 0,
             pending_settings: None,
+            survival: script::survival::SurvivalReport::default(),
             fields: Arc::from([StatusField {
                 key: "block_reason",
                 label: "Block reason",
@@ -3902,6 +3903,7 @@ mod tests {
             phase: NativePhase::Blocked,
             active_settings: 1,
             pending_settings: None,
+            survival: script::survival::SurvivalReport::default(),
             failure: Some(script::native::ScriptFailure {
                 code: "parked".into(),
                 message: "expected refusal".into(),
