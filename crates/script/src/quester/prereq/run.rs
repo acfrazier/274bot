@@ -1334,6 +1334,14 @@ fn probe_target(
         .and_then(|loc| Some((loc.tile, Arc::from(loc.actions.get(option)?.as_deref()?))))
 }
 
+fn talk_allowance_ticks(row: &PrereqStep) -> u16 {
+    row.target
+        .leash
+        .saturating_add(NPC_STEP_TICKS)
+        .saturating_add(OP_TICKS)
+        .saturating_add(SEND_SLACK_TICKS)
+}
+
 struct PendingPage {
     send: DialogueSend,
     wait: TickWait,
@@ -1358,11 +1366,7 @@ impl PendingPage {
             PrereqWaitName::W3
         };
         let bound = if send.kind == DialogueSendKind::Talk {
-            row.target
-                .leash
-                .saturating_add(NPC_STEP_TICKS)
-                .saturating_add(OP_TICKS)
-                .saturating_add(SEND_SLACK_TICKS)
+            talk_allowance_ticks(row)
         } else {
             PAGE_TICKS + SEND_SLACK_TICKS
         };
@@ -1478,6 +1482,7 @@ impl ChatDrive {
         } else {
             DialogueOptions {
                 strict: true,
+                first_page_allowance_ticks: Some(talk_allowance_ticks(row)),
                 prefer: Arc::clone(&row.talk.prefer),
                 line_rules: if row.talk.line_rules.is_empty() {
                     DialogueOptions::default().line_rules

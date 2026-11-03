@@ -794,6 +794,11 @@ is at most two (measured from the player's path head) and the NPC is
 reachable. The bound of a Talk that is not
 cancelled is unchanged: the row's leash plus two ticks of NPC movement, one
 operation tick and two ticks of send allowance, which is 7 for Drezel.
+The shared dialogue owner honours at least that row allowance after the host
+accepts the Talk, including its last allowed tick. A later generic
+engine-trigger deadline still wins. Without a supplied row allowance, the
+generic deadline and its expiry boundary stay unchanged. A queued Talk still
+has no page deadline until dispatch, and a reissued Talk starts a fresh wait.
 
 The same page-source mechanism reads the Heroes' Quest journal when the
 required `heroquest >= 3` fact is unknown. The Phoenix text about giving

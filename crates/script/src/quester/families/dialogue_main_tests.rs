@@ -1155,6 +1155,48 @@ fn a_queued_talk_keeps_its_wait_until_acceptance_then_uses_the_content_deadline(
     assert_eq!(runtime.modal_wait_tick(due, deadline), None);
 }
 
+#[test]
+fn a_content_first_page_allowance_extends_only_the_shorter_generic_bound() {
+    let generic_deadline = 3 + super::dialogue::DIALOGUE_OPEN_TICKS;
+    for (allowance, deadline, expires) in [
+        (None, generic_deadline, generic_deadline),
+        (Some(1), generic_deadline, generic_deadline),
+        (Some(7), 9, 10),
+    ] {
+        let snapshot = cook_beside_player();
+        let start = std::time::Instant::now();
+        let mut runtime = ledger::Runtime::default();
+        runtime.clock.observe(start, true);
+        let mut args = npc_args_for(content_npc_id("cook"), "Cook");
+        args.options.first_page_allowance_ticks = allowance;
+        let handle = on_clock(&snapshot, &mut runtime, 1, start, |tick| {
+            tick.actions.begin::<Dialogue>(args, &mut tick.cx).unwrap()
+        });
+        let (key, _) = runtime.modal_wait_tick(start, 1).expect("queued Talk wait");
+        complete_talk(&mut runtime.ledger, 2, true, false);
+        for observed in 3..expires {
+            let at = start + Duration::from_millis(600 * (observed - 1));
+            assert!(
+                on_clock(&snapshot, &mut runtime, observed, at, |tick| {
+                    tick.actions.poll(&handle, &mut tick.cx)
+                })
+                .is_pending(),
+                "allowance {allowance:?} tick {observed}"
+            );
+            assert_eq!(runtime.modal_wait_tick(at, observed), Some((key, deadline)));
+        }
+        let at = start + Duration::from_millis(600 * (expires - 1));
+        assert!(matches!(
+            on_clock(&snapshot, &mut runtime, expires, at, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            }),
+            Poll::Ready(Err(ActionError::Failed(reason)))
+                if reason.as_ref() == "expected dialogue did not open"
+        ));
+        assert_eq!(runtime.modal_wait_tick(at, expires), None);
+    }
+}
+
 /// A guardian reissue replaces the undispatched lease. Its eventual Choice
 /// acknowledgement then keeps the active-clock pause rule, not the Talk's
 /// observed-tick page rule.

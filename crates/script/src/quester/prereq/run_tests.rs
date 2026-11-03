@@ -167,6 +167,20 @@ fn npc_snapshot(row: &PrereqStep) -> GameSnapshot {
     snapshot.seed_npcs(vec![npc_view(row, at, 0)]);
     snapshot
 }
+fn npc_snapshot_with_open_scene(row: &PrereqStep) -> GameSnapshot {
+    let mut snapshot = npc_snapshot(row);
+    snapshot.seed_scene(api::snapshot::SceneView {
+        available: true,
+        base_x: row.target.anchor.x - 8,
+        base_z: row.target.anchor.z - 8,
+        level: row.target.anchor.level,
+        width: 17,
+        height: 17,
+        collision_flags: vec![0; 17 * 17],
+    });
+    snapshot
+}
+
 fn poll(
     run: &mut PrereqRun,
     snapshot: &GameSnapshot,
@@ -2056,7 +2070,7 @@ fn last_request_id(ledger: &Option<Box<ledger::Ledger>>) -> u64 {
 fn a_cancelled_talk_ends_its_wait_at_once_and_re_approaches_the_moved_npc() {
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
-    let mut snapshot = npc_snapshot(row);
+    let mut snapshot = npc_snapshot_with_open_scene(row);
     let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
     let anchor = row.target.anchor;
 
@@ -2199,7 +2213,7 @@ fn repeated_cancels_end_in_a_terminal_failure_that_keeps_the_last_detail() {
 fn a_failed_re_approach_is_retried_inside_the_budget_and_the_talk_still_passes() {
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
-    let mut snapshot = npc_snapshot(row);
+    let mut snapshot = npc_snapshot_with_open_scene(row);
     let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
     let anchor = row.target.anchor;
 
@@ -2284,7 +2298,7 @@ fn a_failed_re_approach_is_retried_inside_the_budget_and_the_talk_still_passes()
 fn failed_re_approaches_end_in_a_terminal_failure_that_keeps_the_approach_detail() {
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
-    let mut snapshot = npc_snapshot(row);
+    let mut snapshot = npc_snapshot_with_open_scene(row);
     let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
     let anchor = row.target.anchor;
 
@@ -2383,7 +2397,7 @@ fn modal_wait(ledger: &Option<Box<ledger::Ledger>>) -> Option<u64> {
 fn a_talk_holds_the_auto_run_wait_only_while_its_own_send_awaits_a_page() {
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
-    let mut snapshot = npc_snapshot(row);
+    let mut snapshot = npc_snapshot_with_open_scene(row);
     let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
     let anchor = row.target.anchor;
     let talk = modal_wait(&ledger).expect("the sent Talk waits for its page");

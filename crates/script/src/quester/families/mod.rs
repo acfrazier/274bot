@@ -1460,6 +1460,7 @@ fn compile_dialogue_options(
         answer_once: args.answer_once,
         chat_only: false,
         gap_ticks: args.gap_ticks,
+        first_page_allowance_ticks: None,
     })
 }
 

@@ -51,6 +51,7 @@ fn strict_line_rules_select_current_page_before_fixed_and_preferred_choices() {
                     answer_once: false,
                     chat_only: false,
                     gap_ticks: None,
+                    first_page_allowance_ticks: None,
                 }),
                 &mut tick.cx,
             )

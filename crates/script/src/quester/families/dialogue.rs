@@ -205,6 +205,11 @@ pub struct DialogueOptions {
     /// Authored end gap in quiet ticks after the chat closes; `None` uses
     /// [`DIALOG_GAP_TICKS`].
     pub gap_ticks: Option<u16>,
+    /// A content row's first-page allowance, in observed ticks after the
+    /// accepted Talk. Its last tick remains allowed. The later of this bound
+    /// and the generic engine-trigger deadline wins; `None` keeps the
+    /// generic deadline and its existing expiry boundary.
+    pub first_page_allowance_ticks: Option<u16>,
 }
 
 impl Default for DialogueOptions {
@@ -221,6 +226,7 @@ impl Default for DialogueOptions {
             answer_once: false,
             chat_only: false,
             gap_ticks: None,
+            first_page_allowance_ticks: None,
         }
     }
 }
@@ -899,7 +905,7 @@ impl Dialogue {
                 }
                 self.observe_talk_arrival(cx, obs.tick);
                 self.observe_talk_message(cx, obs.tick);
-                match self.update_talk_open_deadline(cx) {
+                let deadline_inclusive = match self.update_talk_open_deadline(cx) {
                     // The host still holds the click: no pass that may
                     // dispatch has run since it was queued. The engine
                     // cannot trigger `opnpc1` from a click it never received,
@@ -921,9 +927,12 @@ impl Dialogue {
                     TalkDispatch::Refused(tick) => {
                         return Poll::Ready(Err(self.talk_refused_error(cx, tick)));
                     }
-                    TalkDispatch::Accepted | TalkDispatch::NotRequested => {}
-                }
-                if obs.tick >= self.content_deadline_tick {
+                    TalkDispatch::Accepted { deadline_inclusive } => deadline_inclusive,
+                    TalkDispatch::NotRequested => false,
+                };
+                if obs.tick > self.content_deadline_tick
+                    || (!deadline_inclusive && obs.tick == self.content_deadline_tick)
+                {
                     static REASON: std::sync::LazyLock<Arc<str>> =
                         std::sync::LazyLock::new(|| Arc::from("expected dialogue did not open"));
                     return Poll::Ready(Err(ActionError::Failed(Arc::clone(&REASON))));
@@ -1506,8 +1515,14 @@ impl Dialogue {
         if let Some(message_tick) = self.talk_message_tick {
             deadline = message_tick.saturating_add(DIALOGUE_OPEN_TICKS);
         }
-        self.content_deadline_tick = deadline;
-        TalkDispatch::Accepted
+        let content_deadline = self
+            .args
+            .options
+            .first_page_allowance_ticks
+            .map(|ticks| click_tick.saturating_add(u64::from(ticks)));
+        let deadline_inclusive = content_deadline.is_some_and(|content| content >= deadline);
+        self.content_deadline_tick = content_deadline.map_or(deadline, |content| deadline.max(content));
+        TalkDispatch::Accepted { deadline_inclusive }
     }
 
     /// The host refused the Talk-to and no page is open. The error names the
@@ -1909,7 +1924,9 @@ enum TalkDispatch {
     Unsent,
     /// The host took the click and refused it, on this observed tick.
     Refused(u64),
-    Accepted,
+    /// The row allowance permits its last tick; the generic deadline keeps
+    /// its existing expiry boundary when no row extends it.
+    Accepted { deadline_inclusive: bool },
 }
 
 /// The text of the newest server game message newer than chat `since`.

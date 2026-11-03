@@ -47,6 +47,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   change progress after completion. Crossings with an unknown stage domain
   require progress evidence instead of assuming quest completion. Exact-value
   exits remain available when that progress is observed.
+- A prerequisite conversation now keeps its content row's full first-page
+  allowance when that is longer than the shared dialogue default. This
+  prevents an early timeout while keeping ordinary dialogue deadlines and
+  cancelled-Talk retries unchanged.
 
 ### Developer tools
 
