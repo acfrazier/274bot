@@ -3225,6 +3225,25 @@ mod api_gather_seat {
             "API gather warmed native baseline: idle option={}B; prepared+instance={worker:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>()
         );
+        let survival_text = slot
+            .api
+            .as_ref()
+            .and_then(|seat| seat.page.as_ref())
+            .and_then(|page| page.status.as_ref())
+            .and_then(|status| status.fields.iter().find(|field| field.key == "survival"))
+            .and_then(|field| match &field.value {
+                crate::native::StatusValue::Text(value) => Some(value.as_ref()),
+                _ => None,
+            })
+            .expect("actual Gatherer survival status");
+        let survival_text_heap = allocation_counter::measure(|| {
+            std::hint::black_box(Arc::<str>::from(survival_text));
+        });
+        println!(
+            "API gather survival status contribution: field={}B; text={}B",
+            std::mem::size_of::<crate::native::StatusField>(),
+            survival_text_heap.bytes_total
+        );
         assert_eq!(
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
