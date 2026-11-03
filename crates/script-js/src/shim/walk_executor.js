@@ -1,6 +1,5 @@
 import { proxy, runMachine } from '../../shim/_kernel.js';
 
-
 const walkApi = globalThis.rustyscript.functions.__rs2b0t_walk_api;
 
 export const WalkExecutor = proxy('WalkExecutor', {

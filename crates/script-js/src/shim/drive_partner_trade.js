@@ -57,5 +57,5 @@ export function tradeScreenState() {
 
 export function stableClosedPoll(minMs = 600, nowFn) {
     const poll = globalThis.__rs2b0t_partner_trade('stableClosedPoll', minMs, nowFn);
-    return () => poll();
+    return poll;
 }
