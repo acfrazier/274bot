@@ -414,6 +414,7 @@ import { parseBurnMode, logsForTree, firemakingLevelForLogs, resolveFireSpot, ne
 import { bankDistance } from '#/bot/api/bank/BankLocations.js';
 import { NAV_PURE_WALK, NAV_WITH_TELES } from '#/bot/api/walking/Traversal.js';
 import { worthStocking, buildCatalog, searchCatalog, resolveByName, resetLiveCatalog } from '#/bot/api/market/catalog.js';
+import { shouldWalkHomeToGatherAnchor, shouldSoftHomeFromGatherMiss } from '#/bot/api/tasks/Anchor.js';
 import { COIN_FLOAT, PROVISION_BANK } from '#/bot/api/ai/quests/engine/QuestEngine.js';
 import { suspectOrder, ARHEIN, GUARD_START, GUARD_HANDIN, SALESMAN, SUSPECTS, MURDER_EVIDENCE, MURDER_OBJ } from '#/bot/api/ai/quests/defs/murder/areas.js';
 import { tilesTo, trailWalkOpts, TRACE_STORAGE_KEY } from '#/bot/api/ai/clues/ClueExecutor.js';
@@ -556,6 +557,28 @@ check(
 );
 check(objCatalog.find((item) => item.id === 1321)?.equippable === true, 'bronze scimitar worn model is missing');
 check(reader.objCatalog() === objCatalog, 'reader.objCatalog rebuilt its selected records');
+const mapleWorn = resolveByName(selectedCatalog, 'maple longbow').map((item) => item.id);
+const mapleUnstrung = resolveByName(selectedCatalog, 'maple longbow u').map((item) => item.id);
+check(
+    mapleWorn.join(',') === '851' &&
+        mapleUnstrung.join(',') === '62' &&
+        resolveByName(selectedCatalog, '#851').map((item) => item.id).join(',') === '851' &&
+        resolveByName(selectedCatalog, 'maple', { exactOnly: true }).length === 0,
+    'resolveByName collision, id, or exact-only behavior mismatch'
+);
+check(
+    !shouldWalkHomeToGatherAnchor(null) &&
+        !shouldWalkHomeToGatherAnchor(8) &&
+        shouldWalkHomeToGatherAnchor(8.01) &&
+        shouldWalkHomeToGatherAnchor(12, 11.9) &&
+        !shouldWalkHomeToGatherAnchor(12, 12) &&
+        !shouldSoftHomeFromGatherMiss(null) &&
+        !shouldSoftHomeFromGatherMiss(28) &&
+        shouldSoftHomeFromGatherMiss(28.01) &&
+        !shouldSoftHomeFromGatherMiss(20, 12) &&
+        shouldSoftHomeFromGatherMiss(22.01, 22.9),
+    'gather anchor threshold behavior mismatch'
+);
 const chatHistoryProbe = gameMessagesExports.GameMessages;
 check(chatHistoryProbe.reset() === undefined && chatHistoryProbe.recent().length === 0, 'GameMessages.reset did not clear history');
 check(chatHistoryProbe.record('line') === undefined, 'GameMessages.record must return void');

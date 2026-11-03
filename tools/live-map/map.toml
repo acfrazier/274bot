@@ -647,3 +647,24 @@ globs = ["crates/host-play/src/memory.rs"]
 cells = [
   "host.api-gather-wire-shadow|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_WC_TILE=3197,3209,0 BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,memory-profile --lib -- --ignored --exact api_gather_live_tests::live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow --nocapture --test-threads=1",
 ]
+
+# These headless V8 contract tests exercise the selected-catalog and anchor shims.
+[[cover]]
+globs = [
+  "crates/script-js/src/compat/market_catalog.rs",
+  "crates/script-js/src/shim/anchor.js",
+  "crates/script-js/src/shim/catalog.js",
+]
+cells = [
+  "compat.catalog-anchor-contract|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test upstream_tier1 -- --exact refrozen_runtime_members_load_and_refuse_by_name",
+]
+
+# The paint contract test calls the real compatibility shim and native paint operations.
+[[cover]]
+globs = [
+  "crates/script-js/src/shim/paint.js",
+  "crates/script-js/src/shim/paintLogic.js",
+]
+cells = [
+  "compat.paint-helpers-contract|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test paint_helpers -- --exact catalog_paint_helpers_match_upstream_contract",
+]
