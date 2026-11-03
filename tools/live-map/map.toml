@@ -73,6 +73,9 @@ globs = [
   "crates/nav-bake/src/transport/vertical.rs",
   "crates/nav-planner/examples/route_parity.rs",
   "crates/script-js/src/tooling/compat_dts.rs",
+  # deleted by script split S3; its code moved to `script-js`
+  # S3 commit: 6831a262cbb35272e6a596b14a1239901b1ea90b.
+  "crates/script/src/shim/mod.rs",
   "crates/host-play/src/bank_core_live.rs",
   "crates/host-play/src/bank_fetch_closed_live.rs",
   # Test/live-harness only: host-play/src/lib.rs:634-635 gates this module
@@ -305,7 +308,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/panel/src/session.rs", "crates/panel/src/fleet.rs", "crates/panel/src/fleet_actions.rs"]
+globs = ["crates/panel/src/session.rs", "crates/panel/src/fleet.rs", "crates/panel/src/fleet_actions.rs", "crates/host-play/src/manual_click_live_probe.rs"]
 cells = [
   "panel.manual-start-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip MANUAL_LIVE_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} ISOHOME_DIR=${PANEL_LIVE_HOME:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib -- --ignored --exact manual_click_live_tests::live_gatherer_skill_sync_restart_through_panel_fleet_action --nocapture --test-threads=1",
 ]
@@ -462,7 +465,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/host-play/src/script_observe.rs"]
+globs = ["crates/host-play/src/script_observe.rs", "crates/host-play/src/memory_diagnostics.rs", "crates/script-js/src/wire/mod.rs"]
 cells = [
   "host.api-gather-wire-shadow|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_WC_TILE=3197,3209,0 BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,memory-profile --lib -- --ignored --exact api_gather_live_tests::live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow --nocapture --test-threads=1",
 ]
@@ -489,6 +492,32 @@ globs = [
   "crates/script-js/schema/isolate.fbs",
   "crates/script-js/src/scene/observed.rs",
   "crates/script/src/native/snapshot_source.rs",
+  "crates/script-js/src/compat/cake_stall/runtime.rs",
+  "crates/script-js/src/compat/drive_partner_trade.rs",
+  "crates/script-js/src/compat/duel.rs",
+  "crates/script-js/src/compat/mod.rs",
+  "crates/script-js/src/compat/modals.rs",
+  "crates/script-js/src/compat/reach.rs",
+  "crates/script-js/src/compat/teleport.rs",
+  "crates/script-js/src/compat/trade.rs",
+  "crates/script-js/src/scene/attack_clock.rs",
+  "crates/script-js/src/scene/events.rs",
+  "crates/script-js/src/scene/inspect_wait.rs",
+  "crates/script-js/src/scene/line_of_sight.rs",
+  "crates/script-js/src/scene/mod.rs",
+  "crates/script-js/src/scene/scene_query.rs",
+  "crates/script-js/src/scene/walk_wait.rs",
+  "crates/host-play/src/script_paint.rs",
+  "crates/script/src/canvas/compose.rs",
+  "crates/script-js/src/tooling/mod.rs",
+  "crates/script-js/src/shim/_kernel.js",
+  "crates/script-js/src/shim/hunting_combat.js",
+  "crates/script-js/src/shim/hunting_guarded.js",
+  "crates/script-js/src/shim/hunting_logic.js",
+  "crates/script-js/src/shim/hunting_sites.js",
+  "crates/script-js/src/shim/hunting_supply.js",
+  "crates/script-js/src/wire/isolate_fb_schema_roundtrip.rs",
+  "crates/script-js/src/wire/mod.rs",
   "crates/script/src/keep_list.rs",
   "crates/script/src/lib.rs",
   "crates/script-js/src/machine/mod.rs",
@@ -586,7 +615,32 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/script/src/combat/**", "crates/script/src/melee_weapons.rs", "crates/script-js/src/compat/death_recovery.rs", "crates/script-js/src/compat/hunt.rs", "crates/scenario/src/scenarios/combat/auto_fighter.rs"]
+globs = [
+  "crates/script/src/combat/**",
+  "crates/script/src/melee_weapons.rs",
+  "crates/script-js/src/compat/death_recovery.rs",
+  "crates/script-js/src/compat/hunt.rs",
+  "crates/scenario/src/scenarios/combat/auto_fighter.rs",
+  "crates/script-js/src/compat/fight_upkeep.rs",
+  "crates/script-js/src/compat/special.rs",
+  "crates/script-js/src/compat/hunt/acquire.rs",
+  "crates/script-js/src/compat/hunt/teleport_out.rs",
+  "crates/script-js/src/compat/hunt_catalog.rs",
+  "crates/script-js/src/compat/hunt_cell.rs",
+  "crates/script-js/src/compat/hunt_fight.rs",
+  "crates/script-js/src/compat/hunt_fight/hold.rs",
+  "crates/script-js/src/compat/hunt_fight/walk_spot.rs",
+  "crates/script-js/src/compat/hunt_key.rs",
+  "crates/script-js/src/compat/hunt_lair.rs",
+  "crates/script-js/src/compat/hunt_leave.rs",
+  "crates/script-js/src/compat/hunt_bank.rs",
+  "crates/script-js/src/compat/hunt_bank/plan.rs",
+  "crates/script-js/src/shim/hunting_combat.js",
+  "crates/script-js/src/shim/hunting_guarded.js",
+  "crates/script-js/src/shim/hunting_logic.js",
+  "crates/script-js/src/shim/hunting_sites.js",
+  "crates/script-js/src/shim/hunting_supply.js",
+]
 cells = [
   "scenario.auto-fighter-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_auto_fighter|--locked -p scenario --lib runner::tests::auto_fighter_bank_clean_floor_allows_start_and_records_zero_wait",
   "host.api-combat-native-lines|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line --nocapture --test-threads=1",
@@ -608,7 +662,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/script/src/combat_session.rs", "crates/script/src/api_combat.rs", "crates/script-js/src/api_v2/api_session.rs", "crates/script-js/src/compat/prayer.rs", "crates/script/src/slot/combat.rs", "crates/script-js/examples/combat_showcase_v2.ts"]
+globs = ["crates/script/src/combat_session.rs", "crates/script/src/api_combat.rs", "crates/script-js/src/api_v2/api_session.rs", "crates/script-js/src/api_v2/mod.rs", "crates/script/src/native_equipment.rs", "crates/script-js/src/compat/prayer.rs", "crates/script/src/slot/combat.rs", "crates/script-js/examples/combat_showcase_v2.ts"]
 cells = [
   "host.api-combat-showcase|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_showcase_script_runs_every_phase --nocapture --test-threads=1",
   "host.api-combat-melee|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_melee_kills_a_lumbridge_cow_for_xp --nocapture --test-threads=1",
@@ -743,7 +797,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/script/src/reach_route.rs", "crates/script/src/quester/families/combat.rs"]
+globs = ["crates/script/src/reach_route.rs", "crates/script/src/quester/families/combat.rs", "crates/host-play/src/combat_proof.rs"]
 cells = [
   "host.combat-m4-unattackable-escape|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact combat_live_proof_tests::live_combat_m4_static_nasty_tree_unattackable --nocapture --test-threads=1",
 ]
@@ -760,7 +814,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/script/src/native_bank.rs", "crates/script/src/bank/**", "crates/script/src/bank.rs", "crates/script-js/src/scene/bank_select.rs", "crates/script-js/src/compat/bank_withdraw.rs", "crates/script/src/slot/bank.rs", "crates/script-js/src/shim/*bank*.js", "crates/script-js/src/shim/inventory.js", "crates/script-js/src/shim/periodic_bank.js", "crates/api/data/game-data/bank-catalog.rs"]
+globs = ["crates/script/src/native_bank.rs", "crates/script/src/bank/**", "crates/script/src/bank.rs", "crates/script-js/src/scene/bank_select.rs", "crates/script-js/src/compat/bank_withdraw.rs", "crates/script/src/slot/bank.rs", "crates/script-js/src/shim/*bank*.js", "crates/script-js/src/shim/inventory.js", "crates/script-js/src/shim/periodic_bank.js", "crates/api/data/game-data/bank-catalog.rs", "crates/script-js/src/compat/bank_rows.rs", "crates/script-js/src/compat/hunt_bank.rs", "crates/script-js/src/compat/hunt_bank/plan.rs", "crates/script-js/src/compat/periodic_bank.rs"]
 cells = [
   "compat.bank-core-loop|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_core_live::live_bank_core_compat_gathering_bank_loop_at_draynor --nocapture --test-threads=1",
 ]
@@ -889,7 +943,7 @@ cells = [
 [[cover]]
 globs = ["crates/script-js/src/compat/dialog.rs", "crates/host-play/src/script_snapshot.rs", "crates/script-js/schema/generated/isolate_generated.rs", "crates/script-js/schema/isolate.fbs", "crates/script-js/src/scene/observed.rs", "crates/script/src/native/snapshot_source.rs"]
 cells = [
-  "compat.dialog-combat-close-adapter|${ISOHOME:?} nice -n 10 cargo test --release --locked -p script-js --features test-hooks --lib dialog::tests::combat_close_requires_visible_actor_targeting_local_player -- --exact --nocapture --test-threads=1",
+  "compat.dialog-combat-close-adapter|${ISOHOME:?} nice -n 10 cargo test --release --locked -p script-js --features test-hooks --lib compat::dialog::tests::combat_close_requires_visible_actor_targeting_local_player -- --exact --nocapture --test-threads=1",
 ]
 
 # "adapter proof, not a game witness": no catalog script reaches these
@@ -899,7 +953,7 @@ cells = [
 [[cover]]
 globs = ["crates/script-js/src/compat/production.rs"]
 cells = [
-  "compat.make-x-clock-adapter|${ISOHOME:?} nice -n 10 cargo test --release --locked -p script-js --features test-hooks --lib production::compat::tests::make_x_adapter_keeps_the_frozen_count_and_menu_waits -- --exact --nocapture --test-threads=1",
+  "compat.make-x-clock-adapter|${ISOHOME:?} nice -n 10 cargo test --release --locked -p script-js --features test-hooks --lib compat::production::compat::tests::make_x_adapter_keeps_the_frozen_count_and_menu_waits -- --exact --nocapture --test-threads=1",
 ]
 
 # Exact core classifications approved by Main.
@@ -973,7 +1027,15 @@ cells = [
 # Controlled proof, not a game witness: host.catalog-start-headless.
 # Limit: Game cells provide normal catalog-start integration. The exact consumed JS failure is a controlled real Start-handle regression, not a deterministic gameplay failure.
 [[cover]]
-globs = ["crates/host-play/src/live_start.rs"]
+globs = [
+  "crates/host-play/src/live_start.rs",
+  "crates/host-play/src/catalog_actor.rs",
+  "crates/host-play/src/catalog_core_hunt.rs",
+  "crates/host-play/src/catalog_fight_field.rs",
+  "crates/host-play/src/catalog_los.rs",
+  "crates/host-play/src/catalog_observation.rs",
+  "crates/host-play/src/catalog_watch.rs",
+]
 cells = [
   "tui.live-jive-kq|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_jive_kq_four|--locked -p tui --lib bin::tests::live_prepare_jive_kq_stashes_four_starts_with_the_same_roster",
   "scenario.quester-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 ENGINE_DIR=${ENGINE_Q_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo run --release -p tui --features frontend-core/test-support --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44694 --asset-host 127.0.0.1 --http-port 1180 --engine ${ENGINE_Q_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_quester_cook|--locked -p scenario --lib scenarios::quester::tests::quester_stage_stands_after_the_relog",
@@ -1069,7 +1131,7 @@ cells = [
 
 # BATCH-P: controlled memory-profile contracts, not live capacity measurements.
 [[cover]]
-globs = ["crates/frontend-core/src/bench.rs", "crates/host-play/src/memory.rs"]
+globs = ["crates/frontend-core/src/bench.rs", "crates/host-play/src/memory.rs", "crates/host-play/src/memory_diagnostics.rs"]
 cells = [
   "panel.memory-profile-exit-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --features memory-profile --lib app::tests::failed_memory_run_retires_play_before_the_gpu_window_is_released -- --exact --nocapture --test-threads=1|--locked -p panel --features memory-profile --lib app::tests::failed_memory_run_retires_play_before_the_gpu_window_is_released -- --exact",
   "panel.memory-profile-scatter-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --features memory-profile --lib session::tests::memory_stress_policies_keep_seed_placement_by_workload -- --exact --nocapture --test-threads=1|--locked -p panel --features memory-profile --lib session::tests::memory_stress_policies_keep_seed_placement_by_workload -- --exact",
@@ -1105,9 +1167,9 @@ globs = [
   "crates/script-js/src/compat/reach_entity.rs",
 ]
 cells = [
-  "scenario.boat-fare-retry-live|for fare_case in boat_fare_v1_ts boat_fare_far_start_v1_ts boat_fare_reconnect_v1_ts; do fare_evidence=${LIVE_EVIDENCE_DIR:?}/${fare_case}; LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${fare_evidence} BOT_EVIDENCE_DIR=${fare_evidence} ISOHOME_DIR=${fare_evidence}/home ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 47594 --asset-host 127.0.0.1 --http-port 3080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_${fare_case}; fare_rc=$?; if [ $fare_rc -ne 0 ]; then exit $fare_rc; fi; done|--locked -p script-js --lib boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact",
-  "script-js.boat-fare-compat-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --lib boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact --nocapture --test-threads=1|--locked -p script-js --lib boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact",
-  "script-js.reach-entity-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --lib reach_entity::tests::npc_dialog_reach_reclicks_each_tick_after_a_timeout_for_eight_rounds -- --exact --nocapture --test-threads=1|--locked -p script-js --lib reach_entity::tests::npc_dialog_reach_reclicks_each_tick_after_a_timeout_for_eight_rounds -- --exact",
+  "scenario.boat-fare-retry-live|for fare_case in boat_fare_v1_ts boat_fare_far_start_v1_ts boat_fare_reconnect_v1_ts; do fare_evidence=${LIVE_EVIDENCE_DIR:?}/${fare_case}; LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${fare_evidence} BOT_EVIDENCE_DIR=${fare_evidence} ISOHOME_DIR=${fare_evidence}/home ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 47594 --asset-host 127.0.0.1 --http-port 3080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_${fare_case}; fare_rc=$?; if [ $fare_rc -ne 0 ]; then exit $fare_rc; fi; done|--locked -p script-js --lib compat::boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact",
+  "script-js.boat-fare-compat-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --lib compat::boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact --nocapture --test-threads=1|--locked -p script-js --lib compat::boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact",
+  "script-js.reach-entity-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --lib compat::reach_entity::tests::npc_dialog_reach_reclicks_each_tick_after_a_timeout_for_eight_rounds -- --exact --nocapture --test-threads=1|--locked -p script-js --lib compat::reach_entity::tests::npc_dialog_reach_reclicks_each_tick_after_a_timeout_for_eight_rounds -- --exact",
 ]
 
 # Process logging I/O: a controlled failing writer, not game-world proof.
@@ -1262,3 +1324,12 @@ globs = ["crates/panel/src/picker.rs", "crates/panel/src/picker_tests.rs", "crat
 cells = [
   "panel.survivable-checkbox-default-escape|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib -- --exact picker::tests::probability_admission_checkbox_and_default_escape_use_the_real_picker --nocapture --test-threads=1",
 ]
+
+# Controlled proof, not a game witness: host.quest-pair-coordinator-headless.
+# Limit: This proves owned pair leases and fresh peer receipts, not paired gameplay.
+[[cover]]
+globs = ["crates/host-play/src/quest_pair.rs"]
+cells = [
+  "host.quest-pair-coordinator-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib quest_pair::tests:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib quest_pair::tests::",
+]
+
