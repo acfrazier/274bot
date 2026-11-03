@@ -4,6 +4,7 @@
 use crate::supply_v2;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -29,6 +30,7 @@ struct SelectedFactsObjectShapes {
     catalog: v8::Global<v8::ObjectTemplate>,
     record: v8::Global<v8::ObjectTemplate>,
     alias: v8::Global<v8::ObjectTemplate>,
+    obj_records: RefCell<Option<v8::Global<v8::Array>>>,
 }
 
 enum SelectedFactsObjectShape {
@@ -54,6 +56,7 @@ pub(super) fn install(
             catalog: object_template(&mut scope, OBJ_CATALOG_FIELDS)?,
             record: object_template(&mut scope, OBJ_RECORD_FIELDS)?,
             alias: object_template(&mut scope, OBJ_ALIAS_FIELDS)?,
+            obj_records: RefCell::new(None),
         })
     };
     if !runtime.deno_runtime().v8_isolate().set_slot(object_shapes) {
@@ -453,18 +456,28 @@ fn obj_resolve_by_name<'s>(
     Ok(result.into())
 }
 
-/// Frozen adapter `reader.objCatalog()`: every named object, or an empty array without selected data.
+/// Frozen adapter `reader.objCatalog()`: every named object, or a fresh empty array before data.
 fn obj_records<'s>(
     scope: &mut v8::HandleScope<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let rows = v8::Array::new(scope, 0);
+    let shapes = scope
+        .get_slot::<Rc<SelectedFactsObjectShapes>>()
+        .cloned()
+        .ok_or_else(|| "selected facts object shape cache is not installed".to_string())?;
+    if let Some(rows) = shapes.obj_records.borrow().as_ref() {
+        return Ok(v8::Local::new(scope, rows).into());
+    }
     let Some(data) = supply_v2::selected_data() else {
-        return Ok(rows.into());
+        return Ok(v8::Array::new(scope, 0).into());
     };
+    let rows = v8::Array::new(scope, 0);
     for (index, (item, name)) in crate::market_catalog::records(data.items()).enumerate() {
         let row = obj_record_row(scope, item, name)?;
         rows.set_index(scope, index as u32, row.into())
             .ok_or_else(|| "selected facts obj-records".to_string())?;
+    }
+    if rows.length() > 0 {
+        *shapes.obj_records.borrow_mut() = Some(v8::Global::new(scope, rows));
     }
     Ok(rows.into())
 }
