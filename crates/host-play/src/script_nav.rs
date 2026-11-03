@@ -11001,7 +11001,11 @@ mod route_quest_provider_tests {
             .expect("proved ladders must not discard the registered barrier's refusal content");
         assert_eq!(content.gates.as_ref(), route_gates.as_ref());
         assert_eq!(content.gate_groups.len(), 3);
-        assert!(content.gate_groups.iter().map(|group| group.leg).eq([3, 5, 7]));
+        assert!(content
+            .gate_groups
+            .iter()
+            .map(|group| group.leg)
+            .eq([3, 5, 7]));
         assert_eq!(content.crossing_passes.len(), 1);
         assert_eq!(content.crossing_passes[0].crossing, barrier.crossing);
         assert!(!content.refusal_texts.is_empty());
