@@ -164,7 +164,7 @@ fn open_and_continue_waits_keep_their_tick_deadline_through_pause() {
             "the deadline retains its margin"
         );
         let id = if continuation { 2 } else { 1 };
-        assert_eq!(last.expired, Some((Key::Modal(id), Some(4), 5)));
+        assert_eq!(last.expired, Some((Key::Modal(id), 4, 5)));
         assert!(last.pressed && !last.deferred);
     }
 }
