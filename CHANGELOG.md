@@ -7,6 +7,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Network transport
 
+- Game connections and asset downloads now use a shared network service.
+  A slow connection or certificate check for one bot no longer holds up
+  the other bots. Login cancellation and connection timeouts can finish
+  without waiting for a stalled certificate check.
 - Game TCP and WSS now share one process-scoped Mio reactor. A fixed
   game-handshake worker owns each initial WSS TLS handshake and returns the
   authenticated socket to the reactor for WebSocket upgrade and session I/O.
