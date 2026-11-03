@@ -1740,6 +1740,28 @@ impl ChatDrive {
                     } else {
                         None
                     };
+                    if matches!(approach, Some(Some(crate::native::WalkEnd::Arrived)))
+                        && handle
+                            .inspect_in(cx, |dialogue, cx| dialogue.target_ready(cx))
+                            .is_some_and(|ready| !ready)
+                    {
+                        // The completed approach spent this attempt. Inspect
+                        // before polling, which can otherwise retarget and
+                        // hide that failure from the conversation's budget.
+                        let walk = approach.flatten();
+                        talk_log(
+                            cx,
+                            row,
+                            &format!("approach-failed walk={walk:?}"),
+                            cx.evidence().tick,
+                        );
+                        return self.reach_failed(
+                            cx,
+                            row,
+                            TalkReachCause::Approach { walk },
+                            self.attempt_since,
+                        );
+                    }
                     let result = actions.poll(handle, cx);
                     if let Some(send) = handle
                         .inspect(Dialogue::last_send)

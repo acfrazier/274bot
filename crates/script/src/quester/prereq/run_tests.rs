@@ -2013,7 +2013,7 @@ fn exhausted_transition_budget_defers_repair_admission_without_allocating() {
 }
 
 #[test]
-fn a_dialogue_deadline_keeps_its_reported_failure_without_inventing_a_cause() {
+fn a_talk_row_outlives_the_generic_deadline_and_keeps_its_typed_expiry() {
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let snapshot = npc_snapshot(row);
@@ -2023,18 +2023,36 @@ fn a_dialogue_deadline_keeps_its_reported_failure_without_inventing_a_cause() {
     // The accepted Talk at tick 2 reaches its content trigger at observed tick 3.
     assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
     let deadline = 3 + crate::quester::families::dialogue::DIALOGUE_OPEN_TICKS;
-    let result = poll(
+    assert_eq!(deadline, 7);
+    assert!(poll(
         &mut run,
         &snapshot,
         &mut ledger,
         deadline,
         &state,
         &mut budget,
-    );
-    // The reused machine exposes this error, not a typed expiry cause.
-    assert!(matches!(result, Poll::Ready(Err(PrereqRefusal::StepFailed {
-        why: PrereqFailure::Action(reason), ..
-    })) if reason.contains("expected dialogue did not open")));
+    )
+    .is_pending());
+    assert_eq!(state.prereq_snapshot(), before);
+    assert_eq!(budget.talks, 1);
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent);
+    assert!(ledger.as_ref().unwrap().test_owner_live());
+    // The row owns the inclusive deadline at tick 9, not the generic tick 7.
+    assert_eq!(2 + talk_bound(row), 9);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 9, &state, &mut budget).is_pending());
+    let result = poll(&mut run, &snapshot, &mut ledger, 10, &state, &mut budget);
+    assert!(matches!(
+        result,
+        Poll::Ready(Err(PrereqRefusal::StepFailed {
+            why: PrereqFailure::WaitSpent {
+                wait: PrereqWaitName::W5,
+                since: 2,
+                bound: 7,
+                ..
+            },
+            ..
+        }))
+    ));
     assert_eq!(state.prereq_snapshot(), before);
     assert_eq!(budget.talks, 1);
     assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent);
@@ -2203,6 +2221,35 @@ fn repeated_cancels_end_in_a_terminal_failure_that_keeps_the_last_detail() {
     assert_eq!(cause, TalkReachCause::Cancelled);
     assert_eq!(budget.talks, 1);
     assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn an_arrived_re_approach_with_a_missing_target_spends_one_attempt_before_retargeting() {
+    let (_, row) = row(ConsentSwitch::PrereqDialogue);
+    let state = state();
+    let mut snapshot = npc_snapshot_with_open_scene(row);
+    let (mut run, mut budget, mut ledger) = start_talk(row, &snapshot, &state);
+    let before = state.prereq_snapshot();
+    message(&mut snapshot, 1, CANT_REACH_TEXT);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 3, &state, &mut budget).is_pending());
+    let moved = WorldTile {
+        x: row.target.anchor.x + 5,
+        ..row.target.anchor
+    };
+    snapshot.seed_npcs(vec![npc_view(row, moved, 5)]);
+    assert!(poll(&mut run, &snapshot, &mut ledger, 4, &state, &mut budget).is_pending());
+    let sent = ledger.as_ref().unwrap().outbox.len();
+    snapshot.seed_npcs(Vec::new());
+    arrive(&mut ledger, 5);
+    for _ in 0..3 {
+        assert!(poll(&mut run, &snapshot, &mut ledger, 5, &state, &mut budget).is_pending());
+        assert_eq!(talk_drive(&run).reach_failures, 2);
+        assert!(talk_drive(&run).handle.is_none());
+        assert_eq!(talk_drive(&run).retry_after, Some(5));
+        assert_eq!(ledger.as_ref().unwrap().outbox.len(), sent);
+    }
+    assert_eq!(state.prereq_snapshot(), before);
+    assert_eq!(budget.talks, 1);
 }
 
 /// R3-2: after a cancel, the replacement dialogue's walk reaches the NPC's

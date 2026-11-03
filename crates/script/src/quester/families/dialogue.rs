@@ -1110,6 +1110,14 @@ impl Dialogue {
         })
     }
 
+    /// Use the same visible-target and live-reach predicate as `open`.
+    /// Callers must inspect it before a completed approach can retarget.
+    pub(crate) fn target_ready(&self, cx: &ActionContext<'_>) -> bool {
+        self.npc_id()
+            .and_then(|id| nearest_talk(cx, id))
+            .is_some_and(|target| approach_goal(cx, &target).close)
+    }
+
     /// Quiet ticks this conversation waits after the chat closes, and after
     /// each re-arm signal.
     fn gap_ticks(&self) -> u64 {

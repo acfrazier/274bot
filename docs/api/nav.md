@@ -799,6 +799,10 @@ accepts the Talk, including its last allowed tick. A later generic
 engine-trigger deadline still wins. Without a supplied row allowance, the
 generic deadline and its expiry boundary stay unchanged. A queued Talk still
 has no page deadline until dispatch, and a reissued Talk starts a fresh wait.
+After an Arrived re-approach, the prerequisite runner reads that same visible
+target and live-reach predicate before the dialogue can retarget. A missing
+or unreachable NPC spends the completed attempt. Repeated polls in that tick
+cannot start another attempt. Generic dialogue route retries remain separate.
 
 The same page-source mechanism reads the Heroes' Quest journal when the
 required `heroquest >= 3` fact is unknown. The Phoenix text about giving
@@ -816,16 +820,18 @@ Keep the row's exact content citations with that proof. Schema and text
 validation alone do not prove a stage range.
 
 Prerequisite-aware walks retain their original request and bounded step state.
-On x86_64 Linux, `Dialogue` measures 472 B, including its 72 B last-send receipt,
-and `TalkRun` measures 856 B, including its retained `PrereqWalk`.
-Their layout ceilings are 480 B and 864 B, each with 8 B of headroom.
+On x86_64 Linux and macOS arm64, `Dialogue` measures 520 B and `TalkRun`
+measures 912 B. Their ceilings are 528 B and 920 B, each with 8 B headroom.
+`CombatRun` measures 1,456 B on Linux, with a 1,464 B ceiling. Its extra 8 B
+comes from `first_page_allowance_ticks` inside `FinishConfig.options`.
+The shared `CombatPlan` also grows by 8 B per program, not per bot.
 A `MakeRun` measures 1,176 B once per running Make step, including its retained
 prerequisite walk. Its ceiling is 1,184 B, also with 8 B of headroom.
 These are retained type sizes, not process memory or per-bot capacity.
 In the default/test-hooks native-seat measurement, installed API-seat heap is
-8,504 B and its ceiling is 8,512 B. Compared with the pre-prerequisite input,
-preparation grows 2,810→2,818 B, installation 816→824 B and polls 4,694→4,862 B:
-184 B in total. No state is boxed to exclude it from this accounting.
+8,568 B and its ceiling is 8,576 B. Preparation uses 2,818 B, installation
+uses 824 B and polls use 4,926 B. The retained ledger and owner growth is
+already contained in that heap total. No state is boxed to exclude it.
 
 
 ## Router (`nav_planner::router`)
@@ -844,6 +850,11 @@ level exceeds the edge's packed cap (the content
 transport. `RouteError` is `NoPath` or `BudgetExhausted` (a node-expansion
 or resource-state cap). `find` is CPU-heavy; run it off-pump (a short-lived
 worker) and arm the result.
+
+Host route admission retains its 192 MiB work limit. It reserves bank-plan,
+bank-fetch and post-bank custody only when `allow_bank_fetch` is true.
+Captured request buffers always remain input custody. Missing-carry,
+entrance, blocker and quest-gate diagnostics remain charged in both modes.
 
 Consumptive hops debit a path's running inventory and credit script-proven
 replacement items. Walking nodes share interned balance IDs, without a

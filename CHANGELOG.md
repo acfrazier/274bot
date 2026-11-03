@@ -35,6 +35,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Scripting
 
+- Prerequisite conversations now count an arrived re-approach as a failed
+  attempt when the NPC moved away or disappeared. The next attempt waits for
+  a later game tick and keeps the conversation's existing four-attempt limit.
+- Routes that cannot fetch from a bank no longer reserve unreachable bank
+  planning buffers. The route work limit and diagnostic coverage are unchanged.
+
 - `api.questIdentity` now returns the state variable and completion value for
   four quests whose row held a script procedure name or zero. The Digsite Quest
   and Clock Tower rows name the varp each progress procedure reads

@@ -459,38 +459,66 @@ impl RouteSubmission {
             .reservation()
             .result_bytes
             .max(preflights.missing_route.reservation().result_bytes);
-        let bank_plan_bytes =
-            BankFetchPlan::heap_bound(plan_item_rows).ok_or(RouteJobError::Budget)?;
-        let planner_bytes = PlanningRowsCursor::heap_bound(bank_rows, plan_item_rows)
-            .ok_or(RouteJobError::Budget)?;
-        let planned_rows_bytes = PlanningRowsCursor::rows_heap_bound(bank_rows, plan_item_rows)
-            .ok_or(RouteJobError::Budget)?;
-        let planned_rows = bank_rows
-            .checked_add(plan_item_rows)
-            .ok_or(RouteJobError::Budget)?;
-        let bank_direct_bytes = BankFetchCursor::heap_bound(bank_rows, plan_item_rows, stand_rows)
-            .ok_or(RouteJobError::Budget)?;
-        let bank_planned_bytes =
-            BankFetchCursor::heap_bound(planned_rows, plan_item_rows, stand_rows)
+        // These owners exist only after the bank-fetch transitions in
+        // `handle_search` or `begin_fetchable_first`. Diagnostic searches
+        // remain reachable with bank fetch disabled and stay charged below.
+        let (
+            bank_plan_bytes,
+            planner_bytes,
+            planned_rows_bytes,
+            bank_direct_bytes,
+            bank_planned_bytes,
+            fetchable_state_bytes,
+            fetchable_edge_bytes,
+            post_bank_state_bytes,
+            bank_undo_bytes,
+        ) = if options.allow_bank_fetch {
+            let bank_plan_bytes =
+                BankFetchPlan::heap_bound(plan_item_rows).ok_or(RouteJobError::Budget)?;
+            let planner_bytes = PlanningRowsCursor::heap_bound(bank_rows, plan_item_rows)
                 .ok_or(RouteJobError::Budget)?;
-        let has_stands = !request.world.banks().is_empty();
-        let fetchable_state_bytes =
-            FetchableStateCursor::heap_bound(state, planned_rows, has_stands)
+            let planned_rows_bytes = PlanningRowsCursor::rows_heap_bound(bank_rows, plan_item_rows)
                 .ok_or(RouteJobError::Budget)?;
-        let fetchable_edge_bytes =
-            FetchableEdgeCursor::heap_bound(&request.world.graph, options.allow_teleports)
+            let planned_rows = bank_rows
+                .checked_add(plan_item_rows)
                 .ok_or(RouteJobError::Budget)?;
-        let state_growth = state
-            .growth_bound(plan_item_rows, plan_item_rows)
-            .ok_or(RouteJobError::Budget)?;
-        let post_bank_state_bytes = state_growth
-            .inventory_new_bytes
-            .checked_add(state_growth.worn_new_bytes)
-            .ok_or(RouteJobError::Budget)?;
-        let bank_undo_bytes = plan_item_rows
-            .checked_mul(2)
-            .and_then(|rows| rows.checked_mul(std::mem::size_of::<RouteBankUndo>()))
-            .ok_or(RouteJobError::Budget)?;
+            let bank_direct_bytes =
+                BankFetchCursor::heap_bound(bank_rows, plan_item_rows, stand_rows)
+                    .ok_or(RouteJobError::Budget)?;
+            let bank_planned_bytes =
+                BankFetchCursor::heap_bound(planned_rows, plan_item_rows, stand_rows)
+                    .ok_or(RouteJobError::Budget)?;
+            let fetchable_state_bytes =
+                FetchableStateCursor::heap_bound(state, planned_rows, !request.world.banks().is_empty())
+                    .ok_or(RouteJobError::Budget)?;
+            let fetchable_edge_bytes =
+                FetchableEdgeCursor::heap_bound(&request.world.graph, options.allow_teleports)
+                    .ok_or(RouteJobError::Budget)?;
+            let state_growth = state
+                .growth_bound(plan_item_rows, plan_item_rows)
+                .ok_or(RouteJobError::Budget)?;
+            let post_bank_state_bytes = state_growth
+                .inventory_new_bytes
+                .checked_add(state_growth.worn_new_bytes)
+                .ok_or(RouteJobError::Budget)?;
+            let bank_undo_bytes = plan_item_rows
+                .checked_mul(2)
+                .and_then(|rows| rows.checked_mul(std::mem::size_of::<RouteBankUndo>()))
+                .ok_or(RouteJobError::Budget)?;
+            (
+                bank_plan_bytes,
+                planner_bytes,
+                planned_rows_bytes,
+                bank_direct_bytes,
+                bank_planned_bytes,
+                fetchable_state_bytes,
+                fetchable_edge_bytes,
+                post_bank_state_bytes,
+                bank_undo_bytes,
+            )
+        } else {
+            (0, 0, 0, 0, 0, 0, 0, 0, 0)
+        };
         let risk = script::combat::risk::assessment_heap_bounds().ok_or(RouteJobError::Budget)?;
         let risk_admission_bytes =
             script::combat::risk::admission_peak_heap_bytes().ok_or(RouteJobError::Budget)?;
@@ -571,16 +599,19 @@ impl RouteSubmission {
                 .ok_or(RouteJobError::Budget)?,
         )?;
         for search in [
-            &preflights.single,
-            &preflights.post_bank_single,
-            &preflights.first,
-            &preflights.missing,
-            &preflights.missing_route,
-            &preflights.blocking,
-            &preflights.unresolved,
-            &preflights.entrance,
+            Some(&preflights.single),
+            options
+                .allow_bank_fetch
+                .then_some(&preflights.post_bank_single),
+            Some(&preflights.first),
+            Some(&preflights.missing),
+            Some(&preflights.missing_route),
+            Some(&preflights.blocking),
+            Some(&preflights.unresolved),
+            Some(&preflights.entrance),
         ]
         .into_iter()
+        .flatten()
         .chain(preflights.actionable.as_ref())
         {
             include_peak(
@@ -593,83 +624,85 @@ impl RouteSubmission {
                     .ok_or(RouteJobError::Budget)?,
             )?;
         }
-        include_peak(
-            preflights
-                .bank_access_first
-                .input_bytes()
-                .checked_add(preflights.bank_access_first.reservation().peak_bytes)
-                .and_then(|bytes| {
-                    bytes.checked_add(
+        if options.allow_bank_fetch {
+            include_peak(
+                preflights
+                    .bank_access_first
+                    .input_bytes()
+                    .checked_add(preflights.bank_access_first.reservation().peak_bytes)
+                    .and_then(|bytes| {
+                        bytes.checked_add(
+                            preflights
+                                .bank_access_first
+                                .reservation()
+                                .future_layout_bytes,
+                        )
+                    })
+                    .and_then(|bytes| bytes.checked_add(candidate_bytes))
+                    .and_then(|bytes| bytes.checked_add(search_working_bytes))
+                    .and_then(|bytes| bytes.checked_add(bank_direct_bytes.max(bank_planned_bytes)))
+                    .ok_or(RouteJobError::Budget)?,
+            )?;
+            include_peak(
+                missing_result_bytes
+                    .checked_add(planner_bytes)
+                    .ok_or(RouteJobError::Budget)?,
+            )?;
+            include_peak(
+                missing_result_bytes
+                    .checked_add(planned_rows_bytes)
+                    .and_then(|bytes| bytes.checked_add(bank_planned_bytes))
+                    .ok_or(RouteJobError::Budget)?,
+            )?;
+            include_peak(
+                missing_result_bytes
+                    .checked_add(bank_direct_bytes)
+                    .ok_or(RouteJobError::Budget)?,
+            )?;
+            include_peak(
+                planned_rows_bytes
+                    .checked_add(fetchable_state_bytes)
+                    .and_then(|bytes| bytes.checked_add(fetchable_edge_bytes))
+                    .and_then(|bytes| bytes.checked_add(candidate_bytes))
+                    .ok_or(RouteJobError::Budget)?,
+            )?;
+            include_peak(
+                planned_rows_bytes
+                    .checked_add(fetchable_state_bytes)
+                    .and_then(|bytes| {
                         preflights
-                            .bank_access_first
-                            .reservation()
-                            .future_layout_bytes,
-                    )
-                })
-                .and_then(|bytes| bytes.checked_add(candidate_bytes))
-                .and_then(|bytes| bytes.checked_add(search_working_bytes))
-                .and_then(|bytes| bytes.checked_add(bank_direct_bytes.max(bank_planned_bytes)))
-                .ok_or(RouteJobError::Budget)?,
-        )?;
-        include_peak(
-            missing_result_bytes
-                .checked_add(planner_bytes)
-                .ok_or(RouteJobError::Budget)?,
-        )?;
-        include_peak(
-            missing_result_bytes
-                .checked_add(planned_rows_bytes)
-                .and_then(|bytes| bytes.checked_add(bank_planned_bytes))
-                .ok_or(RouteJobError::Budget)?,
-        )?;
-        include_peak(
-            missing_result_bytes
-                .checked_add(bank_direct_bytes)
-                .ok_or(RouteJobError::Budget)?,
-        )?;
-        include_peak(
-            planned_rows_bytes
-                .checked_add(fetchable_state_bytes)
-                .and_then(|bytes| bytes.checked_add(fetchable_edge_bytes))
-                .and_then(|bytes| bytes.checked_add(candidate_bytes))
-                .ok_or(RouteJobError::Budget)?,
-        )?;
-        include_peak(
-            planned_rows_bytes
-                .checked_add(fetchable_state_bytes)
-                .and_then(|bytes| {
-                    preflights
-                        .first
-                        .input_bytes()
-                        .checked_add(preflights.first.reservation().peak_bytes)
-                        .and_then(|bytes| {
-                            bytes.checked_add(preflights.first.reservation().future_layout_bytes)
-                        })
-                        .and_then(|search| bytes.checked_add(search))
-                })
-                .ok_or(RouteJobError::Budget)?,
-        )?;
-        include_peak(
-            bank_plan_bytes
-                .checked_add(post_bank_state_bytes)
-                .and_then(|bytes| bytes.checked_add(bank_undo_bytes))
-                .and_then(|bytes| {
-                    preflights
-                        .post_bank_single
-                        .input_bytes()
-                        .checked_add(preflights.post_bank_single.reservation().peak_bytes)
-                        .and_then(|bytes| {
-                            bytes.checked_add(
-                                preflights
-                                    .post_bank_single
-                                    .reservation()
-                                    .future_layout_bytes,
-                            )
-                        })
-                        .and_then(|search| bytes.checked_add(search))
-                })
-                .ok_or(RouteJobError::Budget)?,
-        )?;
+                            .first
+                            .input_bytes()
+                            .checked_add(preflights.first.reservation().peak_bytes)
+                            .and_then(|bytes| {
+                                bytes.checked_add(preflights.first.reservation().future_layout_bytes)
+                            })
+                            .and_then(|search| bytes.checked_add(search))
+                    })
+                    .ok_or(RouteJobError::Budget)?,
+            )?;
+            include_peak(
+                bank_plan_bytes
+                    .checked_add(post_bank_state_bytes)
+                    .and_then(|bytes| bytes.checked_add(bank_undo_bytes))
+                    .and_then(|bytes| {
+                        preflights
+                            .post_bank_single
+                            .input_bytes()
+                            .checked_add(preflights.post_bank_single.reservation().peak_bytes)
+                            .and_then(|bytes| {
+                                bytes.checked_add(
+                                    preflights
+                                        .post_bank_single
+                                        .reservation()
+                                        .future_layout_bytes,
+                                )
+                            })
+                            .and_then(|search| bytes.checked_add(search))
+                    })
+                    .ok_or(RouteJobError::Budget)?,
+            )?;
+        }
         include_peak(
             route_bytes
                 .checked_add(bank_plan_bytes)
@@ -8983,6 +9016,64 @@ mod diagnostic_tests {
             nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         )))
+    }
+
+    #[test]
+    fn route_admission_charges_bank_custody_only_when_bank_fetch_is_reachable() {
+        let mut request = tiny_stage_request();
+        let state = Arc::new(WorldState::empty());
+        let lease = nav_lease(&request.world).unwrap();
+        request.opts.allow_bank_fetch = false;
+        let (without_bank, diagnostics) =
+            RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
+        // A captured buffer stays input in either mode. Its unreachable
+        // planning/fetch/post-bank owners must not become scratch or output.
+        request.bank = Vec::with_capacity(ROUTE_WORK_LIMIT_BYTES / 16);
+        let (captured_bank, _) =
+            RouteSubmission::prepare(&request, &state, &lease, request.bank.capacity(), 32).unwrap();
+        assert!(captured_bank.input_bytes > without_bank.input_bytes);
+        assert_eq!(captured_bank.scratch_bytes, without_bank.scratch_bytes);
+        assert_eq!(captured_bank.result_bytes, without_bank.result_bytes);
+        for diagnostic in [
+            &diagnostics.missing,
+            &diagnostics.missing_route,
+            &diagnostics.entrance,
+            &diagnostics.blocking,
+            &diagnostics.unresolved,
+        ] {
+            assert!(
+                captured_bank.scratch_bytes + captured_bank.result_bytes
+                    >= diagnostic.input_bytes()
+                        + diagnostic.reservation().peak_bytes
+                        + diagnostic.reservation().future_layout_bytes,
+                "bank-disabled requests retain each reachable diagnostic",
+            );
+        }
+        request.opts.allow_bank_fetch = true;
+        assert!(matches!(
+            RouteSubmission::prepare(&request, &state, &lease, request.bank.capacity(), 32),
+            Err(RouteJobError::Budget),
+        ));
+        assert_eq!(ROUTE_WORK_LIMIT_BYTES, 192 * 1024 * 1024);
+    }
+
+    #[test]
+    fn bank_enabled_route_admission_keeps_bank_plan_output_custody() {
+        let (world, _, _) = first_goal_probe_world(8, 4, 4, 6, true);
+        let mut request = stage_request(world);
+        let state = Arc::new(WorldState::empty());
+        let lease = nav_lease(&request.world).unwrap();
+        request.opts.allow_bank_fetch = false;
+        let (without_bank, _) =
+            RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
+        request.opts.allow_bank_fetch = true;
+        let (with_bank, _) =
+            RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
+        assert!(with_bank.result_bytes > without_bank.result_bytes);
+        assert!(
+            with_bank.scratch_bytes + with_bank.result_bytes
+                > without_bank.scratch_bytes + without_bank.result_bytes,
+        );
     }
 
     #[test]

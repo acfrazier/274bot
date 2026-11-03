@@ -4952,9 +4952,9 @@ fn stand_walk_count_survives_a_failure_on_the_budget_tick() {
     }
 }
 
-/// 1448 B measured on x86_64 Linux, with no headroom. The retained inline state
-/// composes QUEST-S2, quester-approach-retry, quester-read-keeps-step,
-/// quest-window-evidence, and loot-retake-after-rebuild.
+/// 1456 B measured on x86_64 Linux, with 8 B headroom. The additional 8 B is
+/// `first_page_allowance_ticks` inside `FinishConfig.options`. The shared
+/// `CombatPlan` also grows by 8 B per stored program, not per bot.
 #[test]
 fn combat_run_layout_stays_compact() {
     println!("CombatRun={}", std::mem::size_of::<CombatRun>());
@@ -4975,7 +4975,7 @@ fn combat_run_layout_stays_compact() {
         std::mem::size_of::<CombatReport>(),
         std::mem::size_of::<StepTraceEvent>(),
     );
-    assert!(std::mem::size_of::<CombatRun>() <= 1448);
+    assert!(std::mem::size_of::<CombatRun>() <= 1464);
 }
 
 #[test]
