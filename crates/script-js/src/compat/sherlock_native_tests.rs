@@ -1440,7 +1440,7 @@ fn post_stand_walk_failure(
 fn begin_clue_stand_walk(
     caller: ClueCombatCaller,
 ) -> (World, script::slot::SlotScript, NativeStandWalk) {
-    crate::clue::on_reset();
+    crate::compat::clue::on_reset();
     let mut world = match caller {
         ClueCombatCaller::Guardian => World::new(0),
         ClueCombatCaller::Keeper => keeper_retry_world(),
@@ -1653,7 +1653,7 @@ fn clue_guardian_and_keeper_stand_walks_retry_three_times_and_stop_on_refusal() 
         assert_eq!(after.attacks, 0);
         slot.stop();
     }
-    crate::clue::on_reset();
+    crate::compat::clue::on_reset();
 }
 
 fn settle_sherlock_restart(slot: &mut script::slot::SlotScript) {

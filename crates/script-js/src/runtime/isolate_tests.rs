@@ -2373,7 +2373,9 @@ fn journal_slot(source: &str) -> script::SlotScript {
 /// Post the quest tab and the main-modal pair of `root` through the slot,
 /// then run the isolate's tick to its end.
 fn post_journal_page(slot: &mut script::SlotScript, tick: u64, root: i32, texts: &[String]) {
-    use crate::wire::{MainModalTextsInput, NativeFactsInput, QuestStatusInput};
+    use script::native::snapshot_source::{
+        MainModalTextsInput, NativeFactsInput, QuestStatusInput,
+    };
 
     let rows = [QuestStatusInput {
         name: "Cook's Assistant",
