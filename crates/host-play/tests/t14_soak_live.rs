@@ -635,8 +635,9 @@ fn worksite_patch_rejects_outer_boundary_and_danger_crossings() {
 
 #[test]
 fn worksite_departure_is_recorded_without_failing_the_route_guard() {
-    let inside = (2937, 3367, 0);
-    let outside = (2938, 3367, 0);
+    let oak_rect = NORMAL_SAFE_WALK[1];
+    let inside = (oak_rect.max_x, SECOND_TIER_START.1, 0);
+    let outside = (oak_rect.max_x + 1, SECOND_TIER_START.1, 0);
     assert!(worksite_exit(NORMAL_SAFE_WALK, Some(inside), outside));
     assert!(!work_route_escape(OUTER_WALK_BOUNDS, outside));
     assert!(!worksite_exit(NORMAL_SAFE_WALK, Some(outside), inside));
