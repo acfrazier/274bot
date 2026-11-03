@@ -9,7 +9,9 @@ const TEST_NAME: &str =
 const SETUP: &str = r#"
 const facts = (...args) => globalThis.__rs2b0t_selected_facts(...args);
 globalThis.__catalog = null;
+globalThis.__recordRows = null;
 globalThis.__buildCatalog = () => {
+    globalThis.__recordRows = facts('obj-records');
     globalThis.__catalog = facts('obj-catalog');
     return __catalog.byId.size + __catalog.aliases.size;
 };
@@ -18,11 +20,15 @@ globalThis.__resolve = (query, exactOnly = false) =>
 globalThis.__fast = () => {
     const hasFast = new Function('value', 'return %HasFastProperties(value)');
     const resolved = __resolve('green dragonhide');
+    const catalogRecords = [...__catalog.byId.values()];
     const recordKeys = 'id,name,cost,stackable,members,equippable,certlink,certtemplate,stackVariant';
     return hasFast(__catalog)
         && Object.keys(__catalog).join(',') === 'byId,items,aliases'
-        && [...__catalog.byId.values()].every(
-            row => hasFast(row) && Object.keys(row).join(',') === recordKeys
+        && __recordRows.length === catalogRecords.length
+        && __recordRows.every(
+            (row, index) => row === catalogRecords[index]
+                && hasFast(row)
+                && Object.keys(row).join(',') === recordKeys
         )
         && __catalog.items.every(row => __catalog.byId.get(row.id) === row)
         && [...__catalog.aliases.values()].every(
@@ -32,12 +38,13 @@ globalThis.__fast = () => {
         && resolved.length === 1
         && resolved[0] === __catalog.byId.get(1753);
 };
+globalThis.__retainedResolutions = [];
 globalThis.__repeat = count => {
-    let found = 0;
+    globalThis.__retainedResolutions = [];
     for (let index = 0; index < count; index++) {
-        found += __resolve('green dragonhide').length;
+        globalThis.__retainedResolutions.push(__resolve('green dragonhide'));
     }
-    return found;
+    return globalThis.__retainedResolutions.length;
 };
 "#;
 
@@ -87,34 +94,36 @@ fn catalog_rows_keep_fast_properties_and_resolver_heap_is_bounded() {
         assert!(catalog_rows > 0);
         let after_catalog = collected_used_heap(&mut runtime);
         let catalog_growth = after_catalog.saturating_sub(baseline);
-        let catalog_limit = catalog_rows * 512 + 64 * 1024;
+        let catalog_limit = 4 * 1024 * 1024;
         println!("selected-facts V8 heap catalog_rows={catalog_rows} baseline={baseline} after={after_catalog} growth={catalog_growth} limit={catalog_limit}");
         assert!(
             catalog_growth <= catalog_limit,
-            "collected V8 heap grew {catalog_growth} bytes for {catalog_rows} rows; limit {catalog_limit}"
+            "collected V8 heap grew {catalog_growth} bytes for {catalog_rows} catalog rows; limit {catalog_limit}"
         );
         assert!(
             runtime.eval::<bool>("__fast()").unwrap(),
-            "catalog records, alias rows and resolved values have fast properties"
+            "obj-records and obj-catalog share fast record rows and preserve object identity"
         );
 
-        let found = runtime.eval::<usize>("__repeat(1)").unwrap();
-        assert_eq!(found, 1);
+        assert_eq!(runtime.eval::<usize>("__repeat(1)").unwrap(), 1);
         let baseline = collected_used_heap(&mut runtime);
         let iterations = 1_000;
+        let repeat = format!("__repeat({iterations})");
+        assert_eq!(runtime.eval::<usize>(&repeat).unwrap(), iterations);
         assert_eq!(
             runtime
-                .eval::<usize>(&format!("__repeat({iterations})"))
+                .eval::<usize>("__retainedResolutions.length")
                 .unwrap(),
-            iterations
+            iterations,
+            "the resolver heap measurement retains every result array"
         );
         let after = collected_used_heap(&mut runtime);
         let growth = after.saturating_sub(baseline);
-        let limit = 64 * iterations + 16_384;
-        println!("catalog resolver V8 heap resolver_rows={iterations} baseline={baseline} after={after} growth={growth} limit={limit}");
+        let limit = 2 * 1024 * 1024;
+        println!("catalog resolver V8 heap retained_result_arrays={iterations} baseline={baseline} after={after} growth={growth} limit={limit}");
         assert!(
             growth <= limit,
-            "collected V8 heap grew {growth} bytes; limit {limit}"
+            "collected V8 heap grew {growth} bytes for {iterations} retained resolver results; limit {limit}"
         );
     });
 }

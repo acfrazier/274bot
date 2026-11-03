@@ -3,8 +3,9 @@
 //! content lets an obj cross a trade window. Every answer reads
 //! `SelectedGameData::items`; nothing here is a copied foreign table.
 //!
-//! Generated collision aliases and the hand-written alias table are joined
-//! once per selected-data revision and shared by every isolate.
+//! `HAND_ALIASES` and `NAME_SYNONYMS` mirror the frozen rs2b0t
+//! `src/bot/api/market/catalog.ts`; generated collision aliases derive from
+//! selected item names.
 
 use api::game_data::{GameItem, SelectedGameData};
 use std::cmp::Ordering;
@@ -543,6 +544,54 @@ fn titled(name: &str, word: &str) -> String {
 mod tests {
     use super::*;
     use client::io::ClientRevision;
+    const COLD_CHILD_ENV: &str = "SCRIPT_MARKET_INDEX_COLD_TEST_CHILD";
+    const COLD_TEST_NAME: &str =
+        "market_catalog::tests::market_index_cold_build_has_bounded_process_allocation";
+
+    #[test]
+    fn market_index_cold_build_has_bounded_process_allocation() {
+        if std::env::var_os(COLD_CHILD_ENV).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+                .args(["--exact", COLD_TEST_NAME, "--nocapture"])
+                .env(COLD_CHILD_ENV, "1")
+                .output()
+                .expect("run isolated market index allocation test");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "isolated market index test failed\nstdout: {stdout}\nstderr: {stderr}"
+            );
+            return;
+        }
+
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let size = std::mem::size_of::<MarketIndex>();
+        let expected_size = if cfg!(target_pointer_width = "64") {
+            264
+        } else {
+            132
+        };
+        assert_eq!(size, expected_size, "MarketIndex stack size");
+
+        let mut built = None;
+        let cold = allocation_counter::measure(|| {
+            built = Some(market_index(&data));
+        });
+        let built = built.expect("cold MarketIndex");
+        let warm = allocation_counter::measure(|| {
+            assert!(Arc::ptr_eq(&built, &market_index(&data)));
+        });
+        let limit = 16 * 1024 * 1024;
+        println!("MarketIndex process allocation: size={size} cold={cold:?} warm={warm:?} limit={limit}");
+        assert!(cold.bytes_total <= limit, "cold MarketIndex allocation: {cold:?}");
+        assert!(
+            cold.bytes_current <= limit as i64,
+            "retained MarketIndex allocation: {cold:?}"
+        );
+        assert!(cold.bytes_max <= limit, "peak MarketIndex allocation: {cold:?}");
+        assert_eq!(warm, allocation_counter::AllocationInfo::default());
+    }
 
     #[test]
     fn worth_stocking_drops_poisoned_ammo_and_lit_arrows_only() {

@@ -343,14 +343,9 @@ fn slot_native_input_authority_survives_run_context_replacement() {
 fn slot_size_stays_within_the_full_build_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
     println!("S0d SlotScript layout: {actual} bytes");
-    let expected = if cfg!(any(
-        all(
-            target_os = "linux",
-            target_arch = "x86_64",
-            target_env = "gnu"
-        ),
-        all(target_os = "macos", target_arch = "aarch64")
-    )) {
+    // macOS/aarch64 and Linux/x86_64 GNU measure 1640 B on 64-bit targets.
+    // Windows x64 is unmeasured and follows the same 64-bit grouping.
+    let expected = if cfg!(target_pointer_width = "64") {
         1640
     } else {
         1648

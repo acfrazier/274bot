@@ -1310,6 +1310,7 @@ fn run_events_cell(receipt: &mut Receipt) -> Result<(), String> {
         || count_prefix(&session.receipt.logs, "INV:OFF:") != 1
         || count_prefix(&session.receipt.logs, "INV:WITNESS:") != 2
         || count_prefix(&session.receipt.logs, "LEVEL:PRAYER:") != 1
+        || count_prefix(&session.receipt.logs, "XP:PRAYER:") != 1
         || count_prefix(&session.receipt.logs, "RESTART:CHAT:") != 1
         || count_prefix(&session.receipt.logs, "RESTART:INSTANCE:") != 1
         || count_prefix(&session.receipt.logs, "EVENTS:STOP:1") != 1

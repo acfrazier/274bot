@@ -57,11 +57,7 @@ export const Paint = {
         const frame = {
             title(text) {
                 rec.title = String(text);
-                const click = host().paintClick;
-                chrome('title', click);
-                if (click === 'paint:toggle') {
-                    host().paintClick = null;
-                }
+                chrome('title', host());
                 return frame;
             },
             row(...cols) {
@@ -209,25 +205,17 @@ export const Paint = {
             },
             stepper(id, label, options, current) {
                 const key = String(id);
-                const click = host().paintClick;
                 const picked = chrome(
                     'stepper',
                     rec,
                     key,
                     String(label),
-                    asNames(options),
+                    options,
                     String(current),
                     pendingRows,
-                    click
+                    host()
                 );
                 pendingRows = 0;
-                if (
-                    click === `step:${key}:prev` ||
-                    click === `step:${key}:mid` ||
-                    click === `step:${key}:next`
-                ) {
-                    host().paintClick = null;
-                }
                 return picked;
             },
             buttons(items) {

@@ -495,11 +495,15 @@ fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
         return Ok(catalog.into());
     };
     let market = crate::market_catalog::market_index(&data);
-    for (item, name) in crate::market_catalog::records(data.items()) {
-        let row = obj_record_row(scope, item, name)?;
+    let rows = v8::Local::<v8::Array>::try_from(obj_records(scope)?)
+        .map_err(|_| "selected facts obj-records array".to_string())?;
+    for (index, (item, _name)) in crate::market_catalog::records(data.items()).enumerate() {
+        let row = rows
+            .get_index(scope, index as u32)
+            .ok_or_else(|| "selected facts obj-records item".to_string())?;
         let id = v8::Integer::new(scope, item.id);
         by_id
-            .set(scope, id.into(), row.into())
+            .set(scope, id.into(), row)
             .ok_or_else(|| "selected facts catalog byId".to_string())?;
     }
     let items = v8::Array::new(

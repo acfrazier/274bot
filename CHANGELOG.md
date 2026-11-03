@@ -92,10 +92,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Native compatibility shop actions now use measured settle bounds for item
   acquisition, by-ID purchases and closing the shop.
 
-- Compat loading now provides every named selected object row to the adapter.
-
-- Paint wrapping now indents only continuation lines.
-
 - Compatibility `probeDest` calls now use the host's full route-search
   budget; an upstream `maxExpansions` argument cannot lower it.
 
@@ -270,6 +266,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Removed `Shop.player`, which only reported `not impl`.
 
 ### Fixed during development
+
+#### Compatibility repairs
+
+- Compat loading now provides every named selected object row to the adapter.
+- Paint wrapping now indents only continuation lines.
 
 #### Scenario checks
 

@@ -12,10 +12,9 @@ use crate::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use std::sync::Arc;
 use std::task::Poll;
 
-// Shop content adds no server delay. These are observation bounds.
-// Engine L, 20 native acquisitions: maximum 1 tick from button dispatch to
-// held-count change, plus 3 ticks of margin. See
-// COMPAT-FINISH-029/impl/native-shop-measure/cargo-20-native-cells.log.
+// Engine L `shop.rs2:23-25,59-98,168-181` checks live price, stock, coins and
+// inventory space per request, then calls the item-transfer routine; these
+// paths define no fixed server-delay wait. These values are observation bounds.
 const ACQUISITION_SETTLE_TICKS: u64 = 4;
 // Engine L, 20 byId samples: maximum 1 tick from button dispatch to inventory
 // change, plus 3 ticks of margin. The call-to-change maximum was 2 ticks.

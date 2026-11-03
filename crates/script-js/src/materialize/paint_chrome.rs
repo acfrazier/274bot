@@ -33,12 +33,16 @@ thread_local! {
 struct PaintChromeShapes {
     stepper_button: v8::Global<v8::ObjectTemplate>,
     lowercase_method_key: v8::Global<v8::String>,
+    state_store_weak_map_ctor: v8::Global<v8::Function>,
+    state_store_get: v8::Global<v8::Function>,
+    state_store_set: v8::Global<v8::Function>,
+    state_stores: RefCell<v8::Global<v8::Object>>,
 }
 
 #[derive(Default)]
 struct ChromeState {
-    stores: HashMap<String, HashMap<String, String>>,
-    next_store_id: u64,
+    selections: HashMap<String, String>,
+    reset_instance_stores: bool,
     dock_h: i32,
     consumed: i32,
     panel: PanelRect,
@@ -66,8 +70,8 @@ impl Default for PanelRect {
 
 impl ChromeState {
     fn reset_store(&mut self) {
-        self.stores.clear();
-        self.next_store_id = 0;
+        self.selections.clear();
+        self.reset_instance_stores = true;
         self.consumed = 0;
         self.dock_h = CHATBOX_H;
         self.panel = PanelRect::default();
@@ -82,11 +86,6 @@ impl ChromeState {
         self.consumed = 0;
         self.body_x = PAD;
         self.char_w = char_w;
-        self.collapsed = self
-            .stores
-            .get("0")
-            .and_then(|store| store.get("paint:collapsed"))
-            .is_some_and(|value| value == "1");
     }
 
     fn rows_left(&self) -> i32 {
@@ -104,24 +103,6 @@ impl ChromeState {
         self.consume(px.clamp(0, i64::from(i32::MAX)) as i32);
     }
 
-    fn create_store(&mut self) -> Option<String> {
-        self.next_store_id = self.next_store_id.checked_add(1)?;
-        let id = self.next_store_id.to_string();
-        self.stores.entry(id.clone()).or_default();
-        Some(id)
-    }
-
-    fn state_get(&self, id: &str, key: &str) -> Option<&str> {
-        self.stores.get(id)?.get(key).map(String::as_str)
-    }
-
-    fn state_set(&mut self, id: &str, key: String, value: String) {
-        self.stores
-            .entry(id.to_owned())
-            .or_default()
-            .insert(key, value);
-    }
-
     fn cols(&self) -> i32 {
         if self.char_w <= 0.0 {
             return 0;
@@ -132,9 +113,9 @@ impl ChromeState {
     }
 
     fn resolve(&self, key: &str, names: &[String]) -> String {
-        if let Some(stored) = self.state_get("0", key) {
+        if let Some(stored) = self.selections.get(key) {
             if names.iter().any(|name| name == stored) {
-                return stored.to_owned();
+                return stored.clone();
             }
         }
         names.first().cloned().unwrap_or_default()
@@ -142,11 +123,12 @@ impl ChromeState {
 
     fn resolve_rail(&self, key: &str, names: &[String]) -> String {
         if names.is_empty() {
-            return self.state_get("0", key).unwrap_or_default().to_owned();
+            return self.selections.get(key).cloned().unwrap_or_default();
         }
         self.resolve(key, names)
     }
 }
+
 
 pub(super) fn reset() {
     STATE.with(|s| s.borrow_mut().reset_store());
@@ -158,7 +140,8 @@ pub(super) fn store_select(key: &str, name: &str) {
     }
     STATE.with(|s| {
         s.borrow_mut()
-            .state_set("0", key.to_owned(), name.to_owned());
+            .selections
+            .insert(key.to_owned(), name.to_owned());
     });
 }
 
@@ -196,12 +179,41 @@ fn object_template(
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let shapes = {
         let mut scope = runtime.deno_runtime().handle_scope();
+        let context = runtime.deno_runtime().main_context();
+        let global = context.open(&mut scope).global(&mut scope);
         let lowercase_method_key =
             v8::String::new_from_utf8(&mut scope, b"toLowerCase", v8::NewStringType::Internalized)
                 .ok_or_else(|| "paint stepper lowercase key".to_string())?;
+        let weak_map_ctor = v8::Local::<v8::Function>::try_from(js_property(
+            &mut scope,
+            global.into(),
+            "WeakMap",
+        )?)
+        .map_err(|_| "paint state weak map constructor".to_string())?;
+        let weak_map_prototype =
+            js_property(&mut scope, weak_map_ctor.into(), "prototype")?
+                .to_object(&mut scope)
+                .ok_or_else(|| "paint state weak map prototype".to_string())?;
+        let state_store_get = v8::Local::<v8::Function>::try_from(js_property(
+            &mut scope,
+            weak_map_prototype.into(),
+            "get",
+        )?)
+        .map_err(|_| "paint state weak map get method".to_string())?;
+        let state_store_set = v8::Local::<v8::Function>::try_from(js_property(
+            &mut scope,
+            weak_map_prototype.into(),
+            "set",
+        )?)
+        .map_err(|_| "paint state weak map set method".to_string())?;
+        let state_stores = new_state_store_weak_map(&mut scope, weak_map_ctor)?;
         Rc::new(PaintChromeShapes {
             stepper_button: object_template(&mut scope, &["id", "label"])?,
             lowercase_method_key: v8::Global::new(&mut scope, lowercase_method_key),
+            state_store_weak_map_ctor: v8::Global::new(&mut scope, weak_map_ctor),
+            state_store_get: v8::Global::new(&mut scope, state_store_get),
+            state_store_set: v8::Global::new(&mut scope, state_store_set),
+            state_stores: RefCell::new(v8::Global::new(&mut scope, state_stores)),
         })
     };
     if !runtime.deno_runtime().v8_isolate().set_slot(shapes) {
@@ -218,6 +230,63 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         .set(&mut scope, name.into(), func.into())
         .ok_or_else(|| "paint chrome set".to_string())?;
     Ok(())
+}
+fn new_state_store_weak_map<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    constructor: v8::Local<'s, v8::Function>,
+) -> Result<v8::Local<'s, v8::Object>, String> {
+    constructor
+        .new_instance(scope, &[])
+        .ok_or_else(|| "paint state weak map allocation failed".to_string())
+}
+
+fn apply_pending_state_store_reset(scope: &mut v8::HandleScope) -> Result<(), String> {
+    let pending = STATE.with(|s| std::mem::take(&mut s.borrow_mut().reset_instance_stores));
+    if !pending {
+        return Ok(());
+    }
+    let shapes = scope
+        .get_slot::<Rc<PaintChromeShapes>>()
+        .cloned()
+        .ok_or_else(|| "paint chrome object shape cache is not installed".to_string())?;
+    let constructor = v8::Local::new(scope, &shapes.state_store_weak_map_ctor);
+    let state_stores = new_state_store_weak_map(scope, constructor)?;
+    *shapes.state_stores.borrow_mut() = v8::Global::new(scope, state_stores);
+    Ok(())
+}
+
+fn paint_state_store<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    owner: v8::Local<'s, v8::Value>,
+    create: bool,
+) -> Result<Option<v8::Local<'s, v8::Map>>, String> {
+    let owner = v8::Local::<v8::Object>::try_from(owner)
+        .map_err(|_| "paint state owner is not an object".to_string())?;
+    let shapes = scope
+        .get_slot::<Rc<PaintChromeShapes>>()
+        .cloned()
+        .ok_or_else(|| "paint chrome object shape cache is not installed".to_string())?;
+    let weak_map = {
+        let state_stores = shapes.state_stores.borrow();
+        v8::Local::new(scope, &*state_stores)
+    };
+    let get = v8::Local::new(scope, &shapes.state_store_get);
+    let store = get
+        .call(scope, weak_map.into(), &[owner.into()])
+        .ok_or_else(|| "paint state weak map get failed".to_string())?;
+    if store.is_undefined() {
+        if !create {
+            return Ok(None);
+        }
+        let store = v8::Map::new(scope);
+        let set = v8::Local::new(scope, &shapes.state_store_set);
+        set.call(scope, weak_map.into(), &[owner.into(), store.into()])
+            .ok_or_else(|| "paint state weak map set failed".to_string())?;
+        return Ok(Some(store));
+    }
+    v8::Local::<v8::Map>::try_from(store)
+        .map(Some)
+        .map_err(|_| "paint state owner has an invalid store".to_string())
 }
 
 fn paint_chrome_callback<'s>(
@@ -241,6 +310,7 @@ fn run<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: &v8::FunctionCallbackArguments<'s>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
+    apply_pending_state_store_reset(scope)?;
     let op = js_string_arg(scope, args.get(0));
     match op.as_str() {
         "begin" => {
@@ -260,18 +330,12 @@ fn run<'s>(
             Ok(v8::undefined(scope).into())
         }
         "title" => {
-            let toggle = js_string_arg(scope, args.get(1)) == "paint:toggle";
+            let toggle = consume_paint_click(scope, args.get(1), "paint:toggle")?;
             STATE.with(|s| {
                 let mut state = s.borrow_mut();
                 state.consume(TITLE_H);
                 if toggle {
                     state.collapsed = !state.collapsed;
-                    let collapsed = state.collapsed;
-                    state.state_set(
-                        "0",
-                        "paint:collapsed".to_owned(),
-                        if collapsed { "1" } else { "0" }.to_owned(),
-                    );
                 }
             });
             Ok(v8::undefined(scope).into())
@@ -365,27 +429,44 @@ fn run<'s>(
             js_string(scope, accent)
         }
         "stateNew" => {
-            let id = STATE
-                .with(|s| s.borrow_mut().create_store())
-                .ok_or_else(|| "paint state id exhausted".to_string())?;
-            js_string(scope, &id)
+            let owner = v8::Local::<v8::Object>::try_from(args.get(1))
+                .map_err(|_| "paint state owner is not an object".to_string())?;
+            let shapes = scope
+                .get_slot::<Rc<PaintChromeShapes>>()
+                .cloned()
+                .ok_or_else(|| "paint chrome object shape cache is not installed".to_string())?;
+            let weak_map = v8::Local::new(scope, &*shapes.state_stores.borrow());
+            let set = v8::Local::new(scope, &shapes.state_store_set);
+            let store = v8::Map::new(scope);
+            set.call(scope, weak_map.into(), &[owner.into(), store.into()])
+                .ok_or_else(|| "paint state weak map set failed".to_string())?;
+            Ok(v8::undefined(scope).into())
         }
         "stateGet" => {
-            let id = js_string_arg(scope, args.get(1));
-            let key = js_string_arg(scope, args.get(2));
-            STATE.with(|s| {
-                let state = s.borrow();
-                match state.state_get(&id, &key) {
-                    Some(value) => js_string(scope, value),
-                    None => Ok(args.get(3)),
-                }
-            })
+            let Some(store) = paint_state_store(scope, args.get(1), false)? else {
+                return Ok(args.get(3));
+            };
+            let key_text = js_string_arg(scope, args.get(2));
+            let key = js_string(scope, &key_text)?;
+            let value = store
+                .get(scope, key.into())
+                .ok_or_else(|| "paint state map get failed".to_string())?;
+            if value.is_undefined() {
+                Ok(args.get(3))
+            } else {
+                Ok(value)
+            }
         }
         "stateSet" => {
-            let id = js_string_arg(scope, args.get(1));
-            let key = js_string_arg(scope, args.get(2));
-            let value = js_string_arg(scope, args.get(3));
-            STATE.with(|s| s.borrow_mut().state_set(&id, key, value));
+            let store = paint_state_store(scope, args.get(1), true)?
+                .ok_or_else(|| "paint state store was not created".to_string())?;
+            let key_text = js_string_arg(scope, args.get(2));
+            let value_text = js_string_arg(scope, args.get(3));
+            let key = js_string(scope, &key_text)?;
+            let value = js_string(scope, &value_text)?;
+            store
+                .set(scope, key.into(), value.into())
+                .ok_or_else(|| "paint state map set failed".to_string())?;
             Ok(v8::undefined(scope).into())
         }
         "cols" => {
@@ -470,6 +551,28 @@ fn set_property<'s>(
         .set(scope, key.into(), value)
         .ok_or_else(|| format!("paint property write failed for `{name}`"))?;
     Ok(())
+}
+fn clear_paint_click<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    host: v8::Local<'s, v8::Object>,
+) -> Result<(), String> {
+    let null = v8::null(scope).into();
+    set_property(scope, host, "paintClick", null)
+}
+
+fn consume_paint_click<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    host: v8::Local<'s, v8::Value>,
+    expected: &str,
+) -> Result<bool, String> {
+    let host = v8::Local::<v8::Object>::try_from(host)
+        .map_err(|_| "paint click host is not an object".to_string())?;
+    let click = js_property(scope, host.into(), "paintClick")?;
+    if js_string_arg(scope, click) != expected {
+        return Ok(false);
+    }
+    clear_paint_click(scope, host)?;
+    Ok(true)
 }
 
 fn panel_rect<'s>(
@@ -1201,7 +1304,7 @@ fn stepper<'s>(
     values: v8::Local<'s, v8::Value>,
     current: v8::Local<'s, v8::Value>,
     pending: v8::Local<'s, v8::Value>,
-    click: v8::Local<'s, v8::Value>,
+    host: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     pending_rows(scope, pending);
     if STATE.with(|s| s.borrow().collapsed) {
@@ -1240,12 +1343,18 @@ fn stepper<'s>(
             .ok_or_else(|| "paint stepper button append failed".to_string())?;
     }
     STATE.with(|s| s.borrow_mut().consume(BUTTON_H + BUTTON_TRAIL));
+    let host_object = v8::Local::<v8::Object>::try_from(host)
+        .map_err(|_| "paint click host is not an object".to_string())?;
+    let click = js_property(scope, host_object.into(), "paintClick")?;
     let click = js_string_arg(scope, click);
     let delta = if click == prev_id {
+        clear_paint_click(scope, host_object)?;
         -1
     } else if click == next_id {
+        clear_paint_click(scope, host_object)?;
         1
     } else {
+        // The upstream display-only middle click remains pending.
         0
     };
     if delta == 0 {
