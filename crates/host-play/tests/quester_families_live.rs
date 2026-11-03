@@ -3126,6 +3126,7 @@ mod prereq_failure_oracle_tests {
                 message: oracle.messages[0].as_str().into(),
             }),
             fields: Arc::from([]),
+            survival: script::survival::SurvivalReport::default(),
         };
         let pages = if expected == "FreeSlots" {
             vec![DAGGER_RECLAIM_OPENER.into()]
