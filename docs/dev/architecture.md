@@ -1088,6 +1088,8 @@ need nothing. Profile files and the instance lock are owned by `host-play`
 - Per-bot state is bounded and inline: fixed-size structs with asserted
   size budgets (for example `Combat`, `WalkGuard`, `Threat`), no per-tick or
   per-frame allocation on hot paths.
+- Warm the once-per-process combat tables before measuring an API Gatherer seat.
+  Report their allocation separately. Do not charge their first initialization to one bot.
 - Measurement never equates allocation counts with RSS. The opt-in
   `BOT_MEMORY_N` harness (see [harness.md](harness.md)) reports RSS per
   additional bot; sample fields are separate domains and are never summed.

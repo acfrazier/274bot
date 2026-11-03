@@ -3148,6 +3148,10 @@ mod api_gather_seat {
         let previous_status_log_suppression =
             compiled::set_heap_test_status_logging_suppressed(true);
         let selected = selected();
+        let shared_tables = allocation_counter::measure(|| {
+            assert!(crate::combat::guard::shared_tables_ref().is_some());
+        });
+        println!("API gather once-per-process combat tables={shared_tables:?}");
         let pin = selected.selected_pin().unwrap();
         let banks = Arc::default();
         let run_key = api::selected::RunKey {
@@ -3211,9 +3215,11 @@ mod api_gather_seat {
         assert!(slot.has_native_actions(), "actual native batch measured");
         let exclusive = worker.bytes_current + installed_heap.bytes_current + polled.bytes_current;
         println!(
-            "ApiSeat={} ScriptSlot={}",
+            "ApiSeat={} ScriptSlot={} Gatherer={} SurvivalStep={}",
             std::mem::size_of::<crate::slot::api_seat::ApiSeat>(),
-            std::mem::size_of::<SlotScript>()
+            std::mem::size_of::<SlotScript>(),
+            std::mem::size_of::<crate::gatherer::Gatherer>(),
+            std::mem::size_of::<crate::survival::SurvivalStep>()
         );
         println!(
             "API gather warmed native baseline: idle option={}B; prepared+instance={worker:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
