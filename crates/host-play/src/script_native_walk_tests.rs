@@ -21,7 +21,9 @@ struct Walker {
     cross_first: Vec<Arc<str>>,
     protect: bool,
     food_guard: bool,
+    cure_guard: bool,
     disallow_prayer: bool,
+    disallow_food: bool,
     target: Option<WorldTile>,
     later_target: Option<WorldTile>,
     radius: u16,
@@ -99,8 +101,10 @@ impl Script for WalkerScript {
                 avoid: Box::default(),
                 protect: shared.protect,
                 food_guard: shared.food_guard,
+                cure_guard: shared.cure_guard,
                 allow: script::native::WalkAllow {
                     prayer: !shared.disallow_prayer,
+                    food: !shared.disallow_food,
                     ..Default::default()
                 },
             };
@@ -1441,6 +1445,14 @@ fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
         assert!(rig.driver.move_calls > 0, "the escape must actually walk");
         assert!(rig.driver.if_button_components.is_empty());
         assert_eq!(rig.end(), None);
+        seed_guard_inventory(&mut rig.snapshot, &[("lobster", "Eat")], 1);
+        rig.snapshot.seed_tick(2);
+        rig.step();
+        assert_eq!(
+            rig.driver.held_item_ids,
+            [379],
+            "the ordinary abort's food guard must eat the held meal"
+        );
     }
 }
 
@@ -1452,75 +1464,12 @@ fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {
     rig.snapshot.seed_tick(1);
     rig.observe(1);
     rig.wait_routed();
-    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-    rig.snapshot.seed_inventory(
-        ["lobster", "1doseantipoison"]
-            .into_iter()
-            .enumerate()
-            .map(|(slot, alias)| {
-                let fact = data.item_by_alias(alias).unwrap();
-                api::snapshot::ItemView {
-                    def: api::ItemDefView {
-                        id: fact.id,
-                        name: fact.name.clone(),
-                        stackable: false,
-                        members: true,
-                        base_value: 0,
-                        noted: false,
-                        certificate_link: -1,
-                        certificate_template: -1,
-                    },
-                    slot: slot as i32,
-                    count: 1,
-                    container: api::snapshot::ItemContainer::Inventory,
-                    action_family: api::snapshot::ItemActionFamily::Held,
-                    actions: vec![Some(if slot == 0 { "Eat" } else { "Drink" }.into())],
-                    component_id: 3214,
-                }
-            })
-            .collect(),
-        28,
+    seed_guard_inventory(
+        &mut rig.snapshot,
+        &[("lobster", "Eat"), ("1doseantipoison", "Drink")],
+        1,
     );
-    let mut stats = rig.snapshot.stats().to_vec();
-    stats
-        .iter_mut()
-        .find(|stat| stat.index == 3)
-        .unwrap()
-        .effective = 1;
-    rig.snapshot.seed_stats(stats);
-    rig.snapshot
-        .seed_inventory_packet_generations(Some(1), None);
-    let drain = host::DrainResult {
-        player_info: true,
-        npc_rows_coherent: true,
-        session_changed: false,
-        gens: Default::default(),
-        dirty: Default::default(),
-    };
-    {
-        let mut navs = rig.navs.lock().unwrap();
-        let bot = navs.get_mut("alice").unwrap();
-        bot.cure_poison = script::survival::CurePoison::Never;
-        bot.condition.session_started(
-            1,
-            0,
-            Some((script::combat::guard::shared_tables().unwrap(), 11)),
-        );
-        bot.condition.observe_frame(&rig.snapshot, &drain, false);
-        rig.snapshot.seed_tick(2);
-        rig.snapshot
-            .seed_chat_lines(vec![api::snapshot::ChatLineView {
-                type_: 0,
-                username: None,
-                text: "You have been poisoned!".into(),
-                sequence: 1,
-            }]);
-        bot.condition.observe_frame(&rig.snapshot, &drain, false);
-        assert!(matches!(
-            bot.condition.current().unwrap().poison,
-            api::condition::PoisonState::Onset { .. }
-        ));
-    }
+    seed_guard_poison_onset(&mut rig, script::survival::CurePoison::Never);
     rig.step();
     assert_eq!(
         rig.driver.held_ops, 1,
@@ -1531,6 +1480,128 @@ fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {
         [379],
         "the host must use NavBot's Never policy, not drink the held cure",
     );
+}
+
+#[test]
+fn exhausted_escape_host_walk_neither_uses_nor_fetches_food() {
+    for food_held in [false, true] {
+        let mut rig = open_rig(false);
+        {
+            let mut walker = rig.shared.lock();
+            walker.cure_guard = true;
+            walker.disallow_prayer = true;
+            walker.disallow_food = true;
+        }
+        seed_protect_frame(&mut rig.snapshot, 1);
+        rig.snapshot.seed_tick(1);
+        rig.observe(1);
+        rig.wait_routed();
+        assert!(rig.navs.lock().unwrap()["alice"].walk_guard.is_some());
+        let items = if food_held {
+            &[("lobster", "Eat")][..]
+        } else {
+            &[]
+        };
+        seed_guard_inventory(&mut rig.snapshot, items, 1);
+        for tick in 2..=4 {
+            rig.snapshot.seed_tick(tick);
+            rig.step();
+            assert!(rig.driver.held_item_ids.is_empty());
+            assert!(
+                rig.navs.lock().unwrap()["alice"].bank_fetch.is_none(),
+                "the exhausted escape must not fetch food"
+            );
+        }
+        assert!(rig.driver.if_button_components.is_empty());
+        assert!(rig.driver.move_calls > 0);
+        assert!(rig.walk_armed());
+    }
+}
+
+#[test]
+fn exhausted_escape_host_walk_drinks_a_needed_held_cure_without_eating() {
+    let mut rig = open_rig(false);
+    {
+        let mut walker = rig.shared.lock();
+        walker.cure_guard = true;
+        walker.disallow_prayer = true;
+        walker.disallow_food = true;
+    }
+    seed_protect_frame(&mut rig.snapshot, 1);
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+    assert!(rig.navs.lock().unwrap()["alice"].walk_guard.is_some());
+    seed_guard_inventory(
+        &mut rig.snapshot,
+        &[("lobster", "Eat"), ("1doseantipoison", "Drink")],
+        1,
+    );
+    seed_guard_poison_onset(&mut rig, script::survival::CurePoison::WhenNeeded);
+    rig.step();
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    assert_eq!(
+        rig.driver.held_item_ids,
+        [data.item_by_alias("1doseantipoison").unwrap().id],
+        "the explicit cure guard must drink the held dose, not the held meal"
+    );
+    assert!(rig.driver.if_button_components.is_empty());
+    assert!(rig.navs.lock().unwrap()["alice"].bank_fetch.is_none());
+}
+
+#[test]
+fn food_disallowed_without_an_explicit_guard_starts_no_host_guard() {
+    let mut rig = open_rig(false);
+    rig.shared.lock().disallow_food = true;
+    seed_protect_frame(&mut rig.snapshot, 1);
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+    assert!(
+        rig.navs.lock().unwrap()["alice"].walk_guard.is_none(),
+        "disallowing food must not implicitly request cure upkeep"
+    );
+    seed_guard_inventory(
+        &mut rig.snapshot,
+        &[("lobster", "Eat"), ("1doseantipoison", "Drink")],
+        1,
+    );
+    seed_guard_poison_onset(&mut rig, script::survival::CurePoison::WhenNeeded);
+    rig.step();
+    assert!(rig.driver.held_item_ids.is_empty());
+    assert!(rig.driver.move_calls > 0);
+}
+
+fn seed_guard_poison_onset(rig: &mut Rig, policy: script::survival::CurePoison) {
+    let drain = host::DrainResult {
+        player_info: true,
+        npc_rows_coherent: true,
+        session_changed: false,
+        gens: Default::default(),
+        dirty: Default::default(),
+    };
+    let mut navs = rig.navs.lock().unwrap();
+    let bot = navs.get_mut("alice").unwrap();
+    bot.cure_poison = policy;
+    bot.condition.session_started(
+        1,
+        0,
+        Some((script::combat::guard::shared_tables().unwrap(), 11)),
+    );
+    bot.condition.observe_frame(&rig.snapshot, &drain, false);
+    rig.snapshot.seed_tick(2);
+    rig.snapshot
+        .seed_chat_lines(vec![api::snapshot::ChatLineView {
+            type_: 0,
+            username: None,
+            text: "You have been poisoned!".into(),
+            sequence: 1,
+        }]);
+    bot.condition.observe_frame(&rig.snapshot, &drain, false);
+    assert!(matches!(
+        bot.condition.current().unwrap().poison,
+        api::condition::PoisonState::Onset { .. }
+    ));
 }
 
 #[test]
@@ -1586,6 +1657,46 @@ fn seed_protect_frame(snapshot: &mut GameSnapshot, prayer_base: i32) {
         }; 4],
         loop_cycle: 0,
     });
+}
+
+fn seed_guard_inventory(snapshot: &mut GameSnapshot, items: &[(&str, &str)], hitpoints: i32) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    snapshot.seed_inventory(
+        items
+            .iter()
+            .enumerate()
+            .map(|(slot, (alias, action))| {
+                let fact = data.item_by_alias(alias).unwrap();
+                api::snapshot::ItemView {
+                    def: api::ItemDefView {
+                        id: fact.id,
+                        name: fact.name.clone(),
+                        stackable: false,
+                        members: true,
+                        base_value: 0,
+                        noted: false,
+                        certificate_link: -1,
+                        certificate_template: -1,
+                    },
+                    slot: slot as i32,
+                    count: 1,
+                    container: api::snapshot::ItemContainer::Inventory,
+                    action_family: api::snapshot::ItemActionFamily::Held,
+                    actions: vec![Some((*action).into())],
+                    component_id: 3214,
+                }
+            })
+            .collect(),
+        28,
+    );
+    let mut stats = snapshot.stats().to_vec();
+    stats
+        .iter_mut()
+        .find(|stat| stat.index == 3)
+        .unwrap()
+        .effective = hitpoints;
+    snapshot.seed_stats(stats);
+    snapshot.seed_inventory_packet_generations(Some(1), None);
 }
 
 fn seed_prayer_widgets(snapshot: &mut GameSnapshot) {
@@ -6130,6 +6241,9 @@ fn s2b_admission_per_bot_layouts() {
     // across resends): NavBot measures 3776 B, with no new heap payload and
     // no SlotScript growth.
     // SURVIVAL-1.4 adds one byte of cure_poison, padded to 8 by alignment: NavBot is 3784 B.
+    // SURVIVAL-NATIVE-CURE keeps SurvivalStep (bounded by 192 B) and interrupt
+    // state in the existing boxed Gatherer/Quester scripts, not inline SlotScript.
+    // The 64-bit SlotScript pin remains 1624 B (+0 B).
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
     // S0c moves the platform-specific isolate mutexes into the surface run.
@@ -6516,6 +6630,7 @@ mod s2b_admission_contract {
                 avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
             };
             while shared.requests.len() < shared.count {
@@ -6758,6 +6873,7 @@ mod s2b_admission_contract {
                 avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
             };
             let failure = |code: &str, error: ActionError| ScriptFailure {

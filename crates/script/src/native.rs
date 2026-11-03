@@ -821,6 +821,8 @@ pub struct ScriptStatus {
     pub active_settings: u64,
     pub pending_settings: Option<u64>,
     pub fields: Arc<[StatusField]>,
+    /// Typed survival outcome from this runner's most recent poll.
+    pub survival: crate::survival::SurvivalReport,
     pub failure: Option<ScriptFailure>,
 }
 
@@ -1104,8 +1106,12 @@ pub struct WalkRequest {
     pub protect: bool,
     /// Create a food-only [`crate::combat::WalkGuard`] when `protect` is
     /// false. A declared danger crossing arms this guard for ordinary walks.
-    /// Requires `allow.food`, or the host refuses the walk.
+    /// Food use still follows `allow.food`.
     pub food_guard: bool,
+    /// Retain held-cure upkeep without requesting protection or food upkeep.
+    /// Crossing normalization preserves this request's food allowance.
+    /// Only the exhausted combat escape sets this flag.
+    pub cure_guard: bool,
     /// Represented on the request so a protect walk can still be refused
     /// when the owner disallows prayer.
     pub allow: WalkAllow,
@@ -1884,6 +1890,7 @@ pub trait NativeMachine: Send + 'static {
     /// After cancellation, the owner must not call `poll` or `after_hold`.
     /// Nested owners obey the same rule as the native action slot.
     fn cancel(&mut self) {}
+    fn interrupt(&mut self) {}
     fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         crate::combat::RaisedPrayers::empty()
     }

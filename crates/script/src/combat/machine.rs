@@ -1965,6 +1965,7 @@ impl Combat {
             hp,
             max,
             tick,
+            0,
         ) else {
             return;
         };
@@ -3201,6 +3202,7 @@ impl Combat {
             cross: self.request.cross.as_deref().unwrap_or_default().into(),
             protect: false,
             food_guard: false,
+            cure_guard: false,
             allow: Default::default(),
             avoid: Box::default(),
         })?;

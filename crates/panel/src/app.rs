@@ -5032,6 +5032,9 @@ fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &
     if let Some(random) = d.random() {
         kv_row(ui, "random", random);
     }
+    if let Some(survival) = d.survival() {
+        kv_row(ui, "survival", &survival.to_string());
+    }
     // The current login notice takes the history row's place while it
     // stands (the terminal app's status pane does the same).
     if let Some(notice) = d.login_notice_line() {

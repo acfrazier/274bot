@@ -67,7 +67,6 @@ pub enum GuardOp {
 pub enum GuardRefusal {
     PrayerTooLow,
     PrayerDisallowed,
-    FoodDisallowed,
     Snapshot,
     Tables,
 }
@@ -178,6 +177,12 @@ pub fn shared_tables() -> Result<Arc<CombatTables>, GuardRefusal> {
     TABLES.clone().ok_or(GuardRefusal::Tables)
 }
 
+/// Borrow the existing table for per-tick consumers without changing its
+/// reference count or constructing another selected-data owner.
+pub(crate) fn shared_tables_ref() -> Option<&'static CombatTables> {
+    TABLES.as_ref().map(Arc::as_ref)
+}
+
 fn prayer_base(snapshot: &SnapshotView<'_>) -> Option<i32> {
     snapshot
         .stats()?
@@ -255,10 +260,7 @@ impl WalkGuard {
         _snapshot: &SnapshotView<'_>,
         tables: Arc<CombatTables>,
     ) -> Result<Self, GuardRefusal> {
-        if !request.allow.food {
-            return Err(GuardRefusal::FoodDisallowed);
-        }
-        Ok(Self::new(tables, true, true))
+        Ok(Self::new(tables, request.allow.food, true))
     }
 
     /// Whether any recognized food remains in the observed inventory.
@@ -480,6 +482,7 @@ impl WalkGuard {
                 hp,
                 hp_max,
                 tick,
+                0,
             )
         } else {
             None
@@ -935,6 +938,7 @@ mod tests {
                 cross: Box::default(),
                 protect: true,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
                 avoid: Box::default(),
             }
@@ -2387,11 +2391,12 @@ mod tests {
         assert!(!matches!(op, GuardOp::Drink { .. }));
     }
     #[test]
-    fn food_only_guard_drinks_cure() {
+    fn food_only_guard_drinks_cure_without_biting_when_food_is_disabled() {
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 10;
         scene.add_antipoison();
-        let condition = BotCondition {
+        scene.add_food("lobster", 1, 1);
+        let mut condition = BotCondition {
             tick: 0,
             session: api::condition::SessionMark::Live,
             hp: 10,
@@ -2406,18 +2411,30 @@ mod tests {
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses::default(),
         };
-        let mut guard = WalkGuard::begin_food_only_with(
-            &scene.request(),
-            &scene.view(),
-            Arc::clone(&scene.tables),
-        )
-        .unwrap();
+        let mut request = scene.request();
+        request.allow.food = false;
+        let mut guard =
+            WalkGuard::begin_food_only_with(&request, &scene.view(), Arc::clone(&scene.tables))
+                .unwrap();
+        assert_eq!(guard.has_food(&scene.view()), Some(false));
         assert!(matches!(
             guard.tick(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded),
             Some(GuardOp::Drink {
                 kind: PotionKind::Antipoison,
                 ..
             })
+        ));
+
+        condition.poison = api::condition::PoisonState::Clear;
+        condition.food = api::condition::FoodSummary {
+            ordinary_count: 1,
+            best_heal: 12,
+            smallest_heal: 12,
+            ..api::condition::FoodSummary::default()
+        };
+        assert!(!matches!(
+            guard.tick(&scene.view_at(1), Some(&condition), CurePoison::WhenNeeded),
+            Some(GuardOp::Eat { .. })
         ));
     }
 
@@ -2752,6 +2769,7 @@ mod tests {
             poison_fire,
             hp,
             hp_max,
+            0,
             0,
         )
     }

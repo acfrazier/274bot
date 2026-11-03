@@ -1543,6 +1543,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/native_survival_cure_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/npc_hop_live.rs",
       "owner": "T1"
     },
@@ -3076,6 +3080,10 @@
     },
     {
       "path": "crates/scenario/src/scenarios/shop/buyout.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/scenario/src/scenarios/survival_need.rs",
       "owner": "T2"
     },
     {
@@ -5072,6 +5080,10 @@
     },
     {
       "path": "crates/script/src/survival/math.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/survival/step.rs",
       "owner": "T2"
     },
     {

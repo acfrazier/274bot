@@ -1743,6 +1743,7 @@ fn combat_and_guard_share_projectile_first_protect_policy() {
         cross: Vec::new().into_boxed_slice(),
         protect: true,
         food_guard: false,
+        cure_guard: false,
         allow: crate::native::WalkAllow::default(),
         avoid: Box::default(),
     };

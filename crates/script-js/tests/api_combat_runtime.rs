@@ -258,6 +258,7 @@ fn combat_status() -> Arc<ScriptStatus> {
             integer("engaged_index", "Engaged index", 7),
         ]
         .into(),
+        survival: script::survival::SurvivalReport::default(),
         failure: None,
     })
 }

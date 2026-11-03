@@ -386,6 +386,7 @@ pub(crate) fn record_walk(
             "radius": request.radius,
             "protect": request.protect,
             "food_guard": request.food_guard,
+            "cure_guard": request.cure_guard,
             "allow": {
                 "prayer": request.allow.prayer,
                 "food": request.allow.food,

@@ -10,6 +10,7 @@ use std::sync::Arc;
 pub struct StatusData {
     pub skill: &'static str,
     pub method: Arc<str>,
+    pub survival: crate::survival::SurvivalReport,
     pub phase: &'static str,
     pub area: Arc<str>,
     pub target: Arc<str>,
@@ -52,6 +53,7 @@ macro_rules! status_rows {
         [
             $emit!("skill", "Skill", Text, $data.skill),
             $emit!("method", "Method", Text, Arc::clone(&$data.method)),
+            $emit!("survival", "Survival", Text, format!("{}", $data.survival)),
             $emit!("phase", "Phase", Text, $data.phase),
             $emit!("area", "Area", Text, Arc::clone(&$data.area)),
             $emit!("target", "Target", Text, Arc::clone(&$data.target)),
@@ -162,6 +164,7 @@ pub fn publish(
         active_settings: revision,
         pending_settings: pending_revision,
         fields,
+        survival: data.survival,
         failure,
     });
 }
@@ -214,6 +217,7 @@ mod tests {
         let data = StatusData {
             skill: "Woodcutting",
             method: Arc::from("normal"),
+            survival: crate::survival::SurvivalReport::default(),
             phase: "gathering",
             area: Arc::from("Start"),
             target: Arc::from("Tree"),
@@ -302,6 +306,7 @@ mod tests {
         let data = StatusData {
             skill: "Woodcutting",
             method: Arc::from("normal"),
+            survival: crate::survival::SurvivalReport::default(),
             phase: "gathering",
             area: Arc::from("Start"),
             target: Arc::from("Tree"),

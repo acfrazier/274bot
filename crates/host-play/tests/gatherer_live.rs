@@ -8298,6 +8298,7 @@ mod bank_conservation_tests {
                     value: StatusValue::Integer(deposited),
                 },
             ]),
+            survival: script::survival::SurvivalReport::default(),
         };
         slot.apply_status(&status("bank opened", 0)).unwrap();
         let rows = slot.snapshot.inventory().to_vec();
@@ -8591,6 +8592,7 @@ mod bank_conservation_tests {
                     value: StatusValue::Integer(0),
                 },
             ]),
+            survival: script::survival::SurvivalReport::default(),
         };
         slot.apply_status(&status).unwrap();
         let receipt = slot.witness.pending_bank_trip.as_ref().unwrap();
@@ -8684,6 +8686,7 @@ mod bank_conservation_tests {
                     value: StatusValue::Integer(trips),
                 },
             ]),
+            survival: script::survival::SurvivalReport::default(),
         }
     }
 
@@ -9437,6 +9440,7 @@ mod woodcutting_wield_oracle_tests {
                 label: "Tool",
                 value: StatusValue::Text(tool.into()),
             }]),
+            survival: script::survival::SurvivalReport::default(),
         }
     }
 

@@ -455,6 +455,13 @@ impl StepRun for BankStepRun {
     fn cancel(&mut self, actions: &mut NativeActions) {
         self.run.cancel(actions);
     }
+    fn transfer_in_flight(&self) -> bool {
+        self.run.transfer_in_flight()
+    }
+
+    fn interrupt_transfer(&mut self, actions: &mut NativeActions) {
+        self.run.interrupt_transfer(actions);
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1419,6 +1426,17 @@ impl StepRun for LoadoutObservationWait {
             run.cancel(actions);
         }
     }
+    fn transfer_in_flight(&self) -> bool {
+        self.run
+            .as_ref()
+            .is_some_and(LoadoutRun::transfer_in_flight)
+    }
+
+    fn interrupt_transfer(&mut self, actions: &mut NativeActions) {
+        if let Some(run) = &mut self.run {
+            run.interrupt_transfer(actions);
+        }
+    }
 
     fn prayer_cleanup(&self) -> RaisedPrayers {
         self.run
@@ -1609,7 +1627,26 @@ impl StepRun for LoadoutRun {
             receipt: self.receipt.take(),
         }))
     }
-    fn cancel(&mut self, _actions: &mut NativeActions) {}
+    fn cancel(&mut self, actions: &mut NativeActions) {
+        if let Some(bank) = &mut self.bank {
+            bank.cancel(actions);
+        }
+        if let Some(handle) = self.equipment.take() {
+            actions.cancel(handle);
+        }
+    }
+
+    fn transfer_in_flight(&self) -> bool {
+        self.bank
+            .as_ref()
+            .is_some_and(AcquireRun::transfer_in_flight)
+    }
+
+    fn interrupt_transfer(&mut self, actions: &mut NativeActions) {
+        if let Some(bank) = &mut self.bank {
+            bank.interrupt_transfer(actions);
+        }
+    }
 }
 
 pub(super) fn compile_bank_known(

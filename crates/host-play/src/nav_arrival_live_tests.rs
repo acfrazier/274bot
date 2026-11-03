@@ -186,6 +186,7 @@ impl WalkSpec {
             avoid: Box::default(),
             protect: false,
             food_guard: false,
+            cure_guard: false,
             allow: Default::default(),
         }
     }

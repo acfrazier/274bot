@@ -5582,7 +5582,7 @@ impl ScriptWalkArm {
             }
         }
         let protect = request.protect;
-        let guard = if protect || request.food_guard {
+        let guard = if protect || request.food_guard || request.cure_guard {
             let view = SnapshotView::new(
                 Some(snapshot),
                 EvidenceStamp {

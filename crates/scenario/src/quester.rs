@@ -1137,8 +1137,24 @@ fn build_fixture(request: FixtureSeed<'_>) -> Result<QuesterFixture, String> {
         name: "relog after permanent quest stage and loadout seed",
         kind: StepKind::Relog,
         wait: Wait {
-            arm: Proof::SideTabAvailable { index: 3 },
+            arm: Proof::IngameScene2,
             budget_ticks: 600,
+        },
+    });
+    // The fixture's final relog can reset tutorial to 1 again. The shared
+    // seed already reseeded it before this login, so require a fresh reply.
+    steps.push(Step {
+        name: "reseed tutorial after the fixture relog",
+        kind: StepKind::Repeat {
+            send: Box::new(|client, _| {
+                api::interact::cheat(client, crate::tutorial::TUTORIAL_SETVAR);
+                api::interact::cheat(client, crate::tutorial::TUTORIAL_GETVAR);
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::FreshTutorial,
+            budget_ticks: 200,
         },
     });
     let teleport = api::interact::tele_args(stand.level, stand.x, stand.z);
@@ -1780,7 +1796,7 @@ mod tests {
     }
 
     #[test]
-    fn relog_precedes_the_proved_authored_stand() {
+    fn final_relog_reseeds_tutorial_before_proved_authored_stand() {
         let fixture = fixture(&document()).unwrap();
         let relog = fixture
             .scenario
@@ -1788,8 +1804,17 @@ mod tests {
             .iter()
             .rposition(|step| matches!(step.kind, StepKind::Relog))
             .unwrap();
+        assert_eq!(fixture.scenario.steps[relog].wait.arm, Proof::IngameScene2);
+        assert!(matches!(
+            fixture.scenario.steps[relog + 1].kind,
+            StepKind::Repeat { .. }
+        ));
         assert_eq!(
             fixture.scenario.steps[relog + 1].wait.arm,
+            Proof::FreshTutorial
+        );
+        assert_eq!(
+            fixture.scenario.steps[relog + 2].wait.arm,
             Proof::Arrived {
                 x: 3209,
                 z: 3215,
@@ -2075,7 +2100,7 @@ mod tests {
             .rposition(|step| matches!(step.kind, StepKind::Relog))
             .unwrap();
         assert_eq!(
-            fixture.scenario.steps[relog + 1].wait.arm,
+            fixture.scenario.steps[relog + 2].wait.arm,
             Proof::Arrived {
                 x: 3209,
                 z: 3215,
@@ -2182,7 +2207,7 @@ mod tests {
             .unwrap();
         assert!(setup < relog);
         assert_eq!(
-            fixture.scenario.steps[relog + 1].wait.arm,
+            fixture.scenario.steps[relog + 2].wait.arm,
             Proof::Arrived {
                 x: stand.x,
                 z: stand.z,

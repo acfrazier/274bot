@@ -138,6 +138,7 @@ impl Script for NativeWalkScript {
                 avoid: Box::default(),
                 protect: false,
                 food_guard: false,
+                cure_guard: false,
                 allow: script::native::WalkAllow::default(),
             };
             self.handle = Some(

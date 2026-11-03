@@ -273,6 +273,7 @@ impl Script for NativeWalkScript {
                 avoid: Box::default(),
                 protect: true,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {

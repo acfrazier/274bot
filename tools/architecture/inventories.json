@@ -2658,6 +2658,54 @@
       "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/lib.rs|SurvivalCureWhy",
+      "path": "crates/frontend-core/src/lib.rs",
+      "symbol": "SurvivalCureWhy",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "SURVIVAL-NATIVE-CURE: Copy survival reason enum; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/lib.rs|SurvivalDecision",
+      "path": "crates/frontend-core/src/lib.rs",
+      "symbol": "SurvivalDecision",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "SURVIVAL-NATIVE-CURE: Copy survival decision enum; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/lib.rs|SurvivalNeed",
+      "path": "crates/frontend-core/src/lib.rs",
+      "symbol": "SurvivalNeed",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "SURVIVAL-NATIVE-CURE: Copy supply-need enum with scalar fields; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/lib.rs|SurvivalNeedWhy",
+      "path": "crates/frontend-core/src/lib.rs",
+      "symbol": "SurvivalNeedWhy",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "SURVIVAL-NATIVE-CURE: Copy survival need reason enum; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/lib.rs|SurvivalOwner",
+      "path": "crates/frontend-core/src/lib.rs",
+      "symbol": "SurvivalOwner",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "SURVIVAL-NATIVE-CURE: Copy survival owner enum; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/lib.rs|SurvivalReport",
+      "path": "crates/frontend-core/src/lib.rs",
+      "symbol": "SurvivalReport",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "SURVIVAL-NATIVE-CURE: Copy typed survival report without owned allocation; register in the introducing commit, no allowance."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/models.rs|Models",
       "path": "crates/frontend-core/src/models.rs",
       "symbol": "Models",

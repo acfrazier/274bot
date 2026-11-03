@@ -790,6 +790,35 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   JavaScript `Bank` API still keeps the millisecond minimum that its frozen
   documentation states for its own waits. This closes the known issue
   "Grinch's bank trip still waits up to a fixed time".
+### Survival
+
+- Gatherer and Quester check for a needed poison cure while they work. They can
+  drink a held antipoison during a walk, even when eating is disabled. Outside a
+  walk or a fight, they cancel the current step to drink, close a dialogue page
+  or an "Enter amount" prompt first when one is open, and then start the step
+  again. An active bank transfer first settles or reaches its limit, then they
+  close the bank, drink and resume work. When poison makes survival unsafe and
+  no cure is held, or when hitpoints are at or below the eat line and no food is
+  held, they pause work without ending the run and show the needed cure or food
+  in the status row.
+  Exhausted combat escapes retain that held-cure guard without restoring food
+  permission, including when the walk crosses a named danger zone.
+- A Gatherer bank trip keeps held antipoison and super antipoison doses in the
+  pack, so a later poison still finds them.
+- The panel and terminal app show the same status row when poison means the bot
+  needs a cure or food, and clear it when that need passes.
+- When the game ignores a survival drink (for example in the tick after a
+  mining success, when the game drops item clicks), Gatherer and Quester click
+  the dose again after 3 game ticks with no dose used, and then go back to
+  work. After a drink they wait out the game's short drink delay before the
+  next bite or work click, and a second bite waits for the game's next-food
+  delay, so the game does not drop either click. Both waits count from the
+  game tick in which the game used the dose or the food, so they stay right
+  when the game applies a click late.
+- After a bite or a closed page that leaves nothing more to do, the Quester
+  goes back to its step in the same game tick.
+
+### Scripting
 
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host

@@ -15,6 +15,33 @@ use api::snapshot::{
 use std::sync::LazyLock;
 use std::time::Duration;
 
+#[test]
+fn repair_walk_preserves_explicit_cure_upkeep_without_food() {
+    let stamp = EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 2,
+            session: 3,
+        },
+        tick: 4,
+        sequence: 5,
+    };
+    let target = WorldTile {
+        x: 10,
+        z: 20,
+        level: 0,
+    };
+    let mut request = reach::walk_request(target, 0, None, stamp);
+    assert!(!request.cure_guard);
+    request.protect = false;
+    request.food_guard = false;
+    request.cure_guard = true;
+    request.allow.food = false;
+    let replay = RepairWalk::from_request(&request).request(target, 0, stamp);
+    assert!(replay.cure_guard);
+    assert!(!replay.protect && !replay.food_guard && !replay.allow.food);
+}
+
 static CATALOG: LazyLock<Arc<PrereqCatalog>> = LazyLock::new(|| {
     FamilyPreparation::run(|worker| {
         api::game_data::for_revision(ClientRevision::R289)

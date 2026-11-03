@@ -514,6 +514,7 @@ impl BankRow {
                         avoid: Box::new([]),
                         protect: false,
                         food_guard: false,
+                        cure_guard: false,
                         allow: Default::default(),
                     };
                     match PrereqWalk::begin(request, actions, cx) {

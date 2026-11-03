@@ -4460,6 +4460,13 @@ impl SlotScript {
                 .status
                 .as_ref()
                 .map_or_else(|| Arc::from([]), |status| Arc::clone(&status.fields)),
+            survival: run
+                .output
+                .status
+                .as_ref()
+                .map_or_else(crate::survival::SurvivalReport::default, |status| {
+                    status.survival
+                }),
             failure: Some(failure),
         };
         // Publish through the same change-only logging seam as card statuses.

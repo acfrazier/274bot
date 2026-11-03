@@ -5,7 +5,7 @@ use super::gather::{
     observe_target, GatherEnd, GatherResult, GatherRun, GatherRunArgs, TargetObservation,
     DEFAULT_STALL_TICKS,
 };
-use super::oneop::{OneOp, OneOpArgs};
+use super::oneop::{OneOp, OneOpArgs, OneOpKind};
 use super::select::{
     resource_return_target, select, tile_loaded, AvoidedTile, FishingSurvey, PlacementClass,
     ResourceReturn, ReturnObservation, SelectedTarget, Selection, TargetPlan,
@@ -285,6 +285,12 @@ pub struct Gatherer {
     last_paint_tick: u64,
     fence: TickPacketFence,
     death: crate::native::death::DeathLatch,
+    survival: crate::survival::SurvivalStep,
+    survival_deferred: bool,
+    survival_interrupting: bool,
+    /// The `Active::Tend` handle is a survival click (drink, fruit, bite or
+    /// the close before one), not a wear or a stray-page op.
+    survival_tend: bool,
     respawn_deadline: Option<std::time::Duration>,
     respawn_settle: Option<u64>,
     proving_runs: u8,
@@ -342,6 +348,10 @@ impl Gatherer {
             last_paint_tick: 0,
             fence: TickPacketFence::default(),
             death,
+            survival: crate::survival::SurvivalStep::default(),
+            survival_deferred: false,
+            survival_interrupting: false,
+            survival_tend: false,
             respawn_deadline: None,
             respawn_settle: None,
             proving_runs: 0,
@@ -471,8 +481,12 @@ impl Gatherer {
             cross: Box::default(),
             avoid: Box::new([]),
             protect: false,
-            food_guard: false,
-            allow: Default::default(),
+            food_guard: true,
+            cure_guard: false,
+            allow: crate::native::WalkAllow {
+                food: true,
+                ..Default::default()
+            },
         };
         match PrereqWalk::begin(request, tick.actions, &mut tick.cx) {
             Ok(walk) => {
@@ -852,6 +866,9 @@ impl Gatherer {
         }
         self.active = Active::None;
         self.scratch.observation_walk = false;
+        self.survival_deferred = false;
+        self.survival_interrupting = false;
+        self.survival_tend = false;
         self.target = None;
     }
 
@@ -1729,6 +1746,25 @@ impl Gatherer {
             },
             Active::Tend(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Tend(handle),
+                Poll::Ready(Ok(settled)) if std::mem::take(&mut self.survival_tend) => {
+                    self.needs_validate = true;
+                    // Anchor the click's delays on the frame that showed its
+                    // effect, then decide again in this tick with them: a late
+                    // effect moves the drink lock past the send-frame clock.
+                    self.survival.record_settled(settled, &tick.cx);
+                    self.survival_deferred = true;
+                    if settled {
+                        self.set_event("survival operation settled");
+                    } else {
+                        // The engine drops a held click while the player is
+                        // delayed (`OpHeldHandler.ts:16-19`), for example in
+                        // the tick after a mining success's `p_delay(0)`
+                        // (`mining.rs2:139`). That is a deferral: the poll
+                        // after this one clicks again, and the interrupted
+                        // work resumes when survival wants nothing more.
+                        self.set_event("survival click not applied; clicking again");
+                    }
+                }
                 Poll::Ready(Ok(settled)) => {
                     if settled {
                         self.needs_validate = true;
@@ -1738,6 +1774,9 @@ impl Gatherer {
                     }
                 }
                 Poll::Ready(Err(error)) => {
+                    if std::mem::take(&mut self.survival_tend) {
+                        self.survival.record_settled(false, &tick.cx);
+                    }
                     self.action_failure(error);
                 }
             },
@@ -1783,6 +1822,7 @@ impl Gatherer {
             },
             Active::Deposit(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Deposit(handle),
+                Poll::Ready(_) if self.survival_interrupting => self.finish_survival_transfer(),
                 Poll::Ready(Ok(deposited)) => {
                     self.retained.deposited = self.retained.deposited.saturating_add(deposited);
                     if deposited > 0 && self.retained.recovery == RecoveryState::Idle {
@@ -1804,6 +1844,7 @@ impl Gatherer {
             },
             Active::Withdraw(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Withdraw(handle),
+                Poll::Ready(_) if self.survival_interrupting => self.finish_survival_transfer(),
                 Poll::Ready(Ok(true)) => {
                     // Known limit (accepted 2026-10-15): this marks any
                     // completed withdrawal, not one that filled the pack. If a
@@ -1876,40 +1917,142 @@ impl Gatherer {
         true
     }
 
-    fn begin_eat(&mut self, tick: &mut NativeTick<'_>) -> bool {
-        let Some(food) = &self.prepared.supply.food else {
-            return false;
-        };
-        let snapshot = tick.cx.snapshot();
-        let (Some(stats), Some(inventory)) = (snapshot.stats(), snapshot.inventory()) else {
-            return false;
-        };
-        let Some(hp) = stats.value.iter().find(|stat| stat.index == 3) else {
-            return false;
-        };
-        let below = if self.settings().eat_below == 0 {
-            hp.base.saturating_add(1) / 2
-        } else {
-            self.settings().eat_below
-        };
-        let held = inventory
-            .value
-            .iter()
-            .filter(|row| row.def.id == food.id)
-            .map(|row| row.count)
-            .sum::<i32>();
-        if hp.effective > below || held == 0 || !self.fence.reserve(1) {
+    fn survival_eat_floor(&self, tick: &NativeTick<'_>) -> i32 {
+        if self.settings().eat_below != 0 {
+            return self.settings().eat_below;
+        }
+        tick.cx
+            .snapshot()
+            .stats()
+            .and_then(|stats| stats.value.iter().find(|stat| stat.index == 3))
+            .map_or(0, |hp| hp.base.saturating_add(1) / 2)
+    }
+
+    fn active_transfer_in_flight(&self) -> bool {
+        match &self.active {
+            Active::Deposit(handle) => handle
+                .inspect(|machine| machine.transfer_in_flight())
+                .unwrap_or(false),
+            Active::Withdraw(handle) => handle
+                .inspect(|machine| machine.transfer_in_flight())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    fn interrupt_active_transfer(&mut self, tick: &mut NativeTick<'_>) {
+        if self.survival_interrupting || !self.active_transfer_in_flight() {
+            return;
+        }
+        match &self.active {
+            Active::Deposit(handle) => tick.actions.interrupt(handle),
+            Active::Withdraw(handle) => tick.actions.interrupt(handle),
+            _ => return,
+        }
+        self.survival_interrupting = true;
+    }
+
+    fn finish_survival_transfer(&mut self) {
+        self.cancel_active();
+        self.needs_validate = true;
+        self.rebaseline_gameplay = true;
+        self.survival_deferred = true;
+        self.set_event("survival transfer interrupted at boundary");
+    }
+
+    fn begin_survival_click(&mut self, mut args: OneOpArgs, tick: &mut NativeTick<'_>) -> bool {
+        if !tick.cx.may_continue_this_tick() || !self.fence.reserve(1) {
+            self.survival_deferred = true;
             return false;
         }
-        let args = OneOpArgs::eat(&food.name, food.id, held, hp.effective);
+        if let Some(close) = OneOpArgs::close_modal_if_open(tick.cx.snapshot()) {
+            args = close;
+        }
+        let kind = args.kind;
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
             Ok(handle) => {
                 self.active = Active::Tend(handle);
-                self.set_event("eating at boundary");
+                self.survival_tend = true;
+                self.survival_deferred = false;
+                self.survival.record_sent(kind, &tick.cx);
+                self.set_event(match (kind, self.survival.report().decision) {
+                    (OneOpKind::CloseModal, _) => "closing a page before survival",
+                    (_, crate::survival::Decision::Drinking) => "drinking at boundary",
+                    _ => "eating at boundary",
+                });
             }
             Err(error) => self.action_failure(error),
         }
         true
+    }
+
+    fn poll_survival(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        let before = self.survival.report();
+        let was_parked = self.survival.parked().is_some();
+        let eat_floor = self.survival_eat_floor(tick);
+        let want = self.survival.want(&tick.cx, eat_floor);
+        if was_parked && self.survival.parked().is_none() {
+            // The un-park resumes work the way `Interrupt::Resume` does
+            // (design A6.5 item 2). The park was not idle gathering, so the
+            // no-yield window restarts too.
+            self.needs_validate = true;
+            self.rebaseline_gameplay = true;
+            self.scratch.last_yield_tick = tick.cx.evidence().tick;
+        }
+        let wanted = match want {
+            crate::survival::step::SurvivalWant::Nothing => {
+                if self.active_matches_none() {
+                    self.survival_deferred = false;
+                }
+                self.survival.parked().is_some()
+            }
+            crate::survival::step::SurvivalWant::Hold => {
+                self.survival_deferred = true;
+                true
+            }
+            crate::survival::step::SurvivalWant::Click(args) => {
+                if matches!(self.active, Active::Tend(_)) {
+                    self.survival_deferred = true;
+                } else if matches!(self.active, Active::Walk(_)) {
+                    self.survival.defer();
+                    self.survival_deferred = true;
+                } else if self.active_transfer_in_flight() {
+                    self.interrupt_active_transfer(tick);
+                    self.survival.defer();
+                    self.survival_deferred = true;
+                } else {
+                    if !self.active_matches_none() {
+                        self.cancel_active();
+                        self.needs_validate = true;
+                        self.rebaseline_gameplay = true;
+                    }
+                    self.begin_survival_click(args, tick);
+                }
+                true
+            }
+            crate::survival::step::SurvivalWant::Need(need) => {
+                if matches!(self.active, Active::Walk(_) | Active::Tend(_)) {
+                    self.survival_deferred = true;
+                    true
+                } else if self.active_transfer_in_flight() {
+                    self.interrupt_active_transfer(tick);
+                    self.survival_deferred = true;
+                    true
+                } else {
+                    if !self.active_matches_none() {
+                        self.cancel_active();
+                        self.needs_validate = true;
+                        self.rebaseline_gameplay = true;
+                    }
+                    self.survival.park(need, &tick.cx);
+                    true
+                }
+            }
+        };
+        if self.survival.report() != before {
+            self.dirty = true;
+        }
+        wanted
     }
 
     fn begin_idle(&mut self, tick: &mut NativeTick<'_>, handoff: bool) {
@@ -1923,9 +2066,6 @@ impl Gatherer {
                 }
                 Validation::Ready => self.needs_validate = false,
             }
-        }
-        if self.begin_eat(tick) {
-            return;
         }
         if self.trip != TripStep::Idle {
             self.begin_trip(tick);
@@ -2226,8 +2366,12 @@ impl Gatherer {
             cross: Vec::new().into_boxed_slice(),
             avoid: Box::new([]),
             protect: false,
-            food_guard: false,
-            allow: Default::default(),
+            food_guard: true,
+            cure_guard: false,
+            allow: crate::native::WalkAllow {
+                food: true,
+                ..Default::default()
+            },
         };
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {
@@ -2283,6 +2427,9 @@ impl Gatherer {
         }
         if self.paused {
             return ("paused", NativePhase::Waiting);
+        }
+        if self.survival.parked().is_some() {
+            return ("parked", NativePhase::Waiting);
         }
         if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
             return ("recovering", NativePhase::Working);
@@ -2351,6 +2498,7 @@ impl Gatherer {
         StatusData {
             skill: self.settings().skill_kind().name(),
             method: Arc::clone(&self.method),
+            survival: self.survival.report(),
             phase,
             area: Arc::<str>::from(self.area_label()),
             target: self.target.as_ref().map_or_else(
@@ -2470,6 +2618,9 @@ impl Script for Gatherer {
             self.needs_validate = true;
             self.rebaseline_gameplay = true;
             self.death = crate::native::death::DeathLatch::from_watermark(self.retained.death_seq);
+            self.survival = crate::survival::SurvivalStep::default();
+            self.survival_deferred = false;
+            self.survival_interrupting = false;
             self.set_event("run key changed; revalidating");
         }
         if !tick.cx.eligible {
@@ -2487,7 +2638,9 @@ impl Script for Gatherer {
         if self.observe_death(tick) {
             self.latch_recovery(tick);
         }
-        if self.failure.is_some() {
+        let recovering = matches!(self.retained.recovery, RecoveryState::Pending { .. });
+        let survival_wanted = !recovering && self.poll_survival(tick);
+        if self.failure.is_some() && !survival_wanted && self.survival.parked().is_none() {
             self.publish(tick);
             return Ok(ScriptFlow::Blocked(self.failure.clone().unwrap()));
         }
@@ -2509,7 +2662,26 @@ impl Script for Gatherer {
         }
         let bank_closed_this_tick = !bank_close_before_poll
             && self.last_event.as_ref() == "bank closed; validating equipment";
-        if self.active_matches_none() && tick.cx.may_continue_this_tick() && self.failure.is_none()
+        // Preserve the close observation unless survival starts a higher-priority operation.
+        if bank_closed_this_tick {
+            self.set_event("bank closed; validating equipment");
+        }
+        if handoff
+            && self.active_matches_none()
+            && self.survival_deferred
+            && tick.cx.may_continue_this_tick()
+        {
+            self.survival_deferred = false;
+            self.poll_survival(tick);
+        }
+        if self.survival.parked().is_some() {
+            self.publish(tick);
+            return Ok(ScriptFlow::Continue);
+        }
+        if self.active_matches_none()
+            && !self.survival_deferred
+            && tick.cx.may_continue_this_tick()
+            && self.failure.is_none()
         {
             let disposal_due = tick.cx.snapshot().stock().pack_full() == Some(true);
             if let Some(revision) = self.apply_pending(disposal_due) {
@@ -2518,11 +2690,6 @@ impl Script for Gatherer {
             // Even at expiry, re-observe first: a freshly regrown resource
             // takes precedence over waiting or widening.
             self.begin_idle(tick, handoff);
-        }
-        // Same-tick validation/return setup must not hide the close observation
-        // before this frame's status is published.
-        if bank_closed_this_tick {
-            self.set_event("bank closed; validating equipment");
         }
         if self.retained.recoveries != recoveries {
             self.set_event(&format!("recovered after death {}", self.retained.deaths));
@@ -2584,6 +2751,9 @@ impl Script for Gatherer {
             self.fail("manual-movement", "cancelled by user input");
         }
     }
+    fn waits_for_evidence(&self) -> bool {
+        self.survival.parked().is_some() && self.active_matches_none()
+    }
 
     fn on_stop(&mut self, _reason: StopReason) {
         self.cancel_active();
@@ -2610,7 +2780,68 @@ mod switch_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::quester::families::tests::with_tick;
+    use api::snapshot::{ItemActionFamily, ItemContainer};
     use std::mem::size_of;
+
+    fn survival_condition(
+        poison: api::condition::PoisonState,
+        hp: u8,
+        food: api::condition::FoodSummary,
+    ) -> api::condition::BotCondition {
+        api::condition::BotCondition {
+            tick: 20,
+            session: api::condition::SessionMark::Live,
+            hp,
+            hp_max: 99,
+            hp_known: true,
+            poison,
+            food,
+            cures: api::condition::CureDoses::default(),
+        }
+    }
+
+    fn accept_last_interaction(tick: &mut NativeTick<'_>) {
+        let evidence = tick.cx.evidence();
+        let authority = tick
+            .cx
+            .ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .last()
+            .unwrap()
+            .authority();
+        tick.cx.ledger.as_mut().unwrap().complete_interaction(
+            &authority,
+            crate::native::InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence,
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+    }
+
+    fn antipoison_item(slot: i32) -> ItemView {
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+        let id = crate::combat::guard::shared_tables()
+            .unwrap()
+            .potion(crate::combat::tables::PotionKind::Antipoison)
+            .unwrap()
+            .doses[0]
+            .unwrap()
+            .id;
+        ItemView {
+            def: crate::quester::families::tests::def(id, "Antipoison"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 0,
+        }
+    }
 
     #[test]
     fn gatherer_names_incomplete_search_as_non_risk_failure() {
@@ -2738,10 +2969,17 @@ mod tests {
         // Quest-list retry state adds 24 B to the 64 B hold-resume adapter.
         // Both resume paths reuse the same replay allocation.
         assert_eq!(size_of::<Walk>(), 88, "Walk inline layout changed");
+        // SURVIVAL-DESIGN-1022/design-final.md:A11:745 allows 192 B for
+        // SurvivalStep. The prior 1,024 B bound plus 192 B gives 1,216 B.
         assert!(
-            size_of::<Gatherer>() <= 1024,
+            size_of::<Gatherer>() <= 1216,
             "Gatherer={} exceeds its inline budget",
             size_of::<Gatherer>()
+        );
+        assert!(
+            size_of::<crate::survival::SurvivalStep>() <= 192,
+            "SurvivalStep={} exceeds its 192 B bound",
+            size_of::<crate::survival::SurvivalStep>()
         );
         assert!(size_of::<GatherRetained>() <= 80);
         println!(
@@ -2830,6 +3068,8 @@ mod tests {
             panic!("the resource return must arm a walk");
         };
         assert_ne!(request.target, gatherer.area.unwrap().anchor);
+        assert!(request.food_guard);
+        assert!(request.allow.food);
         assert_eq!(
             request.radius, 0,
             "r40 bounds gathering; the router selects an exact observation goal"
@@ -3066,9 +3306,16 @@ mod tests {
 
     impl BaitFixture {
         fn new() -> Self {
+            Self::with_eat_below(0)
+        }
+
+        fn with_eat_below(eat_below: i32) -> Self {
             use crate::quester::families::tests::{def, local_player};
             use api::bank_memory::{BankMemory, ObservedAt};
-            use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, WorldStateView};
+            use api::snapshot::{
+                GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer,
+                WorldStateView,
+            };
             let selected =
                 api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
             let mut bag = crate::native::SettingsBag::new();
@@ -3077,6 +3324,7 @@ mod tests {
                 ("fishingMethod", serde_json::json!("fishing.saltfish.op3")),
                 ("baitTarget", serde_json::json!(10)),
                 ("disposition", serde_json::json!("Bank")),
+                ("eatBelow", serde_json::json!(eat_below)),
             ] {
                 bag.insert(key.into(), value);
             }
@@ -3129,6 +3377,16 @@ mod tests {
             snapshot.seed_equipment(vec![]);
             snapshot.seed_locs(vec![]);
             snapshot.seed_npcs(vec![]);
+            snapshot.seed_players(Vec::new());
+            snapshot.seed_projectiles(Vec::new());
+            snapshot.seed_hitmarks(HitmarksView {
+                marks: [HitmarkView {
+                    value: 0,
+                    kind: 0,
+                    cycle: 0,
+                }; 4],
+                loop_cycle: 0,
+            });
             let mut session = BankMemory::default();
             session.observe(
                 &[],
@@ -3170,6 +3428,91 @@ mod tests {
                 self.prepared.supply.bait.as_ref().unwrap().name
             )
         }
+    }
+
+    #[test]
+    fn gatherer_eat_below_floor_unchanged() {
+        use crate::quester::families::tests::{def, with_tick};
+        use api::condition::{FoodSummary, PoisonState};
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
+
+        let fixture = BaitFixture::with_eat_below(1);
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.needs_validate = false;
+        gatherer.tool = ToolState {
+            id: 307,
+            worn: false,
+        };
+        let mut snapshot = fixture.snapshot;
+        let food_id = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .unwrap()
+            .item_by_alias("lobster")
+            .unwrap()
+            .id;
+        snapshot.seed_stats(vec![
+            StatView {
+                index: 10,
+                name: "fishing".into(),
+                base: 99,
+                effective: 99,
+                xp: 0,
+                used: true,
+            },
+            StatView {
+                index: 3,
+                name: "hitpoints".into(),
+                base: 99,
+                effective: 1,
+                xp: 0,
+                used: true,
+            },
+        ]);
+        snapshot.seed_inventory(
+            vec![
+                ItemView {
+                    def: def(307, "Fishing rod"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: 0,
+                    count: 1,
+                    actions: Vec::new(),
+                    component_id: 3214,
+                },
+                ItemView {
+                    def: def(food_id, "Lobster"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: 1,
+                    count: 1,
+                    actions: vec![Some("Eat".into())],
+                    component_id: 3214,
+                },
+            ],
+            28,
+        );
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.condition = Some(survival_condition(
+                PoisonState::Clear,
+                1,
+                FoodSummary {
+                    ordinary_count: 1,
+                    ordinary_heal_total: 12,
+                    best_heal: 12,
+                    smallest_heal: 12,
+                    combo_count: 0,
+                    more_kinds: false,
+                },
+            ));
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+            assert!(matches!(
+                tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                Some(crate::native::HostEffect::Interaction(
+                    crate::interact::InteractReq::Held { action, .. }
+                )) if action == "Eat"
+            ));
+        });
     }
 
     /// A supply-only bait trip with a held Strange box stack and free slots
@@ -3383,6 +3726,1158 @@ mod tests {
             "bank-unavailable: bank did not open after 3 attempts"
         );
     }
+    #[test]
+    fn gatherer_cancels_open_retry_for_drink() {
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+
+        let mut fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let bank_tile = WorldTile {
+            x: 3245,
+            z: 3423,
+            level: 0,
+        };
+        let access = Arc::new(crate::bank::BankStandAccess {
+            bank: api::named_banks::NamedBank::new("Draynor", bank_tile),
+            stand_tile: bank_tile,
+            kind: crate::bank::AccessKind::Booth,
+            stand_op: 2,
+            name: Some(Arc::from("Bank booth")),
+            choose: None,
+        });
+        gatherer.trip = TripStep::Open;
+        gatherer.scratch.bank_open_attempts = 1;
+        gatherer.selected_bank = Some(SelectedBank {
+            bank_index: 0,
+            access_tile: bank_tile,
+            kind: PickKind::Reachable,
+            access: Some(access),
+        });
+
+        let dose_id = crate::combat::guard::shared_tables()
+            .unwrap()
+            .potion(crate::combat::tables::PotionKind::Antipoison)
+            .unwrap()
+            .doses[0]
+            .unwrap()
+            .id;
+        let dose = ItemView {
+            def: crate::quester::families::tests::def(dose_id, "Antipoison"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 1,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 0,
+        };
+        fixture.snapshot.seed_inventory(
+            vec![
+                ItemView {
+                    def: crate::quester::families::tests::def(307, "Fishing rod"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: 0,
+                    count: 1,
+                    actions: Vec::new(),
+                    component_id: 3214,
+                },
+                dose,
+            ],
+            28,
+        );
+        fixture.snapshot.seed_tick(20);
+
+        let mut ledger = None;
+        with_tick(&fixture.snapshot, &mut ledger, 1, |tick| {
+            gatherer.begin_trip(tick);
+            gatherer.poll_active(tick);
+        });
+        assert_eq!(gatherer.scratch.bank_open_attempts, 2);
+        assert!(matches!(gatherer.active, Active::Open(_)));
+
+        with_tick(&fixture.snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(BotCondition {
+                tick: 20,
+                session: SessionMark::Live,
+                hp: 5,
+                hp_max: 99,
+                hp_known: true,
+                poison: PoisonState::Onset {
+                    since: 20,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                food: FoodSummary::default(),
+                cures: CureDoses::default(),
+            });
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::Drinking
+        );
+        assert!(matches!(gatherer.active, Active::Tend(_)));
+        assert!(matches!(
+            ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::interact::InteractReq::Held { action, .. }
+            )) if action == "Drink"
+        ));
+    }
+    #[test]
+    fn gatherer_interrupts_deposit_at_transfer_boundary() {
+        use crate::quester::families::tests::{def, with_tick};
+        use api::condition::{FoodSummary, PoisonState};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let mut snapshot = fixture.snapshot;
+        let ids = [201, 202, 203];
+        let mut inventory: Vec<_> = ids
+            .iter()
+            .enumerate()
+            .map(|(slot, id)| ItemView {
+                def: def(*id, "Raw fish"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: i32::try_from(slot).unwrap(),
+                count: 1,
+                actions: Vec::new(),
+                component_id: 3214,
+            })
+            .collect();
+        inventory.push(antipoison_item(3));
+        let bank_side: Vec<_> = inventory
+            .iter()
+            .cloned()
+            .map(|mut item| {
+                item.action_family = ItemActionFamily::Component;
+                item.actions = vec![Some("Deposit-All".into())];
+                item
+            })
+            .collect();
+        snapshot.seed_inventory(inventory, 28);
+        snapshot.seed_bank_observation(10, 1, Some(Vec::new()), bank_side);
+        let clear = || survival_condition(PoisonState::Clear, 60, FoodSummary::default());
+        let onset = || {
+            survival_condition(
+                PoisonState::Onset {
+                    since: 20,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                5,
+                FoodSummary::default(),
+            )
+        };
+        let mut ledger = None;
+
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.active = Active::Deposit(
+                tick.actions
+                    .begin::<bank::Deposit>(
+                        bank::DepositArgs {
+                            products: Arc::from(ids),
+                            keep: Arc::<[i32]>::from([]),
+                            access: None,
+                        },
+                        &mut tick.cx,
+                    )
+                    .unwrap(),
+            );
+            tick.cx.condition = Some(clear());
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+            assert!(matches!(
+                tick.cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
+                Some(crate::native::HostEffect::Interaction(
+                    crate::interact::InteractReq::InvButton { id: 201, .. }
+                ))
+            ));
+            accept_last_interaction(tick);
+        });
+        let outbox_len = ledger.as_ref().unwrap().outbox.len();
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(clear());
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+            assert_eq!(
+                tick.cx.ledger.as_ref().unwrap().outbox.len(),
+                outbox_len,
+                "the in-flight deposit must not send another click"
+            );
+        });
+        assert!(gatherer.active_transfer_in_flight());
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.condition = Some(clear());
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.active_transfer_in_flight());
+
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.cx.condition = Some(onset());
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival_interrupting);
+        assert!(gatherer.active_transfer_in_flight());
+        // The drink waits for the transfer's boundary, so the status row shows
+        // the need, not a drink in progress (design A6.6; Argon review
+        // finding 13).
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::Needed
+        );
+        assert_eq!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|action| {
+                    matches!(
+                        &action.effect,
+                        crate::native::HostEffect::Interaction(
+                            crate::interact::InteractReq::InvButton { id: 201..=203, .. }
+                        )
+                    )
+                })
+                .count(),
+            1,
+            "the interrupted Deposit wrapper must not click another product before settling"
+        );
+
+        let product = |id, count, container, slot| ItemView {
+            def: def(id, "Raw fish"),
+            container,
+            action_family: if container == ItemContainer::Bank {
+                ItemActionFamily::Component
+            } else {
+                ItemActionFamily::Held
+            },
+            slot,
+            count,
+            actions: Vec::new(),
+            component_id: 3214,
+        };
+        snapshot.seed_inventory(
+            vec![
+                product(201, 0, ItemContainer::Inventory, 0),
+                product(202, 1, ItemContainer::Inventory, 1),
+                product(203, 1, ItemContainer::Inventory, 2),
+                antipoison_item(3),
+            ],
+            28,
+        );
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![product(201, 1, ItemContainer::Bank, 0)]),
+            Vec::new(),
+        );
+        with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.cx.condition = Some(onset());
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert!(matches!(
+            outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::interact::InteractReq::Held { action, .. }
+            )) if action == "Drink"
+        ));
+        assert!(!gatherer.survival_interrupting);
+    }
+
+    #[test]
+    fn gatherer_interrupts_withdraw_at_transfer_boundary() {
+        use crate::quester::families::tests::{def, with_tick};
+        use api::condition::{FoodSummary, PoisonState};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let mut snapshot = fixture.snapshot;
+        let bank_item = |id, name, count, slot| ItemView {
+            def: def(id, name),
+            container: ItemContainer::Bank,
+            action_family: ItemActionFamily::Component,
+            slot,
+            count,
+            actions: vec![Some("Withdraw-1".into()), Some("Withdraw-X".into())],
+            component_id: 7,
+        };
+        snapshot.seed_inventory(vec![antipoison_item(0)], 28);
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![
+                bank_item(301, "Bait", 5, 0),
+                bank_item(302, "Feather", 3, 1),
+            ]),
+            Vec::new(),
+        );
+        let clear = || survival_condition(PoisonState::Clear, 60, FoodSummary::default());
+        let onset = || {
+            survival_condition(
+                PoisonState::Onset {
+                    since: 20,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                5,
+                FoodSummary::default(),
+            )
+        };
+        let withdrawals = Arc::<[bank::Withdrawal]>::from([
+            bank::Withdrawal {
+                id: 301,
+                name: Arc::from("Bait"),
+                target: 2,
+            },
+            bank::Withdrawal {
+                id: 302,
+                name: Arc::from("Feather"),
+                target: 1,
+            },
+        ]);
+        let mut ledger = None;
+
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.active = Active::Withdraw(
+                tick.actions
+                    .begin::<bank::Withdraw>(
+                        bank::WithdrawArgs {
+                            withdrawals: Arc::clone(&withdrawals),
+                            access: None,
+                        },
+                        &mut tick.cx,
+                    )
+                    .unwrap(),
+            );
+            tick.cx.condition = Some(clear());
+            gatherer.tick(tick).unwrap();
+            assert!(matches!(
+                tick.cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
+                Some(crate::native::HostEffect::Interaction(
+                    crate::interact::InteractReq::SetNoteMode { on: false, .. }
+                ))
+            ));
+            accept_last_interaction(tick);
+        });
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(clear());
+            gatherer.tick(tick).unwrap();
+            assert!(matches!(
+                tick.cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
+                Some(crate::native::HostEffect::Interaction(
+                    crate::interact::InteractReq::WithdrawX {
+                        bank_item_id: 301,
+                        count: 2,
+                        ..
+                    }
+                ))
+            ));
+            accept_last_interaction(tick);
+        });
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.condition = Some(clear());
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.active_transfer_in_flight());
+
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.cx.condition = Some(onset());
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival_interrupting);
+        assert!(gatherer.active_transfer_in_flight());
+        let withdraw_clicks = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    crate::native::HostEffect::Interaction(
+                        crate::interact::InteractReq::WithdrawX { .. }
+                    )
+                )
+            })
+            .count();
+        assert_eq!(
+            withdraw_clicks, 1,
+            "the interrupted Withdraw wrapper must not click another bank row before settling"
+        );
+
+        snapshot.seed_inventory(
+            vec![
+                antipoison_item(0),
+                ItemView {
+                    def: def(301, "Bait"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: 1,
+                    count: 2,
+                    actions: Vec::new(),
+                    component_id: 3214,
+                },
+            ],
+            28,
+        );
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![
+                bank_item(301, "Bait", 3, 0),
+                bank_item(302, "Feather", 3, 1),
+            ]),
+            Vec::new(),
+        );
+        with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.cx.condition = Some(onset());
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert!(matches!(
+            outbox.last().map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::interact::InteractReq::Held { action, .. }
+            )) if action == "Drink"
+        ));
+        assert!(!gatherer.survival_interrupting);
+    }
+    #[test]
+    fn need_does_not_block_interrupted_transfer_polling_to_boundary() {
+        use crate::native::{NativePhase, ScriptFlow};
+        use crate::quester::families::tests::{def, with_tick};
+        use api::condition::{FoodSummary, PoisonState};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let mut snapshot = fixture.snapshot;
+        let bank_item = |id, name, count, slot| ItemView {
+            def: def(id, name),
+            container: ItemContainer::Bank,
+            action_family: ItemActionFamily::Component,
+            slot,
+            count,
+            actions: vec![Some("Withdraw-1".into()), Some("Withdraw-X".into())],
+            component_id: 7,
+        };
+        snapshot.seed_bank_observation(
+            10,
+            1,
+            Some(vec![
+                bank_item(301, "Bait", 5, 0),
+                bank_item(302, "Feather", 3, 1),
+            ]),
+            Vec::new(),
+        );
+        let clear = || survival_condition(PoisonState::Clear, 60, FoodSummary::default());
+        let need = || {
+            survival_condition(
+                PoisonState::Onset {
+                    since: 20,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                5,
+                FoodSummary::default(),
+            )
+        };
+        let withdrawals = Arc::<[bank::Withdrawal]>::from([
+            bank::Withdrawal {
+                id: 301,
+                name: Arc::from("Bait"),
+                target: 2,
+            },
+            bank::Withdrawal {
+                id: 302,
+                name: Arc::from("Feather"),
+                target: 1,
+            },
+        ]);
+        let mut ledger = None;
+
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.active = Active::Withdraw(
+                tick.actions
+                    .begin::<bank::Withdraw>(
+                        bank::WithdrawArgs {
+                            withdrawals: Arc::clone(&withdrawals),
+                            access: None,
+                        },
+                        &mut tick.cx,
+                    )
+                    .unwrap(),
+            );
+            tick.cx.condition = Some(clear());
+            gatherer.tick(tick).unwrap();
+            accept_last_interaction(tick);
+        });
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(clear());
+            gatherer.tick(tick).unwrap();
+            assert!(matches!(
+                tick.cx
+                    .ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .last()
+                    .map(|action| &action.effect),
+                Some(crate::native::HostEffect::Interaction(
+                    crate::interact::InteractReq::WithdrawX {
+                        bank_item_id: 301,
+                        count: 2,
+                        ..
+                    }
+                ))
+            ));
+            accept_last_interaction(tick);
+        });
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.condition = Some(clear());
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.active_transfer_in_flight());
+
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            tick.cx.condition = Some(need());
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            assert!(matches!(gatherer.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+        assert!(gatherer.active_transfer_in_flight());
+        assert!(gatherer.survival_interrupting);
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::Needed
+        );
+
+        let mut inventory = snapshot.inventory().to_vec();
+        inventory.push(ItemView {
+            def: def(301, "Bait"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 1,
+            count: 2,
+            actions: Vec::new(),
+            component_id: 3214,
+        });
+        snapshot.seed_inventory(inventory, 28);
+        snapshot.seed_bank_observation(
+            10,
+            2,
+            Some(vec![
+                bank_item(301, "Bait", 3, 0),
+                bank_item(302, "Feather", 3, 1),
+            ]),
+            Vec::new(),
+        );
+        with_tick(&snapshot, &mut ledger, 5, |tick| {
+            tick.cx.condition = Some(need());
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            assert!(matches!(gatherer.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+
+        assert!(!gatherer.active_transfer_in_flight());
+        assert!(!gatherer.survival_interrupting);
+        assert_eq!(gatherer.phase(), ("parked", NativePhase::Waiting));
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::Parked
+        );
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert!(
+            !outbox.iter().any(|action| matches!(
+                &action.effect,
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
+                    bank_item_id: 302,
+                    ..
+                })
+            )),
+            "the boundary must not begin the second withdrawal"
+        );
+    }
+
+    #[test]
+    fn parked_gatherer_publishes_waiting_continue_status_and_resumes_parked() {
+        use crate::native::{Interrupt, NativeOutput, NativePhase, ScriptFlow, ScriptStatus};
+        use crate::quester::families::tests::with_tick_output;
+        use api::condition::{FoodSummary, PoisonState};
+
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
+            }
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
+        }
+
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let snapshot = fixture.snapshot;
+        let mut ledger = None;
+        let mut output = Capture::default();
+        let condition = survival_condition(
+            PoisonState::Onset {
+                since: 20,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            5,
+            FoodSummary::default(),
+        );
+
+        with_tick_output(&snapshot, &mut ledger, 1, &mut output, |tick| {
+            tick.cx.condition = Some(condition);
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            assert!(matches!(gatherer.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+        assert_eq!(gatherer.phase(), ("parked", NativePhase::Waiting));
+        assert!(gatherer.waits_for_evidence());
+        assert!(gatherer.survival.parked().is_some());
+        let status = output.0.last().expect("parked status is published");
+        assert_eq!(status.phase, NativePhase::Waiting);
+        assert!(status.failure.is_none());
+        assert_eq!(gatherer.status_data(None).phase, "parked");
+
+        gatherer.interrupt(Interrupt::Pause);
+        assert_eq!(gatherer.phase(), ("paused", NativePhase::Waiting));
+        gatherer.interrupt(Interrupt::Resume);
+        assert_eq!(gatherer.phase(), ("parked", NativePhase::Waiting));
+        assert!(gatherer.survival.parked().is_some());
+
+        with_tick_output(&snapshot, &mut ledger, 2, &mut output, |tick| {
+            tick.cx.condition = Some(condition);
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            assert!(matches!(gatherer.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+        assert_eq!(gatherer.phase(), ("parked", NativePhase::Waiting));
+        assert!(gatherer.waits_for_evidence());
+        let status = output
+            .0
+            .last()
+            .expect("continued parked status is published");
+        assert_eq!(status.phase, NativePhase::Waiting);
+        assert!(status.failure.is_none());
+        assert_eq!(gatherer.status_data(None).phase, "parked");
+    }
+
+    #[test]
+    fn status_row_shows_needed_under_never() {
+        use crate::native::{NativeOutput, ScriptFlow, ScriptStatus};
+        use crate::quester::families::tests::with_tick_output;
+        use api::condition::PoisonState;
+
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
+            }
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
+        }
+
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let snapshot = fixture.snapshot;
+        let mut ledger = None;
+        let mut output = Capture::default();
+        let condition = survival_condition(
+            PoisonState::Onset {
+                since: 20,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            5,
+            api::condition::FoodSummary::default(),
+        );
+
+        with_tick_output(&snapshot, &mut ledger, 1, &mut output, |tick| {
+            tick.cx.condition = Some(condition);
+            tick.cx.cure_poison = crate::survival::CurePoison::Never;
+            assert!(matches!(gatherer.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+
+        let status = output.0.last().expect("status is published");
+        assert_eq!(
+            status.survival.to_string(),
+            "Needed: poisoned: would die; needs antipoison or 1 food"
+        );
+        assert!(gatherer.survival.parked().is_none());
+    }
+    #[test]
+    fn runner_tick_poisoned_frame_allocates_nothing() {
+        use crate::quester::families::tests::with_tick;
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.needs_validate = false;
+        let snapshot = fixture.snapshot;
+        let mut ledger = None;
+        let condition = |tick: u64| BotCondition {
+            tick: u32::try_from(tick).unwrap(),
+            session: SessionMark::Live,
+            hp: 99,
+            hp_max: 99,
+            hp_known: true,
+            poison: PoisonState::Poisoned {
+                per_tick: 1,
+                last_mark: 1,
+                hit_since_mark: false,
+            },
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        };
+
+        for tick in 1..=8 {
+            with_tick(&snapshot, &mut ledger, tick, |native| {
+                native.cx.condition = Some(condition(tick));
+                native.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+                gatherer.tick(native).unwrap();
+            });
+        }
+        let allocations = allocation_counter::measure(|| {
+            for tick in 9..=1008 {
+                with_tick(&snapshot, &mut ledger, tick, |native| {
+                    native.cx.condition = Some(condition(tick));
+                    native.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+                    gatherer.tick(native).unwrap();
+                });
+            }
+        })
+        .count_total;
+        assert_eq!(allocations, 0, "poisoned runner ticks allocated");
+        assert!(gatherer.survival.parked().is_none());
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::None
+        );
+    }
+
+    #[test]
+    fn runner_tick_parked_frame_allocates_nothing() {
+        use crate::native::{NativePhase, ScriptFlow};
+        use crate::quester::families::tests::with_tick;
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.needs_validate = false;
+        let snapshot = fixture.snapshot;
+        let mut ledger = None;
+        let condition = |tick: u64| BotCondition {
+            tick: u32::try_from(tick).unwrap(),
+            session: SessionMark::Live,
+            hp: 5,
+            hp_max: 99,
+            hp_known: true,
+            poison: PoisonState::Onset {
+                since: 1,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        };
+
+        with_tick(&snapshot, &mut ledger, 1, |native| {
+            native.cx.condition = Some(condition(1));
+            native.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            assert!(matches!(
+                gatherer.tick(native).unwrap(),
+                ScriptFlow::Continue
+            ));
+        });
+        assert_eq!(gatherer.phase(), ("parked", NativePhase::Waiting));
+        assert!(gatherer.waits_for_evidence());
+        let allocations = allocation_counter::measure(|| {
+            for tick in 2..=1001 {
+                with_tick(&snapshot, &mut ledger, tick, |native| {
+                    native.cx.condition = Some(condition(tick));
+                    native.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+                    assert!(matches!(
+                        gatherer.tick(native).unwrap(),
+                        ScriptFlow::Continue
+                    ));
+                });
+            }
+        })
+        .count_total;
+        assert_eq!(allocations, 0, "parked runner ticks allocated");
+        assert_eq!(gatherer.phase(), ("parked", NativePhase::Waiting));
+        assert!(gatherer.waits_for_evidence());
+        assert!(gatherer.survival.parked().is_some());
+    }
+
+    #[test]
+    fn parked_runner_unparks_at_next_exact_fire_without_rescue() {
+        use crate::quester::families::tests::with_tick;
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::snapshot::StatView;
+
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: crate::quester::families::tests::def(307, "Fishing rod"),
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 3214,
+            }],
+            28,
+        );
+        let condition = |poison, hp, tick| BotCondition {
+            tick,
+            session: SessionMark::Live,
+            hp,
+            hp_max: 90,
+            hp_known: true,
+            poison,
+            food: FoodSummary::default(),
+            cures: CureDoses::default(),
+        };
+        let set_hp = |snapshot: &mut api::snapshot::GameSnapshot, hp| {
+            snapshot.seed_stats(vec![StatView {
+                index: 3,
+                name: "hitpoints".into(),
+                base: 90,
+                effective: hp,
+                xp: 0,
+                used: true,
+            }]);
+        };
+        let mut ledger = None;
+
+        set_hp(&mut snapshot, 90);
+        with_tick(&snapshot, &mut ledger, 20, |tick| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Onset {
+                    since: 20,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                90,
+                20,
+            ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        set_hp(&mut snapshot, 84);
+        with_tick(&snapshot, &mut ledger, 50, |tick| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Poisoned {
+                    per_tick: 6,
+                    last_mark: 50,
+                    hit_since_mark: false,
+                },
+                84,
+                50,
+            ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        set_hp(&mut snapshot, 78);
+        with_tick(&snapshot, &mut ledger, 80, |tick| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Poisoned {
+                    per_tick: 6,
+                    last_mark: 80,
+                    hit_since_mark: false,
+                },
+                78,
+                80,
+            ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        set_hp(&mut snapshot, 73);
+        with_tick(&snapshot, &mut ledger, 110, |tick| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Poisoned {
+                    per_tick: 5,
+                    last_mark: 110,
+                    hit_since_mark: false,
+                },
+                73,
+                110,
+            ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_none());
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::Needed
+        );
+        assert!(gatherer.survival.report().need.is_none());
+        assert!(!gatherer.survival_deferred);
+        // The un-park resumes as `Interrupt::Resume` does (design A6.5 item 2;
+        // Argon review finding 10): the park did not count against the
+        // fishing no-yield window (800 ticks, `WAIT_GAMEPLAY_TICKS`) or the
+        // idle gameplay baseline.
+        assert_eq!(gatherer.scratch.last_yield_tick, 110);
+        assert!(gatherer.rebaseline_gameplay || gatherer.last_gameplay_tick == 110);
+    }
+
+    #[test]
+    fn parked_runner_with_food_unparks_at_fire_eight() {
+        use crate::quester::families::tests::{def, with_tick};
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
+
+        fn seed(snapshot: &mut GameSnapshot, lobster_id: i32, hp: u8, food_count: u8) {
+            snapshot.seed_stats(vec![StatView {
+                index: 3,
+                name: "hitpoints".into(),
+                base: 10,
+                effective: i32::from(hp),
+                xp: 0,
+                used: true,
+            }]);
+            let mut inventory = vec![ItemView {
+                def: def(307, "Fishing rod"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 3214,
+            }];
+            if food_count > 0 {
+                inventory.push(ItemView {
+                    def: def(lobster_id, "Lobster"),
+                    container: ItemContainer::Inventory,
+                    action_family: ItemActionFamily::Held,
+                    slot: 1,
+                    count: i32::from(food_count),
+                    actions: vec![Some("Eat".into())],
+                    component_id: 3214,
+                });
+            }
+            snapshot.seed_inventory(inventory, 28);
+        }
+        fn condition(poison: PoisonState, hp: u8, food_count: u8) -> BotCondition {
+            BotCondition {
+                tick: 20,
+                session: SessionMark::Live,
+                hp,
+                hp_max: 10,
+                hp_known: true,
+                poison,
+                food: FoodSummary {
+                    ordinary_count: food_count,
+                    ordinary_heal_total: u16::from(food_count) * 12,
+                    best_heal: 12,
+                    smallest_heal: 12,
+                    combo_count: 0,
+                    more_kinds: false,
+                },
+                cures: CureDoses::default(),
+            }
+        }
+
+        let fixture = BaitFixture::with_eat_below(1);
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let mut snapshot = fixture.snapshot;
+        let lobster_id = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .unwrap()
+            .item_by_alias("lobster")
+            .unwrap()
+            .id;
+        let mut ledger = None;
+        let onset = PoisonState::Onset {
+            since: 20,
+            q: Some(11),
+            hit_since_line: false,
+        };
+        seed(&mut snapshot, lobster_id, 10, 9);
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.condition = Some(condition(onset, 10, 9));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        let eat = |tick: &mut NativeTick<'_>, hp, count, per_tick, last_mark| {
+            tick.cx.condition = Some(condition(
+                PoisonState::Poisoned {
+                    per_tick,
+                    last_mark,
+                    hit_since_mark: false,
+                },
+                hp,
+                count,
+            ));
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+        };
+        let expected_eat = |tick: &mut NativeTick<'_>| {
+            assert!(matches!(
+                tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
+                Some(crate::native::HostEffect::Interaction(
+                    crate::interact::InteractReq::Held { action, .. }
+                )) if action == "Eat"
+            ));
+            accept_last_interaction(tick);
+        };
+
+        seed(&mut snapshot, lobster_id, 5, 9);
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            eat(tick, 5, 9, 5, 50);
+            gatherer.tick(tick).unwrap();
+            expected_eat(tick);
+        });
+        assert!(gatherer.survival.parked().is_some());
+        seed(&mut snapshot, lobster_id, 10, 8);
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            eat(tick, 10, 8, 5, 50);
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        seed(&mut snapshot, lobster_id, 5, 8);
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            eat(tick, 5, 8, 5, 80);
+            gatherer.tick(tick).unwrap();
+            expected_eat(tick);
+        });
+        seed(&mut snapshot, lobster_id, 10, 7);
+        with_tick(&snapshot, &mut ledger, 5, |tick| {
+            eat(tick, 10, 7, 5, 80);
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        seed(&mut snapshot, lobster_id, 6, 7);
+        with_tick(&snapshot, &mut ledger, 6, |tick| {
+            eat(tick, 6, 7, 4, 110);
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        seed(&mut snapshot, lobster_id, 2, 7);
+        with_tick(&snapshot, &mut ledger, 7, |tick| {
+            eat(tick, 2, 7, 4, 140);
+            gatherer.tick(tick).unwrap();
+            expected_eat(tick);
+        });
+        seed(&mut snapshot, lobster_id, 10, 6);
+        with_tick(&snapshot, &mut ledger, 8, |tick| {
+            eat(tick, 10, 6, 4, 140);
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        seed(&mut snapshot, lobster_id, 6, 6);
+        with_tick(&snapshot, &mut ledger, 9, |tick| {
+            eat(tick, 6, 6, 4, 170);
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        seed(&mut snapshot, lobster_id, 2, 6);
+        with_tick(&snapshot, &mut ledger, 10, |tick| {
+            eat(tick, 2, 6, 4, 200);
+            gatherer.tick(tick).unwrap();
+            expected_eat(tick);
+        });
+        seed(&mut snapshot, lobster_id, 10, 5);
+        with_tick(&snapshot, &mut ledger, 11, |tick| {
+            eat(tick, 10, 5, 4, 200);
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        seed(&mut snapshot, lobster_id, 6, 5);
+        with_tick(&snapshot, &mut ledger, 12, |tick| {
+            eat(tick, 6, 5, 4, 230);
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        seed(&mut snapshot, lobster_id, 3, 5);
+        with_tick(&snapshot, &mut ledger, 13, |tick| {
+            eat(tick, 3, 5, 3, 260);
+            gatherer.tick(tick).unwrap();
+            expected_eat(tick);
+        });
+        assert!(gatherer.survival.parked().is_some());
+
+        seed(&mut snapshot, lobster_id, 10, 4);
+        with_tick(&snapshot, &mut ledger, 14, |tick| {
+            eat(tick, 10, 4, 3, 260);
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(gatherer.survival.parked().is_none());
+        assert_eq!(
+            snapshot
+                .inventory()
+                .iter()
+                .find(|row| row.def.id == lobster_id)
+                .unwrap()
+                .count,
+            4
+        );
+    }
+
     #[test]
     fn gatherer_caps_timed_out_close_attempts() {
         use crate::quester::families::tests::with_tick;
@@ -4171,6 +5666,8 @@ mod tests {
             panic!("the retreat must arm a walk");
         };
         assert_eq!(request.target, stand);
+        assert!(request.food_guard);
+        assert!(request.allow.food);
         assert_eq!(
             request.options.allow_danger_zones,
             crate::native::WalkBit::Inherit

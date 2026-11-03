@@ -517,6 +517,7 @@ fn walk_request(required_after: api::quest_progress::EvidenceStamp) -> WalkReque
         avoid: Box::default(),
         protect: false,
         food_guard: true,
+        cure_guard: false,
         allow: WalkAllow {
             prayer: true,
             food: true,
@@ -613,6 +614,7 @@ fn run_survival_live_cell(scenario: &str, evidence_prefix: &str, stop_after_mirr
         oracle_result.err(),
     );
 }
+
 fn run_guard_cure_live(
     account: &str,
     vault_path: &Path,

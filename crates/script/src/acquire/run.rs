@@ -67,6 +67,7 @@ pub struct AcquireRun {
     close_attempts: u8,
     deposit_done: bool,
     cancelled: bool,
+    interrupted: bool,
     complete: bool,
     withdrew_any: bool,
     withdrawal_before: i64,
@@ -135,6 +136,7 @@ impl AcquireRun {
             close_attempts: 0,
             deposit_done: false,
             cancelled: false,
+            interrupted: false,
             complete: true,
             withdrew_any: false,
             withdrawal_before: 0,
@@ -182,6 +184,12 @@ impl AcquireRun {
                 match self.poll_active(tick) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(()))
+                        if self.interrupted && matches!(self.active, Active::None) =>
+                    {
+                        self.interrupted = false;
+                        return Poll::Pending;
+                    }
                     Poll::Ready(Ok(())) => {}
                 }
             }
@@ -262,6 +270,7 @@ impl AcquireRun {
                             avoid: Box::new([]),
                             protect: false,
                             food_guard: false,
+                            cure_guard: false,
                             allow: Default::default(),
                         },
                         tick.actions,
@@ -522,6 +531,31 @@ impl AcquireRun {
         }
         self.phase = Phase::Done;
         self.cancelled = true;
+        self.interrupted = false;
+    }
+
+    pub fn transfer_in_flight(&self) -> bool {
+        match &self.active {
+            Active::Deposit(handle) => handle
+                .inspect(|machine| machine.transfer_in_flight())
+                .unwrap_or(false),
+            Active::Machine(handle) => handle
+                .inspect(|machine| machine.transfer_in_flight())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    pub fn interrupt_transfer(&mut self, actions: &mut NativeActions) {
+        if !self.transfer_in_flight() {
+            return;
+        }
+        match &self.active {
+            Active::Deposit(handle) => actions.interrupt(handle),
+            Active::Machine(handle) => actions.interrupt(handle),
+            _ => return,
+        }
+        self.interrupted = true;
     }
 
     fn install(&mut self, mut plan: AcquirePlan) -> bool {
@@ -682,6 +716,7 @@ impl AcquireRun {
             },
             Active::Deposit(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Deposit(handle),
+                Poll::Ready(_) if self.interrupted => {}
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(deposited)) => {
                     self.deposited = self.deposited.saturating_add(deposited);
@@ -691,6 +726,7 @@ impl AcquireRun {
             },
             Active::Machine(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Machine(handle),
+                Poll::Ready(_) if self.interrupted => {}
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
                     self.complete &= receipt.complete;

@@ -1340,6 +1340,7 @@ mod witness_lifecycle_tests {
                 value: StatusValue::Text(Arc::from(value)),
             })
             .into(),
+            survival: script::survival::SurvivalReport::default(),
             failure: None,
         }
     }

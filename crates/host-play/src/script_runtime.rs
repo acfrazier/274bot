@@ -99,7 +99,8 @@ pub(super) use script_interact::{
 #[path = "script_paint.rs"]
 mod script_paint;
 pub(super) use script_paint::{
-    publish_script_paint, script_paint_of, script_paint_select_advertised,
+    publish_script_paint, publish_script_survival, script_paint_of, script_paint_select_advertised,
+    script_survival_of,
 };
 
 #[path = "route_inspect.rs"]

@@ -49,6 +49,43 @@ impl Gatherer {
         }
     }
 
+    // Keep recovery's prepared-food bite separate so an unmet need cannot stop its supply trip.
+    fn begin_recovery_eat(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        let Some(food) = &self.prepared.supply.food else {
+            return false;
+        };
+        let snapshot = tick.cx.snapshot();
+        let (Some(stats), Some(inventory)) = (snapshot.stats(), snapshot.inventory()) else {
+            return false;
+        };
+        let Some(hp) = stats.value.iter().find(|stat| stat.index == 3) else {
+            return false;
+        };
+        let below = if self.settings().eat_below == 0 {
+            hp.base.saturating_add(1) / 2
+        } else {
+            self.settings().eat_below
+        };
+        let held = inventory
+            .value
+            .iter()
+            .filter(|row| row.def.id == food.id)
+            .map(|row| row.count)
+            .sum::<i32>();
+        if hp.effective > below || held == 0 || !self.fence.reserve(1) {
+            return false;
+        }
+        let args = OneOpArgs::eat(&food.name, food.id, held);
+        match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
+            Ok(handle) => {
+                self.active = Active::Tend(handle);
+                self.set_event("eating at boundary");
+            }
+            Err(error) => self.action_failure(error),
+        }
+        true
+    }
+
     pub(super) fn poll_recovery(&mut self, tick: &mut NativeTick<'_>) {
         let RecoveryState::Pending { step } = self.retained.recovery else {
             return;
@@ -112,7 +149,7 @@ impl Gatherer {
         if self.failure.is_some() {
             return;
         }
-        if self.begin_eat(tick) {
+        if self.begin_recovery_eat(tick) {
             return;
         }
         match step {

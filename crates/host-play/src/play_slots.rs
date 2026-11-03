@@ -47,9 +47,10 @@ use crate::script_runtime::{
 };
 use crate::script_runtime::{
     hold_script_nav, nav_world_state_for_observe, observe_script_inv, publish_script_paint,
-    reset_script_nav, script_active, script_frame, script_observe_cached_with_channels,
-    script_paint_of, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
-    take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
+    publish_script_survival, reset_script_nav, script_active, script_frame,
+    script_observe_cached_with_channels, script_paint_of, script_slot, script_slot_or_insert,
+    script_survival_of, slot_arrival_reach, step_nav_bot, take_manual_walk_ownership, NavBot,
+    ScriptSlot, ScriptWall,
 };
 use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
@@ -1811,6 +1812,7 @@ fn spawn_slot_thread(
                             // status lock (scripts -> statuses is the only
                             // order the two mutexes may nest).
                             let paint = script_paint_of(&slot_scripts, name);
+                            let survival = script_survival_of(&slot_scripts, name);
                             let login_latch_reason = arm_latch_obs.login_latch_reason();
                             let (up, here, active_world) = {
                                 let mut all = lock_statuses(&slot_statuses);
@@ -1842,6 +1844,7 @@ fn spawn_slot_thread(
                                         s.tutorial_pending = nav_snapshot.tutorial_pending();
                                         s.random = if session_boundary { RandomStatus::default() } else { status.clone() };
                                         s.condition = condition;
+                                        publish_script_survival(s, survival, session_boundary);
                                         publish_script_paint(s, paint.clone());
                                         here = nav_snapshot.tile();
                                         let (tx, tz, level) = here.unwrap_or((-1, -1, -1));

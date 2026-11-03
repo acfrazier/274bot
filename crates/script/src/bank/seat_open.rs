@@ -373,6 +373,7 @@ fn build_walk_request(
         avoid: Box::default(),
         protect: false,
         food_guard: false,
+        cure_guard: false,
         allow: WalkAllow::default(),
     }
 }

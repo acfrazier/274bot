@@ -436,6 +436,7 @@ impl Grinch {
                     value: StatusValue::Text(Arc::clone(&self.exclusions)),
                 },
             ]),
+            survival: crate::survival::SurvivalReport::default(),
             failure: self.failure.clone(),
         });
         self.dirty = false;
@@ -908,6 +909,7 @@ impl Grinch {
                         avoid: Box::new([]),
                         protect: false,
                         food_guard: false,
+                        cure_guard: false,
                         allow: Default::default(),
                     };
                     match PrereqWalk::begin(request, tick.actions, &mut tick.cx) {

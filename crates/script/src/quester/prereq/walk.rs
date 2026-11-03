@@ -26,6 +26,7 @@ struct SavedNativeWalk {
     avoid: Box<[Arc<str>]>,
     protect: bool,
     food_guard: bool,
+    cure_guard: bool,
     allow: WalkAllow,
 }
 
@@ -44,6 +45,7 @@ impl From<WalkRequest> for SavedNativeWalk {
             avoid,
             protect,
             food_guard,
+            cure_guard,
             allow,
         } = request;
         Self {
@@ -58,6 +60,7 @@ impl From<WalkRequest> for SavedNativeWalk {
             avoid,
             protect,
             food_guard,
+            cure_guard,
             allow,
         }
     }
@@ -78,6 +81,7 @@ impl SavedNativeWalk {
             avoid: self.avoid.clone(),
             protect: self.protect,
             food_guard: self.food_guard,
+            cure_guard: self.cure_guard,
             allow: self.allow,
         }
     }
@@ -87,6 +91,7 @@ impl SavedNativeWalk {
             options: self.options,
             protect: self.protect,
             food_guard: self.food_guard,
+            cure_guard: self.cure_guard,
             allow: self.allow,
             cross: &self.cross,
             avoid: &self.avoid,
@@ -251,6 +256,7 @@ impl PrereqWalk {
                 avoid: outer.avoid.clone(),
                 protect: false,
                 food_guard: false,
+                cure_guard: false,
                 allow: WalkAllow::default(),
             },
         }
@@ -418,9 +424,14 @@ mod tests {
         };
         let mut request =
             crate::quester::families::reach::walk_request(target, 2, Some(42), original);
+        assert!(
+            !request.cure_guard,
+            "ordinary requests keep the false default"
+        );
         request.options.allow_teleports = crate::native::WalkBit::Forbid;
         request.protect = true;
         request.food_guard = true;
+        request.cure_guard = true;
         request.allow.food = false;
         let mut saved = None;
         let measured = allocation_counter::measure(|| {
@@ -439,6 +450,8 @@ mod tests {
         );
         assert!(reissued.protect && reissued.food_guard);
         assert!(!reissued.allow.food);
+        assert!(reissued.cure_guard);
+        assert!(saved.repair().cure_guard);
         assert!(
             std::mem::size_of::<SavedNativeWalk>() + std::mem::size_of::<EvidenceStamp>()
                 <= std::mem::size_of::<WalkRequest>()

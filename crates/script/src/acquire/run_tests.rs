@@ -726,6 +726,243 @@ fn generated_deposit_precedes_live_replan_and_receipts_exact_count() {
 }
 
 #[test]
+fn quester_interrupts_acquire_run_at_transfer_boundary() {
+    let (mut snapshot, bank, banks) = fixture();
+    snapshot.seed_inventory(
+        vec![item(
+            PRODUCT,
+            "Product",
+            2,
+            ItemContainer::Inventory,
+            &["Use"],
+        )],
+        28,
+    );
+    open_bank(
+        &mut snapshot,
+        Some(vec![bank_row(ITEM, "Widget", 2)]),
+        vec![side_row(PRODUCT, "Product", 2)],
+    );
+    let need = need(
+        ITEM,
+        "Widget",
+        2,
+        2,
+        Presence::Held,
+        NeedKind::Required,
+        SourceSet::PACK | SourceSet::BANK,
+    );
+    let request = request(
+        BankStage::Planned,
+        vec![need],
+        Some(DepositSpec::Ids {
+            products: Arc::from([PRODUCT]),
+            keep: Arc::from([]),
+        }),
+        Some(bank),
+        false,
+        false,
+        CloseBank::LeaveOpen,
+    );
+    let mut ledger = None;
+    let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(matches!(
+        complete_interaction(&mut ledger, 1),
+        HostEffect::Interaction(crate::interact::InteractReq::InvButton { id: PRODUCT, .. })
+    ));
+    assert!(run.transfer_in_flight());
+    crate::quester::families::tests::with_tick_bank(&snapshot, None, &mut ledger, 2, |tick| {
+        run.interrupt_transfer(tick.actions);
+    });
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 3, OpenGate::Open).is_pending());
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+    snapshot.seed_inventory(Vec::new(), 28);
+    open_bank(
+        &mut snapshot,
+        Some(vec![
+            bank_row(ITEM, "Widget", 2),
+            bank_row(PRODUCT, "Product", 2),
+        ]),
+        Vec::new(),
+    );
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
+    assert!(!run.transfer_in_flight());
+    assert!(matches!(run.active, Active::None));
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "the boundary poll must not begin a later bank action"
+    );
+
+    let (mut snapshot, bank, banks) = fixture();
+    open_bank(
+        &mut snapshot,
+        Some(vec![
+            bank_row(ITEM, "Widget", 3),
+            bank_row(OTHER, "Other", 1),
+        ]),
+        Vec::new(),
+    );
+    let request = authored_request(
+        Some(bank),
+        false,
+        vec![BankAction::WithdrawTo {
+            withdrawals: Arc::from([
+                crate::native_bank::Withdrawal {
+                    id: ITEM,
+                    name: Arc::from("Widget"),
+                    target: 2,
+                },
+                crate::native_bank::Withdrawal {
+                    id: OTHER,
+                    name: Arc::from("Other"),
+                    target: 1,
+                },
+            ]),
+        }],
+    );
+    let mut ledger = None;
+    let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(matches!(
+        complete_interaction(&mut ledger, 1),
+        HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode { on: false, .. })
+    ));
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open).is_pending());
+    assert!(matches!(
+        complete_interaction(&mut ledger, 2),
+        HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
+            bank_item_id: ITEM,
+            ..
+        })
+    ));
+    assert!(run.transfer_in_flight());
+    crate::quester::families::tests::with_tick_bank(&snapshot, None, &mut ledger, 3, |tick| {
+        run.interrupt_transfer(tick.actions);
+    });
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 4, OpenGate::Open).is_pending());
+    snapshot.seed_inventory(
+        vec![item(ITEM, "Widget", 2, ItemContainer::Inventory, &["Use"])],
+        28,
+    );
+    open_bank(
+        &mut snapshot,
+        Some(vec![
+            bank_row(ITEM, "Widget", 1),
+            bank_row(OTHER, "Other", 1),
+        ]),
+        Vec::new(),
+    );
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 5, OpenGate::Open).is_pending());
+    assert!(!run.transfer_in_flight());
+    assert!(matches!(run.active, Active::None));
+    assert!(
+        ledger.as_ref().unwrap().outbox.is_empty(),
+        "the boundary poll must not withdraw the second requested item"
+    );
+}
+
+#[test]
+fn acquire_run_active_match_unchanged() {
+    let (mut snapshot, bank, banks) = fixture();
+    let mut net = item(
+        ITEM,
+        "Net",
+        1,
+        ItemContainer::Inventory,
+        &["Deposit-1", "Deposit-All"],
+    );
+    net.slot = 0;
+    let mut shrimp = item(
+        PRODUCT,
+        "Shrimp",
+        1,
+        ItemContainer::Inventory,
+        &["Deposit-1", "Deposit-All"],
+    );
+    shrimp.slot = 1;
+    let mut anchovy = item(
+        OTHER,
+        "Anchovy",
+        1,
+        ItemContainer::Inventory,
+        &["Deposit-1", "Deposit-All"],
+    );
+    anchovy.slot = 2;
+    snapshot.seed_inventory(vec![net, shrimp, anchovy], 28);
+
+    let mut shrimp_side = side_row(PRODUCT, "Shrimp", 1);
+    shrimp_side.slot = 1;
+    let mut anchovy_side = side_row(OTHER, "Anchovy", 1);
+    anchovy_side.slot = 2;
+    open_bank(
+        &mut snapshot,
+        Some(Vec::new()),
+        vec![shrimp_side, anchovy_side],
+    );
+
+    let request = request(
+        BankStage::Planned,
+        Vec::new(),
+        Some(DepositSpec::Capacity {
+            keep: Arc::from([ITEM]),
+            slots: 1,
+        }),
+        Some(bank),
+        false,
+        false,
+        CloseBank::LeaveOpen,
+    );
+    let mut ledger = None;
+    let mut run = new_run(request, &snapshot, None, &mut ledger, &banks);
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
+    assert!(
+        run.transfer_in_flight(),
+        "capacity deposits use Active::Machine"
+    );
+    assert!(matches!(
+        complete_interaction(&mut ledger, 1),
+        HostEffect::Interaction(crate::interact::InteractReq::InvButton { id: PRODUCT, .. })
+    ));
+
+    crate::quester::families::tests::with_tick_bank(&snapshot, None, &mut ledger, 2, |tick| {
+        run.interrupt_transfer(tick.actions)
+    });
+    assert!(run.transfer_in_flight());
+
+    let mut net = item(
+        ITEM,
+        "Net",
+        1,
+        ItemContainer::Inventory,
+        &["Deposit-1", "Deposit-All"],
+    );
+    net.slot = 0;
+    let mut anchovy = item(
+        OTHER,
+        "Anchovy",
+        1,
+        ItemContainer::Inventory,
+        &["Deposit-1", "Deposit-All"],
+    );
+    anchovy.slot = 2;
+    snapshot.seed_inventory(vec![net, anchovy], 28);
+    let mut anchovy_side = side_row(OTHER, "Anchovy", 1);
+    anchovy_side.slot = 2;
+    open_bank(
+        &mut snapshot,
+        Some(vec![bank_row(PRODUCT, "Shrimp", 1)]),
+        vec![anchovy_side],
+    );
+    assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 3, OpenGate::Open).is_pending());
+    assert!(!run.transfer_in_flight());
+    assert!(matches!(run.active, Active::None));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+#[test]
 fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
     let (mut snapshot, _bank, banks) = fixture();
     snapshot.seed_inventory(
@@ -1086,19 +1323,23 @@ fn close_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
 }
 
 #[test]
-fn acquisition_owner_layout() {
+fn bank_machine_and_acquire_run_size_of_pinned() {
     use std::mem::size_of;
     println!(
-        "AcquireRun={} AcquireRequest={} BankReceipt={} Provisioner={} Quester={}",
+        "BankMachine={} AcquireRun={} AcquireRequest={} BankReceipt={} Provisioner={} Gatherer={} Quester={} SurvivalStep={}",
+        size_of::<crate::native_bank::BankMachine>(),
         size_of::<AcquireRun>(),
         size_of::<AcquireRequest>(),
         size_of::<BankReceipt>(),
         size_of::<crate::quester::provision::Provisioner>(),
+        size_of::<crate::gatherer::Gatherer>(),
         size_of::<crate::quester::runner::Quester>(),
+        size_of::<crate::survival::SurvivalStep>(),
     );
-    // First arm64 build: 712 bytes. Keep 56 bytes of explicit headroom.
+    assert!(size_of::<crate::native_bank::BankMachine>() <= 768);
     assert!(size_of::<AcquireRun>() <= 768);
     assert_eq!(size_of::<BankReceipt>(), 8);
+    assert!(size_of::<crate::survival::SurvivalStep>() <= 192);
 }
 
 #[test]

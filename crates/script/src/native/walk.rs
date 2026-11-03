@@ -48,6 +48,7 @@ struct WalkReplay {
     avoid: Box<[Arc<str>]>,
     protect: bool,
     food_guard: bool,
+    cure_guard: bool,
     allow: super::WalkAllow,
 }
 
@@ -65,6 +66,7 @@ impl WalkReplay {
             avoid: request.avoid.clone(),
             protect: request.protect,
             food_guard: request.food_guard,
+            cure_guard: request.cure_guard,
             allow: request.allow,
         })
     }
@@ -88,6 +90,7 @@ impl WalkReplay {
             avoid: self.avoid.clone(),
             protect: self.protect,
             food_guard: self.food_guard,
+            cure_guard: self.cure_guard,
             allow: self.allow,
         }
     }
@@ -496,64 +499,73 @@ mod tests {
         assert_eq!(std::mem::size_of::<Walk>(), 88);
         assert_eq!(std::mem::size_of::<WalkReplay>(), 128);
 
-        let target = WorldTile {
-            x: 3220,
-            z: 3200,
-            level: 0,
-        };
-        let mut snapshot = GameSnapshot::new();
-        snapshot.seed_ingame(2);
-        snapshot.seed_local_player(local_player(WorldTile { x: 3200, ..target }));
-        let (mut ledger, mut budget) = (None, TickBudget::default());
-        let handle = with_tick_budget(&snapshot, &mut ledger, &mut budget, 1, |tick| {
-            let mut request =
-                crate::quester::families::reach::walk_request(target, 3, None, tick.cx.evidence());
-            request.loc_id = Some(1530);
-            request.options.allow_wilderness = super::super::WalkBit::Allow;
-            request.cross = Box::from([Arc::from("test-zone")]);
-            request.avoid = Box::from([Arc::from("avoided-zone")]);
-            request.protect = true;
-            request.allow.food = false;
-            tick.actions.begin::<Walk>(request, &mut tick.cx).unwrap()
-        });
-        let first = ledger.as_ref().unwrap().outbox[0].request_id.get();
-        budget.hold_begin();
-        assert_eq!(host_drops_queued_work(&mut ledger), 1);
-        budget.hold_end();
-        for tick in [9, 10] {
-            assert!(
-                with_tick_budget(&snapshot, &mut ledger, &mut budget, tick, |tick| {
-                    tick.actions.poll(&handle, &mut tick.cx)
-                })
-                .is_pending()
+        for cure_only in [false, true] {
+            let target = WorldTile {
+                x: 3220,
+                z: 3200,
+                level: 0,
+            };
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_local_player(local_player(WorldTile { x: 3200, ..target }));
+            let (mut ledger, mut budget) = (None, TickBudget::default());
+            let handle = with_tick_budget(&snapshot, &mut ledger, &mut budget, 1, |tick| {
+                let mut request = crate::quester::families::reach::walk_request(
+                    target,
+                    3,
+                    None,
+                    tick.cx.evidence(),
+                );
+                request.loc_id = Some(1530);
+                request.options.allow_wilderness = super::super::WalkBit::Allow;
+                request.cross = Box::from([Arc::from("test-zone")]);
+                request.avoid = Box::from([Arc::from("avoided-zone")]);
+                request.protect = !cure_only;
+                request.food_guard = !cure_only;
+                request.cure_guard = cure_only;
+                request.allow.food = false;
+                tick.actions.begin::<Walk>(request, &mut tick.cx).unwrap()
+            });
+            let first = ledger.as_ref().unwrap().outbox[0].request_id.get();
+            budget.hold_begin();
+            assert_eq!(host_drops_queued_work(&mut ledger), 1);
+            budget.hold_end();
+            for tick in [9, 10] {
+                assert!(
+                    with_tick_budget(&snapshot, &mut ledger, &mut budget, tick, |tick| {
+                        tick.actions.poll(&handle, &mut tick.cx)
+                    })
+                    .is_pending()
+                );
+            }
+            let outbox = &ledger.as_ref().unwrap().outbox;
+            assert_eq!(outbox.len(), 1, "one walk is sent again");
+            assert_ne!(outbox[0].request_id.get(), first);
+            assert_eq!(
+                handle.inspect(Walk::request_id),
+                Some(outbox[0].request_id.get()),
+                "a nested owner cancels the resumed request, not the original"
             );
+            let HostEffect::Walk(request) = &outbox[0].effect else {
+                panic!("the resend is a walk");
+            };
+            assert_eq!((request.target, request.radius), (target, 3));
+            assert_eq!(request.loc_id, Some(1530));
+            assert_eq!(
+                request.required_after.tick, 1,
+                "the original evidence bound"
+            );
+            assert_eq!(
+                request.options.allow_wilderness,
+                super::super::WalkBit::Allow
+            );
+            assert_eq!(request.cross.as_ref(), [Arc::<str>::from("test-zone")]);
+            assert_eq!(request.avoid.as_ref(), [Arc::<str>::from("avoided-zone")]);
+            assert_eq!(request.protect, !cure_only);
+            assert_eq!(request.food_guard, !cure_only);
+            assert_eq!(request.allow.food, !cure_only);
+            assert_eq!(request.cure_guard, cure_only);
         }
-        let outbox = &ledger.as_ref().unwrap().outbox;
-        assert_eq!(outbox.len(), 1, "one walk is sent again");
-        assert_ne!(outbox[0].request_id.get(), first);
-        assert_eq!(
-            handle.inspect(Walk::request_id),
-            Some(outbox[0].request_id.get()),
-            "a nested owner cancels the resumed request, not the original"
-        );
-        let HostEffect::Walk(request) = &outbox[0].effect else {
-            panic!("the resend is a walk");
-        };
-        assert_eq!((request.target, request.radius), (target, 3));
-        assert_eq!(request.loc_id, Some(1530));
-        assert_eq!(
-            request.required_after.tick, 1,
-            "the original evidence bound"
-        );
-        assert_eq!(
-            request.options.allow_wilderness,
-            super::super::WalkBit::Allow
-        );
-        assert_eq!(request.cross.as_ref(), [Arc::<str>::from("test-zone")]);
-        assert_eq!(request.avoid.as_ref(), [Arc::<str>::from("avoided-zone")]);
-        assert!(request.protect);
-        assert!(request.food_guard, "named consent retains its food guard");
-        assert!(request.allow.food);
     }
 
     #[test]

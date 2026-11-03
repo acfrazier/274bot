@@ -4517,6 +4517,19 @@ impl StepRun for AcquireRun {
         }
         self.clear_prayers = None;
     }
+    /// The child step owns the bank transfer, so the survival interrupt
+    /// reaches the transfer's boundary through it (design A6.5 Quester items
+    /// 4 and 5).
+    fn transfer_in_flight(&self) -> bool {
+        self.current
+            .as_ref()
+            .is_some_and(|run| run.transfer_in_flight())
+    }
+    fn interrupt_transfer(&mut self, actions: &mut NativeActions) {
+        if let Some(run) = &mut self.current {
+            run.interrupt_transfer(actions);
+        }
+    }
     fn prayer_cleanup(&self) -> RaisedPrayers {
         let mut owned = self.prayer_cleanup_owned;
         if let Some(run) = self.current.as_ref() {

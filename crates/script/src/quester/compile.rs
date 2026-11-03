@@ -430,6 +430,10 @@ pub enum AcquisitionTraceOutcome {
 pub trait StepRun: Send {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>>;
     fn cancel(&mut self, actions: &mut NativeActions);
+    fn transfer_in_flight(&self) -> bool {
+        false
+    }
+    fn interrupt_transfer(&mut self, _actions: &mut NativeActions) {}
     /// Combat raises retained for a cancellation/error hygiene handoff.
     fn prayer_cleanup(&self) -> RaisedPrayers {
         RaisedPrayers::empty()

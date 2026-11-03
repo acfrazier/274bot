@@ -3,8 +3,9 @@ use api::interact::Driver;
 use api::prot::Out;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{
-    ActorView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
-    LocalPlayerView, PlayerView, SceneView, SideTabView, StatView, WorldStateView, WorldTile,
+    ActorView, GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
+    LocLayer, LocView, LocalPlayerView, PlayerView, SceneView, SideTabView, StatView,
+    WorldStateView, WorldTile,
 };
 use api::ItemDefView;
 use script::interact::InteractReq;
@@ -156,6 +157,17 @@ fn snapshot(slots: &[i32]) -> GameSnapshot {
         energy: 100,
         weight: 0,
         animation_update: None,
+    });
+    // The live decoder posts the local hitmark family whenever it posts the
+    // local player (`api/src/snapshot/decode.rs:218-229`); a combat frame
+    // (`script/src/combat/frame.rs:44`) is unavailable without it.
+    snapshot.seed_hitmarks(HitmarksView {
+        marks: [HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 1,
     });
     snapshot.seed_stats(vec![StatView {
         index: 8,

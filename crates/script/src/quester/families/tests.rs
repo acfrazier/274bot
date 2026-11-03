@@ -750,6 +750,41 @@ fn typed_bank_deposit_failure_keeps_user_text_in_acquisition_trace() {
     ));
 }
 
+/// An acquisition recipe's child step can own a bank transfer (a `bank` or
+/// loadout child). The recipe forwards the transfer query and the interrupt,
+/// so a survival click waits for the per-transfer boundary instead of
+/// cancelling the transfer mid-flight (Argon review finding 5; design A6.5
+/// Quester items 4 and 5).
+#[test]
+fn acquire_recipe_forwards_its_child_transfer_to_survival() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct Transfer(Arc<AtomicBool>);
+    impl StepRun for Transfer {
+        fn poll(&mut self, _: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+            Poll::Pending
+        }
+        fn cancel(&mut self, _: &mut NativeActions) {}
+        fn transfer_in_flight(&self) -> bool {
+            !self.0.load(Ordering::Relaxed)
+        }
+        fn interrupt_transfer(&mut self, _: &mut NativeActions) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let snapshot = ready();
+    let mut ledger = None;
+    let mut run = policy_s2_recipe_run(Box::new(Transfer(Arc::clone(&interrupted))));
+    assert!(run.transfer_in_flight());
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        run.interrupt_transfer(tick.actions);
+    });
+    assert!(interrupted.load(Ordering::Relaxed));
+    assert!(!run.transfer_in_flight());
+}
+
 pub(crate) fn post_user_input_walk_receipt(
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,

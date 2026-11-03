@@ -829,6 +829,7 @@ fn native_wait_and_refusal_override_running_but_not_pause() {
             label: "Waiting for",
             value: StatusValue::Text(Arc::from("quest list from login")),
         }]),
+        survival: script::survival::SurvivalReport::default(),
         failure: None,
     };
     assert_eq!(
@@ -884,6 +885,7 @@ fn status_card_shows_the_script_phase_and_park_reason() {
         active_settings: 1,
         pending_settings: None,
         fields: Arc::from(fields),
+        survival: script::survival::SurvivalReport::default(),
         failure,
     };
     let action = |value: &'static str| StatusField {
@@ -968,6 +970,7 @@ fn status_card_shows_the_current_park_reason_not_an_earlier_quests() {
             field("block_reason", "Queue block reason", "no step for stage"),
             field("block_reason", "Blocked", SECOND_QUEST_PARK),
         ]),
+        survival: script::survival::SurvivalReport::default(),
         failure: None,
     };
     let mut detail = SlotDetail::default();
@@ -1005,11 +1008,61 @@ fn draft_path_status_is_projected_to_one_short_status_row() {
             label: "Path status",
             value: StatusValue::Text(Arc::from("Untested draft Path")),
         }]),
+        survival: script::survival::SurvivalReport::default(),
         failure: None,
     };
     assert_eq!(
         script_status_rows(StatusView::new(&status)).collect::<Vec<_>>(),
         vec![("Path status", "Untested draft Path")]
+    );
+}
+
+#[test]
+fn status_row_shows_needed_under_never() {
+    use api::condition::{PoisonState, SessionMark};
+    use script::survival::{
+        cure::CureWhy,
+        math::{NeedWhy, SurvivalNeed},
+        Decision, Owner, SurvivalReport,
+    };
+
+    let mut status = SlotStatus::default();
+    status.condition.session = SessionMark::Live;
+    status.condition.hp = 5;
+    status.condition.hp_max = 99;
+    status.condition.hp_known = true;
+    status.condition.poison = PoisonState::Onset {
+        since: 20,
+        q: Some(12),
+        hit_since_line: true,
+    };
+    status.survival = SurvivalReport {
+        decision: Decision::Needed,
+        why: Some(CureWhy::Lethal),
+        need: Some(SurvivalNeed::Cure {
+            or_food: 0,
+            ref_heal: 12,
+            why: NeedWhy::Lethal,
+        }),
+        tried: 0,
+        owner: Owner::Guard,
+    };
+
+    let mut detail = SlotDetail::default();
+    let mut scratch = String::new();
+    assert!(update_detail(
+        &mut detail,
+        Some(&status),
+        false,
+        None,
+        &mut scratch
+    ));
+    assert_eq!(
+        detail
+            .survival()
+            .expect("the report is retained")
+            .to_string(),
+        "Needed: poisoned: would die; needs antipoison"
     );
 }
 

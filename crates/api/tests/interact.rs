@@ -3789,6 +3789,28 @@ fn close_modal_sends_while_count_dialog_open() {
     assert_eq!(rec.menus, vec![(0, MiniMenuAction::CLOSE_BUTTON, 0, 0, 0)]);
 }
 
+/// An enter-amount prompt that the content opened after `if_close` has no
+/// modal root. Close still sends, so a survival drink that the prompt blocks
+/// can run (`Player.ts:760-766` clears `protect` before the modal check).
+#[test]
+fn close_modal_sends_for_a_count_dialog_with_no_modal_root() {
+    let mut s = scene();
+    s.client.dialog_input_open = true;
+    let snap = rebuild(&mut s.client);
+    assert!(snap.count_dialog_open());
+    assert_eq!(snap.modals().main, -1);
+    assert_eq!(snap.modals().chat, -1);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.close_modal() {
+            SendResult::Sent { command, .. } => assert!(matches!(command, WireCommand::Close)),
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+    }
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::CLOSE_BUTTON, 0, 0, 0)]);
+}
+
 /// `doAction` clears the enter-amount dialog before the next op. A second
 /// Withdraw-X (Alcher nature runes after noted stock) must not refuse
 /// `CountDialogOpen`.

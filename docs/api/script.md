@@ -936,12 +936,15 @@ parking the step. Threat evidence requires an NPC facing or targeting the local
 player together with an attack animation, attack spot, or recent hitmark on the
 player; NPC health-bar visibility is not required. Product and live-proof
 receipts use the same evidence predicate.
-Abort walks retain food upkeep and the step's crossing permissions. They request
-protection only when prayer is allowed and the player's Prayer level can use
-Protect; otherwise they set the walk request's explicit `food_guard` flag and
-the host runs a food-only guard without refusing the walk. Only combat abort
-walks set `food_guard`. Ordinary script and Quester walks, which default to
-`allow.food = true`, start no host guard unless they request `protect`.
+Ordinary abort walks retain food upkeep and the step's crossing permissions.
+They request protection only when prayer is allowed and the player's Prayer
+level can use Protect. Otherwise the explicit `food_guard` flag starts
+food-only upkeep without prayer admission.
+An exhausted escape sets `cure_guard` and disallows food. The host keeps held
+cures usable under the slot's Cure poison policy, without eating or fetching
+food. Named crossings do not restore food permission for that explicit request.
+Other walk owners keep their existing guard settings. Disallowing food alone
+does not create a host guard.
 If no engaged actor was recorded, or the engaged actor is no longer observed,
 retreat geometry uses the heaviest observed live attacker (the same shared
 threat predicate). Retreat direction compares packet-time network tiles (the
@@ -997,7 +1000,7 @@ hold. The hold continues eating and permitted protection even at high HP, and
 ends only after three consecutive
 ticks without threat evidence. There is no tick-based hold timeout. If no food
 remains, protection is unavailable or disallowed, and an attacker is still
-live, the hold instead starts one more pass of unguarded escape requests,
+live, the hold instead starts one more pass of food-disabled escape requests,
 planned from the position the hold observed, before parking. Without a live
 attacker it parks after the threat-free horizon instead. The step never starts
 a third pass. An abort makes at most six requests with a stand and four
@@ -1006,9 +1009,10 @@ No claim is made that a reachable escape exists. When no tier routes, the hold
 and its food are the last resort.
 A combat step whose target is `attacker` and whose report is
 `Aborted(Unattackable)` completes once the bot is safe: when a guarded escape
-walk arrives with no live attacker, when the hold ends threat-free, or when an
-unguarded escape walk arrives and the step observes that no attacker is live.
-The unguarded pass has neither prayer nor food, so arrival alone is not safety.
+walk arrives with no live attacker, when the hold ends threat-free, or when a
+food-disabled escape walk arrives and the step observes that no attacker is live.
+The exhausted pass has neither prayer nor food, but can drink a needed held
+cure. Arrival alone is not safety.
 If an attacker is live or unobserved on arrival, the step plans the next tier,
 and it ends with the failure "combat abort escape walk arrived without proof
 that the attacker is gone" when no tier is left. The step keeps its combat
@@ -2001,18 +2005,23 @@ flight settles false (a deposit loop does nothing).
   bank-side row with the name, by id, slot and component, and answers whether
   it pressed. A row without the label presses nothing; it is never an All.
 - **`depositAllMatching` / `depositInventory` / `depositAllExcept`** press
-  each matching row's All op by id and wait up to eight fresh game updates for
-  that id to leave the pack. A side row is clicked only while its item remains
-  in the current pack. The loop ends when no matching pack items remain or a
-  click's eight-update bound expires; if a current pack candidate has no
+  each matching row's All op by id and wait for that id to leave the pack.
+  If a transfer does not settle, its timeout requires at least eight fresh
+  game updates (observed ticks) and 4.8 seconds of active time, whichever
+  takes longer. A deposit may make one second transfer attempt after a no-op
+  click, with the same timeout bound. A side row is clicked only while its
+  item remains in the current pack. The loop ends when no matching pack items
+  remain or a click's wait expires; if a current pack candidate has no
   matching posted side row, the loop waits up to 1.2 s and then fails rather
   than reporting success with items still held. `depositAllExcept(names)`
   keeps every id whose display name is kept, noted or not. A nameless row is
   still an item the matcher decides.
 - **`Bank.withdrawLoad(name)`** presses the row's Withdraw-All and answers
-  true once more pack slots are used, the pack is full or that row emptied,
-  within eight fresh game updates; a row without All is withdrawn as
-  `withdrawX` of the free slots. A full pack is true with no press.
+  true once more pack slots are used, the pack is full or that row emptied.
+  If the transfer does not settle, its timeout requires at least eight fresh
+  game updates (observed ticks) and 4.8 seconds of active time, whichever
+  takes longer; a row without All is withdrawn as `withdrawX` of the free
+  slots. A full pack is true with no press.
 - **`Bank.close(timeoutMs)`** is true at once on a shut bank. Otherwise one
   Close is true only when the bank is shut, its old side root is released
   and the bank session generation moved on, within `timeoutMs` (4 s when

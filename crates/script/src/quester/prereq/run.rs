@@ -121,6 +121,7 @@ pub(crate) struct RepairWalk<'a> {
     pub(super) options: WalkOptions,
     pub(super) protect: bool,
     pub(super) food_guard: bool,
+    pub(super) cure_guard: bool,
     pub(super) allow: WalkAllow,
     pub(super) cross: &'a [Arc<str>],
     pub(super) avoid: &'a [Arc<str>],
@@ -133,6 +134,7 @@ impl<'a> RepairWalk<'a> {
             options: request.options,
             protect: request.protect,
             food_guard: request.food_guard,
+            cure_guard: request.cure_guard,
             allow: request.allow,
             cross: &request.cross,
             avoid: &request.avoid,
@@ -152,6 +154,7 @@ impl<'a> RepairWalk<'a> {
         request.options = self.options;
         request.protect = self.protect;
         request.food_guard = self.food_guard;
+        request.cure_guard = self.cure_guard;
         request.allow = self.allow;
         request.cross = self.cross.into();
         request.avoid = self.avoid.into();

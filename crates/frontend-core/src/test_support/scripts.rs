@@ -604,6 +604,7 @@ impl NativeStatus {
             active_settings: 1,
             pending_settings: None,
             fields: std::sync::Arc::from([]),
+            survival: script::survival::SurvivalReport::default(),
             failure: None,
         }
     }

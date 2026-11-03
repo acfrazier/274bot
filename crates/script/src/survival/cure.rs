@@ -1,11 +1,12 @@
 //! Pure poison-cure decisions shared by the combat machine and walk guard.
 
-use api::condition::{poison_math, BotCondition, Exposure, FoodSummary, PoisonState, SessionMark};
+use api::condition::{poison_math, BotCondition, Exposure, PoisonState, SessionMark};
 use api::snapshot::ItemView;
 
 use crate::combat::schedule::{OpKind, Schedule};
 use crate::combat::select;
 use crate::combat::tables::{CombatTables, PotionKind};
+use crate::survival::math::food_credit;
 
 /// Operator policy for consuming a held poison cure.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +39,7 @@ impl CurePoison {
 
 /// Why the decision requires a cure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CureWhy {
+pub enum CureWhy {
     /// The next poison fire reaches the emergency line.
     Emergency,
     /// Held food cannot keep the player alive through the poison outlook.
@@ -133,7 +134,7 @@ pub(crate) fn cure_choice(input: &CureInputs<'_>) -> CureDecision {
     let fire = i32::from(outlook.per_fire_now);
     let emergency = base_lines.emergency.saturating_add(fire);
     let eat_line = base_lines.eat.saturating_add(fire).max(input.eat_floor);
-    let usable = food_credit(condition.food, condition.hp_max, eat_line);
+    let usable = food_credit(&condition.food, condition.hp_max, eat_line);
     let hp = i32::from(condition.hp);
     let remaining = i32::from(outlook.total);
 
@@ -213,16 +214,24 @@ fn held_fruit(inventory: &[ItemView], tables: &CombatTables) -> Option<i32> {
         .then_some(item_id)
 }
 
-fn food_credit(food: FoodSummary, hp_max: u8, eat_line: i32) -> u16 {
-    let cap = (i32::from(hp_max) - eat_line).max(0);
-    let unit = u16::from(food.smallest_heal.min(u8::try_from(cap).unwrap_or(u8::MAX)));
-    u16::from(food.ordinary_count).saturating_mul(unit)
+/// Whether `item_id` is a dose of antipoison or super antipoison that
+/// [`cure_choice`] can drink. Runners keep these out of bank deposits so a
+/// later poison still finds them. Strange fruit is not kept: it reaches a
+/// gathering bot as a random-event reward, and the bank trip deposits it as an
+/// incidental item so repeated events do not fill the pack.
+pub(crate) fn is_antipoison_dose(tables: &CombatTables, item_id: i32) -> bool {
+    [PotionKind::Antipoison, PotionKind::SuperAntipoison]
+        .into_iter()
+        .filter_map(|kind| tables.potion(kind))
+        .flat_map(|family| family.doses.iter().flatten())
+        .any(|dose| dose.id == item_id)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::combat::schedule::{InputEffect, Schedule};
-    use api::condition::{CureDoses, SessionMark};
+    use api::condition::{CureDoses, FoodSummary, SessionMark};
     use api::obj_names::ItemDefView;
     use api::selected::ClientRevision;
     use api::snapshot::{ItemActionFamily, ItemContainer};

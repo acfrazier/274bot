@@ -477,14 +477,10 @@ fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
                     panic!("the compiled combat transition must submit a native walk");
                 };
                 assert_eq!(request.protect, protect, "{expected:?}: cross={cross}");
-                assert_eq!(
-                    request.food_guard,
-                    cross || (aborted && !protect),
-                    "declared crossings and unprotected abort walks request the food guard"
-                );
+                assert!(request.food_guard, "every runner walk has a food guard");
+                assert!(request.allow.food, "every runner walk permits food");
                 if aborted {
                     assert_eq!(request.allow.prayer, protect);
-                    assert!(request.allow.food);
                 }
                 if cross {
                     assert_eq!(request.cross.as_ref(), &[Arc::from("draynor-jail-guards")]);
@@ -1615,6 +1611,7 @@ struct WalkOut {
     request_id: u64,
     target: api::WorldTile,
     food_guard: bool,
+    cure_guard: bool,
     allow_food: bool,
     arrival: nav_planner::contract::ArrivalKind,
     radius: u16,
@@ -1631,6 +1628,7 @@ fn pending_walk(ledger: &TestLedger) -> Option<WalkOut> {
         request_id: action.request_id.get(),
         target: request.target,
         food_guard: request.food_guard,
+        cure_guard: request.cure_guard,
         allow_food: request.allow.food,
         arrival: request.arrival,
         radius: request.radius,
@@ -2319,6 +2317,7 @@ fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_w
     let (mut run, mut ledger, live, mut previous) = m4_exhausted_escape_walk(&lease, true);
     let first = last_walk(&ledger);
     assert!(!first.food_guard && !first.allow_food);
+    assert!(first.cure_guard);
     assert!(
         !previous.is_empty(),
         "the exhausted pass follows failed walks"
@@ -2388,6 +2387,7 @@ fn stationary_m4_tree_gets_untried_goals_after_food_runs_out() {
     let (_, ledger, _, previous) = m4_exhausted_escape_walk(&lease, false);
     let exhausted = last_walk(&ledger);
     assert!(!exhausted.food_guard && !exhausted.allow_food);
+    assert!(exhausted.cure_guard);
     assert!(
         previous.iter().all(|goals| {
             goals_of(&exhausted)
@@ -2831,6 +2831,7 @@ fn guard_request_from_outbox(
     );
     guard_request.protect = request.protect;
     guard_request.food_guard = request.food_guard;
+    guard_request.cure_guard = request.cure_guard;
     guard_request.allow = request.allow;
     guard_request
 }
@@ -3494,6 +3495,7 @@ fn failed_abort_walk_does_not_retry_named_tiles_after_food_exhaustion() {
     assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
     let exhausted = last_walk(&ledger);
     assert!(!exhausted.food_guard && !exhausted.allow_food);
+    assert!(exhausted.cure_guard);
     assert!(
         earlier_goal_sets.iter().all(|goals| {
             goals_of(&exhausted)
@@ -3631,11 +3633,10 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
             earlier_goal_sets.push(goals.to_vec());
         }
         for (index, walk) in walks.iter().enumerate() {
-            assert_eq!(
-                walk.food_guard,
-                index < pass,
-                "walk {index}: only the first pass runs under the food guard"
-            );
+            let food_allowed = index < first_pass_count;
+            assert_eq!(walk.food_guard, food_allowed, "walk {index}");
+            assert_eq!(walk.allow_food, food_allowed, "walk {index}");
+            assert_eq!(walk.cure_guard, !food_allowed, "walk {index}");
         }
         for (pass_index, chunk) in walks.chunks(pass).enumerate() {
             let preferred = chunk
@@ -3865,7 +3866,10 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
             }
         }
         for (index, (_, walk)) in walks.iter().enumerate() {
-            assert_eq!(walk.food_guard, index < pass, "walk {index}");
+            let food_allowed = index < first_pass_count;
+            assert_eq!(walk.food_guard, food_allowed, "walk {index}");
+            assert_eq!(walk.allow_food, food_allowed, "walk {index}");
+            assert_eq!(walk.cure_guard, !food_allowed, "walk {index}");
         }
         assert!(
             matches!(
@@ -4637,7 +4641,7 @@ fn return_and_abort_walks_use_only_authored_protection() {
                 assert_eq!(request.radius, 1);
             }
             assert_eq!(request.protect, protect);
-            assert_eq!(request.food_guard, cross || (aborting && !protect));
+            assert!(request.food_guard && request.allow.food);
             if aborting {
                 assert_eq!(request.allow.prayer, protect);
                 assert!(request.allow.food);

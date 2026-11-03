@@ -426,7 +426,8 @@ area = "Scripts"
 text = """Cure poison does not interrupt Gatherer or Quester steps to drink a held
   antipoison when poison makes a cure necessary. This behavior is not included."""
 first = "0.2.7"
-target = "0.2.9"
+fixed = "0.2.9"
+target = "none"
 severity = "low"
 owner = "T2 survival"
 
@@ -437,7 +438,207 @@ area = "Panel and terminal app"
 text = """The panel and terminal app do not show a status row for a poison-related
   cure need. A poison-need status row is not included."""
 first = "0.2.7"
+fixed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-fetch-planned"
+kind = "not-in-release"
+area = "Scripts"
+text = """Fetching a cure or food when the bot would otherwise die is planned for a
+  later release. In this release a native script that would die of poison with
+  no cure held pauses its work and names what it needs."""
+first = "0.2.9"
 target = "0.2.9"
+severity = "low"
+owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
+
+[[item]]
+id = "survival-shop-cure-planned"
+kind = "not-in-release"
+area = "Scripts"
+text = """Buying a cure from a shop is planned, not included here."""
+first = "0.2.9"
+target = "0.2.9"
+severity = "low"
+owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
+
+[[item]]
+id = "survival-spawn-or-made-cure-planned"
+kind = "not-in-release"
+area = "Scripts"
+text = """Taking a cure from a ground spawn, or making one from held supplies, is
+  planned for a later release."""
+first = "0.2.9"
+target = "0.2.9"
+severity = "low"
+owner = "T2 survival phase 2 (later; decided again at the 0.2.9-cut backlog review)"
+
+[[item]]
+id = "survival-green-hitsplat-reserve"
+kind = "known-issue"
+area = "Scripts"
+text = """A green poison hitsplat that the game shows without poison makes the bot
+  keep a poison reserve until the next poison message, poison tick or cure."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-strange-fruit-not-fetched"
+kind = "known-issue"
+area = "Scripts"
+text = """Strange fruit is recognized as a held cure and never fetched."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival phase 2"
+
+[[item]]
+id = "survival-unknown-poison-worst-case"
+kind = "known-issue"
+area = "Scripts"
+text = """When the game reports poison and the bot cannot see which creature
+  poisoned it, when the poison message and the creatures' update arrived
+  together so the bot cannot tell which game tick the message belongs to, or
+  when a poisoned bot takes any hit, the bot assumes the strongest poison in the
+  game (330 damage) until the next poison tick shows the real value. Each poison
+  tick then shows the true remaining value. A bot with a cure may drink it
+  earlier than it strictly needed to. A script with no cure held can pause on a
+  poison it would have survived. The pause ends within five poison ticks (about
+  150 game ticks) of the first poison tick at which the bot's hitpoints and food
+  would have carried it through, which can be later than the message when the
+  bot is eating as it waits, and then the script continues on its own."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-poison-line-waits-for-creatures"
+kind = "known-issue"
+area = "Scripts"
+text = """When the game reports poison in a frame before its creatures' update, the
+  bot waits for that update before it decides which creature poisoned it. A
+  cure that is needed only for the worst case is then drunk one game tick
+  later. A cure that is needed at once is drunk at once."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-pause-outlasts-poison"
+kind = "known-issue"
+area = "Scripts"
+text = """The game does not say when a poison has ended. A paused script whose
+  hitpoints plus food are at or below the last poison tick's worst case (4
+  after the weakest tick) stays paused after the poison ran out, until it heals
+  past that or gets a cure."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-pause-while-hit"
+kind = "known-issue"
+area = "Scripts"
+text = """A paused script that is being hit by any creature stays paused while the
+  hits continue, because any hit can be a fresh poisoning. It does not flee or
+  fight back for that reason in this release."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-cure-waits-for-bank-transfer"
+kind = "known-issue"
+area = "Scripts"
+text = """A native script that needs a cure while a bank deposit or withdrawal is in
+  flight lets that one transfer settle or time out first: eight observed game
+  ticks, without an elapsed-time minimum (twice that for a deposit the game did
+  not apply the first time). Then it closes
+  the bank and drinks. The Quester's own provisioning trips follow the same
+  rule."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-reconnect-forgets-poison"
+kind = "known-issue"
+area = "Scripts"
+text = """When the bot reconnects while it is poisoned, it does not know it is
+  poisoned until the next poison tick, up to 30 game ticks later: the game
+  keeps the poison but does not repeat the poison message. In that time the
+  bot does not drink a held cure for that poison and does not eat early for
+  it. A bot whose hitpoints are at or below one poison tick's damage can die in
+  that tick."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "T2 survival"
+
+[[item]]
+id = "combat-no-food-stop-before-cure"
+kind = "known-issue"
+area = "Combat"
+text = """In a fight with no food left, a poisoned bot that holds an antipoison can
+  retreat or end the fight when its hitpoints are near the poison-raised stop
+  line, even though it drinks the antipoison in the same game tick and would
+  then be safe."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "walk-guard-dialogue-and-door-tick"
+kind = "known-issue"
+area = "Navigation"
+text = """During a walk, a dialogue page that is open (for example a level-up page
+  or a gate's dialogue) can delay a drink or a bite until the walk moves on and
+  the page closes. An ordinary bite during a walk can go out in the same game
+  tick as a door or gate click."""
+first = "0.2.7"
+listed = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "gatherer-power-keeps-empty-vial"
+kind = "known-issue"
+area = "Scripts"
+text = """In Power mode, a Gatherer that finishes its last dose of an antipoison
+  keeps the empty vial. The vial takes a pack slot until you drop it. Bank mode
+  deposits it on the next bank trip."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "T2 survival"
+
+[[item]]
+id = "survival-status-during-walk-or-fight"
+kind = "known-issue"
+area = "Panel and terminal app"
+text = """During a walk or a fight, the status row shows that a cure or food is
+  needed while the walk or the fight drinks or eats; it does not show the drink
+  or the bite itself."""
+first = "0.2.9"
+target = "none"
 severity = "low"
 owner = "T2 survival"
 

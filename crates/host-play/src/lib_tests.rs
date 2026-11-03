@@ -28035,6 +28035,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                 avoid: Box::default(),
                                 protect: false,
                                 food_guard: false,
+                                cure_guard: false,
                                 allow: Default::default(),
                             },
                             &mut tick.cx,
@@ -30819,6 +30820,7 @@ mod read_journal_tests {
                     active_settings: 1,
                     pending_settings: None,
                     fields: Arc::from([]),
+                    survival: script::survival::SurvivalReport::default(),
                     failure: None,
                 });
                 Ok(ScriptFlow::Continue)
@@ -32098,6 +32100,7 @@ export default class T extends LoopingBot {
                             avoid: Box::default(),
                             protect: false,
                             food_guard: false,
+                            cure_guard: false,
                             allow: Default::default(),
                         },
                         &mut tick.cx,
@@ -32322,6 +32325,213 @@ export default class T extends LoopingBot {
             graph,
             Vec::new(),
         ))
+    }
+
+    #[test]
+    fn slot_keeps_parked_native_run_and_resumes_after_dose() {
+        use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+        use api::quest_progress::EvidenceStamp;
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
+        use script::native::{HostEffect, InteractionReceipt, NativePhase, SettingsBag};
+        use script::survival::CurePoison;
+
+        fn condition(tick: u64, poison: PoisonState, hp: u8, antipoison: u8) -> BotCondition {
+            BotCondition {
+                tick: u32::try_from(tick).unwrap(),
+                session: SessionMark::Live,
+                hp,
+                hp_max: 99,
+                hp_known: true,
+                poison,
+                food: FoodSummary::default(),
+                cures: CureDoses {
+                    antipoison,
+                    ..CureDoses::default()
+                },
+            }
+        }
+
+        let selected = selected_r289();
+        let mut slot = script::SlotScript::new();
+        slot.bind_incarnation(81_031);
+        slot.start_compiled(
+            "alice",
+            script::CompiledId("Gatherer"),
+            Arc::new(SettingsBag::new()),
+            Arc::clone(&selected),
+            Arc::default(),
+        )
+        .expect("start selected Gatherer");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            match slot.poll_start() {
+                script::StartPoll::Settled(script::StartOutcome::Ready) => break,
+                script::StartPoll::Pending => {
+                    assert!(Instant::now() < deadline, "Gatherer preparation timed out");
+                    std::thread::yield_now();
+                }
+                other => panic!("Gatherer start failed: {other:?}"),
+            }
+        }
+
+        let run = slot.native_run().expect("compiled Gatherer run");
+        let mut snapshot = nav_frame_at(3200, 3200);
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 99,
+            effective: 60,
+            xp: 0,
+            used: true,
+        }]);
+        let onset = PoisonState::Onset {
+            since: 1,
+            q: Some(11),
+            hit_since_line: false,
+        };
+        let mut driver = NavRec::default();
+
+        for tick in 1..=40 {
+            snapshot.seed_tick(u32::try_from(tick).unwrap());
+            let mut context = script::ScriptCtx {
+                driver: &mut driver,
+                tick,
+                here: Some((3200, 3200, 0)),
+                walk: None,
+                walk_with: None,
+                inv: None,
+                snapshot: Some(&snapshot),
+                obj_names: None,
+                compiled: script::CompiledTick {
+                    selected: Some(&selected),
+                    condition: Some(condition(tick, onset, 5, 0)),
+                    poison_unknown_pulse: Some(11),
+                    cure_poison: CurePoison::WhenNeeded,
+                    ..script::CompiledTick::default()
+                },
+            };
+            slot.on_game_tick(&mut context);
+            let status = slot.native_status().expect("parked status");
+            assert_eq!(slot.state(), script::RunState::Running);
+            assert_eq!(slot.native_run(), Some(run));
+            assert_eq!(status.run, run);
+            assert_eq!(status.phase, NativePhase::Waiting);
+            assert!(status.failure.is_none());
+            assert!(slot.lifecycle_receipt().is_none());
+        }
+
+        let dose_id = script::combat::guard::shared_tables()
+            .expect("shared potion tables")
+            .potion(script::combat::tables::PotionKind::Antipoison)
+            .expect("antipoison table row")
+            .doses[0]
+            .expect("one-dose antipoison item")
+            .id;
+        snapshot.seed_tick(41);
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: api::ItemDefView {
+                    id: dose_id,
+                    name: Some("Antipoison".into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 0,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: Vec::new(),
+                component_id: 0,
+            }],
+            28,
+        );
+        let mut context = script::ScriptCtx {
+            driver: &mut driver,
+            tick: 41,
+            here: Some((3200, 3200, 0)),
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(&snapshot),
+            obj_names: None,
+            compiled: script::CompiledTick {
+                selected: Some(&selected),
+                condition: Some(condition(41, onset, 5, 1)),
+                poison_unknown_pulse: Some(11),
+                cure_poison: CurePoison::WhenNeeded,
+                ..script::CompiledTick::default()
+            },
+        };
+        slot.on_game_tick(&mut context);
+
+        let action = slot.take_native_action().expect("survival drink action");
+        assert_eq!(action.run(), run);
+        assert!(matches!(
+            &action.effect,
+            HostEffect::Interaction(script::interact::InteractReq::Held { action, .. })
+                if action == "Drink"
+        ));
+        let authority = action.authority();
+        slot.complete_native_interaction(
+            &authority,
+            InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: EvidenceStamp {
+                    run,
+                    tick: 41,
+                    sequence: 41,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+
+        // The drink sent at tick 41 delays the player through ticks 42 and 43
+        // (`consume_effects.rs2:124-126`, `PlayerOps.ts:376-378`). The runner
+        // holds its work through the drink lock and resumes at tick 44.
+        snapshot.seed_inventory(Vec::new(), 28);
+        for tick in 42..=44 {
+            snapshot.seed_tick(u32::try_from(tick).unwrap());
+            let mut context = script::ScriptCtx {
+                driver: &mut driver,
+                tick,
+                here: Some((3200, 3200, 0)),
+                walk: None,
+                walk_with: None,
+                inv: None,
+                snapshot: Some(&snapshot),
+                obj_names: None,
+                compiled: script::CompiledTick {
+                    selected: Some(&selected),
+                    condition: Some(condition(
+                        tick,
+                        PoisonState::Immune { until_lower: 80 },
+                        60,
+                        0,
+                    )),
+                    poison_unknown_pulse: Some(11),
+                    cure_poison: CurePoison::WhenNeeded,
+                    ..script::CompiledTick::default()
+                },
+            };
+            slot.on_game_tick(&mut context);
+            let status = slot.native_status().expect("resumed native status");
+            assert_eq!(slot.state(), script::RunState::Running);
+            assert_eq!(slot.native_run(), Some(run));
+            assert_eq!(status.run, run);
+            assert!(status.failure.is_none());
+            assert!(slot.lifecycle_receipt().is_none());
+            assert!(slot.take_native_action().is_none(), "tick {tick}");
+            if tick == 44 {
+                assert_eq!(status.phase, NativePhase::Working);
+            }
+        }
     }
 
     #[test]

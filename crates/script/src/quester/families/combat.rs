@@ -1600,7 +1600,7 @@ impl CombatRun {
         let snapshot = cx.tick.cx.snapshot();
         let allow_prayer = self.abort_protection_allowed(&snapshot);
         request.protect = allow_prayer;
-        request.food_guard = !allow_prayer;
+        request.food_guard = true;
         request.allow = WalkAllow {
             prayer: allow_prayer,
             food: true,
@@ -1672,6 +1672,8 @@ impl CombatRun {
         let budget_ticks = goals.budget_ticks;
         let mut request = self.escape_walk_request(goals, cx);
         request.protect = false;
+        request.food_guard = false;
+        request.cure_guard = true;
         request.allow = WalkAllow {
             prayer: false,
             food: false,

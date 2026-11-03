@@ -2543,6 +2543,7 @@ impl Script for BankPickBurstScript {
                         avoid: Box::default(),
                         protect: false,
                         food_guard: false,
+                        cure_guard: false,
                         allow: Default::default(),
                     };
                     self.guest.lock().burst.walk_started_at_ms =

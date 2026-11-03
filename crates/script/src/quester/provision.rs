@@ -488,6 +488,16 @@ impl Provisioner {
         self.acquire_run.as_mut()?.take_trace_event()
     }
 
+    /// Prayers the acquisition run raised, so a survival cancel can still
+    /// clear them after it drops the run.
+    pub(super) fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
+        self.acquire_run
+            .as_ref()
+            .map_or_else(crate::combat::RaisedPrayers::empty, |run| {
+                run.prayer_cleanup()
+            })
+    }
+
     pub fn status_revision(&self) -> u64 {
         self.revision
     }
@@ -505,6 +515,27 @@ impl Provisioner {
         self.bank_run.is_some()
             || self.closer.active()
             || (self.acquire_run.is_some() && !self.acquire_finished)
+    }
+    pub(super) fn has_run(&self) -> bool {
+        self.bank_run.is_some() || self.acquire_run.is_some()
+    }
+
+    pub(super) fn transfer_in_flight(&self) -> bool {
+        self.bank_run
+            .as_ref()
+            .is_some_and(AcquireRun::transfer_in_flight)
+            || self
+                .acquire_run
+                .as_ref()
+                .is_some_and(|run| run.transfer_in_flight())
+    }
+
+    pub(super) fn interrupt_transfer(&mut self, actions: &mut NativeActions) {
+        if let Some(run) = &mut self.bank_run {
+            run.interrupt_transfer(actions);
+        } else if let Some(run) = &mut self.acquire_run {
+            run.interrupt_transfer(actions);
+        }
     }
 
     pub fn needs_progress_read(&self) -> bool {

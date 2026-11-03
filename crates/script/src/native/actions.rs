@@ -32,7 +32,7 @@ fn apply_stage_cross(request: &mut WalkRequest, stage: Option<&[Arc<str>]>) {
     if has_stage_scope || !request.cross.is_empty() {
         request.options.allow_danger_zones = WalkBit::Forbid;
     }
-    if !request.cross.is_empty() {
+    if !request.cross.is_empty() && !request.cure_guard {
         request.food_guard = true;
         request.allow.food = true;
     }
@@ -1040,6 +1040,19 @@ impl NativeActions {
             }
         }
     }
+    /// Interrupt a live machine without completing or revoking its handle.
+    pub fn interrupt<M: NativeMachine>(&mut self, handle: &ActionHandle<M>) {
+        if !handle.owner.live() {
+            return;
+        }
+        let mut machine = handle.machine.borrow_mut();
+        let Some(active) = machine.as_mut() else {
+            return;
+        };
+        if let Err(payload) = catch_unwind(AssertUnwindSafe(|| active.interrupt())) {
+            resume_unwind(payload);
+        }
+    }
 
     /// Consume one warning from this walk's live request without completing
     /// its machine or spending an interaction/transition allowance.
@@ -1576,6 +1589,63 @@ mod tests {
                 Poll::Ready(Err(ActionError::Cancelled))
             ));
         });
+    }
+    #[test]
+    fn native_machine_default_interrupt_is_noop() {
+        struct Passive(u8);
+        impl NativeMachine for Passive {
+            type Args = ();
+            type Output = ();
+
+            fn begin(_: (), _: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+                Ok(Self(7))
+            }
+
+            fn poll(&mut self, _: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+                Poll::Pending
+            }
+        }
+
+        let mut actions = NativeActions { _private: () };
+        let mut ledger = None;
+        let handle = with_frame(&mut ledger, Duration::ZERO, |cx| {
+            actions.begin::<Passive>((), cx).unwrap()
+        });
+        assert_eq!(handle.inspect(|machine| machine.0), Some(7));
+        with_frame(&mut ledger, Duration::ZERO, |_| actions.interrupt(&handle));
+        assert_eq!(
+            handle.inspect(|machine| machine.0),
+            Some(7),
+            "the trait's default interrupt must preserve machines that do not opt in"
+        );
+    }
+
+    #[test]
+    fn action_handle_inspect_stays_shared() {
+        struct Passive;
+        impl NativeMachine for Passive {
+            type Args = ();
+            type Output = ();
+
+            fn begin(_: (), _: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+                Ok(Self)
+            }
+
+            fn poll(&mut self, _: &mut ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+                Poll::Pending
+            }
+        }
+        fn inspect_shared(handle: &ActionHandle<Passive>) -> Option<()> {
+            handle.inspect(|_| ())
+        }
+
+        let mut ledger = None;
+        let handle = with_frame(&mut ledger, Duration::ZERO, |cx| {
+            NativeActions { _private: () }
+                .begin::<Passive>((), cx)
+                .unwrap()
+        });
+        assert_eq!(inspect_shared(&handle), Some(()));
     }
 
     #[test]
@@ -2179,6 +2249,7 @@ mod tests {
                 avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
             };
             assert_eq!(cx.walk(walk), Err(ActionError::BudgetExhausted));
@@ -2694,6 +2765,7 @@ mod tests {
                 avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
             };
             let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
@@ -2795,6 +2867,7 @@ mod tests {
                             avoid: Box::new([]),
                             protect: false,
                             food_guard: false,
+                            cure_guard: false,
                             allow: Default::default(),
                         };
                         let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
@@ -2859,6 +2932,7 @@ mod tests {
             avoid: Box::new([]),
             protect: false,
             food_guard: false,
+            cure_guard: false,
             allow: WalkAllow::default(),
         }
     }
@@ -3104,6 +3178,41 @@ mod tests {
             assert!(!request.protect);
             drop(handle);
         });
+    }
+
+    #[test]
+    fn explicit_cure_guard_keeps_food_disabled_across_step_and_stage_crossings() {
+        for stage_cross in [false, true] {
+            for step_cross in [false, true] {
+                let mut ledger = None;
+                with_frame(&mut ledger, Duration::ZERO, |cx| {
+                    cx.stage_cross = stage_cross.then(|| Arc::from([Arc::from("stage-zone")]));
+                    let mut request = assessment_walk_request(cx.evidence());
+                    assert!(!request.cure_guard);
+                    request.cure_guard = true;
+                    request.allow.food = false;
+                    request.allow.prayer = false;
+                    if step_cross {
+                        request.cross = Box::from([Arc::from("step-zone")]);
+                    }
+                    cx.walk(request).unwrap();
+                });
+                let HostEffect::Walk(request) =
+                    &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+                else {
+                    panic!("the explicit cure request must remain a walk");
+                };
+                assert!(request.cure_guard);
+                assert!(!request.protect && !request.food_guard && !request.allow.food);
+                assert_eq!(
+                    request.cross.len(),
+                    usize::from(stage_cross) + usize::from(step_cross)
+                );
+                if stage_cross || step_cross {
+                    assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+                }
+            }
+        }
     }
 
     #[test]

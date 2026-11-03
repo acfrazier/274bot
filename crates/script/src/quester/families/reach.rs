@@ -1674,8 +1674,12 @@ pub fn walk_request(
         cross: Vec::new().into_boxed_slice(),
         avoid: Box::new([]),
         protect: false,
-        food_guard: false,
-        allow: Default::default(),
+        food_guard: true,
+        cure_guard: false,
+        allow: crate::native::WalkAllow {
+            food: true,
+            ..Default::default()
+        },
     }
 }
 
@@ -2010,6 +2014,26 @@ mod tests {
             Poll::Ready(Err(ActionError::Blocked(detail)))
                 if detail.as_ref() == "the specific first route failure"
         ));
+    }
+
+    #[test]
+    fn quester_reach_walk_requests_food_guard() {
+        let request = walk_request(
+            tile(10, 20),
+            1,
+            None,
+            EvidenceStamp {
+                run: api::selected::RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+        );
+        assert!(request.food_guard);
+        assert!(request.allow.food);
     }
 }
 
