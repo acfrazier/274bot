@@ -2699,7 +2699,7 @@ pub(crate) mod tests {
         const WIDTH: usize = 768;
         const HEIGHT: usize = 768;
         const WALL_X: usize = WIDTH / 2;
-        assert!(300_000 < NODE_BUDGET);
+        const { assert!(300_000 < NODE_BUDGET) };
         reset();
         let from = WorldTile {
             x: 0,
