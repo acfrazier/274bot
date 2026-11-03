@@ -898,11 +898,17 @@ fn on_clock<R>(
     f: impl FnOnce(&mut crate::native::NativeTick<'_>) -> R,
 ) -> R {
     let active = runtime.clock.now(at).as_duration();
-    with_tick_budget(snapshot, &mut runtime.ledger, &mut runtime.budget, tick, |native| {
-        native.cx.active_now = active;
-        native.cx.wall_now = at;
-        f(native)
-    })
+    with_tick_budget(
+        snapshot,
+        &mut runtime.ledger,
+        &mut runtime.budget,
+        tick,
+        |native| {
+            native.cx.active_now = active;
+            native.cx.wall_now = at;
+            f(native)
+        },
+    )
 }
 
 /// The paused owner's hold, sampled as the host does on every tick of the
@@ -963,7 +969,9 @@ fn a_paused_main_acknowledgement_holds_through_the_pause_and_its_own_clock_decid
                 InteractReq::CloseModal
             ));
         }
-        let (key, deadline) = runtime.modal_wait_tick(sent, 2).expect("the Main wait holds");
+        let (key, deadline) = runtime
+            .modal_wait_tick(sent, 2)
+            .expect("the Main wait holds");
         assert_eq!(deadline, 2, "not due before its active bound");
 
         let paused_at = start + Duration::from_secs(1);
@@ -1067,13 +1075,18 @@ fn tick_bound_open_and_continue_waits_keep_their_owner_deadline_during_pause() {
         } else {
             1 + super::dialogue::DIALOGUE_OPEN_TICKS
         };
-        let (key, deadline) = runtime.modal_wait_tick(sent, 2).expect("the tick wait holds");
+        let (key, deadline) = runtime
+            .modal_wait_tick(sent, 2)
+            .expect("the tick wait holds");
         assert_eq!(deadline, expected);
         let paused_at = start + Duration::from_secs(1);
         runtime.clock.observe(paused_at, false);
         let late = start + Duration::from_secs(30);
         assert_eq!(runtime.modal_wait_tick(late, 43), Some((key, expected)));
-        assert!(43 > expected + 1, "the accepted tick-bound pause tail is expired");
+        assert!(
+            43 > expected + 1,
+            "the accepted tick-bound pause tail is expired"
+        );
         runtime.clock.observe(late, true);
         let result = on_clock(&snapshot, &mut runtime, 43, late, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
@@ -1091,7 +1104,6 @@ fn tick_bound_open_and_continue_waits_keep_their_owner_deadline_during_pause() {
     }
 }
 
-
 #[test]
 fn a_queued_talk_keeps_its_wait_until_acceptance_then_uses_the_content_deadline() {
     let snapshot = cook_beside_player();
@@ -1103,7 +1115,9 @@ fn a_queued_talk_keeps_its_wait_until_acceptance_then_uses_the_content_deadline(
             .begin::<Dialogue>(npc_args_for(content_npc_id("cook"), "Cook"), &mut tick.cx)
             .unwrap()
     });
-    let (key, _) = runtime.modal_wait_tick(start, 1).expect("the queued Talk holds");
+    let (key, _) = runtime
+        .modal_wait_tick(start, 1)
+        .expect("the queued Talk holds");
     assert!(matches!(
         runtime.ledger.as_ref().unwrap().modal_wait_deadline,
         Some((_, crate::native::WaitDeadline::AwaitingDispatch))
@@ -1115,7 +1129,11 @@ fn a_queued_talk_keeps_its_wait_until_acceptance_then_uses_the_content_deadline(
         })
         .is_pending());
         assert_eq!(runtime.modal_wait_tick(at, observed), Some((key, observed)));
-        assert_eq!(talks(&runtime.ledger), 1, "the queued click is not duplicated");
+        assert_eq!(
+            talks(&runtime.ledger),
+            1,
+            "the queued click is not duplicated"
+        );
     }
 
     complete_talk(&mut runtime.ledger, 7, true, false);
@@ -1153,7 +1171,9 @@ fn a_guardian_reissued_talk_renews_its_lease_and_its_choice_wait_excludes_paused
         assert!(tick.actions.poll(&handle, &mut tick.cx).is_pending());
         handle
     });
-    let (first, _) = runtime.modal_wait_tick(start, 1).expect("the first Talk holds");
+    let (first, _) = runtime
+        .modal_wait_tick(start, 1)
+        .expect("the first Talk holds");
     let paused_at = start + Duration::from_secs(1);
     runtime.clock.observe(paused_at, false);
     runtime.budget.hold_begin();
@@ -1177,7 +1197,10 @@ fn a_guardian_reissued_talk_renews_its_lease_and_its_choice_wait_excludes_paused
         .modal_wait_tick(reissued_at, 44)
         .expect("the reissued Talk holds");
     assert_ne!(second, first, "a reissue owns a fresh lease");
-    assert_eq!(deadline, 44, "the new click is awaiting dispatch, not expired");
+    assert_eq!(
+        deadline, 44,
+        "the new click is awaiting dispatch, not expired"
+    );
 
     complete_talk(&mut runtime.ledger, 44, true, false);
     let choice = menu_page(100, &["Choose."], &["Buy", "Leave"], -1);

@@ -996,7 +996,9 @@ fn stopping_a_queued_talk_releases_the_slots_modal_wait() {
             None,
             "Stop and the session boundary release the queued owner's wait"
         );
-        assert!(slot.take_native_action().is_none(), "no queued Talk survives");
+        assert!(
+            slot.take_native_action().is_none(),
+            "no queued Talk survives"
+        );
     }
 }
-
