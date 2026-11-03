@@ -41,9 +41,8 @@ struct PaintChromeShapes {
 
 #[derive(Default)]
 struct ChromeState {
-    selections: HashMap<String, String>,
-    // Singleton list offsets persist until the script resets its paint store.
-    scroll_state: HashMap<String, String>,
+    // Only the exported singleton is mirrored here; instance stores live in V8's WeakMap.
+    singleton_store: HashMap<String, String>,
     reset_instance_stores: bool,
     dock_h: i32,
     consumed: i32,
@@ -72,8 +71,7 @@ impl Default for PanelRect {
 
 impl ChromeState {
     fn reset_store(&mut self) {
-        self.selections.clear();
-        self.scroll_state.clear();
+        self.singleton_store.clear();
         self.reset_instance_stores = true;
         self.consumed = 0;
         self.dock_h = CHATBOX_H;
@@ -89,6 +87,9 @@ impl ChromeState {
         self.consumed = 0;
         self.body_x = PAD;
         self.char_w = char_w;
+        self.collapsed = self
+            .state_get("paint:collapsed")
+            .is_some_and(|value| value == "1");
     }
 
     fn rows_left(&self) -> i32 {
@@ -106,6 +107,14 @@ impl ChromeState {
         self.consume(px.clamp(0, i64::from(i32::MAX)) as i32);
     }
 
+    fn state_get(&self, key: &str) -> Option<&str> {
+        self.singleton_store.get(key).map(String::as_str)
+    }
+
+    fn state_set(&mut self, key: String, value: String) {
+        self.singleton_store.insert(key, value);
+    }
+
     fn cols(&self) -> i32 {
         if self.char_w <= 0.0 {
             return 0;
@@ -116,7 +125,7 @@ impl ChromeState {
     }
 
     fn resolve(&self, key: &str, names: &[String]) -> String {
-        if let Some(stored) = self.selections.get(key) {
+        if let Some(stored) = self.singleton_store.get(key) {
             if names.iter().any(|name| name == stored) {
                 return stored.clone();
             }
@@ -126,7 +135,7 @@ impl ChromeState {
 
     fn resolve_rail(&self, key: &str, names: &[String]) -> String {
         if names.is_empty() {
-            return self.selections.get(key).cloned().unwrap_or_default();
+            return self.singleton_store.get(key).cloned().unwrap_or_default();
         }
         self.resolve(key, names)
     }
@@ -142,11 +151,10 @@ pub(super) fn store_select(key: &str, name: &str) {
     }
     STATE.with(|s| {
         s.borrow_mut()
-            .selections
-            .insert(key.to_owned(), name.to_owned());
+            .state_set(key.to_owned(), name.to_owned());
     });
-}
 
+}
 /// Resolve a strip band's selection and spend its title row, for a caller that
 /// records the frame itself (`paint_jive`'s frame plan) instead of marshalling
 /// the call.
@@ -334,6 +342,11 @@ fn run<'s>(
                 state.consume(TITLE_H);
                 if toggle {
                     state.collapsed = !state.collapsed;
+                    let collapsed = state.collapsed;
+                    state.state_set(
+                        "paint:collapsed".to_owned(),
+                        if collapsed { "1" } else { "0" }.to_owned(),
+                    );
                 }
             });
             Ok(v8::undefined(scope).into())
@@ -429,22 +442,32 @@ fn run<'s>(
         "stateNew" => {
             let owner = v8::Local::<v8::Object>::try_from(args.get(1))
                 .map_err(|_| "paint state owner is not an object".to_string())?;
-            let shapes = scope
-                .get_slot::<Rc<PaintChromeShapes>>()
-                .cloned()
-                .ok_or_else(|| "paint chrome object shape cache is not installed".to_string())?;
-            let weak_map = v8::Local::new(scope, &*shapes.state_stores.borrow());
-            let set = v8::Local::new(scope, &shapes.state_store_set);
-            let store = v8::Map::new(scope);
-            set.call(scope, weak_map.into(), &[owner.into(), store.into()])
-                .ok_or_else(|| "paint state weak map set failed".to_string())?;
+            if !args.get(2).boolean_value(scope) {
+                let shapes = scope
+                    .get_slot::<Rc<PaintChromeShapes>>()
+                    .cloned()
+                    .ok_or_else(|| "paint chrome object shape cache is not installed".to_string())?;
+                let weak_map = v8::Local::new(scope, &*shapes.state_stores.borrow());
+                let set = v8::Local::new(scope, &shapes.state_store_set);
+                let store = v8::Map::new(scope);
+                set.call(scope, weak_map.into(), &[owner.into(), store.into()])
+                    .ok_or_else(|| "paint state weak map set failed".to_string())?;
+            }
             Ok(v8::undefined(scope).into())
         }
         "stateGet" => {
+            let key_text = js_string_arg(scope, args.get(2));
+            if args.get(4).boolean_value(scope) {
+                let value =
+                    STATE.with(|s| s.borrow().state_get(&key_text).map(str::to_owned));
+                return match value {
+                    Some(value) => js_string(scope, &value),
+                    None => Ok(args.get(3)),
+                };
+            }
             let Some(store) = paint_state_store(scope, args.get(1), false)? else {
                 return Ok(args.get(3));
             };
-            let key_text = js_string_arg(scope, args.get(2));
             let key = js_string(scope, &key_text)?;
             let value = store
                 .get(scope, key.into())
@@ -456,10 +479,16 @@ fn run<'s>(
             }
         }
         "stateSet" => {
-            let store = paint_state_store(scope, args.get(1), true)?
-                .ok_or_else(|| "paint state store was not created".to_string())?;
             let key_text = js_string_arg(scope, args.get(2));
             let value_text = js_string_arg(scope, args.get(3));
+            if args.get(4).boolean_value(scope) {
+                STATE.with(|s| {
+                    s.borrow_mut().state_set(key_text, value_text);
+                });
+                return Ok(v8::undefined(scope).into());
+            }
+            let store = paint_state_store(scope, args.get(1), true)?
+                .ok_or_else(|| "paint state store was not created".to_string())?;
             let key = js_string(scope, &key_text)?;
             let value = js_string(scope, &value_text)?;
             store
@@ -859,12 +888,11 @@ fn parse_number(text: Option<&str>, fallback: f64) -> f64 {
 fn list_scroll(state: &mut ChromeState, key: &str, len: usize, rows: f64, focus: f64) -> f64 {
     let manual_key = format!("{key}:manual");
     let focus_key = format!("{key}:focus");
-    let stored_offset = parse_number(state.scroll_state.get(key).map(String::as_str), 0.0);
+    let stored_offset = parse_number(state.state_get(key), 0.0);
     let manual = state
-        .scroll_state
-        .get(&manual_key)
+        .state_get(&manual_key)
         .is_some_and(|value| value == "1");
-    let old_focus = parse_number(state.scroll_state.get(&focus_key).map(String::as_str), -1.0);
+    let old_focus = parse_number(state.state_get(&focus_key), -1.0);
     let manual = if focus != old_focus { false } else { manual };
     let max = (len as f64 - rows).max(0.0);
     let clamp = |number: f64| number.max(0.0).min(max);
@@ -880,16 +908,9 @@ fn list_scroll(state: &mut ChromeState, key: &str, len: usize, rows: f64, focus:
             offset = clamp(focus - rows + 1.0);
         }
     }
-    state
-        .scroll_state
-        .insert(key.to_owned(), js_number_string(offset));
-    state
-        .scroll_state
-        .insert(manual_key, if manual { "1" } else { "0" }.to_owned());
-    state
-        .scroll_state
-        .insert(focus_key, js_number_string(focus));
-    offset
+    state.state_set(key.to_owned(), js_number_string(offset));
+    state.state_set(manual_key, if manual { "1" } else { "0" }.to_owned());
+    state.state_set(focus_key, js_number_string(focus));
 }
 
 fn fill_rows<'s>(

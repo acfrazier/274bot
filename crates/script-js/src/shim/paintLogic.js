@@ -93,7 +93,7 @@ export function statColumns(panelW, railW, pad, columns) {
 
 export class PaintState {
     constructor() {
-        paint('stateNew', this);
+        paint('stateNew', this, false);
     }
 
     publishRegions(regions) {
@@ -129,11 +129,11 @@ export class PaintState {
     }
 
     get(key, fallback) {
-        return paint('stateGet', this, String(key), fallback);
+        return paint('stateGet', this, String(key), fallback, this === paintState);
     }
 
     set(key, value) {
-        return paint('stateSet', this, String(key), String(value));
+        return paint('stateSet', this, String(key), String(value), this === paintState);
     }
 
     reset() {
@@ -142,6 +142,6 @@ export class PaintState {
 }
 
 const paintState = Object.create(PaintState.prototype);
-paint('stateNew', paintState);
+paint('stateNew', paintState, true);
 export { paintState };
 export const WHEEL_ROWS = notImplValue('WHEEL_ROWS');

@@ -160,6 +160,7 @@ fn stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded() {
             state_growth <= state_limit,
             "collected V8 heap grew {state_growth} bytes for temporary PaintState stores; limit {state_limit}"
         );
+        // The 1,000-store run retained 0 B in Rust; 4 KiB allows allocator bookkeeping.
         assert!(
             rust.bytes_current <= 4 * 1024,
             "Rust retained {rust:?} after temporary PaintState stores"

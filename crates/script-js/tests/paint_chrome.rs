@@ -631,7 +631,7 @@ export default class T extends LoopingBot {
 
     iso.paint_click("step:mode:prev");
     tick(&iso, 4);
-    assert_eq!(iso.probe("__picked").unwrap().as_str(), Some("one"));
+    assert_eq!(iso.probe("__picked").unwrap().as_str(), Some("three"));
     assert_eq!(
         iso.probe("__clickAfterStep").unwrap(),
         serde_json::Value::Null,
