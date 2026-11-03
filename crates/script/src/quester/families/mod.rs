@@ -1661,9 +1661,11 @@ struct TalkRun {
     /// The retry of a step that failed with its dialogue page open: no anchor walk.
     open_page: bool,
 }
-// TalkRun measures 856 B on x86_64 Linux, with 8 B headroom below 864 B.
+// Linux measures 896 B, with 8 B headroom below 904 B. Its growth from 856 B
+// is the nested Dialogue's 16 B lease + 8 B mirrored epoch + 16 B bound, not
+// another allocation. AwaitingDispatch adds no bytes to WaitDeadline.
 // NAV-PREREQ-RUNNER retains PrereqWalk plus Dialogue's last-send receipt.
-const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 864) as usize];
+const _: [(); 1] = [(); (std::mem::size_of::<TalkRun>() <= 904) as usize];
 impl StepRun for TalkRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         let now_tick = cx.tick.cx.evidence().tick;

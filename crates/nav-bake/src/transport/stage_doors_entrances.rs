@@ -644,16 +644,6 @@ impl Motion<'_> {
                 let quest_stage = self.base.src.quest_stage.get(quest_varp).copied();
                 let colour_authoritative =
                     quest_stage.is_some_and(|facts| facts.colour_authoritative);
-                // Without a stage domain, a green row proves only that
-                // progress reached completion. That is enough for the
-                // completed branch when the row is either generated as
-                // authoritative or proven by the content's own colour rule.
-                let green_proves_complete = colour_authoritative
-                    || self
-                        .base
-                        .src
-                        .quest_green_proves_complete
-                        .contains(quest_varp);
                 let stage_domain = self
                     .base
                     .src
@@ -1601,13 +1591,16 @@ mod stage_window_tests {
         );
     }
 
-    /// The completed branch of `%heroquest >= ^hero_complete` for a row with no
-    /// stage domain, as the entrance evaluator reads it.
-    fn completed_hero_comparison(colour_authoritative: bool, green_proven: bool) -> Cond {
+    /// A controlled no-domain comparison, not a change to selected Hero's
+    /// 0..15 domain or its exact15 completion Window.
+    fn completed_progress_comparison(
+        colour_authoritative: bool,
+        family: Option<nav_planner::quest_gates::QuestFamilyId>,
+    ) -> Cond {
         let src = Sources {
             oplocs: std::array::from_fn(|_| HashMap::new()),
             oplocu: HashMap::new(),
-            quest_family: None,
+            quest_family: family,
             quest_complete: HashMap::from([(
                 "heroquest".to_owned(),
                 (api::selected::FactKey::new("hero"), 15),
@@ -1620,12 +1613,11 @@ mod stage_window_tests {
                     transmission: api::quest_facts::Transmission::NotTransmitted,
                 },
             )]),
+            quest_signals: HashMap::from([(
+                "heroquest".to_owned(),
+                api::selected::FactKey::new("hero"),
+            )]),
             quest_exact: HashSet::new(),
-            quest_green_proves_complete: if green_proven {
-                HashSet::from(["heroquest".to_owned()])
-            } else {
-                HashSet::new()
-            },
             labels: HashMap::new(),
             timers: HashMap::new(),
             procs: HashMap::new(),
@@ -1642,6 +1634,7 @@ mod stage_window_tests {
         let positions = HashMap::new();
         let absent: [i32; 0] = [];
         let npc_queries: [Expr; 0] = [];
+        let scenery_queries: [Expr; 0] = [];
         let above_queries: [String; 0] = [];
         let proofs = HashSet::new();
         let selectors = HashMap::new();
@@ -1672,12 +1665,15 @@ mod stage_window_tests {
             moved: false,
             ticks: 1,
             gate_read: false,
+            entry_modal_closed: true,
             entrance: Some(Inputs {
                 facts: &facts,
                 positions: &positions,
                 absent: &absent,
                 npc_queries: &npc_queries,
                 npc_mask: 0,
+                scenery_queries: &scenery_queries,
+                scenery_mask: 0,
                 complete: true,
                 stage_ranges: None,
                 above_queries: &above_queries,
@@ -1686,6 +1682,7 @@ mod stage_window_tests {
             returned: None,
             value_query: false,
             timer: None,
+            obstacle: None,
         };
         let lhs = Expr::Word("%heroquest".to_owned());
         let rhs = Expr::Word("^hero_complete".to_owned());
@@ -1695,29 +1692,30 @@ mod stage_window_tests {
     }
 
     #[test]
-    fn unproven_completion_without_stage_domain_is_unknown() {
-        // Neither the generated row nor the content's colour rule proves that
-        // a green row means progress reached completion.
-        let condition = completed_hero_comparison(false, false);
-
-        assert_eq!(condition.value, None);
-        assert!(condition.needs.quests.is_empty());
+    fn no_domain_comparison_without_a_verified_family_is_unknown() {
+        for colour_authoritative in [false, true] {
+            let condition = completed_progress_comparison(colour_authoritative, None);
+            assert_eq!(condition.value, None);
+            assert!(condition.needs.quests.is_empty());
+        }
     }
 
     #[test]
-    fn completion_without_stage_domain_keeps_its_gate_when_a_green_row_is_proven() {
-        for (colour_authoritative, green_proven) in [(false, true), (true, false), (true, true)] {
-            let condition = completed_hero_comparison(colour_authoritative, green_proven);
-
+    fn no_domain_comparison_preserves_its_raw_window_without_colour_substitution() {
+        let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let (_, identity) = selected.quest_identity_for_bake().expect("verified family");
+        let family = nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
+        for colour_authoritative in [false, true] {
+            let condition = completed_progress_comparison(colour_authoritative, Some(family));
             assert_eq!(condition.value, Some(true));
-            assert!(
-                matches!(
-                    condition.needs.quests.as_slice(),
-                    [api::selected::QuestGate::Complete(quest)] if quest.0.as_ref() == "hero"
-                ),
-                "authoritative={colour_authoritative} proven={green_proven}: {:?}",
-                condition.needs.quests
-            );
+            assert_eq!(condition.needs.quest_family, Some(family));
+            let [api::selected::QuestGate::Window(window)] = condition.needs.quests.as_slice() else {
+                panic!("expected the raw progress window: {:?}", condition.needs.quests);
+            };
+            assert_eq!(window.quest.0.as_ref(), "hero");
+            assert_eq!(window.signal.0.as_ref(), "heroquest");
+            assert_eq!(window.values.min, Some(15));
+            assert_eq!(window.values.max, Some(i32::MAX));
         }
     }
 }
