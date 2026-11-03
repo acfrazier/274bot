@@ -83,6 +83,6 @@ export function walkApproach() {
 }
 
 export async function withdrawTo(name, target) {
-    const out = await runMachine('bank_withdraw_to', { name: String(name), target });
+    const out = await runMachine('bank_withdraw_to', { name: String(name), target }, {});
     return out.kind === 'done' ? out.value : 0;
 }
