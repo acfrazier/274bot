@@ -81,6 +81,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Navigation extractor tests retain Hero's exact stage 15 and Grand Tree's
   stage range 80 to 160, including raw completion and colour-only refusal, while
   controlled true-authority fixtures keep canonical completion paths covered.
+  No-domain entrance tests retain the raw progress threshold with either a
+  direct-varp or procedure-based journal expression; a green row alone does
+  not replace that threshold or remove the crossing.
 - The route-corpus exporter and navigation regression fixtures now use
   stamped quest observations from the current evidence API. A stale
   observation keeps its original timestamp and does not authorize a gate.
