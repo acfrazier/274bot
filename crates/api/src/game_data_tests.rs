@@ -275,11 +275,13 @@ fn facts_old_data_is_refused_by_version() {
 }
 #[test]
 fn facts_negative_bonus_is_signed() {
-    for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let data = for_revision(revision).expect("selected game data");
-        let halberd = data.item_combat_bonus(3190).expect("bronze halberd");
-        assert_eq!((halberd.magicattack, halberd.stabdefence), (-4, -1));
-    }
+    // generate.ts:3044-3047,3161-3178 publishes PvP V0 bonuses only on289.
+    let unavailable = for_revision(ClientRevision::R274).expect("selected game data");
+    assert!(unavailable.item_combat_bonus_rows().is_empty());
+    assert!(unavailable.item_combat_bonus(3190).is_none());
+    let data = for_revision(ClientRevision::R289).expect("selected game data");
+    let halberd = data.item_combat_bonus(3190).expect("bronze halberd");
+    assert_eq!((halberd.magicattack, halberd.stabdefence), (-4, -1));
 }
 
 fn minimal_json(tail: &str) -> String {
@@ -2179,7 +2181,7 @@ fn special_button_resolves_one_component_per_tab() {
 }
 
 #[test]
-fn duel_rule_buttons_match_both_pinned_sources() {
+fn duel_rule_buttons_match_revision_support() {
     // Content: the 14 `[if_button,duel_select_type:<rule>]` toggles of
     // C`duel_arena_settings.rs2:1-85`, indexed by the bits of
     // C`duelarena.constant:1-14` (NoForfeit = 0 through NoSpecs = 13).
@@ -2189,13 +2191,21 @@ fn duel_rule_buttons_match_both_pinned_sources() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).unwrap();
         let controls = data.duel_controls().expect("duel controls");
-        assert_eq!(controls.rule_buttons, EXPECTED, "{revision:?} rule buttons");
-        for (bit, component) in EXPECTED.iter().enumerate() {
-            assert_eq!(
-                controls.rule_button(bit as u8),
-                Some(*component),
-                "{revision:?} rule_button({bit})"
-            );
+        // generate.ts:3044-3047,3161-3178 excludes every PvP V0 fact on274.
+        if revision == ClientRevision::R274 {
+            assert_eq!(controls.rule_buttons, [0; 14]);
+            for bit in 0..=u8::MAX {
+                assert_eq!(controls.rule_button(bit), None, "R274 rule_button({bit})");
+            }
+        } else {
+            assert_eq!(controls.rule_buttons, EXPECTED, "{revision:?} rule buttons");
+            for (bit, component) in EXPECTED.iter().enumerate() {
+                assert_eq!(
+                    controls.rule_button(bit as u8),
+                    Some(*component),
+                    "{revision:?} rule_button({bit})"
+                );
+            }
         }
         assert_eq!(
             controls.rule_button(14),
