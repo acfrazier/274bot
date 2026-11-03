@@ -12993,7 +12993,7 @@
       "module": "paint/paintLogic.js",
       "selector": "WHEEL_ROWS",
       "reason": "The scroll-wheel layout constant is unavailable while its paint family refuses.",
-      "runtime": "crates/script-js/src/shim/paintLogic.js:147",
+      "runtime": "crates/script-js/src/shim/paintLogic.js:148",
       "declaration": "export const WHEEL_ROWS: never;",
       "family_id": "paint",
       "nav_consuming": false
@@ -22764,7 +22764,7 @@
       "selector": "WHEEL_ROWS",
       "module": "paint/paintLogic.js",
       "state": "not-impl",
-      "source": "crates/script-js/src/shim/paintLogic.js:147",
+      "source": "crates/script-js/src/shim/paintLogic.js:148",
       "reason": "The exported value throws when accessed through notImplValue."
     },
     {
