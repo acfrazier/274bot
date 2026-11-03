@@ -488,9 +488,12 @@ impl RouteSubmission {
             let bank_planned_bytes =
                 BankFetchCursor::heap_bound(planned_rows, plan_item_rows, stand_rows)
                     .ok_or(RouteJobError::Budget)?;
-            let fetchable_state_bytes =
-                FetchableStateCursor::heap_bound(state, planned_rows, !request.world.banks().is_empty())
-                    .ok_or(RouteJobError::Budget)?;
+            let fetchable_state_bytes = FetchableStateCursor::heap_bound(
+                state,
+                planned_rows,
+                !request.world.banks().is_empty(),
+            )
+            .ok_or(RouteJobError::Budget)?;
             let fetchable_edge_bytes =
                 FetchableEdgeCursor::heap_bound(&request.world.graph, options.allow_teleports)
                     .ok_or(RouteJobError::Budget)?;
@@ -675,7 +678,8 @@ impl RouteSubmission {
                             .input_bytes()
                             .checked_add(preflights.first.reservation().peak_bytes)
                             .and_then(|bytes| {
-                                bytes.checked_add(preflights.first.reservation().future_layout_bytes)
+                                bytes
+                                    .checked_add(preflights.first.reservation().future_layout_bytes)
                             })
                             .and_then(|search| bytes.checked_add(search))
                     })
@@ -9030,7 +9034,8 @@ mod diagnostic_tests {
         // planning/fetch/post-bank owners must not become scratch or output.
         request.bank = Vec::with_capacity(ROUTE_WORK_LIMIT_BYTES / 16);
         let (captured_bank, _) =
-            RouteSubmission::prepare(&request, &state, &lease, request.bank.capacity(), 32).unwrap();
+            RouteSubmission::prepare(&request, &state, &lease, request.bank.capacity(), 32)
+                .unwrap();
         assert!(captured_bank.input_bytes > without_bank.input_bytes);
         assert_eq!(captured_bank.scratch_bytes, without_bank.scratch_bytes);
         assert_eq!(captured_bank.result_bytes, without_bank.result_bytes);
@@ -9064,11 +9069,9 @@ mod diagnostic_tests {
         let state = Arc::new(WorldState::empty());
         let lease = nav_lease(&request.world).unwrap();
         request.opts.allow_bank_fetch = false;
-        let (without_bank, _) =
-            RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
+        let (without_bank, _) = RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
         request.opts.allow_bank_fetch = true;
-        let (with_bank, _) =
-            RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
+        let (with_bank, _) = RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
         assert!(with_bank.result_bytes > without_bank.result_bytes);
         assert!(
             with_bank.scratch_bytes + with_bank.result_bytes
