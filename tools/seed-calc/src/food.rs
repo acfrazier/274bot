@@ -134,6 +134,7 @@ fn request(tick: u16) -> WalkRequest {
         avoid: Box::default(),
         protect: false,
         food_guard: true,
+        cure_guard: false,
         allow,
     }
 }

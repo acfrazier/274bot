@@ -32361,6 +32361,7 @@ export default class T extends LoopingBot {
             Arc::new(SettingsBag::new()),
             Arc::clone(&selected),
             Arc::default(),
+            None,
         )
         .expect("start selected Gatherer");
         let deadline = Instant::now() + Duration::from_secs(20);

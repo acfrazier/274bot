@@ -74,7 +74,7 @@ fn post_page(
 fn post_page_in(
     iso: &LoadIsolate,
     buffer: &mut crate::wire::IsolateBuf,
-    snapshot: crate::wire::SnapshotInput<'_>,
+    snapshot: script::native::snapshot_source::SnapshotInput<'_>,
     rows: &[Live<'_>],
     results: &[SeatResult],
 ) {
@@ -98,14 +98,14 @@ fn post_page_in(
             prompt: row.prompt.as_ref().map(|(sequence, _, _)| *sequence),
         })
         .collect();
-    let details: Vec<crate::wire::SeatLiveDetails<'_>> =
+    let details: Vec<script::native::seat_rows::SeatLiveDetails<'_>> =
         rows.iter()
             .zip(&encoded)
-            .map(|(row, args)| crate::wire::SeatLiveDetails {
+            .map(|(row, args)| script::native::seat_rows::SeatLiveDetails {
                 id: row.id,
                 phase: script::native::NativePhase::Waiting,
                 prompt: row.prompt.as_ref().zip(args.as_ref()).map(
-                    |((sequence, point, _), args)| crate::wire::SeatPromptInput {
+                    |((sequence, point, _), args)| script::native::seat_rows::SeatPromptInput {
                         sequence: DecisionSequence::from_raw(*sequence).expect("nonzero sequence"),
                         point,
                         args,
@@ -113,8 +113,8 @@ fn post_page_in(
                 ),
             })
             .collect();
-    let page =
-        crate::wire::SeatPageInput::new(&entries, results, &details, 0).expect("valid seat page");
+    let page = script::native::seat_rows::SeatPageInput::new(&entries, results, &details, 0)
+        .expect("valid seat page");
     let bytes = buffer.encode_snapshot_with_native(
         &snapshot,
         script::native::snapshot_source::NativeFactsInput {
@@ -909,7 +909,7 @@ fn an_embedded_hunt_child_steps_only_its_owner_and_continues_into_the_family() {
     // the bank, the bank is closed. Only the seat pages change.
     let standing = || {
         let mut input = crate::wire::tests::empty_input(1);
-        input.here = Some(crate::wire::TileInput {
+        input.here = Some(script::native::snapshot_source::TileInput {
             x: 80,
             z: 80,
             level: 0,

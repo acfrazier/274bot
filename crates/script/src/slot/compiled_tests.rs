@@ -3735,7 +3735,7 @@ fn completed_native_status_survives_teardown_without_copying() {
                 phase: NativePhase::Complete,
                 active_settings: 1,
                 pending_settings: None,
-                survival: None,
+                survival: crate::survival::SurvivalReport::default(),
                 fields: Arc::from([
                     crate::native::StatusField {
                         key: "ground_waited_ticks",
