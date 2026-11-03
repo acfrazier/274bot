@@ -2423,7 +2423,7 @@ fn queued_seat_rows(
 }
 
 fn drain_host(slot: &mut script::SlotScript) -> Vec<script::shim::InteractReq> {
-    slot.drain_host_interacts()
+    slot.drain_host_interacts(None)
         .1
         .into_iter()
         .map(|queued| queued.req)
@@ -2570,7 +2570,7 @@ export function tick(api) {
     stall_journal_hold(&mut slot, STALL_PAST_THE_HOLD);
     let dropped = slot.slot_metrics().dropped;
     slot.pause();
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     assert_eq!(
         closes(&mut slot),
         [queued[1]],
