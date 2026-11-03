@@ -171,19 +171,24 @@ impl<'a> RepairWalk<'a> {
     }
 }
 
+const MAX_DISTINCT_ROWS: u8 = 3;
+
 #[derive(Default)]
 pub struct PrereqBudget {
     rows_run: u8,
     talks: u8,
     probes: u8,
     pub re_issues: u8,
-    visited: [u16; 3],
+    visited: [u16; MAX_DISTINCT_ROWS as usize],
     visited_len: u8,
 }
 impl PrereqBudget {
-    pub const MAX_RE_ISSUES: u8 = 2;
+    // One original-walk reissue is available per distinct prerequisite row.
+    pub const MAX_RE_ISSUES: u8 = MAX_DISTINCT_ROWS;
     fn row(&mut self, row: u16) -> bool {
-        if self.rows_run >= 3 || self.visited[..usize::from(self.visited_len)].contains(&row) {
+        if self.rows_run >= MAX_DISTINCT_ROWS
+            || self.visited[..usize::from(self.visited_len)].contains(&row)
+        {
             return false;
         }
         self.visited[usize::from(self.visited_len)] = row;

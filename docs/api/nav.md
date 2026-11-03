@@ -716,6 +716,13 @@ or multiple matches leave the gate closed. A failed journal read also leaves
 the gate closed and blocks the walk. The session remembers only the proved
 signal range and its content-checked preservation range.
 
+A logical walk can resolve at most three distinct prerequisite rows.
+Each distinct row permits one reissue of the original walk from fresh evidence.
+The reissue cap and visited-row storage use the same row budget.
+A journal read can therefore precede both distinct dialogue repairs.
+A repeated row or a fourth source still blocks the walk.
+The Talk, probe and observed-tick limits remain unchanged.
+
 The Shield of Arrav page distinguishes completed Phoenix and Black Arm
 accounts even though their quest-list row has the same green colour.
 Its Phoenix completion text proves `phoenixgang = 10`: the Phoenix section

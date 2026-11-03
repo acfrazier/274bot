@@ -1837,13 +1837,14 @@ fn exhausted_re_issues_keep_the_recorded_refusal() {
     let (_, mort) = row(ConsentSwitch::QuestStart);
     let state = state();
     let (mut walk, mut ledger) = walk_wrapper(&crossing_snapshot(&holy.crossings[0]));
-    resolve_probe_in_walk(&mut walk, holy, &holy.crossings[0], &state, &mut ledger, 2);
+    resolve_journal_in_walk(&mut walk, &state, &mut ledger, 2);
+    resolve_probe_in_walk(&mut walk, holy, &holy.crossings[0], &state, &mut ledger, 5);
     let snapshot =
-        resolve_probe_in_walk(&mut walk, mort, &mort.crossings[0], &state, &mut ledger, 4);
+        resolve_probe_in_walk(&mut walk, mort, &mort.crossings[0], &state, &mut ledger, 7);
     let crossing = &holy.crossings[0];
     let gates: Arc<[ActionableGate]> = vec![gate(holy, crossing, Truth::False)].into();
     let possible = holy.probe.refuse[0].proves;
-    let fact = with_tick(&snapshot, &mut ledger, 6, |native| Fact {
+    let fact = with_tick(&snapshot, &mut ledger, 9, |native| Fact {
         quest: holy.establishes.quest.clone(),
         signal: holy.establishes.signal.clone(),
         possible,
@@ -1869,10 +1870,10 @@ fn exhausted_re_issues_keep_the_recorded_refusal() {
         },
         fact: fact.clone(),
     });
-    wrapper_terminal(&mut ledger, 6, WalkEnd::GateRefused(observation));
-    let Poll::Ready(Ok(receipt)) = wrapper_poll(&mut walk, &snapshot, &mut ledger, 6, &state)
+    wrapper_terminal(&mut ledger, 9, WalkEnd::GateRefused(observation));
+    let Poll::Ready(Ok(receipt)) = wrapper_poll(&mut walk, &snapshot, &mut ledger, 9, &state)
     else {
-        panic!("the two-reissue budget must terminate the logical walk");
+        panic!("the distinct-row reissue budget must terminate the logical walk");
     };
     assert_eq!(receipt.end, WalkEnd::Blocked);
     let Some(crate::native::WalkRefusal::Prerequisite(refusal)) = receipt.refusal else {

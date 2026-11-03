@@ -43,6 +43,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Walking to Drezel can now read the Priest in Peril journal when quest colour
   does not prove access through the mausoleum. The holy barrier still requires
   Drezel's advice, rather than a guess from the completed quest colour.
+- A walk can now complete a journal read and both distinct prerequisite
+  conversations before it resumes. Reissues share the existing three-row
+  budget. Repeated rows and a fourth source still stop the walk.
 
 - `api.questIdentity` now returns the state variable and completion value for
   four quests whose row held a script procedure name or zero. The Digsite Quest
