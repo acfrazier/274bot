@@ -469,7 +469,7 @@ fn run<'s>(
             };
             let key = js_string(scope, &key_text)?;
             let value = store
-                .get(scope, key.into())
+                .get(scope, key)
                 .ok_or_else(|| "paint state map get failed".to_string())?;
             if value.is_undefined() {
                 Ok(args.get(3))
@@ -491,7 +491,7 @@ fn run<'s>(
             let key = js_string(scope, &key_text)?;
             let value = js_string(scope, &value_text)?;
             store
-                .set(scope, key.into(), value.into())
+                .set(scope, key, value)
                 .ok_or_else(|| "paint state map set failed".to_string())?;
             Ok(v8::undefined(scope).into())
         }
