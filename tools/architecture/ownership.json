@@ -855,6 +855,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/examples/soak_routes.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/examples/profile_check.rs",
       "owner": "T1"
     },
@@ -1756,6 +1760,10 @@
     },
     {
       "path": "crates/host-play/tests/support/t14_candidate_observers.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/support/t14_final_barrier.rs",
       "owner": "T1"
     },
     {
@@ -6159,6 +6167,22 @@
       "owner": "T1"
     },
     {
+      "path": "global-region-rank-driver-t14-soak-route-1028.sh",
+      "owner": "T5"
+    },
+    {
+      "path": "global-region-rank-preflight-driver-t14-soak-route-1028.sh",
+      "owner": "T5"
+    },
+    {
+      "path": "global-region-rank-t14-soak-route-1028-preflight.py",
+      "owner": "T5"
+    },
+    {
+      "path": "global-region-rank-t14-soak-route-1028.py",
+      "owner": "T5"
+    },
+    {
       "path": "scripts/fetch-cache.sh",
       "owner": "T1"
     },
@@ -6511,11 +6535,31 @@
       "owner": "T1"
     },
     {
+      "path": "tools/t14_soak_routes.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/t14_soak_run.py",
       "owner": "T1"
     },
     {
       "path": "tools/t14_soak_summary.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/test_t14_soak_proxy.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/test_t14_soak_routes.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/test_t14_soak_run.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/test_t14_soak_summary.py",
       "owner": "T1"
     },
     {
