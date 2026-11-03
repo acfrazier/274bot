@@ -83,6 +83,7 @@ fn catalog_paint_helpers_match_upstream_contract() {
             "alpha beta gamma",
             "  delta",
             "two",
+            "three",
             "3 to 4 of 5 · end",
             "four",
             "5 to 5 of 5",

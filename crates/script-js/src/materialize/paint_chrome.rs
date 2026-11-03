@@ -817,7 +817,7 @@ fn append_paint_line<'s>(
     if cols <= 0.0 {
         return Ok(());
     }
-    let length = text.length() as usize;
+    let length = text.length();
     let (copied, ellipsis) = if length as f64 <= cols {
         (length, false)
     } else {
@@ -936,7 +936,6 @@ fn list<'s>(
     let id = js_string_arg(scope, id);
     let rows = js_number(scope, rows);
     let lines = as_array(scope, values, "lines")?;
-    let len = lines.length() as usize;
     let focus = js_property(scope, options, "focus")?;
     let focus = if focus.is_null_or_undefined() {
         -1.0
@@ -944,7 +943,7 @@ fn list<'s>(
         js_number(scope, focus)
     };
     let footer = js_property(scope, options, "footer")?;
-    list_impl(scope, record, &id, lines, len, rows, focus, footer)
+    list_impl(scope, record, &id, lines, rows, focus, footer)
 }
 
 fn list_impl<'s>(
@@ -952,11 +951,11 @@ fn list_impl<'s>(
     record: v8::Local<'s, v8::Value>,
     id: &str,
     lines: v8::Local<'s, v8::Array>,
-    len: usize,
     rows: f64,
     focus: f64,
     footer: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
+    let len = lines.length() as usize;
     let (collapsed, offset, cols) = STATE.with(|s| {
         let mut state = s.borrow_mut();
         if state.collapsed {
@@ -1044,7 +1043,7 @@ fn fill<'s>(
         js_number(scope, focus)
     };
     let footer = js_property(scope, options, "footer")?;
-    list_impl(scope, record, &id, lines, len, rows, focus, footer)
+    list_impl(scope, record, &id, lines, rows, focus, footer)
 }
 
 fn grid<'s>(
@@ -1190,6 +1189,10 @@ fn js_lowercase<'s>(
         .ok_or_else(|| "paint stepper lowercase call failed".to_string())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each field is one argument supplied to the native paint stepper operation."
+)]
 fn stepper<'s>(
     scope: &mut v8::HandleScope<'s>,
     record: v8::Local<'s, v8::Value>,

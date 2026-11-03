@@ -92,8 +92,8 @@ export function statColumns(panelW, railW, pad, columns) {
 }
 
 export class PaintState {
-    constructor(id) {
-        this._id = id === undefined ? paint('stateNew') : id;
+    constructor() {
+        this._id = paint('stateNew');
     }
 
     publishRegions(regions) {
@@ -141,5 +141,7 @@ export class PaintState {
     }
 }
 
-export const paintState = new PaintState('0');
+const paintState = Object.create(PaintState.prototype);
+paintState._id = '0';
+export { paintState };
 export const WHEEL_ROWS = notImplValue('WHEEL_ROWS');

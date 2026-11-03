@@ -558,7 +558,7 @@ export default class T extends LoopingBot {
             "3 to 4 of 4",
             "one",
             "two",
-            "three",
+            "thr…",
             "end",
             "… | b…",
             "1 to 2 of 3"

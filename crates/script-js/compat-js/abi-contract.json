@@ -12863,7 +12863,7 @@
       "selector": "PaintState",
       "preserveMembers": true,
       "reason": "PaintState retains its per-isolate string settings; input and event methods are not part of compat.",
-      "runtime": "crates/script-js/src/shim/paintLogic.js:87",
+      "runtime": "crates/script-js/src/shim/paintLogic.js:94",
       "declaration": "/** Per-isolate string settings for paint helpers. */\nexport class PaintState {\n    constructor();\n    get(key: string, fallback: string): string;\n    set(key: string, value: string): void;\n}",
       "family_id": "paint",
       "nav_consuming": false
@@ -12979,21 +12979,11 @@
       "nav_consuming": true
     },
     {
-      "id": "not-impl-value:paint/paintLogic.js:paintState",
-      "module": "paint/paintLogic.js",
-      "selector": "paintState",
-      "reason": "The singleton mutable paint state has no native implementation.",
-      "runtime": "crates/script-js/src/shim/paintLogic.js:137",
-      "declaration": "export const paintState: never;",
-      "family_id": "paint",
-      "nav_consuming": false
-    },
-    {
       "id": "not-impl-value:paint/paintLogic.js:WHEEL_ROWS",
       "module": "paint/paintLogic.js",
       "selector": "WHEEL_ROWS",
       "reason": "The scroll-wheel layout constant is unavailable while its paint family refuses.",
-      "runtime": "crates/script-js/src/shim/paintLogic.js:138",
+      "runtime": "crates/script-js/src/shim/paintLogic.js:145",
       "declaration": "export const WHEEL_ROWS: never;",
       "family_id": "paint",
       "nav_consuming": false
