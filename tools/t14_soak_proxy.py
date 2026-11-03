@@ -317,6 +317,34 @@ def _recv_exact(
             on_bytes(n)
     return buffer
 
+def _peek_raw(sock: socket.socket | ssl.SSLSocket, limit: int = 64) -> dict[str, Any]:
+    try:
+        data = sock.recv(limit, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+    except (OSError, ValueError) as exc:
+        return {"hex": None, "bytes": None, "error": f"{type(exc).__name__}: {exc}"}
+    return {"hex": data.hex(), "bytes": len(data), "error": None}
+
+
+def _record_ws_unparsed_tail(
+    context: "ConnectionState",
+    client: socket.socket,
+    engine: socket.socket,
+    direction: str,
+    error: BaseException,
+) -> None:
+    with context.lock:
+        if context.unparsed_tail_recorded:
+            return
+        context.unparsed_tail_recorded = True
+    context.runtime.write_event({
+        "type": "websocket_unparsed_tail",
+        "connection_id": context.identifier,
+        "failure_direction": direction,
+        "error": f"{type(error).__name__}: {error}",
+        "client_to_engine": _peek_raw(client),
+        "engine_to_client": _peek_raw(engine),
+    })
+
 
 def _send_half_close(sock: socket.socket | ssl.SSLSocket) -> None:
     try:
@@ -554,6 +582,7 @@ class ConnectionState:
         self.stage_status: dict[str, str] = {}
         self.failures: list[dict[str, str]] = []
         self.finalized = False
+        self.unparsed_tail_recorded = False
         self.a: dict[str, collections.Counter[str]] = {
             "client_to_terminator_ciphertext": collections.Counter(),
             "terminator_to_client_ciphertext": collections.Counter(),
@@ -1194,6 +1223,9 @@ def _read_frame(
 ) -> dict[str, Any] | None:
     def received(n: int) -> None:
         context.inc("ws", direction, "wire_bytes_read", n)
+    with context.lock:
+        stream_byte_offset = context.ws[direction]["counters"]["wire_bytes_read"]
+
 
     first = _recv_exact(source, 2, received, allow_clean_eof=True)
     if first is None:
@@ -1203,20 +1235,46 @@ def _read_frame(
     rsv = (b0 >> 4) & 0x07
     opcode = b0 & 0x0F
     masked = bool(b1 & 0x80)
-    if rsv & 0x06:
-        raise FrameError("RSV2 or RSV3 bit is set without a supported extension")
-    if masked != expect_masked:
-        raise FrameError("client frames must be masked and server frames must not be masked")
-    if opcode not in (0, 1, 2, 8, 9, 10):
-        raise FrameError(f"reserved WebSocket opcode {opcode}")
-    if opcode == 0 and rsv:
-        raise FrameError("continuation frame has a reserved bit set")
-    if opcode >= 8 and rsv:
-        raise FrameError("control frame has a reserved bit set")
-    if opcode >= 8 and not fin:
-        raise FrameError("control frame is fragmented")
-
     length_code = b1 & 0x7F
+    length: int | None = length_code if length_code < 126 else None
+
+    def fail(message: str) -> None:
+        next_bytes = _peek_raw(source)
+        decoded_length = length
+        if decoded_length is None and next_bytes["hex"] is not None:
+            extension_size = 2 if length_code == 126 else 8
+            extension = bytes.fromhex(next_bytes["hex"])[:extension_size]
+            if len(extension) == extension_size:
+                decoded_length = int.from_bytes(extension, "big")
+        context.runtime.write_event({
+            "type": "websocket_frame_error",
+            "connection_id": context.identifier,
+            "direction": direction,
+            "source_endpoint": "client" if expect_masked else "engine",
+            "stream_byte_offset": stream_byte_offset,
+            "header_hex": bytes(first).hex(),
+            "opcode": opcode,
+            "masked": masked,
+            "length_code": length_code,
+            "decoded_length": decoded_length,
+            "next_64_raw_bytes": next_bytes,
+            "error": message,
+        })
+        raise FrameError(message)
+
+    if rsv & 0x06:
+        fail("RSV2 or RSV3 bit is set without a supported extension")
+    if masked != expect_masked:
+        fail("client frames must be masked and server frames must not be masked")
+    if opcode not in (0, 1, 2, 8, 9, 10):
+        fail(f"reserved WebSocket opcode {opcode}")
+    if opcode == 0 and rsv:
+        fail("continuation frame has a reserved bit set")
+    if opcode >= 8 and rsv:
+        fail("control frame has a reserved bit set")
+    if opcode >= 8 and not fin:
+        fail("control frame is fragmented")
+
     header_parts = [bytes(first)]
     if length_code == 126:
         extended = _recv_exact(source, 2, received)
@@ -1224,22 +1282,22 @@ def _read_frame(
         header_parts.append(bytes(extended))
         length = int.from_bytes(extended, "big")
         if length < 126:
-            raise FrameError("non-minimal 16-bit payload length")
+            fail("non-minimal 16-bit payload length")
     elif length_code == 127:
         extended = _recv_exact(source, 8, received)
         assert extended is not None
         header_parts.append(bytes(extended))
         length = int.from_bytes(extended, "big")
         if extended[0] & 0x80:
-            raise FrameError("invalid 64-bit payload length high bit")
+            fail("invalid 64-bit payload length high bit")
         if length < 65536:
-            raise FrameError("non-minimal 64-bit payload length")
+            fail("non-minimal 64-bit payload length")
     else:
         length = length_code
     if opcode >= 8 and length > 125:
-        raise FrameError("control frame payload exceeds 125 bytes")
+        fail("control frame payload exceeds 125 bytes")
     if length > MAX_WS_FRAME_BYTES:
-        raise FrameError(f"WebSocket frame length {length} exceeds maximum {MAX_WS_FRAME_BYTES}")
+        fail(f"WebSocket frame length {length} exceeds maximum {MAX_WS_FRAME_BYTES}")
 
     mask_key: bytes | None = None
     if masked:
@@ -1251,7 +1309,7 @@ def _read_frame(
     assert payload is not None
     raw_header = b"".join(header_parts)
     if rsv & 1 and opcode not in (1, 2):
-        raise FrameError("RSV1 is only valid on an initial data frame")
+        fail("RSV1 is only valid on an initial data frame")
     return {
         "fin": fin,
         "opcode": opcode,
@@ -1470,6 +1528,13 @@ def _relay_ws_direction(
                     context.inc("ws", direction, "binary_messages_written")
                     context.finish_binary_message(direction)
     except (OSError, ssl.SSLError, FrameError, ConnectionError, ConfigError) as exc:
+        _record_ws_unparsed_tail(
+            context,
+            source if expect_masked else destination,
+            destination if expect_masked else source,
+            direction,
+            exc,
+        )
         if not runtime.stop.is_set():
             context.add_failure("proxy_b_websocket", exc)
         _safe_shutdown(source)
