@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -174,6 +175,60 @@ def check_census(folder: Path, samples: list[dict], summary: dict, config: dict,
                                    for tid, comm in sorted(unknown)]}
 
 
+def check_scene_samples(folder: Path, events: list[dict], accounts: list[str],
+                        first_scene: dict[str, int | None], sample_seconds: int,
+                        errors: list[str]) -> None:
+    # Client map rebuilds enter scene_state 1 before scene_state 2
+    # (crates/api/tests/snapshot.rs:979-993). Five Engine A loading samples
+    # recovered at the next ten-second sample in the same stream epoch.
+    # check_samples permits two seconds of sample-gap jitter.
+    recovery_ns = (sample_seconds + 2) * 1_000_000_000
+    epochs: dict[str, int] = {}
+    loading_since: dict[str, int] = {}
+    for account in accounts:
+        if first_scene[account] is None:
+            errors.append(f"{folder.name}: {account} never entered scene2")
+    for event in (row for row in events if row.get("event") == "sample"):
+        snapshots = event.get("slots")
+        demand(isinstance(snapshots, list) and len(snapshots) == len(accounts), errors,
+               f"{folder.name}: incomplete ten-second slot snapshot")
+        if not isinstance(snapshots, list):
+            continue
+        seen: set[str] = set()
+        for slot in snapshots:
+            account = slot.get("account")
+            if account not in first_scene or account in seen:
+                errors.append(f"{folder.name}: unknown or duplicate account in slot snapshot")
+                continue
+            seen.add(account)
+            at = event["sample_monotonic_ns"]
+            if first_scene[account] is None or at < first_scene[account]:
+                continue
+            epoch = slot.get("stream_epoch")
+            if not isinstance(epoch, int) or epoch <= 0:
+                errors.append(f"{folder.name}: {account} lacks a live stream epoch at {event['elapsed_seconds']}s")
+                continue
+            if epochs.setdefault(account, epoch) != epoch:
+                errors.append(f"{folder.name}: {account} changed stream epoch at {event['elapsed_seconds']}s")
+            if slot.get("connected") is not True:
+                errors.append(f"{folder.name}: {account} disconnected at {event['elapsed_seconds']}s")
+            if slot.get("ingame") is True and slot.get("scene_state") == 2:
+                since = loading_since.pop(account, None)
+                if since is not None:
+                    demand(at - since <= recovery_ns, errors,
+                           f"{folder.name}: {account} did not return to scene2 within {sample_seconds + 2}s")
+            elif slot.get("ingame") is False and slot.get("scene_state") == 1:
+                since = loading_since.setdefault(account, at)
+                demand(at - since <= recovery_ns, errors,
+                       f"{folder.name}: {account} stayed in scene1 beyond {sample_seconds + 2}s")
+            else:
+                errors.append(f"{folder.name}: {account} left scene2 outside map loading at {event['elapsed_seconds']}s")
+        demand(seen == set(accounts), errors,
+               f"{folder.name}: slot snapshot lacks an account at {event['elapsed_seconds']}s")
+    for account in loading_since:
+        errors.append(f"{folder.name}: {account} never returned to scene2")
+
+
 def check_workload(folder: Path, summary: dict, config: dict, smoke: bool,
                    errors: list[str]) -> dict:
     count = int(config["run"]["slots"])
@@ -244,20 +299,8 @@ def check_workload(folder: Path, summary: dict, config: dict, smoke: bool,
     first_scene = {account: min((event["scene2_monotonic_ns"] for event in events
                                  if event.get("event") == "scene2" and event.get("account") == account),
                                 default=None) for account in accounts}
-    for event in (event for event in events if event.get("event") == "sample"):
-        snapshots = event.get("slots")
-        demand(isinstance(snapshots, list) and len(snapshots) == count, errors,
-               f"{folder.name}: incomplete ten-second slot snapshot")
-        if not isinstance(snapshots, list):
-            continue
-        for slot in snapshots:
-            account = slot.get("account")
-            if account not in first_scene:
-                errors.append(f"{folder.name}: unknown account in slot snapshot")
-            elif first_scene[account] is not None and event["sample_monotonic_ns"] >= first_scene[account]:
-                demand(slot.get("connected") is True and slot.get("ingame") is True
-                       and slot.get("scene_state") == 2, errors,
-                       f"{folder.name}: {account} left scene2 at {event['elapsed_seconds']}s")
+    check_scene_samples(folder, events, accounts, first_scene,
+                        int(config["run"]["sample_seconds"]), errors)
     return {"accounts": count, "sites": sorted({slot["site_id"] for slot in slots}),
             "bank_events": sum(bank_events.values()), "play_samples": kinds["sample"]}
 
@@ -292,8 +335,17 @@ def check_opcode_projection(folder: Path, connection: dict, errors: list[str]) -
                errors, f"{folder.name}: WS frame count diverged outside approved fragmentation/Pong consumption")
 
 
+def accepted_tls_close_error(failure: dict) -> bool:
+    return (isinstance(failure, dict) and failure.get("stage") == "tls_terminator"
+            and isinstance(failure.get("error"), str)
+            and re.fullmatch(
+                r"SSLEOFError: EOF occurred in violation of protocol(?: \(_ssl\.c:\d+\))?",
+                failure["error"],
+            ) is not None)
+
+
 def check_transport_teardown(folder: Path, event: dict, close_frames: dict[str, list[dict]],
-                             errors: list[str]) -> None:
+                             phase_zero_ns: int | None, errors: list[str]) -> None:
     identifier = event["connection_id"]
     stage = event["stage_status"]
     handshake = event["websocket_handshake"]
@@ -345,12 +397,26 @@ def check_transport_teardown(folder: Path, event: dict, close_frames: dict[str, 
                errors, f"{prefix}: game binary payload hash diverged before Close")
         demand(a_in == tls_in == 0 and 0 <= a_out <= 24 and 0 <= tls_out <= 2,
                errors, f"{prefix}: ciphertext/plaintext deficit extends beyond terminal WS Close")
+        # setup Relog precedes the first-script-Start fault window
+        # (check_workload); the one-byte fault check below excludes earlier
+        # connections. A reset is harmless only with complete Close, matching
+        # binary hashes and no lost transport bytes.
+        before_phase_zero = (isinstance(phase_zero_ns, int)
+                             and isinstance(event.get("started_monotonic_ns"), int)
+                             and isinstance(event.get("closed_monotonic_ns"), int)
+                             and event["started_monotonic_ns"] < event["closed_monotonic_ns"] < phase_zero_ns)
+        setup_reset = (before_phase_zero and completed_close
+                       and stage.get("proxy_a") == "failed"
+                       and stage.get("tls_terminator") == "closed"
+                       and (a_in, a_out, tls_in, tls_out) == (0, 0, 0, 0)
+                       and event["binary_payload_hashes_match_at_proxy_b"].get("client_to_engine") is True
+                       and event["binary_payload_hashes_match_at_proxy_b"].get("engine_to_client") is True)
         demand(tls["handshake"].get("tls_version") == "TLSv1.3" and all(
-            failure in (
-                {"stage": "tls_terminator",
-                 "error": "SSLEOFError: EOF occurred in violation of protocol (_ssl.c:2556)"},
-                {"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"},
-            ) for failure in failures
+            accepted_tls_close_error(failure)
+            or failure == {"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"}
+            or (setup_reset and failure == {"stage": "proxy_a",
+                                             "error": "ConnectionResetError: [Errno 104] Connection reset by peer"})
+            for failure in failures
         ), errors, f"{prefix}: unexpected TLS/segmentation error")
         if not failures:
             demand(a_out == tls_out == 0, errors,
@@ -413,7 +479,9 @@ def check_proxy(folder: Path, full: bool, errors: list[str]) -> dict[int, dict]:
                    and fixture.get("served_body_sha256") == fixture_sha256
                    and fixture.get("body_bytes") == len(fixture_body),
                    errors, f"{folder.name}: local Engine RSA fixture provenance differs")
-        check_transport_teardown(folder, event, close_frames.get(event["connection_id"], {}), errors)
+        check_transport_teardown(
+            folder, event, close_frames.get(event["connection_id"], {}),
+            phase_zeros[0]["phase_zero_monotonic_ns"] if len(phase_zeros) == 1 else None, errors)
         if event.get("websocket_handshake", {}).get("upgrade_status") != 101:
             continue  # HTTPS asset transfer retains raw bytes; not a WSS pair.
         port = event.get("client_peer_port")
@@ -482,8 +550,7 @@ def check_candidate(folder: Path, proxy: dict[int, dict], limit: int,
             continue
         if warmup_end_ns is None or event["sample_monotonic_ns"] < warmup_end_ns:
             continue
-        active = sum(slot.get("connected") is True and slot.get("ingame") is True
-                     and slot.get("scene_state") == 2 for slot in event["slots"])
+        active = sum(slot.get("connected") is True for slot in event["slots"])
         demand(len(sampled_ports.get(event["elapsed_seconds"], set())) == active,
                errors, f"candidate five-compartment ledger did not cover exactly the active WSS ports at {event['elapsed_seconds']}s")
     records = rows(folder / "candidate-wss-payloads.jsonl")
@@ -541,6 +608,8 @@ def check_candidate(folder: Path, proxy: dict[int, dict], limit: int,
 
 def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
     errors: list[str] = []
+    base_errors: list[str] = []
+    cand_errors: list[str] = []
     lhs = document(baseline / "run-manifest.json")
     rhs = document(candidate / "run-manifest.json")
     demand(lhs["build"] == "baseline" and rhs["build"] == "candidate", errors,
@@ -553,10 +622,10 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
     demand(lhs["profile"] == "release", errors, "both builds must use release profile")
     left_nav = document(baseline / "nav-identity.json")
     right_nav = document(candidate / "nav-identity.json")
-    for name, receipt in ((baseline.name, left_nav), (candidate.name, right_nav)):
+    for receipt, arm_errors in ((left_nav, base_errors), (right_nav, cand_errors)):
         demand(receipt["source_pack_sha256"] == receipt["selected_pack_sha256"]
                and receipt["source_flags_sha256"] == receipt["selected_flags_sha256"],
-               errors, f"{name}: public-build nav bytes differ from fixed selected source")
+               arm_errors, "public-build nav bytes differ from fixed selected source")
     for key in ("source_pack_sha256", "selected_pack_sha256",
                 "source_flags_sha256", "selected_flags_sha256"):
         demand(left_nav[key] == right_nav[key], errors,
@@ -575,21 +644,21 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
            "incorrect run duration")
     demand(left_config["fault"]["seed"] == lhs["seed"], errors,
            "proxy seed differs from shared run manifest")
-    for folder in (baseline, candidate):
-        demand(document(folder / "cohort-exit.json").get("code") == 0, errors,
-               f"{folder.name}: cohort process failed")
+    for folder, arm_errors in ((baseline, base_errors), (candidate, cand_errors)):
+        demand(document(folder / "cohort-exit.json").get("code") == 0, arm_errors,
+               "cohort process failed")
     base_summary = document(baseline / "summary.json")
     cand_summary = document(candidate / "summary.json")
-    base_work = check_workload(baseline, base_summary, left_config, smoke, errors)
-    cand_work = check_workload(candidate, cand_summary, right_config, smoke, errors)
-    base_samples = check_samples(baseline, base_summary, left_config, errors)
-    cand_samples = check_samples(candidate, cand_summary, right_config, errors)
-    base_census = check_census(baseline, base_samples, base_summary, left_config, errors)
-    cand_census = check_census(candidate, cand_samples, cand_summary, right_config, errors)
-    base_proxy = check_proxy(baseline, not smoke, errors)
-    cand_proxy = check_proxy(candidate, not smoke, errors)
+    base_work = check_workload(baseline, base_summary, left_config, smoke, base_errors)
+    cand_work = check_workload(candidate, cand_summary, right_config, smoke, cand_errors)
+    base_samples = check_samples(baseline, base_summary, left_config, base_errors)
+    cand_samples = check_samples(candidate, cand_summary, right_config, cand_errors)
+    base_census = check_census(baseline, base_samples, base_summary, left_config, base_errors)
+    cand_census = check_census(candidate, cand_samples, cand_summary, right_config, cand_errors)
+    base_proxy = check_proxy(baseline, not smoke, base_errors)
+    cand_proxy = check_proxy(candidate, not smoke, cand_errors)
     candidate_receipts = check_candidate(candidate, cand_proxy,
-                                          right_config["limits"]["connection_bytes"], errors)
+                                          right_config["limits"]["connection_bytes"], cand_errors)
     result = {
         "classification": "infrastructure-smoke-nonqualifying" if smoke else "T1.4-local-candidate-gate",
         "baseline_commit": lhs["commit"], "candidate_commit": rhs["commit"],
@@ -623,8 +692,11 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
             "candidate_final_bytes": final_candidate,
             "candidate_final_ceiling_bytes": final_ceiling,
         }
-    result["verdict"] = "FAIL" if errors else ("NONQUALIFYING_SMOKE_OK" if smoke else "PASS")
-    result["reasons"] = errors
+    reasons = ([f"baseline/candidate: {reason}" for reason in errors]
+               + [f"{lhs['build']}: {reason}" for reason in base_errors]
+               + [f"{rhs['build']}: {reason}" for reason in cand_errors])
+    result["verdict"] = "FAIL" if reasons else ("NONQUALIFYING_SMOKE_OK" if smoke else "PASS")
+    result["reasons"] = reasons
     return result
 
 
@@ -638,7 +710,8 @@ def main() -> int:
     try:
         result = evaluate(args.baseline, args.candidate, args.smoke)
     except (OSError, ValueError, KeyError, TypeError) as error:
-        result = {"verdict": "FAIL", "reasons": [f"missing or invalid evidence: {error}"]}
+        result = {"verdict": "FAIL",
+                  "reasons": [f"baseline/candidate: missing or invalid evidence: {error}"]}
     args.output.open("x", encoding="utf-8").write(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
     return 0 if result["verdict"] in ("PASS", "NONQUALIFYING_SMOKE_OK") else 1
