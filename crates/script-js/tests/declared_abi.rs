@@ -620,7 +620,7 @@ fn declared_surface_matches_generator() {
     let actual = std::fs::read_to_string(&path).expect("read declared_surface.js");
     assert!(
         actual == expected,
-        "{} is stale; run: cargo test -p script --test declared_abi \
+        "{} is stale; run: cargo test -p script-js --test declared_abi \
          regen_declared_surface_from_fixture -- --ignored",
         path.display()
     );
