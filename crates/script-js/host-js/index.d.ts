@@ -1,5 +1,5 @@
 // Generated from host verb tables — do not edit by hand.
-// Regen: cargo test -p script --test host_js regen_host_js -- --ignored
+// Regen: cargo test -p script-js --test host_js regen_host_js -- --ignored
 // NativeTick Load is planned for a later release. JS API v2 is NativeApi (explicit export const apiVersion = 2).
 // Not a clone of rs2b0t-api.
 
@@ -1001,6 +1001,7 @@ export interface GatherSettings {
 export interface GatherStatus {
   skill: string;
   method: string;
+  survival: string;
   phase: string;
   area: string;
   target: string;
