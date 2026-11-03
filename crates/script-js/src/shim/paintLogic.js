@@ -129,11 +129,11 @@ export class PaintState {
     }
 
     get(key, fallback) {
-        return paint('stateGet', this, String(key), fallback, this === paintState);
+        return paint('stateGet', this, String(key), fallback);
     }
 
     set(key, value) {
-        return paint('stateSet', this, String(key), String(value), this === paintState);
+        return paint('stateSet', this, String(key), String(value));
     }
 
     reset() {
@@ -141,7 +141,7 @@ export class PaintState {
     }
 }
 
-// paintState is the native singleton; other owners use WeakMap-backed stores.
+// paintState is the exported singleton; Rust binds it to the chrome store.
 const paintState = Object.create(PaintState.prototype);
 paint('stateNew', paintState, true);
 export { paintState };
