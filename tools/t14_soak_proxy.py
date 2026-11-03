@@ -1438,6 +1438,7 @@ def _relay_ws_direction(
                     "type": "websocket_close_frame",
                     "connection_id": context.identifier,
                     "direction": direction,
+                    "payload_len": len(payload),
                     "status_code": int.from_bytes(payload[:2], "big") if len(payload) >= 2 else None,
                     "reason": payload[2:].decode("utf-8", errors="replace") if len(payload) > 2 else "",
                 })
