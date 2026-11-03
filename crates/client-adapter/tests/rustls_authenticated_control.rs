@@ -20,8 +20,14 @@ use std::fmt::Write as FmtWrite;
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::fs::OpenOptions;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use std::io::BufRead;
 use std::io::{self, Read, Write};
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use std::net::{Ipv4Addr, SocketAddr};
 use std::net::{TcpListener, TcpStream};
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use std::process::{Child, Command, Stdio};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
@@ -737,10 +743,11 @@ impl ClientSessionStore for TicketCountingStore {
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn client_config_with_ticket_metrics(
-    pki: &TestPki,
+    root: &CertificateDer<'static>,
     metrics: Arc<TicketMetrics>,
 ) -> Arc<ClientConfig> {
-    let mut config = pki.client_config();
+    let mut config = build_test_client_config_with_roots(std::slice::from_ref(root))
+        .expect("build OS-verifying client config with the test CA root");
     Arc::get_mut(&mut config)
         .expect("the test owns the OS-verifying client config before sharing it")
         .resumption = Resumption::store(Arc::new(TicketCountingStore {
@@ -1994,6 +2001,7 @@ fn sample_g5e_wss_ledger(
 #[derive(Clone, Copy, Debug)]
 struct G5eProcessResources {
     rss_bytes: u64,
+    rss_high_water_bytes: Option<u64>,
     task_count: usize,
     file_descriptors: Option<usize>,
     process_handles: Option<usize>,
@@ -2013,6 +2021,9 @@ fn g5e_process_resources() -> G5eProcessResources {
             .saturating_sub(1);
         G5eProcessResources {
             rss_bytes,
+            rss_high_water_bytes: Some(
+                g5e_linux_rss_high_water_bytes().expect("read Linux process RSS high-water"),
+            ),
             task_count,
             file_descriptors: Some(file_descriptors),
             process_handles: None,
@@ -2024,6 +2035,7 @@ fn g5e_process_resources() -> G5eProcessResources {
         let file_descriptors = g5e_macos_fd_count();
         G5eProcessResources {
             rss_bytes: task_info.resident_size,
+            rss_high_water_bytes: None,
             task_count: usize::try_from(task_info.thread_count)
                 .expect("macOS process thread count is nonnegative"),
             file_descriptors,
@@ -2032,8 +2044,11 @@ fn g5e_process_resources() -> G5eProcessResources {
     }
     #[cfg(target_os = "windows")]
     {
+        let (rss_bytes, rss_high_water_bytes) =
+            g5e_windows_rss_snapshot().expect("read Windows process working set");
         G5eProcessResources {
-            rss_bytes: g5e_windows_rss_bytes().expect("read Windows process working set"),
+            rss_bytes,
+            rss_high_water_bytes: Some(rss_high_water_bytes),
             task_count: g5e_windows_thread_count().expect("read Windows process thread count"),
             file_descriptors: None,
             process_handles: Some(
@@ -2049,6 +2064,19 @@ fn g5e_linux_rss_bytes() -> Option<u64> {
     let resident_kib = status
         .lines()
         .find(|line| line.starts_with("VmRSS:"))?
+        .split_whitespace()
+        .nth(1)?
+        .parse::<u64>()
+        .ok()?;
+    resident_kib.checked_mul(1024)
+}
+
+#[cfg(target_os = "linux")]
+fn g5e_linux_rss_high_water_bytes() -> Option<u64> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    let resident_kib = status
+        .lines()
+        .find(|line| line.starts_with("VmHWM:"))?
         .split_whitespace()
         .nth(1)?
         .parse::<u64>()
@@ -2177,7 +2205,7 @@ struct G5eProcessMemoryCountersEx {
 }
 
 #[cfg(target_os = "windows")]
-fn g5e_windows_rss_bytes() -> Option<u64> {
+fn g5e_windows_rss_snapshot() -> Option<(u64, u64)> {
     let mut counters = std::mem::MaybeUninit::<G5eProcessMemoryCountersEx>::zeroed();
     let size = u32::try_from(std::mem::size_of::<G5eProcessMemoryCountersEx>()).ok()?;
     // SAFETY: `counters` points to writable storage for the declared structure.
@@ -2191,7 +2219,10 @@ fn g5e_windows_rss_bytes() -> Option<u64> {
     }
     // SAFETY: GetProcessMemoryInfo succeeded and filled the complete structure.
     let counters = unsafe { counters.assume_init() };
-    u64::try_from(counters.working_set_size).ok()
+    Some((
+        u64::try_from(counters.working_set_size).ok()?,
+        u64::try_from(counters._peak_working_set_size).ok()?,
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -2511,7 +2542,7 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
     let ticket_metrics = Arc::new(TicketMetrics::default());
     let shared_config_before = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
     reset_g5e_allocator_peak();
-    let client_config = client_config_with_ticket_metrics(&pki, Arc::clone(&ticket_metrics));
+    let client_config = client_config_with_ticket_metrics(&pki.root, Arc::clone(&ticket_metrics));
     let (shared_config_after, shared_config_peak) = g5e_allocator_snapshot();
     let server_config = configure_tls13_with_tickets(pki.identity.duplicate());
     let server =
@@ -3149,7 +3180,7 @@ fn g5e_adapter_wss_connection_difference_receipt() {
     let process_before_setup = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
     let pki = TestPki::new();
     let ticket_metrics = Arc::new(TicketMetrics::default());
-    let client_config = client_config_with_ticket_metrics(&pki, Arc::clone(&ticket_metrics));
+    let client_config = client_config_with_ticket_metrics(&pki.root, Arc::clone(&ticket_metrics));
     let server_config = configure_tls13_with_tickets(pki.identity.duplicate());
     let process_after_shared_setup = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
     for _ in 0..LANES {
@@ -3283,6 +3314,339 @@ fn g5e_adapter_wss_connection_difference_receipt() {
     file.write_all(receipt.as_bytes())
         .expect("write G5-E difference receipt");
     file.sync_all().expect("sync G5-E difference receipt");
+}
+
+/// The child process owns all server TLS and WebSocket allocations. Its
+/// certificate authority is transmitted as public DER; no server key enters
+/// the measured client process.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+struct ExternalG5eFixture {
+    child: Child,
+    stopped: bool,
+    _stdout: io::BufReader<std::process::ChildStdout>,
+    root: CertificateDer<'static>,
+    addresses: Vec<SocketAddr>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl ExternalG5eFixture {
+    fn start() -> Self {
+        let mut child = Command::new(std::env::current_exe().expect("locate this test binary"))
+            .args([
+                "g5e_external_server_fixture",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("BOT_T14_G5E_CHILD_SERVER", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("start the isolated local server fixture");
+        let mut stdout = io::BufReader::new(child.stdout.take().expect("capture fixture stdout"));
+        let mut line = String::new();
+        let marker = loop {
+            line.clear();
+            assert_ne!(
+                stdout.read_line(&mut line).expect("read fixture startup"),
+                0,
+                "isolated server fixture exited without readiness"
+            );
+            if let Some((_, marker)) = line.split_once("G5E_FIXTURE_READY ") {
+                break marker.trim_end().to_owned();
+            }
+        };
+        let (root_hex, ports) = marker
+            .split_once('|')
+            .expect("fixture readiness includes root DER and ports");
+        let mut pairs = root_hex.as_bytes().chunks_exact(2);
+        let root = pairs
+            .by_ref()
+            .map(|pair| {
+                u8::from_str_radix(
+                    std::str::from_utf8(pair).expect("root DER is ASCII hex"),
+                    16,
+                )
+                .expect("root DER contains hex bytes")
+            })
+            .collect::<Vec<_>>();
+        assert!(!root.is_empty());
+        assert!(pairs.remainder().is_empty(), "root DER hex has even length");
+        let addresses = ports
+            .split(',')
+            .map(|port| {
+                SocketAddr::from((
+                    Ipv4Addr::LOCALHOST,
+                    port.parse::<u16>().expect("fixture port is numeric"),
+                ))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(addresses.len(), 13, "eight live and five transient lanes");
+        Self {
+            child,
+            stopped: false,
+            _stdout: stdout,
+            root: CertificateDer::from(root),
+            addresses,
+        }
+    }
+
+    fn stop(mut self) {
+        let mut stdin = self.child.stdin.take().expect("fixture stdin is open");
+        stdin.write_all(b"stop\n").expect("stop fixture");
+        drop(stdin);
+        let status = self.child.wait().expect("reap isolated fixture");
+        self.stopped = true;
+        assert!(
+            status.success(),
+            "isolated fixture completed without a server failure"
+        );
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl Drop for ExternalG5eFixture {
+    fn drop(&mut self) {
+        // On an assertion failure a prestarted listener may still be waiting
+        // in accept(). Kill only our test child rather than orphaning it.
+        if !self.stopped {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[test]
+#[ignore = "internal child fixture, launched by the client-only G5-E receipt"]
+fn g5e_external_server_fixture() {
+    assert_eq!(
+        std::env::var("BOT_T14_G5E_CHILD_SERVER")
+            .expect("only the parent receipt launches this fixture"),
+        "1"
+    );
+    let pki = TestPki::new();
+    let config = configure_tls13_with_tickets(pki.identity.duplicate());
+    let servers = (0..13)
+        .map(|_| ControlServer::spawn(Arc::clone(&config)))
+        .collect::<Vec<_>>();
+    let mut marker = String::from("G5E_FIXTURE_READY ");
+    for byte in pki.root.as_ref() {
+        write!(marker, "{byte:02x}").expect("encode public test CA root");
+    }
+    marker.push('|');
+    for (index, server) in servers.iter().enumerate() {
+        if index != 0 {
+            marker.push(',');
+        }
+        write!(marker, "{}", server.address.port()).expect("encode local fixture port");
+    }
+    println!("{marker}");
+    io::stdout().flush().expect("publish fixture readiness");
+    let mut command = String::new();
+    let length = io::stdin()
+        .read_line(&mut command)
+        .expect("read parent fixture command");
+    if length == 0 || command.trim() != "stop" {
+        // Never join a listener that has not accepted when the parent aborted.
+        std::process::exit(1);
+    }
+    for server in servers {
+        server.stop();
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn connect_external_g5e_wss(
+    address: SocketAddr,
+    config: Arc<ClientConfig>,
+) -> (LaneAttempt, WssEndpoint) {
+    let mut attempt = LaneAttempt::start_with_send_buffer(address, config, None);
+    let accepted = attempt.wait_for_return();
+    let mut endpoint = attempt.accept_success(accepted, &format!("localhost:{}", address.port()));
+    complete_wss_upgrade(&mut attempt, &mut endpoint);
+    assert!(
+        endpoint.is_connected(),
+        "the isolated WSS upgrade completed"
+    );
+    drain_local_work_to_idle(&mut attempt, &mut endpoint);
+    (attempt, endpoint)
+}
+
+/// Test-only client process measurement. The server fixture is another
+/// process; the in-process difference receipt remains the combined upper
+/// bound, not an attempted per-allocation ownership oracle.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[test]
+#[ignore = "opt-in client-only actual-adapter WSS 1/2/4/8 difference receipt"]
+fn g5e_client_only_wss_connection_difference_receipt() {
+    const LANES: usize = 8;
+    const HANDSHAKE_REPEATS: usize = 5;
+
+    let output_path = std::env::var_os("BOT_T14_G5E_CLIENT_ONLY_OUTPUT")
+        .expect("set an absent BOT_T14_G5E_CLIENT_ONLY_OUTPUT receipt path");
+    install_g5e_observers();
+    let fixture = ExternalG5eFixture::start();
+    let fixture_pid = fixture.child.id();
+    assert_ne!(fixture_pid, std::process::id());
+    let mut lanes = Vec::with_capacity(LANES);
+    let mut points = Vec::with_capacity(LANES);
+    let mut handshakes = Vec::with_capacity(HANDSHAKE_REPEATS);
+    let baseline_resources = g5e_process_resources();
+    let process_before_setup = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    let ticket_metrics = Arc::new(TicketMetrics::default());
+    let client_config =
+        client_config_with_ticket_metrics(&fixture.root, Arc::clone(&ticket_metrics));
+    let process_after_shared_setup = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    for (index, &address) in fixture.addresses[..LANES].iter().enumerate() {
+        lanes.push(connect_external_g5e_wss(
+            address,
+            Arc::clone(&client_config),
+        ));
+        assert_eq!(wss_ledger_samples().len(), index + 1);
+        let live = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+        let corrected = live as i128 - process_before_setup as i128;
+        let resources = g5e_process_resources();
+        points.push((index + 1, live, corrected, resources));
+    }
+    for (attempt, endpoint) in lanes {
+        endpoint.close(attempt.poll.registry());
+        drop(attempt);
+    }
+    assert!(wss_ledger_samples().is_empty());
+
+    for &address in &fixture.addresses[LANES..LANES + HANDSHAKE_REPEATS] {
+        let before = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+        reset_g5e_allocator_peak();
+        let (attempt, endpoint) = connect_external_g5e_wss(address, Arc::clone(&client_config));
+        let (after, peak) = g5e_allocator_snapshot();
+        let resources = g5e_process_resources();
+        handshakes.push((
+            before,
+            after,
+            peak,
+            peak.saturating_sub(before.max(after)),
+            resources,
+        ));
+        endpoint.close(attempt.poll.registry());
+        drop(attempt);
+        assert!(wss_ledger_samples().is_empty());
+    }
+    assert_eq!(ticket_metrics.inserted.load(Ordering::Acquire), 0);
+    assert_eq!(ticket_metrics.taken.load(Ordering::Acquire), 0);
+    assert!(!G5E_SCOPE_OVERFLOW.load(Ordering::Acquire));
+    assert!(!G5E_CONFIG_GENERATION_OVERFLOW.load(Ordering::Acquire));
+    assert!(!G5E_WORKER_STACK_OVERFLOW.load(Ordering::Acquire));
+    assert_eq!(G5E_WORKER_STACK_CAPTURE_FAILURES.load(Ordering::Acquire), 0);
+    fixture.stop();
+
+    let selected = [points[0], points[1], points[3], points[7]];
+    let sum_x = 15.0_f64;
+    let sum_xx = 85.0_f64;
+    let sum_y: f64 = selected
+        .iter()
+        .map(|(_, _, corrected, _)| *corrected as f64)
+        .sum();
+    let sum_xy: f64 = selected
+        .iter()
+        .map(|(count, _, corrected, _)| *count as f64 * *corrected as f64)
+        .sum();
+    let slope = (4.0 * sum_xy - sum_x * sum_y) / (4.0 * sum_xx - sum_x * sum_x);
+    let intercept = (sum_y - slope * sum_x) / 4.0;
+    let residuals = selected
+        .map(|(count, _, corrected, _)| corrected as f64 - intercept - slope * count as f64);
+    let spread_min = handshakes.iter().map(|sample| sample.3).min().unwrap();
+    let spread_max = handshakes.iter().map(|sample| sample.3).max().unwrap();
+    let observed_rss_max = points
+        .iter()
+        .map(|(_, _, _, resources)| resources.rss_bytes)
+        .max()
+        .unwrap();
+    let mut receipt = format!(
+        "{{\"schema\":\"t1.4-g5e-client-only-difference-v1\",\"target_os\":\"{}\",\"target_arch\":\"{}\",\"measurement_subject\":\"actual GameTlsLane and WssEndpoint in client process; thirteen TLS server fixtures in a separate child process\",\"client_process_pid\":{},\"server_process_pid\":{},\"process_live_before_shared_setup_bytes\":{},\"process_live_after_shared_setup_bytes\":{},\"shared_setup_live_delta_bytes\":{},\"fit\":\"ordinary least squares on N=1,2,4,8 client-process GlobalAlloc live requested bytes minus post-fixture client-process baseline\",\"retained_slope_bytes_per_connection\":{},\"retained_shared_intercept_bytes\":{},\"residuals_bytes\":[{},{},{},{}],\"server_post_accept_cost\":\"excluded from the measured client process; the separate child owns all server TLS and WebSocket state\",\"points\":[",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        std::process::id(),
+        fixture_pid,
+        process_before_setup,
+        process_after_shared_setup,
+        process_after_shared_setup as i128 - process_before_setup as i128,
+        slope,
+        intercept,
+        residuals[0],
+        residuals[1],
+        residuals[2],
+        residuals[3],
+    );
+    for (index, (count, live, corrected, resources)) in points.iter().enumerate() {
+        if index != 0 {
+            receipt.push(',');
+        }
+        write!(
+            receipt,
+            "{{\"connections\":{count},\"client_process_live_requested_bytes\":{live},\"client_process_baseline_corrected_bytes\":{corrected},\"rss_current_bytes\":{},\"rss_high_water_bytes\":{},\"tasks\":{},\"fds\":{},\"process_handles\":{}}}",
+            resources.rss_bytes,
+            resources
+                .rss_high_water_bytes
+                .map_or_else(|| "null".to_owned(), |value| value.to_string()),
+            resources.task_count,
+            optional_usize_json(resources.file_descriptors),
+            optional_usize_json(resources.process_handles),
+        )
+        .expect("write observed client-only WSS point");
+    }
+    receipt.push_str("],\"isolated_handshake_runs\":[");
+    for (index, (before, after, peak, excess, resources)) in handshakes.iter().enumerate() {
+        if index != 0 {
+            receipt.push(',');
+        }
+        write!(
+            receipt,
+            "{{\"iteration\":{},\"before_live_bytes\":{before},\"after_live_bytes\":{after},\"peak_live_bytes\":{peak},\"peak_above_max_endpoint_bytes\":{excess},\"rss_current_bytes\":{},\"rss_high_water_bytes\":{}}}",
+            index + 1,
+            resources.rss_bytes,
+            resources
+                .rss_high_water_bytes
+                .map_or_else(|| "null".to_owned(), |value| value.to_string()),
+        )
+        .expect("write isolated client handshake sample");
+    }
+    writeln!(
+        receipt,
+        "],\"handshake_peak_excess_spread_bytes\":{{\"min\":{spread_min},\"max\":{spread_max},\"range\":{}}},\"client_rss_current_before_setup_bytes\":{},\"client_rss_high_water_before_setup_bytes\":{},\"client_rss_observed_max_at_live_points_bytes\":{observed_rss_max},\"ticket_store_insertions\":0,\"ticket_parse_cost\":\"not separately attributable: the excess includes client handshake and upgrade allocations; no TLS ticket store insertion observed\",\"worker_stack_capture_count\":{},\"worker_config_generation_count\":{},\"allocation_scope_count\":{},\"sample_semantics\":\"client-process GlobalAlloc requested-layout live bytes, not usable capacity; source-known 250760-byte logical reserve is never an actual-cost oracle\"}}",
+        spread_max - spread_min,
+        baseline_resources.rss_bytes,
+        baseline_resources
+            .rss_high_water_bytes
+            .map_or_else(|| "null".to_owned(), |value| value.to_string()),
+        G5E_WORKER_STACK_SAMPLES
+            .get()
+            .expect("worker stack observer initialized")
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len(),
+        soak_observer::client_config_generation_samples().len(),
+        G5E_SCOPE_SAMPLES
+            .get()
+            .expect("allocation scope observer initialized")
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .flatten()
+            .count(),
+    )
+    .expect("write client-only difference summary");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output_path)
+        .expect("create unique G5-E client-only difference receipt");
+    file.write_all(receipt.as_bytes())
+        .expect("write G5-E client-only difference receipt");
+    file.sync_all()
+        .expect("sync G5-E client-only difference receipt");
 }
 
 #[test]
