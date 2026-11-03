@@ -1,8 +1,14 @@
-//! G5-E allocator receipt from one local WSS connection in this dedicated test process.
+//! G5-E receipt combining a scoped direct-WSS control and an actual adapter WSS run.
 //!
-//! The test is ignored in ordinary suites. Run it with
-//! `BOT_T14_G5E_OUTPUT=/abs/path/receipt.json cargo test -p client-adapter --test
-//! wss_g5e_allocator -- --ignored --test-threads=1`.
+//! Run the ignored `rustls_authenticated_control` tests
+//! `g5e_tls13_wss_keyupdate_backpressure_memory_receipt` and
+//! `g5e_adapter_wss_connection_difference_receipt` separately with disjoint
+//! `BOT_T14_G5E_ADAPTER_OUTPUT` and `BOT_T14_G5E_DIFFERENCE_OUTPUT` paths.
+//! Then run this ignored test with `BOT_T14_G5E_ADAPTER_INPUT` set to the first
+//! completed receipt and `BOT_T14_G5E_OUTPUT` set to another absent path.
+//! Select each exact test by name; use
+//! `--features test-support -- --exact --ignored --test-threads=1`.
+//! The test processes have disjoint allocator baselines; do not add their peaks.
 //!
 //! G5-E in `/srv/dev/scratch/274bot-evidence/TRACK-T1/T1-GATE/r7e/T1-GATE.md`
 //! (especially lines 684-717) distinguishes logical reservation, allocator-
@@ -14,7 +20,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, UnsafeCell};
 use std::fmt::Write as _;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 #[cfg(target_os = "linux")]
 use std::mem::MaybeUninit;
@@ -694,6 +700,24 @@ fn write_optional_i128(output: &mut String, value: Option<i128>) {
     }
 }
 
+fn write_json_string(output: &mut String, value: &str) {
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            control if control < '\u{20}' => {
+                write!(output, "\\u{:04x}", control as u32).expect("escape JSON control character");
+            }
+            other => output.push(other),
+        }
+    }
+    output.push('"');
+}
+
 fn write_snapshot(
     output: &mut String,
     snapshot: &PhaseSnapshot,
@@ -733,6 +757,9 @@ fn make_receipt(
     snapshots: &[PhaseSnapshot; 6],
     driver_thread: u64,
     fixture_thread: u64,
+    adapter_receipt_path: &str,
+    adapter_receipt: &str,
+    adapter_receipt_sha256: &[u8],
 ) -> String {
     let event_count = EVENT_COUNT.load(Ordering::Acquire);
     assert!(
@@ -747,14 +774,19 @@ fn make_receipt(
         assert!(rss_available, "Linux getrusage RSS samples are required");
     }
     let root_lock_digest = Sha256::digest(include_bytes!("../../../Cargo.lock"));
-    let mut output = String::with_capacity(1_024 + event_count * 144);
-    output.push_str("{\n  \"schema\": \"t1-g5e-allocator-receipt-v1\",\n  \"gate\": \"T1-GATE r7e G5-E (sections 8 and 8.1, lines 684-717)\",\n");
+    let fork_lock_digest = Sha256::digest(include_bytes!("../../../vendor/fr-client-rust/Cargo.lock"));
+    let mut output = String::with_capacity(4_096 + event_count * 256 + adapter_receipt.len());
+    output.push_str("{\n  \"schema\": \"t1-g5e-allocator-receipt-v2\",\n  \"gate\": \"T1-GATE r7e G5-E (sections 8 and 8.1, lines 684-717)\",\n");
     output.push_str("  \"root_lock_sha256\": \"");
     for byte in root_lock_digest {
         write!(output, "{byte:02x}").expect("write lock digest");
     }
-    output.push_str("\",\n  \"locked_dependency_configuration\": {\n    \"rustls\": \"0.23.45; manifest features std,ring,tls12; local private root; TLS 1.3/1.2\",\n    \"tungstenite\": \"0.24.0; default-features=false; handshake\",\n    \"fork_standalone_lock\": \"not used by this direct rustls+tungstenite measurement\"\n  },\n");
-    output.push_str("  \"measurement_subject\": \"rustls+tungstenite measurement process only; not the full client-adapter endpoint or G5-E per-WSS total\",\n");
+    output.push_str("\",\n  \"fork_standalone_lock_sha256\": \"");
+    for byte in fork_lock_digest {
+        write!(output, "{byte:02x}").expect("write fork lock digest");
+    }
+    output.push_str("\",\n  \"locked_dependency_configuration\": {\n    \"rustls\": \"0.23.45; manifest features std,ring,tls12; local private root; TLS 1.3/1.2\",\n    \"tungstenite\": \"0.24.0; default-features=false; handshake\",\n    \"resolved_root_features\": \"unresolved in binary alone: capture cargo tree -p client-adapter -e features for the exact root lock and target\"\n  },\n");
+    output.push_str("  \"measurement_subject\": \"direct rustls+tungstenite control plus embedded independently measured actual client-adapter endpoint; allocator baselines are disjoint\",\n");
     output.push_str("  \"target\": {\n    \"os\": \"");
     output.push_str(std::env::consts::OS);
     output.push_str("\",\n    \"arch\": \"");
@@ -826,6 +858,30 @@ fn make_receipt(
     output.push_str("},\n    \"logical_sum_bytes\":");
     write!(output, "{RESERVED_TOTAL_BYTES}").expect("write reservation summary");
     output.push_str(",\n    \"adapter_rings_measured\": false,\n    \"used_as_measurement_oracle\": false\n  },\n");
+    output.push_str("  \"actual_adapter_wss_capture\": {\"source_path\":");
+    write_json_string(&mut output, adapter_receipt_path);
+    output.push_str(",\"sha256\":\"");
+    for byte in adapter_receipt_sha256 {
+        write!(output, "{byte:02x}").expect("write adapter receipt digest");
+    }
+    output.push_str("\",\"receipt\":");
+    output.push_str(adapter_receipt);
+    output.push_str("},\n");
+    output.push_str("  \"gate_measurement_fields\": {\n");
+    output.push_str("    \"actual_adapter_connection_count\": {\"status\":\"measured\",\"source\":\"actual_adapter_wss_capture.receipt.connection_count\"},\n");
+    output.push_str("    \"process_allocator_high_water\": {\"status\":\"measured\",\"source\":\"actual_adapter_wss_capture.receipt.allocator_requested_peak_during_*_bytes; includes fixture and both lanes\"},\n");
+    output.push_str("    \"per_connection_allocator_high_water\": {\"status\":\"unresolved\",\"reason\":\"global live-requested peak includes server fixture and two live WSS lanes; allocation scopes count gross request bytes, not retained per-connection ownership\"},\n");
+    output.push_str("    \"tls_session_request_transient\": {\"status\":\"measured\",\"source\":\"actual_adapter_wss_capture.receipt.allocation_scope_samples filtered by GameTlsConnection and GameTlsVerification; gross requested bytes only\"},\n");
+    output.push_str("    \"tls_session_retained_transient\": {\"status\":\"unresolved\",\"reason\":\"scope events do not retain allocation pointer ownership through cross-thread frees or expose private rustls capacities\"},\n");
+    output.push_str("    \"client_ticket_store\": {\"status\":\"measured\",\"source\":\"actual_adapter_wss_capture.receipt.tls13_tickets_inserted and allocator_live_growth_per_ticket_insert_high_water_bytes; resumption disabled\"},\n");
+    output.push_str("    \"ticket_parse_transient\": {\"status\":\"unresolved\",\"reason\":\"client ticket insert and resumption are disabled, but incoming ticket parsing may allocate inside a larger TLS scope without separate attribution\"},\n");
+    output.push_str("    \"shared_config_once_per_process\": {\"status\":\"measured\",\"source\":\"actual_adapter_wss_capture.receipt.shared_config_process_requested_*_bytes; process live and peak deltas, not exact retained config ownership\"},\n");
+    output.push_str("    \"worker_config_generations\": {\"status\":\"measured\",\"source\":\"actual_adapter_wss_capture.receipt.client_config_generation_samples_after_connect and client_config_generation_events\"},\n");
+    output.push_str("    \"worker_stack_reserved_committed_resident_guard\": {\"status\":\"measured_or_unresolved_per_field\",\"source\":\"actual_adapter_wss_capture.receipt.worker_stack_samples; null means OS/API cannot provide that field, inspect measurement_source and platform-specific evaluator\"},\n");
+    output.push_str("    \"process_rss\": {\"status\":\"measured\",\"source\":\"actual_adapter_wss_capture.receipt.rss_current_*_bytes at five phases; not a continuous high-water\"},\n");
+    output.push_str("    \"per_connection_os_rss_high_water\": {\"status\":\"unresolved\",\"reason\":\"process RSS includes two WSS lanes, server fixture, shared config, kernel and allocator overhead; no independent per-connection attribution\"},\n");
+    output.push_str("    \"unexplained_difference_from_logical_ledger\": {\"status\":\"unresolved\",\"reason\":\"logical 250760-byte reserve is not actual allocation; component ownership is unavailable, so no honest exact subtraction exists\"}\n");
+    output.push_str("  },\n");
 
     output.push_str("  \"limitations\": {\n    \"requested_layout_bytes_are_not_allocator_usable_bytes\": true,\n    \"private_field_sizes_inferred\": false,\n    \"allocation_scope\": \"all Rust GlobalAlloc requests in this dedicated integration-test process while a named phase is active; exact process live-requested current/peak, including local fixture and test code\",\n    \"allocation_component_attribution\": \"unknown: GlobalAlloc reports layouts, not rustls/tungstenite callsites or allocation owners; per-thread event net is operation-thread attribution only and cross-thread frees remain ambiguous\",\n    \"allocator_event_order\": \"slot-reservation order; concurrent operations may be listed in a different order than the atomic counter updates\",\n    \"unidentified_process_bytes\": \"the process-wide current and phase peak fields are reported separately and must not be relabeled as client-only bytes\",\n    \"adapter_scope\": \"the production WssEndpoint, reactor and SharedConnection rings are not instantiated; no full client-adapter total is claimed\",\n    \"unmeasured_reservation_owners\": \"the source-known inbound/outbound ring compartments are listed as logical reserves only; adapter ring allocations are outside this direct stack test\",\n    \"shared_tls_config_cost\": \"client root/config and server fixture are built before the no-WSS baseline; aggregate fixture_setup sample only, not isolated shared-config attribution\",\n    \"handshake_ticket_cost\": \"not measured: the adapter handshake ticket and worker path are not instantiated\",\n    \"realloc_peak_semantics\": \"requested live bytes are sampled after successful realloc; underlying allocator transient/usable capacity is not observed\",\n    \"native_os_verifier_memory\": \"not exercised: client trusts the generated local certificate through an explicit RootCertStore\",\n    \"rss_metric\": \"process lifetime maximum RSS from getrusage sampled at phase boundaries; process-wide high-water, not per-client/current RSS\",\n    \"rss_includes_static_recorder_pages\": true,\n    \"rss_available\": ");
     output.push_str(if rss_available { "true\n" } else { "false\n" });
@@ -834,8 +890,8 @@ fn make_receipt(
 }
 
 #[test]
-#[ignore = "manual G5-E allocator receipt; requires BOT_T14_G5E_OUTPUT"]
-fn one_local_wss_connection_emits_scoped_allocator_receipt() {
+#[ignore = "manual combined G5-E receipt; requires BOT_T14_G5E_ADAPTER_INPUT and BOT_T14_G5E_OUTPUT"]
+fn g5e_actual_adapter_and_direct_control_receipt() {
     let output_path = std::env::var_os("BOT_T14_G5E_OUTPUT")
         .map(PathBuf::from)
         .expect("set BOT_T14_G5E_OUTPUT to an absent receipt path");
@@ -983,12 +1039,40 @@ fn one_local_wss_connection_emits_scoped_allocator_receipt() {
         "source-known G5 compartments changed; they remain non-measurements"
     );
 
+    let adapter_input_path = std::env::var_os("BOT_T14_G5E_ADAPTER_INPUT")
+        .map(PathBuf::from)
+        .expect("set BOT_T14_G5E_ADAPTER_INPUT to the completed actual-adapter receipt");
+    assert!(
+        adapter_input_path.is_absolute(),
+        "the adapter receipt path must be absolute"
+    );
+    let adapter_bytes = fs::read(&adapter_input_path).expect("read actual-adapter WSS receipt");
+    let adapter_receipt = std::str::from_utf8(&adapter_bytes)
+        .expect("actual-adapter receipt is UTF-8")
+        .trim();
+    assert!(
+        adapter_receipt.starts_with("{\"schema\":\"t1.4-g5e-rustls-adapter-receipt-v3\",")
+            && adapter_receipt.ends_with('}'),
+        "expected a complete actual-adapter WSS receipt, not the direct control"
+    );
+    assert!(
+        adapter_receipt.contains(&format!("\"target_os\":\"{}\"", std::env::consts::OS))
+            && adapter_receipt.contains(&format!("\"target_arch\":\"{}\"", std::env::consts::ARCH))
+            && adapter_receipt.contains("\"connection_count\":2")
+            && adapter_receipt.contains("\"key_update_response_recovery_observed\":true"),
+        "actual-adapter receipt target and required WSS operation do not match this run"
+    );
+    let adapter_digest = Sha256::digest(&adapter_bytes);
+
     let receipt = make_receipt(
         baseline_current,
         baseline_rss,
         &[setup, connected, idle, read_write, shutdown, retired],
         driver_thread,
         fixture_thread_id,
+        &adapter_input_path.to_string_lossy(),
+        adapter_receipt,
+        &adapter_digest,
     );
     let mut file = OpenOptions::new()
         .write(true)

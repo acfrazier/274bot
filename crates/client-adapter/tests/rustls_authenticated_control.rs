@@ -845,9 +845,16 @@ impl ControlServer {
         }
         let (command_tx, command_rx) = mpsc::channel();
         let (handshake_tx, handshake_rx) = mpsc::sync_channel(1);
+        let (ready_tx, ready_rx) = mpsc::sync_channel(0);
         let server = thread::spawn(move || {
+            ready_tx
+                .send(())
+                .expect("server fixture startup receiver remains available");
             serve_control_server(listener, config, command_rx, handshake_tx, receive_buffer)
         });
+        ready_rx
+            .recv_timeout(IO_TIMEOUT)
+            .expect("local TLS fixture reaches its accept boundary");
         Self {
             address,
             commands: command_tx,
@@ -2502,7 +2509,10 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         .expect("set a disjoint BOT_T14_G5E_ADAPTER_OUTPUT receipt path");
     let pki = TestPki::new();
     let ticket_metrics = Arc::new(TicketMetrics::default());
+    let shared_config_before = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    reset_g5e_allocator_peak();
     let client_config = client_config_with_ticket_metrics(&pki, Arc::clone(&ticket_metrics));
+    let (shared_config_after, shared_config_peak) = g5e_allocator_snapshot();
     let server_config = configure_tls13_with_tickets(pki.identity.duplicate());
     let server =
         ControlServer::spawn_with_receive_buffer(Arc::clone(&server_config), Some(4 * 1024));
@@ -2903,21 +2913,17 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
                 && sample.sample.tid == tid
         }));
     }
-    assert!(worker_stack_samples
-        .iter()
-        .all(|sample| sample.sample.reserved_bytes.is_some()));
-    if cfg!(target_os = "macos") {
+    assert!(worker_stack_samples.iter().all(|sample| {
+        sample.sample.tid != 0
+            && sample.sample.stack_low_address.is_some()
+            && sample.sample.stack_high_address_exclusive.is_some()
+    }));
+    if cfg!(target_os = "windows") {
         assert!(worker_stack_samples.iter().all(|sample| {
-            sample.sample.guard_bytes.is_none()
-                && sample
-                    .sample
-                    .measurement_source
-                    .contains("guard-unavailable")
+            sample.sample.reserved_bytes.is_some()
+                && sample.sample.committed_bytes.is_some()
+                && sample.sample.guard_bytes.is_some()
         }));
-    } else {
-        assert!(worker_stack_samples
-            .iter()
-            .all(|sample| sample.sample.guard_bytes.is_some()));
     }
     assert!(!G5E_WORKER_STACK_OVERFLOW.load(Ordering::Acquire));
     assert_eq!(G5E_WORKER_STACK_CAPTURE_FAILURES.load(Ordering::Acquire), 0);
@@ -2955,6 +2961,12 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
             "\"measurement_subject\":\"actual client-adapter GameTlsLane and WssEndpoint with local TLS 1.3 fixture\",",
             "\"client_verifier\":\"platform verifier with generated fixture CA root\",",
             "\"connection_count\":2,\"client_config_identity_count\":{config_identity_count},",
+            "\"shared_config_process_requested_before_build_bytes\":{shared_config_before},",
+            "\"shared_config_process_requested_after_build_bytes\":{shared_config_after},",
+            "\"shared_config_process_requested_peak_during_build_bytes\":{shared_config_peak},",
+            "\"shared_config_process_requested_live_delta_bytes\":{shared_config_delta},",
+            "\"shared_config_process_requested_peak_delta_bytes\":{shared_config_peak_delta},",
+            "\"shared_config_measurement\":\"one caller source ClientConfig including fixture trust roots, platform verifier and ticket store; measured after PKI creation and before server fixture setup; process-wide requested bytes, not retained bytes owned by this config\",",
             "\"initial_backpressure_records\":{},\"stable_backpressure_settle_rounds\":{},",
             "\"client_config_generation_count\":{config_generation_count},\"source_config_strong_count_after_connect\":{},",
             "\"client_config_generation_ids\":[{lane_config_generation_id},{sibling_config_generation_id}],",
@@ -3078,6 +3090,11 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         recovery_ledger_sample_count,
         active_connections_after_cleanup,
         config_identity_count = config_generation_samples.len(),
+        shared_config_before = shared_config_before,
+        shared_config_after = shared_config_after,
+        shared_config_peak = shared_config_peak,
+        shared_config_delta = shared_config_after as i128 - shared_config_before as i128,
+        shared_config_peak_delta = shared_config_peak.saturating_sub(shared_config_before),
         config_generation_count = config_generation_samples.len(),
         lane_config_generation_id = lane_config_generation_id,
         sibling_config_generation_id = sibling_config_generation_id,
@@ -3110,6 +3127,168 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         .write_all(receipt.as_bytes())
         .expect("write the G5-E adapter receipt");
     println!("G5E_MEMORY_RECEIPT {receipt}");
+}
+
+/// Differential test-only receipt. Both server and client execute in this
+/// process, so a server-side post-accept allocation is still an explicit
+/// confounder; the fitted slope is not silently relabeled client-only memory.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[test]
+#[ignore = "opt-in actual-adapter WSS 1/2/4/8 difference receipt"]
+fn g5e_adapter_wss_connection_difference_receipt() {
+    const LANES: usize = 8;
+    const HANDSHAKE_REPEATS: usize = 5;
+
+    let output_path = std::env::var_os("BOT_T14_G5E_DIFFERENCE_OUTPUT")
+        .expect("set an absent BOT_T14_G5E_DIFFERENCE_OUTPUT receipt path");
+    install_g5e_observers();
+    let mut servers = Vec::with_capacity(LANES);
+    let mut lanes = Vec::with_capacity(LANES);
+    let mut points = Vec::with_capacity(LANES);
+    let mut handshakes = Vec::with_capacity(HANDSHAKE_REPEATS);
+    let process_before_setup = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    let pki = TestPki::new();
+    let ticket_metrics = Arc::new(TicketMetrics::default());
+    let client_config = client_config_with_ticket_metrics(&pki, Arc::clone(&ticket_metrics));
+    let server_config = configure_tls13_with_tickets(pki.identity.duplicate());
+    let process_after_shared_setup = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    for _ in 0..LANES {
+        servers.push(ControlServer::spawn(Arc::clone(&server_config)));
+    }
+    let fixture_only_live = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    let fixture_setup_delta =
+        fixture_only_live as i128 - process_after_shared_setup as i128;
+    for (index, server) in servers.iter().enumerate() {
+        let (attempt, endpoint, handshake) = connect_wss(server, Arc::clone(&client_config));
+        assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+        drop(handshake);
+        lanes.push((attempt, endpoint));
+        assert_eq!(wss_ledger_samples().len(), index + 1);
+        let live = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+        let corrected = live as i128 - process_before_setup as i128 - fixture_setup_delta;
+        let resources = g5e_process_resources();
+        points.push((index + 1, live, corrected, resources));
+    }
+    for ((attempt, mut endpoint), server) in lanes.into_iter().zip(servers.into_iter()) {
+        endpoint.close(attempt.poll.registry());
+        drop(attempt);
+        server.stop();
+    }
+    assert!(wss_ledger_samples().is_empty());
+
+    for _ in 0..HANDSHAKE_REPEATS {
+        let server = ControlServer::spawn(Arc::clone(&server_config));
+        let before = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+        reset_g5e_allocator_peak();
+        let (attempt, mut endpoint, handshake) = connect_wss(&server, Arc::clone(&client_config));
+        assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+        drop(handshake);
+        let (after, peak) = g5e_allocator_snapshot();
+        handshakes.push((
+            before,
+            after,
+            peak,
+            peak.saturating_sub(before.max(after)),
+        ));
+        endpoint.close(attempt.poll.registry());
+        drop(attempt);
+        server.stop();
+        assert!(wss_ledger_samples().is_empty());
+    }
+    assert_eq!(ticket_metrics.inserted.load(Ordering::Acquire), 0);
+    assert_eq!(ticket_metrics.taken.load(Ordering::Acquire), 0);
+    assert!(!G5E_SCOPE_OVERFLOW.load(Ordering::Acquire));
+    assert!(!G5E_CONFIG_GENERATION_OVERFLOW.load(Ordering::Acquire));
+    assert!(!G5E_WORKER_STACK_OVERFLOW.load(Ordering::Acquire));
+    assert_eq!(G5E_WORKER_STACK_CAPTURE_FAILURES.load(Ordering::Acquire), 0);
+
+    let selected = [points[0], points[1], points[3], points[7]];
+    let sum_x = 15.0_f64;
+    let sum_xx = 85.0_f64;
+    let sum_y: f64 = selected
+        .iter()
+        .map(|(_, _, corrected, _)| *corrected as f64)
+        .sum();
+    let sum_xy: f64 = selected
+        .iter()
+        .map(|(count, _, corrected, _)| *count as f64 * *corrected as f64)
+        .sum();
+    let slope = (4.0 * sum_xy - sum_x * sum_y) / (4.0 * sum_xx - sum_x * sum_x);
+    let intercept = (sum_y - slope * sum_x) / 4.0;
+    let residuals = selected
+        .map(|(count, _, corrected, _)| corrected as f64 - intercept - slope * count as f64);
+    let spread_min = handshakes.iter().map(|sample| sample.3).min().unwrap();
+    let spread_max = handshakes.iter().map(|sample| sample.3).max().unwrap();
+    let mut receipt = format!(
+        "{{\"schema\":\"t1.4-g5e-adapter-difference-v1\",\"target_os\":\"{}\",\"target_arch\":\"{}\",\"measurement_subject\":\"actual GameTlsLane and WssEndpoint against eight prestarted in-process TLS server fixtures\",\"process_live_before_setup_bytes\":{},\"process_live_after_shared_setup_bytes\":{},\"fixture_only_live_before_connections_bytes\":{},\"fixture_setup_live_delta_bytes\":{},\"fit\":\"ordinary least squares on N=1,2,4,8 after subtracting process-before-setup and eight server-fixture setup delta\",\"retained_slope_bytes_per_connection\":{},\"retained_shared_intercept_bytes\":{},\"residuals_bytes\":[{},{},{},{}],\"server_post_accept_cost\":\"unresolved: TLS/WebSocket server connections remain live in this counting process; fixture-only pre-accept baseline cannot subtract their per-connection cost\",\"idle_steady_points\":[",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        process_before_setup,
+        process_after_shared_setup,
+        fixture_only_live,
+        fixture_setup_delta,
+        slope,
+        intercept,
+        residuals[0],
+        residuals[1],
+        residuals[2],
+        residuals[3],
+    );
+    for (index, (count, live, corrected, resources)) in points.iter().enumerate() {
+        if index != 0 {
+            receipt.push(',');
+        }
+        write!(
+            receipt,
+            "{{\"connections\":{count},\"process_live_requested_bytes\":{live},\"fixture_setup_corrected_bytes\":{corrected},\"rss_current_bytes\":{},\"tasks\":{},\"fds\":{},\"process_handles\":{}}}",
+            resources.rss_bytes,
+            resources.task_count,
+            optional_usize_json(resources.file_descriptors),
+            optional_usize_json(resources.process_handles),
+        )
+        .expect("write observed idle WSS point");
+    }
+    receipt.push_str("],\"isolated_handshake_runs\":[");
+    for (index, (before, after, peak, excess)) in handshakes.iter().enumerate() {
+        if index != 0 {
+            receipt.push(',');
+        }
+        write!(
+            receipt,
+            "{{\"iteration\":{},\"before_live_bytes\":{before},\"after_live_bytes\":{after},\"peak_live_bytes\":{peak},\"peak_above_max_endpoint_bytes\":{excess}}}",
+            index + 1
+        )
+        .expect("write isolated handshake sample");
+    }
+    write!(
+        receipt,
+        "],\"handshake_peak_excess_spread_bytes\":{{\"min\":{spread_min},\"max\":{spread_max},\"range\":{}}},\"ticket_store_insertions\":0,\"ticket_parse_cost\":\"unresolved: the excess includes client handshake, server post-accept and upgrade allocations; no ticket-parse-specific scope\",\"worker_stack_capture_count\":{},\"worker_config_generation_count\":{},\"allocation_scope_count\":{},\"sample_semantics\":\"GlobalAlloc requested-layout live bytes, not usable capacity; source-known 250760-byte logical reserve is never an actual-cost oracle\"}}\n",
+        spread_max - spread_min,
+        G5E_WORKER_STACK_SAMPLES
+            .get()
+            .expect("worker stack observer initialized")
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len(),
+        soak_observer::client_config_generation_samples().len(),
+        G5E_SCOPE_SAMPLES
+            .get()
+            .expect("allocation scope observer initialized")
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .flatten()
+            .count(),
+    )
+    .expect("write difference receipt summary");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output_path)
+        .expect("create unique G5-E difference receipt");
+    file.write_all(receipt.as_bytes())
+        .expect("write G5-E difference receipt");
+    file.sync_all().expect("sync G5-E difference receipt");
 }
 
 #[test]
