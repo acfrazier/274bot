@@ -94,3 +94,49 @@ const splitNeedles = [
     '}',
 ];
 assert.equal(boundedJournalRange(parsed(splitNeedles), 'progress', constants, { min: 0, max: 61 }, cited(splitNeedles), needles), null);
+
+const interpolatedLiteralPrograms = [
+    [
+        'if (%progress = 0) {',
+        '    def_string $page = "<displayname>";',
+        '    ~quest_journal("Priest", $page);',
+        '} else {',
+        '    def_string $page = "Priest Drezel";',
+        '    ~quest_journal("Priest", $page);',
+        '}',
+    ],
+    [
+        'def_string $page = "safe";',
+        'if (%progress = 0) {',
+        '    $page = "<displayname>";',
+        '    ~quest_journal("Priest", $page);',
+        '} else {',
+        '    $page = "Priest Drezel";',
+        '    ~quest_journal("Priest", $page);',
+        '}',
+    ],
+    [
+        'def_string $page = "safe";',
+        'if (%progress = 0) {',
+        '    $page = append($page, "<displayname>");',
+        '    ~quest_journal("Priest", $page);',
+        '} else {',
+        '    $page = "Priest Drezel";',
+        '    ~quest_journal("Priest", $page);',
+        '}',
+    ],
+    [
+        'def_string $page = "Priest Drezel";',
+        'if (%progress = 0) {',
+        '    ~quest_journal("<displayname>", $page);',
+        '} else {',
+        '    ~quest_journal("Priest", $page);',
+        '}',
+    ],
+];
+for (const lines of interpolatedLiteralPrograms) {
+    assert.equal(
+        boundedJournalRange(parsed(lines), 'progress', constants, { min: 1, max: 61 }, cited(lines), needles),
+        null,
+    );
+}
