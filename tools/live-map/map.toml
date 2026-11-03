@@ -44,6 +44,8 @@ globs = [
   # Neither is enabled in a shipped product. The soak remains mandatory.
   "T1.4/soak-config.json",
   "crates/client-adapter/src/soak_observer.rs",
+  # Offline route audit for the T1.4 soak fixture; no shipped product loads it.
+  "crates/host-play/examples/soak_routes.rs",
   ".github/**",
   "tools/**",
   "crates/e2e/**",
