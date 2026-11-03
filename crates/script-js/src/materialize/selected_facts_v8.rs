@@ -457,9 +457,7 @@ fn obj_resolve_by_name<'s>(
 }
 
 /// Frozen adapter `reader.objCatalog()`: every named object, or a fresh empty array before data.
-fn obj_records<'s>(
-    scope: &mut v8::HandleScope<'s>,
-) -> Result<v8::Local<'s, v8::Value>, String> {
+fn obj_records<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
     let shapes = scope
         .get_slot::<Rc<SelectedFactsObjectShapes>>()
         .cloned()

@@ -495,7 +495,9 @@ fn unconditional_refusals_use_compat_surface_policy() {
                 );
             } else {
                 assert!(
-                    matching.into_iter().all(|entry| entry["operation"] != "not-impl"),
+                    matching
+                        .into_iter()
+                        .all(|entry| entry["operation"] != "not-impl"),
                     "refused function {relative}:{symbol} must not have a not-impl overlay"
                 );
             }

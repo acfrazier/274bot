@@ -2,7 +2,8 @@ use super::*;
 use rustyscript::{Runtime, RuntimeOptions};
 
 const CHILD_ENV: &str = "SCRIPT_PAINT_STEPPER_SHAPE_TEST_CHILD";
-const TEST_NAME: &str = "paint_chrome::tests::stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded";
+const TEST_NAME: &str =
+    "paint_chrome::tests::stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded";
 
 const SETUP: &str = r#"
 globalThis.__draw = click => {
