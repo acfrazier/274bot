@@ -41,7 +41,7 @@ struct PaintChromeShapes {
 
 #[derive(Default)]
 struct ChromeState {
-    // Only the exported singleton is mirrored here; instance stores live in V8's WeakMap.
+    // Only the exported singleton uses this Rust store; instance stores live in V8's WeakMap.
     singleton_store: HashMap<String, String>,
     reset_instance_stores: bool,
     dock_h: i32,

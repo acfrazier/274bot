@@ -141,7 +141,7 @@ export class PaintState {
     }
 }
 
-// The native adapter keeps the singleton; other owners use WeakMap-backed stores.
+// paintState is the native singleton; other owners use WeakMap-backed stores.
 const paintState = Object.create(PaintState.prototype);
 paint('stateNew', paintState, true);
 export { paintState };
