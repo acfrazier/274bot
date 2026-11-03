@@ -343,10 +343,13 @@ fn slot_native_input_authority_survives_run_context_replacement() {
 fn slot_size_stays_within_the_full_build_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
     println!("S0d SlotScript layout: {actual} bytes");
-    let expected = if cfg!(all(
-        target_os = "linux",
-        target_arch = "x86_64",
-        target_env = "gnu"
+    let expected = if cfg!(any(
+        all(
+            target_os = "linux",
+            target_arch = "x86_64",
+            target_env = "gnu"
+        ),
+        all(target_os = "macos", target_arch = "aarch64")
     )) {
         1640
     } else {
