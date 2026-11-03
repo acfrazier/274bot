@@ -1261,21 +1261,12 @@ impl Script for KitchenPrereqScript {
                     });
                 }
                 self.open_page = Some(acquired);
-            } else if let Some(acquired) = self.open_page {
+            } else if self.open_page.is_some() {
                 if let Some(modal) = snapshot
                     .main_modal()
                     .filter(|modal| modal.value.root == -1 && modal.value.texts.is_empty())
                 {
-                    if let Some(page) = self
-                        .report
-                        .lock()
-                        .journal_pages
-                        .iter_mut()
-                        .find(|page| page.acquired == acquired)
-                    {
-                        page.closed = Some(modal.stamp);
-                    }
-                    self.open_page = None;
+                    record_journal_close(&mut self.report.lock(), &mut self.open_page, modal.stamp);
                 }
             }
         }
@@ -1351,6 +1342,89 @@ struct LiveJournalPage {
     lines: Vec<String>,
     acquired: EvidenceStamp,
     closed: Option<EvidenceStamp>,
+}
+
+fn record_journal_close(
+    report: &mut NativePrereqReport,
+    open_page: &mut Option<EvidenceStamp>,
+    closed: EvidenceStamp,
+) {
+    let Some(acquired) = *open_page else {
+        return;
+    };
+    // An empty modal may retain the page's stamp before the next observed
+    // snapshot. Keep tracking this page until the existing strict oracle
+    // can distinguish its close from that stale observation.
+    if closed.run != acquired.run
+        || (closed.tick, closed.sequence) <= (acquired.tick, acquired.sequence)
+    {
+        return;
+    }
+    if let Some(page) = report
+        .journal_pages
+        .iter_mut()
+        .find(|page| page.acquired == acquired)
+    {
+        page.closed = Some(closed);
+        *open_page = None;
+    }
+}
+
+#[test]
+fn kitchen_journal_observer_retains_a_stale_close_until_fresh_evidence() {
+    let acquired = EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 2,
+        sequence: 2,
+    };
+    for closed in [
+        EvidenceStamp {
+            sequence: 3,
+            ..acquired
+        },
+        EvidenceStamp {
+            tick: 3,
+            sequence: 3,
+            ..acquired
+        },
+    ] {
+        let mut report = NativePrereqReport {
+            journal_pages: vec![LiveJournalPage {
+                title: "Shield of Arrav".into(),
+                lines: Vec::new(),
+                acquired,
+                closed: None,
+            }],
+            ..NativePrereqReport::default()
+        };
+        let mut open_page = Some(acquired);
+        for stale in [
+            acquired,
+            EvidenceStamp {
+                tick: 1,
+                sequence: 1,
+                ..acquired
+            },
+            EvidenceStamp {
+                run: api::selected::RunKey {
+                    session: 2,
+                    ..acquired.run
+                },
+                ..closed
+            },
+        ] {
+            record_journal_close(&mut report, &mut open_page, stale);
+            assert_eq!(open_page, Some(acquired));
+            assert_eq!(report.journal_pages[0].closed, None);
+        }
+        record_journal_close(&mut report, &mut open_page, closed);
+        assert_eq!(open_page, None);
+        assert_eq!(report.journal_pages[0].closed, Some(closed));
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
