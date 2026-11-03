@@ -1787,21 +1787,21 @@ fn a_journal_and_two_distinct_rows_each_reissue_before_the_budget_refuses_a_four
     let (_, mort) = row(ConsentSwitch::QuestStart);
     let state = state();
     let (mut walk, mut ledger) = walk_wrapper(&crossing_snapshot(&holy.crossings[0]));
+    let original_walk = ledger.as_ref().unwrap().outbox.last().unwrap().request_id;
     resolve_journal_in_walk(&mut walk, &state, &mut ledger, 2);
+    let journal_walk = ledger.as_ref().unwrap().outbox.last().unwrap().request_id;
     resolve_probe_in_walk(&mut walk, holy, &holy.crossings[0], &state, &mut ledger, 5);
+    let holy_walk = ledger.as_ref().unwrap().outbox.last().unwrap().request_id;
     let snapshot =
         resolve_probe_in_walk(&mut walk, mort, &mort.crossings[0], &state, &mut ledger, 7);
     assert_eq!(state.prereq_snapshot().facts().len(), 3);
-    assert_eq!(
-        ledger
-            .as_ref()
-            .unwrap()
-            .outbox
-            .iter()
-            .filter(|action| matches!(action.effect, HostEffect::Walk(_)))
-            .count(),
-        4,
-        "the original walk and one reissue per distinct prerequisite row"
+    let mort_walk = ledger.as_ref().unwrap().outbox.last().unwrap().request_id;
+    // The foreground outbox drops retired owners, so retain each walk's
+    // identity before its replacement instead of treating it as a history.
+    let walk_ids = [original_walk, journal_walk, holy_walk, mort_walk];
+    assert!(
+        walk_ids.windows(2).all(|ids| ids[0] < ids[1]),
+        "the original walk and each row's fresh reissue: {walk_ids:?}"
     );
 
     let mut fourth = gate(holy, &holy.crossings[0], Truth::Unknown);
