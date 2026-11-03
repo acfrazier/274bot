@@ -152,6 +152,60 @@ export function stripComment(line: string) {
     return line;
 }
 
+/** Remove comments outside quoted strings, preserving physical line positions. */
+export function stripComments(text: string) {
+    let out = '';
+    let string = false;
+    let escaped = false;
+    let lineComment = false;
+    let blockComment = false;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i]!;
+        const next = text[i + 1];
+        if (lineComment) {
+            if (c === '\n') {
+                lineComment = false;
+                out += c;
+            } else {
+                out += ' ';
+            }
+            continue;
+        }
+        if (blockComment) {
+            if (c === '*' && next === '/') {
+                out += '  ';
+                i++;
+                blockComment = false;
+            } else {
+                out += c === '\n' ? '\n' : ' ';
+            }
+            continue;
+        }
+        if (string) {
+            out += c;
+            if (escaped) escaped = false;
+            else if (c === '\\') escaped = true;
+            else if (c === '"') string = false;
+            continue;
+        }
+        if (c === '"') {
+            string = true;
+            out += c;
+        } else if (c === '/' && next === '/') {
+            lineComment = true;
+            out += '  ';
+            i++;
+        } else if (c === '/' && next === '*') {
+            blockComment = true;
+            out += '  ';
+            i++;
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
 export type SectionIndex = { get(name: string): Section | undefined; all(): Section[]; duplicates(): string[] };
 
 function indexSections(sections: Section[]): SectionIndex {

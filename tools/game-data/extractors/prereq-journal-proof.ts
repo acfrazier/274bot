@@ -14,7 +14,7 @@ type ProgramNode =
     | { kind: 'if'; cond: string; then: ProgramNode[]; els: ProgramNode[] };
 
 function literal(value: string): string | null {
-    if (!/^"(?:[^"\\]|\\.)*"$/.test(value)) return null;
+    if (value.includes('\\') || !/^"[^"\\]*"$/.test(value)) return null;
     try {
         const parsed: unknown = JSON.parse(value);
         return typeof parsed === 'string' && !/<[^>]*>/.test(parsed) ? parsed : null;

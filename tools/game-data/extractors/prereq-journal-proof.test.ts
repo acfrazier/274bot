@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { parseBody, type Node } from './gathering-rs2.ts';
 import { boundedJournalRange } from './prereq-journal-proof.ts';
+import { stripComments } from './gathering-content.ts';
 
 const constants = new Map<string, number>();
 const needles = ['priest', 'drezel'];
@@ -140,3 +141,23 @@ for (const lines of interpolatedLiteralPrograms) {
         null,
     );
 }
+
+const commented = [
+    'def_string $page = "/* literal */ // literal"; // removed',
+    '/* removed',
+    '   removed */',
+    '~quest_journal("Title", $page);',
+].join('\n');
+const uncommented = stripComments(commented);
+assert.equal(uncommented.split('\n').length, commented.split('\n').length);
+assert.ok(uncommented.includes('"/* literal */ // literal"'));
+assert.ok(!uncommented.includes('removed'));
+assert.deepEqual(
+    boundedJournalRange(parsed(uncommented.split('\n')), 'progress', constants, { min: 0, max: 61 }, cited(commented.split('\n')), ['/* literal */ // literal']),
+    { min: 0, max: 61 },
+);
+const escaped = [
+    'def_string $page = "Priest\\nDrezel";',
+    '~quest_journal("Priest", $page);',
+];
+assert.equal(boundedJournalRange(parsed(escaped), 'progress', constants, { min: 0, max: 61 }, cited(escaped), needles), null);

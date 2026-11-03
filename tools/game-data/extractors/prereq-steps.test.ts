@@ -314,6 +314,32 @@ withProjection(baseEntries(), (overrides) => {
         assert.deepEqual(domain, { min: 0, max: 61 });
         assert.deepEqual(boundedJournalRange(nodes, 'progress', constants, domain, covered, ['completed reward']), { min: 9, max: 61 });
 
+        const pageFile = path.join(root, 'scripts/journal.rs2');
+        const journalLines = [
+            '[if_button,questlist:progress]',
+            '/* Commentary only: completed reward; unknown_call(); */',
+            ...lines,
+        ];
+        fs.writeFileSync(pageFile, journalLines.join('\n'));
+        const journal = {
+            id: 'progress:bounded-page',
+            quest: 'progress',
+            establishes: { quest: 'progress', signal: 'progress', values: { min: 9, max: 61 } },
+            after: [{ proves: { min: 9, max: 61 }, after: { min: 9, max: 61 } }],
+            reviewed_writes: [],
+            rules: [{
+                all: ['completed reward'],
+                proves: { min: 9, max: 61 },
+                source: `scripts/journal.rs2:1-${journalLines.length}`,
+            }],
+            source: 'scripts/journal.rs2:1',
+        };
+        assertPrereqJournalPins(root, [journal]);
+        fs.writeFileSync(pageFile, journalLines.map((line) =>
+            line === '    $page = "Completed reward";' ? '    $page = "Not earned yet";' : line).join('\n'));
+        assert.throws(() => assertPrereqJournalPins(root, [journal]), /no source-pinned stage range/, 'comment text is not emitted page evidence');
+        fs.writeFileSync(pageFile, journalLines.join('\n'));
+
         fs.writeFileSync(path.join(root, 'scripts/unbounded.rs2'), '[proc,unbounded](int $value)()\n%progress = $value;\n');
         const unknown = captureProgressWriterDomains(root)('progress');
         assert.equal(unknown, null, 'one unbounded production writer removes the domain authority');

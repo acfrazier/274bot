@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parsePack, parseParamDefinitions, parseRows, requireGatherText, walkContentFiles } from './common.ts';
+import { stripComments } from './gathering-content.ts';
 
 export const STYLE = {
     MELEE: 0x01,
@@ -61,59 +62,6 @@ type WeaponStyleFactWire = WeaponStyleMetadata & {
 type CombatStyleSlot = Pick<WeaponStyleFactWire, 'style_slot' | 'damagetype' | 'damagestyle' | 'style_bonus'>;
 
 const AI_KINDS = new Set(['ai_applayer2', 'ai_opplayer2', 'ai_queue1']);
-
-function stripComments(text: string) {
-    let out = '';
-    let string = false;
-    let escaped = false;
-    let lineComment = false;
-    let blockComment = false;
-    for (let i = 0; i < text.length; i++) {
-        const c = text[i]!;
-        const next = text[i + 1];
-        if (lineComment) {
-            if (c === '\n') {
-                lineComment = false;
-                out += c;
-            } else {
-                out += ' ';
-            }
-            continue;
-        }
-        if (blockComment) {
-            if (c === '*' && next === '/') {
-                out += '  ';
-                i++;
-                blockComment = false;
-            } else {
-                out += c === '\n' ? '\n' : ' ';
-            }
-            continue;
-        }
-        if (string) {
-            out += c;
-            if (escaped) escaped = false;
-            else if (c === '\\') escaped = true;
-            else if (c === '"') string = false;
-            continue;
-        }
-        if (c === '"') {
-            string = true;
-            out += c;
-        } else if (c === '/' && next === '/') {
-            lineComment = true;
-            out += '  ';
-            i++;
-        } else if (c === '/' && next === '*') {
-            blockComment = true;
-            out += '  ';
-            i++;
-        } else {
-            out += c;
-        }
-    }
-    return out;
-}
 
 function parseSections(text: string) {
     const sections: ScriptSection[] = [];

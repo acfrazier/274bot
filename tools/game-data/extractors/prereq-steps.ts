@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { integer, parseJm2LocPlacements, parseJm2NpcPlacements, parseMapsquarePath, parsePack, sourceFile, walkContentFiles, worldFromMapsquare } from './common.ts';
 import { assertPrereqPreservation } from './prereq-preservation.ts';
-import { parseRs2Blocks, stripComment } from './gathering-content.ts';
+import { parseRs2Blocks, stripComment, stripComments } from './gathering-content.ts';
 import { parseBody } from './gathering-rs2.ts';
 import { captureProgressWriterDomains, type ProgressWriterDomains } from './quests.ts';
 import { boundedJournalRange } from './prereq-journal-proof.ts';
@@ -712,13 +712,15 @@ export function assertPrereqJournalPins(
             }
             journalRuleRange(source, journal.establishes.signal, constants, label, rule.proves, rule.all, () => {
                 const blocks = [...pageFiles].flatMap((file) =>
-                    parseRs2Blocks(file, fs.readFileSync(path.join(content, file), 'utf8')))
+                    parseRs2Blocks(file, stripComments(fs.readFileSync(path.join(content, file), 'utf8'))))
                     .filter((block) => block.kind === 'if_button' && block.name === `questlist:${journal.quest}`);
                 if (blocks.length !== 1 || !isProductionScript(blocks[0].span.file)) return null;
                 const block = blocks[0];
                 const covered = new Set(parseSource(rule.source)
                     .filter(({ file }) => file === block.span.file).flatMap(({ lines }) => lines));
                 if (block.body.some((line) => stripComment(line.text).trim() && !covered.has(line.line))) return null;
+                // The structural reader does not model escaped source quotes.
+                if (block.body.some((line) => line.text.includes('\\'))) return null;
                 let nodes;
                 try {
                     nodes = parseBody(block.body);
