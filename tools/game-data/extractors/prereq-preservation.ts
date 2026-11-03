@@ -183,6 +183,48 @@ function guardsCanHold(guards: readonly Guard[], variable: string, range: RangeW
     }));
 }
 
+/** Partition a bounded domain without enumerating its values. Unknown atoms refuse the proof. */
+export function stageConditionCases(
+    conditions: readonly string[],
+    variable: string,
+    range: RangeWire,
+    constants: ReadonlyMap<string, number>,
+): { values: RangeWire; outcomes: ReadonlyMap<string, boolean> }[] | null {
+    if (!Number.isSafeInteger(range.min) || !Number.isSafeInteger(range.max)
+        || range.min > range.max || range.max >= Number.MAX_SAFE_INTEGER) return null;
+    const unique = [...new Set(conditions)];
+    const expressions = unique.map((text) => ({ text, expression: parseBool(text) }));
+    const known = (expression: BoolExpr): boolean => {
+        if (expression.kind === 'atom') {
+            const comparison = comparisonAt(expression.text, variable, constants);
+            return comparison !== null && Number.isSafeInteger(comparison.value);
+        }
+        if (expression.kind === 'not') return known(expression.child);
+        return known(expression.left) && known(expression.right);
+    };
+    if (!expressions.every(({ expression }) => known(expression))) return null;
+    const boundaries = new Set([range.min, range.max + 1]);
+    for (const value of criticalValues(unique.map((expression) => ({ expression, polarity: true })), variable, range, constants)) {
+        boundaries.add(value);
+        boundaries.add(value + 1);
+    }
+    const ordered = [...boundaries].sort((left, right) => left - right);
+    const cases: { values: RangeWire; outcomes: ReadonlyMap<string, boolean> }[] = [];
+    for (let index = 0; index + 1 < ordered.length; index += 1) {
+        const values = { min: ordered[index], max: ordered[index + 1] - 1 };
+        const outcomes = new Map<string, boolean>();
+        for (const { text, expression } of expressions) {
+            const possible = possibleAt(expression, variable, values.min, constants);
+            if (possible.size !== 1) return null;
+            const value = possible.values().next().value;
+            if (typeof value !== 'boolean') return null;
+            outcomes.set(text, value);
+        }
+        cases.push({ values, outcomes });
+    }
+    return cases;
+}
+
 function negate(expression: BoolExpr): BoolExpr {
     if (expression.kind === 'not') return expression.child;
     if (expression.kind === 'and' || expression.kind === 'or') return {
