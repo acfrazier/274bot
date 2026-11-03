@@ -6244,6 +6244,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         }
@@ -7125,6 +7126,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -7388,6 +7390,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison: PoisonState::Clear,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -7598,6 +7601,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -7668,6 +7672,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -7789,6 +7794,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -8184,6 +8190,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food,
             cures: CureDoses::default(),
         };
@@ -8283,6 +8290,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };

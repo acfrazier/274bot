@@ -2079,6 +2079,7 @@ fn seat_answer_wake_polls_only_the_answered_request() {
         },
         0,
         &[],
+        None,
     );
     assert_eq!(
         slot.unstarted_bank_rows_for_test(),

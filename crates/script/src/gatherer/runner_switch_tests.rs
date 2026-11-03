@@ -2089,6 +2089,7 @@ fn cure_condition(
         hp_max: 99,
         hp_known: true,
         poison,
+        poison_window: None,
         food: api::condition::FoodSummary::default(),
         cures: api::condition::CureDoses::default(),
     }

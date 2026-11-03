@@ -2796,6 +2796,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food,
             cures: api::condition::CureDoses::default(),
         }
@@ -3747,7 +3748,7 @@ mod tests {
         });
         gatherer.trip = TripStep::Open;
         gatherer.scratch.bank_open_attempts = 1;
-        gatherer.selected_bank = Some(SelectedBank {
+        gatherer.scratch.selected_bank = Some(SelectedBank {
             bank_index: 0,
             access_tile: bank_tile,
             kind: PickKind::Reachable,
@@ -3807,6 +3808,7 @@ mod tests {
                     q: Some(11),
                     hit_since_line: false,
                 },
+                poison_window: None,
                 food: FoodSummary::default(),
                 cures: CureDoses::default(),
             });
@@ -4468,6 +4470,7 @@ mod tests {
                 last_mark: 1,
                 hit_since_mark: false,
             },
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -4519,6 +4522,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -4580,6 +4584,7 @@ mod tests {
             hp_max: 90,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -4721,6 +4726,7 @@ mod tests {
                 hp_max: 10,
                 hp_known: true,
                 poison,
+                poison_window: None,
                 food: FoodSummary {
                     ordinary_count: food_count,
                     ordinary_heal_total: u16::from(food_count) * 12,

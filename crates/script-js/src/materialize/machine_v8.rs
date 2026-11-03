@@ -62,13 +62,13 @@ pub(crate) fn snapshot_step(
 
 /// Step only the native rows that the posted seat page changed and no pass
 /// has read, keeping the callback budget. Returns the rows it stepped.
-pub(super) fn seat_step(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) -> machine::SteppedRows {
+pub(crate) fn seat_step(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) -> machine::SteppedRows {
     machine::seat_step(&mut RuntimeJs { runtime, claimed })
 }
 
 /// After a seat page step and its drain, resume the stepped rows whose
 /// callback promise settled. No other row resumes.
-pub(super) fn resume_callbacks_seat(
+pub(crate) fn resume_callbacks_seat(
     runtime: &mut Runtime,
     stepped: &machine::SteppedRows,
     claimed: &dyn Fn() -> bool,
@@ -104,7 +104,7 @@ pub(crate) fn settle_waits(
 /// seat answer dispatch. The handle list lives on the stack; the JS array of
 /// it exists only when a terminal qualifies (once per ended request, not per
 /// wake), and the shim re-parks every other machine wait without taking it.
-pub(super) fn settle_waits_seat(
+pub(crate) fn settle_waits_seat(
     runtime: &mut Runtime,
     release_floor: u64,
     claimed: &dyn Fn() -> bool,

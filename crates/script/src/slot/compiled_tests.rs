@@ -473,6 +473,7 @@ fn slot_keeps_parked_native_run_and_resumes_after_dose() {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses {
                 antipoison,
@@ -3734,6 +3735,7 @@ fn completed_native_status_survives_teardown_without_copying() {
                 phase: NativePhase::Complete,
                 active_settings: 1,
                 pending_settings: None,
+                survival: None,
                 fields: Arc::from([
                     crate::native::StatusField {
                         key: "ground_waited_ticks",
