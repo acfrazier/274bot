@@ -210,7 +210,8 @@ fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
     assert!(reissued.cross.is_empty());
     assert!(reissued.avoid.is_empty());
     assert!(!reissued.protect);
-    assert!(!reissued.food_guard);
+    assert!(reissued.food_guard && reissued.allow.food);
+    assert!(!reissued.cure_guard);
     assert_eq!(reissued.required_after.tick, 3);
     assert!(gatherer.target.is_none());
 

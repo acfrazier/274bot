@@ -2261,7 +2261,7 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
 }
 
 #[test]
-fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
+fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
     fn measure_prepared(
         incarnation: u64,
     ) -> (
@@ -2389,9 +2389,14 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
         cold.bytes_current - prepare_bytes,
         i128::from(cold.bytes_max) - i128::from(cold.bytes_current),
     );
+    // Native-Cure b4e71198d adds 176 B of runner state and 80 B of
+    // published survival status (56 B field + 24 B text allocation).
+    // The last pre-Cure composed sample at fdf4f839e measured 7970 B.
+    // Current source 9bfa72d9b measures 8226 B after the same exclusions.
+    // Main accepts this conscious increase past 8 KiB, with 8 B headroom.
     assert!(
-        (0..=8192).contains(&exclusive),
-        "exclusive Gatherer heap exceeds 8 KiB"
+        (0..=8234).contains(&exclusive),
+        "exclusive Gatherer heap exceeds 8234 B (native-cure b4e71198d: +176 B runner, +56 B survival field, +24 B text. Measured 8226 B + 8 B headroom)"
     );
     measured.as_mut().unwrap().stop();
     warm.stop();
@@ -3248,17 +3253,20 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // HOLD-MODEL: measured 8584 B. QuietRead.hold_until adds 16 B in
-        // Ledger (992 -> 1008 B), over the prior 8568 B. Keep 8 B headroom.
-        // macOS also owns one lazily boxed Darwin pthread_mutex_t (64 B) for
-        // the retained Mutex<RetainedMemory>, first locked in prepare.
+        // Composed Cure source 219bac20e measures 8840 B on Linux and
+        // 8904 B on macOS. Native-Cure b4e71198d adds 176 B of runner
+        // state plus 80 B of survival status (56 B field + 24 B text).
+        // Keep the prior QuietRead.hold_until +16 B in Ledger 992 -> 1008.
+        // macOS owns a further 64 B Darwin retained mutex, first locked
+        // in prepare. The shared combat index is charged once per process.
+        // Both limits retain 8 B of headroom.
         #[cfg(target_os = "macos")]
-        let exclusive_limit = 8656;
+        let exclusive_limit = 8912;
         #[cfg(not(target_os = "macos"))]
-        let exclusive_limit = 8592;
+        let exclusive_limit = 8848;
         assert!(
             exclusive <= exclusive_limit,
-            "exclusive API seat exceeds {exclusive_limit} B (QuietRead.hold_until +16 B in Ledger 992 -> 1008; macOS retained pthread mutex +64 B; 8 B headroom)"
+            "exclusive API seat exceeds {exclusive_limit} B (native-cure b4e71198d: +176 B runner +80 B survival status. QuietRead.hold_until +16 B, Darwin retained mutex +64 B, 8 B headroom)"
         );
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));

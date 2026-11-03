@@ -875,10 +875,19 @@ The shared `CombatPlan` also grows by 8 B per program, not per bot.
 A `MakeRun` measures 1,176 B once per running Make step, including its retained
 prerequisite walk. Its ceiling is 1,184 B, also with 8 B of headroom.
 These are retained type sizes, not process memory or per-bot capacity.
-In the default/test-hooks native-seat measurement, installed API-seat heap is
-8,568 B and its ceiling is 8,576 B. Preparation uses 2,818 B, installation
-uses 824 B and polls use 4,926 B. The retained ledger and owner growth is
-already contained in that heap total. No state is boxed to exclude it.
+At composed Cure source `219bac20e`, the default/test-hooks native-seat
+measurement retains 8,840 B on Linux and 8,904 B on macOS.
+Their ceilings are 8,848 B and 8,912 B, each with 8 B of headroom.
+Preparation owns 2,994 B on Linux and 3,058 B on macOS.
+Installation owns 824 B and polling owns 5,022 B on both platforms.
+The 64 B platform difference is the retained Darwin mutex, not shared memory.
+The existing combat index measures 5,408 B once per process, outside those totals.
+Cure adds 176 B of runner state and 80 B of published survival status.
+The separate native Gatherer family measure grows from 7,970 B at `fdf4f839e`
+to 8,226 B, with a consciously increased 8,234 B ceiling.
+That family measure excludes its shared seat and delivery buffers.
+Do not add these overlapping measurements or infer RSS, Windows storage, or capacity.
+No state is boxed to exclude it from a bound.
 
 
 ## Router (`nav_planner::router`)

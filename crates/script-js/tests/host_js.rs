@@ -9,7 +9,7 @@ fn host_js_dts_is_fresh() {
     let rendered = render_host_js_dts();
     assert_eq!(
         on_disk, rendered,
-        "host-js/index.d.ts is stale; run: cargo test -p script --test host_js regen_host_js -- --ignored"
+        "host-js/index.d.ts is stale; run: cargo test -p script-js --test host_js regen_host_js -- --ignored"
     );
 }
 

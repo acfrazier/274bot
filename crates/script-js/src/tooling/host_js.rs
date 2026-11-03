@@ -51,7 +51,7 @@ pub fn write_host_js_dts_to(path: &Path) -> Result<(), String> {
 pub fn render_host_js_dts() -> String {
     let mut out = String::from(
         "// Generated from host verb tables — do not edit by hand.\n\
-         // Regen: cargo test -p script --test host_js regen_host_js -- --ignored\n\
+         // Regen: cargo test -p script-js --test host_js regen_host_js -- --ignored\n\
          // NativeTick Load is planned for a later release. JS API v2 is NativeApi (explicit export const apiVersion = 2).\n\
          // Not a clone of rs2b0t-api.\n\n",
     );

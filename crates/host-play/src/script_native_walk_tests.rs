@@ -1446,6 +1446,7 @@ fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
         assert!(rig.driver.if_button_components.is_empty());
         assert_eq!(rig.end(), None);
         seed_guard_inventory(&mut rig.snapshot, &[("lobster", "Eat")], 1);
+        seed_melee_attack(&mut rig.snapshot);
         rig.snapshot.seed_tick(2);
         rig.step();
         assert_eq!(

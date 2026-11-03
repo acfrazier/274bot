@@ -3195,22 +3195,24 @@ mod tests {
                     if step_cross {
                         request.cross = Box::from([Arc::from("step-zone")]);
                     }
-                    cx.walk(request).unwrap();
+                    let mut actions = NativeActions { _private: () };
+                    let handle = actions.begin::<walk::Walk>(request, cx).unwrap();
+                    let HostEffect::Walk(request) =
+                        &cx.ledger.as_ref().unwrap().outbox.last().unwrap().effect
+                    else {
+                        panic!("the explicit cure request must remain a walk");
+                    };
+                    assert!(request.cure_guard);
+                    assert!(!request.protect && !request.food_guard && !request.allow.food);
+                    assert_eq!(
+                        request.cross.len(),
+                        usize::from(stage_cross) + usize::from(step_cross)
+                    );
+                    if stage_cross || step_cross {
+                        assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+                    }
+                    drop(handle);
                 });
-                let HostEffect::Walk(request) =
-                    &ledger.as_ref().unwrap().outbox.last().unwrap().effect
-                else {
-                    panic!("the explicit cure request must remain a walk");
-                };
-                assert!(request.cure_guard);
-                assert!(!request.protect && !request.food_guard && !request.allow.food);
-                assert_eq!(
-                    request.cross.len(),
-                    usize::from(stage_cross) + usize::from(step_cross)
-                );
-                if stage_cross || step_cross {
-                    assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
-                }
             }
         }
     }
