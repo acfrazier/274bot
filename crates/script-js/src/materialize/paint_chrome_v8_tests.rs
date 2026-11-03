@@ -141,7 +141,10 @@ fn stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded() {
             "collected V8 heap grew {growth} bytes; limit {limit}"
         );
 
-        assert_eq!(runtime.eval::<String>("__stateIsolation()").unwrap(), "left:right");
+        assert_eq!(
+            runtime.eval::<String>("__stateIsolation()").unwrap(),
+            "left:right"
+        );
         let state_baseline = collected_used_heap(&mut runtime);
         let state_count = 1_000;
         let create_states = format!("__makeTemporaryPaintStates({state_count})");
