@@ -3025,9 +3025,15 @@ mod api_gather_seat {
         );
         // HOLD-MODEL: measured 8584 B. QuietRead.hold_until adds 16 B in
         // Ledger (992 -> 1008 B), over the prior 8568 B. Keep 8 B headroom.
+        // macOS also owns one lazily boxed Darwin pthread_mutex_t (64 B) for
+        // the retained Mutex<RetainedMemory>, first locked in prepare.
+        #[cfg(target_os = "macos")]
+        let exclusive_limit = 8656;
+        #[cfg(not(target_os = "macos"))]
+        let exclusive_limit = 8592;
         assert!(
-            exclusive <= 8592,
-            "exclusive API seat exceeds 8592 B (8584 measured: QuietRead.hold_until +16 B in Ledger 992 -> 1008; 8 B headroom)"
+            exclusive <= exclusive_limit,
+            "exclusive API seat exceeds {exclusive_limit} B (QuietRead.hold_until +16 B in Ledger 992 -> 1008; macOS retained pthread mutex +64 B; 8 B headroom)"
         );
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));
