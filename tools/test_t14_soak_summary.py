@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Guard the Engine A evaluator against false passes and false failures."""
 
+import contextlib
 import hashlib
+import io
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest import mock
 
@@ -13,12 +16,16 @@ import t14_soak_summary as summary
 
 class SceneSamplesTests(unittest.TestCase):
     @staticmethod
-    def sample(at, *, state=2, epoch=3, connected=True):
+    def sample(at, *, state=2, epoch=3, connected=True, ingame=None):
         return {"event": "sample", "elapsed_seconds": at // 1_000_000_000,
                 "sample_monotonic_ns": at,
                 "slots": [{"account": "slot", "connected": connected,
-                           "stream_epoch": epoch, "ingame": state == 2,
+                           "stream_epoch": epoch, "ingame": state == 2 if ingame is None else ingame,
                            "scene_state": state}]}
+
+    @staticmethod
+    def scene2(at):
+        return {"event": "scene2", "account": "slot", "scene2_monotonic_ns": at}
 
     def check(self, events):
         errors = []
@@ -27,25 +34,53 @@ class SceneSamplesTests(unittest.TestCase):
 
     def test_connected_map_load_recovers_at_next_sample(self):
         self.assertEqual(self.check([self.sample(0), self.sample(10_000_000_000, state=1),
-                                     self.sample(20_000_000_000)]), [])
+                                     self.scene2(10_045_000_000), self.sample(20_000_000_000)]), [])
+
+    def test_play_sampler_gap_cannot_hide_a_long_load(self):
+        errors = self.check([self.sample(0), self.sample(60_000_000_000, state=1),
+                             self.scene2(60_045_000_000), self.sample(70_000_000_000)])
+        self.assertTrue(any("Play sample gap exceeds 12s" in error for error in errors))
+
+    def test_two_consecutive_loading_samples_fail_on_recovery(self):
+        errors = self.check([self.sample(0), self.sample(10_000_000_000, state=1),
+                             self.sample(20_000_000_000, state=1),
+                             self.scene2(20_045_000_000), self.sample(30_000_000_000)])
+        self.assertTrue(any("did not return to scene2 within 12s" in error for error in errors))
+
+    def test_slow_scene2_event_fails_even_when_next_sample_is_ready(self):
+        errors = self.check([self.sample(0), self.sample(10_000_000_000, state=1),
+                             self.scene2(12_000_000_000), self.sample(20_000_000_000)])
+        self.assertTrue(any("no scene2 return within 1s" in error for error in errors))
 
     def test_long_map_load_fails(self):
         errors = self.check([self.sample(0), self.sample(10_000_000_000, state=1),
                              self.sample(20_000_000_000, state=1),
-                             self.sample(30_000_000_000, state=1), self.sample(40_000_000_000)])
+                             self.sample(30_000_000_000, state=1),
+                             self.scene2(30_045_000_000), self.sample(40_000_000_000)])
         self.assertTrue(any("stayed in scene1 beyond 12s" in error for error in errors))
 
     def test_changed_epoch_and_disconnect_fail_during_loading(self):
-        for changed in (self.sample(10_000_000_000, state=1, epoch=4),
-                        self.sample(10_000_000_000, state=1, connected=False)):
+        for changed, expected in (
+            (self.sample(10_000_000_000, state=1, epoch=4), "changed stream epoch"),
+            (self.sample(10_000_000_000, state=1, connected=False), "disconnected"),
+        ):
             with self.subTest(changed=changed):
-                self.assertTrue(self.check([self.sample(0), changed, self.sample(20_000_000_000)]))
+                errors = self.check([self.sample(0), changed, self.scene2(10_045_000_000),
+                                     self.sample(20_000_000_000)])
+                self.assertTrue(any(expected in error for error in errors))
 
     def test_unrecovered_and_nonloading_scene_fail(self):
         self.assertTrue(any("never returned" in error for error in
                             self.check([self.sample(0), self.sample(10_000_000_000, state=1)])))
         self.assertTrue(any("outside map loading" in error for error in
                             self.check([self.sample(0), self.sample(10_000_000_000, state=0)])))
+        self.assertTrue(any("outside map loading" in error for error in
+                            self.check([self.sample(0), self.sample(10_000_000_000,
+                                                    state=1, ingame=True)])))
+
+    def test_missing_epoch_fails_without_a_second_sample(self):
+        errors = self.check([self.sample(0, epoch=None)])
+        self.assertTrue(any("lacks a live stream epoch" in error for error in errors))
 
 
 class TeardownTests(unittest.TestCase):
@@ -55,7 +90,8 @@ class TeardownTests(unittest.TestCase):
         return {"connection_id": "c000060", "started_monotonic_ns": started,
                 "closed_monotonic_ns": closed,
                 "stage_status": {"proxy_a": "failed" if failure["stage"] == "proxy_a" else "closed",
-                                 "proxy_b": "closed", "tls_terminator": "closed"},
+                                 "proxy_b": "closed",
+                                 "tls_terminator": "failed" if failure["stage"] == "tls_terminator" else "closed"},
                 "websocket_handshake": {"upgrade_status": 101},
                 "proxy_a_ciphertext": {"client_to_terminator_ciphertext": counters,
                                        "terminator_to_client_ciphertext": counters},
@@ -92,6 +128,16 @@ class TeardownTests(unittest.TestCase):
                 failure = {"stage": "tls_terminator", "error": bad}
                 self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
                                     self.check(self.event(failure, tls_out=2))))
+        self.assertEqual(self.check(self.event(
+            {"stage": "tls_terminator",
+             "error": "SSLEOFError: EOF occurred in violation of protocol (_ssl.c:2556)"},
+            tls_out=2)), [])
+        read_site = self.event(original)
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(read_site)))
+        self.assertFalse(summary.accepted_tls_close_error(
+            {"stage": "proxy_a", "error": original["error"]},
+            {"proxy_a": "closed", "tls_terminator": "failed"}, (0, 0, 0, 2)))
 
     def test_setup_reset_accepts_only_complete_prephase_relay(self):
         reset = {"stage": "proxy_a",
@@ -106,16 +152,42 @@ class TeardownTests(unittest.TestCase):
                             self.check(corrupt)))
         self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
                             self.check(self.event(reset), phase_zero=None)))
+        partial = self.event(reset)
+        partial["proxy_a_ciphertext"]["terminator_to_client_ciphertext"] = {
+            "bytes_read": 10, "bytes_written": 0}
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(partial)))
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(self.event(reset, tls_out=2))))
+        wrong_stage = self.event(reset)
+        wrong_stage["stage_status"]["proxy_a"] = "closed"
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(wrong_stage)))
+        wrong_errno = {"stage": "proxy_a",
+                       "error": "ConnectionResetError: [Errno 54] Connection reset by peer"}
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(self.event(wrong_errno))))
+        incomplete = self.event(reset)
+        incomplete["proxy_b_websocket"]["engine_to_client"]["opcodes_written"]["8"] = 0
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(incomplete)))
+        hash_mismatch = self.event(reset)
+        hash_mismatch["binary_payload_hashes_match_at_proxy_b"]["engine_to_client"] = False
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(hash_mismatch)))
 
 
 class LedgerTests(unittest.TestCase):
-    def make_folder(self, root, *, connected):
+    def make_folder(self, root, *, connected, extra_connected=False):
         folder = Path(root)
         (folder / "proxy").mkdir()
         (folder / "summary.json").write_text(json.dumps({"run": {"warmup_end_monotonic_ns": 0}}))
+        slots = [{"connected": connected, "ingame": False, "scene_state": 1}]
+        if extra_connected:
+            slots.append({"connected": True, "ingame": True, "scene_state": 2})
         (folder / "events.jsonl").write_text(json.dumps({
-            "event": "sample", "sample_monotonic_ns": 10_000_000_000, "elapsed_seconds": 10,
-            "slots": [{"connected": connected, "ingame": False, "scene_state": 1}]}) + "\n")
+            "event": "sample", "sample_monotonic_ns": 10_000_000_000,
+            "elapsed_seconds": 10, "slots": slots}) + "\n")
         sizes = {"received_plaintext": 16384, "pending_tls_output": 131072,
                  "handshake_deframer": 65536, "outbound_ring": 5000, "inbound_ring": 32768}
         ledger = {"client_local_port": 123, "elapsed_seconds": 10,
@@ -150,6 +222,13 @@ class LedgerTests(unittest.TestCase):
             summary.check_candidate(folder, proxy, 250760, errors)
             self.assertTrue(any("active WSS ports" in error for error in errors))
 
+    def test_connected_session_without_a_port_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder, proxy = self.make_folder(temporary, connected=True, extra_connected=True)
+            errors = []
+            summary.check_candidate(folder, proxy, 250760, errors)
+            self.assertTrue(any("active WSS ports" in error for error in errors))
+
 
 class ArmReasonTests(unittest.TestCase):
     def test_same_folder_basename_produces_distinct_manifest_arm_reasons(self):
@@ -176,15 +255,42 @@ class ArmReasonTests(unittest.TestCase):
                 errors.append(f"{folder.name}: scene error")
                 return {"accounts": 2}
 
+            def fail_proxy(folder, _full, errors):
+                errors.append(f"{folder.name}: proxy error")
+                return {}
+
+            def fail_candidate(_folder, _proxy, _limit, errors):
+                errors.append("ledger error")
+                return {}
+
             with mock.patch.object(summary, "check_workload", side_effect=fail_workload), \
                     mock.patch.object(summary, "check_samples", return_value=[]), \
                     mock.patch.object(summary, "check_census", return_value={}), \
-                    mock.patch.object(summary, "check_proxy", return_value={}), \
-                    mock.patch.object(summary, "check_candidate", return_value={}):
+                    mock.patch.object(summary, "check_proxy", side_effect=fail_proxy), \
+                    mock.patch.object(summary, "check_candidate", side_effect=fail_candidate):
                 result = summary.evaluate(*folders, smoke=True)
             self.assertEqual(result["verdict"], "FAIL")
             self.assertIn("baseline: run: scene error", result["reasons"])
             self.assertIn("candidate: run: scene error", result["reasons"])
+            self.assertIn("baseline: run: proxy error", result["reasons"])
+            self.assertIn("candidate: run: proxy error", result["reasons"])
+            self.assertIn("candidate: ledger error", result["reasons"])
+
+    def test_missing_evidence_exception_names_the_arm(self):
+        for missing in ("baseline", "candidate"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
+                folders = [Path(temporary) / arm / "run" for arm in ("baseline", "candidate")]
+                for folder in folders:
+                    folder.mkdir(parents=True)
+                if missing == "candidate":
+                    (folders[0] / "run-manifest.json").write_text("{}")
+                output = Path(temporary) / "failure.json"
+                argv = ["t14_soak_summary.py", "--baseline", str(folders[0]),
+                        "--candidate", str(folders[1]), "--output", str(output)]
+                with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(summary.main(), 1)
+                reason = json.loads(output.read_text())["reasons"][0]
+                self.assertTrue(reason.startswith(f"{missing}: missing or invalid evidence:"), reason)
 
 
 if __name__ == "__main__":

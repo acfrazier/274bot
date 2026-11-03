@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
 import hashlib
 import json
 import re
@@ -41,6 +42,12 @@ def rows(path: Path) -> list[dict]:
 def demand(condition: bool, errors: list[str], message: str) -> None:
     if not condition:
         errors.append(message)
+
+def arm_evidence(arm: str, operation, *args):
+    try:
+        return operation(*args)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise EvidenceError(f"{arm}: missing or invalid evidence: {error}") from error
 
 
 def rss_slope(samples: list[dict], cutoff_ns: int) -> tuple[float, float]:
@@ -178,17 +185,31 @@ def check_census(folder: Path, samples: list[dict], summary: dict, config: dict,
 def check_scene_samples(folder: Path, events: list[dict], accounts: list[str],
                         first_scene: dict[str, int | None], sample_seconds: int,
                         errors: list[str]) -> None:
-    # Client map rebuilds enter scene_state 1 before scene_state 2
-    # (crates/api/tests/snapshot.rs:979-993). Five Engine A loading samples
-    # recovered at the next ten-second sample in the same stream epoch.
-    # check_samples permits two seconds of sample-gap jitter.
+    # The client enters scene_state 1 while rebuilding (snapshot.rs:979-993).
+    # Every observed Engine A load returned at the next Play sample, and its
+    # scene2 event followed the loading sample by 17-45 ms. Permit one 10 s
+    # sample interval plus 2 s jitter, and at most 1 s (ten 100 ms harness
+    # ticks) from a sampled load to the directly recorded scene2 return.
     recovery_ns = (sample_seconds + 2) * 1_000_000_000
+    return_ns = 1_000_000_000
     epochs: dict[str, int] = {}
     loading_since: dict[str, int] = {}
+    scene_returns: dict[str, list[int]] = {account: [] for account in accounts}
+    for event in events:
+        if event.get("event") == "scene2" and event.get("account") in scene_returns:
+            scene_returns[event["account"]].append(event["scene2_monotonic_ns"])
+    for times in scene_returns.values():
+        times.sort()
     for account in accounts:
         if first_scene[account] is None:
             errors.append(f"{folder.name}: {account} never entered scene2")
+    last_sample_ns: int | None = None
     for event in (row for row in events if row.get("event") == "sample"):
+        at = event["sample_monotonic_ns"]
+        if last_sample_ns is not None:
+            demand(0 < at - last_sample_ns <= recovery_ns, errors,
+                   f"{folder.name}: Play sample gap exceeds {sample_seconds + 2}s at {event['elapsed_seconds']}s")
+        last_sample_ns = at
         snapshots = event.get("slots")
         demand(isinstance(snapshots, list) and len(snapshots) == len(accounts), errors,
                f"{folder.name}: incomplete ten-second slot snapshot")
@@ -219,6 +240,10 @@ def check_scene_samples(folder: Path, events: list[dict], accounts: list[str],
                            f"{folder.name}: {account} did not return to scene2 within {sample_seconds + 2}s")
             elif slot.get("ingame") is False and slot.get("scene_state") == 1:
                 since = loading_since.setdefault(account, at)
+                times = scene_returns[account]
+                next_return = bisect_right(times, at)
+                demand(next_return < len(times) and 0 <= times[next_return] - at <= return_ns,
+                       errors, f"{folder.name}: {account} map load has no scene2 return within 1s")
                 demand(at - since <= recovery_ns, errors,
                        f"{folder.name}: {account} stayed in scene1 beyond {sample_seconds + 2}s")
             else:
@@ -335,8 +360,13 @@ def check_opcode_projection(folder: Path, connection: dict, errors: list[str]) -
                errors, f"{folder.name}: WS frame count diverged outside approved fragmentation/Pong consumption")
 
 
-def accepted_tls_close_error(failure: dict) -> bool:
+def accepted_tls_close_error(failure: dict, stage: dict,
+                             deficits: tuple[int, int, int, int]) -> bool:
+    # A two-byte deficit in proxy-B-to-client plaintext identifies the failed
+    # secure.send of the terminal Close, not a read or TLS shutdown.
     return (isinstance(failure, dict) and failure.get("stage") == "tls_terminator"
+            and stage.get("tls_terminator") == "failed" and stage.get("proxy_a") == "closed"
+            and deficits == (0, 0, 0, 2)
             and isinstance(failure.get("error"), str)
             and re.fullmatch(
                 r"SSLEOFError: EOF occurred in violation of protocol(?: \(_ssl\.c:\d+\))?",
@@ -412,7 +442,7 @@ def check_transport_teardown(folder: Path, event: dict, close_frames: dict[str, 
                        and event["binary_payload_hashes_match_at_proxy_b"].get("client_to_engine") is True
                        and event["binary_payload_hashes_match_at_proxy_b"].get("engine_to_client") is True)
         demand(tls["handshake"].get("tls_version") == "TLSv1.3" and all(
-            accepted_tls_close_error(failure)
+            accepted_tls_close_error(failure, stage, (a_in, a_out, tls_in, tls_out))
             or failure == {"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"}
             or (setup_reset and failure == {"stage": "proxy_a",
                                              "error": "ConnectionResetError: [Errno 104] Connection reset by peer"})
@@ -610,8 +640,8 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
     errors: list[str] = []
     base_errors: list[str] = []
     cand_errors: list[str] = []
-    lhs = document(baseline / "run-manifest.json")
-    rhs = document(candidate / "run-manifest.json")
+    lhs = arm_evidence("baseline", document, baseline / "run-manifest.json")
+    rhs = arm_evidence("candidate", document, candidate / "run-manifest.json")
     demand(lhs["build"] == "baseline" and rhs["build"] == "candidate", errors,
            "comparison must pair dev baseline and T1.4 candidate")
     for key in ("shared_harness_sha256", "proxy_sha256", "seed", "profile", "mode",
@@ -620,8 +650,8 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
     demand(lhs["mode"] == ("smoke" if smoke else "qualification"), errors,
            "incorrect smoke/qualification mode")
     demand(lhs["profile"] == "release", errors, "both builds must use release profile")
-    left_nav = document(baseline / "nav-identity.json")
-    right_nav = document(candidate / "nav-identity.json")
+    left_nav = arm_evidence(lhs["build"], document, baseline / "nav-identity.json")
+    right_nav = arm_evidence(rhs["build"], document, candidate / "nav-identity.json")
     for receipt, arm_errors in ((left_nav, base_errors), (right_nav, cand_errors)):
         demand(receipt["source_pack_sha256"] == receipt["selected_pack_sha256"]
                and receipt["source_flags_sha256"] == receipt["selected_flags_sha256"],
@@ -630,8 +660,8 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
                 "source_flags_sha256", "selected_flags_sha256"):
         demand(left_nav[key] == right_nav[key], errors,
                f"baseline/candidate {key} navigation provenance differs")
-    left_config = document(baseline / "effective-config.json")
-    right_config = document(candidate / "effective-config.json")
+    left_config = arm_evidence(lhs["build"], document, baseline / "effective-config.json")
+    right_config = arm_evidence(rhs["build"], document, candidate / "effective-config.json")
     for key in ("fault", "limits", "workload"):
         demand(left_config[key] == right_config[key], errors,
                f"baseline/candidate {key} contract differs")
@@ -644,21 +674,29 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
            "incorrect run duration")
     demand(left_config["fault"]["seed"] == lhs["seed"], errors,
            "proxy seed differs from shared run manifest")
-    for folder, arm_errors in ((baseline, base_errors), (candidate, cand_errors)):
-        demand(document(folder / "cohort-exit.json").get("code") == 0, arm_errors,
-               "cohort process failed")
-    base_summary = document(baseline / "summary.json")
-    cand_summary = document(candidate / "summary.json")
-    base_work = check_workload(baseline, base_summary, left_config, smoke, base_errors)
-    cand_work = check_workload(candidate, cand_summary, right_config, smoke, cand_errors)
-    base_samples = check_samples(baseline, base_summary, left_config, base_errors)
-    cand_samples = check_samples(candidate, cand_summary, right_config, cand_errors)
-    base_census = check_census(baseline, base_samples, base_summary, left_config, base_errors)
-    cand_census = check_census(candidate, cand_samples, cand_summary, right_config, cand_errors)
-    base_proxy = check_proxy(baseline, not smoke, base_errors)
-    cand_proxy = check_proxy(candidate, not smoke, cand_errors)
-    candidate_receipts = check_candidate(candidate, cand_proxy,
-                                          right_config["limits"]["connection_bytes"], cand_errors)
+    for folder, label, arm_errors in ((baseline, lhs["build"], base_errors),
+                                      (candidate, rhs["build"], cand_errors)):
+        demand(arm_evidence(label, document, folder / "cohort-exit.json").get("code") == 0,
+               arm_errors, "cohort process failed")
+    base_summary = arm_evidence(lhs["build"], document, baseline / "summary.json")
+    cand_summary = arm_evidence(rhs["build"], document, candidate / "summary.json")
+    base_work = arm_evidence(lhs["build"], check_workload,
+                             baseline, base_summary, left_config, smoke, base_errors)
+    cand_work = arm_evidence(rhs["build"], check_workload,
+                             candidate, cand_summary, right_config, smoke, cand_errors)
+    base_samples = arm_evidence(lhs["build"], check_samples,
+                                baseline, base_summary, left_config, base_errors)
+    cand_samples = arm_evidence(rhs["build"], check_samples,
+                                candidate, cand_summary, right_config, cand_errors)
+    base_census = arm_evidence(lhs["build"], check_census,
+                               baseline, base_samples, base_summary, left_config, base_errors)
+    cand_census = arm_evidence(rhs["build"], check_census,
+                               candidate, cand_samples, cand_summary, right_config, cand_errors)
+    base_proxy = arm_evidence(lhs["build"], check_proxy, baseline, not smoke, base_errors)
+    cand_proxy = arm_evidence(rhs["build"], check_proxy, candidate, not smoke, cand_errors)
+    candidate_receipts = arm_evidence(
+        rhs["build"], check_candidate, candidate, cand_proxy,
+        right_config["limits"]["connection_bytes"], cand_errors)
     result = {
         "classification": "infrastructure-smoke-nonqualifying" if smoke else "T1.4-local-candidate-gate",
         "baseline_commit": lhs["commit"], "candidate_commit": rhs["commit"],
@@ -710,9 +748,12 @@ def main() -> int:
     try:
         result = evaluate(args.baseline, args.candidate, args.smoke)
     except (OSError, ValueError, KeyError, TypeError) as error:
-        result = {"verdict": "FAIL",
-                  "reasons": [f"baseline/candidate: missing or invalid evidence: {error}"]}
-    args.output.open("x", encoding="utf-8").write(json.dumps(result, indent=2) + "\n")
+        message = str(error)
+        if not message.startswith(("baseline: ", "candidate: ")):
+            message = f"baseline/candidate: missing or invalid evidence: {message}"
+        result = {"verdict": "FAIL", "reasons": [message]}
+    with args.output.open("x", encoding="utf-8") as output:
+        output.write(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
     return 0 if result["verdict"] in ("PASS", "NONQUALIFYING_SMOKE_OK") else 1
 
