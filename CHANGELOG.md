@@ -76,6 +76,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   their absence on revision274. Quest-window tests retain Unknown for
   non-authoritative colours and keep authoritative positive/refusal controls
   through both the API and the host's captured route evidence.
+  Paired-duel regressions also keep revision274 admission refused for absent
+  rule buttons and preserve all fourteen revision289 positive mappings.
 - The route-corpus exporter and navigation regression fixtures now use
   stamped quest observations from the current evidence API. A stale
   observation keeps its original timestamp and does not authorize a gate.

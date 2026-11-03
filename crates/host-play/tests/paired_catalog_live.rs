@@ -1749,35 +1749,45 @@ mod tests {
     }
 
     #[test]
-    fn generated_duel_controls_match_both_caches() {
+    fn generated_duel_controls_preserve_revision_specific_admission() {
         const EXPECTED_RULE_BUTTONS: [i32; 14] = [
             6721, 6722, 6723, 6724, 6725, 6726, 6727, 6728, 6729, 6730, 6732, 671, 670, 7816,
         ];
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let data = game_data::for_revision(revision).unwrap();
-            verify_generated_duel_controls(&data).unwrap();
             let controls = data.duel_controls().unwrap();
-            assert_eq!(
-                controls.rule_buttons, EXPECTED_RULE_BUTTONS,
-                "{revision:?} canonical duel rule buttons"
-            );
-            for (bit, component) in EXPECTED_RULE_BUTTONS.iter().enumerate() {
+            if revision == ClientRevision::R274 {
+                // generate.ts:3044-3047,3161-3178 excludes R274 PvP V0 facts.
+                // The real paired-duel verifier must keep refusing absent buttons.
+                assert!(verify_generated_duel_controls(&data).is_err());
+                assert_eq!(controls.rule_buttons, [0; 14]);
+                for bit in 0..=u8::MAX {
+                    assert_eq!(controls.rule_button(bit), None, "{revision:?} bit {bit}");
+                }
+            } else {
+                verify_generated_duel_controls(&data).unwrap();
                 assert_eq!(
-                    controls.rule_button(bit as u8),
-                    Some(*component),
-                    "{revision:?} rule_button({bit})"
+                    controls.rule_buttons, EXPECTED_RULE_BUTTONS,
+                    "{revision:?} canonical duel rule buttons"
+                );
+                for (bit, component) in EXPECTED_RULE_BUTTONS.iter().enumerate() {
+                    assert_eq!(
+                        controls.rule_button(bit as u8),
+                        Some(*component),
+                        "{revision:?} rule_button({bit})"
+                    );
+                }
+                assert_eq!(
+                    controls.rule_button(14),
+                    None,
+                    "{revision:?} out-of-range bit"
+                );
+                assert_eq!(
+                    controls.rule_button(u8::MAX),
+                    None,
+                    "{revision:?} invalid bit"
                 );
             }
-            assert_eq!(
-                controls.rule_button(14),
-                None,
-                "{revision:?} out-of-range bit"
-            );
-            assert_eq!(
-                controls.rule_button(u8::MAX),
-                None,
-                "{revision:?} invalid bit"
-            );
             let scim = data.item_by_alias("bronze_scimitar").unwrap();
             assert_eq!(scim.wear_position, WEARPOS_RIGHTHAND);
             assert_eq!(data.item_by_alias("blankrune").unwrap().id, 1436);
