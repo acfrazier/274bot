@@ -1,7 +1,7 @@
 //! Native stack facts for the current test worker.
 //!
-//! The OS-reported stack interval is authoritative; this module never searches
-//! anonymous mappings to guess which mapping belongs to the current thread.
+//! The OS-reported stack interval is authoritative. Platform maps are only
+//! matched against that interval; anonymous mappings are never guessed.
 
 use std::ffi::c_void;
 
@@ -15,7 +15,7 @@ pub(crate) struct StackSample {
     pub(crate) stack_high_address_exclusive: Option<u64>,
     /// Bytes in the native stack interval; not a resident-byte measurement.
     pub(crate) reserved_bytes: Option<u64>,
-    /// Bytes the OS identifies as committed; never substituted with residency.
+    /// Bytes the OS identifies as committed or backed; never just residency.
     pub(crate) committed_bytes: Option<u64>,
     /// Bytes within the native interval whose pages `mincore` reports resident.
     pub(crate) resident_bytes: Option<u64>,
@@ -156,19 +156,98 @@ fn capture_linux() -> Result<StackSample, String> {
         .map_err(|_| "pthread stack lower bound does not fit u64".to_owned())?;
     let stack_high_u64 = u64::try_from(stack_high)
         .map_err(|_| "pthread stack upper bound does not fit u64".to_owned())?;
-    let reserved_bytes =
-        u64::try_from(stack_size).map_err(|_| "pthread stack size does not fit u64".to_owned())?;
+    let map_attribution = inspect_linux_proc_maps(stack_low_u64, stack_high_u64);
+    let reserved_bytes = match map_attribution {
+        ProcMapsAttribution::Unique => Some(
+            u64::try_from(stack_size)
+                .map_err(|_| "pthread stack size does not fit u64".to_owned())?,
+        ),
+        ProcMapsAttribution::Unavailable | ProcMapsAttribution::Ambiguous => None,
+    };
 
     Ok(StackSample {
         tid,
         stack_low_address: Some(stack_low_u64),
         stack_high_address_exclusive: Some(stack_high_u64),
-        reserved_bytes: Some(reserved_bytes),
+        reserved_bytes,
         committed_bytes: None,
         resident_bytes: count_resident_bytes(stack_low_u64, stack_high_u64),
         guard_bytes,
-        measurement_source: "linux:SYS_gettid+pthread_getattr_np/pthread_attr_getstack;reserved=pthread-stack-interval-size;guard=pthread_attr_getguardsize-reported;mincore-resident-only;commit-unavailable",
+        measurement_source: match map_attribution {
+            ProcMapsAttribution::Unique => {
+                "linux:SYS_gettid+pthread_getattr_np/pthread_attr_getstack+/proc/self/maps;proc-maps=unique-covering-pthread-interval;reserved=pthread-stack-interval-confirmed-by-maps;guard=pthread_attr_getguardsize-reported;mincore-resident-only;commit-unavailable"
+            }
+            ProcMapsAttribution::Unavailable => {
+                "linux:SYS_gettid+pthread_getattr_np/pthread_attr_getstack+/proc/self/maps;proc-maps=unavailable;reserved=unresolved;guard=pthread_attr_getguardsize-reported;mincore-resident-only;commit-unavailable"
+            }
+            ProcMapsAttribution::Ambiguous => {
+                "linux:SYS_gettid+pthread_getattr_np/pthread_attr_getstack+/proc/self/maps;proc-maps=ambiguous;reserved=unresolved;guard=pthread_attr_getguardsize-reported;mincore-resident-only;commit-unavailable"
+            }
+        },
     })
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProcMapsAttribution {
+    Unavailable,
+    Ambiguous,
+    Unique,
+}
+
+#[cfg(target_os = "linux")]
+fn inspect_linux_proc_maps(stack_low: u64, stack_high: u64) -> ProcMapsAttribution {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+
+    let file = match File::open("/proc/self/maps") {
+        Ok(file) => file,
+        Err(_) => return ProcMapsAttribution::Unavailable,
+    };
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut matching_regions = 0_u32;
+    let mut covering_region = false;
+
+    loop {
+        line.clear();
+        let bytes_read = match reader.read_line(&mut line) {
+            Ok(bytes_read) => bytes_read,
+            Err(_) => return ProcMapsAttribution::Unavailable,
+        };
+        if bytes_read == 0 {
+            break;
+        }
+
+        let mut fields = line.split_whitespace();
+        let Some(range) = fields.next() else {
+            continue;
+        };
+        let Some((low, high)) = range.split_once('-') else {
+            return ProcMapsAttribution::Ambiguous;
+        };
+        let Some(low) = u64::from_str_radix(low, 16).ok() else {
+            return ProcMapsAttribution::Ambiguous;
+        };
+        let Some(high) = u64::from_str_radix(high, 16).ok() else {
+            return ProcMapsAttribution::Ambiguous;
+        };
+        if low >= high {
+            return ProcMapsAttribution::Ambiguous;
+        }
+        if low < stack_high && stack_low < high {
+            matching_regions += 1;
+            covering_region = low <= stack_low && stack_high <= high;
+        }
+    }
+
+    if matching_regions == 1 && covering_region {
+        ProcMapsAttribution::Unique
+    } else if matching_regions == 0 {
+        ProcMapsAttribution::Unavailable
+    } else {
+        ProcMapsAttribution::Ambiguous
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -211,19 +290,328 @@ fn capture_macos() -> Result<StackSample, String> {
         .map_err(|_| "pthread stack lower bound does not fit u64".to_owned())?;
     let stack_high_u64 = u64::try_from(stack_high)
         .map_err(|_| "pthread stack upper bound does not fit u64".to_owned())?;
-    let reserved_bytes =
-        u64::try_from(stack_size).map_err(|_| "pthread stack size does not fit u64".to_owned())?;
+    let vmmap = capture_macos_vmmap(stack_low_u64, stack_high_u64);
 
     Ok(StackSample {
         tid,
         stack_low_address: Some(stack_low_u64),
         stack_high_address_exclusive: Some(stack_high_u64),
-        reserved_bytes: Some(reserved_bytes),
-        committed_bytes: None,
+        reserved_bytes: vmmap.reserved_bytes,
+        committed_bytes: vmmap.committed_bytes,
         resident_bytes: count_resident_bytes(stack_low_u64, stack_high_u64),
-        guard_bytes: None,
-        measurement_source: "macos:pthread_threadid_np+pthread_get_stackaddr_np/pthread_get_stacksize_np;reserved=pthread-stack-interval-size;mincore-resident-only;commit-unavailable;guard-unavailable",
+        guard_bytes: vmmap.guard_bytes,
+        measurement_source: vmmap.measurement_source(),
     })
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VmmapAttribution {
+    Unavailable,
+    Ambiguous,
+    Unique,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VmmapGuardAttribution {
+    Unavailable,
+    Ambiguous,
+    Matched,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct VmmapStackEvidence {
+    reserved_bytes: Option<u64>,
+    committed_bytes: Option<u64>,
+    guard_bytes: Option<u64>,
+    attribution: VmmapAttribution,
+    guard_attribution: VmmapGuardAttribution,
+}
+
+#[cfg(target_os = "macos")]
+impl VmmapStackEvidence {
+    fn unresolved(attribution: VmmapAttribution) -> Self {
+        Self {
+            reserved_bytes: None,
+            committed_bytes: None,
+            guard_bytes: None,
+            attribution,
+            guard_attribution: VmmapGuardAttribution::Unavailable,
+        }
+    }
+
+    fn measurement_source(self) -> &'static str {
+        match (self.attribution, self.guard_attribution) {
+            (VmmapAttribution::Unavailable, _) => {
+                "macos:pthread_threadid_np+pthread_get_stackaddr_np/pthread_get_stacksize_np;vmmap(-w,-pages,-resident,-dirty,-swapped)=unavailable;reserved=unresolved;committed=unresolved;guard=unresolved;mincore-resident-only"
+            }
+            (VmmapAttribution::Ambiguous, _) => {
+                "macos:pthread_threadid_np+pthread_get_stackaddr_np/pthread_get_stacksize_np;vmmap(-w,-pages,-resident,-dirty,-swapped)=ambiguous;reserved=unresolved;committed=unresolved;guard=unresolved;mincore-resident-only"
+            }
+            (VmmapAttribution::Unique, VmmapGuardAttribution::Matched) => {
+                "macos:pthread_threadid_np+pthread_get_stackaddr_np/pthread_get_stacksize_np;vmmap(-w,-pages,-resident,-dirty,-swapped)=unique-exact-pthread-interval;reserved=vmmap-stack-region-size;committed=vmmap-resident-plus-swapped-pages;guard=adjacent-Stack-Guard-same-vmmap-thread;mincore-resident-only"
+            }
+            (VmmapAttribution::Unique, VmmapGuardAttribution::Unavailable) => {
+                "macos:pthread_threadid_np+pthread_get_stackaddr_np/pthread_get_stacksize_np;vmmap(-w,-pages,-resident,-dirty,-swapped)=unique-exact-pthread-interval;reserved=vmmap-stack-region-size;committed=vmmap-resident-plus-swapped-pages;guard=unresolved-not-reported;mincore-resident-only"
+            }
+            (VmmapAttribution::Unique, VmmapGuardAttribution::Ambiguous) => {
+                "macos:pthread_threadid_np+pthread_get_stackaddr_np/pthread_get_stacksize_np;vmmap(-w,-pages,-resident,-dirty,-swapped)=unique-exact-pthread-interval;reserved=vmmap-stack-region-size;committed=vmmap-resident-plus-swapped-pages;guard=unresolved-ambiguous;mincore-resident-only"
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VmmapRegionKind {
+    Stack,
+    StackGuard,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct VmmapRegion {
+    kind: VmmapRegionKind,
+    low: u64,
+    high: u64,
+    virtual_pages: u64,
+    resident_pages: u64,
+    swapped_pages: u64,
+    thread_index: Option<u64>,
+}
+
+#[cfg(target_os = "macos")]
+enum VmmapRow {
+    NotStack,
+    Malformed(VmmapRegionKind),
+    Parsed(VmmapRegion),
+}
+
+#[cfg(target_os = "macos")]
+fn capture_macos_vmmap(stack_low: u64, stack_high: u64) -> VmmapStackEvidence {
+    use std::process::Command;
+
+    let output = match Command::new("/usr/bin/vmmap")
+        .args(["-w", "-pages", "-resident", "-dirty", "-swapped"])
+        .arg(std::process::id().to_string())
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return VmmapStackEvidence::unresolved(VmmapAttribution::Unavailable),
+    };
+    let text = match std::str::from_utf8(&output.stdout) {
+        Ok(text) => text,
+        Err(_) => return VmmapStackEvidence::unresolved(VmmapAttribution::Unavailable),
+    };
+
+    parse_macos_vmmap(text, stack_low, stack_high)
+}
+
+#[cfg(target_os = "macos")]
+fn parse_macos_vmmap(text: &str, stack_low: u64, stack_high: u64) -> VmmapStackEvidence {
+    let mut page_size = None;
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix("VM page size: ") {
+            let Some((size, unit)) = value.split_once(' ') else {
+                return VmmapStackEvidence::unresolved(VmmapAttribution::Unavailable);
+            };
+            if unit != "bytes" {
+                return VmmapStackEvidence::unresolved(VmmapAttribution::Unavailable);
+            }
+            let Ok(size) = size.parse::<u64>() else {
+                return VmmapStackEvidence::unresolved(VmmapAttribution::Unavailable);
+            };
+            if size == 0 || page_size.is_some_and(|prior| prior != size) {
+                return VmmapStackEvidence::unresolved(VmmapAttribution::Ambiguous);
+            }
+            page_size = Some(size);
+        }
+    }
+    let Some(page_size) = page_size else {
+        return VmmapStackEvidence::unresolved(VmmapAttribution::Unavailable);
+    };
+
+    let mut overlapping_stack_count = 0_u32;
+    let mut stack_region = None;
+    for line in text.lines() {
+        match parse_vmmap_region(line) {
+            VmmapRow::Parsed(region) if region.kind == VmmapRegionKind::Stack => {
+                let Some(region_size) = region.high.checked_sub(region.low) else {
+                    return VmmapStackEvidence::unresolved(VmmapAttribution::Ambiguous);
+                };
+                let Some(reported_size) = region.virtual_pages.checked_mul(page_size) else {
+                    return VmmapStackEvidence::unresolved(VmmapAttribution::Ambiguous);
+                };
+                if region_size != reported_size {
+                    return VmmapStackEvidence::unresolved(VmmapAttribution::Ambiguous);
+                }
+                if region.low < stack_high && stack_low < region.high {
+                    overlapping_stack_count += 1;
+                    if region.low == stack_low && region.high == stack_high {
+                        stack_region = Some(region);
+                    }
+                }
+            }
+            VmmapRow::Malformed(VmmapRegionKind::Stack) => {
+                return VmmapStackEvidence::unresolved(VmmapAttribution::Ambiguous);
+            }
+            _ => {}
+        }
+    }
+
+    if overlapping_stack_count == 0 {
+        return VmmapStackEvidence::unresolved(VmmapAttribution::Unavailable);
+    }
+    let Some(stack_region) = stack_region.filter(|_| overlapping_stack_count == 1) else {
+        return VmmapStackEvidence::unresolved(VmmapAttribution::Ambiguous);
+    };
+    let reserved_bytes = stack_high - stack_low;
+    let Some(committed_pages) = stack_region
+        .resident_pages
+        .checked_add(stack_region.swapped_pages)
+        .filter(|pages| *pages <= stack_region.virtual_pages)
+    else {
+        return VmmapStackEvidence::unresolved(VmmapAttribution::Ambiguous);
+    };
+    let Some(committed_bytes) = committed_pages.checked_mul(page_size) else {
+        return VmmapStackEvidence::unresolved(VmmapAttribution::Ambiguous);
+    };
+
+    let mut adjacent_guard_count = 0_u32;
+    let mut matching_guard = None;
+    let mut malformed_guard = false;
+    for line in text.lines() {
+        match parse_vmmap_region(line) {
+            VmmapRow::Parsed(region) if region.kind == VmmapRegionKind::StackGuard => {
+                let Some(region_size) = region.high.checked_sub(region.low) else {
+                    malformed_guard = true;
+                    continue;
+                };
+                let Some(reported_size) = region.virtual_pages.checked_mul(page_size) else {
+                    malformed_guard = true;
+                    continue;
+                };
+                if region_size != reported_size {
+                    malformed_guard = true;
+                    continue;
+                }
+                if region.high == stack_low {
+                    adjacent_guard_count += 1;
+                    if stack_region.thread_index.is_some()
+                        && region.thread_index == stack_region.thread_index
+                    {
+                        matching_guard = Some(region);
+                    }
+                }
+            }
+            VmmapRow::Malformed(VmmapRegionKind::StackGuard) => malformed_guard = true,
+            _ => {}
+        }
+    }
+
+    let (guard_bytes, guard_attribution) = if malformed_guard || adjacent_guard_count > 1 {
+        (None, VmmapGuardAttribution::Ambiguous)
+    } else if let Some(guard) = matching_guard.filter(|_| adjacent_guard_count == 1) {
+        (
+            Some(guard.high - guard.low),
+            VmmapGuardAttribution::Matched,
+        )
+    } else if adjacent_guard_count == 1 {
+        (None, VmmapGuardAttribution::Ambiguous)
+    } else {
+        (None, VmmapGuardAttribution::Unavailable)
+    };
+
+    VmmapStackEvidence {
+        reserved_bytes: Some(reserved_bytes),
+        committed_bytes: Some(committed_bytes),
+        guard_bytes,
+        attribution: VmmapAttribution::Unique,
+        guard_attribution,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn parse_vmmap_region(line: &str) -> VmmapRow {
+    let trimmed = line.trim_start();
+    let Some((kind, row)) = trimmed.split_once("  ") else {
+        return VmmapRow::NotStack;
+    };
+    let kind = match kind {
+        "Stack" => VmmapRegionKind::Stack,
+        "Stack Guard" => VmmapRegionKind::StackGuard,
+        _ => return VmmapRow::NotStack,
+    };
+    let Some(range) = row.split_whitespace().next() else {
+        return VmmapRow::NotStack;
+    };
+    if !range.contains('-') {
+        return VmmapRow::NotStack;
+    }
+    let Some((low, high)) = range.split_once('-') else {
+        return VmmapRow::Malformed(kind);
+    };
+    let Some(low) = parse_vmmap_hex_address(low) else {
+        return VmmapRow::Malformed(kind);
+    };
+    let Some(high) = parse_vmmap_hex_address(high) else {
+        return VmmapRow::Malformed(kind);
+    };
+    if low >= high {
+        return VmmapRow::Malformed(kind);
+    }
+
+    let Some(open_bracket) = row.find('[') else {
+        return VmmapRow::Malformed(kind);
+    };
+    let Some(close_bracket) = row[open_bracket + 1..]
+        .find(']')
+        .map(|offset| open_bracket + 1 + offset)
+    else {
+        return VmmapRow::Malformed(kind);
+    };
+    let mut sizes = row[open_bracket + 1..close_bracket].split_whitespace();
+    let Some(virtual_pages) = sizes.next().and_then(|size| size.parse::<u64>().ok()) else {
+        return VmmapRow::Malformed(kind);
+    };
+    let Some(resident_pages) = sizes.next().and_then(|size| size.parse::<u64>().ok()) else {
+        return VmmapRow::Malformed(kind);
+    };
+    let Some(_dirty_pages) = sizes.next().and_then(|size| size.parse::<u64>().ok()) else {
+        return VmmapRow::Malformed(kind);
+    };
+    let Some(swapped_pages) = sizes.next().and_then(|size| size.parse::<u64>().ok()) else {
+        return VmmapRow::Malformed(kind);
+    };
+    if sizes.next().is_some() {
+        return VmmapRow::Malformed(kind);
+    }
+
+    let mut suffix_words = row[close_bracket + 1..].split_whitespace();
+    let mut thread_index = None;
+    while let Some(word) = suffix_words.next() {
+        if word == "thread" {
+            thread_index = suffix_words.next().and_then(|index| index.parse::<u64>().ok());
+            break;
+        }
+    }
+
+    VmmapRow::Parsed(VmmapRegion {
+        kind,
+        low,
+        high,
+        virtual_pages,
+        resident_pages,
+        swapped_pages,
+        thread_index,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn parse_vmmap_hex_address(address: &str) -> Option<u64> {
+    u64::from_str_radix(address.strip_prefix("0x").unwrap_or(address), 16).ok()
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -438,33 +826,45 @@ mod tests {
             stack_low <= local_address && local_address < stack_high,
             "known worker-local address must lie within native stack bounds"
         );
-        let reserved = sample
-            .reserved_bytes
-            .expect("native reserved stack interval");
-        assert_eq!(reserved, stack_high - stack_low);
-        assert!(
-            reserved >= REQUESTED_STACK_BYTES as u64,
-            "native reservation must cover the explicit Builder stack-size request"
-        );
+        let reserved = sample.reserved_bytes;
+        if let Some(reserved) = reserved {
+            assert_eq!(reserved, stack_high - stack_low);
+            assert!(
+                reserved >= REQUESTED_STACK_BYTES as u64,
+                "native reservation must cover the explicit Builder stack-size request"
+            );
+        }
 
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
-            assert_eq!(
-                sample.committed_bytes, None,
-                "commit is not exposed per stack"
-            );
             let resident = sample
                 .resident_bytes
                 .expect("mincore residency query for native stack interval");
             assert!(resident > 0, "the touched worker stack has resident pages");
-            assert!(resident <= reserved);
+            if let Some(reserved) = reserved {
+                assert!(resident <= reserved);
+            }
             assert!(sample.measurement_source.contains("mincore-resident-only"));
         }
 
         #[cfg(target_os = "linux")]
         {
+            assert_eq!(
+                sample.committed_bytes, None,
+                "commit is not exposed per stack"
+            );
             let guard = sample.guard_bytes.expect("pthread guard-size attribute");
-            assert!(guard <= reserved);
+            if let Some(reserved) = reserved {
+                assert!(guard <= reserved);
+                assert!(sample
+                    .measurement_source
+                    .contains("proc-maps=unique-covering-pthread-interval"));
+            } else {
+                assert!(
+                    sample.measurement_source.contains("proc-maps=unavailable")
+                        || sample.measurement_source.contains("proc-maps=ambiguous")
+                );
+            }
             assert!(sample
                 .measurement_source
                 .contains("pthread_attr_getguardsize"));
@@ -474,22 +874,40 @@ mod tests {
 
         #[cfg(target_os = "macos")]
         {
-            assert_eq!(
-                sample.guard_bytes, None,
-                "current-thread guard is not verified"
-            );
-            assert!(sample.measurement_source.contains("pthread_threadid_np"));
-            assert!(sample.measurement_source.contains("guard-unavailable"));
-            assert!(sample
-                .measurement_source
-                .contains("pthread_get_stackaddr_np"));
-            assert!(sample
-                .measurement_source
-                .contains("pthread_get_stacksize_np"));
+            let source = sample.measurement_source;
+            assert!(source.contains("pthread_threadid_np"));
+            assert!(source.contains("pthread_get_stackaddr_np"));
+            assert!(source.contains("pthread_get_stacksize_np"));
+            assert!(source.contains("vmmap("));
+            assert!(source.contains("mincore-resident-only"));
+            if source.contains("vmmap(-w,-pages,-resident,-dirty,-swapped)=unique-") {
+                let reserved = reserved.expect("uniquely matched vmmap stack reservation");
+                let committed = sample
+                    .committed_bytes
+                    .expect("vmmap-backed stack bytes");
+                assert!(committed <= reserved);
+                if let Some(guard) = sample.guard_bytes {
+                    assert!(guard > 0);
+                    assert!(guard <= reserved);
+                    assert!(source.contains("guard=adjacent-Stack-Guard-same-vmmap-thread"));
+                } else {
+                    assert!(source.contains("guard=unresolved"));
+                }
+            } else {
+                assert!(
+                    source.contains("vmmap(-w,-pages,-resident,-dirty,-swapped)=unavailable")
+                        || source
+                            .contains("vmmap(-w,-pages,-resident,-dirty,-swapped)=ambiguous")
+                );
+                assert_eq!(reserved, None);
+                assert_eq!(sample.committed_bytes, None);
+                assert_eq!(sample.guard_bytes, None);
+            }
         }
 
         #[cfg(target_os = "windows")]
         {
+            let reserved = reserved.expect("VirtualQuery reserve total");
             let committed = sample.committed_bytes.expect("VirtualQuery commit total");
             let guard = sample.guard_bytes.expect("VirtualQuery guard total");
             assert!(committed > 0 && committed <= reserved);
@@ -505,5 +923,51 @@ mod tests {
                 .measurement_source
                 .contains("GetCurrentThreadStackLimits"));
         }
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn vmmap_stack_evidence_requires_a_unique_exact_pthread_interval() {
+        const VM_MAP: &str = "\
+VM page size: 4096 bytes
+REGION TYPE                    START - END         [ VSIZE RSDNT DIRTY SWAP]
+Stack Guard                    f000-10000          [ 1 0 0 0] ---/rwx SM=NUL stack guard for thread 7
+Stack                          10000-90000         [ 128 3 3 1] rw-/rwx SM=COW thread 7
+Stack                          a0000-b0000         [ 16 1 1 0] rw-/rwx SM=COW thread 8
+";
+
+        let evidence = super::parse_macos_vmmap(VM_MAP, 0x10000, 0x90000);
+        assert_eq!(evidence.attribution, super::VmmapAttribution::Unique);
+        assert_eq!(evidence.reserved_bytes, Some(0x80000));
+        assert_eq!(evidence.committed_bytes, Some(4 * 4096));
+        assert_eq!(evidence.guard_bytes, Some(4096));
+        assert_eq!(
+            evidence.guard_attribution,
+            super::VmmapGuardAttribution::Matched
+        );
+
+        let duplicate = format!(
+            "{VM_MAP}Stack                          10000-90000         [ 128 3 3 1] rw-/rwx SM=COW thread 9\n"
+        );
+        let evidence = super::parse_macos_vmmap(&duplicate, 0x10000, 0x90000);
+        assert_eq!(evidence.attribution, super::VmmapAttribution::Ambiguous);
+        assert_eq!(evidence.reserved_bytes, None);
+        assert_eq!(evidence.committed_bytes, None);
+        assert_eq!(evidence.guard_bytes, None);
+
+        let evidence = super::parse_macos_vmmap(VM_MAP, 0x11000, 0x90000);
+        assert_eq!(evidence.attribution, super::VmmapAttribution::Ambiguous);
+        assert_eq!(evidence.reserved_bytes, None);
+        assert_eq!(evidence.committed_bytes, None);
+        assert_eq!(evidence.guard_bytes, None);
+
+        let evidence = super::parse_macos_vmmap(
+            "VM page size: 4096 bytes\n",
+            0x10000,
+            0x90000,
+        );
+        assert_eq!(evidence.attribution, super::VmmapAttribution::Unavailable);
+        assert_eq!(evidence.reserved_bytes, None);
+        assert_eq!(evidence.committed_bytes, None);
+        assert_eq!(evidence.guard_bytes, None);
     }
 }
