@@ -132,7 +132,6 @@ impl ChromeState {
     }
 }
 
-
 pub(super) fn reset() {
     STATE.with(|s| s.borrow_mut().reset_store());
 }
@@ -187,16 +186,12 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         let lowercase_method_key =
             v8::String::new_from_utf8(&mut scope, b"toLowerCase", v8::NewStringType::Internalized)
                 .ok_or_else(|| "paint stepper lowercase key".to_string())?;
-        let weak_map_ctor = v8::Local::<v8::Function>::try_from(js_property(
-            &mut scope,
-            global.into(),
-            "WeakMap",
-        )?)
-        .map_err(|_| "paint state weak map constructor".to_string())?;
-        let weak_map_prototype =
-            js_property(&mut scope, weak_map_ctor.into(), "prototype")?
-                .to_object(&mut scope)
-                .ok_or_else(|| "paint state weak map prototype".to_string())?;
+        let weak_map_ctor =
+            v8::Local::<v8::Function>::try_from(js_property(&mut scope, global.into(), "WeakMap")?)
+                .map_err(|_| "paint state weak map constructor".to_string())?;
+        let weak_map_prototype = js_property(&mut scope, weak_map_ctor.into(), "prototype")?
+            .to_object(&mut scope)
+            .ok_or_else(|| "paint state weak map prototype".to_string())?;
         let state_store_get = v8::Local::<v8::Function>::try_from(js_property(
             &mut scope,
             weak_map_prototype.into(),
@@ -869,10 +864,7 @@ fn list_scroll(state: &mut ChromeState, key: &str, len: usize, rows: f64, focus:
         .scroll_state
         .get(&manual_key)
         .is_some_and(|value| value == "1");
-    let old_focus = parse_number(
-        state.scroll_state.get(&focus_key).map(String::as_str),
-        -1.0,
-    );
+    let old_focus = parse_number(state.scroll_state.get(&focus_key).map(String::as_str), -1.0);
     let manual = if focus != old_focus { false } else { manual };
     let max = (len as f64 - rows).max(0.0);
     let clamp = |number: f64| number.max(0.0).min(max);

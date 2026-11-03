@@ -551,11 +551,12 @@ mod tests {
     #[test]
     fn market_index_cold_build_has_bounded_process_allocation() {
         if std::env::var_os(COLD_CHILD_ENV).is_none() {
-            let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
-                .args(["--exact", COLD_TEST_NAME, "--nocapture"])
-                .env(COLD_CHILD_ENV, "1")
-                .output()
-                .expect("run isolated market index allocation test");
+            let output =
+                std::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .args(["--exact", COLD_TEST_NAME, "--nocapture"])
+                    .env(COLD_CHILD_ENV, "1")
+                    .output()
+                    .expect("run isolated market index allocation test");
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(

@@ -141,20 +141,12 @@ fn stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded() {
             "collected V8 heap grew {growth} bytes; limit {limit}"
         );
 
-        assert_eq!(
-            runtime
-                .eval::<String>("__stateIsolation()")
-                .unwrap(),
-            "left:right"
-        );
+        assert_eq!(runtime.eval::<String>("__stateIsolation()").unwrap(), "left:right");
         let state_baseline = collected_used_heap(&mut runtime);
         let state_count = 1_000;
         let create_states = format!("__makeTemporaryPaintStates({state_count})");
         let rust = allocation_counter::measure(|| {
-            assert_eq!(
-                runtime.eval::<usize>(&create_states).unwrap(),
-                state_count
-            );
+            assert_eq!(runtime.eval::<usize>(&create_states).unwrap(), state_count);
         });
         let state_after = collected_used_heap(&mut runtime);
         let state_growth = state_after.saturating_sub(state_baseline);
@@ -170,8 +162,13 @@ fn stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded() {
             "Rust retained {rust:?} after temporary PaintState stores"
         );
 
-        assert!(runtime.eval::<bool>("__title('paint:toggle') === null").unwrap());
-        assert_eq!(runtime.eval::<String>("__title('another')").unwrap(), "another");
+        assert!(runtime
+            .eval::<bool>("__title('paint:toggle') === null")
+            .unwrap());
+        assert_eq!(
+            runtime.eval::<String>("__title('another')").unwrap(),
+            "another"
+        );
         reset();
         assert_eq!(
             runtime
@@ -182,9 +179,7 @@ fn stepper_descriptors_keep_fast_properties_and_heap_growth_is_bounded() {
             "fallback"
         );
         runtime
-            .eval::<()>(
-                "__rs2b0t_paint_chrome('stateSet', __stateOwner, 'persist', 'after reset')",
-            )
+            .eval::<()>("__rs2b0t_paint_chrome('stateSet', __stateOwner, 'persist', 'after reset')")
             .unwrap();
         assert_eq!(
             runtime
