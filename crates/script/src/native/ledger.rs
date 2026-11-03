@@ -272,9 +272,27 @@ impl HostAction {
     }
 }
 
-/// The quiet-read lease's own wall bound: a paused or stranded reader stops
-/// hiding the page after this, whatever its owner does.
-const QUIET_READ_WALL_BOUND: Duration = Duration::from_secs(10);
+/// The quiet-read lease's wall bound. It is the paint-hide cap from the
+/// begin, and the hold's own bound from the begin and from each window the
+/// owner arms: a paused or stranded reader stops hiding the page, and stops
+/// holding the host, after this, whatever its owner does.
+pub(super) const QUIET_READ_WALL_BOUND: Duration = Duration::from_secs(10);
+
+/// The ledger's record of the live quiet read.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct QuietRead {
+    pub request: NonZeroU64,
+    pub lease: NonZeroU64,
+    /// Wall time of the begin. The paint-hide cap runs from here and never
+    /// moves.
+    pub since: Instant,
+    /// The lease's wall bound for the hold. It starts at the begin and each
+    /// window the owner arms (its click, its capture, its close) takes a
+    /// fresh bound from that poll, so a click never goes out against a lease
+    /// whose bound passes in the frame that sends it. The same rule as the
+    /// compatibility read's `renew_hold`.
+    pub hold_until: Instant,
+}
 
 /// Allocated only on first native admission. There is one foreground owner,
 /// one outstanding walk and a bounded outbox, not a second navigation runtime.
@@ -297,7 +315,7 @@ pub struct Ledger {
     pub(crate) assess_request: Option<NonZeroU64>,
     pub(crate) batch_receipts: [Option<InteractionReceipt>; 5],
     next_batch_receipt: usize,
-    pub(crate) quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
+    pub(crate) quiet_lease: Option<QuietRead>,
     /// The quiet read's lease and the window its owner enforces.
     pub(crate) quiet_deadline: Option<(NonZeroU64, super::WaitDeadline)>,
     /// Last modal-wait lease number. A separate sequence, so a lease does not
@@ -346,7 +364,7 @@ impl Default for Ledger {
             assess_request: None,
             batch_receipts: std::array::from_fn(|_| None),
             next_batch_receipt: 0,
-            quiet_since: None,
+            quiet_lease: None,
             quiet_deadline: None,
             modal_wait_seq: 0,
             modal_wait_deadline: None,
@@ -421,24 +439,64 @@ impl Ledger {
         self.next_id = first.get().checked_add(count as u64).unwrap_or(0);
     }
 
+    /// The live quiet read. The lease ends at its wall bound: the begin's, or
+    /// the last window the owner armed.
+    ///
+    /// An expired hold makes its queued interaction stale (finding N1 of
+    /// `HOLD-MODEL-AB`). The owner renews the bound from its poll, but the
+    /// host reads the wall time later in the same frame, and a stall of the
+    /// process (a suspended or sleeping machine) can put the whole bound
+    /// between the two. The click that the poll queued is then still live in
+    /// the interaction authority, which this lease does not own. The sample
+    /// that releases the lease by expiry therefore also cancels the click or
+    /// close that the owner queued and the host has not yet dispatched: it
+    /// never goes out without a hold. A dispatched one is unchanged, and so is
+    /// its receipt. The owner learns of it at its next poll, where the lease
+    /// is no longer live ([`QuietReadLease::live`]): it fails its read, and
+    /// its own retry and timeout apply.
     pub fn quiet_read(&mut self, now: Instant) -> Option<QuietReadOwner> {
-        let (request, lease, since) = self.quiet_since?;
-        let owner = self.owner.as_ref()?;
+        let quiet = self.quiet_lease?;
+        let owner = Arc::clone(self.owner.as_ref()?);
         // Independent of the active action clock: a paused or stranded
         // reader must not keep hiding a modal indefinitely.
-        if now.saturating_duration_since(since) >= QUIET_READ_WALL_BOUND {
-            owner.release_quiet(lease);
+        if now >= quiet.hold_until && owner.quiet(quiet.lease) {
+            owner.release_quiet(quiet.lease);
+            self.cancel_undispatched_interaction(&owner);
         }
-        if !owner.quiet(lease) {
-            self.quiet_since = None;
+        if !owner.quiet(quiet.lease) {
+            self.quiet_lease = None;
             self.quiet_deadline = None;
             return None;
         }
         Some(QuietReadOwner {
             run: owner.run,
             action_id: owner.id,
-            request_id: request,
+            request_id: quiet.request,
         })
+    }
+
+    /// Cancel the owner's interaction that is queued and not yet dispatched:
+    /// the host's fence ([`HostAction::live`], [`HostAuthority::live`]) then
+    /// drops it, wherever it waits. A dispatched interaction has its receipt
+    /// (`complete_interaction`) and is not touched.
+    fn cancel_undispatched_interaction(&mut self, owner: &Owner) {
+        let Some(request) = self.interaction_request else {
+            return;
+        };
+        if self.interaction.is_none() && owner.interaction_live(request) {
+            owner.cancel_interaction(request);
+            self.outbox.retain(|action| action.request_id != request);
+        }
+    }
+
+    /// Whether the live quiet read still hides the journal page: the lease is
+    /// live and its paint-hide cap, [`QUIET_READ_WALL_BOUND`] from the begin,
+    /// has not passed. A later window of the owner does not move the cap.
+    pub fn quiet_paint_hidden(&mut self, now: Instant) -> bool {
+        self.quiet_read(now).is_some()
+            && self.quiet_lease.is_some_and(|quiet| {
+                now.saturating_duration_since(quiet.since) < QUIET_READ_WALL_BOUND
+            })
     }
 
     /// The live quiet read and the observed tick by which its owner ends it:
@@ -452,10 +510,10 @@ impl Ledger {
         tick: u64,
     ) -> Option<(QuietReadOwner, u64)> {
         let quiet = self.quiet_read(now)?;
-        let (_, lease, since) = self.quiet_since?;
+        let lease = self.quiet_lease?;
         let deadline_tick = match self.quiet_deadline.as_mut() {
-            Some((id, deadline)) if *id == lease => deadline.owner_tick(active_now, tick),
-            _ => super::WaitDeadline::self_ending_tick(since + QUIET_READ_WALL_BOUND, now, tick),
+            Some((id, deadline)) if *id == lease.lease => deadline.owner_tick(active_now, tick),
+            _ => super::WaitDeadline::self_ending_tick(lease.hold_until, now, tick),
         };
         Some((quiet, deadline_tick))
     }
@@ -501,7 +559,7 @@ impl Ledger {
         self.server_ordered_request = None;
         self.batch_receipts.fill(None);
         self.next_batch_receipt = 0;
-        self.quiet_since = None;
+        self.quiet_lease = None;
     }
 
     pub fn revoke(&mut self) {
@@ -1235,7 +1293,12 @@ mod tests {
         let first = ledger.next_id().unwrap();
         let now = Instant::now();
         assert!(owner.acquire_quiet(first));
-        ledger.quiet_since = Some((request, first, now));
+        ledger.quiet_lease = Some(QuietRead {
+            request,
+            lease: first,
+            since: now,
+            hold_until: now + QUIET_READ_WALL_BOUND,
+        });
         let old_guard = QuietReadLease {
             owner: Arc::clone(&owner),
             lease_id: first,
@@ -1245,7 +1308,13 @@ mod tests {
         assert!(ledger.quiet_read(now + Duration::from_secs(10)).is_none());
         let replacement = ledger.next_id().unwrap();
         assert!(owner.acquire_quiet(replacement));
-        ledger.quiet_since = Some((request, replacement, now + Duration::from_secs(10)));
+        let replaced = now + Duration::from_secs(10);
+        ledger.quiet_lease = Some(QuietRead {
+            request,
+            lease: replacement,
+            since: replaced,
+            hold_until: replaced + QUIET_READ_WALL_BOUND,
+        });
         drop(old_guard);
         assert_eq!(
             ledger

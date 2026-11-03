@@ -106,6 +106,12 @@ impl JsSurfaceRun {
         self.isolate.set_onstop_timeout_for_test(timeout);
     }
 
+    /// The run's isolate, for tests that drive the slot's production queue.
+    #[cfg(test)]
+    pub(crate) fn isolate_for_test(&self) -> &LoadIsolate {
+        &self.isolate
+    }
+
     fn post_encoded_snapshot(
         &mut self,
         bytes: Vec<u8>,
@@ -363,6 +369,10 @@ impl SurfaceRun for JsSurfaceRun {
 
     fn journal_wait(&self, now: Instant) -> Option<script::surface::JournalWait> {
         self.isolate.compat_journal_wait(now)
+    }
+
+    fn expired_hold_owners(&self, now: Instant) -> [Option<api::identity::RequestId>; 2] {
+        self.isolate.compat_journal_expired_owners(now)
     }
 
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError> {

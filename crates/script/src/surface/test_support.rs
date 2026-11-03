@@ -295,6 +295,11 @@ impl StubSurfaceHandle {
         *lock(&self.state.journal_wait) = wait;
     }
 
+    /// Set the result returned by [`SurfaceRun::expired_hold_owners`].
+    pub fn set_expired_hold_owners(&self, owners: [Option<api::identity::RequestId>; 2]) {
+        *lock(&self.state.expired_hold_owners) = owners;
+    }
+
     /// Replace the queued log lines used by `stop`'s retirement completion.
     pub fn set_retirement_logs(&self, lines: impl IntoIterator<Item = String>) {
         *lock(&self.state.retirement_logs) = lines.into_iter().collect();
@@ -661,6 +666,10 @@ impl SurfaceRun for StubSurfaceRun {
         *lock(&self.state.journal_wait)
     }
 
+    fn expired_hold_owners(&self, _now: Instant) -> [Option<api::identity::RequestId>; 2] {
+        *lock(&self.state.expired_hold_owners)
+    }
+
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError> {
         record(
             &self.state,
@@ -834,6 +843,7 @@ struct StubSurfaceState {
     paint: Mutex<Option<Arc<ScriptPaint>>>,
     journal_paint_hidden: AtomicBool,
     journal_wait: Mutex<Option<super::JournalWait>>,
+    expired_hold_owners: Mutex<[Option<api::identity::RequestId>; 2]>,
     probe_response: Mutex<Result<serde_json::Value, String>>,
     ignored_randoms: Mutex<Vec<String>>,
     memory_metrics: Mutex<Option<serde_json::Value>>,
@@ -879,6 +889,7 @@ impl StubSurfaceState {
             paint: Mutex::new(None),
             journal_paint_hidden: AtomicBool::new(false),
             journal_wait: Mutex::new(None),
+            expired_hold_owners: Mutex::new([None; 2]),
             probe_response: Mutex::new(Ok(serde_json::Value::Null)),
             ignored_randoms: Mutex::new(Vec::new()),
             memory_metrics: Mutex::new(None),

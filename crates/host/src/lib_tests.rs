@@ -1093,6 +1093,142 @@ fn a_renewed_wait_moves_its_deadline() {
     assert_eq!(slot.run_sends, 1);
 }
 
+/// HOLD-MODEL-AB, defect F1 = D1. The dialogue renews one lease from its
+/// acknowledgement bound to its end gap (`dialogue.rs:361-381`), so the host
+/// sees the same key with a later deadline. A hold that the host ended as the
+/// terminal failure (the owner was paused or held past the bound) holds again
+/// for the renewed wait: the press must not go out during the end gap.
+#[test]
+fn a_renewed_wait_after_the_terminal_release_gets_a_hold_of_its_own() {
+    let mut client = test_client();
+    let mut slot = held_slot(&mut client, wait(9, 1));
+    frame(&mut slot, &mut client, Some(wait(9, 1)), 1);
+    assert_eq!(slot.run_sends, 0, "held on tick 1");
+    // The acknowledgement page is up while the owner does not poll (paused),
+    // so its deadline passes: the terminal release, and the modal check holds
+    // the press.
+    client.main_modal_id = 8134;
+    observe_drain(&mut slot, &mut client, 1);
+    assert!(slot
+        .run_policy
+        .observe_script_wait(Some(wait(9, 1)), 2)
+        .is_some());
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "the modal check holds the press");
+    // The page closed. The owner resumes and renews the same key to its end gap.
+    client.main_modal_id = -1;
+    observe_drain(&mut slot, &mut client, 1);
+    assert_eq!(
+        slot.run_policy.observe_script_wait(Some(wait(9, 5)), 3),
+        None
+    );
+    assert!(
+        slot.run_policy.should_defer_auto_run(),
+        "the renewed wait holds again"
+    );
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 0,
+        "the press waits while the renewed wait is live until tick 5"
+    );
+    for tick in 4..=5 {
+        frame(&mut slot, &mut client, Some(wait(9, 5)), tick);
+        assert_eq!(slot.run_sends, 0, "held on tick {tick}");
+    }
+    // The renewed wait has its own terminal release, at its own deadline.
+    observe_drain(&mut slot, &mut client, 1);
+    assert_eq!(
+        slot.run_policy
+            .observe_script_wait(Some(wait(9, 5)), 5 + SCRIPT_WAIT_MARGIN_TICKS)
+            .map(|expired| expired.deadline_tick),
+        Some(5),
+        "the renewed deadline is the one that counts"
+    );
+    slot.apply_auto_run(&mut client);
+    assert_eq!(
+        slot.run_sends, 1,
+        "the renewed wait ended: the press goes out"
+    );
+}
+
+/// The terminal release ends one wait. A sample of the same key with the same
+/// deadline, or with an earlier one, is not a renewal and holds no more.
+#[test]
+fn a_repeat_of_the_deadline_after_the_terminal_release_stays_released() {
+    for repeat_deadline in [4, 3] {
+        let mut client = test_client();
+        let mut slot = held_slot(&mut client, wait(9, 4));
+        client.main_modal_id = 8134;
+        observe_drain(&mut slot, &mut client, 1);
+        let expired = slot
+            .run_policy
+            .observe_script_wait(Some(wait(9, 4)), 4 + SCRIPT_WAIT_MARGIN_TICKS);
+        assert_eq!(expired.map(|expired| expired.deadline_tick), Some(4));
+        slot.apply_auto_run(&mut client);
+        assert_eq!(slot.run_sends, 0, "the modal check holds the press");
+        client.main_modal_id = -1;
+        for tick in 6..=7 {
+            observe_drain(&mut slot, &mut client, 1);
+            assert_eq!(
+                slot.run_policy
+                    .observe_script_wait(Some(wait(9, repeat_deadline)), tick),
+                None,
+                "one failure per wait"
+            );
+            assert!(
+                !slot.run_policy.should_defer_auto_run(),
+                "deadline {repeat_deadline} is no renewal: the key holds no more"
+            );
+        }
+        slot.apply_auto_run(&mut client);
+        assert_eq!(slot.run_sends, 1, "the press goes out");
+    }
+}
+
+/// A new key after the terminal release is a new wait: it gets a fresh hold.
+#[test]
+fn a_new_key_after_the_terminal_release_gets_a_fresh_hold() {
+    let mut client = test_client();
+    let mut slot = held_slot(&mut client, wait(9, 4));
+    client.main_modal_id = 8134;
+    observe_drain(&mut slot, &mut client, 1);
+    assert!(slot
+        .run_policy
+        .observe_script_wait(Some(wait(9, 4)), 4 + SCRIPT_WAIT_MARGIN_TICKS)
+        .is_some());
+    assert!(!slot.run_policy.should_defer_auto_run());
+    client.main_modal_id = -1;
+    observe_drain(&mut slot, &mut client, 1);
+    slot.run_policy
+        .observe_script_wait(Some(wait(10, 9)), 4 + SCRIPT_WAIT_MARGIN_TICKS);
+    assert!(slot.run_policy.should_defer_auto_run(), "a new key holds");
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0, "the new wait holds the press");
+}
+
+/// A session boundary is never undone by a renewal: the old session's page
+/// cannot arrive, so the same key holds again only as a new key.
+#[test]
+fn a_renewal_after_a_session_boundary_stays_released() {
+    let mut client = test_client();
+    let mut slot = held_slot(&mut client, wait(5, 100));
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 0);
+    client.ingame = false;
+    slot.after_drain(&mut client);
+    ingame_scene2(&mut client);
+    client.gens.session = client.gens.session.wrapping_add(1);
+    client.runenergy = 20;
+    slot.after_drain(&mut client);
+    slot.run_policy.observe_script_wait(Some(wait(5, 200)), 1);
+    assert!(
+        !slot.run_policy.should_defer_auto_run(),
+        "a renewal does not undo the boundary release"
+    );
+    slot.apply_auto_run(&mut client);
+    assert_eq!(slot.run_sends, 1);
+}
+
 #[test]
 fn a_session_change_releases_the_script_wait() {
     let mut client = test_client();
@@ -1135,6 +1271,9 @@ fn a_stopped_runtime_releases_the_script_wait() {
 #[test]
 fn script_run_policy_stays_within_per_slot_size_budget() {
     assert!(std::mem::size_of::<ScriptRunPolicy>() <= 48);
+    // The hold keeps its key, the deadline of its latest sample and its phase
+    // in the 16 bytes that the key and a flag took before.
+    assert_eq!(std::mem::size_of::<Option<ScriptWaitHold>>(), 16);
 }
 
 /// HOTFIX-0.2.1: energy crossing the threshold while the bank is open must

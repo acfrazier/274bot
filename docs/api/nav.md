@@ -762,13 +762,29 @@ A queued NPC Talk has no page deadline before host acceptance. Its explicit
 `AwaitingDispatch` lease holds the press until acceptance installs the content
 deadline. A guardian reissue takes a fresh undispatched lease. Stop, relog,
 death cancellation and a session change still release the owner and its lease.
-A compatibility journal read holds the press for 10 s from its begin, and
-again for 10 s from its click, so its click never goes out without a live hold,
-also after a long pause. Its page stays hidden for at most 10 s from its begin.
-Once a wait has a deadline, the host ends a hold that is still live one tick
-after that deadline (the owner checks it before the host reads the wait in the
-same frame), and logs that as a failure. A new send, a re-armed gap or a new
-journal read has its own key and deadline state.
+A journal read holds the press for 10 s from its begin, and again for 10 s
+from each click it sends (the native reader also from its capture), so its
+click never goes out without a live hold, also after a long pause. Its page
+stays hidden for at most 10 s from its begin. An expired hold makes the
+interaction that it covered stale: the process can stall (a suspended or
+sleeping machine) between the owner's step, which queues the click or the
+close and renews the hold, and the host's reading of the wall clock in the
+same frame. When that reading ends the hold by expiry, the click or close
+that is still queued is dropped, never dispatched, and the owner's next poll
+finds its read expired and fails it (the native reader: `journal quiet lease
+expired`; the compatibility reader: `modal-timeout`), so the script's own
+retry and time limits apply. Only the read's own click or close is dropped:
+the host finds it by the machine that sent it, so an equal request of another
+call (a `Modals.close()` in the same script) still goes out. A click that was
+dispatched before the expiry keeps its receipt.
+A Dialogue wait has no wall bound. Once a wait has a deadline, the host ends
+a hold that is still live one tick after that deadline (the owner checks it
+before the host reads the wait in the same frame), and logs that as a failure.
+A new send, a re-armed gap or a new journal read has its own key and deadline
+state. A renewal that keeps the key and moves the deadline later (the
+dialogue's acknowledgement wait renewed as its end gap) is a wait of its own:
+if the host had ended the earlier hold, it holds again to the new deadline.
+A session boundary is never undone this way.
 The journal content opens the page without a delay (`quest_journal.rs2:1-55`).
 If the retry fails, the walk blocks with the last failure's detail.
 The live kitchen proof receipt records each journal attempt's start and

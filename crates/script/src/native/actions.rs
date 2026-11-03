@@ -67,23 +67,35 @@ impl ActionContext<'_> {
     ) -> Result<QuietReadLease, ActionError> {
         let owner = self.owner()?;
         let request_id = NonZeroU64::new(request_id).ok_or(ActionError::Stale)?;
+        let wall_now = self.wall_now;
         let ledger = self.ledger.as_mut().expect("owner checked");
         let lease_id = ledger.next_id()?;
         if !owner.acquire_quiet(lease_id) {
             return Err(ActionError::Busy);
         }
-        ledger.quiet_since = Some((request_id, lease_id, self.wall_now));
+        ledger.quiet_lease = Some(ledger::QuietRead {
+            request: request_id,
+            lease: lease_id,
+            since: wall_now,
+            hold_until: wall_now + ledger::QUIET_READ_WALL_BOUND,
+        });
         ledger.quiet_deadline = Some((lease_id, deadline));
         Ok(QuietReadLease { owner, lease_id })
     }
 
-    /// The owner armed a new window for its quiet read.
+    /// The owner armed a new window for its quiet read, as it sends its click
+    /// or its close, or captures the page. The lease's wall bound runs from
+    /// this poll, so the verb that the window follows never goes out against a
+    /// hold that ends in the same frame. The paint-hide cap does not move.
     pub fn renew_quiet_read(&mut self, lease: &QuietReadLease, deadline: WaitDeadline) {
+        let wall_now = self.wall_now;
         if let Some(ledger) = self.ledger.as_mut() {
-            if ledger
-                .quiet_since
-                .is_some_and(|(_, id, _)| id == lease.lease_id)
+            if let Some(quiet) = ledger
+                .quiet_lease
+                .as_mut()
+                .filter(|quiet| quiet.lease == lease.lease_id)
             {
+                quiet.hold_until = wall_now + ledger::QUIET_READ_WALL_BOUND;
                 ledger.quiet_deadline = Some((lease.lease_id, deadline));
             }
         }
@@ -635,10 +647,10 @@ impl ActionContext<'_> {
                 }
             }
             owner.cancel_walk(request_id);
-            if let Some((request, lease, _)) = ledger.quiet_since {
-                if request == request_id {
-                    owner.release_quiet(lease);
-                    ledger.quiet_since = None;
+            if let Some(quiet) = ledger.quiet_lease {
+                if quiet.request == request_id {
+                    owner.release_quiet(quiet.lease);
+                    ledger.quiet_lease = None;
                 }
             }
             ledger

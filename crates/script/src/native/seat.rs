@@ -637,6 +637,23 @@ impl<R> GameplaySeat<R> {
         true
     }
 
+    /// The interaction hold of the in-isolate owner `owner` expired at the
+    /// host's sample (finding N1 of `HOLD-MODEL-AB`): its rows that still
+    /// wait in the seat are stale. They are dropped at dispatch and counted
+    /// there. Unlike [`Self::revoke_mirror_owner`], this keeps no revocation
+    /// history: the owner fails at its own next step and sends nothing more.
+    pub fn drop_expired_hold_rows(&mut self, owner: RequestId) {
+        for row in self.queued.iter_mut().chain(&mut self.in_flight) {
+            if row
+                .authority
+                .as_ref()
+                .is_some_and(|lease| lease.owner() == owner)
+            {
+                row.boundary = AuthorityBoundary::Revoked;
+            }
+        }
+    }
+
     pub fn mirror_revokes_consumed(&self) -> u64 {
         self.mirror_revokes_consumed
     }

@@ -2314,6 +2314,288 @@ fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
     iso.join();
 }
 
+/// N1 of `HOLD-MODEL-AB` on the production queue (findings F1 and F2 of its
+/// review). The real `JsSurfaceFactory` spawns the isolate with the slot's
+/// execution identity (`spawn_with_content(.., Some(execution))`, the path of
+/// `LoadIsolate::spawn_with_execution`), so the isolate sends its tick output
+/// as seat batches, and the slot's own `drain_host_interacts`, the host's one
+/// drain, takes them.
+fn journal_slot(source: &str) -> script::SlotScript {
+    let mut slot = script::SlotScript::new();
+    slot.bind_incarnation(1);
+    let (shape, family) = crate::resolve_api_family(source).expect("an API v2 card");
+    slot.bind_surface_factory(std::sync::Arc::new(
+        crate::surface::JsSurfaceFactory::default(),
+    ));
+    slot.start_surface(script::surface::SurfaceStart {
+        card: std::sync::Arc::new(crate::surface::JsStartCard {
+            source: source.into(),
+            shape,
+            siblings: std::sync::Arc::from(Vec::<(String, String)>::new()),
+            family: Some(family),
+        }),
+        settings_bag: None,
+        game_data: None,
+        named_banks: std::sync::Arc::default(),
+        loadouts: std::sync::Arc::default(),
+    })
+    .expect("start the JS surface");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match slot.poll_start() {
+            script::StartPoll::Settled(outcome) => {
+                assert_eq!(outcome, script::StartOutcome::Ready);
+                break;
+            }
+            script::StartPoll::Pending => {
+                assert!(Instant::now() < deadline, "the JS surface start stalled");
+            }
+            script::StartPoll::NotOwed => panic!("the JS surface start is not owed"),
+        }
+        std::thread::yield_now();
+    }
+    slot.on_is_up(true);
+    slot
+}
+
+/// Post the quest tab and the main-modal pair of `root` through the slot,
+/// then run the isolate's tick to its end.
+fn post_journal_page(slot: &mut script::SlotScript, tick: u64, root: i32, texts: &[String]) {
+    use crate::wire::{MainModalTextsInput, NativeFactsInput, QuestStatusInput};
+
+    let rows = [QuestStatusInput {
+        name: "Cook's Assistant",
+        status: "notStarted",
+        component_id: Some(1234),
+    }];
+    let mut snapshot = crate::wire::tests::empty_input(tick);
+    snapshot.ingame = true;
+    snapshot.scene_state = 2;
+    snapshot.side_tab = 2;
+    snapshot.main_modal_id = root;
+    let facts = NativeFactsInput {
+        quest_statuses: Some(&rows),
+        main_modal_texts: Some(MainModalTextsInput { root, texts }),
+        ..Default::default()
+    };
+    assert!(slot.post_snapshot_delta(&snapshot, facts, false));
+    slot.with_surface_run_for_test(|run| run.on_game_tick_at(tick, 0))
+        .expect("active JS surface");
+    slot.probe("true").expect("the tick ends");
+}
+
+/// The process stalls past the whole hold (a suspended or sleeping machine):
+/// the read's begin and hold bound move `by` into the past.
+fn stall_journal_hold(slot: &mut script::SlotScript, by: Duration) {
+    slot.with_surface_run_for_test(|run| {
+        run.as_any_mut()
+            .downcast_mut::<crate::surface::JsSurfaceRun>()
+            .expect("the JS surface run")
+            .isolate_for_test()
+            .compat_journal
+            .as_ref()
+            .expect("the compat lease")
+            .backdate(by);
+    })
+    .expect("active JS surface");
+}
+
+/// The rows that wait in the isolate's seat-batch queue, with their identity
+/// (request, lineage, mirror owner). The queue is restored unchanged.
+fn queued_seat_rows(
+    slot: &mut script::SlotScript,
+) -> Vec<(
+    script::shim::InteractReq,
+    Option<api::identity::RequestId>,
+    Option<api::identity::RequestId>,
+)> {
+    slot.with_surface_run_for_test(|run| {
+        let batches = run.drain_seat_batches();
+        let rows = batches
+            .iter()
+            .flat_map(|queued| &queued.batch.reqs)
+            .map(|row| (row.request.clone(), row.lineage, row.mirror_owner))
+            .collect();
+        run.restore_seat_batches(batches);
+        rows
+    })
+    .expect("active JS surface")
+}
+
+fn drain_host(slot: &mut script::SlotScript) -> Vec<script::shim::InteractReq> {
+    slot.drain_host_interacts()
+        .1
+        .into_iter()
+        .map(|queued| queued.req)
+        .collect()
+}
+
+fn journal_out(slot: &mut script::SlotScript) -> String {
+    slot.probe("JSON.stringify(globalThis.__out)")
+        .expect("probe the read's result")
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+const AWAITED_JOURNAL_READ: &str = r#"export const apiVersion = 2;
+export async function tick(api) {
+  if (globalThis.__started) return;
+  globalThis.__started = true;
+  const begin = api.questJournalBegin({ name: "Cook's Assistant" });
+  globalThis.__begin = begin;
+  if (begin.ok) globalThis.__out = await api.questJournalRun(begin.value);
+}"#;
+
+/// More than the read's 10 s hold bound.
+const STALL_PAST_THE_HOLD: Duration = Duration::from_secs(11);
+
+/// F1: the journal machine renews its hold at its click and queues the click
+/// in a seat batch; the process then stalls past the renewed bound before the
+/// host's drain. The drain drops the click, and the read fails with
+/// `modal-timeout` at its next step (its own timeout; the script's retry
+/// applies).
+#[test]
+fn production_queue_drops_a_journal_click_whose_hold_expired_before_the_drain() {
+    let click = script::shim::InteractReq::IfButton { component_id: 1234 };
+    let mut slot = journal_slot(AWAITED_JOURNAL_READ);
+    post_journal_page(&mut slot, 1, -1, &[]);
+    assert_eq!(slot.probe("globalThis.__begin.ok").unwrap(), true);
+    assert!(
+        queued_seat_rows(&mut slot)
+            .iter()
+            .any(|(request, _, owner)| *request == click && owner.is_some()),
+        "the click waits in a seat batch with the read's machine row as owner"
+    );
+    stall_journal_hold(&mut slot, STALL_PAST_THE_HOLD);
+    let dropped = slot.slot_metrics().dropped;
+    let delivered = drain_host(&mut slot);
+    assert!(
+        !delivered.contains(&click),
+        "the click under an expired hold is not dispatched: {delivered:?}"
+    );
+    assert_eq!(slot.slot_metrics().dropped, dropped + 1);
+    post_journal_page(&mut slot, 2, -1, &[]);
+    assert!(
+        journal_out(&mut slot).contains("modal-timeout"),
+        "the read fails with modal-timeout: {}",
+        journal_out(&mut slot)
+    );
+    assert!(!drain_host(&mut slot).contains(&click));
+    slot.stop();
+}
+
+/// F1, when the read's next step comes first: the stall outlasts the hold,
+/// the read fails with `modal-timeout` and clears its lease, and only then
+/// does the host drain. The click is still stale and is dropped.
+#[test]
+fn production_queue_drops_a_journal_click_whose_read_failed_before_the_drain() {
+    let click = script::shim::InteractReq::IfButton { component_id: 1234 };
+    let mut slot = journal_slot(AWAITED_JOURNAL_READ);
+    post_journal_page(&mut slot, 1, -1, &[]);
+    stall_journal_hold(&mut slot, STALL_PAST_THE_HOLD);
+    post_journal_page(&mut slot, 2, -1, &[]);
+    assert!(
+        journal_out(&mut slot).contains("modal-timeout"),
+        "the read fails with modal-timeout: {}",
+        journal_out(&mut slot)
+    );
+    assert!(queued_seat_rows(&mut slot)
+        .iter()
+        .any(|(request, ..)| *request == click));
+    let dropped = slot.slot_metrics().dropped;
+    let delivered = drain_host(&mut slot);
+    assert!(
+        !delivered.contains(&click),
+        "the click of a read that failed by expiry is not dispatched: {delivered:?}"
+    );
+    assert_eq!(slot.slot_metrics().dropped, dropped + 1);
+    slot.stop();
+}
+
+/// F2: identity, not equality. One script starts a journal read without
+/// awaiting it, and on a later tick calls `Modals.close()`. On that tick the
+/// journal machine queues its own close before the user tick queues the
+/// other family's close: two equal `CloseModal` rows, with different owners.
+/// After the stall, the drain drops the journal's close and keeps the other
+/// one. A closed dispatch (Pause) carries the drained batch back to the
+/// queue, which shows the kept row's identity; after Resume the drain
+/// delivers that one close.
+#[test]
+fn production_queue_drops_only_the_journal_close_of_an_expired_hold() {
+    use script::shim::InteractReq;
+
+    let mut slot = journal_slot(
+        r#"import { Modals } from '../../api/ui/widgets/Modals.js';
+export const apiVersion = 2;
+export function tick(api) {
+  if (!globalThis.__started) {
+    globalThis.__started = true;
+    const begin = api.questJournalBegin({ name: "Cook's Assistant" });
+    globalThis.__begin = begin;
+    if (begin.ok) api.questJournalRun(begin.value).then(out => globalThis.__out = out);
+    return;
+  }
+  if (!globalThis.__closed) {
+    globalThis.__closed = true;
+    Modals.close();
+  }
+}"#,
+    );
+    let click = InteractReq::IfButton { component_id: 1234 };
+    post_journal_page(&mut slot, 1, -1, &[]);
+    let journal = queued_seat_rows(&mut slot)
+        .into_iter()
+        .find(|(request, ..)| *request == click)
+        .and_then(|(_, _, owner)| owner)
+        .expect("the click's seat row names the read's machine row");
+    // A click under its live hold goes out.
+    assert!(drain_host(&mut slot).contains(&click));
+    post_journal_page(&mut slot, 2, 77, &["@dre@The Cook's Quest".into()]);
+    let closes = |slot: &mut script::SlotScript| {
+        queued_seat_rows(slot)
+            .into_iter()
+            .filter(|(request, ..)| *request == InteractReq::CloseModal)
+            .map(|(_, lineage, owner)| (lineage, owner))
+            .collect::<Vec<_>>()
+    };
+    let queued = closes(&mut slot);
+    assert_eq!(queued.len(), 2, "two closes wait: {queued:?}");
+    assert_eq!(queued[0].1, Some(journal), "the journal's close is first");
+    assert_ne!(
+        queued[1].1,
+        Some(journal),
+        "the other close has another owner"
+    );
+    stall_journal_hold(&mut slot, STALL_PAST_THE_HOLD);
+    let dropped = slot.slot_metrics().dropped;
+    slot.pause();
+    let _ = slot.drain_host_interacts();
+    assert_eq!(
+        closes(&mut slot),
+        [queued[1]],
+        "the journal's stale close is dropped, the other family's close is kept"
+    );
+    assert_eq!(slot.slot_metrics().dropped, dropped + 1);
+    slot.resume();
+    let delivered = drain_host(&mut slot);
+    assert_eq!(
+        delivered
+            .iter()
+            .filter(|request| **request == InteractReq::CloseModal)
+            .count(),
+        1,
+        "one close goes out: {delivered:?}"
+    );
+    post_journal_page(&mut slot, 3, 77, &["@dre@The Cook's Quest".into()]);
+    assert!(
+        journal_out(&mut slot).contains("modal-timeout"),
+        "the read fails with modal-timeout: {}",
+        journal_out(&mut slot)
+    );
+    slot.stop();
+}
+
 fn post_execution_seat_page<'a>(
     isolate: &LoadIsolate,
     buffer: &mut crate::wire::IsolateBuf,

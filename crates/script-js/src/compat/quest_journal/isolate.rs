@@ -22,6 +22,7 @@ use crate::machine::{AbortReason, Begin, Cx, Family, Step};
 use crate::observed::{self, QuestTab};
 use crate::scene_query;
 use crate::task_clock::InstantTaskClock;
+use api::identity::RequestId;
 use script::shim::InteractReq;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -56,6 +57,10 @@ struct CompatJournalLeaseState {
     /// the click. A read that was paused before its click sends the click
     /// with a live hold.
     hold_until: std::time::Instant,
+    /// The machine row that sent this read's latest click or close: the
+    /// `mirror_owner` of that verb's seat row. The host's drain finds the
+    /// read's queued rows by this identity, never by their request.
+    owner: Option<RequestId>,
 }
 
 /// Shared Rust-only quiet state for a compatibility journal machine. The
@@ -66,6 +71,11 @@ pub struct CompatJournalLease {
     active: std::sync::atomic::AtomicBool,
     producer_generation: std::sync::atomic::AtomicU64,
     host_generation: std::sync::atomic::AtomicU64,
+    /// The owner of the latest read that ended after its hold had expired,
+    /// as a raw [`RequestId`] (`0`: none). Its rows that are still queued
+    /// stay stale after the read cleared its state (finding N1 of
+    /// `HOLD-MODEL-AB`). A reset or stop clears it.
+    expired_owner: std::sync::atomic::AtomicU64,
 }
 
 impl Default for CompatJournalLease {
@@ -75,6 +85,7 @@ impl Default for CompatJournalLease {
             active: std::sync::atomic::AtomicBool::new(false),
             producer_generation: std::sync::atomic::AtomicU64::new(0),
             host_generation: std::sync::atomic::AtomicU64::new(0),
+            expired_owner: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -113,10 +124,14 @@ impl CompatJournalLease {
         {
             return;
         }
+        if let Some(previous) = state.as_ref() {
+            self.retire(previous, std::time::Instant::now());
+        }
         *state = Some(CompatJournalLeaseState {
             key: CompatJournalKey { token, generation },
             since,
             hold_until: since + COMPAT_HOLD_BOUND,
+            owner: None,
         });
         self.active
             .store(true, std::sync::atomic::Ordering::Release);
@@ -124,10 +139,11 @@ impl CompatJournalLease {
 
     pub(crate) fn clear(&self, token: u64, generation: u64) {
         let mut state = self.state.lock();
-        if state
+        if let Some(active) = state
             .as_ref()
-            .is_some_and(|active| active.key == (CompatJournalKey { token, generation }))
+            .filter(|active| active.key == (CompatJournalKey { token, generation }))
         {
+            self.retire(active, std::time::Instant::now());
             *state = None;
             self.active
                 .store(false, std::sync::atomic::Ordering::Release);
@@ -138,6 +154,18 @@ impl CompatJournalLease {
         *self.state.lock() = None;
         self.active
             .store(false, std::sync::atomic::Ordering::Release);
+        self.expired_owner
+            .store(0, std::sync::atomic::Ordering::Release);
+    }
+
+    /// A read ends (it is cleared or replaced). When its hold had expired,
+    /// its owner's rows that are still queued stay stale: the read's step
+    /// that failed it with `modal-timeout` can come before the host's drain.
+    fn retire(&self, state: &CompatJournalLeaseState, now: std::time::Instant) {
+        if let Some(owner) = state.owner.filter(|_| now >= state.hold_until) {
+            self.expired_owner
+                .store(owner.get(), std::sync::atomic::Ordering::Release);
+        }
     }
 
     /// The click of the live read `token` takes a fresh hold bound from
@@ -153,6 +181,47 @@ impl CompatJournalLease {
             true
         })
         .unwrap_or(false)
+    }
+
+    /// The machine row `owner` sent the click or close of the live read
+    /// `token`. The host's drain finds the verb's queued row by this
+    /// identity ([`Self::expired_owners`]).
+    pub(crate) fn note_owner(&self, token: u64, generation: u64, owner: Option<RequestId>) {
+        let key = CompatJournalKey { token, generation };
+        let _ = self.with_state(generation, |state| {
+            if state.key == key {
+                state.owner = owner;
+            }
+        });
+    }
+
+    /// An expired hold makes its queued interaction stale (finding N1 of
+    /// `HOLD-MODEL-AB`). The machine renews the hold at its step and queues
+    /// its click or close, and the host reads the wall time at its drain.
+    /// A stall of the process between the two (a suspended or sleeping
+    /// machine) can put the whole bound there. The host's drain
+    /// (`SlotScript::drain_host_interacts`) drops every queued row whose
+    /// `mirror_owner` is one of the owners returned here, and no other row:
+    /// the live read's owner once its hold has passed at `now`, and the owner
+    /// of the latest read that ended after its hold had passed (its next step
+    /// failed it with `modal-timeout`, which can come before the drain). A
+    /// live hold names no owner. The read's own failure is the script's
+    /// retry, as before.
+    pub fn expired_owners(
+        &self,
+        generation: u64,
+        now: std::time::Instant,
+    ) -> [Option<RequestId>; 2] {
+        let live = self
+            .with_state(generation, |state| {
+                state.owner.filter(|_| now >= state.hold_until)
+            })
+            .flatten();
+        let ended = RequestId::from_raw(
+            self.expired_owner
+                .load(std::sync::atomic::Ordering::Acquire),
+        );
+        [live, ended]
     }
 
     /// The paint lease: the read's page is hidden until the paint-hide cap
@@ -218,7 +287,7 @@ impl CompatJournalLease {
     /// Test-only: move the read's begin and hold bound `by` into the past,
     /// as a pause of that length does.
     #[cfg(test)]
-    fn backdate(&self, by: std::time::Duration) {
+    pub(crate) fn backdate(&self, by: std::time::Duration) {
         if let Some(state) = self.state.lock().as_mut() {
             state.since -= by;
             state.hold_until -= by;
@@ -329,6 +398,14 @@ impl JournalRuntime {
         self.phase = Phase::AwaitingAcquire;
         self.clock.arm(ACQUIRE_TIMEOUT_MS);
         Ok(Some(self.component_id))
+    }
+
+    /// The machine row `owner` sends this read's click or close now: the
+    /// host's drain finds that verb's queued row by this identity.
+    fn note_owner(&self, owner: Option<RequestId>) {
+        if let Some(lease) = &self.compat_lease {
+            lease.note_owner(self.token, self.generation, owner);
+        }
     }
 
     fn frozen(&self) -> bool {
@@ -656,6 +733,9 @@ impl Family for QuestJournal {
                         Ok(None) => return Step::Wait,
                         Err(done) => return Step::Done(done),
                     };
+                    // The click's seat row carries this row's identity as its
+                    // `mirror_owner`: the host's drain finds it by that.
+                    RUNTIME.with(|rt| rt.borrow().note_owner(cx.request_id()));
                     cx.emit(InteractReq::IfButton { component_id });
                     return Step::Wait;
                 }
@@ -679,6 +759,7 @@ impl Family for QuestJournal {
                     });
                     match step.get("kind").and_then(Value::as_str) {
                         Some("close-modal") => {
+                            RUNTIME.with(|rt| rt.borrow().note_owner(cx.request_id()));
                             cx.emit(InteractReq::CloseModal);
                             return Step::Wait;
                         }
@@ -1193,12 +1274,100 @@ mod tests {
         assert_eq!(call("next", token, 7)["kind"], "done");
     }
 
-    /// The hold bound is one more `Instant` in the per-slot lease state.
+    /// N1 of `HOLD-MODEL-AB`: the lease names the owner whose queued rows the
+    /// host's drain drops (`SlotScript::drain_host_interacts`, by their
+    /// `mirror_owner`). A live hold names no owner. Once the hold has passed,
+    /// the live read's owner is named. When the read's next step fails it
+    /// with `modal-timeout` (that step can come before the host's drain), its
+    /// owner stays named, also after the script's retry begins the next read.
+    /// A read that ends with a live hold names no owner, and a reset forgets
+    /// the named owner.
     #[test]
-    fn the_lease_state_is_its_key_and_two_instants() {
+    fn an_expired_hold_names_the_owner_of_its_queued_verb() {
+        reset_closed();
+        let lease = std::sync::Arc::new(CompatJournalLease::default());
+        lease.set_generation(7);
+        lease.set_host_generation(7);
+        bind_compat_runtime(std::sync::Arc::clone(&lease));
+        let begin = || {
+            dispatch(&json!({
+                "op": "begin",
+                "name": "Cook's Assistant",
+                "generation": 0,
+            }))["token"]
+                .as_u64()
+                .expect("the read begins")
+        };
+        let click = |owner| {
+            assert_eq!(RUNTIME.with(|rt| rt.borrow_mut().click()), Ok(Some(1234)));
+            RUNTIME.with(|rt| rt.borrow().note_owner(Some(owner)));
+        };
+        let first = RequestId::isolate(5).expect("isolate id");
+        let token = begin();
+        click(first);
+        let clicked_at = std::time::Instant::now();
+        assert_eq!(
+            lease.expired_owners(7, clicked_at),
+            [None, None],
+            "a live hold names no owner"
+        );
+        assert_eq!(
+            lease.expired_owners(7, clicked_at + COMPAT_HOLD_BOUND),
+            [Some(first), None],
+            "the stall outlasts the hold: the read's queued click is stale"
+        );
+        lease.backdate(COMPAT_HOLD_BOUND);
+        assert_eq!(call("next", token, 7)["reason"], "modal-timeout");
+        assert_eq!(
+            lease.expired_owners(7, std::time::Instant::now()),
+            [None, Some(first)],
+            "the read failed before the host's drain: its click stays stale"
+        );
+        // The script's retry: the next read, with a live hold of its own.
+        let second = RequestId::isolate(6).expect("isolate id");
+        let token = begin();
+        click(second);
+        assert_eq!(
+            lease.expired_owners(7, std::time::Instant::now()),
+            [None, Some(first)]
+        );
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", token, 7)["kind"], "done");
+        assert_eq!(call("close", token, 7)["kind"], "close-modal");
+        post_tab(9, -1, &[], vec![cook_row(), waterfall_row()]);
+        assert_eq!(call("close", token, 7)["kind"], "done");
+        assert_eq!(
+            lease.expired_owners(7, std::time::Instant::now() + COMPAT_HOLD_BOUND),
+            [None, Some(first)],
+            "a read that ended with a live hold names no owner"
+        );
+        lease.revoke();
+        assert_eq!(
+            lease.expired_owners(7, std::time::Instant::now()),
+            [None, None],
+            "a reset forgets the expired owner"
+        );
+    }
+
+    /// The hold bound is one more `Instant` in the per-slot lease state, and
+    /// the owner that the host's drain finds the queued verb by is one more
+    /// word (finding N1 of `HOLD-MODEL-AB`).
+    #[test]
+    fn the_lease_state_is_its_key_two_instants_and_the_verb_owner() {
         assert_eq!(
             std::mem::size_of::<CompatJournalLeaseState>(),
-            std::mem::size_of::<CompatJournalKey>() + 2 * std::mem::size_of::<std::time::Instant>()
+            std::mem::size_of::<CompatJournalKey>()
+                + 2 * std::mem::size_of::<std::time::Instant>()
+                + std::mem::size_of::<Option<RequestId>>()
         );
     }
 }
+
+#[cfg(test)]
+#[path = "hold_conformance_tests.rs"]
+mod hold_conformance_tests;

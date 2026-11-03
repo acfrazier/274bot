@@ -1263,6 +1263,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/script_hold_conformance_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/script_interact.rs",
       "owner": "T1"
     },
@@ -4171,6 +4175,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script-js/src/compat/quest_journal/hold_conformance_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/quest_journal/native.rs",
       "owner": "T2"
     },
@@ -6304,6 +6312,30 @@
     },
     {
       "path": "tools/harness/write_player_fixture.ts",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/hold-model/nightly.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/hold-model/src/explorer.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/hold-model/src/lib.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/hold-model/src/main.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/hold-model/src/model.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/hold-model/tests/model.rs",
       "owner": "T1"
     },
     {

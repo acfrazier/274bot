@@ -1261,6 +1261,22 @@ impl LoadIsolate {
         lease.wait(generation, now)
     }
 
+    /// The in-isolate owners whose compatibility journal hold has expired at
+    /// `now`: the host's drain drops their queued rows
+    /// ([`crate::quest_journal::CompatJournalLease::expired_owners`]).
+    pub(crate) fn compat_journal_expired_owners(
+        &self,
+        now: Instant,
+    ) -> [Option<api::identity::RequestId>; 2] {
+        let Some(lease) = self.compat_journal.as_ref() else {
+            return [None; 2];
+        };
+        let generation = self
+            .work_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        lease.expired_owners(generation, now)
+    }
+
     fn revoke_compat_journal(&self) {
         if let Some(lease) = &self.compat_journal {
             lease.revoke();

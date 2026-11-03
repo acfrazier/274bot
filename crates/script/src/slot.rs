@@ -2252,12 +2252,18 @@ impl SlotScript {
     }
 
     /// Whether a native or compatibility journal currently owns the hidden
-    /// paint lease. Both paths are wall-clock revalidated on every read.
+    /// paint lease. Both paths are wall-clock revalidated on every read. The
+    /// native read hides the page for at most its 10 s paint cap from the
+    /// begin, however long its hold lasts.
     pub fn journal_paint_hidden(&mut self, now: std::time::Instant) -> bool {
-        if self.native_quiet_read(now).is_some() {
+        if self
+            .native_runtime
+            .ledger
+            .as_mut()
+            .is_some_and(|ledger| ledger.quiet_paint_hidden(now))
+        {
             return true;
         }
-
         {
             self.surface
                 .as_ref()
@@ -2272,9 +2278,10 @@ impl SlotScript {
     /// (`Dialogue`), the native quiet read (the journal machine, from before
     /// its click to its observed close) and the compatibility journal. Stop,
     /// replacement and a session boundary revoke the native leases. The
-    /// native quiet read also ends at its own 10 s wall bound; the
-    /// compatibility journal's hold ends at its own 10 s wall bound from its
-    /// begin, renewed at its click.
+    /// native quiet read also ends at its own 10 s wall bound, from its begin
+    /// and renewed at each window its owner arms (its click, its capture, its
+    /// close); the compatibility journal's hold ends at its own 10 s wall
+    /// bound from its begin, renewed at its click.
     ///
     /// Each wait carries the deadline its owner enforces itself, as an
     /// observed tick, in the owner's own clock at this sample. A native
@@ -3381,6 +3388,55 @@ impl SlotScript {
             .map_or(0, |surface| surface.held_fold_len())
     }
 
+    /// An expired hold makes its queued interaction stale (finding N1 of
+    /// `HOLD-MODEL-AB`). This drain is the one place where the isolate's
+    /// output reaches dispatch, so the rule applies here, by identity: the
+    /// surface names the in-isolate owners whose interaction hold has expired
+    /// now, and every row of theirs that is not dispatched yet is dropped,
+    /// in the drained batches (also a batch that a closed dispatch carries
+    /// back) and in the seat's custody. No other row is touched, also not an
+    /// equal request of another family. The owner fails at its own next step
+    /// (the compatibility journal: `modal-timeout`) and its script's retry
+    /// applies. The drain reads the clock after the frame's hold sample, so a
+    /// hold that the sample saw expired is expired here too.
+    ///
+    /// The raw queue ([`Self::drain_interacts_stamped`]) carries no owner. An
+    /// execution-bound isolate (every production surface) sends all of its
+    /// tick output as seat batches; only an isolate without an execution,
+    /// which test hooks create, sends raw gameplay rows.
+    fn drop_expired_hold_rows(
+        &mut self,
+        batches: &mut [crate::native::seat_rows::QueuedSeatBatch],
+    ) {
+        let Some(surface) = self.surface.as_ref() else {
+            return;
+        };
+        let owners = surface.expired_hold_owners(Instant::now());
+        if owners == [None, None] {
+            return;
+        }
+        let mut dropped = 0;
+        for queued in batches.iter_mut() {
+            let before = queued.batch.reqs.len();
+            queued
+                .batch
+                .reqs
+                .retain(|row| row.mirror_owner.is_none() || !owners.contains(&row.mirror_owner));
+            dropped += before - queued.batch.reqs.len();
+        }
+        if let Some(seat) = self.seat.as_mut() {
+            for owner in owners.into_iter().flatten() {
+                seat.drop_expired_hold_rows(owner);
+            }
+            seat.count_dropped(dropped);
+        }
+        if dropped > 0 {
+            self.pending_logs.push(format!(
+                "dropped {dropped} queued row(s) whose interaction hold expired"
+            ));
+        }
+    }
+
     /// Drain one host frame's decoded isolate messages, separating the latest
     /// run-policy replacement from game/lifecycle interacts. The outer option
     /// is "an update was sent"; the inner option is replace versus clear.
@@ -3392,10 +3448,11 @@ impl SlotScript {
         Vec<crate::interact::QueuedInteract>,
         bool,
     ) {
-        let batches = self
+        let mut batches = self
             .surface
             .as_ref()
             .map_or_else(Vec::new, |surface| surface.drain_seat_batches());
+        self.drop_expired_hold_rows(&mut batches);
         let mut carried = Vec::new();
         // Set when the retained guardian-hold batch still has pages that
         // the seat cannot take in this frame.

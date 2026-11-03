@@ -2032,6 +2032,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hold-model"
+version = "0.1.0"
+
+[[package]]
 name = "home"
 version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2065,6 +2069,7 @@ dependencies = [
  "bzip2",
  "client",
  "crossterm",
+ "hold-model",
  "host",
  "libc",
  "native-tls",
@@ -4300,6 +4305,7 @@ dependencies = [
  "deno_ast",
  "deno_core",
  "flatbuffers",
+ "hold-model",
  "libc",
  "nav-planner",
  "parking_lot",
