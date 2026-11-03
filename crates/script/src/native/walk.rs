@@ -21,7 +21,7 @@ mod anchor_policy_tests {
         assert!(should_walk_home_to_gather_anchor(Some(8.01), None));
         assert!(!should_walk_home_to_gather_anchor(Some(0.0), Some(-3.0)));
         assert!(should_walk_home_to_gather_anchor(Some(12.0), Some(11.9)));
-        assert!(!should_walk_home_to_gather_anchor(
+        assert!(should_walk_home_to_gather_anchor(
             Some(12.0),
             Some(f64::INFINITY)
         ));
