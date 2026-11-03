@@ -1,11 +1,11 @@
 //! Frozen `api/market/catalog.ts` over the selected revision's items: which
 //! objs an order book lists, the names a shop says back, and whether the
 //! content lets an obj cross a trade window. Every answer reads
-//! `SelectedGameData::items`; nothing here is a copied foreign table.
+//! `SelectedGameData::items` supplies item facts.
 //!
 //! `HAND_ALIASES` and `NAME_SYNONYMS` mirror the frozen rs2b0t
-//! `src/bot/api/market/catalog.ts`; generated collision aliases derive from
-//! selected item names.
+//! `src/bot/api/market/catalog.ts`.
+//! Generated collision aliases derive from selected item names.
 
 use api::game_data::{GameItem, SelectedGameData};
 use std::cmp::Ordering;
