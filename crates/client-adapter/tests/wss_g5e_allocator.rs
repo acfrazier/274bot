@@ -751,15 +751,19 @@ fn write_snapshot(
     output.push('}');
 }
 
+struct AdapterReceipt<'a> {
+    source_path: &'a str,
+    body: &'a str,
+    sha256: &'a [u8],
+}
+
 fn make_receipt(
     baseline_current: usize,
     baseline_rss: Option<u64>,
     snapshots: &[PhaseSnapshot; 6],
     driver_thread: u64,
     fixture_thread: u64,
-    adapter_receipt_path: &str,
-    adapter_receipt: &str,
-    adapter_receipt_sha256: &[u8],
+    adapter: AdapterReceipt<'_>,
 ) -> String {
     let event_count = EVENT_COUNT.load(Ordering::Acquire);
     assert!(
@@ -776,7 +780,7 @@ fn make_receipt(
     let root_lock_digest = Sha256::digest(include_bytes!("../../../Cargo.lock"));
     let fork_lock_digest =
         Sha256::digest(include_bytes!("../../../vendor/fr-client-rust/Cargo.lock"));
-    let mut output = String::with_capacity(4_096 + event_count * 256 + adapter_receipt.len());
+    let mut output = String::with_capacity(4_096 + event_count * 256 + adapter.body.len());
     output.push_str("{\n  \"schema\": \"t1-g5e-allocator-receipt-v2\",\n  \"gate\": \"T1-GATE r7e G5-E (sections 8 and 8.1, lines 684-717)\",\n");
     output.push_str("  \"root_lock_sha256\": \"");
     for byte in root_lock_digest {
@@ -860,13 +864,13 @@ fn make_receipt(
     write!(output, "{RESERVED_TOTAL_BYTES}").expect("write reservation summary");
     output.push_str(",\n    \"adapter_rings_measured\": false,\n    \"used_as_measurement_oracle\": false\n  },\n");
     output.push_str("  \"actual_adapter_wss_capture\": {\"source_path\":");
-    write_json_string(&mut output, adapter_receipt_path);
+    write_json_string(&mut output, adapter.source_path);
     output.push_str(",\"sha256\":\"");
-    for byte in adapter_receipt_sha256 {
+    for byte in adapter.sha256 {
         write!(output, "{byte:02x}").expect("write adapter receipt digest");
     }
     output.push_str("\",\"receipt\":");
-    output.push_str(adapter_receipt);
+    output.push_str(adapter.body);
     output.push_str("},\n");
     output.push_str("  \"gate_measurement_fields\": {\n");
     output.push_str("    \"actual_adapter_connection_count\": {\"status\":\"measured\",\"source\":\"actual_adapter_wss_capture.receipt.connection_count\"},\n");
@@ -1071,9 +1075,11 @@ fn g5e_actual_adapter_and_direct_control_receipt() {
         &[setup, connected, idle, read_write, shutdown, retired],
         driver_thread,
         fixture_thread_id,
-        &adapter_input_path.to_string_lossy(),
-        adapter_receipt,
-        &adapter_digest,
+        AdapterReceipt {
+            source_path: &adapter_input_path.to_string_lossy(),
+            body: adapter_receipt,
+            sha256: &adapter_digest,
+        },
     );
     let mut file = OpenOptions::new()
         .write(true)

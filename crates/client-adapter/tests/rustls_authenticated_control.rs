@@ -3168,7 +3168,7 @@ fn g5e_adapter_wss_connection_difference_receipt() {
         let resources = g5e_process_resources();
         points.push((index + 1, live, corrected, resources));
     }
-    for ((attempt, mut endpoint), server) in lanes.into_iter().zip(servers.into_iter()) {
+    for ((attempt, endpoint), server) in lanes.into_iter().zip(servers) {
         endpoint.close(attempt.poll.registry());
         drop(attempt);
         server.stop();
@@ -3179,7 +3179,7 @@ fn g5e_adapter_wss_connection_difference_receipt() {
         let server = ControlServer::spawn(Arc::clone(&server_config));
         let before = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
         reset_g5e_allocator_peak();
-        let (attempt, mut endpoint, handshake) = connect_wss(&server, Arc::clone(&client_config));
+        let (attempt, endpoint, handshake) = connect_wss(&server, Arc::clone(&client_config));
         assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
         drop(handshake);
         let (after, peak) = g5e_allocator_snapshot();
@@ -3254,9 +3254,9 @@ fn g5e_adapter_wss_connection_difference_receipt() {
         )
         .expect("write isolated handshake sample");
     }
-    write!(
+    writeln!(
         receipt,
-        "],\"handshake_peak_excess_spread_bytes\":{{\"min\":{spread_min},\"max\":{spread_max},\"range\":{}}},\"ticket_store_insertions\":0,\"ticket_parse_cost\":\"unresolved: the excess includes client handshake, server post-accept and upgrade allocations; no ticket-parse-specific scope\",\"worker_stack_capture_count\":{},\"worker_config_generation_count\":{},\"allocation_scope_count\":{},\"sample_semantics\":\"GlobalAlloc requested-layout live bytes, not usable capacity; source-known 250760-byte logical reserve is never an actual-cost oracle\"}}\n",
+        "],\"handshake_peak_excess_spread_bytes\":{{\"min\":{spread_min},\"max\":{spread_max},\"range\":{}}},\"ticket_store_insertions\":0,\"ticket_parse_cost\":\"unresolved: the excess includes client handshake, server post-accept and upgrade allocations; no ticket-parse-specific scope\",\"worker_stack_capture_count\":{},\"worker_config_generation_count\":{},\"allocation_scope_count\":{},\"sample_semantics\":\"GlobalAlloc requested-layout live bytes, not usable capacity; source-known 250760-byte logical reserve is never an actual-cost oracle\"}}",
         spread_max - spread_min,
         G5E_WORKER_STACK_SAMPLES
             .get()
