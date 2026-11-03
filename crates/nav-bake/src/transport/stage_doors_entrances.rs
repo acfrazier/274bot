@@ -1709,8 +1709,12 @@ mod stage_window_tests {
             let condition = completed_progress_comparison(colour_authoritative, Some(family));
             assert_eq!(condition.value, Some(true));
             assert_eq!(condition.needs.quest_family, Some(family));
-            let [api::selected::QuestGate::Window(window)] = condition.needs.quests.as_slice() else {
-                panic!("expected the raw progress window: {:?}", condition.needs.quests);
+            let [api::selected::QuestGate::Window(window)] = condition.needs.quests.as_slice()
+            else {
+                panic!(
+                    "expected the raw progress window: {:?}",
+                    condition.needs.quests
+                );
             };
             assert_eq!(window.quest.0.as_ref(), "hero");
             assert_eq!(window.signal.0.as_ref(), "heroquest");
