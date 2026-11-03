@@ -1587,6 +1587,56 @@ fn resolve_probe_in_walk(
     snapshot
 }
 
+fn resolve_journal_in_walk(
+    walk: &mut super::super::walk::PrereqWalk,
+    state: &SlotState,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+) -> GameSnapshot {
+    let gate = kitchen_journal_gate();
+    let mut snapshot = snapshot(gate.crossing.takeoff);
+    snapshot.seed_quest_statuses(
+        vec![api::snapshot::QuestStatusView {
+            name: "Shield of Arrav".into(),
+            component_id: 42,
+            colour: 0x00f800,
+        }],
+        true,
+    );
+    wrapper_terminal(ledger, tick, WalkEnd::NeedsStep(vec![gate].into()));
+    assert!(wrapper_poll(walk, &snapshot, ledger, tick, state).is_pending());
+    assert!(matches!(
+        last_interaction(ledger),
+        InteractReq::IfButton { component_id: 42 }
+    ));
+    accept_last(ledger, tick, 0);
+    snapshot.seed_main_modal(
+        crate::quest_journal::ROOT_289,
+        vec![
+            crate::quest_journal::test_widget(
+                crate::quest_journal::TITLE_289,
+                "@dre@Shield of Arrav",
+            ),
+            crate::quest_journal::test_widget(
+                8145,
+                "@str@I searched the Phoenix Gang Headquarters and found",
+            ),
+            crate::quest_journal::test_widget(8146, "@str@half of the Shield of Arrav."),
+            crate::quest_journal::test_widget(8147, "@red@QUEST COMPLETE!"),
+        ],
+    );
+    assert!(wrapper_poll(walk, &snapshot, ledger, tick + 1, state).is_pending());
+    assert!(matches!(last_interaction(ledger), InteractReq::CloseModal));
+    accept_last(ledger, tick + 1, 0);
+    snapshot.seed_main_modal(-1, vec![]);
+    assert!(wrapper_poll(walk, &snapshot, ledger, tick + 2, state).is_pending());
+    assert!(matches!(
+        ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        HostEffect::Walk(_)
+    ));
+    snapshot
+}
+
 #[test]
 fn reissued_walks_keep_the_original_effective_prerequisite_grants() {
     let (_, holy) = row(ConsentSwitch::PrereqDialogue);
@@ -1728,6 +1778,56 @@ fn same_gate_twice_ends_step_repeated_and_preserves_the_original_walk() {
         PrereqRefusal::StepRepeated { .. }
     ));
     assert_eq!(state.prereq_snapshot().facts().len(), 1);
+    assert!(!ledger.as_ref().unwrap().test_owner_live());
+}
+
+#[test]
+fn a_journal_and_two_distinct_rows_each_reissue_before_the_budget_refuses_a_fourth() {
+    let (_, holy) = row(ConsentSwitch::PrereqDialogue);
+    let (_, mort) = row(ConsentSwitch::QuestStart);
+    let state = state();
+    let (mut walk, mut ledger) = walk_wrapper(&crossing_snapshot(&holy.crossings[0]));
+    resolve_journal_in_walk(&mut walk, &state, &mut ledger, 2);
+    resolve_probe_in_walk(&mut walk, holy, &holy.crossings[0], &state, &mut ledger, 5);
+    let snapshot =
+        resolve_probe_in_walk(&mut walk, mort, &mort.crossings[0], &state, &mut ledger, 7);
+    assert_eq!(state.prereq_snapshot().facts().len(), 3);
+    assert_eq!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| matches!(action.effect, HostEffect::Walk(_)))
+            .count(),
+        4,
+        "the original walk and one reissue per distinct prerequisite row"
+    );
+
+    let mut fourth = gate(holy, &holy.crossings[0], Truth::Unknown);
+    let QuestGate::Window(window) = &mut fourth.gate else {
+        panic!("the Priest fixture is a stage window");
+    };
+    window.values = api::selected::InclusiveRange {
+        min: Some(5),
+        max: Some(61),
+    };
+    assert!(CATALOG.for_journal(&fourth.gate).is_some());
+    let emitted = ledger.as_ref().unwrap().outbox.len();
+    wrapper_terminal(&mut ledger, 9, WalkEnd::NeedsStep(vec![fourth].into()));
+    let Poll::Ready(Ok(receipt)) = wrapper_poll(&mut walk, &snapshot, &mut ledger, 9, &state)
+    else {
+        panic!("a fourth prerequisite must not begin after the distinct-row budget");
+    };
+    assert_eq!(receipt.end, WalkEnd::Blocked);
+    let Some(crate::native::WalkRefusal::Prerequisite(refusal)) = receipt.refusal else {
+        panic!("the exhausted budget returns its typed refusal");
+    };
+    assert!(matches!(
+        refusal.as_ref(),
+        PrereqRefusal::StepRepeated { .. }
+    ));
+    assert_eq!(ledger.as_ref().unwrap().outbox.len(), emitted);
     assert!(!ledger.as_ref().unwrap().test_owner_live());
 }
 
