@@ -263,6 +263,10 @@ struct WalkResilientOpts {
     timeout_ms: Option<u64>,
     /// Retained for the caller API; compat does not apply PathFinder's budget
     /// to Rust routing.
+    #[expect(
+        dead_code,
+        reason = "the accepted caller budget is not applied under F1"
+    )]
     #[serde(default)]
     max_budget: Option<u64>,
     #[serde(default)]
@@ -1686,8 +1690,6 @@ impl Family for WalkResilient {
     fn begin(args: WalkResilientArgs, cx: &mut Cx<'_>) -> Begin<Self> {
         reset_executor_status();
         let opts = args.opts;
-        // Keep the upstream pacing option in the ABI; this host router does not use it.
-        let _max_budget = opts.max_budget;
         if let Some(reason) = avoid_refusal(&opts.avoid_zones) {
             set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Refuse(reason);
@@ -1846,13 +1848,15 @@ impl Family for ProbeDest {
     type Output = Value;
 
     fn begin(args: ProbeDestArgs, cx: &mut Cx<'_>) -> Begin<Self> {
-        let (Some(dest), Some(max_expansions), Some(from)) = (
+        let (Some(dest), Some(_), Some(from)) = (
             probe_dest_tile(&args.dest),
             probe_dest_max_expansions(&args.max_expansions),
             here(),
         ) else {
             return Begin::Done(json!({"ok": false, "terminal": null}));
         };
+        // The count is accepted at the API boundary, but native routing uses
+        // NODE_BUDGET just like the walk verifier.
         let token = crate::inspect_wait::dispatch(&json!({
             "op": "begin",
             "from": { "x": from.x, "z": from.z, "level": from.level },
@@ -1860,7 +1864,6 @@ impl Family for ProbeDest {
             "allow_teleports": false,
             "allow_wilderness": true,
             "allow_bank_fetch": false,
-            "max_expansions": max_expansions,
             "timeout_ms": PROBE_TIMEOUT_MS,
         }))
         .as_u64()
@@ -1878,7 +1881,7 @@ impl Family for ProbeDest {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: false,
-            max_expansions: Some(max_expansions),
+            max_expansions: None,
             avoid: Vec::new(),
             cross: Vec::new(),
             request_id: token,
@@ -2687,15 +2690,16 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn stalled_verify_probe_ignores_120k_caller_budget_for_long_route() {
+    fn walk_verify_and_probe_dest_ignore_caller_budgets_below_node_budget_for_long_route() {
         use nav_planner::collision::{pack_walk, WorldCollision};
-        use nav_planner::router::{self, FindOptions};
+        use nav_planner::router::{self, FindOptions, NODE_BUDGET};
         use nav_planner::transport::TransportGraph;
         use nav_planner::WorldState;
 
-        const WIDTH: usize = 512;
-        const HEIGHT: usize = 512;
+        const WIDTH: usize = 768;
+        const HEIGHT: usize = 768;
         const WALL_X: usize = WIDTH / 2;
+        assert!(300_000 < NODE_BUDGET);
         reset();
         let from = WorldTile {
             x: 0,
@@ -2708,9 +2712,47 @@ pub(crate) mod tests {
             level: 0,
         };
         post_here(from.x, from.z);
+        let probe_args = serde_json::from_value::<ProbeDestArgs>(json!({
+            "dest": { "x": to.x, "z": to.z, "level": to.level },
+            "maxExpansions": 300_000
+        }))
+        .expect("probeDest accepts the caller's expansion count");
+        let mut probe_ops = Vec::new();
+        let mut probe_clock = crate::task_clock::InstantTaskClock::new();
+        let mut probe_cx = crate::machine::Cx::test(&mut probe_ops, &mut probe_clock, None);
+        let crate::machine::Begin::Run(_) =
+            <ProbeDest as crate::machine::Family>::begin(probe_args, &mut probe_cx)
+        else {
+            panic!("probeDest accepts a valid destination and expansion count");
+        };
+        drop(probe_cx);
+        let [InteractReq::InspectRoute {
+            x: probe_x,
+            z: probe_z,
+            level: probe_level,
+            from_x: probe_from_x,
+            from_z: probe_from_z,
+            from_level: probe_from_level,
+            max_expansions: probe_max_expansions,
+            ..
+        }] = probe_ops.as_slice()
+        else {
+            panic!("expected the probeDest route request, got {probe_ops:?}");
+        };
+        assert_eq!(*probe_max_expansions, None);
+        assert_eq!((*probe_x, *probe_z, *probe_level), (to.x, to.z, to.level));
+        assert_eq!(
+            (*probe_from_x, *probe_from_z, *probe_from_level),
+            (from.x, from.z, from.level)
+        );
+        let probe_batch =
+            crate::wire::InteractBatch::from_bytes(&crate::wire::encode_interact_batch(&probe_ops))
+                .expect("the probeDest request encodes");
+        assert_eq!(probe_batch.reqs().unwrap().get(0).max_expansions(), None);
+
         let args = serde_json::from_value::<WalkResilientArgs>(json!({
             "tile": { "x": to.x, "z": to.z, "level": to.level },
-            "opts": { "radius": 0, "maxBudget": 120_000 }
+            "opts": { "radius": 0, "maxBudget": 300_000 }
         }))
         .expect("the walk options deserialize with the caller budget");
         let mut ops = Vec::new();
@@ -2796,10 +2838,10 @@ pub(crate) mod tests {
                 options,
                 &state,
                 &[],
-                120_000,
+                300_000,
             ),
             Err(router::RouteError::BudgetExhausted),
-            "the map requires more than the caller's 120,000 expansion budget"
+            "the map requires more than the upstream 300,000 expansion count"
         );
         let routed = router::find_with_avoid(
             &collision,
