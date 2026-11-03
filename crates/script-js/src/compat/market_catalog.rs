@@ -603,8 +603,8 @@ mod tests {
         let index = market_index(&data);
         let resolve = |query, exact_only| resolve_by_name(&index, query, exact_only);
         assert_eq!(resolve(" #62 ", false), [62]);
-        assert_eq!(resolve("#441", false), []);
-        assert_eq!(resolve("  ", false), []);
+        assert!(resolve("#441", false).is_empty());
+        assert!(resolve("  ", false).is_empty());
         assert_eq!(resolve("maple longbow", false), [851]);
         assert_eq!(resolve("maple longbow", true), [851]);
         assert_eq!(resolve("maple longbow u", false), [62]);
@@ -625,8 +625,8 @@ mod tests {
         assert_eq!(resolve("dhide", false), [1747, 1749, 1751, 1753]);
         assert_eq!(resolve("guam leaf", false), [249]);
         assert_eq!(resolve("guam herb", false), [199]);
-        assert_eq!(resolve("green", true), []);
-        assert_eq!(resolve("not a real item", true), []);
+        assert!(resolve("green", true).is_empty());
+        assert!(resolve("not a real item", true).is_empty());
         assert_eq!(resolve("iron ore u", false), [440]);
         assert_eq!(resolve("iron ore u", true), [440]);
     }

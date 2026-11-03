@@ -2745,9 +2745,9 @@ pub(crate) mod tests {
             (*probe_from_x, *probe_from_z, *probe_from_level),
             (from.x, from.z, from.level)
         );
-        let probe_batch =
-            crate::wire::InteractBatch::from_bytes(&crate::wire::encode_interact_batch(&probe_ops))
-                .expect("the probeDest request encodes");
+        let probe_bytes = crate::wire::encode_interact_batch(&probe_ops);
+        let probe_batch = crate::wire::InteractBatch::from_bytes(&probe_bytes)
+            .expect("the probeDest request encodes");
         assert_eq!(probe_batch.reqs().unwrap().get(0).max_expansions(), None);
 
         let args = serde_json::from_value::<WalkResilientArgs>(json!({

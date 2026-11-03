@@ -2,7 +2,6 @@
 //! This is isolate-local calculation, not an isolate-to-host transport.
 
 use crate::supply_v2;
-use api::game_data::SelectedGameData;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 use std::rc::Rc;

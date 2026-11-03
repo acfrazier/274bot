@@ -46,7 +46,7 @@ fn setup() -> Runtime {
         api::game_data::for_revision(ClientRevision::R289).expect("selected game data"),
     ));
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-    install(&mut runtime).unwrap();
+    install(&mut runtime, Arc::new(AtomicBool::new(false))).unwrap();
     runtime.eval::<()>(SETUP).unwrap();
     runtime
 }
