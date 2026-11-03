@@ -3,17 +3,69 @@ use super::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use super::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkReceipt, WalkRequest};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::SnapshotView;
-use api::snapshot::WorldTile;
 use nav_planner::contract::ArrivalKind;
-use nav_planner::transport::WildernessRules;
 use nav_planner::walk_destinations::{WalkDestination, WALK_DESTINATIONS};
 use std::num::NonZeroU64;
 use std::task::Poll;
 use std::time::Duration;
 
-/// Level at a tile under the selected pack’s inclusive wilderness zones.
-pub fn wilderness_level_at(rules: &WildernessRules, tile: WorldTile) -> i32 {
-    rules.level(tile)
+#[cfg(test)]
+mod anchor_policy_tests {
+    use super::*;
+
+    #[test]
+    fn gather_anchor_predicates_keep_frozen_thresholds() {
+        assert!(!should_walk_home_to_gather_anchor(None, None));
+        assert!(!should_walk_home_to_gather_anchor(Some(f64::NAN), None));
+        assert!(!should_walk_home_to_gather_anchor(Some(8.0), None));
+        assert!(should_walk_home_to_gather_anchor(Some(8.01), None));
+        assert!(!should_walk_home_to_gather_anchor(Some(0.0), Some(-3.0)));
+        assert!(should_walk_home_to_gather_anchor(Some(12.0), Some(11.9)));
+        assert!(!should_walk_home_to_gather_anchor(
+            Some(12.0),
+            Some(f64::INFINITY)
+        ));
+
+        assert!(!should_soft_home_from_gather_miss(None, None));
+        assert!(!should_soft_home_from_gather_miss(Some(28.0), None));
+        assert!(should_soft_home_from_gather_miss(Some(28.01), None));
+        assert!(!should_soft_home_from_gather_miss(Some(20.0), Some(12.0)));
+        assert!(should_soft_home_from_gather_miss(Some(22.01), Some(22.9)));
+        assert!(!should_soft_home_from_gather_miss(Some(28.0), Some(40.0)));
+        assert!(!should_soft_home_from_gather_miss(
+            Some(28.0),
+            Some(f64::NAN)
+        ));
+    }
+}
+
+/// Whether gathering should walk home after a bank or a missing target.
+pub fn should_walk_home_to_gather_anchor(
+    distance: Option<f64>,
+    arrive_radius: Option<f64>,
+) -> bool {
+    let Some(distance) = distance.filter(|value| value.is_finite()) else {
+        return false;
+    };
+    let radius = arrive_radius
+        .filter(|value| value.is_finite())
+        .map_or(8.0, f64::floor)
+        .max(0.0);
+    distance > radius
+}
+
+/// Whether a gather miss is far enough from camp to use the soft return.
+pub fn should_soft_home_from_gather_miss(distance: Option<f64>, leash: Option<f64>) -> bool {
+    let Some(distance) = distance.filter(|value| value.is_finite()) else {
+        return false;
+    };
+    let leash = leash
+        .filter(|value| value.is_finite())
+        .unwrap_or(crate::gather_locations::DEFAULT_CAMP_RADIUS)
+        .floor()
+        .max(2.0);
+    let threshold = 20.0_f64.max(leash.min(28.0));
+    distance > threshold
 }
 
 /// Whether the tile belongs to the contract Rune Essence mine square.

@@ -360,9 +360,8 @@ pub(super) fn wire_runtime(
                     Ok(serde_json::json!(index))
                 }
                 "wilderness-level-at" => {
-                    let level = json_tile(args.get(1)).map_or(0, |tile| {
-                        script::native::walk::wilderness_level_at(&wilderness_rules, tile)
-                    });
+                    let level =
+                        json_tile(args.get(1)).map_or(0, |tile| wilderness_rules.level(tile));
                     Ok(serde_json::json!(level))
                 }
                 "in-ess-mine" => Ok(serde_json::json!(json_i32(args.get(1))

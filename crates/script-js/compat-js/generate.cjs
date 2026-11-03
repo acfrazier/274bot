@@ -68,6 +68,17 @@ for (const s of prelude.statements) {
         preludeClasses.set(name(s.expression.right), s.expression.right);
     }
 }
+function isUnconditionalRefusal(node) {
+    if (!node) return false;
+    if (ts.isPropertyAssignment(node) || ts.isPropertyDeclaration(node)) {
+        node = node.initializer;
+        if (!node) return false;
+    }
+    const functionLike = ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) ||
+        ts.isGetAccessor(node) || ts.isSetAccessor(node) ||
+        ts.isFunctionExpression(node) || ts.isArrowFunction(node);
+    return functionLike && refusalBody(node.body);
+}
 function surface(text) {
     const sf = parse(text, 'shim.js');
     const exports = new Map();
@@ -85,11 +96,17 @@ function surface(text) {
     }
     for (const s of sf.statements) {
         if (modifiers(s).includes(ts.SyntaxKind.ExportKeyword)) {
-            if (ts.isVariableStatement(s)) for (const d of s.declarationList.declarations) exports.set(name(d), d.initializer);
-            else if (name(s)) exports.set(name(s), s);
+            if (ts.isVariableStatement(s)) {
+                for (const d of s.declarationList.declarations) {
+                    if (!isUnconditionalRefusal(d.initializer)) exports.set(name(d), d.initializer);
+                }
+            } else if (name(s) && !isUnconditionalRefusal(s)) exports.set(name(s), s);
         }
-        if (modifiers(s).includes(ts.SyntaxKind.DefaultKeyword)) exports.set('default', s);
-        if (ts.isExportAssignment(s) && ts.isIdentifier(s.expression)) exports.set('default', locals.get(s.expression.text) || null);
+        if (modifiers(s).includes(ts.SyntaxKind.DefaultKeyword) && !isUnconditionalRefusal(s)) exports.set('default', s);
+        if (ts.isExportAssignment(s) && ts.isIdentifier(s.expression)) {
+            const target = locals.get(s.expression.text);
+            if (!isUnconditionalRefusal(target)) exports.set('default', target || null);
+        }
         if (ts.isExportDeclaration(s) && s.exportClause && ts.isNamedExports(s.exportClause)) {
             for (const e of s.exportClause.elements) {
                 const imported = (e.propertyName || e.name).text;
@@ -107,8 +124,16 @@ for (let pass = 0; pass < surfaces.size; pass++) {
     for (const [module, live] of surfaces) for (const [symbol, source] of live.reexports) {
         if (live.exports.get(symbol)) continue;
         const target = path.posix.normalize(path.posix.join(path.posix.dirname(module), source.from));
-        const node = surfaces.get(target)?.exports.get(source.imported);
-        if (node) { live.exports.set(symbol, node); changed = true; }
+        const targetSurface = surfaces.get(target);
+        const node = targetSurface?.exports.get(source.imported);
+        if (node) {
+            live.exports.set(symbol, node);
+            changed = true;
+        } else if (targetSurface && !targetSurface.exports.has(source.imported)) {
+            live.exports.delete(symbol);
+            live.reexports.delete(symbol);
+            changed = true;
+        }
     }
     if (!changed) break;
 }
@@ -122,9 +147,9 @@ function members(node, live) {
     }
     if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && live?.locals.has(node.expression.text)) return members(live.locals.get(node.expression.text), live);
     if (ts.isCallExpression(node) && node.expression.getText() === 'proxy') return members(node.arguments?.[1], live);
-    if (ts.isObjectLiteralExpression(node)) return new Set(node.properties.map(name));
+    if (ts.isObjectLiteralExpression(node)) return new Set(node.properties.filter(property => !isUnconditionalRefusal(property)).map(name));
     if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
-        const set = new Set(node.members.map(m => ts.isConstructorDeclaration(m) ? 'constructor' : name(m)));
+        const set = new Set(node.members.filter(member => !isUnconditionalRefusal(member)).map(m => ts.isConstructorDeclaration(m) ? 'constructor' : name(m)));
         function fields(n) {
             if (ts.isBinaryExpression(n) && ts.isPropertyAccessExpression(n.left) && n.left.expression.kind === ts.SyntaxKind.ThisKeyword) set.add(n.left.name.text);
             ts.forEachChild(n, fields);
@@ -177,8 +202,15 @@ function checkUnconditionalRefusalOverlays() {
                         candidates.has(candidate.selector),
                     );
                     if (!covered) {
-                        const line = sf.getLineAndCharacterOfPosition(node.body.statements[0].getStart(sf)).line + 1;
-                        throw new Error(`Unconditional refusal ${relativeSource}:${line} (${selector}) lacks a not-impl overlay.`);
+                        const live = surfaces.get(entry.module);
+                        const [owner, member] = selector.split('.');
+                        const exposed = member
+                            ? members(live?.exports.get(owner) || live?.locals.get(owner), live)?.has(member) ?? false
+                            : live?.exports.has(selector) ?? false;
+                        if (exposed) {
+                            const line = sf.getLineAndCharacterOfPosition(node.body.statements[0].getStart(sf)).line + 1;
+                            throw new Error(`Unconditional refusal ${relativeSource}:${line} (${selector}) remains in the declaration surface.`);
+                        }
                     }
                 }
             }
@@ -477,25 +509,37 @@ function onPaint(ctx: CanvasRenderingContext2D): void {
     frame.footer('footer');
     frame.gap();
     frame.end();
-    type _frameColsNever = AssertNever<ReturnType<typeof frame.cols>>;
-    type _frameWrapNever = AssertNever<ReturnType<typeof frame.wrap>>;
-    type _frameListNever = AssertNever<ReturnType<typeof frame.list>>;
-    type _frameFillNever = AssertNever<ReturnType<typeof frame.fill>>;
-    type _frameGridNever = AssertNever<ReturnType<typeof frame.grid>>;
-    type _frameStepperNever = AssertNever<ReturnType<typeof frame.stepper>>;
+    type _frameColsNumber = AssertType<ReturnType<typeof frame.cols>, number>;
+    type _frameWrapVoid = AssertType<ReturnType<typeof frame.wrap>, void>;
+    type _frameListNumber = AssertType<ReturnType<typeof frame.list>, number>;
+    type _frameFillNumber = AssertType<ReturnType<typeof frame.fill>, number>;
+    type _frameGridNumber = AssertType<ReturnType<typeof frame.grid>, number>;
+    type _frameStepperSelection = AssertType<ReturnType<typeof frame.stepper>, string | null>;
 }
-type AssertNever<T extends never> = T;
+type AssertType<T, Expected> =
+    [T] extends [Expected] ? [Expected] extends [T] ? true : never : never;
 declare const state: PaintState;
+type _paintStateGetString = AssertType<ReturnType<typeof state.get>, string>;
+type _paintStateSetVoid = AssertType<ReturnType<typeof state.set>, void>;
+// @ts-expect-error Pointer hit regions are not part of compat.
 state.publishRegions([]);
+// @ts-expect-error Pointer input is not part of compat.
 state.pointerDown(0, 0);
+// @ts-expect-error Pointer input is not part of compat.
 state.pointerMove(0, 0);
+// @ts-expect-error Pointer input is not part of compat.
 state.pointerIsInside(0, 0);
+// @ts-expect-error Click state is not part of compat.
 state.consumeClick('id');
+// @ts-expect-error Wheel input is not part of compat.
 state.wheel(0, 0, 1);
+// @ts-expect-error Wheel state is not part of compat.
 state.consumeWheel('id');
+// @ts-expect-error Pointer hover is not part of compat.
 state.isHovered({ x: 0, y: 0, w: 1, h: 1 });
 state.get('key', '');
 state.set('key', 'value');
+// @ts-expect-error PaintState reset is not part of compat.
 state.reset();
 const chatRecord: void = GameMessages.record('line');
 const chatMark: number = GameMessages.mark();

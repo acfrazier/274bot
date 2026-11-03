@@ -126,9 +126,9 @@
     "module": "paint/paintLogic.js",
     "selector": "PaintState",
     "preserveMembers": true,
-    "reason": "PaintState's upstream member names and parameters remain declared while the mutable state family refuses.",
+    "reason": "PaintState retains its per-isolate string settings; input and event methods are not part of compat.",
     "runtime": "crates/script-js/src/shim/paintLogic.js:87",
-    "declaration": "/** Construction is refused; the mutable paint-state family remains unavailable. */\nexport class PaintState {\n    constructor();\n    publishRegions(regions: Region[]): void;\n    pointerDown(x: number, y: number): boolean;\n    pointerMove(x: number, y: number): boolean;\n    pointerIsInside(x: number, y: number): boolean;\n    consumeClick(id: string): boolean;\n    wheel(x: number, y: number, delta: number): boolean;\n    consumeWheel(id: string): number;\n    isHovered(rect: Rect): boolean;\n    get(key: string, fallback: string): string;\n    set(key: string, value: string): void;\n    reset(): void;\n}"
+    "declaration": "/** Per-isolate string settings for paint helpers. */\nexport class PaintState {\n    constructor();\n    get(key: string, fallback: string): string;\n    set(key: string, value: string): void;\n}"
   },
   {
     "id": "not-impl-value:api/ai/clues/data/toolAcquire.js:SPADE_SPAWNS",

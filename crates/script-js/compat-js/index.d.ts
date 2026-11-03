@@ -493,11 +493,6 @@ interface NavPoint {
 }
 export const TRACE_STORAGE_KEY = "rs2b0t:cluetrace";
 export function tilesTo(target: NavPoint | null): number | null;
-/**
- * Options for a cross-map clue leg, so the teleport policy lives in one place.
- * Why: close-in walks (onto an NPC or a dropped key) don't use this; the span gate would refuse a tele at 2 tiles anyway.
- */
-export function trailWalkOpts(log?: (m: string) => void, radius?: number): never;
 export type ClueOutcome = 'done' | 'abandon' | 'yield' | 'reset-needed' | GuardianStop;
 export const ClueExecutor: {
     /** Route clue legs through the teleport catalog (spells, ring of dueling). */
@@ -539,8 +534,6 @@ export const PROFESSOR: never;
 export const MURPHY: never;
 export const KOJO: never;
 export const KOJO_EXIT: never;
-export function extraItemShop(name?: string): never;
-export function gateItemShop(name?: string): never;
 
 }
 
@@ -552,7 +545,6 @@ export const DUEL_CLUE_TILE: {
     z: number;
     level: number;
 };
-export function resetClueDuelSearch(): never;
 export function crossesClueDuel(dest: WorldTile): boolean;
 export function walkAcrossClueDuel(dest: WorldTile, radius: number, log: (message: string) => void): Promise<boolean>;
 
@@ -667,8 +659,6 @@ export interface Suspect {
     poison: LocStop;
 }
 export const SUSPECTS: never;
-/** The 2 whose clothes match the thread, then the rest as a fallback. */
-export function suspectOrder(thread?: number): never;
 export const MURDER_EVIDENCE: never;
 
 }
@@ -738,7 +728,6 @@ export interface NpcStop {
     gapMs?: number;
 }
 export function walkWithHops(dest: Tile, radius: number, hops: LadderHop[], log: (m: string) => void): Promise<boolean>;
-export function gotoNpc(stop?: NpcStop, hops?: LadderHop[], log?: (m: string) => void): Promise<never>;
 export function driveDialog(prefer: string[], log: (m: string) => void, gapMs?: number): Promise<boolean>;
 export function openDialogue(npcName: string, log: (m: string) => void): Promise<boolean>;
 export function talkThrough(npcName: string, prefer: string[], log: (m: string) => void, gapMs?: number): Promise<boolean>;
@@ -747,11 +736,6 @@ export function talkThrough(npcName: string, prefer: string[], log: (m: string) 
  * @see docs/reference/quest-primitives.md
  */
 export function talkStrict(npcName: string, prefer: string[], log: (m: string) => void): Promise<boolean>;
-/**
- * Drive a dialogue whose correct option depends on what the NPC said.
- * @see docs/reference/quest-primitives.md
- */
-export function talkChoosingBy(npcName?: string, rules?: readonly LineRule[], prefer?: string[], log?: (m: string) => void): Promise<never>;
 
 }
 
@@ -1526,7 +1510,6 @@ export function chasesTarget(site: DragonSite, style: Style): boolean;
 export class Fight extends HuntTask implements Task {
     constructor(host: CombatHost, site: DragonSite);
     blocksLoot(): boolean;
-    hasChaseTarget(): never;
     reset(): void;
     interruptWatch(): void;
     validate(): boolean;
@@ -2151,7 +2134,6 @@ export function siteFor(key: string): DragonSite;
 
 declare module '*api/combat/hunting/supply.js' {
 import { PotionPlan } from "*api/combat/boostPotions.js";
-import Tile from "*geometry/Tile.js";
 import { Style } from "*api/combat/hunting/logic.js";
 import { DragonSite } from "*api/combat/hunting/sites.js";
 /** What supply and combat need from the bot, so neither imports JiveDragons.ts. */
@@ -2233,8 +2215,6 @@ export const COINS = "Coins";
 export function escapeRunesFor(teleportId: string): EscapeSpell;
 /** Wait for `cond`, feeding the sustain hook every tick. */
 export function waitFed(cond: () => boolean, ms: number): Promise<boolean>;
-/** Walk the site's approach stops from the nearest one on, unless `stand` is already reachable from here. */
-export function walkApproach(h?: JiveHost, site?: DragonSite, stand?: Tile): never;
 /** Whether the site's fee was paid on an attempt whose entrance did not follow. */
 export function feePrepaid(site: DragonSite): boolean;
 export function enterLair(h: JiveHost, site: DragonSite): Promise<boolean>;
@@ -2245,7 +2225,7 @@ export function leaveLair(h: JiveHost, site: DragonSite): Promise<boolean>;
 /** Bank the load, restock, heal, and end the trip ready for the next one. */
 export function bankRoutine(h: JiveHost, site: DragonSite, opts: BankOpts): Promise<void>;
 /** Top the pack up to `target` of `name`, returning how many arrived. */
-export function withdrawTo(name?: string, target?: number): never;
+export function withdrawTo(name: string, target: number): Promise<number>;
 /** Standing inside Velrak's cell, which is a dead end. */
 export function inCell(): boolean;
 /** Open the cell door from the inside. True when the run is back in the corridor. */
@@ -2369,7 +2349,6 @@ export class ClueDuelHandshake {
 }
 export class ClueDuelSearch {
     constructor(log: (message: string) => void, tried?: Map<string, number>);
-    tick(): Promise<never>;
 }
 export class ClueDuelHelper {
     log: (message: string) => void;
@@ -2865,17 +2844,13 @@ export function worthStocking(name: string): boolean;
 export function displayName(cat: Catalog, id: number): string;
 /** What the client itself calls an obj, which is the only name a click can be aimed by. */
 export function clientName(cat: Catalog, id: number): string | undefined;
-export function buildCatalog(records?: readonly ObjRecord[]): never;
 export function unnotedId(cat: Catalog, id: number): number;
 export function notedId(cat: Catalog, id: number): number | null;
-export function searchCatalog(cat?: Catalog, query?: string, limit?: number): never;
-export function resolveByName(cat?: Catalog, query?: string, opts?: {
+export function resolveByName(cat: Catalog, query: string, opts?: {
     exactOnly?: boolean;
-}): never;
+}): ObjRecord[];
 /** Built once per session from the adapter scan. */
 export function liveCatalog(): Catalog;
-/** Test seam, and a relogin onto a different world. */
-export function resetLiveCatalog(): never;
 
 }
 
@@ -3304,9 +3279,9 @@ export interface AnchorHost {
 /** Arrival radius after banking, shopping, or repair; avoids pinning the exact camp spot. */
 export const HOME_ARRIVE_RADIUS = 8;
 /** Whether post-bank or no-target gather should walk toward the camp anchor. */
-export function shouldWalkHomeToGatherAnchor(distToAnchor?: number | null | undefined, arriveRadius?: number): never;
+export function shouldWalkHomeToGatherAnchor(distToAnchor: number | null | undefined, arriveRadius?: number): boolean;
 /** Backup soft-home from a gather miss (no spot or rock in scene). */
-export function shouldSoftHomeFromGatherMiss(distToAnchor?: number | null | undefined, leash?: number): never;
+export function shouldSoftHomeFromGatherMiss(distToAnchor: number | null | undefined, leash?: number): boolean;
 export interface ReturnToAnchorOptions {
     slack?: number;
     arriveRadius?: number;
@@ -4777,22 +4752,22 @@ export class PaintFrame {
     constructor(ctx: CanvasRenderingContext2D, opts?: PaintOptions);
     title(text: string): void;
     tabs(id: string, names: string[]): string;
-    cols(): never;
+    cols(): number;
     rowsLeft(): number;
     text(line: string, color?: string): void;
     row(...cols: string[]): void;
     cells(cells: PaintCell[]): void;
-    wrap(text: string, color?: string, indent?: number): never;
-    list(id: string, lines: PaintLine[], rows: number, opts?: PaintListOptions | string): never;
-    fill(id: string, lines: PaintLine[], opts?: PaintFillOptions): never;
-    grid(id: string, lines: PaintLine[], columns: number, opts?: PaintFillOptions): never;
+    wrap(text: string, color?: string, indent?: number): void;
+    list(id: string, lines: PaintLine[], rows: number, opts?: PaintListOptions | string): number;
+    fill(id: string, lines: PaintLine[], opts?: PaintFillOptions): number;
+    grid(id: string, lines: PaintLine[], columns: number, opts?: PaintFillOptions): number;
     bar(label: string, fraction: number, color?: string): void;
     buttons(items: {
         id: string;
         label: string;
     }[]): string | null;
     select(id: string, label: string, options: string[], current: string): string | null;
-    stepper(id: string, label: string, options: string[], current: string): never;
+    stepper(id: string, label: string, options: string[], current: string): string | null;
     strip(id: string, tabs: string[], status: string, brand: string): string;
     rail(id: string, names: string[]): string;
     statGrid(rows: PaintCell[][], columns?: number): void;
@@ -4827,40 +4802,15 @@ export interface Region extends Rect {
     kind: 'panel' | 'widget' | 'scroll';
 }
 export type Dock = 'chatbox' | 'topleft' | Rect;
-export function resolveDock(dock?: Dock): never;
-export function toCanvasPoint(clientX?: number, clientY?: number, rect?: {
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-}): never;
-/** Wrap an option index; -1 moves back, +1 moves forward, and unknown values start at 0. */
-export function cycleOption(options?: readonly string[], current?: string, delta?: number): never;
-export function hitRegion(regions?: readonly Region[], x?: number, y?: number): never;
-/** Construction is refused; the mutable paint-state family remains unavailable. */
+/** Per-isolate string settings for paint helpers. */
 export class PaintState {
     constructor();
-    publishRegions(regions?: Region[]): never;
-    pointerDown(x?: number, y?: number): never;
-    pointerMove(x?: number, y?: number): never;
-    pointerIsInside(x?: number, y?: number): never;
-    consumeClick(id?: string): never;
-    wheel(x?: number, y?: number, delta?: number): never;
-    consumeWheel(id?: string): never;
-    isHovered(rect?: Rect): never;
-    get(key?: string, fallback?: string): never;
-    set(key?: string, value?: string): never;
-    reset(): never;
+    get(key: string, fallback: string): string;
+    set(key: string, value: string): void;
 }
 export const paintState: never;
-/** Monospace characters that fit a panel `w` px wide with `pad` px of gutter each side. */
-export function paintCols(w?: number, pad?: number, charW?: number): never;
 /** Wrap text to `cols`, indenting continuation lines by `indent` spaces. */
 export function wrapText(text: string, cols: number, indent?: number): string[];
-/** Pixel widths for weighted columns sharing `total` px. */
-export function cellWidths(total?: number, weights?: readonly number[]): never;
-/** Rows needed to lay `len` entries `columns` across. */
-export function gridRows(len?: number, columns?: number): never;
 export const WHEEL_ROWS: never;
 export interface ListScrollState {
     offset: number;
@@ -4869,21 +4819,16 @@ export interface ListScrollState {
     /** The focus row this state was computed against; a change re-attaches. */
     focus: number;
 }
-/**
- * Scroll position for an immediate-mode list.
- * Wheel notches detach the list from `focus`; a new `focus` row re-attaches it.
- */
-export function listScroll(len?: number, rows?: number, state?: ListScrollState, wheel?: number, focus?: number): never;
 export function fmtDuration(mins: number): string;
 /** Compact skill labels for chatbox paint rows. */
 export function paintSkillShort(skill: string): string;
 /** Clip to `cols` characters with a trailing ellipsis, keeping leading spaces so padded columns stay aligned. */
-export function clipText(text?: string, cols?: number): never;
+export function clipText(text: string, cols: number): string;
 /** Truncate paint text with an ellipsis (chatbox rows are tight). */
-export function paintClip(text?: string, max?: number): never;
+export function paintClip(text: string, max?: number): string;
 export function fmtXpHr(gained: number, mins: number): string;
 /** Gathering script title accent colours. */
-export function gatherPaintAccent(kind?: 'fish' | 'mine' | 'wc' | 'other'): never;
+export function gatherPaintAccent(kind: 'fish' | 'mine' | 'wc' | 'other'): string;
 export interface Slot {
     x: number;
     w: number;
@@ -4893,12 +4838,6 @@ export interface StripSegments {
     status: Slot;
     brand: Slot;
 }
-/** Title-row slots: tabs from the left, brand hard right, status filling the gap. */
-export function stripSegments(w?: number, tabWidths?: readonly number[], brandWidth?: number, pad?: number): never;
-/** Even vertical slices of the rail, never shorter than a pixel. */
-export function railRows(h?: number, count?: number): never;
-/** Equal columns filling the body to the right of the rail. */
-export function statColumns(panelW?: number, railW?: number, pad?: number, columns?: number): never;
 
 }
 

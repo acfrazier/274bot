@@ -185,6 +185,9 @@ name = "settings_bag"
 name = "paint_buttons"
 [[test]]
 name = "paint_chrome"
+
+[[test]]
+name = "paint_helpers"
 [[test]]
 name = "paint_crossings"
 [[test]]

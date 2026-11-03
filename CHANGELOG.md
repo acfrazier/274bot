@@ -87,6 +87,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripting
 
+- Selected rs2b0t compatibility helpers now support GatheringBot anchors,
+  Jive bank restocking, MarketMaker name resolution, and paint rendering.
+
 - `Bank.items()` and `reader.bankItems()` now reuse frozen snapshots for a
   bank session and item generation. Their arrays, rows, and nested `ops`
   lists are read-only; `Bank.ready()` still returns a boolean.

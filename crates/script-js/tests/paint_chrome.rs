@@ -437,25 +437,189 @@ fn empty_select_is_ignored() {
 }
 
 #[test]
-fn stepper_still_not_impl() {
+fn paint_text_helpers_match_upstream_contract() {
     let src = r#"
-import { Paint } from '../../paint/Paint.js';
+import { clipText, paintClip } from '../../paint/paintLogic.js';
 export default class T extends LoopingBot {
     onPaint() {
+        globalThis.__clip = [
+            clipText('  abcdef', 5),
+            clipText('abc', 3),
+            clipText('abc', 0),
+            clipText('a😀b', 2),
+            paintClip('  abcdef  ', 5),
+            paintClip('  short  ')
+        ];
+    }
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__clip").unwrap(),
+        serde_json::json!(["  ab…", "abc", "", "a…", "abcd…", "short"])
+    );
+    iso.join();
+}
+
+#[test]
+fn gather_paint_accent_matches_upstream_cases() {
+    let src = r#"
+import { gatherPaintAccent } from '../../paint/paintLogic.js';
+export default class T extends LoopingBot {
+    onPaint() {
+        globalThis.__accents = ['fish', 'mine', 'wc', 'other', 'unknown']
+            .map(gatherPaintAccent);
+    }
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__accents").unwrap(),
+        serde_json::json!(["#7ec8e3", "#e0c36a", "#9be05b", "#9be05b", "#9be05b"])
+    );
+    iso.join();
+}
+
+#[test]
+fn paint_state_get_set_matches_map_and_shares_the_paint_singleton() {
+    let src = r#"
+import { Paint } from '../../paint/Paint.js';
+import { PaintState, paintState } from '../../paint/paintLogic.js';
+export default class T extends LoopingBot {
+    onPaint() {
+        const first = new PaintState();
+        const second = new PaintState();
+        const fallback = { marker: true };
+        const setResult = first.set('value', 'one');
+        paintState.set('strip:shared', 'Options');
         const p = Paint.begin(null, {});
-        try { p.stepper(); } catch (e) { globalThis.__err = String(e.message || e); }
+        globalThis.__state = {
+            value: first.get('value', 'missing'),
+            other: second.get('value', 'missing'),
+            fallback: first.get('missing', fallback) === fallback,
+            setResult: setResult === undefined,
+            selected: p.strip('shared', ['Statistics', 'Options'], '', 'Test')
+        };
         p.end();
     }
 }
 "#;
     let iso = spawn(src);
     tick(&iso, 1);
-    let err = iso.probe("__err").unwrap();
-    assert!(
-        err.as_str()
-            .unwrap_or("")
-            .contains("not impl: PaintFrame.stepper"),
-        "unused widgets stay missing, got {err:?}"
+    assert_eq!(
+        iso.probe("__state").unwrap(),
+        serde_json::json!({
+            "value": "one",
+            "other": "missing",
+            "fallback": true,
+            "setResult": true,
+            "selected": "Options"
+        })
     );
+    iso.join();
+}
+
+#[test]
+fn paint_frame_layout_members_match_upstream_contract() {
+    let src = r#"
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    onPaint() {
+        const ctx = { measureText: () => ({ width: 7 }) };
+        const p = Paint.begin(ctx, { dock: { x: 0, y: 0, w: 50, h: 200 } });
+        p.title('T');
+        const cols = p.cols();
+        p.wrap('ab cd ef');
+        const list = p.list('q', ['A', 'B', 'C', 'D'], 2, { focus: 3 });
+        const fill = p.fill('f', ['one', 'two', 'three'], { reserve: 16, footer: 'end' });
+        const grid = p.grid('g', ['alpha', 'beta', 'gamma'], 2);
+        globalThis.__layout = { cols, list, fill, grid };
+        p.end();
+    }
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__layout").unwrap(),
+        serde_json::json!({ "cols": 4, "list": 2, "fill": 0, "grid": 0 })
+    );
+    let paint = iso.paint().expect("paint frame");
+    assert_eq!(
+        paint.lines,
+        [
+            "ab",
+            "  cd",
+            "  ef",
+            "C",
+            "D",
+            "3 to 4 of 4",
+            "one",
+            "two",
+            "three",
+            "end",
+            "… | b…",
+            "1 to 2 of 3"
+        ]
+    );
+    iso.join();
+}
+
+#[test]
+fn paint_stepper_cycles_only_on_arrow_clicks() {
+    let src = r#"
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    onPaint() {
+        const p = Paint.begin(null, {});
+        globalThis.__picked = p.stepper('mode', 'Mode', ['one', 'two', 'three'], 'one');
+        p.end();
+    }
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__picked").unwrap(), serde_json::Value::Null);
+    let first = iso.paint().expect("first stepper frame");
+    assert_eq!(
+        first
+            .buttons
+            .iter()
+            .map(|button| button.id.as_str())
+            .collect::<Vec<_>>(),
+        ["step:mode:prev", "step:mode:mid", "step:mode:next"]
+    );
+    assert_eq!(
+        first
+            .buttons
+            .iter()
+            .map(|button| button.label.as_str())
+            .collect::<Vec<_>>(),
+        ["◀", "Mode: one", "▶"]
+    );
+
+    iso.paint_click("step:mode:next");
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__picked").unwrap().as_str(), Some("two"));
+    assert_eq!(
+        iso.probe("__rs2b0t_host.paintClick").unwrap(),
+        serde_json::Value::Null,
+        "the matching next region consumes its click"
+    );
+
+    iso.paint_click("step:mode:mid");
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__picked").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("__rs2b0t_host.paintClick").unwrap(),
+        serde_json::Value::Null,
+        "the display-only label consumes the click without cycling"
+    );
+
+    iso.paint_click("step:mode:prev");
+    tick(&iso, 4);
+    assert_eq!(iso.probe("__picked").unwrap().as_str(), Some("three"));
     iso.join();
 }

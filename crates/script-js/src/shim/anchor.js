@@ -5,12 +5,14 @@ import { host, notImpl, runMachine } from '../../shim/_kernel.js';
 
 export const HOME_ARRIVE_RADIUS = 8;
 
-export function shouldWalkHomeToGatherAnchor(_distToAnchor, _arriveRadius) {
-    throw notImpl('shouldWalkHomeToGatherAnchor');
+const facts = (...args) => globalThis.__rs2b0t_selected_facts(...args);
+
+export function shouldWalkHomeToGatherAnchor(distToAnchor, arriveRadius) {
+    return facts('anchor-walk-home', distToAnchor, arriveRadius) === true;
 }
 
-export function shouldSoftHomeFromGatherMiss(_distToAnchor, _leash) {
-    throw notImpl('shouldSoftHomeFromGatherMiss');
+export function shouldSoftHomeFromGatherMiss(distToAnchor, leash) {
+    return facts('anchor-soft-home', distToAnchor, leash) === true;
 }
 
 function campTile(bot) {

@@ -5,26 +5,37 @@ use crate::supply_v2;
 use api::game_data::SelectedGameData;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
-use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 #[path = "client_adapter_v8.rs"]
 mod client_adapter_v8;
 
 const PENDING: &str = "__pending__";
+const OBJ_CATALOG_FIELDS: &[&str] = &["byId", "items", "aliases"];
+const OBJ_RECORD_FIELDS: &[&str] = &[
+    "id",
+    "name",
+    "cost",
+    "stackable",
+    "members",
+    "equippable",
+    "certlink",
+    "certtemplate",
+    "stackVariant",
+];
+const OBJ_ALIAS_FIELDS: &[&str] = &["words", "label"];
 
-struct CachedObjRecords {
-    data: Weak<SelectedGameData>,
-    rows: v8::Global<v8::Array>,
+struct SelectedFactsObjectShapes {
+    catalog: v8::Global<v8::ObjectTemplate>,
+    record: v8::Global<v8::ObjectTemplate>,
+    alias: v8::Global<v8::ObjectTemplate>,
 }
 
-thread_local! {
-    static OBJ_RECORDS: RefCell<Option<CachedObjRecords>> = const { RefCell::new(None) };
-}
-
-pub(super) fn reset_obj_records_cache() {
-    let stale = OBJ_RECORDS.with(|cache| cache.borrow_mut().take());
-    drop(stale);
+enum SelectedFactsObjectShape {
+    Catalog,
+    Record,
+    Alias,
 }
 
 pub(super) fn install(
@@ -37,6 +48,17 @@ pub(super) fn install(
         .set_slot(loc_projection_interest)
     {
         return Err("loc projection interest already installed".to_string());
+    }
+    let object_shapes = {
+        let mut scope = runtime.deno_runtime().handle_scope();
+        Rc::new(SelectedFactsObjectShapes {
+            catalog: object_template(&mut scope, OBJ_CATALOG_FIELDS)?,
+            record: object_template(&mut scope, OBJ_RECORD_FIELDS)?,
+            alias: object_template(&mut scope, OBJ_ALIAS_FIELDS)?,
+        })
+    };
+    if !runtime.deno_runtime().v8_isolate().set_slot(object_shapes) {
+        return Err("selected facts object shape cache already installed".to_string());
     }
     client_adapter_v8::install(runtime)?;
     let context = runtime.deno_runtime().main_context();
@@ -78,7 +100,7 @@ fn run_selected_facts<'s>(
         "cert-maps" => cert_maps(scope),
         "cert-link" => cert_link(scope, args.get(1), args.get(2)),
         "obj-catalog" => obj_catalog(scope),
-        "obj-records" => obj_records(scope),
+        "obj-resolve-by-name" => obj_resolve_by_name(scope, args.get(1), args.get(2), args.get(3)),
         "random-event-casket" => random_event_casket(scope),
         "autocast-component" => autocast_component(scope, args.get(1)),
         "item-tradeable" => item_tradeable(scope, args.get(1)),
@@ -97,6 +119,8 @@ fn run_selected_facts<'s>(
         "pickpocket-spot" => pickpocket_spot(scope, args.get(1)),
         "required-thieving" => required_thieving(scope, args.get(1)),
         "hostile-attacker-names" => hostile_attacker_names(scope),
+        "anchor-walk-home" => anchor_predicate(scope, args.get(1), args.get(2), false),
+        "anchor-soft-home" => anchor_predicate(scope, args.get(1), args.get(2), true),
         "thieving-ready" => thieving_ready(scope, args.get(1), args.get(2)),
         "gas-rock-ids" => gas_rock_ids(scope),
         "mining-rock-data" => mining_rock_data(scope),
@@ -116,6 +140,31 @@ fn run_selected_facts<'s>(
         _ => Err(format!("unsupported selected facts operation: {op}")),
     }
 }
+
+fn anchor_predicate<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    distance: v8::Local<'s, v8::Value>,
+    threshold: v8::Local<'s, v8::Value>,
+    soft_home: bool,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let distance = finite_number(scope, distance);
+    let threshold = finite_number(scope, threshold);
+    let allowed = if soft_home {
+        script::native::walk::should_soft_home_from_gather_miss(distance, threshold)
+    } else {
+        script::native::walk::should_walk_home_to_gather_anchor(distance, threshold)
+    };
+    Ok(v8::Boolean::new(scope, allowed).into())
+}
+
+fn finite_number(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Option<f64> {
+    value
+        .is_number()
+        .then(|| value.number_value(scope))
+        .flatten()
+        .filter(|number| number.is_finite())
+}
+
 fn world_number<'s>(
     scope: &mut v8::HandleScope<'s>,
     hostname: v8::Local<'s, v8::Value>,
@@ -309,12 +358,45 @@ fn cert_link<'s>(
     }
 }
 
+fn object_template(
+    scope: &mut v8::HandleScope,
+    fields: &[&str],
+) -> Result<v8::Global<v8::ObjectTemplate>, String> {
+    let template = v8::ObjectTemplate::new(scope);
+    let placeholder: v8::Local<v8::Data> = v8::undefined(scope).into();
+    for field in fields {
+        let key =
+            v8::String::new_from_utf8(scope, field.as_bytes(), v8::NewStringType::Internalized)
+                .ok_or_else(|| format!("selected facts object shape key `{field}`"))?;
+        template.set(key.into(), placeholder);
+    }
+    Ok(v8::Global::new(scope, template))
+}
+
+fn selected_facts_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    shape: SelectedFactsObjectShape,
+) -> Result<v8::Local<'s, v8::Object>, String> {
+    let shapes = scope
+        .get_slot::<Rc<SelectedFactsObjectShapes>>()
+        .cloned()
+        .ok_or_else(|| "selected facts object shape cache is not installed".to_string())?;
+    let template = match shape {
+        SelectedFactsObjectShape::Catalog => &shapes.catalog,
+        SelectedFactsObjectShape::Record => &shapes.record,
+        SelectedFactsObjectShape::Alias => &shapes.alias,
+    };
+    v8::Local::new(scope, template)
+        .new_instance(scope)
+        .ok_or_else(|| "selected facts object allocation failed".to_string())
+}
+
 fn obj_record_row<'s>(
     scope: &mut v8::HandleScope<'s>,
     item: &api::game_data::GameItem,
     name: &str,
 ) -> Result<v8::Local<'s, v8::Object>, String> {
-    let row = v8::Object::new(scope);
+    let row = selected_facts_object(scope, SelectedFactsObjectShape::Record)?;
     set_i32(scope, row, "id", item.id);
     let name = v8_str(scope, name)?;
     set_key(scope, row, "name", name);
@@ -333,53 +415,49 @@ fn obj_record_row<'s>(
     Ok(row)
 }
 
-fn obj_records_cache<'s>(
+/// Resolve against the selected revision and return the caller catalog's rows
+/// so object identity matches the JavaScript catalog contract.
+fn obj_resolve_by_name<'s>(
     scope: &mut v8::HandleScope<'s>,
-    data: &Arc<SelectedGameData>,
-) -> Result<v8::Local<'s, v8::Array>, String> {
-    OBJ_RECORDS.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        let matches = cache
-            .as_ref()
-            .and_then(|cached| cached.data.upgrade())
-            .is_some_and(|cached| Arc::ptr_eq(&cached, data));
-        if !matches {
-            let mut items: Vec<_> = crate::market_catalog::records(data.items()).collect();
-            items.sort_unstable_by_key(|(item, _)| item.id);
-            let length = i32::try_from(items.len())
-                .map_err(|_| "selected facts object-record count".to_string())?;
-            let rows = v8::Array::new(scope, length);
-            for (index, (item, name)) in items.into_iter().enumerate() {
-                let row = obj_record_row(scope, item, name)?;
-                rows.set_index(scope, index as u32, row.into())
-                    .ok_or_else(|| "selected facts object-record row".to_string())?;
-            }
-            *cache = Some(CachedObjRecords {
-                data: Arc::downgrade(data),
-                rows: v8::Global::new(scope, rows),
-            });
-        }
-        let rows = &cache
-            .as_ref()
-            .expect("object records cache initialized")
-            .rows;
-        Ok(v8::Local::new(scope, rows))
-    })
-}
-
-fn obj_records<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
+    catalog: v8::Local<'s, v8::Value>,
+    query: v8::Local<'s, v8::Value>,
+    exact_only: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
     let Some(data) = supply_v2::selected_data() else {
-        reset_obj_records_cache();
         return Ok(v8::Array::new(scope, 0).into());
     };
-    Ok(obj_records_cache(scope, &data)?.into())
+    let query = js_to_string(scope, query)?;
+    let index = crate::market_catalog::market_index(&data);
+    let ids = crate::market_catalog::resolve_by_name(&index, &query, exact_only.is_true());
+    let catalog = catalog
+        .to_object(scope)
+        .ok_or_else(|| "selected facts catalog object".to_string())?;
+    let key = v8_str(scope, "byId")?;
+    let by_id = catalog
+        .get(scope, key)
+        .ok_or_else(|| "selected facts catalog byId".to_string())?;
+    let by_id = by_id
+        .to_object(scope)
+        .and_then(|value| v8::Local::<v8::Map>::try_from(value).ok())
+        .ok_or_else(|| "selected facts catalog byId map".to_string())?;
+    let result = v8::Array::new(scope, i32::try_from(ids.len()).unwrap_or(i32::MAX));
+    for (index, id) in ids.iter().enumerate() {
+        let id = v8::Integer::new(scope, *id);
+        let row = by_id
+            .get(scope, id.into())
+            .ok_or_else(|| "selected facts catalog item".to_string())?;
+        result
+            .set_index(scope, index as u32, row)
+            .ok_or_else(|| "selected facts catalog result".to_string())?;
+    }
+    Ok(result.into())
 }
 
 /// Frozen `buildCatalog` minus the cert maps: `byId` holds every named obj
 /// as an `ObjRecord`, `items` the listed subset (the same record objects) and
 /// `aliases` the derived same-name labels. Empty without selected data.
 fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
-    let catalog = v8::Object::new(scope);
+    let catalog = selected_facts_object(scope, SelectedFactsObjectShape::Catalog)?;
     let by_id = v8::Map::new(scope);
     let aliases = v8::Map::new(scope);
     let Some(data) = supply_v2::selected_data() else {
@@ -389,25 +467,29 @@ fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
         set_key(scope, catalog, "aliases", aliases.into());
         return Ok(catalog.into());
     };
-    let mut records = std::collections::HashMap::with_capacity(data.items().len());
+    let market = crate::market_catalog::market_index(&data);
     for (item, name) in crate::market_catalog::records(data.items()) {
         let row = obj_record_row(scope, item, name)?;
         let id = v8::Integer::new(scope, item.id);
         by_id
             .set(scope, id.into(), row.into())
             .ok_or_else(|| "selected facts catalog byId".to_string())?;
-        records.insert(item.id, row);
     }
-    let listed = crate::market_catalog::listed(data.items());
-    let items = v8::Array::new(scope, i32::try_from(listed.len()).unwrap_or(i32::MAX));
-    for (index, (item, _)) in listed.iter().enumerate() {
-        let row = records[&item.id];
+    let items = v8::Array::new(
+        scope,
+        i32::try_from(market.listed_len()).unwrap_or(i32::MAX),
+    );
+    for (index, id) in market.ordered_listed_ids().enumerate() {
+        let id = v8::Integer::new(scope, id);
+        let row = by_id
+            .get(scope, id.into())
+            .ok_or_else(|| "selected facts catalog item".to_string())?;
         items
-            .set_index(scope, index as u32, row.into())
+            .set_index(scope, index as u32, row)
             .ok_or_else(|| "selected facts catalog items".to_string())?;
     }
-    for (id, alias) in crate::market_catalog::aliases(&data).iter() {
-        let row = v8::Object::new(scope);
+    for (id, alias) in market.aliases.iter() {
+        let row = selected_facts_object(scope, SelectedFactsObjectShape::Alias)?;
         let words = string_array(scope, &alias.words)?;
         set_key(scope, row, "words", words);
         let label = v8_str(scope, &alias.label)?;
@@ -1099,3 +1181,7 @@ fn hostile_attacker_names<'s>(
     }
     Ok(array.into())
 }
+
+#[cfg(test)]
+#[path = "selected_facts_v8_tests.rs"]
+mod tests;

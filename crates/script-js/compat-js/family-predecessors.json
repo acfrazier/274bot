@@ -201,7 +201,7 @@
         "callbacks": 4,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 9
+        "not_impl_debt": 5
       }
     },
     {
@@ -365,7 +365,7 @@
         "callbacks": 3,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 1
+        "not_impl_debt": 0
       }
     },
     {
@@ -580,10 +580,10 @@
         "members": 0,
         "overloads": 0,
         "aliases": 0,
-        "callbacks": 432,
+        "callbacks": 433,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 3
+        "not_impl_debt": 0
       }
     },
     {
@@ -718,7 +718,7 @@
         "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 4
+        "not_impl_debt": 0
       }
     },
     {
@@ -772,7 +772,7 @@
         "callbacks": 0,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 33
+        "not_impl_debt": 1
       }
     },
     {
@@ -855,7 +855,7 @@
         "callbacks": 3,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 12
+        "not_impl_debt": 9
       }
     },
     {
@@ -996,7 +996,7 @@
         "callbacks": 10,
         "type_aliases": 0,
         "name_aliases": 0,
-        "not_impl_debt": 2
+        "not_impl_debt": 0
       }
     },
     {
@@ -1022,7 +1022,7 @@
         "members": 2,
         "overloads": 0,
         "aliases": 0,
-        "callbacks": 9,
+        "callbacks": 8,
         "type_aliases": 0,
         "name_aliases": 0,
         "not_impl_debt": 0
