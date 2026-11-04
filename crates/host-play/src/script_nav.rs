@@ -326,6 +326,7 @@ impl RouteSubmission {
         state: &Arc<WorldState>,
         lease: &NavLease,
         bank_rows: usize,
+        diagnosed_requirements: usize,
         thread_name_bytes: usize,
     ) -> Result<(Self, RoutePreflights), RouteJobError> {
         let candidate_capacity = RouteTargetCursor::capacity(request)?;
@@ -444,11 +445,16 @@ impl RouteSubmission {
             entrance,
         };
 
-        let plan_item_rows = preflights
-            .missing
-            .reservation()
-            .max_plan_item_rows
-            .max(preflights.missing_route.reservation().max_plan_item_rows);
+        // New diagnoses end the current search job before either row cursor
+        // can advance. The continuation re-admits these buffers using its
+        // observed requirement count, capped by the unchanged graph bound.
+        let plan_item_rows = diagnosed_requirements.min(
+            preflights
+                .missing
+                .reservation()
+                .max_plan_item_rows
+                .max(preflights.missing_route.reservation().max_plan_item_rows),
+        );
         let carry_capacity = preflights
             .missing
             .reservation()
@@ -731,12 +737,6 @@ impl RouteSubmission {
         )?;
         let available = peak.checked_sub(input_bytes).ok_or(RouteJobError::Budget)?;
         if peak > ROUTE_WORK_LIMIT_BYTES || result_bytes > available {
-            #[cfg(test)]
-            api::host_log!(
-                api::hostlog::Category::NavTrace,
-                api::hostlog::Level::Debug,
-                "[DEBUG-b29-prereq] route-admission-bounds peak={peak} input={input_bytes} result={result_bytes} working={search_working_bytes} bank_plan={bank_plan_bytes} planned_rows={planned_rows_bytes} fetchable_state={fetchable_state_bytes} fetchable_edges={fetchable_edge_bytes} post_bank_state={post_bank_state_bytes} undo={bank_undo_bytes} bank_direct={bank_direct_bytes} bank_planned={bank_planned_bytes} route={route_bytes} plan_item_rows={plan_item_rows} stands={stand_rows} bank_rows={bank_rows}",
-            );
             return Err(RouteJobError::Budget);
         }
         let scratch_bytes = peak
@@ -1239,6 +1239,7 @@ impl RouteJob {
             &state,
             &lease,
             bank_rows_limit,
+            0,
             thread_name.capacity(),
         )?;
         let missing_capacity = preflights
@@ -1484,6 +1485,9 @@ impl RouteJob {
             &self.state,
             &self.lease,
             self.bank_rows_limit,
+            self.missing_requirements
+                .as_ref()
+                .map_or(0, MissingRequirements::len),
             self.thread_name.capacity(),
         )?;
         submission.revision = revision;
@@ -3812,12 +3816,6 @@ fn publish_unsubmitted_route_failure(
     {
         return;
     }
-    api::host_log!(
-        api::hostlog::Category::NavTrace,
-        api::hostlog::Level::Debug,
-        slot = name,
-        "[DEBUG-b29-prereq] route-unsubmitted generation={generation} request_id={request_id} detail={detail}",
-    );
     bot.pending_route = None;
     match kind {
         RouteDemandKind::Advisory {
@@ -4086,12 +4084,6 @@ fn publish_accepted_route_refusal(
     detail: &str,
     refusal: Option<script::native::WalkRefusal>,
 ) {
-    api::host_log!(
-        api::hostlog::Category::NavTrace,
-        api::hostlog::Level::Debug,
-        slot = name,
-        "[DEBUG-b29-prereq] route-refused generation={generation} request_id={request_id} detail={detail}",
-    );
     let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let Some(bot) = all.get_mut(name) else {
         return;
@@ -9115,7 +9107,7 @@ mod diagnostic_tests {
         let lease = nav_lease(&request.world).unwrap();
         request.opts.allow_bank_fetch = false;
         let (without_bank, diagnostics) =
-            RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
+            RouteSubmission::prepare(&request, &state, &lease, 0, 0, 32).unwrap();
         // A captured buffer stays input in either mode. Its unreachable
         // planning/fetch/post-bank owners must not become scratch or output.
         // Leave room for the route and diagnostics already reserved above.
@@ -9125,7 +9117,7 @@ mod diagnostic_tests {
         assert!(bank_bytes > 0);
         request.bank = Vec::with_capacity(bank_bytes / std::mem::size_of::<(i32, i32)>());
         let (captured_bank, _) =
-            RouteSubmission::prepare(&request, &state, &lease, request.bank.capacity(), 32)
+            RouteSubmission::prepare(&request, &state, &lease, request.bank.capacity(), 0, 32)
                 .unwrap();
         assert!(captured_bank.input_bytes > without_bank.input_bytes);
         assert_eq!(captured_bank.scratch_bytes, without_bank.scratch_bytes);
@@ -9147,7 +9139,7 @@ mod diagnostic_tests {
         }
         request.opts.allow_bank_fetch = true;
         assert!(matches!(
-            RouteSubmission::prepare(&request, &state, &lease, request.bank.capacity(), 32),
+            RouteSubmission::prepare(&request, &state, &lease, request.bank.capacity(), 0, 32),
             Err(RouteJobError::Budget),
         ));
         assert_eq!(ROUTE_WORK_LIMIT_BYTES, 192 * 1024 * 1024);
@@ -9160,9 +9152,10 @@ mod diagnostic_tests {
         let state = Arc::new(WorldState::empty());
         let lease = nav_lease(&request.world).unwrap();
         request.opts.allow_bank_fetch = false;
-        let (without_bank, _) = RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
+        let (without_bank, _) =
+            RouteSubmission::prepare(&request, &state, &lease, 0, 1, 32).unwrap();
         request.opts.allow_bank_fetch = true;
-        let (with_bank, _) = RouteSubmission::prepare(&request, &state, &lease, 0, 32).unwrap();
+        let (with_bank, _) = RouteSubmission::prepare(&request, &state, &lease, 0, 1, 32).unwrap();
         assert!(with_bank.result_bytes > without_bank.result_bytes);
         assert!(
             with_bank.scratch_bytes + with_bank.result_bytes
@@ -9570,6 +9563,209 @@ mod diagnostic_tests {
         assert!(job.search_cursor.is_none());
         assert!(!job.boundary_ready);
         job
+    }
+
+    fn carry_diagnosis_request(
+        requirements: usize,
+        origin: Origin,
+        first_goal: bool,
+    ) -> Box<ScriptRouteRequest> {
+        let (world, from, to) = first_goal_probe_world(8, 4, 4, 6, true);
+        let mut world = Arc::try_unwrap(world).ok().unwrap();
+        let rows: Vec<_> = (0..requirements)
+            .map(|index| (i32::try_from(index).unwrap() + 1, 1))
+            .collect();
+        world.graph.edges[0].item_req = rows.clone();
+        let world = Arc::new(NavWorld::from_parts(
+            world.collision,
+            world.graph,
+            vec![nav_planner::pack::BankStand {
+                name: "Bank booth".into(),
+                tile: from,
+                access: nav_planner::pack::BankAccess::Booth { op: 2 },
+            }],
+        ));
+        let mut request = stage_request(world);
+        request.from = from;
+        request.to = to;
+        request.opts.allow_bank_fetch = true;
+        request.opts.allow_wilderness = true;
+        request.admission = crate::admission::Admission::manual(
+            request.opts,
+            Default::default(),
+            1,
+            crate::WalkGlobals::default(),
+        );
+        request.state = Some(Arc::new(WorldState::empty()));
+        request.bank_origin = origin;
+        request.bank = rows;
+        if first_goal {
+            request.arrival = ArrivalKind::Area;
+            request.candidate_goals = Some(script::native::WalkGoals::new(vec![to]).unwrap());
+        }
+        request
+    }
+
+    fn diagnosis_derived_bank_bytes(job: &RouteJob) -> usize {
+        job.planning_cursor
+            .as_ref()
+            .map_or(0, PlanningRowsCursor::retained_bytes)
+            + job
+                .bank_cursor
+                .as_ref()
+                .map_or(0, BankFetchCursor::retained_bytes)
+            + job
+                .bank_plan
+                .as_ref()
+                .map_or(0, BankFetchPlan::retained_bytes)
+            + [job.planned_rows.as_ref(), job.fetchable_rows.as_ref()]
+                .into_iter()
+                .flatten()
+                .map(|rows| route_vec_bytes(rows).unwrap())
+                .sum::<usize>()
+            + job
+                .fetchable_cursor
+                .as_ref()
+                .map_or(0, |cursor| cursor.retained_bytes().unwrap())
+            + route_vec_bytes(&job.bank_undo).unwrap()
+    }
+
+    fn next_diagnosis_boundary(
+        request: Box<ScriptRouteRequest>,
+    ) -> (Box<RouteJob>, RouteSubmission) {
+        let mut job = Box::new(
+            RouteJob::prepare(
+                "diagnosis-boundary",
+                request,
+                RouteDemandKind::Walk { authority: None },
+            )
+            .unwrap(),
+        );
+        for index in 0..16 {
+            job.identity = Some(stage_identity(index));
+            let before = *job.submission();
+            let previous_count = job
+                .missing_requirements
+                .as_ref()
+                .map_or(0, MissingRequirements::len);
+            let mut worker = RouteWorkJob::new(job);
+            let (result, _, _) = drive_stage(&mut worker);
+            let RouteStageResult::Continue(mut next) = result else {
+                panic!("the missing-item diagnosis must cross a job boundary");
+            };
+            let next_count = next
+                .missing_requirements
+                .as_ref()
+                .map_or(0, MissingRequirements::len);
+            if next_count > previous_count {
+                assert!(next.search_cursor.is_none());
+                assert!(!next.boundary_ready);
+                assert_eq!(
+                    diagnosis_derived_bank_bytes(&next),
+                    0,
+                    "the larger diagnosis must not grow bank buffers in the old admission",
+                );
+                return (next, before);
+            }
+            next.prepare_continuation().unwrap();
+            job = next;
+        }
+        panic!("the bounded fixture did not publish a missing-item diagnosis");
+    }
+
+    #[test]
+    fn a_larger_diagnosis_is_readmitted_before_bank_buffers_grow() {
+        for requirements in [1, 1024] {
+            for (origin, first_goal) in [
+                (Origin::Session, false),
+                (Origin::Session, true),
+                (Origin::Hint, true),
+            ] {
+                let (mut job, before) = next_diagnosis_boundary(carry_diagnosis_request(
+                    requirements,
+                    origin,
+                    first_goal,
+                ));
+                assert_eq!(
+                    job.missing_requirements.as_ref().unwrap().len(),
+                    requirements
+                );
+                assert_eq!(job.plan_item_limit(), requirements);
+                let revision = job.revision;
+                job.prepare_continuation().unwrap();
+                assert_eq!(job.revision, revision.next().unwrap());
+                assert!(
+                    job.submission.result_bytes
+                        >= before.result_bytes + BankFetchPlan::heap_bound(requirements).unwrap(),
+                    "the worst-case diagnosed plan must retain its complete output bound",
+                );
+                let charge = <RouteWorkSpec as api::work::WorkFamilySpec>::charge(job.submission())
+                    .total_bytes()
+                    .unwrap();
+                assert!(charge <= ROUTE_WORK_LIMIT_BYTES);
+                assert_eq!(diagnosis_derived_bank_bytes(&job), 0);
+                let mut worker = RouteWorkJob::new(job);
+                let (result, _, _) = drive_stage(&mut worker);
+                let RouteStageResult::Continue(next) = result else {
+                    panic!("the admitted bank phase must complete its next search");
+                };
+                assert!(
+                    diagnosis_derived_bank_bytes(&next) > 0,
+                    "bank buffers may grow only after the larger admission succeeds",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn maximum_diagnosis_is_refused_before_unreserved_bank_buffers_grow() {
+        let requirements = 50_000;
+        let (job, _) = next_diagnosis_boundary(carry_diagnosis_request(
+            requirements,
+            Origin::Session,
+            false,
+        ));
+        assert_eq!(
+            job.missing_requirements.as_ref().unwrap().len(),
+            requirements
+        );
+        assert_eq!(
+            job.plan_item_limit(),
+            requirements,
+            "the diagnosis reaches the unchanged graph maximum",
+        );
+        let identity = job.identity.unwrap();
+        let revision = job.revision;
+        let generation = job.generation();
+        let request_id = job.request_id();
+        let target = job.request.to;
+        let ledger = OwnerResultLedger::with_limits(ROUTE_WORK_LIMIT_BYTES, ROUTE_WORK_LIMIT_BYTES);
+        let bytes = job.owned_retained_bytes().unwrap()
+            + std::mem::size_of::<RouteDemand>()
+            + OwnerResultReservation::storage_bytes();
+        let reservation = ledger.try_reserve_bytes(bytes).unwrap();
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "alice".to_owned(),
+            NavBot {
+                route_generation: generation,
+                walk_request_id: request_id,
+                requested_route: Some((target, 0, false, true, true, ZoneExempt::NONE)),
+                ..NavBot::default()
+            },
+        )])));
+        retain_route_continuation(&navs, "alice", job, identity, revision, reservation);
+        let all = navs.lock().unwrap();
+        let bot = &all["alice"];
+        assert!(bot.pending_route.is_none());
+        assert!(bot.route_ticket.is_none());
+        assert!(bot.bank_fetch.is_none());
+        assert!(bot.walk_outcome_failed);
+        assert!(bot
+            .walk_outcome_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("checked WorkAdmission bounds")));
+        assert_eq!(ledger.used_bytes(), 0);
+        assert_eq!(ROUTE_WORK_LIMIT_BYTES, 192 * 1024 * 1024);
     }
 
     #[test]
@@ -11156,9 +11352,9 @@ mod route_quest_provider_tests {
             .expect("evidence state byte bound");
         assert_eq!(evidence_state_bytes - base_state_bytes, owned_bytes);
 
-        let (baseline, _) = RouteSubmission::prepare(&request, &without_evidence, &lease, 0, 0)
+        let (baseline, _) = RouteSubmission::prepare(&request, &without_evidence, &lease, 0, 0, 0)
             .expect("baseline route budget");
-        let (charged, _) = RouteSubmission::prepare(&request, &with_evidence, &lease, 0, 0)
+        let (charged, _) = RouteSubmission::prepare(&request, &with_evidence, &lease, 0, 0, 0)
             .expect("evidence route budget");
         assert_eq!(charged.input_bytes - baseline.input_bytes, owned_bytes);
         assert_eq!(charged.result_bytes - baseline.result_bytes, owned_bytes);

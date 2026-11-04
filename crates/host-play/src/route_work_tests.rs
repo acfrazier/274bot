@@ -561,19 +561,12 @@ fn qualifies_real_bank_route_adapter_search_latency() {
 #[ignore = "requires BOT_ROUTE_PLAN_NAVPACK pointing to the matched 289 pack"]
 fn real_prerequisite_route_fits_checked_admission() {
     let pack = std::path::PathBuf::from(std::env::var_os("BOT_ROUTE_PLAN_NAVPACK").unwrap());
-    let selected =
-        api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let worker_data = Arc::clone(&selected);
     script::preparation::submit(
         script::preparation::PreparationKind::Profile,
         Scope::Process,
-        script::preparation::PreparationInput::new(
-            1,
-            0,
-            8 * 1024 * 1024,
-            2 * 1024 * 1024,
-        )
-        .unwrap(),
+        script::preparation::PreparationInput::new(1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024).unwrap(),
         move |worker| {
             worker_data.prepare_quests(worker)?;
             worker_data.prepare_prereq_steps(worker)
@@ -612,9 +605,11 @@ fn real_prerequisite_route_fits_checked_admission() {
         request.prereq_catalog = prerequisite.then(|| Arc::clone(&catalog));
         request.state = Some(Arc::new(WorldState::empty()));
         request.compat_tile_intent = true;
-        if let Err(error) =
-            RouteJob::prepare("prereq-live", request, RouteDemandKind::Walk { authority: None })
-        {
+        if let Err(error) = RouteJob::prepare(
+            "prereq-live",
+            request,
+            RouteDemandKind::Walk { authority: None },
+        ) {
             failures.push((prerequisite, bank_fetch, error.to_string()));
         }
     }

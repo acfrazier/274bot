@@ -477,6 +477,11 @@ the carry and worn bounds. Bank planners use this effective item bound, not
 the full search budget. Captured bank rows remain a separate dimension.
 Cursor construction does not allocate. Cursor growth uses checked limits and
 fallible reservations.
+Per-job admission also caps diagnosis-derived bank buffers by the current
+requirement count. A search publishes a new diagnosis at its existing job
+boundary. Planning and bank cursor construction allocate nothing at that
+boundary. The continuation must pass admission before either cursor advances.
+A larger reservation that exceeds the limit is refused.
 
 Route execution separates completed searches into private jobs in the existing
 Route family. A later job charges retained routes, diagnosis and plan storage

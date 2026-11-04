@@ -911,6 +911,11 @@ Host route admission retains its 192 MiB work limit. It reserves bank-plan,
 bank-fetch and post-bank custody only when `allow_bank_fetch` is true.
 Captured request buffers always remain input custody. Missing-carry,
 entrance, blocker and quest-gate diagnostics remain charged in both modes.
+Bank-plan row buffers use the current diagnosed requirement count, capped by
+the unchanged graph bound. A new diagnosis completes the current search job
+before those buffers can grow. Its continuation must pass admission with the
+larger count, or the host refuses it. Captured bank rows remain a separate
+dimension. Search budgets and result bounds do not change.
 
 Consumptive hops debit a path's running inventory and credit script-proven
 replacement items. Walking nodes share interned balance IDs, without a
