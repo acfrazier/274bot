@@ -2410,7 +2410,7 @@ fn real_squire_walk(
         loc_id: None,
         arrival: nav_planner::arrival::ArrivalKind::Reach,
         opts,
-        state: Some(state),
+        state: Some(Arc::new(state)),
         bank_origin: api::bank_memory::Origin::Unknown,
         bank: Vec::new(),
         live_geometry: None,

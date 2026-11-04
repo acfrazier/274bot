@@ -70,7 +70,7 @@ impl DiagnosticCase {
             loc_id: None,
             arrival: self.arrival,
             opts: self.opts,
-            state: Some(self.state.clone()),
+            state: Some(Arc::new(self.state.clone())),
             bank_origin: api::bank_memory::Origin::Unknown,
             bank: Vec::new(),
             live_geometry: None,

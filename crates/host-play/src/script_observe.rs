@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use std::time::Duration;
@@ -443,7 +443,7 @@ pub(crate) fn script_observe_cached(
         tick,
         here,
         inv,
-        state,
+        state.map(Arc::new),
         snapshot,
         None,
         #[cfg(feature = "js")]
@@ -535,7 +535,7 @@ pub(crate) fn script_observe_cached_with_channels(
     tick: u64,
     here: Option<(i32, i32, i32)>,
     inv: Option<&[(i32, i32)]>,
-    state: Option<WorldState>,
+    state: Option<Arc<WorldState>>,
     snapshot: Option<&GameSnapshot>,
     bank_memory: Option<&parking_lot::RwLock<api::bank_memory::BankMemory>>,
     #[cfg(feature = "js")] npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
@@ -2514,23 +2514,148 @@ pub(crate) fn take_script_interacts<T: std::borrow::Borrow<script::interact::Int
     }
     out
 }
+/// The generations that feed a slot's cached gating facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WorldStateCacheKey {
+    inventory: (u64, u64, Option<u64>),
+    equipment: (u64, u64, Option<u64>),
+    stats: u64,
+    varps: u64,
+    completed_quests: u64,
+    map_members: bool,
+    session: (u64, u64, u64),
+}
+
+impl WorldStateCacheKey {
+    fn for_snapshot(snapshot: &GameSnapshot, map_members: bool, session_epoch: u64) -> Self {
+        let gens = snapshot.gens();
+        Self {
+            inventory: (gens.inv, gens.iface, snapshot.inventory_packet_generation()),
+            equipment: (gens.inv, gens.iface, snapshot.equipment_packet_generation()),
+            stats: gens.stat,
+            varps: gens.varp,
+            completed_quests: gens.iface,
+            map_members,
+            session: (gens.session, gens.invalidations, session_epoch),
+        }
+    }
+}
+fn try_copy_map<K, V>(
+    source: &HashMap<K, V>,
+) -> Result<HashMap<K, V>, std::collections::TryReserveError>
+where
+    K: Copy + Eq + std::hash::Hash,
+    V: Copy,
+{
+    let mut copied = HashMap::new();
+    copied.try_reserve(source.len())?;
+    copied.extend(source.iter().map(|(&key, &value)| (key, value)));
+    Ok(copied)
+}
+
+fn try_copy_set<T>(source: &HashSet<T>) -> Result<HashSet<T>, std::collections::TryReserveError>
+where
+    T: Copy + Eq + std::hash::Hash,
+{
+    let mut copied = HashSet::new();
+    copied.try_reserve(source.len())?;
+    copied.extend(source.iter().copied());
+    Ok(copied)
+}
+
+pub(super) fn try_clone_world_state(
+    state: &WorldState,
+) -> Result<WorldState, std::collections::TryReserveError> {
+    let mut quests = HashSet::new();
+    quests.try_reserve(state.quests.len())?;
+    for quest in &state.quests {
+        let mut copied = String::new();
+        copied.try_reserve_exact(quest.len())?;
+        copied.push_str(quest);
+        quests.insert(copied);
+    }
+    Ok(WorldState {
+        inv: try_copy_map(&state.inv)?,
+        inventory_ready: state.inventory_ready,
+        worn: try_copy_set(&state.worn)?,
+        equipment_ready: state.equipment_ready,
+        allow_fetchable_worn: state.allow_fetchable_worn,
+        stats: try_copy_map(&state.stats)?,
+        combat_level: state.combat_level,
+        varps: try_copy_map(&state.varps)?,
+        quests,
+        map_members: state.map_members,
+        establishable: state.establishable.clone(),
+        quest_evidence: state.quest_evidence.clone(),
+    })
+}
+
+/// Per-slot cache of snapshot-derived facts. It never stores quest evidence.
+/// Route captures attach evidence from the current context at queue time.
+#[derive(Default)]
+pub(crate) struct NavWorldStateCache {
+    key: Option<WorldStateCacheKey>,
+    state: Option<Arc<WorldState>>,
+}
+
+impl NavWorldStateCache {
+    pub(crate) fn clear(&mut self) {
+        self.key = None;
+        self.state = None;
+    }
+
+    fn get_or_build(
+        &mut self,
+        key: WorldStateCacheKey,
+        snapshot: &GameSnapshot,
+        map_members: bool,
+    ) -> Arc<WorldState> {
+        if self.key != Some(key) {
+            self.state = Some(Arc::new(
+                WorldState::from_snapshot(snapshot).with_map_members(map_members),
+            ));
+            self.key = Some(key);
+        }
+        Arc::clone(
+            self.state
+                .as_ref()
+                .expect("a WorldState cache key always has a backing state"),
+        )
+    }
+}
+
+// The cost probe's baseline arm forces a fresh backing on every active observe.
+#[cfg(feature = "observe-cost-profile")]
+fn world_state_cache_bypassed() -> bool {
+    static BYPASS: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+        std::env::var("BOT_WORLD_STATE_CACHE_BYPASS").is_ok_and(|value| value == "1")
+    });
+    *BYPASS
+}
+
 /// Whether this observe pass needs a [`WorldState`] from the slot snapshot.
-/// Built for a Starting or Running script (walk arm) or an armed nav bot
-/// (route / BankBudget session — interact dispatch may walk with gating
-/// facts). Starting is included because compiled cards can emit their first
-/// walk on that frame, before the outer pump's Running flag flips.
+/// The cache belongs to one slot and only retains facts while navigation is
+/// active. Family generations catch changes within a game tick.
 pub(crate) fn nav_world_state_for_observe(
+    cache: &mut NavWorldStateCache,
     here: Option<(i32, i32, i32)>,
     snapshot: &GameSnapshot,
     script_running: bool,
     nav_armed: bool,
     map_members: bool,
-) -> Option<WorldState> {
-    if here.is_some() && (script_running || nav_armed) {
-        Some(WorldState::from_snapshot(snapshot).with_map_members(map_members))
-    } else {
-        None
+    session_epoch: u64,
+) -> Option<Arc<WorldState>> {
+    #[cfg(feature = "observe-cost-profile")]
+    if world_state_cache_bypassed() {
+        cache.clear();
     }
+
+    if here.is_none() || !(script_running || nav_armed) {
+        cache.clear();
+        return None;
+    }
+    let key = WorldStateCacheKey::for_snapshot(snapshot, map_members, session_epoch);
+    Some(cache.get_or_build(key, snapshot, map_members))
 }
 /// Borrow the current session's inventory only on running tick edges.
 pub(crate) fn observe_script_inv(
@@ -2707,5 +2832,365 @@ mod watchdog_restart_tests {
             *CAPTURE.0.lock().unwrap(),
             ["watchdog-action run=None tick=7 action=ArmWalk { x: 1, z: 2, level: 0 }"]
         );
+    }
+}
+
+#[cfg(test)]
+mod world_state_cache_tests {
+    use super::{NavWorldStateCache, WorldStateCacheKey};
+    use api::snapshot::{GameSnapshot, StatView};
+    use std::fmt::Write as _;
+    use std::sync::Arc;
+
+    fn snapshot_with(
+        change: impl FnOnce(&mut client::client::ClientGens),
+        inventory_packet: Option<u64>,
+        equipment_packet: Option<u64>,
+    ) -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        let mut generations = snapshot.gens();
+        change(&mut generations);
+        snapshot.reset_session(generations);
+        snapshot.seed_inventory_packet_generations(inventory_packet, None);
+        snapshot.seed_equipment_packet_generation(equipment_packet);
+        snapshot
+    }
+
+    fn key(snapshot: &GameSnapshot, map_members: bool, session_epoch: u64) -> WorldStateCacheKey {
+        WorldStateCacheKey::for_snapshot(snapshot, map_members, session_epoch)
+    }
+
+    fn assert_only_differs(
+        baseline: WorldStateCacheKey,
+        changed: WorldStateCacheKey,
+        expected: &[&str],
+        family: &str,
+    ) {
+        let fields = [
+            ("inventory", baseline.inventory != changed.inventory),
+            ("equipment", baseline.equipment != changed.equipment),
+            ("stats", baseline.stats != changed.stats),
+            ("varps", baseline.varps != changed.varps),
+            (
+                "completed_quests",
+                baseline.completed_quests != changed.completed_quests,
+            ),
+            ("map_members", baseline.map_members != changed.map_members),
+            ("session", baseline.session != changed.session),
+        ];
+        for (name, differs) in fields {
+            assert_eq!(
+                expected.contains(&name),
+                differs,
+                "{family} changed unexpected dependency {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn cache_key_invalidates_only_each_gating_fact_dependant() {
+        let baseline_snapshot = snapshot_with(|_| {}, Some(3), Some(4));
+        let baseline = key(&baseline_snapshot, false, 5);
+
+        let inventory = snapshot_with(
+            |generations| generations.inv = generations.inv.wrapping_add(1),
+            Some(3),
+            Some(4),
+        );
+        assert_only_differs(
+            baseline,
+            key(&inventory, false, 5),
+            &["inventory", "equipment"],
+            "inventory family",
+        );
+
+        let interface = snapshot_with(
+            |generations| generations.iface = generations.iface.wrapping_add(1),
+            Some(3),
+            Some(4),
+        );
+        assert_only_differs(
+            baseline,
+            key(&interface, false, 5),
+            &["inventory", "equipment", "completed_quests"],
+            "interface family",
+        );
+
+        let inventory_packet = snapshot_with(|_| {}, Some(8), Some(4));
+        assert_only_differs(
+            baseline,
+            key(&inventory_packet, false, 5),
+            &["inventory"],
+            "inventory packet generation",
+        );
+
+        let equipment_packet = snapshot_with(|_| {}, Some(3), Some(9));
+        assert_only_differs(
+            baseline,
+            key(&equipment_packet, false, 5),
+            &["equipment"],
+            "equipment packet generation",
+        );
+
+        let stats = snapshot_with(
+            |generations| generations.stat = generations.stat.wrapping_add(1),
+            Some(3),
+            Some(4),
+        );
+        assert_only_differs(baseline, key(&stats, false, 5), &["stats"], "stats family");
+
+        let varps = snapshot_with(
+            |generations| generations.varp = generations.varp.wrapping_add(1),
+            Some(3),
+            Some(4),
+        );
+        assert_only_differs(baseline, key(&varps, false, 5), &["varps"], "varps family");
+
+        let session = snapshot_with(
+            |generations| generations.session = generations.session.wrapping_add(1),
+            Some(3),
+            Some(4),
+        );
+        assert_only_differs(
+            baseline,
+            key(&session, false, 5),
+            &["session"],
+            "client session",
+        );
+
+        let invalidation = snapshot_with(
+            |generations| generations.invalidations = generations.invalidations.wrapping_add(1),
+            Some(3),
+            Some(4),
+        );
+        assert_only_differs(
+            baseline,
+            key(&invalidation, false, 5),
+            &["session"],
+            "client invalidation",
+        );
+
+        assert_only_differs(
+            baseline,
+            key(&baseline_snapshot, true, 5),
+            &["map_members"],
+            "world membership",
+        );
+        assert_only_differs(
+            baseline,
+            key(&baseline_snapshot, false, 8),
+            &["session"],
+            "host session epoch",
+        );
+    }
+
+    fn stats_snapshot(generation: u64, effective: i32) -> GameSnapshot {
+        let snapshot = snapshot_with(|generations| generations.stat = generation, None, None);
+        let mut snapshot = snapshot;
+        snapshot.seed_stats(vec![StatView {
+            index: 10,
+            name: "fishing".into(),
+            base: effective,
+            effective,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot
+    }
+
+    #[test]
+    fn changed_fact_generation_never_serves_stale_world_state() {
+        let mut cache = NavWorldStateCache::default();
+        let first_snapshot = stats_snapshot(1, 68);
+        let first_key = key(&first_snapshot, false, 1);
+        let first = cache.get_or_build(first_key, &first_snapshot, false);
+        assert_eq!(first.stats.get(&10), Some(&68));
+
+        let second_snapshot = stats_snapshot(2, 69);
+        let second_key = key(&second_snapshot, false, 1);
+        let second = cache.get_or_build(second_key, &second_snapshot, false);
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "a changed stats generation must replace the cached state"
+        );
+        assert_eq!(
+            first.stats.get(&10),
+            Some(&68),
+            "queued frame A stays stable"
+        );
+        assert_eq!(
+            second.stats.get(&10),
+            Some(&69),
+            "frame B must not receive frame A's stale stat"
+        );
+
+        let mut unrelated_snapshot = stats_snapshot(2, 69);
+        let mut generations = unrelated_snapshot.gens();
+        generations.player = generations.player.wrapping_add(1);
+        unrelated_snapshot.reset_session(generations);
+        unrelated_snapshot.seed_stats(vec![StatView {
+            index: 10,
+            name: "fishing".into(),
+            base: 69,
+            effective: 69,
+            xp: 0,
+            used: true,
+        }]);
+        let unrelated_key = key(&unrelated_snapshot, false, 1);
+        assert_eq!(second_key, unrelated_key);
+        let reused = cache.get_or_build(unrelated_key, &unrelated_snapshot, false);
+        assert!(Arc::ptr_eq(&second, &reused));
+        assert_eq!(
+            reused.stats.get(&10),
+            Some(&69),
+            "an unrelated player generation must not invalidate gating facts"
+        );
+    }
+
+    #[test]
+    fn cache_hits_reuse_the_backing_without_allocating() {
+        let snapshot = stats_snapshot(1, 68);
+        let cache_key = key(&snapshot, false, 1);
+        let mut cache = NavWorldStateCache::default();
+        let first = cache.get_or_build(cache_key, &snapshot, false);
+        let mut reused = None;
+        let allocations = allocation_counter::measure(|| {
+            reused = Some(cache.get_or_build(cache_key, &snapshot, false));
+        });
+        assert_eq!(allocations.count_total, 0, "{allocations:?}");
+        assert!(
+            Arc::ptr_eq(&first, reused.as_ref().expect("cache hit")),
+            "unchanged fact generations retain the same immutable backing"
+        );
+    }
+
+    #[test]
+    fn world_state_cache_and_arc_backing_stay_within_size_budgets() {
+        assert!(
+            std::mem::size_of::<NavWorldStateCache>() <= 160,
+            "cache metadata grew beyond its 160-byte inline budget"
+        );
+        let world_state_size = std::mem::size_of::<nav_planner::WorldState>();
+        assert!(
+            world_state_size <= 384,
+            "WorldState inline representation ({world_state_size} bytes) grew beyond its 384-byte layout budget"
+        );
+
+        let snapshot = stats_snapshot(1, 68);
+        let state = nav_planner::WorldState::from_snapshot(&snapshot);
+        let mut backing = None;
+        let allocation = allocation_counter::measure(|| {
+            backing = Some(Arc::new(state));
+        });
+        assert_eq!(allocation.count_total, 1, "{allocation:?}");
+        assert_eq!(
+            usize::try_from(allocation.bytes_total).expect("Arc allocation size fits usize"),
+            std::mem::size_of::<nav_planner::WorldState>() + 2 * std::mem::size_of::<usize>(),
+            "one cached Arc backing is the inline state plus its two counters"
+        );
+        drop(backing);
+    }
+
+    #[test]
+    fn late_profile_world_state_stays_under_12_kib() {
+        let mut state = nav_planner::WorldState::default();
+        for id in 0..20 {
+            state.inv.insert(id, id + 1);
+        }
+        state.inventory_ready = true;
+        state.worn.extend(0..5);
+        state.equipment_ready = true;
+        state.stats.extend((0..25).map(|index| (index, 80)));
+        state.varps.extend((0..394).map(|index| (index, index * 3)));
+        state.quests.extend((0..62).map(|index| {
+            let suffix = if index < 46 { "xxxxxx" } else { "xxxxx" };
+            let mut name = String::with_capacity("quest-".len() + 2 + 1 + suffix.len());
+            write!(&mut name, "quest-{index:02}-{suffix}")
+                .expect("writing a fixed quest name to String cannot fail");
+            name
+        }));
+        state.map_members = true;
+        state.combat_level = Some(80);
+
+        assert_eq!(state.inv.len(), 20);
+        assert_eq!(state.worn.len(), 5);
+        assert_eq!(state.stats.len(), 25);
+        assert_eq!(state.varps.len(), 394);
+        assert_eq!(state.quests.len(), 62);
+        assert_eq!(state.quests.iter().map(String::len).sum::<usize>(), 914);
+        assert_eq!(
+            state.quests.iter().map(String::capacity).sum::<usize>(),
+            914,
+            "tripwire quest names must use exact capacity"
+        );
+        // 9,786 B leaves 2,502 B of headroom under the 12 KiB tripwire.
+        let retained_bytes = state
+            .try_shared_retained_bytes()
+            .expect("late-profile retained size fits usize");
+        assert!(
+            retained_bytes <= 12 * 1024,
+            "late-profile WorldState retained {retained_bytes} bytes"
+        );
+    }
+
+    #[test]
+    fn fallible_private_copy_retains_establishable_windows_and_keeps_the_base_immutable() {
+        let windows: Arc<[api::selected::StageWindow]> = Arc::from([api::selected::StageWindow {
+            quest: api::selected::FactKey::new("quest"),
+            signal: api::selected::FactKey::new("stage"),
+            values: api::selected::InclusiveRange {
+                min: Some(1),
+                max: Some(2),
+            },
+        }]);
+        let mut state = nav_planner::WorldState::empty().with_establishable(Arc::clone(&windows));
+        state.inv.insert(995, 3);
+        let base = Arc::new(state);
+        let mut private = super::try_clone_world_state(&base).expect("private route facts");
+        assert_eq!(private, *base);
+        assert!(Arc::ptr_eq(
+            private.establishable.as_ref().expect("captured windows"),
+            &windows
+        ));
+        private.inv.insert(995, 9);
+        private.establishable = None;
+        assert_eq!(base.inv.get(&995), Some(&3));
+        assert!(Arc::ptr_eq(
+            base.establishable.as_ref().expect("base windows"),
+            &windows
+        ));
+    }
+
+    #[test]
+    fn inactive_observation_releases_the_slot_cache() {
+        let snapshot = stats_snapshot(1, 68);
+        let mut cache = NavWorldStateCache::default();
+        let state = super::nav_world_state_for_observe(
+            &mut cache,
+            Some((1, 2, 0)),
+            &snapshot,
+            true,
+            false,
+            false,
+            1,
+        )
+        .expect("running script needs navigation facts");
+        assert!(Arc::ptr_eq(
+            cache.state.as_ref().expect("cache retains active facts"),
+            &state
+        ));
+
+        assert!(super::nav_world_state_for_observe(
+            &mut cache,
+            Some((1, 2, 0)),
+            &snapshot,
+            false,
+            false,
+            false,
+            1,
+        )
+        .is_none());
+        assert!(cache.key.is_none());
+        assert!(cache.state.is_none());
     }
 }

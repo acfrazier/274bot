@@ -836,6 +836,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - After a bite or a closed page that leaves nothing more to do, the Quester
   goes back to its step in the same game tick.
 
+- Route planning now reuses each bot's unchanged eligibility facts between
+  observations. It refreshes those facts when their source data changes.
+  Queued routes keep the facts captured when they start.
+
 ### Scripting
 
 - The script API documentation now states that moving the bot by hand during a

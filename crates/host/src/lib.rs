@@ -781,6 +781,35 @@ impl Host {
                     .is_some_and(|head| head.backend_kind() == BackendKind::Gpu),
         );
         let t_obs = Instant::now();
+        #[cfg(feature = "observe-cost-profile")]
+        let busy = if performance_profile::observe_cost_profile_enabled() {
+            let mut busy = false;
+            let mut cpu_ns = None;
+            let allocations = allocation_counter::measure(|| {
+                let cpu_start = capacity::thread_cpu_time();
+                busy = observe(client, username, *run_sends, &status, &mut slot.run_policy);
+                cpu_ns = cpu_start.and_then(|start| {
+                    capacity::thread_cpu_time().map(|end| {
+                        u64::try_from(end.saturating_sub(start).as_nanos()).unwrap_or(u64::MAX)
+                    })
+                });
+            });
+            slot.observe_cost_frames = slot.observe_cost_frames.wrapping_add(1);
+            slot.observe_cost_allocations = slot
+                .observe_cost_allocations
+                .wrapping_add(allocations.count_total);
+            slot.observe_cost_allocated_bytes = slot
+                .observe_cost_allocated_bytes
+                .wrapping_add(allocations.bytes_total);
+            if let Some(cpu_ns) = cpu_ns {
+                slot.observe_cost_cpu_ns = slot.observe_cost_cpu_ns.wrapping_add(cpu_ns);
+                slot.observe_cost_cpu_samples = slot.observe_cost_cpu_samples.wrapping_add(1);
+            }
+            busy
+        } else {
+            observe(client, username, *run_sends, &status, &mut slot.run_policy)
+        };
+        #[cfg(not(feature = "observe-cost-profile"))]
         let busy = observe(client, username, *run_sends, &status, &mut slot.run_policy);
         let observe_ns = t_obs.elapsed().as_nanos() as u64;
         slot.observe_ns = slot.observe_ns.wrapping_add(observe_ns);
@@ -940,7 +969,7 @@ impl Host {
         }
         slot.log_n = slot.log_n.wrapping_add(1);
         #[cfg(feature = "performance-profile")]
-        slot.publish_profile();
+        slot.publish_profile(username);
         if debug_enabled() {
             let frame_us = t_loop.elapsed().as_micros() as u64;
             if let Some(us) = debug_hitch_us(frame_us) {
@@ -1437,6 +1466,17 @@ struct SlotLoop {
     raster_ns: u64,
     /// Wall time of the observe hook (`script_observe` + snapshot encode).
     observe_ns: u64,
+    /// Per-observe thread CPU and allocation counters for the opt-in cost probe.
+    #[cfg(feature = "observe-cost-profile")]
+    observe_cost_cpu_ns: u64,
+    #[cfg(feature = "observe-cost-profile")]
+    observe_cost_cpu_samples: u64,
+    #[cfg(feature = "observe-cost-profile")]
+    observe_cost_frames: u64,
+    #[cfg(feature = "observe-cost-profile")]
+    observe_cost_allocations: u64,
+    #[cfg(feature = "observe-cost-profile")]
+    observe_cost_allocated_bytes: u64,
     /// Max single observe in the current `BOT_DEBUG` window.
     observe_max_ns: u64,
     paint_n: u64,
@@ -1503,6 +1543,16 @@ impl SlotLoop {
             loop_ns: 0,
             raster_ns: 0,
             observe_ns: 0,
+            #[cfg(feature = "observe-cost-profile")]
+            observe_cost_cpu_ns: 0,
+            #[cfg(feature = "observe-cost-profile")]
+            observe_cost_cpu_samples: 0,
+            #[cfg(feature = "observe-cost-profile")]
+            observe_cost_frames: 0,
+            #[cfg(feature = "observe-cost-profile")]
+            observe_cost_allocations: 0,
+            #[cfg(feature = "observe-cost-profile")]
+            observe_cost_allocated_bytes: 0,
             observe_max_ns: 0,
             paint_n: 0,
             skip_n: 0,
@@ -1568,12 +1618,28 @@ impl SlotLoop {
     }
 
     #[cfg(feature = "performance-profile")]
-    fn publish_profile(&mut self) {
+    fn publish_profile(&mut self, username: &str) {
         if self.profile_published_at.elapsed() < Duration::from_secs(1) {
             return;
         }
+        #[cfg(feature = "observe-cost-profile")]
+        let observe_cost = performance_profile::ObserveCost {
+            cpu_ns: self.observe_cost_cpu_ns,
+            cpu_samples: self.observe_cost_cpu_samples,
+            frames: self.observe_cost_frames,
+            allocations: self.observe_cost_allocations,
+            allocated_bytes: self.observe_cost_allocated_bytes,
+        };
+        #[cfg(not(feature = "observe-cost-profile"))]
+        let observe_cost = performance_profile::ObserveCost::default();
         if let Some(profile) = &self.profile {
-            profile.publish(self.loop_ns, self.observe_ns, self.raster_ns);
+            profile.publish(
+                username,
+                self.loop_ns,
+                self.observe_ns,
+                self.raster_ns,
+                observe_cost,
+            );
         }
         self.profile_published_at = Instant::now();
     }

@@ -2012,6 +2012,7 @@ fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
     );
 
     let world = Some(Arc::new(wilderness_route_world()));
+    let state = Arc::new(nav_planner::WorldState::empty());
     crate::script_runtime::apply_watchdog_nav_action(
         script::WatchdogAction::ArmWalk {
             x: 3100,
@@ -2023,7 +2024,7 @@ fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
         Some((3100, 3519, 0)),
         &rig.navs,
         &world,
-        Some(&nav_planner::WorldState::empty()),
+        Some(&state),
         None,
         SLOT,
     );

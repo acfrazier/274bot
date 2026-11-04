@@ -973,7 +973,7 @@ pub(crate) fn apply_watchdog_nav_action(
     here: Option<(i32, i32, i32)>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
-    state: Option<&WorldState>,
+    state: Option<&Arc<WorldState>>,
     bank: Option<&RwLock<BankMemory>>,
     name: &str,
 ) {
@@ -1529,7 +1529,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
             world: world.cloned(),
             navs: Arc::clone(navs),
             name: name.to_string(),
-            state: Some(state),
+            state: Some(Arc::new(state)),
             bank: super::slot_bank_memory::planner_rows(bank),
         }
         .refresh_route_in_snapshot(

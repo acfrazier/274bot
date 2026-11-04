@@ -149,7 +149,7 @@ pub(super) fn request(
         facts,
         from,
         opts,
-        state,
+        Arc::new(state),
         order,
         target_count,
         (walking && target_count != 0).then_some(generation),

@@ -119,6 +119,7 @@ mod script_observe;
 pub(super) use script_observe::deliver_channel_events;
 #[cfg(all(test, feature = "js"))]
 pub(super) use script_observe::post_script_snapshot;
+use script_observe::try_clone_world_state;
 #[cfg(test)]
 pub(super) use script_observe::{
     delay_ordered_drain_for_test, install_dispatch_barrier, install_ordered_dispatch_hook,
@@ -131,7 +132,7 @@ pub(super) use script_observe::{
 };
 pub(super) use script_observe::{
     nav_world_state_for_observe, observe_script_inv, script_observe_cached_with_channels,
-    ScriptObservation,
+    NavWorldStateCache, ScriptObservation,
 };
 #[cfg(any(feature = "js", test))]
 pub(super) use script_observe::{project_npc_boxes_for_isolate_snapshot, projected_npc_boxes};
@@ -354,6 +355,7 @@ pub(super) struct ScriptFrame {
     pub(super) frozen: bool,
     /// The watchdog has seen no game packets for 10 s.
     pub(super) no_game_packets: bool,
+    pub(super) runtime_generation: u64,
 }
 
 /// Capture one script-state projection for the frame's ownership, inventory
@@ -366,6 +368,7 @@ pub(super) fn script_frame(scripts: &ScriptWall, name: &str) -> ScriptFrame {
                 state: Some(slot.state()),
                 frozen: slot.watchdog().frozen(),
                 no_game_packets: slot.watchdog().no_game_packets(),
+                runtime_generation: slot.runtime_generation(),
             })
         })
         .unwrap_or_default()

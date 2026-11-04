@@ -9446,7 +9446,7 @@ fn t23_bank_observe(
             tick,
             here,
             inv,
-            state.clone(),
+            state.clone().map(Arc::new),
             snapshot,
             None,
             #[cfg(feature = "js")]
@@ -14847,6 +14847,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
     };
     let next_frame_watchdog =
         |c: &mut Client, navs: &Arc<Mutex<HashMap<String, NavBot>>>, state: &WorldState| {
+            let state = Arc::new(state.clone());
             for action in [
                 script::WatchdogAction::None,
                 script::WatchdogAction::WarnHungLoop,
@@ -14858,7 +14859,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
                     Some((0, 0, 0)),
                     navs,
                     &world,
-                    Some(state),
+                    Some(&state),
                     None,
                     "alice",
                 );
@@ -14901,6 +14902,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
     // Watchdog: only ArmWalk captures, and it captures its own frame.
     let navs = test_navs("alice");
     bind_test_route_scope(&navs, "alice");
+    let state = Arc::new(frame_a.clone());
     apply_watchdog_nav_action(
         script::WatchdogAction::ArmWalk {
             x: 10,
@@ -14912,7 +14914,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
         Some((0, 0, 0)),
         &navs,
         &world,
-        Some(&frame_a),
+        Some(&state),
         None,
         "alice",
     );
@@ -15796,7 +15798,7 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
         world: Some(Arc::clone(&world)),
         navs: Arc::clone(&navs),
         name: "alice".into(),
-        state: Some(state),
+        state: Some(Arc::new(state)),
         bank: BankRows {
             origin: Origin::Session,
             rows: bank_rows.clone(),
@@ -15868,7 +15870,7 @@ fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
         world: Some(Arc::clone(&world)),
         navs: Arc::clone(&navs),
         name: "alice".into(),
-        state: Some(state),
+        state: Some(Arc::new(state)),
         bank: BankRows {
             origin: Origin::Session,
             rows: bank_rows.clone(),
@@ -15983,7 +15985,7 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
         world: Some(Arc::clone(&world)),
         navs: Arc::clone(&navs),
         name: "compat-full-pack".into(),
-        state: Some(state.clone()),
+        state: Some(Arc::new(state.clone())),
         bank: BankRows {
             origin: Origin::Session,
             rows: vec![(2, 30)],
@@ -16257,7 +16259,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         world: Some(Arc::clone(&world)),
         navs: Arc::clone(&navs),
         name: "alice".into(),
-        state: Some(state),
+        state: Some(Arc::new(state)),
         bank: BankRows {
             origin: Origin::Session,
             rows: bank_rows.clone(),
@@ -18206,16 +18208,17 @@ fn nav_world_state_for_observe_skips_when_idle_and_nav_unarmed() {
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     let here = Some((3200, 3200, 0));
+    let mut cache = super::script_runtime::NavWorldStateCache::default();
     assert!(
-        nav_world_state_for_observe(here, &snap, false, false, false).is_none(),
+        nav_world_state_for_observe(&mut cache, here, &snap, false, false, false, 0).is_none(),
         "idle slot with no armed nav must not build WorldState"
     );
     assert!(
-        nav_world_state_for_observe(here, &snap, true, false, false).is_some(),
+        nav_world_state_for_observe(&mut cache, here, &snap, true, false, false, 0).is_some(),
         "Running script must get WorldState for the walk arm"
     );
     assert!(
-        nav_world_state_for_observe(here, &snap, false, true, false).is_some(),
+        nav_world_state_for_observe(&mut cache, here, &snap, false, true, false, 0).is_some(),
         "armed nav bot must get WorldState for interact walks"
     );
 }
@@ -18257,10 +18260,11 @@ fn starting_script_frame_builds_nav_facts() {
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     let here = Some((3200, 3200, 0));
+    let mut cache = super::script_runtime::NavWorldStateCache::default();
     let nav_facts =
         crate::play_slots::script_state_builds_nav_facts(Some(script::RunState::Starting));
     assert!(
-        nav_world_state_for_observe(here, &snap, nav_facts, false, true).is_some(),
+        nav_world_state_for_observe(&mut cache, here, &snap, nav_facts, false, true, 0).is_some(),
         "a Starting frame must build WorldState so the first walk sees posted skills"
     );
 }
@@ -18289,7 +18293,7 @@ fn native_walk_reads_snapshot_stats_when_arm_state_is_missing() {
         "membership is not inferred from GameSnapshot when the arm is missing"
     );
     let armed = nav_planner::WorldState::empty().with_map_members(true);
-    let reused = super::script_runtime::route_world_state(&snap, Some(armed));
+    let reused = super::script_runtime::route_world_state(&snap, Some(Arc::new(armed)));
     assert!(
         !reused.stats.contains_key(&SKILL_FISHING),
         "an existing arm is reused; the snapshot is not rebuilt"
@@ -26993,6 +26997,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
         "native v2 must select the raw bank-walk path from the initial scene",
     );
     let out_before = c.out.pos;
+    let state = Arc::new(WorldState::empty());
     assert!(
         dispatch_script_interact_cached_scoped(
             &mut c,
@@ -27002,7 +27007,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
                 here: Some((start.x, start.z, start.level)),
                 navs: &navs,
                 world: &world_opt,
-                state: Some(&WorldState::empty()),
+                state: Some(&state),
                 bank: None,
                 name: "test",
                 compatibility_scope: Some(api::identity::Scope::Slot(
@@ -29085,7 +29090,7 @@ fn arm_route_outcome(
         world: Some(world),
         navs: Arc::clone(&navs),
         name: "alice".into(),
-        state,
+        state: state.map(Arc::new),
         bank,
     };
     let _completion = arm

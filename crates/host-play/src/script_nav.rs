@@ -1204,11 +1204,24 @@ impl RouteJob {
         mut request: Box<ScriptRouteRequest>,
         kind: RouteDemandKind,
     ) -> Result<Self, RouteJobError> {
-        let mut state = request.state.take().unwrap_or_else(WorldState::empty);
-        if let Some(catalog) = request.prereq_catalog.as_ref() {
-            state.establishable = Some(catalog.establishable_windows());
-        }
-        let state = Arc::new(state);
+        let state = request
+            .state
+            .take()
+            .unwrap_or_else(|| Arc::new(WorldState::empty()));
+        let state = if request.opts.allow_bank_fetch || request.prereq_catalog.is_some() {
+            let mut private = match Arc::try_unwrap(state) {
+                Ok(state) => state,
+                Err(shared) => {
+                    super::try_clone_world_state(&shared).map_err(|_| RouteJobError::Allocation)?
+                }
+            };
+            if let Some(catalog) = request.prereq_catalog.as_ref() {
+                private.establishable = Some(catalog.establishable_windows());
+            }
+            Arc::new(private)
+        } else {
+            state
+        };
         let basis_avoid: Arc<[AvoidRect]> = Arc::from(copy_boxed_slice(request.avoid())?);
         let lease = nav_lease(&request.world).map_err(|_| RouteJobError::Budget)?;
         let bank_rows_limit = request.bank.capacity();
@@ -5143,7 +5156,7 @@ pub(crate) struct ScriptWalkArm {
     /// The slot's gating facts at arm time (from its live snapshot);
     /// `None` when no player is decoded — the route job then searches with
     /// the fail-closed empty [`WorldState`].
-    pub(crate) state: Option<WorldState>,
+    pub(crate) state: Option<Arc<WorldState>>,
     /// The account's bank memory rows at arm time
     /// ([`super::slot_bank_memory::planner_rows`]): what a BankBudget
     /// session is planned over ([`nav_planner::bank_fetch::planning_rows`]).
@@ -5168,11 +5181,27 @@ fn walk_arm_outcome_tag(outcome: &RouteOutcome) -> &'static str {
 /// with `state: None`. That rebuild is what lets posted skills open a
 /// skill-gated door (Fishing Guild 68) instead of routing on the fail-closed
 /// empty state.
-pub(crate) fn route_world_state(snapshot: &GameSnapshot, armed: Option<WorldState>) -> WorldState {
-    match armed {
-        Some(state) => state,
-        None => WorldState::from_snapshot(snapshot),
+pub(crate) fn route_world_state(
+    snapshot: &GameSnapshot,
+    armed: Option<Arc<WorldState>>,
+) -> Arc<WorldState> {
+    armed.unwrap_or_else(|| Arc::new(WorldState::from_snapshot(snapshot)))
+}
+
+/// Attach evidence to a request-owned view without changing the cached base.
+/// An unchanged empty value can share the original backing.
+/// A private-copy allocation failure returns `RouteJobError::Allocation`.
+pub(super) fn patch_route_quest_evidence(
+    state: Arc<WorldState>,
+    evidence: Option<nav_planner::quest_gates::QuestEvidence>,
+) -> Result<Arc<WorldState>, RouteJobError> {
+    if evidence.is_none() && state.quest_evidence.is_none() {
+        return Ok(state);
     }
+    let mut private =
+        super::try_clone_world_state(&state).map_err(|_| RouteJobError::Allocation)?;
+    private.quest_evidence = evidence;
+    Ok(Arc::new(private))
 }
 
 fn log_walk_arm(name: &str, build: impl FnOnce() -> String) {
@@ -5398,17 +5427,14 @@ impl ScriptWalkArm {
                 return;
             }
         }
-        self.state = Some(route_world_state(snapshot, self.state.take()));
+        let state = route_world_state(snapshot, self.state.take());
         let context = self
             .navs
             .lock()
             .unwrap()
             .get(&self.name)
             .and_then(|bot| bot.quest_context.clone());
-        self.state
-            .as_mut()
-            .expect("request state was captured")
-            .quest_evidence = world.graph.quest_family.and_then(|family| {
+        let quest_evidence = world.graph.quest_family.and_then(|family| {
             captured_route_quests(
                 family,
                 context.as_ref(),
@@ -5417,6 +5443,13 @@ impl ScriptWalkArm {
                 request.required_after,
             )
         });
+        self.state = match patch_route_quest_evidence(state, quest_evidence) {
+            Ok(state) => Some(state),
+            Err(_) => {
+                refusal("Advisory route allocation failed");
+                return;
+            }
+        };
         let from = WorldTile { x, z, level };
         let radius = i32::from(request.radius);
         let (mut options, policy, enforce) = super::walk_permissions::native_admission(
@@ -5429,7 +5462,7 @@ impl ScriptWalkArm {
             options.allow_bank_fetch = allow;
         }
         let empty = WorldState::empty();
-        let state = self.state.as_ref().unwrap_or(&empty);
+        let state = self.state.as_deref().unwrap_or(&empty);
         let (options, exclusions) = match resolve_route_exclusions(
             options,
             world,
@@ -5662,10 +5695,7 @@ impl ScriptWalkArm {
             .unwrap()
             .get(&self.name)
             .and_then(|bot| bot.quest_context.clone());
-        self.state
-            .as_mut()
-            .expect("request state was captured")
-            .quest_evidence = self
+        let evidence = self
             .world
             .as_ref()
             .and_then(|world| world.graph.quest_family)
@@ -5678,6 +5708,14 @@ impl ScriptWalkArm {
                     request.required_after,
                 )
             });
+        let state = self.state.take().expect("request state was captured");
+        self.state = match patch_route_quest_evidence(state, evidence) {
+            Ok(state) => Some(state),
+            Err(_) => {
+                self.refuse_native(authority);
+                return false;
+            }
+        };
         let exclusions = native_route_exclusions(
             &request.avoid,
             &request.cross,
@@ -6192,20 +6230,50 @@ impl ScriptWalkArm {
                     .get(&self.name)
                     .and_then(|bot| bot.quest_context.clone());
                 if let Some(context) = context.as_ref() {
-                    state
-                        .get_or_insert_with(|| WorldState::from_snapshot(snapshot))
-                        .quest_evidence =
+                    let base_state = state
+                        .take()
+                        .unwrap_or_else(|| Arc::new(WorldState::from_snapshot(snapshot)));
+                    let evidence =
                         captured_route_quests(family, Some(context), snapshot, None, context.stamp);
+                    state = match patch_route_quest_evidence(base_state, evidence) {
+                        Ok(state) => Some(state),
+                        Err(_) => {
+                            self.refuse(
+                                to,
+                                radius,
+                                opts.allow_teleports,
+                                request_id,
+                                authority.as_ref(),
+                                None,
+                            );
+                            return false;
+                        }
+                    };
                 }
             }
         }
         let (mut opts, exclusions) = if let Some((basis, exclusions)) = frozen {
-            let state = state.get_or_insert_with(WorldState::empty);
-            state.quest_evidence = basis.quest_evidence.clone();
+            let base_state = state
+                .take()
+                .unwrap_or_else(|| Arc::new(WorldState::empty()));
+            state = match patch_route_quest_evidence(base_state, basis.quest_evidence.clone()) {
+                Ok(state) => Some(state),
+                Err(_) => {
+                    self.refuse(
+                        to,
+                        radius,
+                        opts.allow_teleports,
+                        request_id,
+                        authority.as_ref(),
+                        None,
+                    );
+                    return false;
+                }
+            };
             (basis.options, exclusions)
         } else {
             let empty = WorldState::empty();
-            let route_state = state.as_ref().unwrap_or(&empty);
+            let route_state = state.as_deref().unwrap_or(&empty);
             match resolve_route_exclusions(opts, world, from, to, route_state, exclusions) {
                 Ok((opts, exclusions)) => {
                     let exclusions = (!exclusions.is_empty()).then(|| Arc::new(exclusions));
@@ -6899,7 +6967,7 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) loc_id: Option<i32>,
     pub(crate) arrival: ArrivalKind,
     pub(crate) opts: FindOptions,
-    pub(crate) state: Option<WorldState>,
+    pub(crate) state: Option<Arc<WorldState>>,
     pub(crate) admission: crate::admission::Admission,
     pub(crate) prereq_catalog: Option<Arc<api::prereq_steps::PrereqCatalog>>,
     /// The arm's bank memory ([`ScriptWalkArm::bank`]), its origin beside
@@ -6975,7 +7043,7 @@ impl ScriptRouteRequest {
             return None;
         }
         let empty = WorldState::empty();
-        let state = self.state.as_ref().unwrap_or(&empty);
+        let state = self.state.as_deref().unwrap_or(&empty);
         let bank_targets = if self.radius <= 0 || self.arrival == ArrivalKind::Area {
             targets
         } else {
@@ -7551,7 +7619,7 @@ impl NavBot {
     #[cfg(test)]
     pub(crate) fn pending_route_state_for_test(&self) -> Option<&WorldState> {
         match self.pending_route.as_deref()? {
-            RouteDemand::Pending { request, .. } => request.state.as_ref(),
+            RouteDemand::Pending { request, .. } => request.state.as_deref(),
             RouteDemand::Preparing { .. } | RouteDemand::Prepared(_) => None,
         }
     }
@@ -8799,7 +8867,7 @@ mod diagnostic_tests {
             1,
             crate::WalkGlobals::default(),
         );
-        request.state = Some(WorldState::empty());
+        request.state = Some(Arc::new(WorldState::empty()));
         request
     }
 
@@ -9087,17 +9155,16 @@ mod diagnostic_tests {
     #[test]
     fn compat_no_path_diagnoses_actionable_gates_before_reporting_failure() {
         let mut request = tiny_stage_request();
-        request.state =
-            Some(
-                WorldState::empty().with_establishable(Arc::from([api::selected::StageWindow {
-                    quest: api::selected::FactKey::new("quest"),
-                    signal: api::selected::FactKey::new("stage"),
-                    values: api::selected::InclusiveRange {
-                        min: Some(1),
-                        max: Some(1),
-                    },
-                }])),
-            );
+        request.state = Some(Arc::new(WorldState::empty().with_establishable(Arc::from(
+            [api::selected::StageWindow {
+                quest: api::selected::FactKey::new("quest"),
+                signal: api::selected::FactKey::new("stage"),
+                values: api::selected::InclusiveRange {
+                    min: Some(1),
+                    max: Some(1),
+                },
+            }],
+        ))));
         let mut job =
             RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None }).unwrap();
         job.search_purpose = RouteSearchPurpose::Blocking;
@@ -9151,10 +9218,10 @@ mod diagnostic_tests {
         // cannot establish a gate, so neither case reserves or runs this pass.
         for establishable in [None, Some(Arc::from([]))] {
             let mut request = tiny_stage_request();
-            request.state = Some(WorldState {
+            request.state = Some(Arc::new(WorldState {
                 establishable,
                 ..WorldState::empty()
-            });
+            }));
             let mut job =
                 RouteJob::prepare("test", request, RouteDemandKind::Walk { authority: None })
                     .unwrap();
@@ -9306,7 +9373,7 @@ mod diagnostic_tests {
         request.from = bank;
         request.to = tile(3085, 3230);
         request.arrival = ArrivalKind::Area;
-        request.state = Some(state);
+        request.state = Some(Arc::new(state));
         request.candidate_goals =
             Some(script::native::WalkGoals::with_preferred(vec![bank], &preferred).unwrap());
         let mut job = completed_search_stage(request);
@@ -9604,6 +9671,144 @@ mod diagnostic_tests {
     fn ordinary_and_single_candidate_routes_match_across_the_real_corpus() {
         use sha2::Digest;
         use std::collections::{HashMap, HashSet};
+        use std::io::Write as _;
+
+        fn snapshot_for_state(state: &WorldState) -> GameSnapshot {
+            fn item(
+                id: i32,
+                count: i32,
+                container: api::snapshot::ItemContainer,
+                slot: i32,
+            ) -> api::snapshot::ItemView {
+                api::snapshot::ItemView {
+                    def: api::ItemDefView {
+                        id,
+                        name: None,
+                        stackable: false,
+                        members: false,
+                        base_value: 0,
+                        noted: false,
+                        certificate_link: -1,
+                        certificate_template: -1,
+                    },
+                    container,
+                    action_family: api::snapshot::ItemActionFamily::Held,
+                    slot,
+                    count,
+                    actions: Vec::new(),
+                    component_id: 0,
+                }
+            }
+
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+
+            let mut inventory = state
+                .inv
+                .iter()
+                .map(|(&id, &count)| (id, count))
+                .collect::<Vec<_>>();
+            inventory.sort_unstable_by_key(|&(id, _)| id);
+            snapshot.seed_inventory(
+                inventory
+                    .into_iter()
+                    .enumerate()
+                    .map(|(slot, (id, count))| {
+                        item(
+                            id,
+                            count,
+                            api::snapshot::ItemContainer::Inventory,
+                            i32::try_from(slot).unwrap(),
+                        )
+                    })
+                    .collect(),
+                28,
+            );
+            snapshot.seed_inventory_packet_generations(state.inventory_ready.then_some(1), None);
+
+            let mut worn = state.worn.iter().copied().collect::<Vec<_>>();
+            worn.sort_unstable();
+            snapshot.seed_equipment(
+                worn.into_iter()
+                    .enumerate()
+                    .map(|(slot, id)| {
+                        item(
+                            id,
+                            1,
+                            api::snapshot::ItemContainer::Equipment,
+                            i32::try_from(slot).unwrap(),
+                        )
+                    })
+                    .collect(),
+            );
+            snapshot.seed_equipment_packet_generation(state.equipment_ready.then_some(1));
+
+            let combat_base = match state.combat_level {
+                Some(126) => Some([99; 7]),
+                Some(3) => Some([3; 7]),
+                Some(50) => Some([40, 39, 40, 40, 40, 39, 40]),
+                None => None,
+                Some(level) => panic!("unexpected route fixture combat level {level}"),
+            };
+            let mut stat_indices = state.stats.keys().copied().collect::<Vec<_>>();
+            if combat_base.is_some() {
+                stat_indices.extend(0..7);
+            }
+            stat_indices.sort_unstable();
+            stat_indices.dedup();
+            snapshot.seed_stats(
+                stat_indices
+                    .into_iter()
+                    .map(|index| {
+                        let effective = state.stats.get(&index).copied().unwrap_or(0);
+                        let base = combat_base
+                            .and_then(|levels| {
+                                usize::try_from(index)
+                                    .ok()
+                                    .and_then(|slot| levels.get(slot).copied())
+                            })
+                            .unwrap_or(effective);
+                        api::snapshot::StatView {
+                            index,
+                            name: format!("skill-{index}"),
+                            effective,
+                            base,
+                            xp: 0,
+                            used: true,
+                        }
+                    })
+                    .collect(),
+            );
+
+            let mut varps = state
+                .varps
+                .iter()
+                .map(|(&index, &value)| (index, value))
+                .collect::<Vec<_>>();
+            varps.sort_unstable_by_key(|&(index, _)| index);
+            snapshot.seed_varps(
+                varps
+                    .into_iter()
+                    .map(|(index, value)| api::snapshot::VarpView { index, value })
+                    .collect(),
+            );
+
+            let mut quests = state.quests.iter().cloned().collect::<Vec<_>>();
+            quests.sort_unstable();
+            snapshot.seed_quest_statuses(
+                quests
+                    .into_iter()
+                    .enumerate()
+                    .map(|(component_id, name)| api::snapshot::QuestStatusView {
+                        component_id: i32::try_from(component_id).unwrap(),
+                        name,
+                        colour: nav_planner::world_state::QUEST_COMPLETE_COLOUR,
+                    })
+                    .collect(),
+                true,
+            );
+            snapshot
+        }
 
         let pack = std::path::PathBuf::from(
             std::env::var_os("BOT_ROUTE_PARITY_NAVPACK").expect("set the real 289 navpack"),
@@ -9657,6 +9862,7 @@ mod diagnostic_tests {
             map_members: true,
             combat_level: Some(50),
             inv: HashMap::from([(995, 60)]),
+            stats: (0..7).map(|skill| (skill, 0)).collect(),
             ..WorldState::empty()
         };
         let legacy = FindOptions {
@@ -9810,6 +10016,10 @@ mod diagnostic_tests {
             ("all_off_control", lumbridge, vec![falador], default, empty),
         ];
         let mut records = Vec::new();
+        let cached_route_output = output.with_extension("cached.routes");
+        let fresh_route_output = output.with_extension("fresh.routes");
+        let mut cached_route_bytes = std::fs::File::create(&cached_route_output).unwrap();
+        let mut fresh_route_bytes = std::fs::File::create(&fresh_route_output).unwrap();
         let started = Instant::now();
         for (index, (name, from, goals, opts, state)) in cases.into_iter().enumerate() {
             if index == 5 {
@@ -9838,8 +10048,37 @@ mod diagnostic_tests {
             let pair_count = selected.len();
             let mut routed = 0;
             let mut route_digest = sha2::Sha256::new();
+            let snapshot = snapshot_for_state(&state);
+            let mut cache = crate::script_runtime::NavWorldStateCache::default();
+            let here = Some((from.x, from.z, from.level));
+            let cached_state = crate::script_runtime::nav_world_state_for_observe(
+                &mut cache,
+                here,
+                &snapshot,
+                true,
+                false,
+                state.map_members,
+                1,
+            )
+            .expect("active route corpus state");
+            let cached_again = crate::script_runtime::nav_world_state_for_observe(
+                &mut cache,
+                here,
+                &snapshot,
+                true,
+                false,
+                state.map_members,
+                1,
+            )
+            .expect("reused route corpus state");
+            assert!(Arc::ptr_eq(&cached_state, &cached_again));
+            let original_state = Arc::new(state.clone());
+            let fresh_state =
+                Arc::new(WorldState::from_snapshot(&snapshot).with_map_members(state.map_members));
+            assert_eq!(cached_state.as_ref(), original_state.as_ref());
+            assert_eq!(cached_state.as_ref(), fresh_state.as_ref());
             for goal in selected.drain(..) {
-                let request = |candidate_goals| {
+                let request = |route_state: Arc<WorldState>, candidate_goals| {
                     let mut request = stage_request(Arc::clone(&world));
                     request.from = from;
                     request.to = goal;
@@ -9851,11 +10090,11 @@ mod diagnostic_tests {
                         1,
                         crate::WalkGlobals::default(),
                     );
-                    request.state = Some(state.clone());
+                    request.state = Some(route_state);
                     request.candidate_goals = candidate_goals;
                     request
                 };
-                let (before, _, _) = request(None)
+                let (before, _, _) = request(Arc::clone(&original_state), None)
                     .drive_route_job_output_with_diagnostic_budget_for_test(usize::MAX);
                 let before = ScriptRouteRequest::project_route_job_outcome(
                     before.outcome,
@@ -9863,28 +10102,68 @@ mod diagnostic_tests {
                     before.bank_avoid_copy,
                     &world,
                 );
-                let (ordinary, _) = request(None).drive_route_job_for_test();
-                let (candidate, _) =
-                    request(Some(script::native::WalkGoals::new(vec![goal]).unwrap()))
-                        .drive_route_job_for_test();
+                let (ordinary, _) =
+                    request(Arc::clone(&original_state), None).drive_route_job_for_test();
+                let (candidate, _) = request(
+                    Arc::clone(&original_state),
+                    Some(script::native::WalkGoals::new(vec![goal]).unwrap()),
+                )
+                .drive_route_job_for_test();
+                let (cached, _) =
+                    request(Arc::clone(&cached_state), None).drive_route_job_for_test();
+                let (fresh, _) = request(Arc::clone(&fresh_state), None).drive_route_job_for_test();
                 route_digest.update(goal.x.to_le_bytes());
                 route_digest.update(goal.z.to_le_bytes());
                 route_digest.update(goal.level.to_le_bytes());
-                match (before, ordinary, candidate) {
+                match (before, ordinary, candidate, cached, fresh) {
                     (
                         RouteOutcome::Routed(before),
                         RouteOutcome::Routed(ordinary),
                         RouteOutcome::Routed(candidate),
+                        RouteOutcome::Routed(cached),
+                        RouteOutcome::Routed(fresh),
                     ) => {
                         assert_eq!(before, ordinary, "{name}: {from:?} -> {goal:?}");
-                        assert_eq!(ordinary, candidate, "{name}: {from:?} -> {goal:?}");
+                        assert_eq!(
+                            ordinary, candidate,
+                            "{name}: candidate route {from:?} -> {goal:?}"
+                        );
+                        assert_eq!(
+                            ordinary, cached,
+                            "{name}: cached route {from:?} -> {goal:?}"
+                        );
+                        assert_eq!(
+                            ordinary, fresh,
+                            "{name}: independent fresh-state route {from:?} -> {goal:?}"
+                        );
                         route_digest.update(format!("{ordinary:?}").as_bytes());
+                        cached_route_bytes
+                            .write_all(
+                                format!("{name}\t{from:?}\t{goal:?}\t{cached:?}\n").as_bytes(),
+                            )
+                            .unwrap();
+                        fresh_route_bytes
+                            .write_all(
+                                format!("{name}\t{from:?}\t{goal:?}\t{fresh:?}\n").as_bytes(),
+                            )
+                            .unwrap();
                         routed += 1;
                     }
-                    (RouteOutcome::NoPath, RouteOutcome::NoPath, RouteOutcome::NoPath) => {
+                    (
+                        RouteOutcome::NoPath,
+                        RouteOutcome::NoPath,
+                        RouteOutcome::NoPath,
+                        RouteOutcome::NoPath,
+                        RouteOutcome::NoPath,
+                    ) => {
                         route_digest.update(b"NoPath");
+                        let line = format!("{name}\t{from:?}\t{goal:?}\tno-path\n");
+                        cached_route_bytes.write_all(line.as_bytes()).unwrap();
+                        fresh_route_bytes.write_all(line.as_bytes()).unwrap();
                     }
-                    _ => panic!("{name}: route availability changed for {from:?} -> {goal:?}"),
+                    _ => panic!(
+                        "{name}: diagnostic/original/candidate/cached/fresh route availability changed for {from:?} -> {goal:?}"
+                    ),
                 }
             }
             let record = serde_json::json!({
@@ -9912,6 +10191,18 @@ mod diagnostic_tests {
             .unwrap();
         }
         assert_eq!(records.len(), 17);
+        cached_route_bytes.flush().unwrap();
+        fresh_route_bytes.flush().unwrap();
+        assert_eq!(
+            std::fs::metadata(&cached_route_output).unwrap().len(),
+            std::fs::metadata(&fresh_route_output).unwrap().len(),
+            "cached and fresh route corpus byte lengths differ"
+        );
+        println!(
+            "cached/fresh route bytes written: {} and {}",
+            cached_route_output.display(),
+            fresh_route_output.display()
+        );
     }
 
     #[test]
@@ -9965,12 +10256,12 @@ mod diagnostic_tests {
                 1,
                 crate::WalkGlobals::default(),
             );
-            request.state = Some(WorldState {
+            request.state = Some(Arc::new(WorldState {
                 stats: (0..25).map(|skill| (skill, 99)).collect(),
                 combat_level: Some(126),
                 map_members: true,
                 ..WorldState::empty()
-            });
+            }));
             request.bank_origin = Origin::Session;
             request.bank = vec![(item, 1)];
             if case == "exact-worn-blade" {

@@ -1517,6 +1517,8 @@ fn spawn_slot_thread(
                         // gates on its facts; the follow surface reads the
                         // canonical base + route-head tile from it).
                         let mut nav_snapshot = GameSnapshot::new();
+                        let mut nav_world_state_cache =
+                            super::script_runtime::NavWorldStateCache::default();
                         let mut session_epoch = 0u64;
                         let mut welcome = login_readiness::LoginReadiness::default();
                         let mut debug_replies = super::debug_replies::DebugReplies::default();
@@ -1570,6 +1572,7 @@ fn spawn_slot_thread(
                             if session_boundary {
                                 debug_replies = super::debug_replies::DebugReplies::default();
                                 session_epoch = session_epoch.wrapping_add(1);
+                                nav_world_state_cache.clear();
                                 if c.ingame {
                                     arm_latch_obs.set_script_active(script_active(&slot_scripts, name));
                                     reset_slot_session_boundary(
@@ -1873,11 +1876,13 @@ fn spawn_slot_thread(
                             };
                             let inv = observe_script_inv(running, tick_edge, &nav_snapshot);
                             let nav_state = nav_world_state_for_observe(
+                                &mut nav_world_state_cache,
                                 here,
                                 &nav_snapshot,
                                 nav_facts,
                                 nav_armed,
                                 map_members,
+                                session_epoch,
                             );
                             #[cfg(feature = "js")]
                             let npc_boxes = project_npc_boxes_for_isolate_snapshot(
@@ -2043,7 +2048,13 @@ fn spawn_slot_thread(
                                         false,
                                         false,
                                         nav_world_state_for_observe(
-                                            here, &nav_snapshot, nav_facts, true, map_members,
+                                            &mut nav_world_state_cache,
+                                            here,
+                                            &nav_snapshot,
+                                            nav_facts,
+                                            true,
+                                            map_members,
+                                            session_epoch,
                                         ),
                                     );
                                     c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);

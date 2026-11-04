@@ -614,7 +614,7 @@ fn ok_hops_are_post_from_to_not_bank_steps() {
 }
 
 #[test]
-fn cooperative_bank_fetch_postroute_uses_unique_world_state() {
+fn shared_cached_state_allows_cooperative_bank_fetch_postroute() {
     let from = tile(0, 0, 0);
     let destination = tile(4, 0, 1);
     let mut graph = TransportGraph::default();
@@ -635,7 +635,20 @@ fn cooperative_bank_fetch_postroute_uses_unique_world_state() {
         }],
     );
     let cache = named_cache();
-    let state = Arc::new(WorldState::empty());
+    let snapshot = api::snapshot::GameSnapshot::new();
+    let here = Some((from.x, from.z, from.level));
+    let mut slot_cache = crate::script_runtime::NavWorldStateCache::default();
+    let state = crate::script_runtime::nav_world_state_for_observe(
+        &mut slot_cache,
+        here,
+        &snapshot,
+        true,
+        false,
+        false,
+        1,
+    )
+    .expect("active slot has cached navigation facts");
+    assert_eq!(Arc::strong_count(&state), 2, "slot cache retains its Arc");
     let bank = BankRows {
         origin: Origin::Session,
         rows: vec![(995, 10)],
@@ -670,21 +683,33 @@ fn cooperative_bank_fetch_postroute_uses_unique_world_state() {
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let mut request = req(from, destination, 57);
     request.allow_bank_fetch = true;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&*state),
+        Some(&state),
         bank,
         Some(cache),
         None,
         request,
     );
     let actual = wait_latest(&navs, 57);
+    let cached_again = crate::script_runtime::nav_world_state_for_observe(
+        &mut slot_cache,
+        here,
+        &snapshot,
+        true,
+        false,
+        false,
+        1,
+    )
+    .expect("active slot retains cached navigation facts");
+    assert!(Arc::ptr_eq(&state, &cached_again), "cache entry stays live");
     assert_eq!(
         actual, expected,
         "cooperative bank-fetch/post-route outcome"
     );
+    assert!(actual.ok && actual.bank_planned, "bank deltas were applied");
     assert!(
         actual.hops.owner.is_some(),
         "published hops borrow the compact result"

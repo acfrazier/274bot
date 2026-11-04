@@ -230,6 +230,7 @@ pub(crate) fn dispatch_script_interact(
 ) -> bool {
     let bank = RwLock::new(BankMemory::default());
     bank.write().track(snapshot, 0);
+    let state = state.map(Arc::new);
     dispatch_script_interact_cached_scoped(
         driver,
         &InteractContext {
@@ -432,6 +433,7 @@ pub(crate) fn dispatch_script_interact_cached<R>(
 where
     R: AsRef<[script::interact::InteractReq]> + IntoIterator<Item = script::interact::InteractReq>,
 {
+    let state = state.map(Arc::new);
     dispatch_script_interact_cached_scoped(
         driver,
         &InteractContext {
@@ -456,8 +458,7 @@ where
 /// it once and every dispatch in that pass reads it; the driver stays a
 /// separate argument because the pass also writes through it between
 /// dispatches. `state` borrows the frame's gating facts: only an arm that
-/// queues work (walk, bank selection, route inspection) copies them, and the
-/// queued request keeps that copy of this frame.
+/// queues work takes a shared `Arc` handle at the event boundary.
 #[derive(Clone, Copy)]
 pub(crate) struct InteractContext<'a> {
     pub(crate) snapshot: &'a GameSnapshot,
@@ -465,7 +466,7 @@ pub(crate) struct InteractContext<'a> {
     pub(crate) here: Option<(i32, i32, i32)>,
     pub(crate) navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
     pub(crate) world: &'a Option<Arc<NavWorld>>,
-    pub(crate) state: Option<&'a WorldState>,
+    pub(crate) state: Option<&'a Arc<WorldState>>,
     pub(crate) bank: Option<&'a RwLock<BankMemory>>,
     pub(crate) name: &'a str,
     pub(crate) compatibility_scope: Option<api::identity::Scope>,
@@ -916,7 +917,7 @@ where
                 };
                 let to = WorldTile { x, z, level };
                 let empty_state = WorldState::empty();
-                let route_state = state.unwrap_or(&empty_state);
+                let route_state = state.map(Arc::as_ref).unwrap_or(&empty_state);
                 let opts = super::walk_permissions::compiled_options(
                     navs,
                     name,
@@ -951,7 +952,7 @@ where
                     }
                     None => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true),
                 };
-                route_inspect::queue_inspect(
+                route_inspect::queue_inspect_shared(
                     navs,
                     name,
                     world,

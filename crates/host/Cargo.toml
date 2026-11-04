@@ -11,11 +11,15 @@ num-bigint = "0.4"
 thiserror = "2.0.20"
 vault = { path = "../vault" }
 parking_lot = { version = "0.12", optional = true }
+allocation-counter = { version = "=0.8.1", optional = true }
 
 [features]
 render-diagnostics = ["client/render-diagnostics"]
 render-test-hooks = ["client/render-test-hooks"]
 performance-profile = []
+# Opt-in per-observe CPU/allocation diagnostics, enabled only with a fresh
+# BOT_OBSERVE_COST_OUT TSV destination.
+observe-cost-profile = ["performance-profile", "dep:allocation-counter"]
 # Lossless, immutable paint witnesses for the Windows journal fixture only.
 journal-paint-proof = ["dep:parking_lot"]
 # Test-only capacity seams (force the time-off-the-CPU measure on Linux,
