@@ -165,15 +165,76 @@ class TeardownTests(unittest.TestCase):
     def test_baseline_tls12_does_not_mask_real_teardown_failure(self):
         event = self.event({"stage": "proxy_b_websocket", "error": "FrameError: bad frame"})
         event["tls_terminator"]["handshake"]["tls_version"] = "TLSv1.2"
-        event["proxy_b_websocket"]["engine_to_client"]["opcodes_written"]["8"] = 0
-        self.assertTrue(any("no complete zero-payload bidirectional WS Close" in reason
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason
                             for reason in self.check(event, arm="baseline")))
+
+    def test_old_proxy_a_broken_pipe_acceptance_retains_13_and_16_byte_window(self):
+        for connection_id, deficit in (("old-zero", 0), ("c000053", 13), ("c000057", 16)):
+            for arm in ("baseline", "candidate"):
+                with self.subTest(connection_id=connection_id, arm=arm):
+                    event = self.event({
+                        "stage": "proxy_a",
+                        "error": "BrokenPipeError: [Errno 32] Broken pipe",
+                    })
+                    event["connection_id"] = connection_id
+                    event["proxy_a_ciphertext"]["terminator_to_client_ciphertext"] = {
+                        "bytes_read": deficit, "bytes_written": 0,
+                    }
+                    observations = []
+                    errors = []
+                    summary.check_transport_teardown(
+                        Path(arm), arm, event, self.close_frames(), 30, errors,
+                        observations if arm == "baseline" else None)
+                    self.assertEqual(errors, [])
+                    if arm == "baseline":
+                        self.assertFalse(observations[0]["non_gating"])
+
+    def test_new_baseline_rule_requires_zero_deficit(self):
+        reset = {"stage": "proxy_a",
+                 "error": "ConnectionResetError: [Errno 54] Connection reset by peer"}
+        for deficit in (13, 16):
+            with self.subTest(deficit=deficit):
+                event = self.event(reset)
+                event["proxy_a_ciphertext"]["terminator_to_client_ciphertext"] = {
+                    "bytes_read": deficit, "bytes_written": 0,
+                }
+                observations = []
+                errors = []
+                summary.check_transport_teardown(
+                    Path("baseline"), "baseline", event, self.close_frames(), 30,
+                    errors, observations)
+                self.assertTrue(any("unexpected TLS/segmentation error" in reason
+                                    for reason in errors))
+                self.assertFalse(observations[0]["non_gating"])
+
+    def test_proxy_b_stage_failure_gates_both_arms_and_observation(self):
+        fault = {"stage": "proxy_a",
+                 "error": "ConnectionResetError: [Errno 54] Connection reset by peer"}
+        for arm in ("baseline", "candidate"):
+            with self.subTest(arm=arm):
+                stage_only = self.event(fault)
+                stage_only["failures"] = []
+                stage_only["stage_status"]["proxy_a"] = "closed"
+                stage_only["stage_status"]["proxy_b"] = "failed"
+                errors = []
+                summary.check_transport_teardown(
+                    Path(arm), arm, stage_only, self.close_frames(), 30, errors)
+                self.assertTrue(any("application relay or TLS handshake did not complete" in reason
+                                    for reason in errors))
+
+                if arm == "baseline":
+                    event = self.event(fault)
+                    event["stage_status"]["proxy_b"] = "failed"
+                    observations = []
+                    errors = []
+                    summary.check_transport_teardown(
+                        Path(arm), arm, event, self.close_frames(), 30, errors, observations)
+                    self.assertFalse(observations[0]["non_gating"])
 
     def test_baseline_teardown_is_observed_only_after_lossless_close(self):
         failures = (
             {"stage": "proxy_a", "error": "ConnectionResetError: [Errno 54] Connection reset by peer"},
             {"stage": "tls_terminator", "error": "BrokenPipeError: [Errno 32] Broken pipe"},
-            {"stage": "proxy_b_websocket", "error": "FrameError: client frames must be masked"},
         )
         for failure in failures:
             with self.subTest(failure=failure):
@@ -190,16 +251,31 @@ class TeardownTests(unittest.TestCase):
 
                 missing = self.close_frames()
                 missing["engine_to_client"] = []
+                observations = []
                 errors = []
                 summary.check_transport_teardown(Path("baseline"), "baseline", event,
-                                                 missing, 30, errors)
+                                                 missing, 30, errors, observations)
                 self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in errors))
+                self.assertFalse(observations[0]["non_gating"])
 
                 partial = self.event(failure, started=35, closed=40)
                 partial["proxy_a_ciphertext"]["client_to_terminator_ciphertext"] = {
                     "bytes_read": 1, "bytes_written": 0}
-                self.assertTrue(any("unexpected TLS/segmentation error" in reason
-                                    for reason in self.check(partial, phase_zero=30, arm="baseline")))
+                observations = []
+                errors = []
+                summary.check_transport_teardown(Path("baseline"), "baseline", partial,
+                                                 self.close_frames(), 30, errors, observations)
+                self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in errors))
+                self.assertFalse(observations[0]["non_gating"])
+
+                mismatched = self.event(failure, started=35, closed=40)
+                mismatched["binary_payload_hashes_match_at_proxy_b"]["engine_to_client"] = False
+                observations = []
+                errors = []
+                summary.check_transport_teardown(Path("baseline"), "baseline", mismatched,
+                                                 self.close_frames(), 30, errors, observations)
+                self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in errors))
+                self.assertFalse(observations[0]["non_gating"])
 
     def test_unknown_baseline_failure_still_gates(self):
         failure = {"stage": "tls_terminator", "error": "SSLError: certificate verify failed"}

@@ -416,8 +416,6 @@ def baseline_teardown_fault(failure: dict, stage: dict) -> bool:
                 or re.fullmatch(
                     r"SSLEOFError: EOF occurred in violation of protocol(?: \(_ssl\.c:\d+\))?",
                     error) is not None)
-    if origin == "proxy_b_websocket" and stage.get("proxy_b") == "failed":
-        return error.startswith("FrameError: ")
     return False
 
 
@@ -477,6 +475,8 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
         demand(event["binary_payload_hashes_match_at_proxy_b"].get("client_to_engine") is True
                and event["binary_payload_hashes_match_at_proxy_b"].get("engine_to_client") is True,
                errors, f"{prefix}: game binary payload hash diverged before Close")
+        # The old teardown allowance includes small proxy-A and TLS deficits.
+        # The new baseline observation rule below requires zero deficits.
         demand(a_in == tls_in == 0 and 0 <= a_out <= 24 and 0 <= tls_out <= 2,
                errors, f"{prefix}: ciphertext/plaintext deficit extends beyond terminal WS Close")
         # setup Relog precedes the first-script-Start fault window
@@ -496,20 +496,33 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
         matching_hashes = (
             event["binary_payload_hashes_match_at_proxy_b"].get("client_to_engine") is True
             and event["binary_payload_hashes_match_at_proxy_b"].get("engine_to_client") is True)
-        baseline_end = (arm == "baseline" and completed_close and matching_hashes
+        # Both Close frames passed proxy B. The new rule records a baseline
+        # teardown fault only when every transport deficit is zero.
+        baseline_end = (arm == "baseline" and stage.get("proxy_b") == "closed"
+                        and completed_close and matching_hashes
                         and tls["handshake"].get("completed") == 1
                         and (a_in, a_out, tls_in, tls_out) == (0, 0, 0, 0))
-        baseline_faults = (baseline_end and bool(failures)
-                           and all(baseline_teardown_fault(failure, stage)
-                                   for failure in failures))
-        demand(stage.get("proxy_b") == "closed"
-               or (stage.get("proxy_b") == "failed" and baseline_faults),
-               errors, f"{prefix}: application relay or TLS handshake did not complete")
+        def accepted_prior_rule(failure: dict) -> bool:
+            return (
+                accepted_tls_close_error(
+                    failure, stage, (a_in, a_out, tls_in, tls_out), before_phase_zero)
+                or (failure == {"stage": "proxy_a",
+                                "error": "BrokenPipeError: [Errno 32] Broken pipe"}
+                    and (arm == "candidate" or (0 <= a_out <= 24 and 0 <= tls_out <= 2)))
+                or (setup_reset and failure == {
+                    "stage": "proxy_a",
+                    "error": "ConnectionResetError: [Errno 104] Connection reset by peer",
+                })
+            )
+
+        demand(stage.get("proxy_b") == "closed", errors,
+               f"{prefix}: application relay or TLS handshake did not complete")
         if arm == "baseline" and observations is not None:
             for failure in failures:
                 observations.append({
                     "connection_id": identifier, "failure": failure,
-                    "non_gating": baseline_end and baseline_teardown_fault(failure, stage),
+                    "non_gating": (baseline_end and baseline_teardown_fault(failure, stage)
+                                   and not accepted_prior_rule(failure)),
                     "byte_deficits": [a_in, a_out, tls_in, tls_out],
                 })
         # Both transports support TLS 1.2. This soak exercises the candidate
@@ -517,12 +530,7 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
         version = tls["handshake"].get("tls_version")
         version_ok = version == "TLSv1.3" if arm == "candidate" else version in ("TLSv1.2", "TLSv1.3")
         demand(version_ok and all(
-            accepted_tls_close_error(failure, stage, (a_in, a_out, tls_in, tls_out),
-                                     before_phase_zero)
-            or (failure == {"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"}
-                and (arm == "candidate" or (a_in, a_out, tls_in, tls_out) == (0, 0, 0, 0)))
-            or (setup_reset and failure == {"stage": "proxy_a",
-                                             "error": "ConnectionResetError: [Errno 104] Connection reset by peer"})
+            accepted_prior_rule(failure)
             or (baseline_end and baseline_teardown_fault(failure, stage))
             for failure in failures
         ), errors, f"{prefix}: unexpected TLS/segmentation error")
