@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 
 import t14_soak_summary as summary
+from test_t14_windows_thread_evidence import ARCHIVED_BASELINE_DUMP
 
 
 class SceneSamplesTests(unittest.TestCase):
@@ -724,10 +725,7 @@ class WindowsRuntimeCensusTests(unittest.TestCase):
             return errors, result
 
     def test_archived_baseline_dump_classifies_six_os_workers(self):
-        dump = Path(
-            "/Volumes/dev-scratch/274bot-evidence/TRACK-T1/T1.4/closeout-1103/"
-            "windows/thread-stack-export-2/T14-THREAD-DIAGNOSTIC-BASELINE/"
-            "thread-snapshot.dmp")
+        dump = ARCHIVED_BASELINE_DUMP
         if not dump.is_file():
             self.skipTest("archived baseline Windows minidump not mounted")
         tids = (10512, 4956, 4468, 5140, 1524, 3036)
@@ -786,6 +784,12 @@ class WindowsRuntimeCensusTests(unittest.TestCase):
                 errors)
             self.assertEqual(errors, [])
             self.assertEqual(census["term_maxima"]["W"], 6)
+            allowance = census["recorded_backend_L_T_allowance"]
+            self.assertEqual(allowance["maximum"], 6)
+            self.assertEqual({row["tid"] for row in allowance["thread_lifetimes"]}, set(tids))
+            self.assertTrue(all(row["process_id"] == 9896
+                                and row["thread_creation_filetime"] == by_tid[row["tid"]]["thread_creation_filetime"]
+                                for row in allowance["thread_lifetimes"]))
 
     def test_os_only_stack_is_explicit_W(self):
         evidence, projection = self.witness()
@@ -801,6 +805,7 @@ class WindowsRuntimeCensusTests(unittest.TestCase):
         kernel32 = "C:\\Windows\\System32\\kernel32.dll"
         for modules, stack_bytes, start in (
             ({product: 1}, 4096, None),
+            ({ntdll: 2}, 4096, None),
             ({ntdll: 2, kernel32: 1, product: 1}, 4096, None),
             ({}, 4096, None),
             ({ntdll: 2, kernel32: 1}, 0, None),
@@ -896,7 +901,7 @@ class WindowsRuntimeCensusTests(unittest.TestCase):
             {"sample_monotonic_ns": at, "elapsed_seconds": at // 100,
              "sampler_platform": "windows", "process_id": 500, "pid": 10,
              "task_count": 2 + len(tasks), "threads": fixed + tasks}
-            for at, tasks in ((200, workers[:1]), (400, workers))
+            for at, tasks in ((200, workers[:1]), (400, workers[:2]), (600, workers))
         ]
         with mock.patch.object(summary.t14_windows_thread_evidence, "analyze",
                                side_effect=lambda _path, descriptions, _pid:
@@ -910,15 +915,28 @@ class WindowsRuntimeCensusTests(unittest.TestCase):
                  "limits": {"fixed_threads": 14, "max_request_threads": 64}},
                 errors)
         self.assertEqual(result["term_maxima"]["W"], 40)
-        self.assertTrue(any("W grew after warm-up" in error for error in errors))
+        self.assertTrue(any("W grew after warm-up at 4s" in error for error in errors))
+        self.assertTrue(any("W grew after warm-up at 6s" in error for error in errors))
+        allowance = result["recorded_backend_L_T_allowance"]
+        self.assertEqual(allowance["maximum"], 40)
+        self.assertEqual(len(allowance["thread_lifetimes"]), 40)
+        lifetime_by_tid = {row["tid"]: row for row in allowance["thread_lifetimes"]}
+        self.assertEqual((lifetime_by_tid[13]["first_sample_monotonic_ns"],
+                          lifetime_by_tid[13]["last_sample_monotonic_ns"]), (200, 600))
+        self.assertEqual((lifetime_by_tid[14]["first_sample_monotonic_ns"],
+                          lifetime_by_tid[14]["last_sample_monotonic_ns"]), (400, 600))
 
-    def test_candidate_worker_count_exceeding_baseline_fails_pair(self):
+    def test_backend_allowances_are_not_compared_across_tls_backends(self):
         with tempfile.TemporaryDirectory() as temporary:
             folders = ArmReasonTests.folders(temporary)
             censuses = [
-                {"term_maxima": {"W": 6}, "per_sample": []},
+                {"term_maxima": {"W": 6}, "per_sample": [],
+                 "recorded_backend_L_T_allowance":
+                     {"worker_term": "W", "maximum": 6, "thread_lifetimes": []}},
                 {"term_maxima": {"W": 10},
-                 "per_sample": [{"terms": {"W": 10}, "elapsed_seconds": 30}]},
+                 "per_sample": [{"terms": {"W": 10}, "elapsed_seconds": 30}],
+                 "recorded_backend_L_T_allowance":
+                     {"worker_term": "W", "maximum": 10, "thread_lifetimes": []}},
             ]
             with mock.patch.object(summary, "check_workload", return_value={}), \
                     mock.patch.object(summary, "check_samples", return_value=[]), \
@@ -926,9 +944,12 @@ class WindowsRuntimeCensusTests(unittest.TestCase):
                     mock.patch.object(summary, "check_proxy", return_value={}), \
                     mock.patch.object(summary, "check_candidate", return_value={}):
                 result = summary.evaluate(*folders, smoke=True)
-        self.assertEqual(result["verdict"], "FAIL")
-        self.assertTrue(any("W exceeded baseline maximum" in reason
-                            for reason in result["reasons"]))
+        self.assertEqual(result["verdict"], "NONQUALIFYING_SMOKE_OK")
+        self.assertEqual(result["reasons"], [])
+        self.assertEqual(result["baseline"]["census"]["recorded_backend_L_T_allowance"]["backend_commit"],
+                         "baseline")
+        self.assertEqual(result["candidate"]["census"]["recorded_backend_L_T_allowance"]["backend_commit"],
+                         "candidate")
 
     def test_linux_census_output_keeps_old_shape(self):
         sample = {

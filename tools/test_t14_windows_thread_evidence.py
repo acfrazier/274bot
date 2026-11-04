@@ -16,8 +16,10 @@ ARCHIVED_BASELINE_DUMP = Path(
 ARCHIVED_BASELINE_PID = 9896
 UNNAMED_BASELINE_TIDS = (10512, 4956, 4468, 5140, 1524, 3036)
 SYSTEM_MODULE = r"C:\Windows\System32\ntdll.dll"
+KERNEL_MODULE = r"C:\Windows\System32\kernel32.dll"
 PRODUCT_MODULE = r"C:\build\t14_soak_live-test.exe"
 SYSTEM_BASE = 0x7FFB00000000
+KERNEL_BASE = 0x7FF900000000
 PRODUCT_BASE = 0x7FFA00000000
 
 
@@ -28,36 +30,40 @@ def is_windows_system_module(module):
 
 class MinidumpProjectionTests(unittest.TestCase):
     @staticmethod
-    def dump(*, bad_rsp_tid=None, include_thread_info=True):
+    def dump(*, bad_rsp_tid=None, include_thread_info=True,
+             duplicate_thread_info_tid=None, cut_short_stack_tid=None):
         data = bytearray(16384)
         module_rva = 128
-        thread_rva = 360
-        system_rva = 472
-        misc_rva = 536
-        info_rva = 576
-        name_rvas = (800, 1000)
+        thread_rva = 480
+        system_rva = 592
+        misc_rva = 656
+        info_rva = 688
+        name_rvas = (1024, 1248, 1472)
         context_rvas = (2048, 2304)
         stack_rvas = (4096, 8192)
         stack_starts = (0x100000, 0x200000)
         stack_size = 4096
         thread_ids = (13, 14)
-        module_names = (SYSTEM_MODULE, PRODUCT_MODULE)
-        module_bases = (SYSTEM_BASE, PRODUCT_BASE)
+        thread_info_ids = thread_ids
+        if duplicate_thread_info_tid is not None:
+            thread_info_ids = (*thread_ids, duplicate_thread_info_tid)
+        module_names = (SYSTEM_MODULE, PRODUCT_MODULE, KERNEL_MODULE)
+        module_bases = (SYSTEM_BASE, PRODUCT_BASE, KERNEL_BASE)
 
         data[:4] = b"MDMP"
         streams = [
-            (4, 4 + 2 * 108, module_rva),
-            (3, 4 + 2 * 48, thread_rva),
+            (4, 4 + len(module_names) * 108, module_rva),
+            (3, 4 + len(thread_ids) * 48, thread_rva),
             (7, 56, system_rva),
             (15, 24, misc_rva),
         ]
         if include_thread_info:
-            streams.append((17, 12 + 2 * 64, info_rva))
+            streams.append((17, 12 + len(thread_info_ids) * 64, info_rva))
         struct.pack_into("<II", data, 8, len(streams), 32)
         for index, (kind, size, rva) in enumerate(streams):
             struct.pack_into("<III", data, 32 + index * 12, kind, size, rva)
 
-        struct.pack_into("<I", data, module_rva, 2)
+        struct.pack_into("<I", data, module_rva, len(module_names))
         for index, (module_name, base, name_rva) in enumerate(
             zip(module_names, module_bases, name_rvas)
         ):
@@ -79,36 +85,66 @@ class MinidumpProjectionTests(unittest.TestCase):
         struct.pack_into("<H", data, system_rva, 9)
         struct.pack_into("<III", data, misc_rva, 24, 1, 500)
         if include_thread_info:
-            struct.pack_into("<III", data, info_rva, 12, 64, len(thread_ids))
+            struct.pack_into("<III", data, info_rva, 12, 64, len(thread_info_ids))
 
         for index, tid in enumerate(thread_ids):
             thread_offset = thread_rva + 4 + index * 48
             stack_start = stack_starts[index]
             stack_rva = stack_rvas[index]
             context_rva = context_rvas[index]
+            captured_stack_size = (
+                0x800 if tid == cut_short_stack_tid else stack_size
+            )
             struct.pack_into("<I", data, thread_offset, tid)
             struct.pack_into(
-                "<QII", data, thread_offset + 24, stack_start, stack_size, stack_rva
+                "<QII", data, thread_offset + 24, stack_start,
+                captured_stack_size, stack_rva
             )
             struct.pack_into(
                 "<II", data, thread_offset + 40, 0x100, context_rva
             )
-            rsp = stack_start + stack_size if tid == bad_rsp_tid else stack_start
+            rsp = (
+                stack_start + captured_stack_size
+                if tid == bad_rsp_tid else stack_start
+            )
             struct.pack_into("<Q", data, context_rva + 0x98, rsp)
             struct.pack_into("<Q", data, context_rva + 0xF8, SYSTEM_BASE + 0x123)
             if include_thread_info:
-                info_offset = info_rva + 12 + index * 64
                 start_address = (
                     SYSTEM_BASE + 0x200 if tid == 13 else PRODUCT_BASE + 0x300
                 )
+                info_offset = info_rva + 12 + index * 64
                 struct.pack_into("<I", data, info_offset, tid)
                 struct.pack_into("<Q", data, info_offset + 16, 1000 + tid)
                 struct.pack_into("<Q", data, info_offset + 48, start_address)
+
+        if include_thread_info and duplicate_thread_info_tid is not None:
+            duplicate_offset = info_rva + 12 + len(thread_ids) * 64
+            duplicate_start = (
+                SYSTEM_BASE + 0x200
+                if duplicate_thread_info_tid == 13 else PRODUCT_BASE + 0x300
+            )
+            struct.pack_into("<I", data, duplicate_offset, duplicate_thread_info_tid)
+            struct.pack_into("<Q", data, duplicate_offset + 16,
+                             1000 + duplicate_thread_info_tid)
+            struct.pack_into("<Q", data, duplicate_offset + 48, duplicate_start)
 
         struct.pack_into("<Q", data, stack_rvas[0] + 0x20, SYSTEM_BASE + 0x456)
         struct.pack_into("<Q", data, stack_rvas[0] + 0x180, SYSTEM_BASE + 0x789)
         struct.pack_into("<Q", data, stack_rvas[0] + 0x900, PRODUCT_BASE + 0x10)
         struct.pack_into("<Q", data, stack_rvas[1] + 0x20, SYSTEM_BASE + 0xABC)
+        for index, tid in enumerate(thread_ids):
+            if tid == cut_short_stack_tid:
+                continue
+            stack_rva = stack_rvas[index]
+            struct.pack_into(
+                "<Q", data, stack_rva + captured_stack_size - 0x38,
+                KERNEL_BASE + 0x500
+            )
+            struct.pack_into(
+                "<Q", data, stack_rva + captured_stack_size - 8,
+                SYSTEM_BASE + 0x600
+            )
         return data
 
     def test_full_stack_pid_thread_info_and_win32_start_projection(self):
@@ -128,12 +164,14 @@ class MinidumpProjectionTests(unittest.TestCase):
         self.assertEqual(product_stack["stack_window_bytes"], 4096)
         self.assertEqual(
             product_stack["candidate_return_address_module_counts"],
-            {SYSTEM_MODULE: 2, PRODUCT_MODULE: 1},
+            {SYSTEM_MODULE: 3, PRODUCT_MODULE: 1, KERNEL_MODULE: 1},
         )
         self.assertEqual(product_start["thread_creation_filetime"], 1014)
         self.assertEqual(product_start["start_module"], PRODUCT_MODULE)
-        self.assertEqual(product_start["candidate_return_address_module_counts"],
-                         {SYSTEM_MODULE: 1})
+        self.assertEqual(
+            product_start["candidate_return_address_module_counts"],
+            {SYSTEM_MODULE: 2, KERNEL_MODULE: 1},
+        )
         self.assertEqual(set(rows[99]), {"tid", "error"})
 
     def test_malformed_thread_isolated_to_its_row(self):
@@ -148,6 +186,21 @@ class MinidumpProjectionTests(unittest.TestCase):
         self.assertIn("stack pointer outside captured stack", rows[13]["error"])
         self.assertEqual(rows[14]["start_module"], PRODUCT_MODULE)
 
+    def test_cut_short_stack_is_rejected_for_only_its_thread(self):
+        raw = self.dump(cut_short_stack_tid=13)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "snapshot-0001.dmp"
+            path.write_bytes(raw)
+            projection = evidence.analyze(path, {13: "", 14: ""}, 500)
+
+        rows = {row["tid"]: row for row in projection["threads"]}
+        self.assertEqual(set(rows[13]), {"tid", "error"})
+        self.assertIn("incomplete captured stack boundary", rows[13]["error"])
+        self.assertEqual(rows[14]["start_module"], PRODUCT_MODULE)
+        self.assertIn(
+            KERNEL_MODULE, rows[14]["candidate_return_address_module_counts"]
+        )
+
     def test_pid_mismatch_and_missing_thread_info_stream_reject(self):
         raw = self.dump()
         with tempfile.TemporaryDirectory() as temporary:
@@ -159,6 +212,18 @@ class MinidumpProjectionTests(unittest.TestCase):
             path.write_bytes(self.dump(include_thread_info=False))
             with self.assertRaisesRegex(ValueError, "thread info stream absent"):
                 evidence.analyze(path, {13: ""}, 500)
+
+    def test_duplicate_stream17_tid_is_rejected_for_only_its_thread(self):
+        raw = self.dump(duplicate_thread_info_tid=13)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "snapshot-0001.dmp"
+            path.write_bytes(raw)
+            projection = evidence.analyze(path, {13: "", 14: ""}, 500)
+
+        rows = {row["tid"]: row for row in projection["threads"]}
+        self.assertEqual(set(rows[13]), {"tid", "error"})
+        self.assertIn("duplicate thread-info entry for TID 13", rows[13]["error"])
+        self.assertEqual(rows[14]["start_module"], PRODUCT_MODULE)
 
     @unittest.skipUnless(
         ARCHIVED_BASELINE_DUMP.is_file(),

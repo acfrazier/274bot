@@ -1,7 +1,11 @@
 """Check that Windows census provenance follows thread lifetimes, not TIDs."""
 
 import ctypes
+import sys
+import tempfile
+import types
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import windows_t14_soak as sampler
@@ -145,6 +149,8 @@ class ThreadCensusProgressTests(unittest.TestCase):
             self.index = 0
             self.last_error = 0
             self.first_time_error = first_time_error
+            self.thread_times_calls = 0
+            self.max_thread_times_calls = 2
             self.next_calls = 0
 
         def CreateToolhelp32Snapshot(self, _flags, _process_id):
@@ -174,6 +180,9 @@ class ThreadCensusProgressTests(unittest.TestCase):
             return 1000 + thread_id
 
         def GetThreadTimes(self, thread_handle, created_pointer, *_other):
+            self.thread_times_calls += 1
+            if self.thread_times_calls > self.max_thread_times_calls:
+                raise AssertionError("GetThreadTimes exceeded finite call bound")
             thread_id = thread_handle - 1000
             if thread_id == 13:
                 self.last_error = self.first_time_error
@@ -208,6 +217,10 @@ class ThreadCensusProgressTests(unittest.TestCase):
         rows, _main_tid = self.run_census(kernel)
 
         self.assertEqual(kernel.next_calls, 2)
+        self.assertEqual(kernel.thread_times_calls, 2)
+        self.assertLessEqual(
+            kernel.thread_times_calls, kernel.max_thread_times_calls
+        )
         self.assertEqual([row["tid"] for row in rows], [14])
 
     def test_thread32next_runs_before_unexpected_thread_times_error_is_raised(self):
@@ -215,6 +228,37 @@ class ThreadCensusProgressTests(unittest.TestCase):
         with self.assertRaisesRegex(OSError, "GetThreadTimes\\(13\\)"):
             self.run_census(kernel)
         self.assertEqual(kernel.next_calls, 1)
+        self.assertEqual(kernel.thread_times_calls, 1)
+        self.assertLessEqual(
+            kernel.thread_times_calls, kernel.max_thread_times_calls
+        )
+
+
+class MiniDumpThreadInfoFlagTests(unittest.TestCase):
+    def test_capture_requests_minidump_with_thread_info(self):
+        write_dump = mock.Mock(return_value=True)
+        dbghelp = types.SimpleNamespace(MiniDumpWriteDump=write_dump)
+        msvcrt = types.ModuleType("msvcrt")
+        msvcrt.get_osfhandle = lambda descriptor: descriptor
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with (
+                mock.patch.object(
+                    ctypes, "WinDLL", return_value=dbghelp, create=True
+                ),
+                mock.patch.dict(sys.modules, {"msvcrt": msvcrt}),
+                mock.patch.object(
+                    sampler.t14_windows_thread_evidence,
+                    "analyze",
+                    return_value={"sampled_pid": 500},
+                ),
+            ):
+                sampler.capture_thread_projection(
+                    123, 500, Path(temporary), 1, {13: ""}
+                )
+
+        self.assertEqual(sampler.MINIDUMP_WITH_THREAD_INFO, 0x1000)
+        self.assertEqual(write_dump.call_args.args[3], 0x1000)
 
 
 if __name__ == "__main__":

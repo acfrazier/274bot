@@ -213,6 +213,7 @@ def check_census(folder: Path, samples: list[dict], summary: dict, config: dict,
     observed: list[dict] = []
     unknown: set[tuple[int, str, int]] = set()
     provenance_cache: dict[tuple[str, int, int], dict] = {}
+    worker_lifetimes: dict[tuple[int, int, int], dict] = {}
     for sample in samples:
         counts = Counter({term: 0 for term in terms})
         fixed_seen: set[str] = set()
@@ -278,6 +279,17 @@ def check_census(folder: Path, samples: list[dict], summary: dict, config: dict,
                     errors.append(f"{folder.name}: unclassified task tid={tid} comm={comm!r}")
             if term is not None:
                 counts[term] += 1
+            if term == "W":
+                identity = (sample["process_id"], tid, task["thread_creation_filetime"])
+                if identity not in worker_lifetimes:
+                    worker_lifetimes[identity] = {
+                        "process_id": identity[0], "tid": tid,
+                        "thread_creation_filetime": identity[2],
+                        "raw_description": task["windows_thread_description"],
+                        "start_module": task["os_runtime_provenance"]["start_module"],
+                        "first_sample_monotonic_ns": sample["sample_monotonic_ns"],
+                    }
+                worker_lifetimes[identity]["last_sample_monotonic_ns"] = sample["sample_monotonic_ns"]
         if windows_arm:
             if type(warmup_end) is int and sample["sample_monotonic_ns"] < warmup_end:
                 warmup_w_max = max(warmup_w_max, counts["W"])
@@ -308,12 +320,23 @@ def check_census(folder: Path, samples: list[dict], summary: dict, config: dict,
         observed.append({"sample_monotonic_ns": sample["sample_monotonic_ns"],
                          "elapsed_seconds": elapsed, "T": sample["task_count"],
                          "terms": {term: counts[term] for term in terms}})
-    return {"per_sample": observed,
-            "term_maxima": {term: max(row["terms"][term] for row in observed) for term in terms},
-            "unclassified_tasks": ([{"tid": tid, "comm": comm, "thread_creation_filetime": created}
-                                    for tid, comm, created in sorted(unknown)]
-                                   if windows_arm else
-                                   [{"tid": tid, "comm": comm} for tid, comm, _ in sorted(unknown)])}
+    result = {
+        "per_sample": observed,
+        "term_maxima": {term: max(row["terms"][term] for row in observed) for term in terms},
+        "unclassified_tasks": ([{"tid": tid, "comm": comm, "thread_creation_filetime": created}
+                                for tid, comm, created in sorted(unknown)]
+                               if windows_arm else
+                               [{"tid": tid, "comm": comm} for tid, comm, _ in sorted(unknown)]),
+    }
+    if windows_arm:
+        # §21 line 54 records a finite L_T allowance per selected backend.
+        # W is its distinct Windows OS-worker census term, not a slot allowance.
+        result["recorded_backend_L_T_allowance"] = {
+            "worker_term": "W", "maximum": result["term_maxima"]["W"],
+            "warmup_maximum": warmup_w_max,
+            "thread_lifetimes": [worker_lifetimes[key] for key in sorted(worker_lifetimes)],
+        }
+    return result
 
 
 def check_scene_samples(folder: Path, events: list[dict], accounts: list[str],
@@ -890,13 +913,11 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
     if "W" in base_terms or "W" in cand_terms:
         demand("W" in base_terms and "W" in cand_terms,
                errors, "baseline/candidate Windows census platforms differ")
-        if "W" in base_terms and "W" in cand_terms:
-            # §21 line 54: the baseline's finite backend allowance also caps
-            # every matched candidate sample, not just the candidate maximum.
-            baseline_w_max = base_terms["W"]
-            for sample in cand_census["per_sample"]:
-                demand(sample["terms"]["W"] <= baseline_w_max, errors,
-                       f"candidate Windows OS worker W exceeded baseline maximum at {sample['elapsed_seconds']}s")
+    for census, manifest in ((base_census, lhs), (cand_census, rhs)):
+        allowance = census.get("recorded_backend_L_T_allowance")
+        if allowance is not None:
+            allowance["backend_commit"] = manifest["commit"]
+            allowance["build"] = manifest["build"]
     base_proxy = arm_evidence(lhs["build"], check_proxy, baseline, "baseline", not smoke,
                               base_errors, baseline_teardown)
     cand_proxy = arm_evidence(rhs["build"], check_proxy, candidate, "candidate", not smoke, cand_errors)

@@ -6,6 +6,7 @@ accepts only a complete, OS-only projection and records this limit.
 
 import bisect
 import hashlib
+import ntpath
 import struct
 from pathlib import Path
 
@@ -134,6 +135,9 @@ def analyze(dump_path: Path, descriptions: dict[int, str], process_id: int) -> d
 
             candidate_addresses = []
             module_counts = {}
+            # The captured boundary signature has kernel32 48 bytes below ntdll.
+            outermost_module_hit = None
+            outermost_module_relative = None
             first_word = ((rsp + 7) & ~7) - stack_start
             for relative in range(first_word, stack_size - 7, 8):
                 value = unpack("<Q", stack_rva + relative)[0]
@@ -142,6 +146,8 @@ def analyze(dump_path: Path, descriptions: dict[int, str], process_id: int) -> d
                     continue
                 module = mapped["module"]
                 module_counts[module] = module_counts.get(module, 0) + 1
+                outermost_module_hit = module
+                outermost_module_relative = relative
                 if len(candidate_addresses) < 32:
                     candidate_addresses.append({
                         "stack_offset": f"0x{relative:X}",
@@ -149,6 +155,26 @@ def analyze(dump_path: Path, descriptions: dict[int, str], process_id: int) -> d
                         **mapped,
                     })
 
+            kernel32_word = None
+            if (
+                outermost_module_relative is not None
+                and outermost_module_relative - 48 >= first_word
+            ):
+                kernel32_word = identify(
+                    unpack(
+                        "<Q", stack_rva + outermost_module_relative - 48
+                    )[0]
+                )
+            if (
+                outermost_module_hit is None
+                or ntpath.basename(outermost_module_hit).casefold() != "ntdll.dll"
+                or kernel32_word is None
+                or ntpath.basename(kernel32_word["module"]).casefold()
+                != "kernel32.dll"
+            ):
+                raise ValueError(
+                    f"incomplete captured stack boundary for TID {tid}"
+                )
             creation_time, start_address = info
             mapped_start = identify(start_address)
             row = {
