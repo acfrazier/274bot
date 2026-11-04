@@ -365,12 +365,16 @@ fn next_page_send(
 fn budget_visited_uses_a_length_and_no_option() {
     let mut budget = PrereqBudget::default();
     assert_eq!(std::mem::size_of_val(&budget.visited), 6);
-    assert!(budget.row(0));
-    assert!(!budget.row(0));
-    assert!(budget.row(1));
-    assert!(budget.row(2));
-    assert!(!budget.row(3));
+    assert!(budget.row(0, 1));
+    assert!(budget.row(1, 1));
+    assert!(!budget.row(0, 1), "an interleaved same-session repeat refuses");
+    assert!(budget.row(2, 1));
+    assert!(!budget.row(3, 1));
     assert_eq!(budget.visited_len, 3);
+    assert!(budget.row(0, 2), "a new session can revisit the same row");
+    assert!(budget.row(1, 2));
+    assert!(!budget.row(0, 2));
+    assert_eq!(budget.visited_len, 3, "session revisits use no row slots");
 }
 
 #[test]

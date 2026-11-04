@@ -178,39 +178,42 @@ const MAX_DISTINCT_ROWS: u8 = 3;
 
 #[derive(Default)]
 pub struct PrereqBudget {
-    rows_run: u8,
     talks: u8,
     probes: u8,
     pub re_issues: u8,
     visited: [u16; MAX_DISTINCT_ROWS as usize],
-    visited_session: [u64; MAX_DISTINCT_ROWS as usize],
+    current_session: u64,
+    /// One bit per visited-row index in the current session.
+    visited_in_session: u8,
     visited_len: u8,
 }
 impl PrereqBudget {
     // The logical reissue cap is global; session revalidation spends it too.
     pub const MAX_RE_ISSUES: u8 = MAX_DISTINCT_ROWS;
 
-    /// Keep one distinct-row slot across sessions. A kept operation may
-    /// revisit that row once per new session, but never twice in one session.
+    /// Keep one distinct-row slot across sessions and reject same-session repeats.
     fn row(&mut self, row: u16, session: u64) -> bool {
-        if let Some(index) = self.visited[..usize::from(self.visited_len)]
+        if self.current_session != session {
+            self.current_session = session;
+            self.visited_in_session = 0;
+        }
+        let index = match self.visited[..usize::from(self.visited_len)]
             .iter()
             .position(|&visited| visited == row)
         {
-            if self.visited_session[index] == session {
-                return false;
+            Some(index) if self.visited_in_session & (1_u8 << index) != 0 => return false,
+            Some(index) => index,
+            None => {
+                if self.visited_len >= MAX_DISTINCT_ROWS {
+                    return false;
+                }
+                let index = usize::from(self.visited_len);
+                self.visited[index] = row;
+                self.visited_len += 1;
+                index
             }
-            self.visited_session[index] = session;
-            return true;
-        }
-        if self.rows_run >= MAX_DISTINCT_ROWS {
-            return false;
-        }
-        let index = usize::from(self.visited_len);
-        self.visited[index] = row;
-        self.visited_session[index] = session;
-        self.visited_len += 1;
-        self.rows_run += 1;
+        };
+        self.visited_in_session |= 1_u8 << index;
         true
     }
 }
