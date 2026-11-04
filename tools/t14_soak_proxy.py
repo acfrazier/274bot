@@ -1005,25 +1005,36 @@ def _tcp_copy(
                 _send_counted(destination, data, on_sent)
     except (OSError, ssl.SSLError, ConnectionError, ConfigError) as exc:
         pending_client_bytes = 0
+        pending_server_bytes = 0
         if stage == "proxy_a":
             with context.lock:
                 client = context.a["client_to_terminator_ciphertext"]
+                server = context.a["terminator_to_client_ciphertext"]
                 pending_client_bytes = client["bytes_read"] - client["bytes_written"]
+                pending_server_bytes = server["bytes_read"] - server["bytes_written"]
             runtime.write_event({
                 "type": "tcp_copy_error", "connection_id": context.identifier,
                 "direction": direction, "monotonic_ns": time.monotonic_ns(),
                 "error": repr(exc), "pending_client_bytes": pending_client_bytes,
+                "pending_server_bytes": pending_server_bytes,
             })
         if not runtime.stop.is_set():
             context.add_failure(stage, exc)
-        if stage == "proxy_a" and direction == "terminator_to_client_ciphertext" and pending_client_bytes > 0:
-            # The other worker owns bytes it already read. Let it finish the
+        pending_opposite = (
+            pending_client_bytes if direction == "terminator_to_client_ciphertext"
+            else pending_server_bytes
+        )
+        if stage == "proxy_a" and pending_opposite > 0:
+            # The other worker owns bytes it already read. Let it finish its
             # delayed write before the connection owner closes both sockets.
             runtime.write_event({
-                "type": "tcp_reverse_error_draining_client_tail",
+                "type": ("tcp_reverse_error_draining_client_tail"
+                         if direction == "terminator_to_client_ciphertext"
+                         else "tcp_forward_error_draining_server_tail"),
                 "connection_id": context.identifier,
                 "monotonic_ns": time.monotonic_ns(),
                 "pending_client_bytes": pending_client_bytes,
+                "pending_server_bytes": pending_server_bytes,
             })
             return
         _safe_shutdown(source)
