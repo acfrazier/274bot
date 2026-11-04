@@ -240,11 +240,12 @@ The raw TLS peer retains the initial client traffic secret only in memory. After
 
 The proxy keeps raw terminal socket/TLS errors in each connection receipt; the comparator does **not** discard them. A post-response HTTPS TLS BrokenPipe is an accounted close only when headers/body and both ciphertext/plaintext transfer byte counts agree. A WSS `SSLEOFError` or proxy-A BrokenPipe is an accounted close only when both zero-payload WebSocket Close frames were forwarded, both game-binary cumulative hashes agree, client-to-engine bytes all match, and any unmatched TLS1.3 server-to-client tail is at most the two-byte WS Close or 24-byte encrypted final record. Every other error, larger deficit, missing Close or game hash mismatch fails. A Play actor's in-window exit fails separately; this teardown accounting is never permission to reconnect during the soak.
 
-After a completed workload, the shared fixture requests ordinary logout and
-waits for the final receive and bidirectional empty WebSocket Close receipts.
-Only then does it finalize candidate payload observations. An incomplete
-workload or missing Close receipt remains a failure; this does not relax the
-unchanged transport evaluator.
+After a completed workload, the fixture requests ordinary logout. It keeps
+Play and the network service alive while it waits up to 30 seconds for the
+final receive and both empty WebSocket Close receipts. It then drops Play,
+shuts down the network service, and finalizes candidate payload observations.
+The same teardown runs after a timeout. An incomplete workload or missing
+Close receipt remains a failure; the transport evaluator is unchanged.
 Every proxy connection Close receipt, including an HTTPS-only connection,
 carries `closed_monotonic_ns`. The final barrier requires this actual
 monotonic timestamp, not a value inferred from rounded elapsed time.
