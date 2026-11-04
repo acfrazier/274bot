@@ -2118,12 +2118,98 @@ mod tests {
         fixture.send_frames_for_reactor(vec![raw_ws_frame(true, 8, &[])]);
         poll_wss_readable(&mut reactor, id);
         reactor.drive_local();
-        assert!(reactor.live.get(&index(id)).unwrap().graceful_by.is_some());
+        let graceful_by = reactor
+            .live
+            .get(&index(id))
+            .unwrap()
+            .graceful_by
+            .expect("server-first close arms the bounded drain");
+        assert!(
+            graceful_by > Instant::now(),
+            "server-first close arms a future drain deadline"
+        );
+        assert!(
+            graceful_by <= Instant::now() + GRACEFUL_PEER_DRAIN,
+            "the server-first reply flush keeps the one-second bound"
+        );
+        assert!(
+            fixture.shared.rebind_disabled(),
+            "a server-first peer close disables further rebinds"
+        );
         reactor.drive_local();
         assert!(reactor
             .live
             .get(&index(id))
             .unwrap()
+            .endpoint
+            .draining_for_close());
+        drop(reactor);
+        assert_eq!(health.graceful_close_shutdown_drops(), 1);
+        assert_eq!(health.graceful_close_timeouts(), 0);
+        drop(fixture);
+    }
+
+    #[test]
+    fn rebind_peer_close_rejects_the_rebind_and_enters_the_bounded_drain() {
+        use super::super::ws_endpoint::tests::raw_ws_frame;
+
+        let (mut reactor, fixture, health) = connected_wss_reactor();
+        let id = fixture.binding.connection;
+        // The server Close arrives while a rebind is pending. The slot has
+        // already committed and quiesced the old session before posting it.
+        fixture.send_frames_for_reactor(vec![raw_ws_frame(true, 8, &[])]);
+        poll_wss_readable(&mut reactor, id);
+        assert!(fixture.shared.commit_session(fixture.binding));
+        fixture.shared.disable_for_rebind();
+        let source = CancelSource::new(Arc::new(Park::new()));
+        let token = source.child().unwrap();
+        let next = BindingId {
+            incarnation: fixture.binding.incarnation,
+            connection: fixture.binding.connection,
+            binding: fixture.binding.binding + 1,
+            attempt: token.generation(),
+        };
+        let retire = Arc::new(AttemptRetire::new(token.generation()));
+        fixture
+            .shared
+            .control
+            .post_primary(
+                PrimaryCommand::Rebind {
+                    expected: fixture.binding,
+                    next,
+                    deadline: Instant::now() + Duration::from_secs(10),
+                    cancel: token,
+                    retire: Arc::clone(&retire),
+                },
+                &reactor.bus,
+            )
+            .unwrap();
+        reactor.process_commands();
+        reactor.drive_local();
+        let live = reactor
+            .live
+            .get(&index(id))
+            .expect("a peer Close during a rebind enters the drain, it does not close at once");
+        assert!(
+            live.graceful_by.is_some(),
+            "the rebind peer close arms the bounded drain"
+        );
+        assert!(
+            matches!(
+                fixture.shared.control.take_primary_reply(),
+                Some(PrimaryReply::Rejected {
+                    reason: RejectedCommand::Closed,
+                    ..
+                })
+            ),
+            "the pending rebind is rejected because the peer closed"
+        );
+        assert_eq!(retire.ack_count(), 1, "the rejected rebind retires once");
+        reactor.drive_local();
+        assert!(reactor
+            .live
+            .get(&index(id))
+            .expect("draining connection stays live")
             .endpoint
             .draining_for_close());
         drop(reactor);
@@ -2151,6 +2237,11 @@ mod tests {
         reactor.drive_local();
         assert_eq!(health.graceful_close_drain_errors(), 1);
         assert_eq!(health.graceful_close_timeouts(), 0);
+        assert_eq!(
+            fixture.shared.os_failure().map(|error| error.kind()),
+            Some(io::ErrorKind::ConnectionReset),
+            "a drain error publishes the peer reset errno for the slot"
+        );
         assert!(!reactor.live.contains_key(&index(id)));
         drop(reactor);
         drop(fixture);
