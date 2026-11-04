@@ -141,11 +141,32 @@ class TeardownTests(unittest.TestCase):
         return {direction: [{"status_code": None, "reason": ""}]
                 for direction in ("client_to_engine", "engine_to_client")}
 
-    def check(self, event, phase_zero=30):
+    def check(self, event, phase_zero=30, arm="candidate"):
         errors = []
-        summary.check_transport_teardown(Path("run"), event, self.close_frames(),
+        summary.check_transport_teardown(Path("run"), arm, event, self.close_frames(),
                                          phase_zero, errors)
         return errors
+
+    def test_baseline_tls12_is_observed_but_candidate_tls12_fails(self):
+        event = self.event({"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"})
+        for version in ("TLSv1.2", "TLSv1.3"):
+            with self.subTest(arm="baseline", version=version):
+                event["tls_terminator"]["handshake"]["tls_version"] = version
+                self.assertEqual(self.check(event, arm="baseline"), [])
+        event["tls_terminator"]["handshake"]["tls_version"] = "TLSv1.2"
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(event, arm="candidate")))
+        event["tls_terminator"]["handshake"]["tls_version"] = "TLSv1.0"
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(event, arm="baseline")))
+        event["tls_terminator"]["handshake"]["tls_version"] = "TLSv1.3"
+        self.assertEqual(self.check(event, arm="candidate"), [])
+
+    def test_baseline_tls12_does_not_mask_real_teardown_failure(self):
+        event = self.event({"stage": "proxy_b_websocket", "error": "FrameError: bad frame"})
+        event["tls_terminator"]["handshake"]["tls_version"] = "TLSv1.2"
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
+                            self.check(event, arm="baseline")))
 
     def test_ssl_eof_accepts_changed_source_line_not_changed_class_or_message(self):
         original = {"stage": "tls_terminator",
@@ -315,7 +336,7 @@ class ArmReasonTests(unittest.TestCase):
                 errors.append(f"{folder.name}: scene error")
                 return {"accounts": 2}
 
-            def fail_proxy(folder, _full, errors):
+            def fail_proxy(folder, _arm, _full, errors):
                 errors.append(f"{folder.name}: proxy error")
                 return {}
 
@@ -335,6 +356,22 @@ class ArmReasonTests(unittest.TestCase):
             self.assertIn("baseline: run: proxy error", result["reasons"])
             self.assertIn("candidate: run: proxy error", result["reasons"])
             self.assertIn("candidate: ledger error", result["reasons"])
+
+    def test_baseline_tls_version_is_recorded_in_result(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folders = self.folders(temporary)
+
+            def proxy_receipt(_folder, arm, _full, _errors):
+                version = "TLSv1.2" if arm == "baseline" else "TLSv1.3"
+                return {123: {"tls_terminator": {"handshake": {"tls_version": version}}}}
+
+            with mock.patch.object(summary, "check_workload", return_value={}), \
+                    mock.patch.object(summary, "check_samples", return_value=[]), \
+                    mock.patch.object(summary, "check_census", return_value={}), \
+                    mock.patch.object(summary, "check_proxy", side_effect=proxy_receipt), \
+                    mock.patch.object(summary, "check_candidate", return_value={}):
+                result = summary.evaluate(*folders, smoke=True)
+            self.assertEqual(result["baseline"]["tls_versions_observed"], ["TLSv1.2"])
 
     def test_missing_evidence_exception_names_the_arm(self):
         for missing in ("baseline", "candidate"):

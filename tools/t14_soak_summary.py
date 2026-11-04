@@ -398,7 +398,8 @@ def accepted_tls_close_error(failure: dict, stage: dict,
             ) is not None)
 
 
-def check_transport_teardown(folder: Path, event: dict, close_frames: dict[str, list[dict]],
+def check_transport_teardown(folder: Path, arm: str, event: dict,
+                             close_frames: dict[str, list[dict]],
                              phase_zero_ns: int | None, errors: list[str]) -> None:
     identifier = event["connection_id"]
     stage = event["stage_status"]
@@ -465,7 +466,11 @@ def check_transport_teardown(folder: Path, event: dict, close_frames: dict[str, 
                        and (a_in, a_out, tls_in, tls_out) == (0, 0, 0, 0)
                        and event["binary_payload_hashes_match_at_proxy_b"].get("client_to_engine") is True
                        and event["binary_payload_hashes_match_at_proxy_b"].get("engine_to_client") is True)
-        demand(tls["handshake"].get("tls_version") == "TLSv1.3" and all(
+        # Both transports support TLS 1.2. This soak exercises the candidate
+        # on TLS 1.3; the native-tls baseline may negotiate either version.
+        version = tls["handshake"].get("tls_version")
+        version_ok = version == "TLSv1.3" if arm == "candidate" else version in ("TLSv1.2", "TLSv1.3")
+        demand(version_ok and all(
             accepted_tls_close_error(failure, stage, (a_in, a_out, tls_in, tls_out),
                                      before_phase_zero)
             or failure == {"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"}
@@ -481,7 +486,7 @@ def check_transport_teardown(folder: Path, event: dict, close_frames: dict[str, 
                f"{prefix}: incomplete non-200/non-101 HTTP transfer")
 
 
-def check_proxy(folder: Path, full: bool, errors: list[str]) -> dict[int, dict]:
+def check_proxy(folder: Path, arm: str, full: bool, errors: list[str]) -> dict[int, dict]:
     fixture_config = document(folder / "effective-config.json")["proxy"]
     modulus = fixture_config["local_login_modulus"]
     source_sha256 = fixture_config["local_login_key_source_sha256"]
@@ -535,7 +540,7 @@ def check_proxy(folder: Path, full: bool, errors: list[str]) -> dict[int, dict]:
                    and fixture.get("body_bytes") == len(fixture_body),
                    errors, f"{folder.name}: local Engine RSA fixture provenance differs")
         check_transport_teardown(
-            folder, event, close_frames.get(event["connection_id"], {}),
+            folder, arm, event, close_frames.get(event["connection_id"], {}),
             phase_zeros[0]["phase_zero_monotonic_ns"] if len(phase_zeros) == 1 else None, errors)
         if event.get("websocket_handshake", {}).get("upgrade_status") != 101:
             continue  # HTTPS asset transfer retains raw bytes; not a WSS pair.
@@ -717,8 +722,8 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
                                baseline, base_samples, base_summary, left_config, base_errors)
     cand_census = arm_evidence(rhs["build"], check_census,
                                candidate, cand_samples, cand_summary, right_config, cand_errors)
-    base_proxy = arm_evidence(lhs["build"], check_proxy, baseline, not smoke, base_errors)
-    cand_proxy = arm_evidence(rhs["build"], check_proxy, candidate, not smoke, cand_errors)
+    base_proxy = arm_evidence(lhs["build"], check_proxy, baseline, "baseline", not smoke, base_errors)
+    cand_proxy = arm_evidence(rhs["build"], check_proxy, candidate, "candidate", not smoke, cand_errors)
     limit = arm_evidence("candidate", lambda: right_config["limits"]["connection_bytes"])
     candidate_receipts = arm_evidence(
         rhs["build"], check_candidate, candidate, cand_proxy, limit, cand_errors)
@@ -727,7 +732,11 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
         "baseline_commit": lhs["commit"], "candidate_commit": rhs["commit"],
         "shared_harness_sha256": lhs["shared_harness_sha256"],
         "baseline": {**base_work, "proxy_wss_connections": len(base_proxy),
-                     "census": base_census},
+                     "tls_versions_observed": sorted({
+                         row["tls_terminator"]["handshake"]["tls_version"]
+                         for row in base_proxy.values()
+                         if isinstance(row["tls_terminator"]["handshake"].get("tls_version"), str)
+                     }), "census": base_census},
         "candidate": {**cand_work, **candidate_receipts, "census": cand_census},
     }
     if not smoke:

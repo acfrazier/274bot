@@ -7,6 +7,7 @@ import ssl
 import threading
 from types import SimpleNamespace
 from unittest.mock import patch
+import unittest
 
 import t14_soak_proxy as proxy
 
