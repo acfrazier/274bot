@@ -159,12 +159,23 @@ mod tests {
     }
 
     #[test]
-    fn final_barrier_requires_both_empty_closes_and_final_connection_receipt() {
+    fn final_barrier_accepts_client_first_close_only_after_engine_close_and_receipt() {
         let mut barrier = opened();
         assert!(!barrier.complete());
         close(&mut barrier, "client_to_engine", 0);
         assert!(!barrier.complete());
         close(&mut barrier, "engine_to_client", 0);
+        assert!(!barrier.complete());
+        finish(&mut barrier);
+        assert!(barrier.complete());
+    }
+
+    #[test]
+    fn final_barrier_accepts_engine_first_close_only_after_client_close_and_receipt() {
+        let mut barrier = opened();
+        close(&mut barrier, "engine_to_client", 0);
+        assert!(!barrier.complete());
+        close(&mut barrier, "client_to_engine", 0);
         assert!(!barrier.complete());
         finish(&mut barrier);
         assert!(barrier.complete());
@@ -182,10 +193,12 @@ mod tests {
             finish(&mut barrier);
             assert!(!barrier.complete());
         }
-        let mut barrier = opened();
-        close(&mut barrier, "client_to_engine", 0);
-        finish(&mut barrier);
-        assert!(!barrier.complete());
+        for direction in ["client_to_engine", "engine_to_client"] {
+            let mut barrier = opened();
+            close(&mut barrier, direction, 0);
+            finish(&mut barrier);
+            assert!(!barrier.complete());
+        }
     }
 
     #[test]

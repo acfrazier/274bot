@@ -3209,7 +3209,6 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
             Ok(None)
         })();
     }
-    drop(play);
     if completed && barrier_result.is_ok() {
         barrier_result = (|| -> Result<Option<u64>, String> {
             let mut barrier =
@@ -3231,6 +3230,7 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
             }
         })();
     }
+    drop(play);
     #[cfg(feature = "soak-observers")]
     if let Ok(network) = client_adapter::service::NetworkService::current_started() {
         network.shutdown();
