@@ -1801,6 +1801,9 @@ impl Gatherer {
                             self.set_event("bank selected");
                         }
                     }
+                    Poll::Ready(Err(ActionError::Failed(detail))) => {
+                        self.fail("bank-unavailable", detail);
+                    }
                     Poll::Ready(Err(error)) => {
                         self.fail(
                             "bank-unavailable",
