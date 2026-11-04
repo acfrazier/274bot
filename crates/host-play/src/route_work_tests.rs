@@ -556,3 +556,70 @@ fn qualifies_real_bank_route_adapter_search_latency() {
     )
     .unwrap();
 }
+
+#[test]
+#[ignore = "requires BOT_ROUTE_PLAN_NAVPACK pointing to the matched 289 pack"]
+fn real_prerequisite_route_fits_checked_admission() {
+    let pack = std::path::PathBuf::from(std::env::var_os("BOT_ROUTE_PLAN_NAVPACK").unwrap());
+    let selected =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let worker_data = Arc::clone(&selected);
+    script::preparation::submit(
+        script::preparation::PreparationKind::Profile,
+        Scope::Process,
+        script::preparation::PreparationInput::new(
+            1,
+            0,
+            8 * 1024 * 1024,
+            2 * 1024 * 1024,
+        )
+        .unwrap(),
+        move |worker| {
+            worker_data.prepare_quests(worker)?;
+            worker_data.prepare_prereq_steps(worker)
+        },
+    )
+    .unwrap()
+    .join()
+    .unwrap()
+    .unwrap();
+    let catalog = selected.try_prereq_steps().unwrap();
+    let loaded = NavWorld::load_pack(&pack).unwrap();
+    loaded.bind_named_bank_facts(&selected).unwrap();
+    let world = Arc::new(loaded);
+    let mut failures = Vec::new();
+    for (prerequisite, bank_fetch) in [(false, false), (false, true), (true, false), (true, true)] {
+        let mut request = diagnostic_tests::tiny_stage_request();
+        request.world = Arc::clone(&world);
+        request.from = WorldTile {
+            x: 3408,
+            z: 3489,
+            level: 0,
+        };
+        request.to = WorldTile {
+            x: 3423,
+            z: 3485,
+            level: 0,
+        };
+        request.opts.allow_bank_fetch = bank_fetch;
+        request.opts.allow_wilderness = true;
+        request.admission = crate::admission::Admission::manual(
+            request.opts,
+            Default::default(),
+            1,
+            crate::WalkGlobals::default(),
+        );
+        request.prereq_catalog = prerequisite.then(|| Arc::clone(&catalog));
+        request.state = Some(Arc::new(WorldState::empty()));
+        request.compat_tile_intent = true;
+        if let Err(error) =
+            RouteJob::prepare("prereq-live", request, RouteDemandKind::Walk { authority: None })
+        {
+            failures.push((prerequisite, bank_fetch, error.to_string()));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "prerequisite/bank-fetch admission failures: {failures:?}"
+    );
+}
