@@ -7,6 +7,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Fixed during development
 
+- The Gatherer live bank tests now observe decoded bank closure within the same
+  login session. A missed status message no longer hides a completed bank trip.
+  This changes test observations only. All gameplay completion requirements remain.
+
 - A Quester trade between two of your own accounts (the Arrav shield halves and
   certificate, for example) no longer fails with "partner offers changed after
   agreement". When both accounts accept, the game empties both offer lists

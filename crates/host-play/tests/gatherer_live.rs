@@ -1831,6 +1831,7 @@ struct Witness {
     bank_nonzero_roundtrips: u32,
     tool_selected_observed: bool,
     bank_loaded_observed: bool,
+    bank_open_login_session: Option<u64>,
     bank_closed_observed: bool,
     bank_return_step_seen: bool,
     site_anchor_selected: bool,
@@ -4092,6 +4093,19 @@ impl GatherSlot {
                 status.card
             ));
         }
+        // Match SnapshotView::bank_session: only an in-game decoded modal
+        // can prove closure. Never bridge an offline frame or login session.
+        if !self.snapshot.ingame() {
+            self.witness.bank_open_login_session = None;
+        } else {
+            let session = self.snapshot.gens().session;
+            if self.snapshot.bank_component_id() >= 0 {
+                self.witness.bank_open_login_session = Some(session);
+            } else {
+                self.witness.bank_closed_observed |=
+                    self.witness.bank_open_login_session.take() == Some(session);
+            }
+        }
         let native_phase = format!("{:?}", status.phase);
         self.witness.native_phases.insert(native_phase.clone());
         for field in status.fields.iter() {
@@ -4440,9 +4454,6 @@ impl GatherSlot {
             }
             if event == "withdrawal confirmed" {
                 self.witness.bank_withdrawal_confirmed = true;
-            }
-            if event == "bank closed; validating equipment" {
-                self.witness.bank_closed_observed = true;
             }
             if self.case == LiveCase::FishBait
                 && event == "withdrawal confirmed"

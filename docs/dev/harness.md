@@ -747,6 +747,16 @@ Gatherer cells live in `crates/host-play/tests/gatherer_live.rs`. Each uses an
 isolated `HOME` plus absolute `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK` and
 `GATHERER_CATALOG_ROOT`, and the `BOT_LIVE_NAME_PREFIX` namespace.
 
+### Bank closure observations
+
+The bank lifecycle cells require an observed open-to-closed bank modal transition.
+Both observations must belong to the same login session and be in-game frames.
+An offline frame discards the pending open observation.
+An initially closed modal, a sent close request or a status message does not prove closure.
+The observer therefore does not depend on sampling the transient bank-close status message.
+Deposit conservation, withdrawal, return, fresh yield and XP requirements remain unchanged.
+Bank disposition does not require the separate Power disposal witness.
+
 ### Target switching
 
 `gatherer_live::gatherer_mine_tier_power` supports a single selected ore through
