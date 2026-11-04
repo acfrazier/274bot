@@ -383,6 +383,13 @@ runs and `isohome` exposes the read-only navigation snapshot.
 The exact core paths beside `script-js/src/runtime/**`, `script-js/src/materialize/**` and `script-js/src/library/**` share the external-script
 start, snapshot, tick and Stop boundary. They do not add a second loader.
 
+The canonical host declaration, declared catalog producer and generated runtime
+surface use the same script-load, runtime-load and Jive cells.
+The runtime cells exercise the consumer boundary.
+They do not replace declaration freshness checks.
+The full `script-js` suite owns `host_js_dts_is_fresh` and
+`declared_surface_matches_generator`.
+
 | Cell | Call path |
 |---|---|
 | `host.script-runtime-load` | `script_api_live::runtime_cell` starts through `Play::script_start_load`, `SlotScript::start_surface` and `JsSurfaceFactory::spawn` in `script-js/src/surface.rs`. It observes a real tick, then Stop and physical retirement. |
