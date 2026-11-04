@@ -3397,8 +3397,8 @@ fn start_kitchen_journal(
     authority: &KitchenPickAuthority,
     gate: ActionableGate,
     allow: PrereqAllow,
-    tick: u64,
 ) -> Poll<Result<crate::bank::SelectedBank, crate::native::ActionError>> {
+    let tick = 2;
     let gates: Arc<[ActionableGate]> = Arc::from([gate]);
     publish_kitchen_bank_pick(
         ledger,
@@ -3459,7 +3459,6 @@ fn bank_select_reissues_only_after_the_real_journal_owner_proves_the_gate() {
         &first_authority,
         gate.clone(),
         allow,
-        2,
     )
     .is_pending());
     assert!(matches!(
@@ -3581,7 +3580,6 @@ fn false_journal_page_does_not_reissue_or_select_a_bank() {
         &first_authority,
         gate.clone(),
         allow,
-        2,
     )
     .is_pending());
     accept_last(&mut ledger, 2, 0);
@@ -3640,7 +3638,6 @@ fn bank_select_journal_timeout_stops_after_two_reads_without_reissue() {
         &first_authority,
         gate,
         allow,
-        2,
     )
     .is_pending());
     assert!(matches!(
