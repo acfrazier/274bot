@@ -376,7 +376,7 @@ static CALLER_STATE: std::sync::LazyLock<crate::local_state::SlotState> =
     std::sync::LazyLock::new(|| {
         crate::local_state::SlotState::new(
             Arc::new(CallerNoStore),
-            api::local_state::AccountKey::try_new("local-289", "acquire_callers").unwrap(),
+            api::local_state::AccountKey::try_new("local-289", "acquire_test").unwrap(),
             api::local_state::ContentScope::try_new(
                 api::selected::ClientRevision::R289,
                 "test-content",
