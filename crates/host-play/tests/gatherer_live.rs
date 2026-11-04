@@ -9408,6 +9408,145 @@ fn mining_power_requires_seeded_gem_disposal_not_a_random_drop() {
 }
 
 #[cfg(test)]
+mod bank_closure_oracle_tests {
+    use super::*;
+
+    fn slot() -> GatherSlot {
+        let mut slot = GatherSlot::new(
+            Cell::Woodcutting,
+            LiveCase::BankCostFirstGoal,
+            OAK_RESPAWN_START,
+            FixturePlan::default(),
+            None,
+            false,
+        );
+        slot.snapshot.seed_ingame(2);
+        slot
+    }
+
+    fn observe(slot: &mut GatherSlot, component_id: i32, event: &'static str) {
+        use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
+        slot.snapshot
+            .seed_bank_observation(component_id, 1, Some(vec![]), vec![]);
+        let status = ScriptStatus {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            card: script::CompiledId("Gatherer"),
+            phase: NativePhase::Working,
+            active_settings: 1,
+            pending_settings: None,
+            failure: None,
+            fields: Arc::from([
+                StatusField {
+                    key: "bank",
+                    label: "Bank",
+                    value: StatusValue::Text(
+                        "Draynor; Reachable; access:3092,3245; Validate".into(),
+                    ),
+                },
+                StatusField {
+                    key: "last_event",
+                    label: "Event",
+                    value: StatusValue::Text(event.into()),
+                },
+            ]),
+            survival: script::survival::SurvivalReport::default(),
+        };
+        slot.apply_status(&status).unwrap();
+    }
+
+    #[test]
+    fn bank_closure_survives_a_missed_status_pulse() {
+        let mut slot = slot();
+        observe(&mut slot, 5292, "withdrawal confirmed");
+        assert!(!slot.witness.bank_closed_observed);
+        observe(&mut slot, -1, "wielding tool");
+        assert!(slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_closure_requires_a_decoded_open_to_closed_transition() {
+        let mut slot = slot();
+        observe(&mut slot, -1, "bank closed; validating equipment");
+        assert!(!slot.witness.bank_closed_observed);
+        observe(&mut slot, 5292, "bank closed; validating equipment");
+        assert!(!slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_closure_does_not_bridge_an_offline_frame() {
+        let mut slot = slot();
+        observe(&mut slot, 5292, "withdrawal confirmed");
+        slot.snapshot = GameSnapshot::new();
+        observe(&mut slot, -1, "waiting for world");
+        assert!(!slot.witness.bank_closed_observed);
+        slot.snapshot.seed_ingame(2);
+        observe(&mut slot, -1, "wielding tool");
+        assert!(!slot.witness.bank_closed_observed);
+        observe(&mut slot, 5292, "withdrawal confirmed");
+        observe(&mut slot, -1, "wielding tool");
+        assert!(slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_closure_does_not_bridge_login_sessions() {
+        let mut slot = slot();
+        observe(&mut slot, 5292, "withdrawal confirmed");
+        let mut gens = slot.snapshot.gens();
+        gens.session += 1;
+        slot.snapshot.reset_session(gens);
+        slot.snapshot.seed_ingame(2);
+        observe(&mut slot, -1, "wielding tool");
+        assert!(!slot.witness.bank_closed_observed);
+        observe(&mut slot, 5292, "withdrawal confirmed");
+        observe(&mut slot, -1, "wielding tool");
+        assert!(slot.witness.bank_closed_observed);
+    }
+
+    #[test]
+    fn bank_closure_never_closes_still_fails_the_unchanged_terminal() {
+        let mut slot = slot();
+        slot.witness = Witness {
+            status_trips: 1,
+            status_deposited: 1,
+            bank_nonzero_roundtrips: 1,
+            post_bank_yields: 1,
+            bank_loaded_observed: true,
+            bank_withdrawal_confirmed: true,
+            last_status_yielded: 1,
+            last_xp: 1,
+            ..Witness::default()
+        };
+        slot.witness.products_seen.insert(1521);
+        slot.witness.oak_live_tiles.insert(OAK_RESPAWN_START);
+        for _ in 0..3 {
+            observe(&mut slot, 5292, "bank closed; validating equipment");
+            assert!(!real_content_bank_lifecycle_complete(
+                slot.case,
+                &slot.witness,
+                &slot.plan,
+                slot.target,
+                0,
+            ));
+        }
+        observe(&mut slot, -1, "wielding tool");
+        assert!(
+            real_content_bank_lifecycle_complete(
+                slot.case,
+                &slot.witness,
+                &slot.plan,
+                slot.target,
+                0,
+            ),
+            "all other terminal facts were already satisfied before decoded closure"
+        );
+    }
+}
+
+#[cfg(test)]
 mod woodcutting_wield_oracle_tests {
     use super::*;
 
