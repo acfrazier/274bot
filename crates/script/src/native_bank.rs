@@ -2488,6 +2488,54 @@ impl Select {
             BankPickOutcome::Selected(_) | BankPickOutcome::NoCandidate { .. } => None,
         }
     }
+
+    /// Keep the typed terminal until each caller applies its existing result contract.
+    pub(crate) fn poll_outcome(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+    ) -> Poll<Result<BankPickOutcome, ActionError>> {
+        if let Some(selected) = self.immediate.take() {
+            return Poll::Ready(Ok(BankPickOutcome::Selected(selected)));
+        }
+        if let Some(receipt) = self.request_id.and_then(|id| cx.bank_pick_receipt(id)) {
+            if let (BankPickOutcome::NoCandidate { .. }, Some(fallback)) =
+                (&receipt.outcome, self.fallback.take())
+            {
+                return Poll::Ready(Ok(BankPickOutcome::Selected(fallback.selected)));
+            }
+            return Poll::Ready(Ok(receipt.outcome.clone()));
+        }
+        if self
+            .fallback
+            .as_ref()
+            .and_then(|fallback| fallback.deadline)
+            .is_some_and(|deadline| deadline.reached(cx.evidence().tick))
+        {
+            return Poll::Ready(Ok(BankPickOutcome::Selected(
+                self.fallback.take().expect("checked fallback").selected,
+            )));
+        }
+        if self.request_id.is_none() {
+            let Some(request) = self.request.take() else {
+                return Poll::Ready(Err(ActionError::Stale));
+            };
+            return match cx.bank_pick(request) {
+                Ok(request_id) => {
+                    self.request_id = Some(request_id);
+                    // The bound counts from the dispatch, the host job's start.
+                    if let Some(fallback) = self.fallback.as_mut() {
+                        fallback.deadline = Some(BankDeadline::after(
+                            cx.evidence().tick,
+                            SELECT_FALLBACK_TICKS,
+                        ));
+                    }
+                    Poll::Pending
+                }
+                Err(error) => Poll::Ready(Err(error)),
+            };
+        }
+        Poll::Pending
+    }
 }
 
 struct SelectFallback {
@@ -2557,52 +2605,13 @@ impl NativeMachine for Select {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
-        if let Some(selected) = self.immediate.take() {
-            return Poll::Ready(Ok(selected));
-        }
-        if let Some(receipt) = self.request_id.and_then(|id| cx.bank_pick_receipt(id)) {
-            return match &receipt.outcome {
-                BankPickOutcome::Selected(selected) => Poll::Ready(Ok(selected.clone())),
-                BankPickOutcome::NeedsStep { gates, .. } => {
-                    Poll::Ready(Err(ActionError::NeedsStep(Arc::clone(gates))))
-                }
-                BankPickOutcome::NoCandidate { detail } => {
-                    if let Some(fallback) = self.fallback.take() {
-                        Poll::Ready(Ok(fallback.selected))
-                    } else {
-                        Poll::Ready(Err(ActionError::Failed(Arc::clone(detail))))
-                    }
-                }
-            };
-        }
-        if self
-            .fallback
-            .as_ref()
-            .and_then(|fallback| fallback.deadline)
-            .is_some_and(|deadline| deadline.reached(cx.evidence().tick))
-        {
-            return Poll::Ready(Ok(self.fallback.take().expect("checked fallback").selected));
-        }
-        if self.request_id.is_none() {
-            let Some(request) = self.request.take() else {
-                return Poll::Ready(Err(ActionError::Stale));
-            };
-            return match cx.bank_pick(request) {
-                Ok(request_id) => {
-                    self.request_id = Some(request_id);
-                    // The bound counts from the dispatch, the host job's start.
-                    if let Some(fallback) = self.fallback.as_mut() {
-                        fallback.deadline = Some(BankDeadline::after(
-                            cx.evidence().tick,
-                            SELECT_FALLBACK_TICKS,
-                        ));
-                    }
-                    Poll::Pending
-                }
-                Err(error) => Poll::Ready(Err(error)),
-            };
-        }
-        Poll::Pending
+        self.poll_outcome(cx).map(|result| {
+            result.and_then(|outcome| match outcome {
+                BankPickOutcome::Selected(selected) => Ok(selected),
+                BankPickOutcome::NeedsStep { gates, .. } => Err(ActionError::NeedsStep(gates)),
+                BankPickOutcome::NoCandidate { detail } => Err(ActionError::Failed(detail)),
+            })
+        })
     }
 
     fn cancel(&mut self) {}

@@ -17,8 +17,8 @@ use crate::native::{
     WalkOptions, WalkRequest,
 };
 use crate::native_bank::{
-    nearest_eligible_bank as select_nearest_eligible_bank, BankSelector, PickKind, Select,
-    SelectArgs, SelectedBank,
+    nearest_eligible_bank as select_nearest_eligible_bank, BankPickOutcome, BankSelector, PickKind,
+    Select, SelectArgs, SelectedBank,
 };
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::snapshot::{LocView, WorldTile};
@@ -2300,9 +2300,15 @@ impl SelectorCore {
         &mut self,
         cx: &mut ActionContext<'_>,
     ) -> Poll<Result<Option<SelectionResult>, ActionError>> {
-        self.machine
-            .poll(cx)
-            .map(|result| result.map(|selected| selected_bank(&self.facts, selected)))
+        self.machine.poll_outcome(cx).map(|result| {
+            result.and_then(|outcome| match outcome {
+                BankPickOutcome::Selected(selected) => Ok(selected_bank(&self.facts, selected)),
+                // Opening keeps its existing scene fallback and false/backoff
+                // contract. Strict native selection retains the NoPath detail.
+                BankPickOutcome::NoCandidate { .. } => Ok(None),
+                BankPickOutcome::NeedsStep { gates, .. } => Err(ActionError::NeedsStep(gates)),
+            })
+        })
     }
 }
 
