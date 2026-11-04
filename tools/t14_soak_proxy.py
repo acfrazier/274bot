@@ -233,6 +233,8 @@ def load_config(path: Path) -> ProxyConfig:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     try:
         context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+        # The capture can identify the encrypted Close only with per-run TLS keys.
+        context.keylog_filename = str(path.parent / "tls.keys.log")
     except (OSError, ssl.SSLError) as exc:
         raise ConfigError(f"cannot load TLS server identity: {exc}") from exc
 
