@@ -3016,10 +3016,21 @@ mod journal_diagnosis {
     use api::prereq_knowledge::Observation;
     use api::quest_progress::EvidenceProvider;
     use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow, Truth};
-    use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
+    use api::work::{MonotonicClock, SharedCancellation, SliceBudget};
     use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId, QuestGates};
     use nav_planner::transport::{TransportEdge, TransportKind};
+    use std::cell::Cell;
     use std::num::NonZeroU32;
+
+    struct CheckpointClock(Cell<Instant>);
+
+    impl MonotonicClock for CheckpointClock {
+        fn now(&self) -> Instant {
+            let now = self.0.get();
+            self.0.set(now + Duration::from_millis(5));
+            now
+        }
+    }
 
     struct GateEvidence {
         stamp: EvidenceStamp,
@@ -3185,7 +3196,10 @@ mod journal_diagnosis {
         };
         let mut worker = CooperativeBankPickJob::new(job.clone(), input, preflights);
         let cancellation = SharedCancellation::new();
-        let clock = SystemClock;
+        // A cursor can finish without spending a work unit. Advance the test
+        // clock at each checkpoint so Finish yields before publication and
+        // the test can signal the deadline after the actual diagnosis.
+        let clock = CheckpointClock(Cell::new(Instant::now()));
         let mut signalled = false;
         for _ in 0..32_768 {
             let mut context = StepContext::new(
