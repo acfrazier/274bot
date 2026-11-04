@@ -935,6 +935,491 @@ fn gatherer_bank_pick(bank_choice: Option<&'static str>) -> crate::native_bank::
         })
         .expect("the bank trip must submit a selection request")
 }
+type CallerLedger = Option<Box<crate::native::ledger::Ledger>>;
+
+struct CallerNoStore;
+
+impl api::local_state::LocalStatePort for CallerNoStore {
+    fn lease(
+        &self,
+        identity: &api::local_state::DomainIdentity,
+    ) -> Result<api::local_state::DomainLease, api::local_state::ErrorCode> {
+        Err(api::local_state::ErrorCode::NotReady {
+            domain: identity.domain(),
+        })
+    }
+
+    fn submit(
+        &self,
+        edit: api::local_state::DomainEdit,
+    ) -> api::local_state::SubmitReceipt {
+        api::local_state::SubmitReceipt::Refused(api::local_state::ErrorCode::Busy {
+            domain: edit.identity().domain(),
+        })
+    }
+
+    fn observe(
+        &self,
+        _: api::identity::RequestId,
+    ) -> Option<api::local_state::WriteSettlement> {
+        None
+    }
+}
+
+impl crate::local_state::StatePort for CallerNoStore {
+    fn lease_version(
+        &self,
+        identity: &api::local_state::DomainIdentity,
+    ) -> Result<api::local_state::StoreVersion, api::local_state::ErrorCode> {
+        api::local_state::LocalStatePort::lease(self, identity).map(|lease| lease.version())
+    }
+}
+
+static CALLER_STATE: std::sync::LazyLock<crate::local_state::SlotState> =
+    std::sync::LazyLock::new(|| {
+        crate::local_state::SlotState::new(
+            Arc::new(CallerNoStore),
+            api::local_state::AccountKey::try_new("local-289", "bank_callers").unwrap(),
+            api::local_state::ContentScope::try_new(
+                api::selected::ClientRevision::R289,
+                "test-content",
+            )
+            .unwrap(),
+        )
+    });
+
+fn prepare_kitchen_journal() {
+    static PREPARED: std::sync::LazyLock<()> = std::sync::LazyLock::new(|| {
+        let _ = FamilyPreparation::run(|worker| {
+            let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            data.prepare_quests(worker).unwrap();
+            data.prepare_prereq_steps(worker).unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    });
+    let _ = &*PREPARED;
+}
+
+fn kitchen_journal_gate() -> api::prereq_steps::ActionableGate {
+    use api::prereq_steps::{CrossingId, CrossingKind};
+    use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow};
+    api::prereq_steps::ActionableGate {
+        gate: QuestGate::Window(StageWindow {
+            quest: FactKey::new("blackarmgang"),
+            signal: FactKey::new("phoenixgang"),
+            values: InclusiveRange {
+                min: Some(10),
+                max: Some(10),
+            },
+        }),
+        truth: api::selected::Truth::Unknown,
+        leg: 0,
+        crossing: CrossingId {
+            loc_id: 2628,
+            option: 1,
+            at: WorldTile {
+                x: 2788,
+                z: 3190,
+                level: 0,
+            },
+            takeoff: WorldTile {
+                x: 2788,
+                z: 3190,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 2788,
+                z: 3189,
+                level: 0,
+            },
+            kind: CrossingKind::Door,
+        },
+    }
+}
+
+fn with_journal_tick<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut CallerLedger,
+    tick: u64,
+    f: impl FnOnce(&mut crate::native::NativeTick<'_>) -> R,
+) -> R {
+    crate::quester::families::tests::with_tick_scene_reach(snapshot, ledger, tick, |native| {
+        native.state = Some(&CALLER_STATE);
+        native.cx.active_now = std::time::Duration::ZERO;
+        f(native)
+    })
+}
+
+fn caller_bank_pick(
+    ledger: &CallerLedger,
+) -> Option<(
+    crate::native_bank::BankPickRequest,
+    crate::native::ledger::HostAuthority,
+)> {
+    ledger.as_ref()?.outbox.iter().rev().find_map(|action| {
+        match &action.effect {
+            crate::native::HostEffect::BankPick(request) => {
+                Some((request.clone(), action.authority()))
+            }
+            _ => None,
+        }
+    })
+}
+
+fn caller_reissued_bank_pick(
+    ledger: &CallerLedger,
+    original_id: u64,
+) -> Option<(
+    crate::native_bank::BankPickRequest,
+    crate::native::ledger::HostAuthority,
+)> {
+    ledger.as_ref()?.outbox.iter().rev().find_map(|action| {
+        if !action.live() || action.request_id.get() == original_id {
+            return None;
+        }
+        match &action.effect {
+            crate::native::HostEffect::BankPick(request) => {
+                Some((request.clone(), action.authority()))
+            }
+            _ => None,
+        }
+    })
+}
+
+fn publish_caller_bank_pick(
+    ledger: &mut CallerLedger,
+    authority: &crate::native::ledger::HostAuthority,
+    tick: u64,
+    outcome: crate::native_bank::BankPickOutcome,
+) {
+    ledger
+        .as_mut()
+        .expect("bank pick request created ledger")
+        .complete_bank_pick(
+            authority,
+            crate::native_bank::BankPickReceipt {
+                request_id: authority.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                outcome,
+            },
+        );
+}
+
+fn assert_bank_pick_reissued_unchanged(
+    original: &crate::native_bank::BankPickRequest,
+    reissued: &crate::native_bank::BankPickRequest,
+) {
+    assert!(Arc::ptr_eq(&original.facts, &reissued.facts));
+    assert_eq!(original.facts.as_ref(), reissued.facts.as_ref());
+    assert_eq!(original.from, reissued.from);
+    assert_eq!(original.preferences, reissued.preferences);
+    assert_eq!(original.options, reissued.options);
+    assert_eq!(original.eligible, reissued.eligible);
+    assert_eq!(original.explicit_bank, reissued.explicit_bank);
+    assert_eq!(original.allow_air_fallback, reissued.allow_air_fallback);
+}
+
+fn accept_caller_interaction(ledger: &mut CallerLedger, tick: u64) {
+    let authority = ledger
+        .as_ref()
+        .expect("interaction created ledger")
+        .outbox
+        .last()
+        .expect("interaction is queued")
+        .authority();
+    ledger
+        .as_mut()
+        .expect("interaction created ledger")
+        .complete_interaction(
+            &authority,
+            crate::native::InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+}
+
+fn assert_no_gatherer_bank_work(ledger: &CallerLedger, original_id: u64) {
+    for action in &ledger.as_ref().expect("bank pick created ledger").outbox {
+        match &action.effect {
+            crate::native::HostEffect::BankPick(_) => {
+                assert_eq!(action.request_id.get(), original_id, "no early bank reissue");
+            }
+            crate::native::HostEffect::Walk(_) => panic!("bank walk began before selection"),
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::OpenStand {
+                ..
+            }) => panic!("bank access began before selection"),
+            _ => {}
+        }
+    }
+}
+
+fn seed_kitchen_journal_page(snapshot: &mut GameSnapshot) {
+    snapshot.seed_main_modal(
+        crate::quest_journal::ROOT_289,
+        vec![
+            crate::quest_journal::test_widget(
+                crate::quest_journal::TITLE_289,
+                "@dre@Shield of Arrav",
+            ),
+            crate::quest_journal::test_widget(
+                8145,
+                "@str@I searched the Phoenix Gang Headquarters and found",
+            ),
+            crate::quest_journal::test_widget(8146, "@str@half of the Shield of Arrav."),
+            crate::quest_journal::test_widget(8147, "@red@QUEST COMPLETE!"),
+        ],
+    );
+}
+
+fn assert_original_allow_gatherer(gatherer: &Gatherer, allow: crate::native::PrereqAllow) {
+    match &gatherer.active {
+        Active::Select(select) => assert_eq!(select.original_allow(), Some(allow)),
+        _ => panic!("gatherer no longer owns the bank selection"),
+    }
+}
+
+#[test]
+fn gatherer_reissues_original_bank_pick_only_after_real_journal_close() {
+    prepare_kitchen_journal();
+    let (mut gatherer, mut snapshot) = bank_fixture(Some("Varrock East"));
+    snapshot.seed_quest_statuses(
+        vec![api::snapshot::QuestStatusView {
+            name: "Shield of Arrav".into(),
+            component_id: 42,
+            colour: 0x00f800,
+        }],
+        true,
+    );
+
+    let mut ledger = None;
+    gatherer.trip = TripStep::Select;
+    with_journal_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+    with_journal_tick(&snapshot, &mut ledger, 2, |tick| gatherer.poll_active(tick));
+    let (original_request, original_authority) =
+        caller_bank_pick(&ledger).expect("gatherer submits its bank pick");
+    let original_id = original_authority.request_id().get();
+    assert_eq!(
+        original_request.from,
+        WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0
+        }
+    );
+    assert_eq!(
+        original_request.preferences,
+        api::named_banks::BankPreferences::default()
+    );
+    assert_eq!(original_request.options, WalkOptions::default());
+    assert_eq!(original_request.explicit_bank, Some(0));
+    assert!(!original_request.allow_air_fallback);
+
+    let gate = kitchen_journal_gate();
+    let allow = crate::native::PrereqAllow {
+        dialogue: true,
+        quest_start: false,
+    };
+    publish_caller_bank_pick(
+        &mut ledger,
+        &original_authority,
+        3,
+        crate::native_bank::BankPickOutcome::NeedsStep {
+            gates: Arc::from([gate.clone()]),
+            allow,
+        },
+    );
+    with_journal_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
+    assert!(matches!(gatherer.active, Active::Select(_)));
+    assert_eq!(gatherer.trip, TripStep::Select);
+    assert!(gatherer.scratch.selected_bank.is_none());
+    assert_original_allow_gatherer(&gatherer, allow);
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::IfButton {
+            component_id: 42
+        })
+    ));
+    assert_no_gatherer_bank_work(&ledger, original_id);
+
+    accept_caller_interaction(&mut ledger, 3);
+    seed_kitchen_journal_page(&mut snapshot);
+    with_journal_tick(&snapshot, &mut ledger, 4, |tick| gatherer.poll_active(tick));
+    assert!(matches!(
+        &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+        crate::native::HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
+    ));
+    assert!(gatherer.scratch.selected_bank.is_none());
+    assert_no_gatherer_bank_work(&ledger, original_id);
+
+    accept_caller_interaction(&mut ledger, 4);
+    snapshot.seed_main_modal(-1, vec![]);
+    with_journal_tick(&snapshot, &mut ledger, 5, |tick| gatherer.poll_active(tick));
+    assert_eq!(
+        CALLER_STATE
+            .prereq_snapshot()
+            .observe(
+                &gate.gate,
+                api::quest_progress::EvidenceStamp {
+                    run: original_authority.run(),
+                    tick: 4,
+                    sequence: 4,
+                },
+            )
+            .map(|fact| fact.truth),
+        Some(api::selected::Truth::True),
+        "the journal fact is available only after the modal close was observed"
+    );
+    assert!(gatherer.scratch.selected_bank.is_none());
+    assert_no_gatherer_bank_work(&ledger, original_id);
+
+    let mut reissued = caller_reissued_bank_pick(&ledger, original_id);
+    for tick in 6..=9 {
+        if reissued.is_some() {
+            break;
+        }
+        with_journal_tick(&snapshot, &mut ledger, tick, |native| {
+            gatherer.poll_active(native)
+        });
+        reissued = caller_reissued_bank_pick(&ledger, original_id);
+    }
+    let (reissued_request, reissued_authority) =
+        reissued.expect("a fresh request follows acquired journal proof and observed close");
+    assert_ne!(reissued_authority.request_id(), original_authority.request_id());
+    assert_bank_pick_reissued_unchanged(&original_request, &reissued_request);
+    assert_original_allow_gatherer(&gatherer, allow);
+    assert!(!original_authority.live());
+
+    let bank = gatherer.prepared.banks.banks()[0].to_owned();
+    let bank_tile = bank.tile;
+    publish_caller_bank_pick(
+        &mut ledger,
+        &reissued_authority,
+        10,
+        crate::native_bank::BankPickOutcome::Selected(crate::native_bank::SelectedBank {
+            bank_index: 0,
+            access_tile: bank_tile,
+            kind: PickKind::Reachable,
+            access: Some(Arc::new(crate::bank::BankStandAccess {
+                bank,
+                stand_tile: bank_tile,
+                kind: crate::bank::AccessKind::Booth,
+                stand_op: 1,
+                name: None,
+                choose: None,
+            })),
+        }),
+    );
+    with_journal_tick(&snapshot, &mut ledger, 11, |tick| gatherer.poll_active(tick));
+    assert!(gatherer.failure.is_none());
+    assert_eq!(gatherer.trip, TripStep::Access);
+    assert_eq!(
+        gatherer
+            .scratch
+            .selected_bank
+            .as_ref()
+            .map(|selected| selected.access_tile),
+        Some(bank_tile)
+    );
+
+    snapshot.seed_locs(vec![api::snapshot::LocView {
+        id: 2213,
+        name: Some("Bank booth".into()),
+        actions: vec![Some("Use-quickly".into())],
+        tile: bank_tile,
+        distance: 0,
+        typecode: 0,
+        info: 0,
+        description: None,
+        layer: api::snapshot::LocLayer::GroundDecoration,
+        shape: 0,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }]);
+    with_journal_tick(&snapshot, &mut ledger, 12, |tick| gatherer.begin_trip(tick));
+    with_journal_tick(&snapshot, &mut ledger, 13, |tick| gatherer.poll_active(tick));
+    let walk_target = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find_map(|action| match &action.effect {
+            crate::native::HostEffect::Walk(request) => Some(request.target),
+            _ => None,
+        })
+        .expect("selected bank continues through the gatherer's access walk");
+    assert_eq!(walk_target, bank_tile);
+
+    let mut player = snapshot.local_player().unwrap().clone();
+    player.player.network = bank_tile;
+    player.player.actor.tile = bank_tile;
+    snapshot.seed_local_player(player);
+    crate::quester::families::tests::post_walk_receipt(
+        &mut ledger,
+        14,
+        WalkEnd::Arrived,
+        None,
+    );
+    with_journal_tick(&snapshot, &mut ledger, 14, |tick| gatherer.poll_active(tick));
+    assert_eq!(gatherer.trip, TripStep::Open);
+    with_journal_tick(&snapshot, &mut ledger, 15, |tick| gatherer.begin_trip(tick));
+    with_journal_tick(&snapshot, &mut ledger, 16, |tick| gatherer.poll_active(tick));
+    assert!(ledger.as_ref().unwrap().outbox.iter().any(|action| {
+        matches!(
+            &action.effect,
+            crate::native::HostEffect::Interaction(
+                crate::interact::InteractReq::OpenStand { .. }
+            )
+        )
+    }));
+}
+
+#[test]
+fn gatherer_preserves_detailed_bank_no_candidate_without_wrapping_it() {
+    let (mut gatherer, snapshot) = bank_fixture(Some("Varrock East"));
+    let mut ledger = None;
+    gatherer.trip = TripStep::Select;
+    with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.begin_trip(tick));
+    with_tick(&snapshot, &mut ledger, 2, |tick| gatherer.poll_active(tick));
+    let (_, authority) = caller_bank_pick(&ledger).expect("bank pick was emitted");
+    let detail: Arc<str> = Arc::from("no routable bank candidate after NoPath");
+    publish_caller_bank_pick(
+        &mut ledger,
+        &authority,
+        3,
+        crate::native_bank::BankPickOutcome::NoCandidate {
+            detail: Arc::clone(&detail),
+        },
+    );
+    with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
+    let failure = gatherer.failure.expect("NoCandidate is terminal for the bank trip");
+    assert_eq!(failure.code.as_ref(), "bank-unavailable");
+    assert_eq!(failure.message.as_ref(), detail.as_ref());
+    assert!(!failure.message.contains("bank selection failed"));
+    assert!(!failure.message.contains("Failed("));
+}
 
 #[test]
 fn gatherer_nearest_bank_setting_emits_no_explicit_bank() {

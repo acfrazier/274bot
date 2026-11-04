@@ -662,8 +662,18 @@ impl AcquireRun {
         match std::mem::take(&mut self.active) {
             Active::None => {}
             Active::Select(mut select) => {
+                let no_candidate = select
+                    .inspect_in(&mut tick.cx, |select, cx| select.no_candidate(cx))
+                    .unwrap_or(false);
                 match select.poll(tick.actions, &mut tick.cx, tick.state) {
                     Poll::Pending => self.active = Active::Select(select),
+                    Poll::Ready(Err(ActionError::Failed(_))) if no_candidate => {
+                        // Only the typed NoCandidate receipt keeps Acquire's
+                        // stable terminal contract; unrelated failures propagate.
+                        return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                            "no eligible bank",
+                        ))));
+                    }
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Ready(Ok(selected)) => {
                         if selected.kind == PickKind::NoCandidate {
