@@ -30,9 +30,11 @@ use super::ws_endpoint::{WssEndpoint, WssStep};
 use client::Transport;
 
 const WAKE_TOKEN: Token = Token(0);
-// The phase-four proxy stalls one chunk for 750 ms. The captured engine
-// server-first close took 47-84 ms to reach the client FIN. Allow roughly
-// 150 ms beyond a stalled ~80 ms round trip, separately from the flush bound.
+// Bound basis, measured in the archived soak pair: the engine replies to a
+// client Close in 0-1 ms at proxy B. Phase four stalls one chunk for 750 ms;
+// one stall plus an about 80 ms round trip gives about 852 ms at worst, so
+// the 1 s bound leaves about 148 ms. The server-first reply flush and the
+// drain each keep this bound; the drain re-arms it where its wait starts.
 const GRACEFUL_PEER_DRAIN: Duration = Duration::from_secs(1);
 static NEXT_INCARNATION: AtomicU64 = AtomicU64::new(1);
 static PROCESS_TRANSPORT: LazyLock<Result<Arc<TransportService>, io::ErrorKind>> =
