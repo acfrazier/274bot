@@ -731,6 +731,12 @@ impl RouteSubmission {
         )?;
         let available = peak.checked_sub(input_bytes).ok_or(RouteJobError::Budget)?;
         if peak > ROUTE_WORK_LIMIT_BYTES || result_bytes > available {
+            #[cfg(test)]
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "[DEBUG-b29-prereq] route-admission-bounds peak={peak} input={input_bytes} result={result_bytes} working={search_working_bytes} bank_plan={bank_plan_bytes} planned_rows={planned_rows_bytes} fetchable_state={fetchable_state_bytes} fetchable_edges={fetchable_edge_bytes} post_bank_state={post_bank_state_bytes} undo={bank_undo_bytes} bank_direct={bank_direct_bytes} bank_planned={bank_planned_bytes} route={route_bytes} plan_item_rows={plan_item_rows} stands={stand_rows} bank_rows={bank_rows}",
+            );
             return Err(RouteJobError::Budget);
         }
         let scratch_bytes = peak
