@@ -1052,9 +1052,49 @@ fn monotonic_now_ns() -> Result<u64, String> {
         .ok_or_else(|| "CLOCK_MONOTONIC timestamp overflow".to_owned())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn monotonic_now_ns() -> Result<u64, String> {
-    Err("the local soak requires a Unix CLOCK_MONOTONIC clock".into())
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "QueryPerformanceCounter"]
+        fn query_performance_counter(value: *mut i64) -> i32;
+        #[link_name = "QueryPerformanceFrequency"]
+        fn query_performance_frequency(value: *mut i64) -> i32;
+    }
+
+    // CPython 3.13.16 uses this same counter and frequency for time.monotonic_ns:
+    // Python/pytime.c:990-1048,1087-1095 and Modules/timemodule.c:1211-1221.
+    static FREQUENCY: LazyLock<Result<u64, String>> = LazyLock::new(|| {
+        let mut value = 0_i64;
+        // SAFETY: value is writable 64-bit storage for LARGE_INTEGER.
+        if unsafe { query_performance_frequency(&mut value) } == 0 || value <= 0 {
+            return Err("read positive Windows performance counter frequency".into());
+        }
+        u64::try_from(value).map_err(|_| "Windows performance counter frequency overflow".into())
+    });
+    let frequency = match &*FREQUENCY {
+        Ok(value) => *value,
+        Err(error) => return Err(error.clone()),
+    };
+    let mut ticks = 0_i64;
+    // SAFETY: ticks is writable 64-bit storage for LARGE_INTEGER.
+    if unsafe { query_performance_counter(&mut ticks) } == 0 {
+        return Err(format!(
+            "read Windows performance counter: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let ticks = u128::try_from(ticks).map_err(|_| "negative Windows performance counter")?;
+    let nanoseconds = ticks
+        .checked_mul(1_000_000_000)
+        .ok_or("Windows performance counter nanoseconds overflow")?
+        / u128::from(frequency);
+    u64::try_from(nanoseconds).map_err(|_| "Windows monotonic nanoseconds overflow".into())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn monotonic_now_ns() -> Result<u64, String> {
+    Err("the local soak requires a system monotonic clock".into())
 }
 
 #[cfg(unix)]
@@ -1063,6 +1103,18 @@ fn monotonic_clock_reports_ordered_timespecs() {
     let first = monotonic_now_ns().expect("read monotonic clock");
     let second = monotonic_now_ns().expect("read monotonic clock again");
     assert!(second >= first);
+}
+
+#[cfg(windows)]
+#[test]
+fn monotonic_clock_reports_ordered_nanoseconds() {
+    let first = monotonic_now_ns().expect("read Windows performance counter");
+    thread::sleep(Duration::from_millis(12));
+    let second = monotonic_now_ns().expect("read Windows performance counter again");
+    assert!(
+        second.saturating_sub(first) >= 10_000_000,
+        "Windows clock must advance in nanoseconds"
+    );
 }
 
 fn site_has_key(site: &GatherSiteOption, key: &str) -> bool {
