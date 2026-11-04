@@ -12,6 +12,7 @@ use crate::bank::seat_open::{Opening, OpeningArgs, OpeningValue};
 use crate::bank::seat_transfer::{
     Transfer, TransferAnswer, TransferArgs, TransferCall, TransferHooks, TransferValue,
 };
+use crate::quester::prereq::reach::PrereqOpening;
 use crate::local_state::SlotState;
 use crate::native::request::NativeKind;
 use crate::native::snapshot_source::BankSelectionInput;
@@ -129,11 +130,20 @@ struct Trip {
 
 enum Job {
     Start(BankSeatArgs),
-    Opening(ActionHandle<Opening>),
+    Opening {
+        handle: ActionHandle<Opening>,
+        args: OpeningArgs,
+    },
+    PrereqOpening(PrereqOpening),
     Transfer(ActionHandle<Transfer>),
     ResumeOpening {
         kind: NativeKind,
         handle: ActionHandle<Opening>,
+        args: OpeningArgs,
+    },
+    ResumePrereqOpening {
+        kind: NativeKind,
+        action: PrereqOpening,
     },
     ResumeTransfer {
         kind: NativeKind,
@@ -336,16 +346,19 @@ impl BankRow {
                         return Poll::Pending;
                     }
                     if is_opening(request.operation) {
-                        match actions.begin::<Opening>(
-                            OpeningArgs {
-                                request,
-                                facts: Arc::clone(facts),
-                                preferences,
-                                hooks: Arc::clone(&self.hooks),
-                            },
-                            cx,
-                        ) {
-                            Ok(handle) => self.job = Job::Opening(handle),
+                        let opening_args = OpeningArgs {
+                            request,
+                            facts: Arc::clone(facts),
+                            preferences,
+                            hooks: Arc::clone(&self.hooks),
+                        };
+                        match actions.begin::<Opening>(opening_args.clone(), cx) {
+                            Ok(handle) => {
+                                self.job = Job::Opening {
+                                    handle,
+                                    args: opening_args,
+                                }
+                            }
                             Err(ActionError::BudgetExhausted | ActionError::Held) => {
                                 return Poll::Ready(Err(ActionError::BudgetExhausted));
                             }
@@ -380,13 +393,29 @@ impl BankRow {
                     // emission reaches the host's dispatch lane.
                     return Poll::Pending;
                 }
-                Job::ResumeOpening { kind, mut handle } => {
+                Job::ResumeOpening {
+                    kind,
+                    mut handle,
+                    args,
+                } => {
                     match actions.resume_kept(kind, &mut handle, cx) {
-                        Ok(()) => self.job = Job::Opening(handle),
+                        Ok(()) => self.job = Job::Opening { handle, args },
                         Err(
                             ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
                         ) => {
-                            self.job = Job::ResumeOpening { kind, handle };
+                            self.job = Job::ResumeOpening { kind, handle, args };
+                            return Poll::Pending;
+                        }
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
+                }
+                Job::ResumePrereqOpening { kind, mut action } => {
+                    match action.resume_after_session(actions, kind, cx) {
+                        Ok(()) => self.job = Job::PrereqOpening(action),
+                        Err(
+                            ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
+                        ) => {
+                            self.job = Job::ResumePrereqOpening { kind, action };
                             return Poll::Pending;
                         }
                         Err(error) => return Poll::Ready(Err(error)),
@@ -404,25 +433,68 @@ impl BankRow {
                         Err(error) => return Poll::Ready(Err(error)),
                     }
                 }
-                Job::Opening(handle) => match actions.poll(&handle, cx) {
-                    Poll::Pending => {
-                        self.job = Job::Opening(handle);
-                        return Poll::Pending;
-                    }
-                    Poll::Ready(Ok(OpeningValue::Bool(ready))) => {
-                        if let Some(value) = self.after_open(ready) {
-                            return Poll::Ready(Ok(value));
+                Job::Opening { handle, args } => {
+                    let allow = handle
+                        .inspect_in(cx, |opening, cx| opening.prereq_allow(cx))
+                        .flatten();
+                    match actions.poll(&handle, cx) {
+                        Poll::Pending => {
+                            self.job = Job::Opening { handle, args };
+                            return Poll::Pending;
                         }
+                        Poll::Ready(Ok(OpeningValue::Bool(ready))) => {
+                            if let Some(value) = self.after_open(ready) {
+                                return Poll::Ready(Ok(value));
+                            }
+                        }
+                        Poll::Ready(Ok(OpeningValue::Selected { bank, selected })) => {
+                            self.selected_bank = Some(selected);
+                            return Poll::Ready(Ok(bank
+                                .as_ref()
+                                .map(bank_value)
+                                .unwrap_or(Value::Null)));
+                        }
+                        Poll::Ready(Err(ActionError::NeedsStep(gates))) => {
+                            let Some(allow) = allow else {
+                                return Poll::Ready(Err(ActionError::NeedsStep(gates)));
+                            };
+                            match PrereqOpening::resolve_after(
+                                args,
+                                ActionError::NeedsStep(gates),
+                                allow,
+                                cx,
+                            ) {
+                                Ok(action) => {
+                                    self.job = Job::PrereqOpening(action);
+                                    continue;
+                                }
+                                Err(error) => return Poll::Ready(Err(error)),
+                            }
+                        }
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     }
-                    Poll::Ready(Ok(OpeningValue::Selected { bank, selected })) => {
-                        self.selected_bank = Some(selected);
-                        return Poll::Ready(Ok(bank
-                            .as_ref()
-                            .map(bank_value)
-                            .unwrap_or(Value::Null)));
+                }
+                Job::PrereqOpening(mut action) => {
+                    match action.poll(actions, cx, slot_state) {
+                        Poll::Pending => {
+                            self.job = Job::PrereqOpening(action);
+                            return Poll::Pending;
+                        }
+                        Poll::Ready(Ok(OpeningValue::Bool(ready))) => {
+                            if let Some(value) = self.after_open(ready) {
+                                return Poll::Ready(Ok(value));
+                            }
+                        }
+                        Poll::Ready(Ok(OpeningValue::Selected { bank, selected })) => {
+                            self.selected_bank = Some(selected);
+                            return Poll::Ready(Ok(bank
+                                .as_ref()
+                                .map(bank_value)
+                                .unwrap_or(Value::Null)));
+                        }
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     }
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                },
+                }
                 Job::Transfer(handle) => match actions.poll(&handle, cx) {
                     Poll::Pending => {
                         self.job = Job::Transfer(handle);
@@ -603,8 +675,13 @@ impl SlotScript {
                         continue;
                     };
                     row.job = match std::mem::replace(&mut row.job, Job::Finished) {
-                        Job::Opening(handle) | Job::ResumeOpening { handle, .. } => {
-                            Job::ResumeOpening { kind, handle }
+                        Job::Opening { handle, args }
+                        | Job::ResumeOpening { handle, args, .. } => {
+                            Job::ResumeOpening { kind, handle, args }
+                        }
+                        Job::PrereqOpening(action)
+                        | Job::ResumePrereqOpening { action, .. } => {
+                            Job::ResumePrereqOpening { kind, action }
                         }
                         Job::Transfer(handle) | Job::ResumeTransfer { handle, .. } => {
                             Job::ResumeTransfer { kind, handle }
@@ -762,7 +839,10 @@ impl SlotScript {
             };
             if matches!(
                 row.job,
-                Job::Opening(_) | Job::Transfer(_) | Job::ReturnWalk { .. }
+                Job::Opening { .. }
+                    | Job::PrereqOpening(_)
+                    | Job::Transfer(_)
+                    | Job::ReturnWalk { .. }
             ) {
                 bank.action_owner = Some(row.id);
             } else if bank.action_owner == Some(row.id) {

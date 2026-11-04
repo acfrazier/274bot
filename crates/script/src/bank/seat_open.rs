@@ -13,7 +13,7 @@ use crate::bank::request::{
 use crate::bank::seat_transfer::{TransferAnswer, TransferCall, TransferHooks};
 use crate::interact::InteractReq;
 use crate::native::{
-    ActionContext, ActionError, NativeMachine, WalkAllow, WalkBit, WalkEnd, WalkOptions,
+    ActionContext, ActionError, NativeMachine, PrereqAllow, WalkAllow, WalkBit, WalkEnd, WalkOptions,
     WalkRequest,
 };
 use crate::native_bank::{
@@ -37,6 +37,7 @@ const ADJACENT_INTERACT_TIMEOUT_MS: u64 = 4_000;
 const DIALOG_OPEN_TIMEOUT_MS: u64 = 4_000;
 
 /// The request and immutable content facts needed by the opening owner.
+#[derive(Clone)]
 pub struct OpeningArgs {
     pub request: BankSeatArgs,
     pub facts: Arc<NamedBankFacts>,
@@ -175,6 +176,18 @@ impl NativeMachine for Opening {
                     Poll::Ready(Ok(OpeningValue::Selected { bank, selected }))
                 }
             },
+        }
+    }
+}
+
+impl Opening {
+    pub(crate) fn prereq_allow(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        match &self.core {
+            Core::Select(select) => select.prereq_allow(cx),
+            Core::Banking(banking) => banking.prereq_allow(cx),
+            Core::Immediate(_) | Core::Booth(_) | Core::Object(_) | Core::Npc(_) | Core::Access(_) => {
+                None
+            }
         }
     }
 }
@@ -1920,6 +1933,19 @@ struct BankingOpen {
 }
 
 impl BankingOpen {
+    fn prereq_allow(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        match &self.phase {
+            BankingPhase::Select(select) => select.prereq_allow(cx),
+            BankingPhase::Choose
+            | BankingPhase::WalkStart { .. }
+            | BankingPhase::Walk(_)
+            | BankingPhase::Access(_)
+            | BankingPhase::Booth(_)
+            | BankingPhase::Ready(_)
+            | BankingPhase::Done(_) => None,
+        }
+    }
+
     fn new(request: &BankSeatArgs, preferences: BankPreferences) -> Self {
         let (booth_name, booth_op) = request.object_access.as_ref().map_or_else(
             || ("Bank booth".to_owned(), "Use-quickly".to_owned()),
@@ -2262,6 +2288,10 @@ impl SelectorCore {
             cx,
         )?;
         Ok(Some(Self { machine, facts }))
+    }
+
+    fn prereq_allow(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        self.machine.prereq_allow(cx)
     }
 
     fn poll(

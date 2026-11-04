@@ -1224,16 +1224,18 @@ mod tests {
                 tick: 4,
                 sequence: 4,
             },
-            selected: crate::native_bank::SelectedBank {
-                bank_index: 7,
-                access_tile: api::snapshot::WorldTile {
-                    x: 100,
-                    z: 200,
-                    level: 0,
+            outcome: crate::native_bank::BankPickOutcome::Selected(
+                crate::native_bank::SelectedBank {
+                    bank_index: 7,
+                    access_tile: api::snapshot::WorldTile {
+                        x: 100,
+                        z: 200,
+                        level: 0,
+                    },
+                    kind: crate::native_bank::PickKind::Reachable,
+                    access: None,
                 },
-                kind: crate::native_bank::PickKind::Reachable,
-                access: None,
-            },
+            ),
         };
         ledger.complete_bank_pick(
             &old,
@@ -1259,9 +1261,16 @@ mod tests {
         ledger.complete_bank_pick(
             &current,
             BankPickReceipt {
-                selected: crate::native_bank::SelectedBank {
-                    bank_index: 8,
-                    ..receipt.selected.clone()
+                outcome: match &receipt.outcome {
+                    crate::native_bank::BankPickOutcome::Selected(selected) => {
+                        crate::native_bank::BankPickOutcome::Selected(
+                            crate::native_bank::SelectedBank {
+                                bank_index: 8,
+                                ..selected.clone()
+                            },
+                        )
+                    }
+                    _ => unreachable!("the fixture receipt is a selected bank"),
                 },
                 ..receipt.clone()
             },

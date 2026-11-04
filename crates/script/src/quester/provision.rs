@@ -2805,7 +2805,7 @@ mod tests {
                     tick,
                     sequence: tick,
                 },
-                selected: crate::bank::SelectedBank {
+                outcome: crate::bank::BankPickOutcome::Selected(crate::bank::SelectedBank {
                     bank_index: 0,
                     access_tile: stand,
                     kind: crate::bank::PickKind::Reachable,
@@ -2817,7 +2817,7 @@ mod tests {
                         name: None,
                         choose: None,
                     })),
-                },
+                }),
             },
         );
     }
@@ -4596,19 +4596,21 @@ mod tests {
                                 tick,
                                 sequence: tick,
                             },
-                            selected: crate::bank::SelectedBank {
-                                bank_index: 0,
-                                access_tile: bank.tile,
-                                kind: crate::bank::PickKind::Reachable,
-                                access: Some(Arc::new(crate::bank::BankStandAccess {
-                                    bank,
-                                    stand_tile: bank.tile,
-                                    kind: crate::bank::AccessKind::Teller,
-                                    stand_op: 2,
-                                    name: Some(Arc::from("Banker")),
-                                    choose: None,
-                                })),
-                            },
+                            outcome: crate::bank::BankPickOutcome::Selected(
+                                crate::bank::SelectedBank {
+                                    bank_index: 0,
+                                    access_tile: bank.tile,
+                                    kind: crate::bank::PickKind::Reachable,
+                                    access: Some(Arc::new(crate::bank::BankStandAccess {
+                                        bank,
+                                        stand_tile: bank.tile,
+                                        kind: crate::bank::AccessKind::Teller,
+                                        stand_op: 2,
+                                        name: Some(Arc::from("Banker")),
+                                        choose: None,
+                                    })),
+                                },
+                            ),
                         },
                     );
                     picked = true;

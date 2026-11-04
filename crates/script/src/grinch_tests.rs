@@ -515,7 +515,7 @@ fn respond_bank_pick(
         BankPickReceipt {
             request_id,
             evidence: stamp(run, tick),
-            selected: SelectedBank {
+            outcome: crate::bank::BankPickOutcome::Selected(SelectedBank {
                 bank_index,
                 access_tile,
                 kind: PickKind::Reachable,
@@ -527,7 +527,7 @@ fn respond_bank_pick(
                     name: None,
                     choose: None,
                 })),
-            },
+            }),
         },
     );
     request_id
@@ -1765,11 +1765,8 @@ fn named_bank_choice_is_explicit_and_no_route_has_no_air_fallback() {
         BankPickReceipt {
             request_id,
             evidence: stamp(run, 1),
-            selected: SelectedBank {
-                bank_index: u16::MAX,
-                access_tile: far_tile,
-                kind: PickKind::NoCandidate,
-                access: None,
+            outcome: crate::bank::BankPickOutcome::NoCandidate {
+                detail: Arc::from("no routable bank candidate"),
             },
         },
     );

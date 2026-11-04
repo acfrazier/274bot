@@ -25,7 +25,7 @@ use crate::native::{
     ReturnStallRecovery, Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkBit,
     WalkEnd, WalkOptions, WalkReceipt, WalkRefusal, WalkRequest,
 };
-use crate::quester::prereq::walk::PrereqWalk;
+use crate::quester::prereq::{reach::PrereqSelect, walk::PrereqWalk};
 use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
@@ -101,7 +101,7 @@ enum Active {
     Walk(PrereqWalk),
     EscapeWalk(ActionHandle<Walk>),
     Tend(ActionHandle<OneOp>),
-    Select(ActionHandle<bank::Select>),
+    Select(PrereqSelect),
     Open(ActionHandle<bank::Open>),
     Deposit(ActionHandle<bank::Deposit>),
     Withdraw(ActionHandle<bank::Withdraw>),
@@ -630,7 +630,7 @@ impl Gatherer {
                         .then(|| Arc::from(self.settings().bank.as_str())),
                     allow_air_fallback: false,
                 };
-                match tick.actions.begin::<bank::Select>(args, &mut tick.cx) {
+                match PrereqSelect::begin(args, tick.actions, &mut tick.cx) {
                     Ok(handle) => self.active = Active::Select(handle),
                     Err(error) => self.action_failure(error),
                 }
@@ -861,6 +861,9 @@ impl Gatherer {
                 .as_ref()
                 .map(|target| (target.entity, target.tile)),
         );
+        if let Active::Select(select) = &mut self.active {
+            select.cancel();
+        }
         if let Active::Walk(walk) = &mut self.active {
             walk.cancel();
         }
@@ -1780,29 +1783,33 @@ impl Gatherer {
                     self.action_failure(error);
                 }
             },
-            Active::Select(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Select(handle),
-                Poll::Ready(Ok(selected)) => {
-                    if selected.kind == PickKind::NoCandidate || selected.bank_index == u16::MAX {
-                        self.bank_label =
-                            Arc::from(format!("{}; NoCandidate", self.settings().bank));
+            Active::Select(mut select) => {
+                match select.poll(tick.actions, &mut tick.cx, tick.state) {
+                    Poll::Pending => self.active = Active::Select(select),
+                    Poll::Ready(Ok(selected)) => {
+                        if selected.kind == PickKind::NoCandidate
+                            || selected.bank_index == u16::MAX
+                        {
+                            self.bank_label =
+                                Arc::from(format!("{}; NoCandidate", self.settings().bank));
+                            self.fail(
+                                "bank-unavailable",
+                                format!("bank-unavailable:{}", self.settings().bank),
+                            );
+                        } else {
+                            self.scratch.selected_bank = Some(selected);
+                            self.advance_trip(TripStep::Access);
+                            self.set_event("bank selected");
+                        }
+                    }
+                    Poll::Ready(Err(error)) => {
                         self.fail(
                             "bank-unavailable",
-                            format!("bank-unavailable:{}", self.settings().bank),
+                            format!("bank selection failed: {error:?}"),
                         );
-                    } else {
-                        self.scratch.selected_bank = Some(selected);
-                        self.advance_trip(TripStep::Access);
-                        self.set_event("bank selected");
                     }
                 }
-                Poll::Ready(Err(error)) => {
-                    self.fail(
-                        "bank-unavailable",
-                        format!("bank selection failed: {error:?}"),
-                    );
-                }
-            },
+            }
             Active::Open(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Open(handle),
                 Poll::Ready(Ok(())) => {

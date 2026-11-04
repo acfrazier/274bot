@@ -245,7 +245,7 @@ fn complete_pick(ledger: &mut TestLedger, bank: NamedBank, tick: u64) {
                 tick,
                 sequence: tick,
             },
-            selected: SelectedBank {
+            outcome: crate::native_bank::BankPickOutcome::Selected(SelectedBank {
                 bank_index: 0,
                 access_tile: STAND,
                 kind: PickKind::Reachable,
@@ -257,7 +257,7 @@ fn complete_pick(ledger: &mut TestLedger, bank: NamedBank, tick: u64) {
                     name: None,
                     choose: None,
                 })),
-            },
+            }),
         },
     );
 }

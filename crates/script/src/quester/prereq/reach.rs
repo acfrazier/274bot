@@ -5,7 +5,8 @@ use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, PrereqAllow,
     PrereqRefusal,
 };
-use crate::quester::families::reach::{GroundTake, Reach, ReachArgs};
+use crate::native_bank::{Select, SelectArgs};
+use crate::bank::seat_open::{Opening, OpeningArgs};
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -38,6 +39,25 @@ impl PrereqMachine for GroundTake {
         self.prereq_allow(cx)
     }
 }
+impl PrereqMachine for Select {
+    fn clone_args(args: &SelectArgs) -> SelectArgs {
+        args.clone()
+    }
+    fn grants(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        self.prereq_allow(cx)
+    }
+}
+impl PrereqMachine for Opening {
+    fn clone_args(args: &OpeningArgs) -> OpeningArgs {
+        args.clone()
+    }
+    fn grants(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        self.prereq_allow(cx)
+    }
+}
+
+pub(crate) type PrereqSelect = PrereqAction<Select>;
+pub(crate) type PrereqOpening = PrereqAction<Opening>;
 pub(crate) type PrereqReach = PrereqAction<Reach>;
 pub(crate) type PrereqGroundTake = PrereqAction<GroundTake>;
 
@@ -61,6 +81,22 @@ impl<M: PrereqMachine> PrereqAction<M> {
             resolve: true,
         })
     }
+    pub(crate) fn resolve_after(
+        args: M::Args,
+        error: ActionError,
+        allow: PrereqAllow,
+        cx: &ActionContext<'_>,
+    ) -> Result<Self, ActionError> {
+        let budget = PrereqBudget::default();
+        let run = resolution(error, allow, cx, &budget)?;
+        Ok(Self {
+            args,
+            phase: Phase::Resolving(Box::new(run)),
+            budget,
+            resolve: true,
+        })
+    }
+
     /// The prerequisite runner already owns the shared resolution budget.
     pub(crate) fn begin_unresolved(
         args: M::Args,
@@ -94,6 +130,23 @@ impl<M: PrereqMachine> PrereqAction<M> {
             _ => None,
         }
     }
+    pub(crate) fn resume_after_session(
+        &mut self,
+        actions: &mut NativeActions,
+        kind: crate::native::request::NativeKind,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<(), ActionError> {
+        if kind.policy().reconnect() != api::script_contract::ReconnectPolicy::Resume {
+            return Err(ActionError::Stale);
+        }
+        match &mut self.phase {
+            Phase::Reaching(handle) => actions.resume_kept(kind, handle, cx),
+            Phase::Resolving(run) => run.restart_after_session(cx),
+            Phase::Reissue => Ok(()),
+            Phase::Cancelled | Phase::Complete => Err(ActionError::Stale),
+        }
+    }
+
     pub fn cancel(&mut self) {
         self.phase = Phase::Cancelled;
     }

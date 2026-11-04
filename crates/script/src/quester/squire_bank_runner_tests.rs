@@ -252,19 +252,21 @@ impl Fixture {
                             tick,
                             sequence: tick,
                         },
-                        selected: crate::bank::SelectedBank {
-                            bank_index: 0,
-                            access_tile: bank_tile(),
-                            kind: crate::bank::PickKind::Reachable,
-                            access: Some(Arc::new(crate::bank::BankStandAccess {
-                                bank: self.named,
-                                stand_tile: bank_tile(),
-                                kind: crate::bank::AccessKind::Booth,
-                                stand_op: 1,
-                                name: None,
-                                choose: None,
-                            })),
-                        },
+                        outcome: crate::bank::BankPickOutcome::Selected(
+                            crate::bank::SelectedBank {
+                                bank_index: 0,
+                                access_tile: bank_tile(),
+                                kind: crate::bank::PickKind::Reachable,
+                                access: Some(Arc::new(crate::bank::BankStandAccess {
+                                    bank: self.named,
+                                    stand_tile: bank_tile(),
+                                    kind: crate::bank::AccessKind::Booth,
+                                    stand_op: 1,
+                                    name: None,
+                                    choose: None,
+                                })),
+                            },
+                        ),
                     },
                 );
                 self.picks += 1;

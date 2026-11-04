@@ -2112,7 +2112,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
                 tick: now,
                 sequence: now,
             },
-            selected: SelectedBank {
+            outcome: script::bank::BankPickOutcome::Selected(SelectedBank {
                 bank_index: 0,
                 access_tile: bank_tile,
                 kind: PickKind::Reachable,
@@ -2124,7 +2124,7 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
                     name: Some(Arc::from("Bank booth")),
                     choose: None,
                 })),
-            },
+            }),
         },
     );
     let (authority, request_id, effect) = next_trip_effect(&mut slot, &frame, &mut now);
@@ -2604,7 +2604,9 @@ fn accept_lifecycle_bank_pick(
     bank: api::named_banks::NamedBank,
     bank_tile: WorldTile,
 ) {
-    use script::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
+    use script::bank::{
+        AccessKind, BankPickOutcome, BankPickReceipt, BankStandAccess, PickKind, SelectedBank,
+    };
 
     slot.complete_native_bank_pick(
         authority,
@@ -2615,7 +2617,7 @@ fn accept_lifecycle_bank_pick(
                 tick: now,
                 sequence: now,
             },
-            selected: SelectedBank {
+            outcome: BankPickOutcome::Selected(SelectedBank {
                 bank_index: 0,
                 access_tile: bank_tile,
                 kind: PickKind::Reachable,
@@ -2627,7 +2629,7 @@ fn accept_lifecycle_bank_pick(
                     name: Some(Arc::from("Bank booth")),
                     choose: None,
                 })),
-            },
+            }),
         },
     );
 }

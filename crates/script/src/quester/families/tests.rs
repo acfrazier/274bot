@@ -2820,19 +2820,21 @@ fn native_bank_without_explicit_selection_opens_the_context_bank() {
                     tick: 3,
                     sequence: 3,
                 },
-                selected: crate::bank::SelectedBank {
-                    bank_index: 0,
-                    access_tile: bank_tile,
-                    kind: crate::bank::PickKind::AirFallback,
-                    access: Some(Arc::new(crate::bank::BankStandAccess {
-                        bank,
-                        stand_tile: bank_tile,
-                        kind: crate::bank::AccessKind::Booth,
-                        stand_op: 1,
-                        name: None,
-                        choose: None,
-                    })),
-                },
+                outcome: crate::bank::BankPickOutcome::Selected(
+                    crate::bank::SelectedBank {
+                        bank_index: 0,
+                        access_tile: bank_tile,
+                        kind: crate::bank::PickKind::AirFallback,
+                        access: Some(Arc::new(crate::bank::BankStandAccess {
+                            bank,
+                            stand_tile: bank_tile,
+                            kind: crate::bank::AccessKind::Booth,
+                            stand_op: 1,
+                            name: None,
+                            choose: None,
+                        })),
+                    },
+                ),
             },
         );
         for now in 4..=7 {
@@ -2963,19 +2965,21 @@ fn bank_walk_manual_takeover_parks_without_opening_or_rewalking() {
                     tick: 3,
                     sequence: 3,
                 },
-                selected: crate::bank::SelectedBank {
-                    bank_index: 0,
-                    access_tile: bank_tile,
-                    kind: crate::bank::PickKind::Reachable,
-                    access: Some(Arc::new(crate::bank::BankStandAccess {
-                        bank,
-                        stand_tile: bank_tile,
-                        kind: crate::bank::AccessKind::Booth,
-                        stand_op: 1,
-                        name: None,
-                        choose: None,
-                    })),
-                },
+                outcome: crate::bank::BankPickOutcome::Selected(
+                    crate::bank::SelectedBank {
+                        bank_index: 0,
+                        access_tile: bank_tile,
+                        kind: crate::bank::PickKind::Reachable,
+                        access: Some(Arc::new(crate::bank::BankStandAccess {
+                            bank,
+                            stand_tile: bank_tile,
+                            kind: crate::bank::AccessKind::Booth,
+                            stand_op: 1,
+                            name: None,
+                            choose: None,
+                        })),
+                    },
+                ),
             },
         );
         assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {

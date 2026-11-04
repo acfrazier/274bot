@@ -8,6 +8,7 @@ use crate::native::{
     ActionContext, ActionHandle, NativeActions, NativeTick, WalkRequest, WalkRetryState,
 };
 use crate::native_bank::{BankMachine, BankRequest};
+use crate::quester::prereq::reach::PrereqSelect;
 use crate::quester::prereq::walk::PrereqWalk;
 use api::named_banks::NamedBankFacts;
 use api::selected::RunKey;
@@ -37,7 +38,7 @@ enum Phase {
 enum Active {
     #[default]
     None,
-    Select(ActionHandle<bank::Select>),
+    Select(PrereqSelect),
     Walk(PrereqWalk),
     Open(ActionHandle<bank::Open>),
     Deposit(ActionHandle<bank::Deposit>),
@@ -203,7 +204,7 @@ impl AcquireRun {
                             "player position unavailable for bank selection",
                         ))));
                     };
-                    let handle = tick.actions.begin::<bank::Select>(
+                    let handle = PrereqSelect::begin(
                         bank::SelectArgs {
                             facts: Arc::clone(&self.banks),
                             from: from.value,
@@ -212,6 +213,7 @@ impl AcquireRun {
                             explicit: self.explicit.clone(),
                             allow_air_fallback: false,
                         },
+                        tick.actions,
                         &mut tick.cx,
                     )?;
                     self.active = Active::Select(handle);
@@ -521,7 +523,7 @@ impl AcquireRun {
     pub fn cancel(&mut self, actions: &mut NativeActions) {
         match std::mem::take(&mut self.active) {
             Active::None => {}
-            Active::Select(handle) => actions.cancel(handle),
+            Active::Select(mut select) => select.cancel(),
             Active::Walk(mut walk) => walk.cancel(),
             Active::Open(handle) => actions.cancel(handle),
             Active::Deposit(handle) => actions.cancel(handle),
@@ -659,30 +661,32 @@ impl AcquireRun {
     fn poll_active(&mut self, tick: &mut NativeTick<'_>) -> Poll<Result<(), ActionError>> {
         match std::mem::take(&mut self.active) {
             Active::None => {}
-            Active::Select(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Select(handle),
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Ready(Ok(selected)) => {
-                    if selected.kind == PickKind::NoCandidate {
-                        return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                            "no eligible bank",
-                        ))));
+            Active::Select(mut select) => {
+                match select.poll(tick.actions, &mut tick.cx, tick.state) {
+                    Poll::Pending => self.active = Active::Select(select),
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(selected)) => {
+                        if selected.kind == PickKind::NoCandidate {
+                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                                "no eligible bank",
+                            ))));
+                        }
+                        let access = selected.access.ok_or_else(|| {
+                            ActionError::Unavailable(Arc::from("selected bank has no access stand"))
+                        })?;
+                        self.bank = Some(
+                            *self
+                                .banks
+                                .banks()
+                                .get(usize::from(selected.bank_index))
+                                .ok_or(ActionError::Stale)?,
+                        );
+                        self.target = Some(selected.access_tile);
+                        self.access = Some(access);
+                        self.phase = Phase::Walk;
                     }
-                    let access = selected.access.ok_or_else(|| {
-                        ActionError::Unavailable(Arc::from("selected bank has no access stand"))
-                    })?;
-                    self.bank = Some(
-                        *self
-                            .banks
-                            .banks()
-                            .get(usize::from(selected.bank_index))
-                            .ok_or(ActionError::Stale)?,
-                    );
-                    self.target = Some(selected.access_tile);
-                    self.access = Some(access);
-                    self.phase = Phase::Walk;
                 }
-            },
+            }
             Active::Walk(mut walk) => match walk.poll(tick.actions, &mut tick.cx, tick.state) {
                 Poll::Pending => self.active = Active::Walk(walk),
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),

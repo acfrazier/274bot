@@ -282,10 +282,22 @@ pub struct BankPickRequest {
     pub allow_air_fallback: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BankPickOutcome {
+    Selected(SelectedBank),
+    NeedsStep {
+        gates: Arc<[api::prereq_steps::ActionableGate]>,
+        allow: crate::native::PrereqAllow,
+    },
+    NoCandidate {
+        detail: Arc<str>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BankPickReceipt {
     pub request_id: u64,
     pub evidence: EvidenceStamp,
-    pub selected: SelectedBank,
+    pub outcome: BankPickOutcome,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,6 +308,7 @@ pub struct Withdrawal {
     pub target: i32,
 }
 
+#[derive(Debug, Clone)]
 pub struct SelectArgs {
     pub facts: Arc<NamedBankFacts>,
     pub from: WorldTile,
@@ -2464,6 +2477,19 @@ pub struct Select {
     fallback: Option<SelectFallback>,
 }
 
+impl Select {
+    pub(crate) fn prereq_allow(
+        &self,
+        cx: &ActionContext<'_>,
+    ) -> Option<crate::native::PrereqAllow> {
+        let receipt = cx.bank_pick_receipt(self.request_id?)?;
+        match &receipt.outcome {
+            BankPickOutcome::NeedsStep { allow, .. } => Some(*allow),
+            BankPickOutcome::Selected(_) | BankPickOutcome::NoCandidate { .. } => None,
+        }
+    }
+}
+
 struct SelectFallback {
     selected: SelectedBank,
     /// Set when the pick request is dispatched; none before.
@@ -2535,12 +2561,19 @@ impl NativeMachine for Select {
             return Poll::Ready(Ok(selected));
         }
         if let Some(receipt) = self.request_id.and_then(|id| cx.bank_pick_receipt(id)) {
-            if receipt.selected.kind == PickKind::NoCandidate {
-                if let Some(fallback) = self.fallback.take() {
-                    return Poll::Ready(Ok(fallback.selected));
+            return match &receipt.outcome {
+                BankPickOutcome::Selected(selected) => Poll::Ready(Ok(selected.clone())),
+                BankPickOutcome::NeedsStep { gates, .. } => {
+                    Poll::Ready(Err(ActionError::NeedsStep(Arc::clone(gates))))
                 }
-            }
-            return Poll::Ready(Ok(receipt.selected.clone()));
+                BankPickOutcome::NoCandidate { detail } => {
+                    if let Some(fallback) = self.fallback.take() {
+                        Poll::Ready(Ok(fallback.selected))
+                    } else {
+                        Poll::Ready(Err(ActionError::Failed(Arc::clone(detail))))
+                    }
+                }
+            };
         }
         if self
             .fallback
@@ -3039,7 +3072,7 @@ mod tests {
                     tick: 1 + SELECT_FALLBACK_TICKS,
                     sequence: 1 + SELECT_FALLBACK_TICKS,
                 },
-                selected: selected.clone(),
+                outcome: BankPickOutcome::Selected(selected.clone()),
             },
         );
         let result = poll_select_waiter(
@@ -3054,6 +3087,95 @@ mod tests {
             "{result:?}"
         );
     }
+    #[test]
+    fn select_needs_step_receipt_preserves_gates_and_original_grants() {
+        let (snapshot, mut ledger, handle, authority) = select_waiter_dispatched_at(false, 1);
+        let at = WorldTile { x: 5, z: 5, level: 0 };
+        let gates: Arc<[api::prereq_steps::ActionableGate]> = Arc::from([
+            api::prereq_steps::ActionableGate {
+                gate: api::selected::QuestGate::Complete(api::selected::FactKey::new(
+                    "bank-gate",
+                )),
+                truth: Truth::Unknown,
+                leg: 0,
+                crossing: api::prereq_steps::CrossingId {
+                    loc_id: 7,
+                    option: 0,
+                    at,
+                    takeoff: at,
+                    to: WorldTile { x: 6, z: 5, level: 0 },
+                    kind: api::prereq_steps::CrossingKind::Ladder,
+                },
+            },
+        ]);
+        let allow = crate::native::PrereqAllow {
+            dialogue: true,
+            quest_start: false,
+        };
+        ledger.as_mut().unwrap().complete_bank_pick(
+            &authority,
+            BankPickReceipt {
+                request_id: authority.request_id().get(),
+                evidence: EvidenceStamp {
+                    run: authority.run(),
+                    tick: 2,
+                    sequence: 2,
+                },
+                outcome: BankPickOutcome::NeedsStep {
+                    gates: Arc::clone(&gates),
+                    allow,
+                },
+            },
+        );
+        let observed_allow = with_tick(&snapshot, &mut ledger, 2, |frame| {
+            handle.inspect_in(&mut frame.cx, |select, cx| select.prereq_allow(cx))
+        })
+        .flatten();
+        assert_eq!(observed_allow, Some(allow));
+
+        let result = poll_select_waiter(&snapshot, &mut ledger, &handle, 2, Duration::ZERO);
+        assert!(
+            matches!(&result, Poll::Ready(Err(ActionError::NeedsStep(found))) if found.as_ref() == gates.as_ref()),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn select_no_candidate_preserves_failure_detail_and_air_fallback() {
+        let detail: Arc<str> = Arc::from("NoPath: no route to an eligible bank");
+        for allow_air_fallback in [false, true] {
+            let (snapshot, mut ledger, handle, authority) =
+                select_waiter_dispatched_at(allow_air_fallback, 1);
+            ledger.as_mut().unwrap().complete_bank_pick(
+                &authority,
+                BankPickReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: EvidenceStamp {
+                        run: authority.run(),
+                        tick: 2,
+                        sequence: 2,
+                    },
+                    outcome: BankPickOutcome::NoCandidate {
+                        detail: Arc::clone(&detail),
+                    },
+                },
+            );
+
+            let result = poll_select_waiter(&snapshot, &mut ledger, &handle, 2, Duration::ZERO);
+            if allow_air_fallback {
+                assert!(
+                    matches!(&result, Poll::Ready(Ok(SelectedBank { kind: PickKind::AirFallback, .. }))),
+                    "{result:?}"
+                );
+            } else {
+                assert!(
+                    matches!(&result, Poll::Ready(Err(ActionError::Failed(found))) if found == &detail),
+                    "{result:?}"
+                );
+            }
+        }
+    }
+
 
     fn fishing(base: i32) -> [StatView; 1] {
         [StatView {

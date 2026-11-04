@@ -250,7 +250,7 @@ impl CookFixture {
                     crate::bank::BankPickReceipt {
                         request_id: authority.request_id().get(),
                         evidence,
-                        selected: crate::bank::SelectedBank {
+                        outcome: crate::bank::BankPickOutcome::Selected(crate::bank::SelectedBank {
                             bank_index: 0,
                             access_tile: self.bank_fixture.tile,
                             kind: crate::bank::PickKind::Reachable,
@@ -262,7 +262,7 @@ impl CookFixture {
                                 name: None,
                                 choose: None,
                             })),
-                        },
+                        }),
                     },
                 ),
                 HostEffect::Walk(request) => {
