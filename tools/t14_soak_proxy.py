@@ -14,6 +14,7 @@ import json
 import math
 import os
 import random
+import select
 import signal
 import socket
 import ssl
@@ -376,6 +377,38 @@ def _send_half_close(
     except OSError:
         pass
 
+def _http_response_complete(context: "ConnectionState") -> bool:
+    with context.lock:
+        status = context.handshake.get("upgrade_status")
+    return type(status) is int and status != 101
+
+
+def _recv_tls(
+    sock: ssl.SSLSocket, context: "ConnectionState", runtime: "Runtime"
+) -> bytes | None:
+    """Poll for the upstream EOF without holding an SSL_read across SSL_write."""
+    while True:
+        if context.tls_upstream_eof.is_set() and _http_response_complete(context):
+            return None
+        if runtime.stop.is_set():
+            return b""
+        with context.tls_io_lock:
+            buffered = sock.pending()
+        if not buffered and not select.select([sock], [], [], 0.05)[0]:
+            continue
+        with context.tls_io_lock:
+            if context.tls_upstream_eof.is_set() and _http_response_complete(context):
+                return None
+            timeout = sock.gettimeout()
+            sock.settimeout(0.05)
+            try:
+                return sock.recv(TCP_READ_BYTES)
+            except socket.timeout:
+                pass
+            finally:
+                sock.settimeout(timeout)
+
+
 
 class Runtime:
     def __init__(self, config: ProxyConfig, output_dir: Path):
@@ -603,6 +636,10 @@ class ConnectionState:
         self.started_utc = _utc_now()
         self.next_checkpoint: float | None = None
         self.lock = threading.RLock()
+        # Only one worker may enter this TLS object at a time. The read worker
+        # owns close_notify after the upstream HTTP response has ended.
+        self.tls_io_lock = threading.Lock()
+        self.tls_upstream_eof = threading.Event()
         self.stage_status: dict[str, str] = {}
         self.failures: list[dict[str, str]] = []
         self.finalized = False
@@ -999,19 +1036,34 @@ def _tcp_copy(
     counter_stage = {"proxy_a": "a", "tls_terminator": "tls"}.get(stage, stage)
     try:
         while True:
-            data = source.recv(TCP_READ_BYTES)
-            if not data:
+            tls_reader = stage == "tls_terminator" and direction == "client_to_proxy_b_plaintext"
+            tls_writer = stage == "tls_terminator" and direction == "proxy_b_to_client_plaintext"
+            data = _recv_tls(source, context, runtime) if tls_reader else source.recv(TCP_READ_BYTES)
+            if data is None or not data:
+                if tls_writer:
+                    # The read owner sends the TLS alert. This worker must
+                    # never call unwrap while the other worker is in SSL_read.
+                    context.tls_upstream_eof.set()
+                    return
+                if tls_reader:
+                    _send_half_close(destination)
+                    if data is not None:
+                        while not context.tls_upstream_eof.wait(0.05):
+                            with context.lock:
+                                failed = bool(context.failures)
+                                upgraded = context.handshake.get("upgrade_status") == 101
+                            if runtime.stop.is_set() or failed or upgraded:
+                                return
+                    if not runtime.stop.is_set() and _http_response_complete(context):
+                        with context.tls_io_lock:
+                            _send_half_close(source, http_response_complete=True)
+                    return
                 if stage == "proxy_a":
                     runtime.write_event({
                         "type": "tcp_eof", "connection_id": context.identifier,
                         "direction": direction, "monotonic_ns": time.monotonic_ns(),
                     })
-                http_response_complete = False
-                if stage == "tls_terminator" and direction == "proxy_b_to_client_plaintext":
-                    with context.lock:
-                        status = context.handshake.get("upgrade_status")
-                    http_response_complete = type(status) is int and status != 101
-                _send_half_close(destination, http_response_complete=http_response_complete)
+                _send_half_close(destination)
                 if stage == "proxy_a":
                     runtime.write_event({
                         "type": "tcp_half_close", "connection_id": context.identifier,
@@ -1029,7 +1081,11 @@ def _tcp_copy(
                     context.inc(counter_stage, direction, "bytes_written", n)
                     context.inc(counter_stage, direction, "write_calls" if not use_faults else "tcp_write_calls", calls)
 
-                _send_counted(destination, data, on_sent)
+                if tls_writer:
+                    with context.tls_io_lock:
+                        _send_counted(destination, data, on_sent)
+                else:
+                    _send_counted(destination, data, on_sent)
     except (OSError, ssl.SSLError, ConnectionError, ConfigError) as exc:
         pending_client_bytes = 0
         pending_server_bytes = 0

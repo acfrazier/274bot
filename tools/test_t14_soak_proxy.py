@@ -425,15 +425,82 @@ class CloseReceiptTests(unittest.TestCase):
     def test_https_response_half_closes_after_complete_body(self):
         self._check_https_response_half_close(partial_body=False)
 
+    def test_https_tls12_clean_end_has_no_proxy_failure(self):
+        self._check_https_response_half_close(
+            partial_body=False, tls_version=ssl.TLSVersion.TLSv1_2)
+
+
     def test_https_partial_body_waits_for_upstream_eof(self):
         self._check_https_response_half_close(partial_body=True)
 
-    def _check_https_response_half_close(self, *, partial_body):
+    def test_https_response_close_notify_with_both_relay_workers_live_200_times(self):
+        for attempt in range(200):
+            with self.subTest(attempt=attempt):
+                self._check_https_response_half_close(partial_body=False)
+
+    def test_tls_socket_calls_never_overlap(self):
+        active = {}
+        overlaps = []
+        mutex = threading.Lock()
+        arm = threading.Event()
+        entered = threading.Event()
+        release = threading.Event()
+
+        def guarded(method, original):
+            def call(sock, *args, **kwargs):
+                with mutex:
+                    if sock in active:
+                        overlaps.append((active[sock], method))
+                    active[sock] = method
+                try:
+                    if method == "recv" and sock.server_side and arm.is_set() and not entered.is_set():
+                        entered.set()
+                        if not release.wait(2):
+                            raise AssertionError("guarded TLS read did not resume")
+                    return original(sock, *args, **kwargs)
+                finally:
+                    with mutex:
+                        active.pop(sock, None)
+            return call
+
+        def before_response(client, proxy_b, response):
+            arm.set()
+            client.sendall(b"x")
+            self.assertTrue(entered.wait(2))
+            try:
+                proxy_b.sendall(response)
+                self.assertFalse(release.wait(0.05))
+            finally:
+                release.set()
+            return True
+
+        with patch.object(ssl.SSLSocket, "recv",
+                          guarded("recv", ssl.SSLSocket.recv)), \
+                patch.object(ssl.SSLSocket, "send",
+                             guarded("send", ssl.SSLSocket.send)), \
+                patch.object(ssl.SSLSocket, "unwrap",
+                             guarded("unwrap", ssl.SSLSocket.unwrap)), \
+                patch.object(ssl.SSLSocket, "pending",
+                             guarded("pending", ssl.SSLSocket.pending)):
+            self._check_https_response_half_close(
+                partial_body=False, before_response=before_response)
+        self.assertEqual(overlaps, [])
+
+
+    def _check_https_response_half_close(
+        self, *, partial_body, before_response=None, tls_version=None
+    ):
         events = []
         def spawn(target, name, *args):
             worker = threading.Thread(target=target, args=args, name=name)
             worker.start()
             return worker
+
+        workers = []
+        def join_pair(group):
+            workers.extend(group)
+            for worker in group:
+                worker.join(3)
 
         runtime = SimpleNamespace(
             config=SimpleNamespace(faults=SimpleNamespace(seed=1027)),
@@ -441,7 +508,7 @@ class CloseReceiptTests(unittest.TestCase):
             phase_started=lambda: False,
             write_event=events.append,
             spawn=spawn,
-            join_pair=lambda workers: [worker.join(3) for worker in workers],
+            join_pair=join_pair,
         )
         connection = proxy.ConnectionState(runtime, "http", ("127.0.0.1", 1234))
         fixture = (Path(__file__).resolve().parents[1] / "vendor" / "fr-client-rust"
@@ -452,6 +519,9 @@ class CloseReceiptTests(unittest.TestCase):
         client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         client_context.check_hostname = False
         client_context.verify_mode = ssl.CERT_NONE
+        if tls_version is not None:
+            server_context.minimum_version = server_context.maximum_version = tls_version
+            client_context.minimum_version = client_context.maximum_version = tls_version
         server_raw, client_raw = socket.socketpair()
         server_holder = []
         handshake = spawn(
@@ -480,6 +550,7 @@ class CloseReceiptTests(unittest.TestCase):
                 received_request.extend(chunk)
             self.assertEqual(received_request, request)
             connection.set_handshake("upgrade_status", 200)
+            response_sent = before_response(client, proxy_b, response) if before_response else False
             client.settimeout(1)
             received = bytearray()
             if partial_body:
@@ -489,7 +560,7 @@ class CloseReceiptTests(unittest.TestCase):
                 with self.assertRaises(socket.timeout):
                     client.recv(1)
                 proxy_b.sendall(response[-2:])
-            else:
+            elif not response_sent:
                 proxy_b.sendall(response)
             proxy_b.shutdown(socket.SHUT_WR)
             while chunk := client.recv(4096):
@@ -498,6 +569,8 @@ class CloseReceiptTests(unittest.TestCase):
             client.close()
             relay.join(3)
             self.assertFalse(relay.is_alive())
+            self.assertTrue(all(not worker.is_alive() for worker in workers))
+            self.assertEqual(connection.failures, [])
             self.assertFalse(any(event["type"] == "tcp_copy_error" for event in events))
         finally:
             for sock in (secure, client, plain, proxy_b):
