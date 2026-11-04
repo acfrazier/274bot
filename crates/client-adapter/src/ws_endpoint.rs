@@ -383,7 +383,9 @@ impl TlsIo {
                 self.budget.read_stop = WorkStop::Budget;
                 return Ok(false);
             }
-            let allowed = discard.len().min(TURN_BYTE_LIMIT - self.budget.plaintext_read);
+            let allowed = discard
+                .len()
+                .min(TURN_BYTE_LIMIT - self.budget.plaintext_read);
             self.budget.rustls_operations += 1;
             match self.conn.reader().read(&mut discard[..allowed]) {
                 Ok(0) => {
@@ -426,7 +428,6 @@ impl TlsIo {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 struct TlsStreamHandle(Arc<Mutex<TlsIo>>);
@@ -1182,8 +1183,8 @@ impl WssEndpoint {
 
     fn drain_close_turn(&mut self) -> io::Result<(bool, bool)> {
         let complete = self.with_tls_mut(TlsIo::drain_after_close)?;
-        self.read_local = !complete
-            && self.with_tls(|tls| tls.budget.read_stop == WorkStop::Budget);
+        self.read_local =
+            !complete && self.with_tls(|tls| tls.budget.read_stop == WorkStop::Budget);
         Ok((complete, self.read_local))
     }
 

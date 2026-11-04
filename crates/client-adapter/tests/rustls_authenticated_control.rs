@@ -825,8 +825,12 @@ enum ServerCommand {
         reply: SyncSender<Result<Option<ObservedRecord>, String>>,
     },
     Stop,
-    HalfCloseWrite { reply: SyncSender<io::Result<()>> },
-    Reset { reply: SyncSender<io::Result<()>> },
+    HalfCloseWrite {
+        reply: SyncSender<io::Result<()>>,
+    },
+    Reset {
+        reply: SyncSender<io::Result<()>>,
+    },
 }
 
 struct ControlServer {
@@ -916,14 +920,24 @@ impl ControlServer {
 
     fn half_close_write(&self) {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        self.commands.send(ServerCommand::HalfCloseWrite { reply: reply_tx }).unwrap();
-        reply_rx.recv_timeout(IO_TIMEOUT).unwrap().unwrap();
+        self.commands
+            .send(ServerCommand::HalfCloseWrite { reply: reply_tx })
+            .expect("server accepts write-half-close command");
+        reply_rx
+            .recv_timeout(IO_TIMEOUT)
+            .expect("server returned write-half-close result")
+            .expect("server half-closes write side");
     }
 
     fn reset(&self) {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        self.commands.send(ServerCommand::Reset { reply: reply_tx }).unwrap();
-        reply_rx.recv_timeout(IO_TIMEOUT).unwrap().unwrap();
+        self.commands
+            .send(ServerCommand::Reset { reply: reply_tx })
+            .expect("server accepts reset command");
+        reply_rx
+            .recv_timeout(IO_TIMEOUT)
+            .expect("server returned reset result")
+            .expect("server configured abrupt reset");
     }
 
     fn stop(mut self) {
@@ -1920,14 +1934,22 @@ fn begin_bounded_graceful_close(attempt: &mut LaneAttempt, endpoint: &mut WssEnd
     let deadline = Instant::now() + IO_TIMEOUT;
     loop {
         let (complete, local) = endpoint.flush_for_close().expect("close flush succeeds");
-        endpoint.apply_interest(attempt.poll.registry()).unwrap();
+        endpoint
+            .apply_interest(attempt.poll.registry())
+            .expect("register close flush readiness");
         assert!(!complete, "server has not yet sent TLS close or TCP FIN");
         if endpoint.draining_for_close() {
             return;
         }
-        assert!(Instant::now() < deadline, "client close_notify flush exceeded fixture bound");
+        assert!(
+            Instant::now() < deadline,
+            "client close_notify flush exceeded fixture bound"
+        );
         if !local {
-            attempt.poll.poll(&mut attempt.events, Some(POLL_SLICE)).unwrap();
+            attempt
+                .poll
+                .poll(&mut attempt.events, Some(POLL_SLICE))
+                .expect("poll close flush readiness");
             for event in &attempt.events {
                 if event.token() == Token(attempt.binding.connection as usize) {
                     endpoint.on_event(event.is_readable(), event.is_writable(), Instant::now());
@@ -1938,21 +1960,29 @@ fn begin_bounded_graceful_close(attempt: &mut LaneAttempt, endpoint: &mut WssEnd
 }
 
 fn assert_client_close_then_tls_notify(server: &ControlServer) {
-    let ws = server.read_client_record(IO_TIMEOUT).expect("client WebSocket Close");
+    let ws = server
+        .read_client_record(IO_TIMEOUT)
+        .expect("client WebSocket Close");
     assert_eq!(ws.content_type, ContentType::ApplicationData);
     assert_eq!(ws.payload[0] & 0x0f, 8, "WebSocket Close opcode");
     assert_ne!(ws.payload[1] & 0x80, 0, "client Close is masked");
-    let alert = server.read_client_record(IO_TIMEOUT).expect("client TLS alert");
+    let alert = server
+        .read_client_record(IO_TIMEOUT)
+        .expect("client TLS alert");
     assert_eq!(alert.content_type, ContentType::Alert);
     assert_eq!(alert.payload, TLS_CLOSE_NOTIFY);
     assert_client_fin(server);
 }
 
 fn assert_client_fin(server: &ControlServer) {
-    let read = server.begin_read_client_record(Duration::from_millis(100))
-        .recv_timeout(IO_TIMEOUT).expect("server inspected TCP end");
-    assert!(matches!(&read, Err(error) if error == "peer closed before a TLS record header"),
-            "client must send FIN without RST: {read:?}");
+    let read = server
+        .begin_read_client_record(Duration::from_millis(100))
+        .recv_timeout(IO_TIMEOUT)
+        .expect("server inspected TCP end");
+    assert!(
+        matches!(&read, Err(error) if error == "peer closed before a TLS record header"),
+        "client must send FIN without RST: {read:?}"
+    );
 }
 
 #[test]
@@ -1964,22 +1994,35 @@ fn deliberate_wss_close_drains_unread_server_records_before_socket_drop() {
     begin_bounded_graceful_close(&mut attempt, &mut endpoint);
     assert_client_close_then_tls_notify(&server);
     server.send_record(ContentType::ApplicationData, &[0x88, 0x00]);
-    server.send_record(ContentType::ApplicationData, &server_binary_frame(b"discard-after-close"));
+    server.send_record(
+        ContentType::ApplicationData,
+        &server_binary_frame(b"discard-after-close"),
+    );
     server.send_record(ContentType::Alert, &TLS_CLOSE_NOTIFY);
     server.half_close_write();
     let deadline = Instant::now() + IO_TIMEOUT;
     loop {
-        let (complete, local) = endpoint.flush_for_close().expect("drain authenticated TLS records");
-        endpoint.apply_interest(attempt.poll.registry()).unwrap();
+        let (complete, local) = endpoint
+            .flush_for_close()
+            .expect("drain authenticated TLS records");
+        endpoint
+            .apply_interest(attempt.poll.registry())
+            .expect("register peer drain readiness");
         if complete {
             break;
         }
         assert!(Instant::now() < deadline, "peer alert was not consumed");
         if !local {
-            attempt.poll.poll(&mut attempt.events, Some(POLL_SLICE)).unwrap();
+            attempt
+                .poll
+                .poll(&mut attempt.events, Some(POLL_SLICE))
+                .expect("poll authenticated peer drain");
         }
     }
-    assert!(attempt.shared.inbound.is_empty(), "stopped session receives no tail payload");
+    assert!(
+        attempt.shared.inbound.is_empty(),
+        "stopped session receives no tail payload"
+    );
     endpoint.close(attempt.poll.registry());
     assert_client_fin(&server);
     server.stop();
@@ -1997,13 +2040,21 @@ fn deliberate_wss_close_accepts_peer_tcp_fin_without_reciprocal_tls_alert() {
     server.half_close_write();
     let deadline = Instant::now() + IO_TIMEOUT;
     loop {
-        let (complete, local) = endpoint.flush_for_close().unwrap();
+        let (complete, local) = endpoint
+            .flush_for_close()
+            .expect("peer FIN completes close drain");
         if complete {
             break;
         }
-        assert!(Instant::now() < deadline, "peer FIN did not terminate the drain");
+        assert!(
+            Instant::now() < deadline,
+            "peer FIN did not terminate the drain"
+        );
         if !local {
-            attempt.poll.poll(&mut attempt.events, Some(POLL_SLICE)).unwrap();
+            attempt
+                .poll
+                .poll(&mut attempt.events, Some(POLL_SLICE))
+                .expect("poll peer FIN readiness");
         }
     }
     endpoint.close(attempt.poll.registry());
@@ -2019,8 +2070,13 @@ fn deliberate_wss_close_silent_server_remains_pending_and_reset_ends_drain() {
     let (mut attempt, mut endpoint, _) = connect_wss(&server, Arc::clone(&config));
     begin_bounded_graceful_close(&mut attempt, &mut endpoint);
     assert_client_close_then_tls_notify(&server);
-    assert_eq!(endpoint.flush_for_close().unwrap(), (false, false),
-               "silent server leaves the peer drain pending for the reactor deadline");
+    assert_eq!(
+        endpoint
+            .flush_for_close()
+            .expect("silent peer leaves drain pending"),
+        (false, false),
+        "silent server leaves the peer drain pending for the reactor deadline"
+    );
     endpoint.close(attempt.poll.registry());
     server.stop();
 

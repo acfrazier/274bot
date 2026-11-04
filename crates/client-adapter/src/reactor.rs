@@ -2097,7 +2097,10 @@ mod tests {
             .is_some_and(|live| live.registration.id == reused_id));
         let close_by = Instant::now() + GRACEFUL_PEER_DRAIN;
         reactor.live.get_mut(&index(reused_id)).unwrap().graceful_by = Some(close_by);
-        reactor.scan_deadlines(close_by - Duration::from_nanos(1));
+        let just_before = close_by
+            .checked_sub(Duration::from_nanos(1))
+            .expect("deadline has an earlier instant");
+        reactor.scan_deadlines(just_before);
         assert!(!shared.is_closed(), "peer-drain deadline has not passed");
         reactor.scan_deadlines(close_by);
         assert_eq!(service.health().graceful_close_timeouts(), 1);
