@@ -1983,7 +1983,6 @@ fn eligible_ordinary_group_walk_without_snapshot_uses_validated_status_origin() 
 #[test]
 fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
     use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId, QuestGates};
-    use nav_planner::test_support::stamp;
 
     struct ClosedGate;
     impl api::quest_progress::EvidenceProvider for ClosedGate {
@@ -2095,7 +2094,15 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
     state.quest_evidence = Some(QuestEvidence::new(
         Arc::new(ClosedGate),
         quest_family,
-        stamp(1),
+        api::quest_progress::EvidenceStamp {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 0,
+        },
     ));
     assert!(
         nav_planner::router::find_actionable_quest_gates(
