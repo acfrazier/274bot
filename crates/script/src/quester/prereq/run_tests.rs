@@ -3516,6 +3516,7 @@ fn bank_select_reissues_only_after_the_real_journal_owner_proves_the_gate() {
         first_authority.request_id()
     );
     assert_kitchen_bank_pick_args(&reissued_request, &args);
+    assert_eq!(action.original_allow(), Some(allow));
     assert!(
         !first_authority.live(),
         "the first bank owner has been retired"

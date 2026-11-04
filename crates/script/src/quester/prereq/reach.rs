@@ -67,6 +67,7 @@ pub(crate) struct PrereqAction<M: PrereqMachine> {
     phase: Phase<M>,
     budget: PrereqBudget,
     resolve: bool,
+    allow: Option<PrereqAllow>,
 }
 impl<M: PrereqMachine> PrereqAction<M> {
     pub fn begin(
@@ -80,6 +81,7 @@ impl<M: PrereqMachine> PrereqAction<M> {
             phase: Phase::Reaching(handle),
             budget: PrereqBudget::default(),
             resolve: true,
+            allow: None,
         })
     }
     pub(crate) fn resolve_after(
@@ -95,7 +97,13 @@ impl<M: PrereqMachine> PrereqAction<M> {
             phase: Phase::Resolving(Box::new(run)),
             budget,
             resolve: true,
+            allow: Some(allow),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn original_allow(&self) -> Option<PrereqAllow> {
+        self.allow
     }
 
     /// The prerequisite runner already owns the shared resolution budget.
@@ -170,9 +178,9 @@ impl<M: PrereqMachine> PrereqAction<M> {
             match &mut self.phase {
                 Phase::Reaching(handle) => {
                     // Capture the terminal's grants before polling retires its native owner.
-                    let allow = handle
-                        .inspect_in(cx, M::grants)
-                        .flatten()
+                    let allow = self
+                        .allow
+                        .or_else(|| handle.inspect_in(cx, M::grants).flatten())
                         .unwrap_or_default();
                     match actions.poll(handle, cx) {
                         Poll::Pending => return Poll::Pending,
@@ -186,6 +194,9 @@ impl<M: PrereqMachine> PrereqAction<M> {
                                 return Poll::Ready(Err(error));
                             }
                             let run = resolution(error, allow, cx, &self.budget)?;
+                            // A new host receipt must not broaden the consent
+                            // captured by this logical operation's first refusal.
+                            self.allow = Some(allow);
                             self.phase = Phase::Resolving(Box::new(run));
                         }
                     }
