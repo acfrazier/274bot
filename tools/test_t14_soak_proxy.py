@@ -355,6 +355,7 @@ class CloseReceiptTests(unittest.TestCase):
         runtime.spawn = spawn
         runtime.join_pair = lambda workers: [worker.join(3) for worker in workers]
         connection = proxy.ConnectionState(runtime, "c1", ("127.0.0.1", 1234))
+        connection.set_handshake("upgrade_status", 101)
         fixture = (Path(__file__).resolve().parents[1] / "vendor" / "fr-client-rust"
                    / "crates" / "client" / "tests" / "fixtures" / "tls")
         server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -389,6 +390,11 @@ class CloseReceiptTests(unittest.TestCase):
             proxy_b.sendall(b"\x88\x00")
             proxy_b.shutdown(socket.SHUT_WR)
             self.assertEqual(client.recv(2), b"\x88\x00")
+            # HTTP-only TLS shutdown must never run for an upgraded socket.
+            client.settimeout(0.2)
+            with self.assertRaises(socket.timeout):
+                client.recv(1)
+            client.settimeout(2)
             client.sendall(masked_close)
             client.settimeout(2)
             client_shutdown = spawn(lambda: self._unwrap_client(client), "client-close-notify")
@@ -417,6 +423,12 @@ class CloseReceiptTests(unittest.TestCase):
             pass
 
     def test_https_response_half_closes_after_complete_body(self):
+        self._check_https_response_half_close(partial_body=False)
+
+    def test_https_partial_body_waits_for_upstream_eof(self):
+        self._check_https_response_half_close(partial_body=True)
+
+    def _check_https_response_half_close(self, *, partial_body):
         events = []
         def spawn(target, name, *args):
             worker = threading.Thread(target=target, args=args, name=name)
@@ -446,7 +458,8 @@ class CloseReceiptTests(unittest.TestCase):
             lambda: server_holder.append(server_context.wrap_socket(server_raw, server_side=True)),
             "http-server-handshake",
         )
-        client = client_context.wrap_socket(client_raw, server_hostname="localhost")
+        client = client_context.wrap_socket(
+            client_raw, server_hostname="localhost", suppress_ragged_eofs=False)
         handshake.join(3)
         self.assertFalse(handshake.is_alive())
         secure = server_holder[0]
@@ -467,10 +480,18 @@ class CloseReceiptTests(unittest.TestCase):
                 received_request.extend(chunk)
             self.assertEqual(received_request, request)
             connection.set_handshake("upgrade_status", 200)
-            proxy_b.sendall(response)
-            proxy_b.shutdown(socket.SHUT_WR)
             client.settimeout(1)
             received = bytearray()
+            if partial_body:
+                proxy_b.sendall(response[:-2])
+                while len(received) < len(response) - 2:
+                    received.extend(client.recv(len(response) - 2 - len(received)))
+                with self.assertRaises(socket.timeout):
+                    client.recv(1)
+                proxy_b.sendall(response[-2:])
+            else:
+                proxy_b.sendall(response)
+            proxy_b.shutdown(socket.SHUT_WR)
             while chunk := client.recv(4096):
                 received.extend(chunk)
             self.assertEqual(received, response)

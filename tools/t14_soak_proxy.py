@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the local three-stage WSS soak fault path without logging payloads.
 
-Non-upgrade HTTPS responses end with TCP write EOF after upstream completion;
+Non-upgrade HTTPS responses end with TLS close_notify after upstream completion;
 upgraded WebSockets keep their TLS decoder alive for the peer's Close alert.
 """
 from __future__ import annotations
@@ -359,8 +359,13 @@ def _send_half_close(
         if not http_response_complete:
             # A WebSocket can still send a Close or close_notify; retain its decoder.
             return
-        # The HTTP response has ended. Bypass SSLSocket.shutdown(), which
-        # discards the decoder while the request reader can still be active.
+        # An HTTP response ended. Send close_notify before the TCP FIN;
+        # OpenSSL 3 treats a bare FIN as an unexpected EOF.
+        try:
+            sock.unwrap()
+        except ssl.SSLEOFError:
+            # The peer closed TCP without its own close_notify.
+            pass
         try:
             socket.socket.shutdown(sock, socket.SHUT_WR)
         except OSError:
