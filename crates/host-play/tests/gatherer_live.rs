@@ -9521,7 +9521,11 @@ mod bank_closure_oracle_tests {
             ..Witness::default()
         };
         slot.witness.products_seen.insert(1521);
-        slot.witness.oak_live_tiles.insert(OAK_RESPAWN_START);
+        slot.witness.oak_live_tiles.insert((
+            OAK_RESPAWN_START.x,
+            OAK_RESPAWN_START.z,
+            OAK_RESPAWN_START.level,
+        ));
         for _ in 0..3 {
             observe(&mut slot, 5292, "bank closed; validating equipment");
             assert!(!real_content_bank_lifecycle_complete(
