@@ -1076,9 +1076,13 @@ impl WssEndpoint {
         self.read_suspended = true;
         self.read_local = false;
         // A server-first Close already queued tungstenite's reply. Do not
-        // attempt to send stale game records after the peer closed.
+        // attempt to send stale game records after the peer closed. The
+        // pending-write disjunct keeps flushing an already queued record
+        // before the Close frame is queued behind it.
         if !self.peer_closed
-            && (!self.shared.outbound.is_empty() || self.shared.records.front().is_some())
+            && (!self.shared.outbound.is_empty()
+                || self.shared.records.front().is_some()
+                || self.ws_write_pending)
         {
             self.write_local = true;
             let turn = self.drive()?;
