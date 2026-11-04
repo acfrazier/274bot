@@ -270,6 +270,7 @@ struct RouteSubmission {
     scratch_bytes: usize,
     result_bytes: usize,
     assessment_future_bytes: usize,
+    plan_item_rows: usize,
 }
 
 struct RoutePreflights {
@@ -326,7 +327,7 @@ impl RouteSubmission {
         state: &Arc<WorldState>,
         lease: &NavLease,
         bank_rows: usize,
-        diagnosed_requirements: usize,
+        required_plan_rows: usize,
         thread_name_bytes: usize,
     ) -> Result<(Self, RoutePreflights), RouteJobError> {
         let candidate_capacity = RouteTargetCursor::capacity(request)?;
@@ -446,9 +447,9 @@ impl RouteSubmission {
         };
 
         // New diagnoses end the current search job before either row cursor
-        // can advance. The continuation re-admits these buffers using its
-        // observed requirement count, capped by the unchanged graph bound.
-        let plan_item_rows = diagnosed_requirements.min(
+        // can advance. Retain the largest admitted diagnosis because Hint
+        // overlay rows can survive a later, smaller diagnosis.
+        let plan_item_rows = required_plan_rows.min(
             preflights
                 .missing
                 .reservation()
@@ -750,6 +751,7 @@ impl RouteSubmission {
                 scratch_bytes,
                 result_bytes,
                 assessment_future_bytes,
+                plan_item_rows,
             },
             preflights,
         ))
@@ -1485,9 +1487,11 @@ impl RouteJob {
             &self.state,
             &self.lease,
             self.bank_rows_limit,
-            self.missing_requirements
-                .as_ref()
-                .map_or(0, MissingRequirements::len),
+            self.submission.plan_item_rows.max(
+                self.missing_requirements
+                    .as_ref()
+                    .map_or(0, MissingRequirements::len),
+            ),
             self.thread_name.capacity(),
         )?;
         submission.revision = revision;
@@ -2942,7 +2946,7 @@ impl CooperativeJob for RouteJob {
                 }
                 RouteJobStage::ApplyBankPlan => {
                     if !self.bank_undo_reserved {
-                        let missing_capacity = self.plan_item_limit();
+                        let missing_capacity = self.submission.plan_item_rows;
                         let Some(capacity) = missing_capacity.checked_mul(2) else {
                             return StepOutcome::Failed(RouteJobError::Budget);
                         };
@@ -2978,7 +2982,7 @@ impl CooperativeJob for RouteJob {
                         continue;
                     }
                     if !self.bank_apply_reserved {
-                        let missing_capacity = self.plan_item_limit();
+                        let missing_capacity = self.submission.plan_item_rows;
                         let Some(state) = Arc::get_mut(&mut self.state) else {
                             return StepOutcome::Failed(RouteJobError::ResultShape);
                         };
@@ -9567,15 +9571,36 @@ mod diagnostic_tests {
 
     fn carry_diagnosis_request(
         requirements: usize,
+        graph_requirements: usize,
         origin: Origin,
         first_goal: bool,
     ) -> Box<ScriptRouteRequest> {
+        assert!(graph_requirements >= requirements);
         let (world, from, to) = first_goal_probe_world(8, 4, 4, 6, true);
         let mut world = Arc::try_unwrap(world).ok().unwrap();
         let rows: Vec<_> = (0..requirements)
             .map(|index| (i32::try_from(index).unwrap() + 1, 1))
             .collect();
         world.graph.edges[0].item_req = rows.clone();
+        if graph_requirements > requirements {
+            let mut unreachable = world.graph.edges[0].clone();
+            unreachable.at = WorldTile {
+                x: 99,
+                z: 99,
+                level: 0,
+            };
+            unreachable.item_req = (requirements..graph_requirements)
+                .map(|index| (i32::try_from(index).unwrap() + 1, 1))
+                .collect();
+            let index = world.graph.edges.len();
+            world
+                .graph
+                .at
+                .entry(unreachable.at)
+                .or_default()
+                .push(index);
+            world.graph.edges.push(unreachable);
+        }
         let world = Arc::new(NavWorld::from_parts(
             world.collision,
             world.graph,
@@ -9630,6 +9655,138 @@ mod diagnostic_tests {
             + route_vec_bytes(&job.bank_undo).unwrap()
     }
 
+    fn readmit_route_continuation(job: Box<RouteJob>) -> Box<RouteJob> {
+        let identity = job.identity.unwrap();
+        let revision = job.revision;
+        let ledger = OwnerResultLedger::with_limits(ROUTE_WORK_LIMIT_BYTES, 64 * 1024 * 1024);
+        let bytes = job.owned_retained_bytes().unwrap()
+            + std::mem::size_of::<RouteDemand>()
+            + OwnerResultReservation::storage_bytes();
+        let reservation = ledger.try_reserve_bytes(bytes).unwrap();
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "alice".to_owned(),
+            NavBot {
+                route_generation: job.generation(),
+                walk_request_id: job.request_id(),
+                requested_route: Some((job.request.to, 0, false, true, true, ZoneExempt::NONE)),
+                ..NavBot::default()
+            },
+        )])));
+        retain_route_continuation(&navs, "alice", job, identity, revision, reservation);
+        let pending = navs
+            .lock()
+            .unwrap()
+            .get_mut("alice")
+            .unwrap()
+            .pending_route
+            .take();
+        let RouteDemand::Prepared(job) = *pending.expect("production must retain the admitted job")
+        else {
+            panic!("the continuation must already be prepared");
+        };
+        assert_eq!(
+            job.revision,
+            revision.next().unwrap(),
+            "production retention must prepare a new admission",
+        );
+        job
+    }
+
+    struct BankReservationBounds {
+        planning: usize,
+        rows: usize,
+        fetch: usize,
+        plan: usize,
+        overlay: usize,
+        undo: usize,
+        inventory: usize,
+        overlay_inventory: usize,
+        worn: usize,
+    }
+
+    impl BankReservationBounds {
+        fn at_admission(job: &RouteJob) -> Self {
+            let count = job.submission.plan_item_rows;
+            let bank = job.bank_rows_limit;
+            let planned = bank.checked_add(count).unwrap();
+            let growth = job.state.growth_bound(count, count).unwrap();
+            let overlay_growth = job.state.growth_bound(planned, 0).unwrap();
+            Self {
+                planning: PlanningRowsCursor::heap_bound(bank, count).unwrap(),
+                rows: PlanningRowsCursor::rows_heap_bound(bank, count).unwrap(),
+                fetch: BankFetchCursor::heap_bound(planned, count, job.request.world.banks().len())
+                    .unwrap(),
+                plan: BankFetchPlan::heap_bound(count).unwrap(),
+                overlay: FetchableStateCursor::heap_bound(
+                    &job.state,
+                    planned,
+                    !job.request.world.banks().is_empty(),
+                )
+                .unwrap(),
+                undo: count * 2 * std::mem::size_of::<RouteBankUndo>(),
+                inventory: growth.inventory_old_bytes.max(growth.inventory_new_bytes),
+                overlay_inventory: overlay_growth
+                    .inventory_old_bytes
+                    .max(overlay_growth.inventory_new_bytes),
+                worn: growth.worn_old_bytes.max(growth.worn_new_bytes),
+            }
+        }
+
+        fn assert_retained(&self, job: &RouteJob) {
+            if let Some(cursor) = &job.planning_cursor {
+                assert!(
+                    cursor.peak_retained_bytes() <= self.planning,
+                    "planning rows"
+                );
+            }
+            for rows in [job.planned_rows.as_ref(), job.fetchable_rows.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                assert!(route_vec_bytes(rows).unwrap() <= self.rows, "retained rows");
+            }
+            if let Some(cursor) = &job.bank_cursor {
+                assert!(cursor.peak_retained_bytes() <= self.fetch, "fetch cursor");
+            }
+            if let Some(plan) = &job.bank_plan {
+                assert!(plan.retained_bytes() <= self.plan, "bank plan");
+            }
+            assert!(
+                route_vec_bytes(&job.bank_undo).unwrap() <= self.undo,
+                "undo capacity exceeds its admitted component",
+            );
+            let state = job.state.growth_bound(0, 0).unwrap();
+            if job.bank_apply_reserved {
+                assert!(
+                    state.inventory_old_bytes <= self.inventory,
+                    "inventory capacity exceeds its admitted component",
+                );
+                assert!(
+                    state.worn_old_bytes <= self.worn,
+                    "worn capacity exceeds its admitted component",
+                );
+            }
+            if let Some(cursor) = &job.fetchable_cursor {
+                assert!(cursor.retained_bytes().unwrap() <= self.overlay, "overlay");
+                assert!(
+                    state.inventory_old_bytes <= self.overlay_inventory,
+                    "overlay inventory capacity exceeds its admitted component",
+                );
+            }
+        }
+    }
+
+    fn drive_stage_with_bank_bounds(
+        worker: &mut RouteWorkJob,
+    ) -> (RouteStageResult, usize, std::time::Duration) {
+        let bounds = BankReservationBounds::at_admission(worker.job.as_ref().unwrap());
+        let result = drive_stage(worker);
+        if let RouteStageResult::Continue(job) = &result.0 {
+            bounds.assert_retained(job);
+        }
+        result
+    }
+
     fn next_diagnosis_boundary(
         request: Box<ScriptRouteRequest>,
     ) -> (Box<RouteJob>, RouteSubmission) {
@@ -9650,7 +9807,7 @@ mod diagnostic_tests {
                 .map_or(0, MissingRequirements::len);
             let mut worker = RouteWorkJob::new(job);
             let (result, _, _) = drive_stage(&mut worker);
-            let RouteStageResult::Continue(mut next) = result else {
+            let RouteStageResult::Continue(next) = result else {
                 panic!("the missing-item diagnosis must cross a job boundary");
             };
             let next_count = next
@@ -9667,22 +9824,22 @@ mod diagnostic_tests {
                 );
                 return (next, before);
             }
-            next.prepare_continuation().unwrap();
-            job = next;
+            job = readmit_route_continuation(next);
         }
         panic!("the bounded fixture did not publish a missing-item diagnosis");
     }
 
     #[test]
     fn a_larger_diagnosis_is_readmitted_before_bank_buffers_grow() {
-        for requirements in [1, 1024] {
+        for (requirements, graph_requirements) in [(1, 1), (1024, 1024), (1, 4097)] {
             for (origin, first_goal) in [
                 (Origin::Session, false),
                 (Origin::Session, true),
                 (Origin::Hint, true),
             ] {
-                let (mut job, before) = next_diagnosis_boundary(carry_diagnosis_request(
+                let (job, before) = next_diagnosis_boundary(carry_diagnosis_request(
                     requirements,
+                    graph_requirements,
                     origin,
                     first_goal,
                 ));
@@ -9690,10 +9847,9 @@ mod diagnostic_tests {
                     job.missing_requirements.as_ref().unwrap().len(),
                     requirements
                 );
-                assert_eq!(job.plan_item_limit(), requirements);
-                let revision = job.revision;
-                job.prepare_continuation().unwrap();
-                assert_eq!(job.revision, revision.next().unwrap());
+                assert_eq!(job.plan_item_limit(), graph_requirements);
+                let mut job = readmit_route_continuation(job);
+                assert_eq!(job.submission.plan_item_rows, requirements);
                 assert!(
                     job.submission.result_bytes
                         >= before.result_bytes + BankFetchPlan::heap_bound(requirements).unwrap(),
@@ -9704,23 +9860,72 @@ mod diagnostic_tests {
                     .unwrap();
                 assert!(charge <= ROUTE_WORK_LIMIT_BYTES);
                 assert_eq!(diagnosis_derived_bank_bytes(&job), 0);
-                let mut worker = RouteWorkJob::new(job);
-                let (result, _, _) = drive_stage(&mut worker);
-                let RouteStageResult::Continue(next) = result else {
-                    panic!("the admitted bank phase must complete its next search");
-                };
+                let mut saw_apply = false;
+                for index in 0..8 {
+                    job.identity = Some(stage_identity(index + 16));
+                    let mut worker = RouteWorkJob::new(job);
+                    let (result, _, _) = drive_stage_with_bank_bounds(&mut worker);
+                    let RouteStageResult::Continue(next) = result else {
+                        panic!("the bank fixture must reach post-bank search");
+                    };
+                    assert!(diagnosis_derived_bank_bytes(&next) > 0);
+                    if next.bank_apply_reserved {
+                        assert!(next.bank_undo_reserved);
+                        saw_apply = true;
+                        break;
+                    }
+                    job = readmit_route_continuation(next);
+                }
                 assert!(
-                    diagnosis_derived_bank_bytes(&next) > 0,
-                    "bank buffers may grow only after the larger admission succeeds",
+                    saw_apply,
+                    "the guard must check undo, inventory and worn reservations"
                 );
             }
         }
     }
 
     #[test]
+    fn retained_hint_overlay_stays_charged_after_a_smaller_diagnosis() {
+        let mut request = carry_diagnosis_request(64, 4097, Origin::Hint, true);
+        request.bank = Vec::new();
+        let (job, _) = next_diagnosis_boundary(request);
+        let mut job = readmit_route_continuation(job);
+        for index in 0..4 {
+            if job.fetchable_rows.is_some() {
+                break;
+            }
+            job.identity = Some(stage_identity(index + 32));
+            let mut worker = RouteWorkJob::new(job);
+            let (result, _, _) = drive_stage_with_bank_bounds(&mut worker);
+            let RouteStageResult::Continue(next) = result else {
+                panic!("the Hint overlay must return its planned rows");
+            };
+            job = readmit_route_continuation(next);
+        }
+        let retained_rows = job.fetchable_rows.as_ref().unwrap().len();
+        assert_eq!(retained_rows, 64);
+        assert_eq!(job.bank_rows_limit, 0);
+        let (mut smaller, _) =
+            next_diagnosis_boundary(carry_diagnosis_request(1, 4097, Origin::Session, false));
+        job.missing_requirements = smaller.missing_requirements.take();
+        job = readmit_route_continuation(job);
+        assert_eq!(job.missing_requirements.as_ref().unwrap().len(), 1);
+        assert_eq!(
+            job.submission.plan_item_rows, 64,
+            "a smaller diagnosis must retain the earlier overlay bound",
+        );
+        assert!(retained_rows > job.bank_rows_limit + 1);
+        let bounds = BankReservationBounds::at_admission(&job);
+        job.finish_bank_failure();
+        assert!(job.fetchable_cursor.is_some());
+        bounds.assert_retained(&job);
+    }
+
+    #[test]
     fn maximum_diagnosis_is_refused_before_unreserved_bank_buffers_grow() {
         let requirements = 50_000;
         let (job, _) = next_diagnosis_boundary(carry_diagnosis_request(
+            requirements,
             requirements,
             Origin::Session,
             false,
@@ -10586,7 +10791,7 @@ mod diagnostic_tests {
                 let mut measured = None;
                 let allocations = allocation_counter::measure(|| {
                     let mut worker = RouteWorkJob::new(job);
-                    measured = Some(drive_stage(&mut worker));
+                    measured = Some(drive_stage_with_bank_bounds(&mut worker));
                 });
                 let peak = held
                     .checked_add(usize::try_from(allocations.bytes_max).unwrap())
@@ -10615,6 +10820,7 @@ mod diagnostic_tests {
                     "next_search_at_admission": purpose,
                     "input_bytes": input.input_bytes,
                     "scratch_bytes": input.scratch_bytes,
+                    "admitted_plan_item_rows": input.plan_item_rows,
                     "result_bound_bytes": input.result_bytes,
                     "charge_bytes": charge,
                     "exact_initial_owned_bytes": held,
