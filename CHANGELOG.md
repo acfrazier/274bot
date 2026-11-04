@@ -13,6 +13,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Proven-false gates stay closed. Journal and reissue limits remain unchanged,
   and a genuine route failure keeps its detail. This fixes a development regression
   exposed by the corrected Priest in Peril colour-authority data.
+  The typed result adds eight bytes to each allocated native ledger.
 
 - The Gatherer live bank tests now observe decoded bank closure within the same
   login session. A missed status message no longer hides a completed bank trip.
