@@ -665,5 +665,102 @@ class ArmReasonTests(unittest.TestCase):
                         summary.evaluate(*folders, smoke=False)
 
 
+class WindowsRuntimeCensusTests(unittest.TestCase):
+    @staticmethod
+    def identity(tid, name, *, main=False, created=100):
+        return {
+            "tid": tid, "comm": "t14_soak_live-" if main else name[:15],
+            "windows_thread_description": name, "windows_process_main_thread": main,
+            "windows_process_id": 500, "thread_creation_filetime": created,
+        }
+
+    def witness(self, modules=None, *, stack_bytes=2048):
+        os_module = "C:\\Windows\\System32\\ntdll.dll"
+        modules = {os_module: 2} if modules is None else modules
+        evidence = {
+            "schema": "t14-windows-thread-minidump-stack-projection-v2",
+            "sampled_pid": 500, "tid": 13, "thread_creation_filetime": 100,
+            "capture_sample_monotonic_ns": 100, "dump_path": "snapshot-0001.dmp",
+            "dump_sha256": "a" * 64, "ip_module": {"module": os_module, "offset": "0x123"},
+            "stack_window_bytes": stack_bytes,
+            "candidate_return_address_module_counts": modules,
+        }
+        projection = {
+            "dump_sha256": "a" * 64, "sampled_pid": 500,
+            "threads": [{"tid": 13, "description_first_sample": "",
+                         "ip_module": evidence["ip_module"],
+                         "stack_window_bytes": stack_bytes,
+                         "candidate_return_address_module_counts": modules}],
+        }
+        return evidence, projection
+
+    def check(self, evidence, projection, *, created=100):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            unknown = self.identity(13, "", created=created)
+            unknown["os_runtime_provenance"] = evidence
+            sample = {
+                "sample_monotonic_ns": 200, "elapsed_seconds": 0,
+                "sampler_platform": "windows", "process_id": 500, "pid": 10,
+                "task_count": 3,
+                "threads": [self.identity(10, "main", main=True),
+                            self.identity(11, "t14_local_wss_s"), unknown],
+            }
+            config = {"run": {"slots": 0},
+                      "limits": {"fixed_threads": 14, "max_request_threads": 64}}
+            with mock.patch.object(summary.t14_windows_thread_evidence, "analyze",
+                                   return_value=projection):
+                errors = []
+                result = summary.check_census(
+                    folder, [sample], {"slots": [],
+                                       "run": {"phase_zero_monotonic_ns": None}},
+                    config, errors)
+            return errors, result
+
+    def test_os_only_stack_is_explicit_O(self):
+        evidence, projection = self.witness()
+        errors, result = self.check(evidence, projection)
+        self.assertEqual(errors, [])
+        self.assertEqual(result["term_maxima"]["O"], 1)
+        self.assertEqual(result["term_maxima"]["F"], 1)
+        self.assertEqual(result["unclassified_tasks"], [])
+
+    def test_product_frame_missing_stack_and_generic_start_stay_unclassified(self):
+        product = r"C:\274bot-work\repo\target\release\deps\t14_soak_live.exe"
+        for modules, stack_bytes in (({product: 1}, 2048), ({}, 2048),
+                                     ({"C:\\Windows\\System32\\ntdll.dll": 1}, 0)):
+            with self.subTest(modules=modules, stack_bytes=stack_bytes):
+                evidence, projection = self.witness(modules, stack_bytes=stack_bytes)
+                errors, result = self.check(evidence, projection)
+                self.assertTrue(any("unclassified task tid=13" in error for error in errors))
+                self.assertEqual(result["term_maxima"]["O"], 0)
+        evidence, projection = self.witness()
+        for missing in (None, {"error": "missing stack"}, {"start_address": "ntdll.dll+0xACAC0"}):
+            with self.subTest(missing=missing):
+                errors, result = self.check(missing, projection)
+                self.assertTrue(any("unclassified task tid=13" in error for error in errors))
+                self.assertEqual(result["term_maxima"]["O"], 0)
+
+    def test_product_instruction_pointer_and_unverified_dump_fail_closed(self):
+        evidence, projection = self.witness()
+        product = r"C:\274bot-work\repo\target\release\deps\t14_soak_live.exe"
+        evidence["ip_module"] = {"module": product, "offset": "0x123"}
+        projection["threads"][0]["ip_module"] = evidence["ip_module"]
+        errors, result = self.check(evidence, projection)
+        self.assertTrue(any("unclassified task tid=13" in error for error in errors))
+        self.assertEqual(result["term_maxima"]["O"], 0)
+        evidence, projection = self.witness()
+        projection["dump_sha256"] = "b" * 64
+        errors, result = self.check(evidence, projection)
+        self.assertTrue(any("unclassified task tid=13" in error for error in errors))
+        self.assertEqual(result["term_maxima"]["O"], 0)
+
+    def test_provenance_cannot_cross_thread_lifetime(self):
+        evidence, projection = self.witness()
+        errors, result = self.check(evidence, projection, created=101)
+        self.assertTrue(any("unclassified task tid=13" in error for error in errors))
+        self.assertEqual(result["term_maxima"]["O"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

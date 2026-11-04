@@ -9,6 +9,9 @@ import json
 import re
 from collections import Counter
 from pathlib import Path
+import ntpath
+
+import t14_windows_thread_evidence
 
 
 class EvidenceError(ValueError):
@@ -124,8 +127,65 @@ F_NAMES = {
         "net-https-handshake",
     )
 }
-TERMS = ("N", "J", "V", "F", "H", "A", "B", "G", "E", "E_v", "L_T", "R")
+TERMS = ("N", "J", "V", "F", "H", "A", "B", "G", "E", "E_v", "L_T", "R", "O")
 REQUEST_PREFIXES = ("nav-find-", "nav-inspect-", "bank-pick-", "card-prepare-")
+
+
+def windows_os_module(module: object) -> bool:
+    if not isinstance(module, str):
+        return False
+    path = ntpath.normcase(module)
+    return path.startswith("c:\\windows\\system32\\") and path.endswith(".dll")
+
+
+def windows_runtime_provenance(folder: Path, sample: dict, task: dict,
+                               cache: dict[tuple[str, int, int], dict]) -> bool:
+    """Accept only a matched, OS-only bounded snapshot for this live identity."""
+    evidence = task.get("os_runtime_provenance")
+    pid = sample.get("process_id")
+    tid = task.get("tid")
+    created = task.get("thread_creation_filetime")
+    if (not isinstance(evidence, dict)
+            or evidence.get("schema") != "t14-windows-thread-minidump-stack-projection-v2"
+            or not all(isinstance(value, int) and value > 0 for value in (pid, tid, created))
+            or evidence.get("sampled_pid") != pid
+            or evidence.get("tid") != tid
+            or evidence.get("thread_creation_filetime") != created
+            or not isinstance(evidence.get("capture_sample_monotonic_ns"), int)
+            or not 0 < evidence["capture_sample_monotonic_ns"] <= sample["sample_monotonic_ns"]):
+        return False
+    dump_path = evidence.get("dump_path")
+    digest = evidence.get("dump_sha256")
+    if (not isinstance(dump_path, str)
+            or not re.fullmatch(r"snapshot-[0-9]{4}\.dmp", ntpath.basename(dump_path))
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+        return False
+    name = ntpath.basename(dump_path)
+    key = (name, pid, tid)
+    try:
+        if key not in cache:
+            cache[key] = t14_windows_thread_evidence.analyze(
+                folder / "thread-provenance" / name, {tid: ""}, pid)
+        projection = cache[key]
+        if projection["dump_sha256"] != digest or projection["sampled_pid"] != pid:
+            return False
+        row = next((row for row in projection["threads"] if row["tid"] == tid), None)
+        if row is None or row["description_first_sample"] != "":
+            return False
+        ip = row["ip_module"]
+        modules = row["candidate_return_address_module_counts"]
+        if (not isinstance(ip, dict) or not windows_os_module(ip.get("module"))
+                or row["stack_window_bytes"] < 256
+                or not isinstance(modules, dict) or not modules
+                or not all(isinstance(count, int) and count > 0 and windows_os_module(module)
+                           for module, count in modules.items())):
+            return False
+        return (evidence.get("ip_module") == ip
+                and evidence.get("stack_window_bytes") == row["stack_window_bytes"]
+                and evidence.get("candidate_return_address_module_counts") == modules)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 def check_census(folder: Path, samples: list[dict], summary: dict, config: dict,
@@ -134,7 +194,8 @@ def check_census(folder: Path, samples: list[dict], summary: dict, config: dict,
     allowed_slots = {account[:15] for account in accounts}
     phase_zero = summary["run"]["phase_zero_monotonic_ns"]
     observed: list[dict] = []
-    unknown: set[tuple[int, str]] = set()
+    unknown: set[tuple[int, str, int]] = set()
+    provenance_cache: dict[tuple[str, int, int], dict] = {}
     for sample in samples:
         counts = Counter({term: 0 for term in TERMS})
         fixed_seen: set[str] = set()
@@ -143,6 +204,20 @@ def check_census(folder: Path, samples: list[dict], summary: dict, config: dict,
         for task in tasks:
             comm = task["comm"]
             tid = task["tid"]
+            windows = sample.get("sampler_platform") == "windows"
+            if windows:
+                raw = task.get("windows_thread_description")
+                valid_identity = (isinstance(sample.get("process_id"), int)
+                                  and task.get("windows_process_id") == sample["process_id"]
+                                  and isinstance(task.get("thread_creation_filetime"), int)
+                                  and task["thread_creation_filetime"] > 0
+                                  and isinstance(raw, str)
+                                  and (comm == "t14_soak_live-" and tid == sample["pid"]
+                                       and task.get("windows_process_main_thread") is True
+                                       or comm == raw[:15]
+                                       and task.get("windows_process_main_thread") is False))
+                demand(valid_identity, errors,
+                       f"{folder.name}: Windows raw thread identity mismatch tid={tid}")
             if comm in allowed_slots:
                 term = "N"
             elif comm.startswith("t14_soak_live-") and tid == sample["pid"]:
@@ -172,10 +247,16 @@ def check_census(folder: Path, samples: list[dict], summary: dict, config: dict,
                            for prefix in REQUEST_PREFIXES
                            for slot in live_slots), errors,
                        f"{folder.name}: request thread {comm} has no live slot owner")
+            elif (sample.get("sampler_platform") == "windows"
+                  and comm == "" and task.get("windows_thread_description") == ""
+                  and task.get("windows_process_main_thread") is False
+                  and windows_runtime_provenance(folder, sample, task, provenance_cache)):
+                term = "O"
             else:
                 term = None
-                if (tid, comm) not in unknown:
-                    unknown.add((tid, comm))
+                identity = (tid, comm, task.get("thread_creation_filetime", -1))
+                if identity not in unknown:
+                    unknown.add(identity)
                     errors.append(f"{folder.name}: unclassified task tid={tid} comm={comm!r}")
             if term is not None:
                 counts[term] += 1
@@ -196,14 +277,14 @@ def check_census(folder: Path, samples: list[dict], summary: dict, config: dict,
                    f"{folder.name}: not all named slot workers lived after first 101 at {elapsed}s")
         counted = sum(counts.values())
         demand(counted == sample["task_count"], errors,
-               f"{folder.name}: T != N+J+V+F+H+A+B+G+E+E_v+L_T+R at {elapsed}s")
+               f"{folder.name}: T != N+J+V+F+H+A+B+G+E+E_v+L_T+R+O at {elapsed}s")
         observed.append({"sample_monotonic_ns": sample["sample_monotonic_ns"],
                          "elapsed_seconds": elapsed, "T": sample["task_count"],
                          "terms": {term: counts[term] for term in TERMS}})
     return {"per_sample": observed,
             "term_maxima": {term: max(row["terms"][term] for row in observed) for term in TERMS},
-            "unclassified_tasks": [{"tid": tid, "comm": comm}
-                                   for tid, comm in sorted(unknown)]}
+            "unclassified_tasks": [{"tid": tid, "comm": comm, "thread_creation_filetime": created}
+                                   for tid, comm, created in sorted(unknown)]}
 
 
 def check_scene_samples(folder: Path, events: list[dict], accounts: list[str],
