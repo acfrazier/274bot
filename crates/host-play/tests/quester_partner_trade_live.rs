@@ -238,6 +238,7 @@ mod tests {
                     worker,
                     Some(gang),
                     &script::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             });
             assert!(compiled.is_ok(), "{gang:?}: {:?}", compiled.err());
