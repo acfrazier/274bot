@@ -428,7 +428,7 @@ fn refusal_entry_with_denied_consent_returns_not_allowed_before_preconditions() 
             .as_ref()
             .is_none_or(|ledger| ledger.outbox.is_empty()));
         assert_eq!(state.prereq_snapshot(), before);
-        assert_eq!(budget.rows_run, 0);
+        assert_eq!(budget.visited_len, 0);
     }
 }
 
@@ -470,7 +470,7 @@ fn nested_child_consent_is_checked_before_candidate_walk() {
     ));
     assert!(ledger.is_none());
     assert_eq!(budget.probes, 0);
-    assert_eq!(budget.rows_run, 1);
+    assert_eq!(budget.visited_len, 1);
 }
 
 #[test]
@@ -1054,7 +1054,6 @@ fn reclaim_retalks_once_with_the_same_row_and_budget() {
                 "conversation must settle within its authored tick bounds"
             );
         }
-        assert_eq!(budget.rows_run, 1);
         assert_eq!(budget.visited_len, 1);
         assert_eq!(budget.talks, 2);
         assert_eq!(budget.probes, 0);
@@ -1089,7 +1088,7 @@ fn a2_child_probe_selects_reachable_crossing_and_parent_talk_share_the_same_budg
         &budget.visited[..usize::from(budget.visited_len)],
         &[mort_ordinal, holy_ordinal]
     );
-    assert_eq!(budget.rows_run, 2);
+    assert_eq!(budget.visited_len, 2);
     arrive_at_goal(&mut ledger, 1, south.crossing.takeoff);
     snapshot.seed_local_player(local_player(south.crossing.takeoff));
     crate::quester::families::tests::seed_prereq_crossing(&mut snapshot, holy, &south.crossing);
@@ -1139,7 +1138,7 @@ fn a2_child_probe_selects_reachable_crossing_and_parent_talk_share_the_same_budg
     )
     .is_pending());
     assert!(matches!(last_interaction(&ledger), InteractReq::Npc { .. }));
-    assert_eq!(budget.rows_run, 2);
+    assert_eq!(budget.visited_len, 2);
     assert_eq!(budget.probes, 1);
     assert_eq!(budget.talks, 1);
     assert_eq!(budget.re_issues, 0);
@@ -3070,7 +3069,7 @@ fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() 
         InteractReq::IfButton { component_id: 42 }
     ));
     assert_eq!(
-        budget.rows_run, 1,
+        budget.visited_len, 1,
         "a retry does not spend another catalog row"
     );
     accept_last(&mut ledger, 7, 0);
@@ -3342,23 +3341,33 @@ fn kitchen_select_fixture() -> (
     (action, args, snapshot, ledger, state)
 }
 
-fn set_kitchen_session<'a>(
-    native: &mut crate::native::NativeTick<'a>,
-    snapshot: &'a GameSnapshot,
+fn with_kitchen_session<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut KitchenSelectLedger,
     tick: u64,
     session: u64,
-) {
-    let evidence = EvidenceStamp {
-        run: RunKey {
-            slot: 1,
-            run: 1,
-            session,
-        },
+    f: impl FnOnce(&mut crate::native::NativeTick<'_>) -> R,
+) -> R {
+    crate::quester::families::tests::with_tick_snapshots(
+        snapshot,
+        snapshot,
+        ledger,
         tick,
-        sequence: tick,
-    };
-    native.cx.evidence = evidence;
-    native.cx.snapshot = SnapshotView::new(Some(snapshot), evidence);
+        |native, snapshot| {
+            let evidence = EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session,
+                },
+                tick,
+                sequence: tick,
+            };
+            native.cx.evidence = evidence;
+            native.cx.snapshot = SnapshotView::new(Some(snapshot), evidence);
+            f(native)
+        },
+    )
 }
 
 fn kitchen_select_poll_in_session(
@@ -3369,8 +3378,7 @@ fn kitchen_select_poll_in_session(
     state: &SlotState,
     session: u64,
 ) -> Poll<Result<crate::bank::SelectedBank, crate::native::ActionError>> {
-    with_tick(snapshot, ledger, tick, |native| {
-        set_kitchen_session(native, snapshot, tick, session);
+    with_kitchen_session(snapshot, ledger, tick, session, |native| {
         native.cx.active_now = Duration::ZERO;
         action.poll(native.actions, &mut native.cx, Some(state))
     })
@@ -3488,8 +3496,7 @@ fn start_kitchen_journal_at(
         tick,
         crate::bank::BankPickOutcome::NeedsStep { gates, allow },
     );
-    with_tick(snapshot, ledger, tick, |native| {
-        set_kitchen_session(native, snapshot, tick, session);
+    with_kitchen_session(snapshot, ledger, tick, session, |native| {
         let observed_allow = action
             .inspect_in(&mut native.cx, |select, cx| select.prereq_allow(cx))
             .flatten();
@@ -3686,8 +3693,7 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
         "same-session misuse leaves the old reader intact"
     );
 
-    let resumed = with_tick(&snapshot, &mut ledger, 4, |native| {
-        set_kitchen_session(native, &snapshot, 4, 2);
+    let resumed = with_kitchen_session(&snapshot, &mut ledger, 4, 2, |native| {
         action.resume_after_session(
             native.actions,
             crate::native::request::NativeKind::BankPlan,
@@ -3855,8 +3861,7 @@ fn bank_select_same_row_session_reissues_stop_at_global_cap() {
         let old_reader = last_live_kitchen_journal_authority(&ledger)
             .expect("each prior session owns a real journal read");
         assert_eq!(old_reader.run().session, session - 1);
-        let resumed = with_tick(&snapshot, &mut ledger, tick, |native| {
-            set_kitchen_session(native, &snapshot, tick, session);
+        let resumed = with_kitchen_session(&snapshot, &mut ledger, tick, session, |native| {
             action.resume_after_session(
                 native.actions,
                 crate::native::request::NativeKind::BankPlan,
