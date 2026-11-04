@@ -951,7 +951,8 @@ fn needs_step_refusal_backs_off_without_retry_spam() {
         }
         assert!(
             later.is_empty(),
-            "a refused step must retain the 180 s backoff: supported={supported}, {later:?}"
+            "a refused step must retain the 180 s backoff: supported={supported}, later actions={}",
+            later.len()
         );
         iso.join();
     }
