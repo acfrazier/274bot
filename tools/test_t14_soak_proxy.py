@@ -416,6 +416,72 @@ class CloseReceiptTests(unittest.TestCase):
             # close_notify. The client alert still reached the TLS decoder.
             pass
 
+    def test_https_response_half_closes_after_complete_body(self):
+        events = []
+        def spawn(target, name, *args):
+            worker = threading.Thread(target=target, args=args, name=name)
+            worker.start()
+            return worker
+
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(faults=SimpleNamespace(seed=1027)),
+            stop=threading.Event(),
+            phase_started=lambda: False,
+            write_event=events.append,
+            spawn=spawn,
+            join_pair=lambda workers: [worker.join(3) for worker in workers],
+        )
+        connection = proxy.ConnectionState(runtime, "http", ("127.0.0.1", 1234))
+        fixture = (Path(__file__).resolve().parents[1] / "vendor" / "fr-client-rust"
+                   / "crates" / "client" / "tests" / "fixtures" / "tls")
+        server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.load_cert_chain(str(fixture / "localhost.pem"),
+                                       str(fixture / "localhost.key"))
+        client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        client_context.check_hostname = False
+        client_context.verify_mode = ssl.CERT_NONE
+        server_raw, client_raw = socket.socketpair()
+        server_holder = []
+        handshake = spawn(
+            lambda: server_holder.append(server_context.wrap_socket(server_raw, server_side=True)),
+            "http-server-handshake",
+        )
+        client = client_context.wrap_socket(client_raw, server_hostname="localhost")
+        handshake.join(3)
+        self.assertFalse(handshake.is_alive())
+        secure = server_holder[0]
+        plain, proxy_b = socket.socketpair()
+        relay = spawn(lambda: proxy._relay_pair(
+            runtime, connection, secure, plain, "tls_terminator",
+            "client_to_proxy_b_plaintext", "proxy_b_to_client_plaintext",
+        ), "http-tls-relay")
+        request = b"GET /crc HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        response = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbody"
+        try:
+            client.sendall(request)
+            proxy_b.settimeout(2)
+            received_request = bytearray()
+            while len(received_request) < len(request):
+                chunk = proxy_b.recv(len(request) - len(received_request))
+                self.assertTrue(chunk)
+                received_request.extend(chunk)
+            self.assertEqual(received_request, request)
+            connection.set_handshake("upgrade_status", 200)
+            proxy_b.sendall(response)
+            proxy_b.shutdown(socket.SHUT_WR)
+            client.settimeout(1)
+            received = bytearray()
+            while chunk := client.recv(4096):
+                received.extend(chunk)
+            self.assertEqual(received, response)
+            client.close()
+            relay.join(3)
+            self.assertFalse(relay.is_alive())
+            self.assertFalse(any(event["type"] == "tcp_copy_error" for event in events))
+        finally:
+            for sock in (secure, client, plain, proxy_b):
+                sock.close()
+
     def test_plaintext_tls_record_is_still_a_websocket_frame_error(self):
         events = []
         runtime = SimpleNamespace(

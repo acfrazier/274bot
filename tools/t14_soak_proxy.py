@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run the local three-stage WSS soak fault path without logging payloads."""
+"""Run the local three-stage WSS soak fault path without logging payloads.
+
+Non-upgrade HTTPS responses end with TCP write EOF after upstream completion;
+upgraded WebSockets keep their TLS decoder alive for the peer's Close alert.
+"""
 from __future__ import annotations
 
 import argparse
@@ -348,10 +352,19 @@ def _record_ws_unparsed_tail(
         "engine_to_client": _peek_raw(engine),
     })
 
-def _send_half_close(sock: socket.socket | ssl.SSLSocket) -> None:
+def _send_half_close(
+    sock: socket.socket | ssl.SSLSocket, *, http_response_complete: bool = False
+) -> None:
     if isinstance(sock, ssl.SSLSocket):
-        # A TCP half-close discards SSLSocket's TLS state. Keep decoding until
-        # the other direction ends and the connection owner closes the socket.
+        if not http_response_complete:
+            # A WebSocket can still send a Close or close_notify; retain its decoder.
+            return
+        # The HTTP response has ended. Bypass SSLSocket.shutdown(), which
+        # discards the decoder while the request reader can still be active.
+        try:
+            socket.socket.shutdown(sock, socket.SHUT_WR)
+        except OSError:
+            pass
         return
     try:
         sock.shutdown(socket.SHUT_WR)
@@ -988,7 +1001,12 @@ def _tcp_copy(
                         "type": "tcp_eof", "connection_id": context.identifier,
                         "direction": direction, "monotonic_ns": time.monotonic_ns(),
                     })
-                _send_half_close(destination)
+                http_response_complete = False
+                if stage == "tls_terminator" and direction == "proxy_b_to_client_plaintext":
+                    with context.lock:
+                        status = context.handshake.get("upgrade_status")
+                    http_response_complete = type(status) is int and status != 101
+                _send_half_close(destination, http_response_complete=http_response_complete)
                 if stage == "proxy_a":
                     runtime.write_event({
                         "type": "tcp_half_close", "connection_id": context.identifier,
