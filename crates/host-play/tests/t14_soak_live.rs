@@ -2271,7 +2271,8 @@ fn drive_frame(
         // let the runner charge the cohort barrier's unobserved tick delta.
         return;
     }
-    let at_relog = actor.runner.record_step().2 == GATHERER_RELOG_STEP && client.ingame;
+    let step_before = actor.runner.record_step().2;
+    let at_relog = step_before == GATHERER_RELOG_STEP && client.ingame;
     let before_output = client.out.pos;
     actor.runner.tick_with_hold(client, frame.hold);
     if at_relog && !actor.setup_relog_requested && client.out.pos > before_output {
@@ -2283,6 +2284,17 @@ fn drive_frame(
                 actor.failure = Some(error);
             }
         }
+    }
+    if setup_relog_return_from_step(
+        step_before,
+        actor.runner.record_step().2,
+        actor.setup_relog_requested,
+        !actor.script_requested,
+    ) {
+        // Relog itself proves a changed session and an ingame return. Record
+        // the exit now; the next connected status records the return even if
+        // the 1 Hz health poll missed the entire logout gap.
+        record_setup_relog_exit(actor, writer, run_started, "scenario-step-returned", true);
     }
     if let RunnerStatus::Failed(message) = actor.runner.status() {
         fail_actor(actor, writer, run_started, "scenario", &message);
@@ -2308,16 +2320,40 @@ fn record_unexpected_exit(
     }
 }
 
+fn setup_relog_return_from_step(
+    step_before: &str,
+    step_after: &str,
+    requested: bool,
+    setup_open: bool,
+) -> bool {
+    setup_open
+        && requested
+        && step_before == GATHERER_RELOG_STEP
+        && step_after != GATHERER_RELOG_STEP
+}
+
+fn setup_relog_exit_expected(
+    requested: bool,
+    exit_observed: bool,
+    returned: bool,
+    setup_open: bool,
+) -> bool {
+    setup_open && requested && !exit_observed && !returned
+}
+
 fn record_setup_relog_exit(
     actor: &mut Actor,
     writer: &EventWriter,
     run_started: Instant,
     kind: &str,
+    setup_open: bool,
 ) -> bool {
-    if !actor.setup_relog_requested
-        || actor.setup_relog_exit_observed
-        || actor.runner.record_step().2 != GATHERER_RELOG_STEP
-    {
+    if !setup_relog_exit_expected(
+        actor.setup_relog_requested,
+        actor.setup_relog_exit_observed,
+        actor.setup_relog_returned,
+        setup_open,
+    ) {
         return false;
     }
     actor.setup_relog_exit_observed = true;
@@ -2738,6 +2774,7 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
                                             &event_writer,
                                             run_started,
                                             "stream-epoch-changed",
+                                            published_start.is_none(),
                                         ))
                                 {
                                     actor.setup_relog_returned = true;
@@ -2771,6 +2808,7 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
                                         &event_writer,
                                         run_started,
                                         "connection",
+                                        published_start.is_none(),
                                     ))
                             {
                                 // A pending clean logout may take many seconds while
@@ -3330,6 +3368,36 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     } else {
         Err(errors.join("; "))
     }
+}
+
+#[test]
+fn fast_setup_relog_return_is_bound_to_the_requested_step() {
+    // The scenario can complete Relog between 1 Hz status observations.
+    assert!(setup_relog_return_from_step(
+        GATHERER_RELOG_STEP,
+        "next setup step",
+        true,
+        true,
+    ));
+    assert!(setup_relog_exit_expected(true, false, false, true));
+}
+
+#[test]
+fn unsolicited_or_post_setup_epoch_change_is_not_a_setup_relog() {
+    assert!(!setup_relog_return_from_step(
+        GATHERER_RELOG_STEP,
+        "next setup step",
+        false,
+        true,
+    ));
+    assert!(!setup_relog_exit_expected(false, false, false, true));
+    assert!(!setup_relog_return_from_step(
+        GATHERER_RELOG_STEP,
+        "next setup step",
+        true,
+        false,
+    ));
+    assert!(!setup_relog_exit_expected(true, false, false, false));
 }
 
 #[test]
