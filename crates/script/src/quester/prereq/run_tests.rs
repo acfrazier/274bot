@@ -365,18 +365,16 @@ fn next_page_send(
 fn budget_visited_uses_a_length_and_no_option() {
     let mut budget = PrereqBudget::default();
     assert_eq!(std::mem::size_of_val(&budget.visited), 6);
-    assert!(budget.row(0, 1));
-    assert!(budget.row(1, 1));
-    assert!(
-        !budget.row(0, 1),
-        "an interleaved same-session repeat refuses"
-    );
-    assert!(budget.row(2, 1));
-    assert!(!budget.row(3, 1));
+    assert!(budget.row(0));
+    assert!(budget.row(1));
+    assert!(!budget.row(0), "an interleaved same-session repeat refuses");
+    assert!(budget.row(2));
+    assert!(!budget.row(3));
     assert_eq!(budget.visited_len, 3);
-    assert!(budget.row(0, 2), "a new session can revisit the same row");
-    assert!(budget.row(1, 2));
-    assert!(!budget.row(0, 2));
+    budget.session_changed();
+    assert!(budget.row(0), "a new session can revisit the same row");
+    assert!(budget.row(1));
+    assert!(!budget.row(0));
     assert_eq!(budget.visited_len, 3, "session revisits use no row slots");
 }
 
@@ -3672,8 +3670,21 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
         .expect("the first session owns a real journal read");
     assert_eq!(old_reader.run().session, 1);
 
-    let resumed = with_tick(&snapshot, &mut ledger, 3, |native| {
-        set_kitchen_session(native, &snapshot, 3, 2);
+    let same_session = with_tick(&snapshot, &mut ledger, 3, |native| {
+        action.resume_after_session(
+            native.actions,
+            crate::native::request::NativeKind::BankPlan,
+            &mut native.cx,
+        )
+    });
+    assert!(matches!(
+        same_session,
+        Err(crate::native::ActionError::Stale)
+    ));
+    assert!(old_reader.live(), "same-session misuse leaves the old reader intact");
+
+    let resumed = with_tick(&snapshot, &mut ledger, 4, |native| {
+        set_kitchen_session(native, &snapshot, 4, 2);
         action.resume_after_session(
             native.actions,
             crate::native::request::NativeKind::BankPlan,
@@ -3684,7 +3695,7 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
     assert!(!old_reader.live(), "the old-session reader is retired");
 
     let mut reissued = None;
-    for tick in 4..=8 {
+    for tick in 5..=9 {
         let result =
             kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, tick, &state, 2);
         assert!(
@@ -3719,7 +3730,7 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
         &reissued_authority,
         gate.clone(),
         changed_allow,
-        9,
+        10,
         2,
     )
     .is_pending());
@@ -3733,7 +3744,7 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
     assert_eq!(new_reader.run().session, 2);
     assert!(!old_reader.live());
     assert!(!reissued_authority.live());
-    accept_last(&mut ledger, 9, 0);
+    accept_last(&mut ledger, 10, 0);
 
     seed_kitchen_journal_page(
         &mut snapshot,
@@ -3744,14 +3755,14 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
         ],
     );
     assert!(
-        kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, 10, &state, 2)
+        kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, 11, &state, 2)
             .is_pending()
     );
     assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
-    accept_last(&mut ledger, 10, 0);
+    accept_last(&mut ledger, 11, 0);
     snapshot.seed_main_modal(-1, vec![]);
     assert!(
-        kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, 11, &state, 2)
+        kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, 12, &state, 2)
             .is_pending()
     );
     assert_eq!(
@@ -3761,8 +3772,8 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
                 &gate.gate,
                 EvidenceStamp {
                     run: reissued_authority.run(),
-                    tick: 10,
-                    sequence: 10,
+                    tick: 11,
+                    sequence: 11,
                 },
             )
             .map(|fact| fact.truth),
@@ -3771,7 +3782,7 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
     );
 
     let mut completed_selection = None;
-    for tick in 12..=16 {
+    for tick in 13..=17 {
         let result =
             kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, tick, &state, 2);
         assert!(
@@ -3800,11 +3811,11 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
         &mut ledger,
         &authority,
         authority.request_id().get(),
-        17,
+        18,
         crate::bank::BankPickOutcome::Selected(selected.clone()),
     );
     assert!(matches!(
-        kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, 17, &state, 2),
+        kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, 18, &state, 2),
         Poll::Ready(Ok(found)) if found == selected
     ));
 }
