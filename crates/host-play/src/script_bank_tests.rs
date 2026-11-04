@@ -3027,7 +3027,7 @@ mod journal_diagnosis {
     impl MonotonicClock for CheckpointClock {
         fn now(&self) -> Instant {
             let now = self.0.get();
-            self.0.set(now + Duration::from_millis(5));
+            self.0.set(now + Duration::from_millis(3));
             now
         }
     }
@@ -3196,9 +3196,9 @@ mod journal_diagnosis {
         };
         let mut worker = CooperativeBankPickJob::new(job.clone(), input, preflights);
         let cancellation = SharedCancellation::new();
-        // A cursor can finish without spending a work unit. Advance the test
-        // clock at each checkpoint so Finish yields before publication and
-        // the test can signal the deadline after the actual diagnosis.
+        // Three clock reads fit inside the slice: both entry checkpoints
+        // can progress, but a zero-unit cursor completion still yields in
+        // Finish before publication, exposing the post-diagnosis deadline.
         let clock = CheckpointClock(Cell::new(Instant::now()));
         let mut signalled = false;
         for _ in 0..32_768 {
