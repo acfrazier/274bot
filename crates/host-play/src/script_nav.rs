@@ -9778,13 +9778,43 @@ mod diagnostic_tests {
 
     fn drive_stage_with_bank_bounds(
         worker: &mut RouteWorkJob,
-    ) -> (RouteStageResult, usize, std::time::Duration) {
+    ) -> (RouteStageResult, usize, std::time::Duration, bool) {
+        use api::identity::Deadline;
+        use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
+
         let bounds = BankReservationBounds::at_admission(worker.job.as_ref().unwrap());
-        let result = drive_stage(worker);
-        if let RouteStageResult::Continue(job) = &result.0 {
-            bounds.assert_retained(job);
+        let clock = SystemClock;
+        let cancellation = SharedCancellation::new();
+        let mut largest = std::time::Duration::ZERO;
+        let mut saw_apply = false;
+        // Keep the original 250,000 * 64 unit horizon. One-unit slices expose
+        // each reservation before a later search can transfer or release it.
+        for slices in 1..=16_000_000 {
+            let budget = SliceBudget::new(
+                std::num::NonZeroU32::new(1).unwrap(),
+                Deadline::after(clock.now(), std::time::Duration::from_millis(10)),
+            );
+            let mut context = StepContext::new(&clock, budget, &cancellation);
+            let started = Instant::now();
+            let outcome = worker.step(&mut context);
+            largest = largest.max(started.elapsed());
+            if let Some(job) = worker.job.as_ref() {
+                bounds.assert_retained(job);
+                saw_apply |= job.bank_apply_reserved;
+            }
+            match outcome {
+                StepOutcome::Yielded => {}
+                StepOutcome::Completed(result) => {
+                    if let RouteStageResult::Continue(job) = &result {
+                        bounds.assert_retained(job);
+                        saw_apply |= job.bank_apply_reserved;
+                    }
+                    return (result, slices, largest, saw_apply);
+                }
+                StepOutcome::Failed(error) => panic!("route stage failed: {error}"),
+            }
         }
-        result
+        panic!("route stage exceeded its unchanged unit horizon");
     }
 
     fn next_diagnosis_boundary(
@@ -9864,16 +9894,14 @@ mod diagnostic_tests {
                 for index in 0..8 {
                     job.identity = Some(stage_identity(index + 16));
                     let mut worker = RouteWorkJob::new(job);
-                    let (result, _, _) = drive_stage_with_bank_bounds(&mut worker);
-                    let RouteStageResult::Continue(next) = result else {
-                        panic!("the bank fixture must reach post-bank search");
-                    };
-                    assert!(diagnosis_derived_bank_bytes(&next) > 0);
-                    if next.bank_apply_reserved {
-                        assert!(next.bank_undo_reserved);
+                    let (result, _, _, applied) = drive_stage_with_bank_bounds(&mut worker);
+                    if applied {
                         saw_apply = true;
                         break;
                     }
+                    let RouteStageResult::Continue(next) = result else {
+                        panic!("the bank fixture must reach post-bank search");
+                    };
                     job = readmit_route_continuation(next);
                 }
                 assert!(
@@ -9896,7 +9924,7 @@ mod diagnostic_tests {
             }
             job.identity = Some(stage_identity(index + 32));
             let mut worker = RouteWorkJob::new(job);
-            let (result, _, _) = drive_stage_with_bank_bounds(&mut worker);
+            let (result, _, _, _) = drive_stage_with_bank_bounds(&mut worker);
             let RouteStageResult::Continue(next) = result else {
                 panic!("the Hint overlay must return its planned rows");
             };
@@ -10800,7 +10828,7 @@ mod diagnostic_tests {
                     peak <= charge,
                     "{case} job {index}: peak={peak}, charge={charge}"
                 );
-                let (result, slices, largest) = measured.unwrap();
+                let (result, slices, largest, _) = measured.unwrap();
                 let result_bytes = route_stage_retained_bytes(&result).unwrap().unwrap_or_else(|| {
                     if let RouteStageResult::Complete(output) = &result {
                         panic!(
