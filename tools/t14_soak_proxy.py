@@ -267,10 +267,11 @@ def _nodelay(sock: socket.socket) -> None:
 
 def _safe_shutdown(sock: socket.socket | ssl.SSLSocket) -> None:
     try:
-        sock.shutdown(socket.SHUT_RDWR)
+        # SSLSocket.shutdown() discards its TLS state; the other relay worker
+        # could then read a raw encrypted record as application data.
+        socket.socket.shutdown(sock, socket.SHUT_RDWR)
     except OSError:
         pass
-
 
 def _close(sock: socket.socket | ssl.SSLSocket | None) -> None:
     if sock is not None:
@@ -347,8 +348,11 @@ def _record_ws_unparsed_tail(
         "engine_to_client": _peek_raw(engine),
     })
 
-
 def _send_half_close(sock: socket.socket | ssl.SSLSocket) -> None:
+    if isinstance(sock, ssl.SSLSocket):
+        # A TCP half-close discards SSLSocket's TLS state. Keep decoding until
+        # the other direction ends and the connection owner closes the socket.
+        return
     try:
         sock.shutdown(socket.SHUT_WR)
     except OSError:

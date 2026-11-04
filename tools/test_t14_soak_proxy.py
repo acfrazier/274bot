@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """The live final Close barrier needs the proxy's monotonic receipt time."""
 
+from pathlib import Path
 import socket
+import ssl
 import threading
 from types import SimpleNamespace
 from unittest.mock import patch
-import unittest
 
 import t14_soak_proxy as proxy
 
@@ -334,6 +335,105 @@ class CloseReceiptTests(unittest.TestCase):
             self.assertTrue(any(event["type"] == "tcp_shutdown_complete" for event in events))
         finally:
             for sock in (client, client_peer, terminator, terminator_peer):
+                sock.close()
+
+    def test_tls_close_notify_after_ws_close_never_enters_plaintext_proxy(self):
+        events = []
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(faults=SimpleNamespace(seed=1027)),
+            stop=threading.Event(),
+            phase_started=lambda: False,
+            write_event=events.append,
+            spawn=lambda target, name, *args: threading.Thread(
+                target=target, args=args, name=name),
+        )
+        def spawn(target, name, *args):
+            worker = threading.Thread(target=target, args=args, name=name)
+            worker.start()
+            return worker
+        runtime.spawn = spawn
+        runtime.join_pair = lambda workers: [worker.join(3) for worker in workers]
+        connection = proxy.ConnectionState(runtime, "c1", ("127.0.0.1", 1234))
+        fixture = (Path(__file__).resolve().parents[1] / "vendor" / "fr-client-rust"
+                   / "crates" / "client" / "tests" / "fixtures" / "tls")
+        server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.load_cert_chain(str(fixture / "localhost.pem"),
+                                       str(fixture / "localhost.key"))
+        client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        client_context.check_hostname = False
+        client_context.verify_mode = ssl.CERT_NONE
+        server_raw, client_raw = socket.socketpair()
+        server_holder = []
+        server_handshake = spawn(
+            lambda: server_holder.append(server_context.wrap_socket(server_raw, server_side=True)),
+            "server-handshake",
+        )
+        client = client_context.wrap_socket(client_raw, server_hostname="localhost")
+        server_handshake.join(3)
+        self.assertFalse(server_handshake.is_alive())
+        secure = server_holder[0]
+        plain, proxy_b = socket.socketpair()
+        engine, engine_peer = socket.socketpair()
+        relay = spawn(lambda: proxy._relay_pair(
+            runtime, connection, secure, plain, "tls_terminator",
+            "client_to_proxy_b_plaintext", "proxy_b_to_client_plaintext",
+        ), "tls-relay")
+        websocket = spawn(lambda: proxy._relay_ws_direction(
+            runtime, connection, proxy_b, engine, "client_to_engine", True,
+        ), "proxy-b-frames")
+        masked_close = b"\x88\x80\x01\x02\x03\x04"
+        try:
+            # Proxy B finishes writing the server Close first. Its write EOF
+            # must not remove the TLS decoder while the client is still live.
+            proxy_b.sendall(b"\x88\x00")
+            proxy_b.shutdown(socket.SHUT_WR)
+            self.assertEqual(client.recv(2), b"\x88\x00")
+            client.sendall(masked_close)
+            client.settimeout(2)
+            client_shutdown = spawn(lambda: self._unwrap_client(client), "client-close-notify")
+            engine_peer.settimeout(2)
+            self.assertEqual(engine_peer.recv(6), masked_close)
+            self.assertEqual(engine_peer.recv(1), b"")
+            relay.join(3)
+            websocket.join(3)
+            self.assertFalse(relay.is_alive())
+            self.assertFalse(websocket.is_alive())
+            self.assertFalse(any(event["type"] == "websocket_frame_error" for event in events))
+            self.assertEqual(connection.tls["client_to_proxy_b_plaintext"]["bytes_read"],
+                             len(masked_close))
+            client_shutdown.join(3)
+        finally:
+            for sock in (secure, client, plain, proxy_b, engine, engine_peer):
+                sock.close()
+
+    @staticmethod
+    def _unwrap_client(client):
+        try:
+            client.unwrap()
+        except (OSError, ssl.SSLError):
+            # The proxy closes TCP after the relay; it does not send a server
+            # close_notify. The client alert still reached the TLS decoder.
+            pass
+
+    def test_plaintext_tls_record_is_still_a_websocket_frame_error(self):
+        events = []
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(faults=SimpleNamespace(seed=1027)),
+            stop=threading.Event(), write_event=events.append,
+        )
+        connection = proxy.ConnectionState(runtime, "c1", ("127.0.0.1", 1234))
+        source, writer = socket.socketpair()
+        destination, receiver = socket.socketpair()
+        try:
+            writer.sendall(b"\x17\x03\x03\x00\x13" + b"x" * 19)
+            writer.shutdown(socket.SHUT_WR)
+            proxy._relay_ws_direction(
+                runtime, connection, source, destination, "client_to_engine", True,
+            )
+            self.assertEqual(len(connection.failures), 1)
+            self.assertTrue(any(event["type"] == "websocket_frame_error" for event in events))
+        finally:
+            for sock in (source, writer, destination, receiver):
                 sock.close()
 
 if __name__ == "__main__":
