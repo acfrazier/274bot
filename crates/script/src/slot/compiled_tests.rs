@@ -3259,14 +3259,16 @@ mod api_gather_seat {
         // Keep the prior QuietRead.hold_until +16 B in Ledger 992 -> 1008.
         // macOS owns a further 64 B Darwin retained mutex, first locked
         // in prepare. The shared combat index is charged once per process.
-        // Both limits retain 8 B of headroom.
+        // The typed bank outcome adds 8 B inside the retained Ledger.
+        // Linux now measures 8848 B, with 0 B of headroom at its unchanged cap.
+        // The latest measured macOS source predates that receipt change.
         #[cfg(target_os = "macos")]
         let exclusive_limit = 8912;
         #[cfg(not(target_os = "macos"))]
         let exclusive_limit = 8848;
         assert!(
             exclusive <= exclusive_limit,
-            "exclusive API seat exceeds {exclusive_limit} B (native-cure b4e71198d: +176 B runner +80 B survival status. QuietRead.hold_until +16 B, Darwin retained mutex +64 B, 8 B headroom)"
+            "exclusive API seat exceeds {exclusive_limit} B (native-cure b4e71198d: +176 B runner +80 B survival status. QuietRead.hold_until +16 B, typed bank receipt +8 B, Darwin retained mutex +64 B; measured Linux headroom 0 B)"
         );
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));

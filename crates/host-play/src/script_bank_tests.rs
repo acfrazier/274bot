@@ -3040,6 +3040,15 @@ mod journal_diagnosis {
     }
 
     fn pick(false_first: bool, second: bool, public: bool) -> BankPickOutcome {
+        pick_with_deadline(false_first, second, public, None)
+    }
+
+    fn pick_with_deadline(
+        false_first: bool,
+        second: bool,
+        public: bool,
+        timeout_stage: Option<BankPickStage>,
+    ) -> BankPickOutcome {
         let family = QuestFamilyId::new([7; 32], std::num::NonZeroU16::MIN);
         let windows = ["first", "second"].map(|signal| StageWindow {
             quest: FactKey::new("bank-journal"),
@@ -3177,18 +3186,27 @@ mod journal_diagnosis {
         let mut worker = CooperativeBankPickJob::new(job.clone(), input, preflights);
         let cancellation = SharedCancellation::new();
         let clock = SystemClock;
-        for _ in 0..4096 {
+        let mut signalled = false;
+        for _ in 0..32_768 {
             let mut context = StepContext::new(
                 &clock,
                 SliceBudget::new(
-                    NonZeroU32::new(64).unwrap(),
+                    NonZeroU32::new(if timeout_stage.is_some() { 1 } else { 64 }).unwrap(),
                     api::identity::Deadline::after(clock.now(), Duration::from_millis(10)),
                 ),
                 &cancellation,
             );
+            if !signalled
+                && worker.search_kind == Some(BankPickSearchKind::Journal)
+                && timeout_stage == Some(worker.stage)
+            {
+                job.request.timeout_fallback.store(true, Ordering::Release);
+                signalled = true;
+            }
             match worker.step(&mut context) {
                 StepOutcome::Yielded => {}
                 StepOutcome::Completed(result) => {
+                    assert_eq!(signalled, timeout_stage.is_some());
                     assert!(result.route.is_none(), "selection never arms a route");
                     let pending = job.pending_inline(
                         Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
@@ -3202,6 +3220,31 @@ mod journal_diagnosis {
             }
         }
         panic!("tiny bank diagnosis did not complete within its bounded slices");
+    }
+
+    #[test]
+    fn deadline_during_journal_search_preserves_genuine_no_path() {
+        let outcome = pick_with_deadline(true, false, false, Some(BankPickStage::Search));
+        assert!(matches!(outcome, BankPickOutcome::NoCandidate { detail }
+                if detail.as_ref() == "bank selection failed: NoPath"));
+    }
+
+    #[test]
+    fn deadline_after_journal_diagnosis_preserves_needs_step() {
+        let outcome = pick_with_deadline(false, false, false, Some(BankPickStage::Finish));
+        let BankPickOutcome::NeedsStep { gates, allow } = outcome else {
+            panic!("a completed journal diagnosis must not become an air fallback");
+        };
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].truth, Truth::Unknown);
+        assert!(!allow.dialogue && allow.quest_start);
+    }
+
+    #[test]
+    fn deadline_after_journal_diagnosis_preserves_genuine_no_path() {
+        let outcome = pick_with_deadline(true, false, false, Some(BankPickStage::Finish));
+        assert!(matches!(outcome, BankPickOutcome::NoCandidate { detail }
+                if detail.as_ref() == "bank selection failed: NoPath"));
     }
 
     #[test]

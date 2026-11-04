@@ -6286,6 +6286,8 @@ fn s2b_admission_per_bot_layouts() {
     ))]
     // FollowRun and WalkHop route-index state adds 48 B to Traveller;
     // Option<PoisonHold> adds 8 B to NavBot.
+    // Typed bank selection outcomes add 8 B in BankPickState.native_receipt.
+    // Linux: r2-bank-journal-check-4/test-host-default.log:1344-1347.
     assert_eq!(
         (
             std::mem::size_of::<NavBot>(),
@@ -6293,7 +6295,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4152, 1576, 520, 264)
+        (4160, 1576, 520, 264)
     );
     // Combat is 520 B with bounded approach retries; retain 8 B of headroom.
     assert!(std::mem::size_of::<script::combat::Combat>() <= 528);

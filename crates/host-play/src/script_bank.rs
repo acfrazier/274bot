@@ -550,6 +550,16 @@ impl CooperativeBankPickJob {
     }
 
     fn start_timeout_fallback(&mut self) {
+        if self.search_kind == Some(BankPickSearchKind::Journal) {
+            // Strict routing already proved NoPath. The computation window
+            // may stop diagnosis, but cannot replace its retained failure or
+            // completed NeedsStep with a bank that routing did not admit.
+            self.fallback_started = true;
+            self.release_search_storage(false);
+            self.search_kind = None;
+            self.stage = BankPickStage::Finish;
+            return;
+        }
         if self.job.request.walk_generation.is_some() {
             self.start_fallback_search();
             return;
@@ -580,7 +590,7 @@ impl CooperativeBankPickJob {
         self.release_search_storage(
             matches!(kind, BankPickSearchKind::Many) && self.job.request.walk_generation.is_some(),
         );
-        self.search_kind = None;
+        self.search_kind = (kind == BankPickSearchKind::Journal).then_some(kind);
         match kind {
             BankPickSearchKind::Journal => {
                 // The strict NoPath and its detail remain the failure outcome.

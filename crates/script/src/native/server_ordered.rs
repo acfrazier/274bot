@@ -418,8 +418,13 @@ mod tests {
         // `(lease, WaitDeadline)` slot each. The quiet read's own wall bound
         // for the hold (F2 of the hold model) adds one `Instant` (16 B) to
         // its record: each click renews it, and the begin's time cannot move.
-        // typed bank selection outcome (+8 B inline receipt).
-        assert_eq!(std::mem::size_of::<Ledger>(), 1016);
+        // The typed bank selection outcome adds 8 B to its inline receipt.
+        assert_eq!(
+            std::mem::size_of::<Ledger>(),
+            944 + 2 * std::mem::size_of::<Option<(NonZeroU64, crate::native::WaitDeadline)>>()
+                + std::mem::size_of::<std::time::Instant>()
+                + 8
+        );
         let mut frame = Frame::new();
         assert!(frame.ledger.as_ref().unwrap().server_ordered.is_none());
         frame.with(|cx| cx.emit_server_ordered(request())).unwrap();

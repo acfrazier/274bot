@@ -163,6 +163,72 @@ fn no_bank_candidate(slot: &mut BankSlot, action: &HostAction, tick: u64) {
     );
 }
 
+fn refused_bank_prerequisite(slot: &mut BankSlot, action: &HostAction, tick: u64, supported: bool) {
+    use api::prereq_steps::{ActionableGate, ConsentSwitch, CrossingId, CrossingKind};
+    use api::selected::{ClientRevision, FactKey, FamilyPreparation, QuestGate, Truth};
+
+    let gate = if supported {
+        let catalog = FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+            selected.prepare_quests(worker).unwrap();
+            selected.prepare_prereq_steps(worker).unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+        let (_, row) = catalog
+            .iter()
+            .find(|(_, row)| {
+                row.consent == ConsentSwitch::PrereqDialogue
+                    && catalog
+                        .for_journal(&QuestGate::Window(row.establishes.clone()))
+                        .is_none()
+            })
+            .expect("the shipped catalog contains a consent-gated conversation");
+        ActionableGate {
+            gate: QuestGate::Window(row.establishes.clone()),
+            truth: Truth::Unknown,
+            leg: 0,
+            crossing: row.crossings[0].crossing,
+        }
+    } else {
+        let at = api::snapshot::WorldTile {
+            x: 3222,
+            z: 3218,
+            level: 0,
+        };
+        ActionableGate {
+            gate: QuestGate::Complete(FactKey::new("unsupported_bank_prerequisite")),
+            truth: Truth::Unknown,
+            leg: 0,
+            crossing: CrossingId {
+                loc_id: 7,
+                option: 0,
+                at,
+                takeoff: at,
+                to: at,
+                kind: CrossingKind::Ladder,
+            },
+        }
+    };
+    let authority = action.authority();
+    slot.slot.complete_native_bank_pick(
+        &authority,
+        script::native_bank::BankPickReceipt {
+            request_id: action.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            outcome: script::native_bank::BankPickOutcome::NeedsStep {
+                gates: Arc::from([gate]),
+                allow: script::native::PrereqAllow::default(),
+            },
+        },
+    );
+}
+
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
     SnapshotInput {
         tick: 1,
@@ -859,6 +925,79 @@ fn missing_access_backs_off_without_retry_spam() {
         "backoff must not retry-spam inside 180s"
     );
     iso.join();
+}
+
+#[test]
+fn needs_step_refusal_backs_off_without_retry_spam() {
+    // Cover both unsupported evidence at resolution and a supported owner
+    // refusing its conversation before it can emit without consent.
+    for supported in [false, true] {
+        let mut iso = spawn_with_facts(CHICKEN, picker_facts());
+        let mut bag = serde_json::Map::new();
+        bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
+        iso.post_settings_bag(&bag);
+        let mut snap = base_snapshot();
+        post_snapshot_input(&mut iso, &snap);
+        tick(&mut iso, 1, &snap);
+        let pick = one_action(&mut iso, "no-scene banking awaits the native picker");
+        assert!(matches!(&pick.effect, HostEffect::BankPick(_)));
+        refused_bank_prerequisite(&mut iso, &pick, 2, supported);
+        let mut later = Vec::new();
+        for n in 2..=6 {
+            snap.tick = n;
+            post_snapshot_input(&mut iso, &snap);
+            tick(&mut iso, n, &snap);
+            later.extend(iso.take_actions().into_iter().map(|action| action.effect));
+        }
+        assert!(
+            later.is_empty(),
+            "a refused step must retain the 180 s backoff: supported={supported}, {later:?}"
+        );
+        iso.join();
+    }
+}
+
+#[test]
+fn needs_step_refusal_still_tries_the_default_nearest_booth() {
+    for supported in [false, true] {
+        let mut iso = spawn_with_facts(CHICKEN, picker_facts());
+        let mut bag = serde_json::Map::new();
+        bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
+        iso.post_settings_bag(&bag);
+        let mut snap = base_snapshot();
+        post_snapshot_input(&mut iso, &snap);
+        tick(&mut iso, 1, &snap);
+        let pick = one_action(&mut iso, "selection starts before a booth is in the scene");
+        assert!(matches!(&pick.effect, HostEffect::BankPick(_)));
+        refused_bank_prerequisite(&mut iso, &pick, 2, supported);
+        snap.here = Some(TileInput {
+            x: 2724,
+            z: 3490,
+            level: 0,
+        });
+        set_seers_scene(&mut snap);
+        let mut actions = Vec::new();
+        for n in 2..=6 {
+            snap.tick = n;
+            post_snapshot_input(&mut iso, &snap);
+            tick(&mut iso, n, &snap);
+            actions.extend(iso.take_actions());
+            if !actions.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(actions.len(), 1, "supported={supported}");
+        assert!(matches!(
+            &actions[0].effect,
+            HostEffect::Interaction(InteractReq::OpenBooth {
+                x: 2725,
+                z: 3490,
+                id: 2213,
+                ..
+            })
+        ));
+        iso.join();
+    }
 }
 
 #[test]

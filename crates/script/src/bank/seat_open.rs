@@ -43,6 +43,14 @@ pub struct OpeningArgs {
     pub facts: Arc<NamedBankFacts>,
     pub preferences: BankPreferences,
     pub hooks: Arc<Mutex<TransferHooks>>,
+    pub(crate) selection_refused: bool,
+}
+
+impl OpeningArgs {
+    pub(crate) fn after_prerequisite_refusal(mut self) -> Self {
+        self.selection_refused = true;
+        self
+    }
 }
 
 /// Result returned by low-level opening and selection operations.
@@ -98,8 +106,12 @@ impl NativeMachine for Opening {
                     None => Core::Immediate(OpeningValue::Bool(false)),
                 }
             }
-            BankSeatOperation::OpenNearestWorld => {
-                Core::Banking(BankingOpen::new(&args.request, args.preferences))
+            BankSeatOperation::OpenNearestWorld | BankSeatOperation::Open => {
+                let mut open = BankingOpen::new(&args.request, args.preferences);
+                if args.selection_refused {
+                    open.phase = BankingPhase::Access(open.default_access());
+                }
+                Core::Banking(open)
             }
             BankSeatOperation::OpenObject => match args.request.object_access.as_ref() {
                 Some(access) => Core::Object(ObjectOpen::new(object_access(access))),
@@ -115,8 +127,11 @@ impl NativeMachine for Opening {
                 args.request.fallback_access.as_ref().map(object_access),
                 default_access("Bank booth", "Use-quickly"),
             )),
-            BankSeatOperation::Open => {
-                Core::Banking(BankingOpen::new(&args.request, args.preferences))
+            BankSeatOperation::Select if args.selection_refused => {
+                Core::Immediate(OpeningValue::Selected {
+                    bank: None,
+                    selected: no_candidate_selection(),
+                })
             }
             BankSeatOperation::Select => {
                 let preferences = effective_preferences(&args.request, args.preferences);
@@ -2380,6 +2395,7 @@ mod tests {
             facts: Arc::new(NamedBankFacts::from_banks(Vec::new())),
             preferences: BankPreferences::default(),
             hooks: Arc::new(Mutex::new(TransferHooks::default())),
+            selection_refused: false,
         }
     }
 
@@ -2518,6 +2534,7 @@ mod tests {
                 facts: Arc::new(NamedBankFacts::from_banks(Vec::new())),
                 preferences: BankPreferences::default(),
                 hooks: Arc::clone(&hooks),
+                selection_refused: false,
             };
             let mut ledger = None;
 

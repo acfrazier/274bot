@@ -731,14 +731,21 @@ Its request-owned establishment set contains only journal-supported windows,
 not world-interaction repairs. `EstablishableFalse` preserves the existing walk
 diagnostic policy. Neither diagnostic admits an executable route.
 The bank request retains its original grants and arguments through reissue.
-After a session change, it revalidates selection through the existing reissue
-budget instead of restarting the old journal owner.
+After a session change, it retires the old journal owner and revalidates selection
+through the existing global reissue budget. The new session can read the same
+row again without spending another distinct-row slot. Each journal run keeps
+its two-read bound.
+The five-second bank-selection window bounds host computation from queue entry,
+not a wait for a journal page or another game outcome. If it ends during
+journal diagnosis, the strict `NoPath` detail or completed `NeedsStep` survives.
+A refused opening prerequisite resumes the existing no-selection fallback.
+It does not turn the false result and PeriodicBank backoff into an exception.
 
 A logical walk can resolve at most three distinct prerequisite rows.
 Each distinct row permits one reissue of the original walk from fresh evidence.
 The reissue cap and visited-row storage use the same row budget.
 A journal read can therefore precede both distinct dialogue repairs.
-A repeated row or a fourth source still blocks the walk.
+A repeated row in the same session or a fourth distinct source still blocks the walk.
 The Talk, probe and observed-tick limits remain unchanged.
 
 The Shield of Arrav page distinguishes completed Phoenix and Black Arm

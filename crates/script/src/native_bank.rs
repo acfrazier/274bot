@@ -2489,6 +2489,16 @@ impl Select {
         }
     }
 
+    pub(crate) fn no_candidate(&self, cx: &ActionContext<'_>) -> bool {
+        self.fallback.is_none()
+            && self
+                .request_id
+                .and_then(|id| cx.bank_pick_receipt(id))
+                .is_some_and(|receipt| {
+                    matches!(&receipt.outcome, BankPickOutcome::NoCandidate { .. })
+                })
+    }
+
     /// Keep the typed terminal until each caller applies its existing result contract.
     pub(crate) fn poll_outcome(
         &mut self,
@@ -3174,6 +3184,11 @@ mod tests {
                     },
                 },
             );
+            let no_candidate = with_tick(&snapshot, &mut ledger, 2, |frame| {
+                handle.inspect_in(&mut frame.cx, |select, cx| select.no_candidate(cx))
+            })
+            .unwrap();
+            assert_eq!(no_candidate, !allow_air_fallback);
 
             let result = poll_select_waiter(&snapshot, &mut ledger, &handle, 2, Duration::ZERO);
             if allow_air_fallback {

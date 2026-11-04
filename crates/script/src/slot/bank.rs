@@ -130,6 +130,7 @@ struct Trip {
 
 enum Job {
     Start(BankSeatArgs),
+    StartOpening(OpeningArgs),
     Opening {
         handle: ActionHandle<Opening>,
         args: OpeningArgs,
@@ -346,24 +347,14 @@ impl BankRow {
                         return Poll::Pending;
                     }
                     if is_opening(request.operation) {
-                        let opening_args = OpeningArgs {
+                        self.job = Job::StartOpening(OpeningArgs {
                             request,
                             facts: Arc::clone(facts),
                             preferences,
                             hooks: Arc::clone(&self.hooks),
-                        };
-                        match actions.begin::<Opening>(opening_args.clone(), cx) {
-                            Ok(handle) => {
-                                self.job = Job::Opening {
-                                    handle,
-                                    args: opening_args,
-                                }
-                            }
-                            Err(ActionError::BudgetExhausted | ActionError::Held) => {
-                                return Poll::Ready(Err(ActionError::BudgetExhausted));
-                            }
-                            Err(error) => return Poll::Ready(Err(error)),
-                        }
+                            selection_refused: false,
+                        });
+                        continue;
                     } else {
                         let generation = cx
                             .snapshot()
@@ -391,6 +382,20 @@ impl BankRow {
                     }
                     // The begin may emit. Never complete its owner before that
                     // emission reaches the host's dispatch lane.
+                    return Poll::Pending;
+                }
+                Job::StartOpening(args) => {
+                    if !cx.may_begin_this_tick() {
+                        self.job = Job::StartOpening(args);
+                        return Poll::Pending;
+                    }
+                    match actions.begin::<Opening>(args.clone(), cx) {
+                        Ok(handle) => self.job = Job::Opening { handle, args },
+                        Err(ActionError::BudgetExhausted | ActionError::Held) => {
+                            return Poll::Ready(Err(ActionError::BudgetExhausted));
+                        }
+                        Err(error) => return Poll::Ready(Err(error)),
+                    }
                     return Poll::Pending;
                 }
                 Job::ResumeOpening {
@@ -464,7 +469,14 @@ impl BankRow {
                                     self.job = Job::PrereqOpening(action);
                                     continue;
                                 }
-                                Err(error) => return Poll::Ready(Err(error)),
+                                Err((
+                                    args,
+                                    ActionError::NeedsEvidence(_) | ActionError::Prerequisite(_),
+                                )) => {
+                                    self.job = Job::StartOpening(args.after_prerequisite_refusal());
+                                    continue;
+                                }
+                                Err((_, error)) => return Poll::Ready(Err(error)),
                             }
                         }
                         Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
@@ -486,6 +498,13 @@ impl BankRow {
                             .as_ref()
                             .map(bank_value)
                             .unwrap_or(Value::Null)));
+                    }
+                    Poll::Ready(Err(
+                        ActionError::NeedsEvidence(_) | ActionError::Prerequisite(_),
+                    )) => {
+                        self.job =
+                            Job::StartOpening(action.into_args().after_prerequisite_refusal());
+                        continue;
                     }
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 },

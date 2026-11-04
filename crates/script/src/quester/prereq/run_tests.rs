@@ -367,7 +367,10 @@ fn budget_visited_uses_a_length_and_no_option() {
     assert_eq!(std::mem::size_of_val(&budget.visited), 6);
     assert!(budget.row(0, 1));
     assert!(budget.row(1, 1));
-    assert!(!budget.row(0, 1), "an interleaved same-session repeat refuses");
+    assert!(
+        !budget.row(0, 1),
+        "an interleaved same-session repeat refuses"
+    );
     assert!(budget.row(2, 1));
     assert!(!budget.row(3, 1));
     assert_eq!(budget.visited_len, 3);
@@ -1375,6 +1378,12 @@ fn combat_during_talk_ends_step_failed_without_retry() {
 #[test]
 fn prerequisite_state_layout_and_ten_repeated_walks_stay_bounded() {
     use std::mem::size_of;
+    println!(
+        "prereq ownership layouts: budget={} run={} walk={}",
+        size_of::<PrereqBudget>(),
+        size_of::<PrereqRun>(),
+        size_of::<super::super::walk::PrereqWalk>()
+    );
     assert!(size_of::<SessionMemory>() <= 24);
     assert!(size_of::<Fact>() <= 160);
     assert!(size_of::<RefusalObservation>() <= 256);
@@ -3693,7 +3702,10 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
     assert_eq!(reissued_authority.run().session, 2);
     assert_kitchen_bank_pick_args(&reissued_request, &args);
     assert_eq!(action.original_allow(), Some(allow));
-    assert!(!first_authority.live(), "the original bank owner is retired");
+    assert!(
+        !first_authority.live(),
+        "the original bank owner is retired"
+    );
 
     let changed_allow = PrereqAllow {
         dialogue: false,
@@ -3731,27 +3743,17 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
             "@red@QUEST COMPLETE!",
         ],
     );
-    assert!(kitchen_select_poll_in_session(
-        &mut action,
-        &snapshot,
-        &mut ledger,
-        10,
-        &state,
-        2
-    )
-    .is_pending());
+    assert!(
+        kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, 10, &state, 2)
+            .is_pending()
+    );
     assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
     accept_last(&mut ledger, 10, 0);
     snapshot.seed_main_modal(-1, vec![]);
-    assert!(kitchen_select_poll_in_session(
-        &mut action,
-        &snapshot,
-        &mut ledger,
-        11,
-        &state,
-        2
-    )
-    .is_pending());
+    assert!(
+        kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, 11, &state, 2)
+            .is_pending()
+    );
     assert_eq!(
         state
             .prereq_snapshot()
@@ -3829,11 +3831,9 @@ fn bank_select_same_row_session_reissues_stop_at_global_cap() {
     )
     .is_pending());
     let mut bank_request_ids = vec![first_authority.request_id()];
-    let mut journal_request_ids = vec![
-        last_live_kitchen_journal_authority(&ledger)
-            .expect("first session journal reader")
-            .request_id(),
-    ];
+    let mut journal_request_ids = vec![last_live_kitchen_journal_authority(&ledger)
+        .expect("first session journal reader")
+        .request_id()];
     let mut previous_bank_request = first_authority.request_id();
     let mut tick = 3;
 
@@ -3850,7 +3850,10 @@ fn bank_select_same_row_session_reissues_stop_at_global_cap() {
             )
         });
         assert!(resumed.is_ok(), "{resumed:?}");
-        assert!(!old_reader.live(), "session change retires the old journal owner");
+        assert!(
+            !old_reader.live(),
+            "session change retires the old journal owner"
+        );
         tick += 1;
 
         let mut reissued = None;
@@ -4105,14 +4108,9 @@ fn bank_select_cancel_during_second_journal_read_does_not_retry_or_reissue() {
         .request_id();
     accept_last(&mut ledger, 2, 0);
     for tick in 3..=7 {
-        assert!(kitchen_select_poll(
-            &mut action,
-            &snapshot,
-            &mut ledger,
-            tick,
-            &state
-        )
-        .is_pending());
+        assert!(
+            kitchen_select_poll(&mut action, &snapshot, &mut ledger, tick, &state).is_pending()
+        );
     }
 
     assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, 8, &state).is_pending());
@@ -4156,11 +4154,9 @@ fn bank_select_cancel_during_second_journal_read_does_not_retry_or_reissue() {
         .map(|action| action.authority().request_id())
         .collect();
     assert!(journal_sends.len() <= 2);
-    assert!(journal_sends
-        .iter()
-        .all(|request_id| {
-            *request_id == first_read_id || *request_id == second_reader.request_id()
-        }));
+    assert!(journal_sends.iter().all(|request_id| {
+        *request_id == first_read_id || *request_id == second_reader.request_id()
+    }));
     assert_no_kitchen_bank_reissue(&ledger, first_authority.request_id().get());
     assert!(state.prereq_snapshot().facts().is_empty());
 }

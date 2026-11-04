@@ -1580,6 +1580,81 @@ fn actionable_quest_diagnosis_preserves_strict_route_and_crossing_identity() {
     );
 }
 
+#[test]
+fn unknown_only_edge_admission_skips_a_cheaper_proven_false_gate() {
+    use api::selected::Truth;
+
+    let false_gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
+    let unknown_gate = gate_window("tbwt", "unobserved_bank_signal", Some(1), Some(1));
+    let establishable = [false_gate.clone(), unknown_gate.clone()].map(|gate| match gate {
+        QuestGate::Window(window) => window,
+        _ => unreachable!("fixture gates are windows"),
+    });
+    let mut graph = stage_door_graph(vec![false_gate.clone()]);
+    let false_crossing = graph.edges[0].loc_id;
+    let mut unknown_edge = graph.edges[0].clone();
+    unknown_edge.loc_id += 1;
+    unknown_edge.ticks += 10;
+    unknown_edge.quest_gates =
+        Some(QuestGates::new(gate_family(1), vec![unknown_gate.clone()]).unwrap());
+    let unknown_crossing = unknown_edge.loc_id;
+    graph.at.entry(unknown_edge.at).or_default().push(1);
+    graph.edges.push(unknown_edge);
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        graph,
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("parallel stage-door fixture lease");
+    let state = evidenced(tbwt_evidence(gate_range(Some(4), Some(6))))
+        .with_establishable(Arc::from(establishable));
+    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
+    let options = FindOptions::default();
+    assert_eq!(
+        find_with(&world.collision, &world.graph, from, to, options, &state),
+        Err(RouteError::NoPath)
+    );
+    for (relaxation, expected_gate, expected_truth, expected_crossing) in [
+        (
+            crate::router::GateRelaxation::UnknownOnly,
+            unknown_gate,
+            Truth::Unknown,
+            unknown_crossing,
+        ),
+        (
+            crate::router::GateRelaxation::EstablishableFalse,
+            false_gate,
+            Truth::False,
+            false_crossing,
+        ),
+    ] {
+        let completion = advance_real_route_completion(
+            crate::router::SearchRequest::ActionableQuestGates {
+                from,
+                targets: Box::new([to]),
+                options,
+                avoid: Box::new([]),
+                max_settles: crate::router::NODE_BUDGET,
+                relaxation,
+            },
+            &lease,
+            &state,
+        );
+        let crate::router::SearchOutcome::ActionableQuestGates(gates) = completion.into_parts().0
+        else {
+            panic!("actionable diagnosis returns its typed gates");
+        };
+        let gates = gates.unwrap().expect("the chosen route names its gate");
+        assert_eq!(gates.len(), 1, "{relaxation:?}");
+        assert_eq!(gates[0].gate, expected_gate, "{relaxation:?}");
+        assert_eq!(gates[0].truth, expected_truth, "{relaxation:?}");
+        assert_eq!(
+            gates[0].crossing.loc_id, expected_crossing,
+            "{relaxation:?}"
+        );
+    }
+}
+
 /// Relaxed no-path diagnosis must not report a proven gate when a sibling
 /// gate on the same edge is still actionable.
 #[test]

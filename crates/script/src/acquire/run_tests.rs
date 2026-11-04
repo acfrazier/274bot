@@ -352,19 +352,13 @@ impl api::local_state::LocalStatePort for CallerNoStore {
         })
     }
 
-    fn submit(
-        &self,
-        edit: api::local_state::DomainEdit,
-    ) -> api::local_state::SubmitReceipt {
+    fn submit(&self, edit: api::local_state::DomainEdit) -> api::local_state::SubmitReceipt {
         api::local_state::SubmitReceipt::Refused(api::local_state::ErrorCode::Busy {
             domain: edit.identity().domain(),
         })
     }
 
-    fn observe(
-        &self,
-        _: api::identity::RequestId,
-    ) -> Option<api::local_state::WriteSettlement> {
+    fn observe(&self, _: api::identity::RequestId) -> Option<api::local_state::WriteSettlement> {
         None
     }
 }
@@ -486,12 +480,15 @@ fn caller_bank_pick(
     crate::native_bank::BankPickRequest,
     crate::native::ledger::HostAuthority,
 )> {
-    ledger.as_ref()?.outbox.iter().rev().find_map(|action| {
-        match &action.effect {
+    ledger
+        .as_ref()?
+        .outbox
+        .iter()
+        .rev()
+        .find_map(|action| match &action.effect {
             HostEffect::BankPick(request) => Some((request.clone(), action.authority())),
             _ => None,
-        }
-    })
+        })
 }
 
 fn caller_reissued_bank_pick(
@@ -553,7 +550,11 @@ fn assert_no_acquire_bank_work(ledger: &TestLedger, original_id: u64) {
     for action in &ledger.as_ref().expect("bank pick created ledger").outbox {
         match &action.effect {
             HostEffect::BankPick(_) => {
-                assert_eq!(action.request_id.get(), original_id, "no early bank reissue");
+                assert_eq!(
+                    action.request_id.get(),
+                    original_id,
+                    "no early bank reissue"
+                );
             }
             HostEffect::Walk(_) => panic!("bank walk began before selection"),
             HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. }) => {
@@ -687,7 +688,10 @@ fn acquire_reissues_original_bank_pick_after_real_journal_close_and_opens_bank()
     }
     let (reissued_request, reissued_authority) =
         reissued.expect("a fresh request follows journal proof and observed close");
-    assert_ne!(reissued_authority.request_id(), original_authority.request_id());
+    assert_ne!(
+        reissued_authority.request_id(),
+        original_authority.request_id()
+    );
     assert_bank_pick_reissued_unchanged(&original_request, &reissued_request);
     assert_eq!(reissued_request.from, start);
     assert!(!run.required_bank_missing);
@@ -716,12 +720,15 @@ fn acquire_reissues_original_bank_pick_after_real_journal_close_and_opens_bank()
     assert!(poll_with_journal(&mut run, &snapshot, &mut ledger, 10, OpenGate::Open).is_pending());
     assert_eq!(run.bank, Some(bank));
     assert_eq!(run.target, Some(STAND));
-    let mut walk_request = ledger.as_ref().unwrap().outbox.iter().find_map(|action| {
-        match &action.effect {
+    let mut walk_request = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .find_map(|action| match &action.effect {
             HostEffect::Walk(request) => Some(request.clone()),
             _ => None,
-        }
-    });
+        });
     for tick in 11..=12 {
         if walk_request.is_some() {
             break;
@@ -729,12 +736,16 @@ fn acquire_reissues_original_bank_pick_after_real_journal_close_and_opens_bank()
         assert!(
             poll_with_journal(&mut run, &snapshot, &mut ledger, tick, OpenGate::Open).is_pending()
         );
-        walk_request = ledger.as_ref().unwrap().outbox.iter().find_map(|action| {
-            match &action.effect {
-                HostEffect::Walk(request) => Some(request.clone()),
-                _ => None,
-            }
-        });
+        walk_request =
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .find_map(|action| match &action.effect {
+                    HostEffect::Walk(request) => Some(request.clone()),
+                    _ => None,
+                });
     }
     let walk_request = walk_request.expect("selected bank continues through AcquireRun's walk");
     assert_eq!(walk_request.target, STAND);
@@ -749,16 +760,11 @@ fn acquire_reissues_original_bank_pick_after_real_journal_close_and_opens_bank()
         .iter()
         .rev()
         .find_map(|action| {
-            matches!(&action.effect, HostEffect::Walk(_))
-                .then_some(action.request_id.get())
+            matches!(&action.effect, HostEffect::Walk(_)).then_some(action.request_id.get())
         })
         .expect("the access walk has a host request");
-    let walk_receipt_id = crate::quester::families::tests::post_walk_receipt(
-        &mut ledger,
-        13,
-        WalkEnd::Arrived,
-        None,
-    );
+    let walk_receipt_id =
+        crate::quester::families::tests::post_walk_receipt(&mut ledger, 13, WalkEnd::Arrived, None);
     assert_eq!(walk_receipt_id, walk_request_id);
     assert!(poll_with_journal(&mut run, &snapshot, &mut ledger, 13, OpenGate::Open).is_pending());
     let mut opened = ledger
