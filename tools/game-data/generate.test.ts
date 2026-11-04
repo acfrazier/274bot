@@ -40,12 +40,13 @@ assert.deepEqual(
 );
 
 {
+    const npcIds = [1, 2, 3, 390, 403];
     const evidence: NpcTransformClosureEvidence = {
         schema: 1,
         source_inputs: { engine: [], content: [] },
         source_spans: [{ file: 'scripts/test.rs2', first: 1, last: 2 }],
-        npc_types: [1, 2].map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete', source_refs: [0] })),
-        actions: [1, 2].map(npc_type_id => ({
+        npc_types: npcIds.map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete', source_refs: [0] })),
+        actions: npcIds.map(npc_type_id => ({
             npc_type_id, slot: 1, state: 'present', label: 'Talk-to', trigger_code: 1,
             trigger_kind: 'type', trigger_target_id: npc_type_id,
             operation_fingerprint: 'a'.repeat(64), source_refs: [0],
@@ -59,17 +60,34 @@ assert.deepEqual(
         })),
         engine: { complete: true, source_refs: { numeric_dispatch: [0], type_change: [0], reversion: [0], static_type_decoder: [0] } },
     };
-    const runtime = runtimeNpcOperations(evidence);
+    const target = (id: number): TargetWire => ({
+        kind: 'npc', id, op: 1, class: 'resource', respawn: { state: 'known', value: null },
+    });
+    const fishingMethod: Pick<MethodWire, 'skill' | 'op' | 'targets'> = {
+        skill: 'fishing',
+        op: { slot: 1, label: 'Net' },
+        targets: { state: 'known', value: [...npcIds, 999].map(target) },
+    };
+    const methods = [fishingMethod, fishingMethod];
+    const hazardNpcs = [3];
+    const runtime = runtimeNpcOperations(evidence, methods, hazardNpcs);
     assert.deepEqual(runtime.operations, [{ npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) }]);
+    assert.deepEqual(runtime.builtin_gatherer_fishing_operations, [
+        { npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) },
+        { npc_type_id: 2, slot: 1, operation_fingerprint: 'a'.repeat(64) },
+    ], 'static proof admits only complete ordinary NPC types, even when full closure is unavailable');
     assert.equal(runtime.evidence_sha256, crypto.createHash('sha256').update(npcEvidenceBytes(evidence)).digest('hex'));
-    assert.deepEqual(Object.keys(runtime), ['schema', 'evidence_sha256', 'operations']);
+    assert.equal(runtime.schema, 2);
+    assert.deepEqual(Object.keys(runtime), ['schema', 'evidence_sha256', 'operations', 'builtin_gatherer_fishing_operations']);
     evidence.proofs[0].unresolved_refs.push(0);
-    assert.throws(() => runtimeNpcOperations(evidence), /positive NPC proof disagrees/);
+    assert.throws(() => runtimeNpcOperations(evidence, methods, hazardNpcs), /positive NPC proof disagrees/);
     evidence.proofs[0].unresolved_refs.length = 0;
     evidence.npc_types[0].config_state = 'missing';
-    assert.throws(() => runtimeNpcOperations(evidence), /positive NPC proof disagrees/);
+    assert.throws(() => runtimeNpcOperations(evidence, methods, hazardNpcs), /positive NPC proof disagrees/);
     evidence.engine.complete = false;
-    assert.deepEqual(runtimeNpcOperations(evidence).operations, []);
+    const incompleteRuntime = runtimeNpcOperations(evidence, methods, hazardNpcs);
+    assert.deepEqual(incompleteRuntime.operations, []);
+    assert.deepEqual(incompleteRuntime.builtin_gatherer_fishing_operations, []);
 }
 
 
@@ -3348,6 +3366,88 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(family.schema, GATHERING_SCHEMA);
     assert.equal(JSON.stringify(extractGatheringFamily(root).payload), JSON.stringify(facts), `${revision} extraction is deterministic`);
     assert.deepEqual(family.summary.methods, { woodcutting: 10, mining: 15, fishing: 16 }, `${revision} method inventory`);
+    const objPack = parsePack(fs.readFileSync(path.join(root, 'pack/obj.pack'), 'utf8'));
+    const seqPack = parsePack(fs.readFileSync(path.join(root, 'pack/seq.pack'), 'utf8'));
+    const itemId = (alias: string) => {
+        const id = objPack.get(alias);
+        assert.notEqual(id, undefined, `${revision} object pack contains ${alias}`);
+        return id;
+    };
+    const sequenceId = (alias: string) => {
+        const id = seqPack.get(alias);
+        assert.notEqual(id, undefined, `${revision} sequence pack contains ${alias}`);
+        return id;
+    };
+    for (const method of facts.methods) {
+        assert.ok(['continuing', 'ending', 'none'].includes(method.tick_arm.kind), `${method.id} has a reviewed kind`);
+        assert.ok(['always', 'sometimes', 'never'].includes(method.tick_arm.roll_signal), `${method.id} has a reviewed roll signal`);
+        const tools = method.tick_arm.tool_facts.map((tool) => tool.item);
+        assert.deepEqual(tools, [...new Set(tools)].sort((a, b) => a - b), `${method.id} tool facts are uniquely item-sorted`);
+    }
+
+    const fly = view.method('fishing.freshfish.op1').tick_arm;
+    assert.deepEqual(
+        [fly.kind, fly.roll_signal, fly.native_arm, fly.act_min_d, fly.act_silent, fly.no_gain, fly.skill_anim, fly.roll_anim, fly.cast_anim, fly.fletch_anim],
+        ['continuing', 'always', 4, 1, false, false, null, sequenceId('human_fish_onspot'), sequenceId('human_fishing_casting'), sequenceId('human_fletching')],
+        `${revision} fly animation and native arm are selected by name`,
+    );
+    assert.equal(view.method('fishing.loc_2027.op1').tick_arm.roll_signal, 'always', `${revision} waterfall fly has a regular roll signal`);
+    const waterfallPike = view.method('fishing.loc_2027.op2').tick_arm;
+    assert.equal(waterfallPike.roll_signal, 'sometimes', `${revision} waterfall pike's recast branch suppresses the roll animation`);
+    assert.equal(waterfallPike.roll_anim, sequenceId('human_fish_onspot'));
+
+    const smallNet = view.method('fishing.saltfish.op1').tick_arm;
+    assert.deepEqual(
+        [smallNet.kind, smallNet.roll_signal, smallNet.roll_anim, smallNet.cast_anim],
+        ['ending', 'never', null, sequenceId('human_smallnet')],
+        `${revision} small-net roll is silent`,
+    );
+    const harpoon = view.method('fishing.rarefish.op3').tick_arm;
+    assert.deepEqual(
+        [harpoon.kind, harpoon.roll_signal, harpoon.roll_anim, harpoon.cast_anim],
+        ['ending', 'always', sequenceId('human_harpoon'), sequenceId('human_harpoon')],
+        `${revision} rarefish op3 is the harpoon family`,
+    );
+    const lavaEel = view.method('fishing.0_45_152_lavafish.op1').tick_arm;
+    assert.deepEqual(
+        [lavaEel.kind, lavaEel.native_arm, lavaEel.act_silent, lavaEel.roll_signal, lavaEel.cast_anim],
+        ['continuing', 5, true, 'never', sequenceId('human_fishing_casting')],
+        `${revision} lava-eel dispatch is silent and arms at five`,
+    );
+    assert.equal(view.method('fishing.category_633.op1').tick_arm.kind, 'none', `${revision} Karambwan vessel has no armable loop`);
+
+    const tree = view.method('woodcutting.normal').tick_arm;
+    assert.deepEqual([tree.kind, tree.depletes, tree.native_arm, tree.act_min_d], ['continuing', true, 3, 0]);
+    for (const [alias, sequence] of [
+        ['rune_axe', 'human_woodcutting_rune_axe'],
+        ['adamant_axe', 'human_woodcutting_adamant_axe'],
+        ['mithril_axe', 'human_woodcutting_mithril_axe'],
+        ['black_axe', 'human_woodcutting_black_axe'],
+        ['steel_axe', 'human_woodcutting_steel_axe'],
+        ['iron_axe', 'human_woodcutting_iron_axe'],
+        ['bronze_axe', 'human_woodcutting_bronze_axe'],
+    ] as const) {
+        const tool = tree.tool_facts.find((each) => each.item === itemId(alias));
+        assert.ok(tool, `${revision} ${alias} has selected tool facts`);
+        assert.deepEqual([tool.native_arm, tool.no_gain, tool.skill_anim], [3, false, sequenceId(sequence)], `${revision} ${alias}`);
+    }
+
+    const normalMine = view.method('mining.copper').tick_arm;
+    const fastMine = view.method('mining.iron').tick_arm;
+    assert.deepEqual([normalMine.delay_drop, fastMine.delay_drop], [true, false], `${revision} normal versus fast mining drop delay`);
+    assert.deepEqual([normalMine.native_arm, normalMine.no_gain], [null, null], `${revision} mining arms are selected by pickaxe`);
+    for (const [alias, nativeArm, sequence, noGain] of [
+        ['bronze_pickaxe', 7, 'human_mining_bronze_pickaxe', false],
+        ['iron_pickaxe', 6, 'human_mining_iron_pickaxe', false],
+        ['steel_pickaxe', 5, 'human_mining_steel_pickaxe', false],
+        ['adamant_pickaxe', 3, 'human_mining_adamant_pickaxe', false],
+        ['mithril_pickaxe', 4, 'human_mining_mithril_pickaxe', false],
+        ['rune_pickaxe', 2, 'human_mining_rune_pickaxe', true],
+    ] as const) {
+        const tool = normalMine.tool_facts.find((each) => each.item === itemId(alias));
+        assert.ok(tool, `${revision} ${alias} has selected tool facts`);
+        assert.deepEqual([tool.native_arm, tool.no_gain, tool.skill_anim], [nativeArm, noGain, sequenceId(sequence)], `${revision} ${alias}`);
+    }
 
     // M-215 R2/R3: handler-less locs are proven inert (no alias or category oploc handler;
     // a global handler fails closed at index time, so reaching here proves there is none
@@ -3444,7 +3544,6 @@ for (const { revision, root } of gatheringPins) {
     const method = view.method(hemensterCarpMethod);
     const target = targetsOf(method, 'resource')[0]!;
     const npcPack = parsePack(fs.readFileSync(path.join(root, 'pack/npc.pack'), 'utf8'));
-    const objPack = parsePack(fs.readFileSync(path.join(root, 'pack/obj.pack'), 'utf8'));
     assert.equal(method.id, hemensterCarpMethod);
     assert.equal(target.kind, 'npc');
     assert.equal(target.id, npcPack.get(hemensterSpot));
@@ -3509,6 +3608,12 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(jungle.targets.state, 'unknown');
     assert.equal(jungle.spots.state, 'unknown');
     assert.equal(jungle.targets.state === 'unknown' && jungle.targets.gap.code, 'no-resource-target');
+    assert.equal(jungle.tools.state, 'unknown');
+    assert.deepEqual(
+        jungle.tools.state === 'unknown' && jungle.tools.gap.sources,
+        jungle.targets.state === 'unknown' && jungle.targets.gap.sources,
+        'an unavailable tool cell retains the same encoded source-reference sequence as its target cell',
+    );
     assert.equal(facts.loose.filter((each) => each.skill === 'woodcutting').every((each) => each.gap?.code === 'custom-handler' && each.gap.sources.some((source) => source.includes('jungle_tree.rs2'))), true);
 
     // Content-defined zones: 289 Miscellania intercepts coal, trees and fish, but not iron; 274 has no such content.
@@ -3774,7 +3879,7 @@ function gatheringFixture(mutate?: (rootDir: string) => void) {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gathering-fixture-'));
     fs.cpSync(path.join(realGathering, 'scripts'), path.join(rootDir, 'scripts'), { recursive: true });
     fs.mkdirSync(path.join(rootDir, 'pack'));
-    for (const pack of ['loc', 'npc', 'obj']) fs.copyFileSync(path.join(realGathering, `pack/${pack}.pack`), path.join(rootDir, `pack/${pack}.pack`));
+    for (const pack of ['loc', 'npc', 'obj', 'seq']) fs.copyFileSync(path.join(realGathering, `pack/${pack}.pack`), path.join(rootDir, `pack/${pack}.pack`));
     const loc = parsePack(fs.readFileSync(path.join(rootDir, 'pack/loc.pack'), 'utf8'));
     const npc = parsePack(fs.readFileSync(path.join(rootDir, 'pack/npc.pack'), 'utf8'));
     fs.mkdirSync(path.join(rootDir, 'maps'));
@@ -3804,6 +3909,19 @@ assert.equal(family289Rows(baseline, 'fishing.freshfish.op1'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op3'), 1);
 assert.equal(baseline.payload.placements.length, 1);
 assert.equal(baseline.payload.methods.some((method) => method.id === hemensterCarpMethod), true, 'the anchored direct-yield extractor admits the selected quest handler');
+const waterfallScript = 'scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2';
+for (const [from, to] of [
+    ['p_oploc(2);\n        return;', 'p_oploc(2);'],
+    ['p_oploc(2);\n        return;', 'p_oploc(1);\n        return;'],
+    ['if (random(5) = 0)', 'if (random(6) = 0)'],
+]) {
+    assert.throws(
+        () => extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, waterfallScript, from, to))),
+        /waterfall recast no longer suppresses one roll animation/,
+        'the Sometimes roll signal requires the authored early return and recast operation',
+    );
+}
+
 const changedContestYield = extractGatheringFamily(gatheringFixture((rootDir) =>
     replaceIn(rootDir, hemensterFishingScript, 'inv_add(inv, raw_giant_carp, 1);', 'inv_add(inv, raw_sardine, 1);')));
 assert.equal(changedContestYield.payload.methods.some((method) => method.id === hemensterCarpMethod), false, 'a changed direct yield is not promoted');
@@ -4056,6 +4174,21 @@ const synRespawn = {
 };
 const synTarget = (id: number, respawn: TargetWire['respawn'] = synRespawn): TargetWire => ({ kind: 'loc', id, op: 1, class: 'resource', respawn });
 
+const synTickArm = (): MethodWire['tick_arm'] => ({
+    kind: 'none',
+    roll_signal: 'never',
+    delay_drop: false,
+    depletes: false,
+    native_arm: null,
+    act_min_d: 0,
+    act_silent: false,
+    no_gain: false,
+    skill_anim: null,
+    roll_anim: null,
+    cast_anim: null,
+    fletch_anim: 1,
+    tool_facts: [],
+});
 function synMethod(
     id: string,
     skill: MethodWire['skill'],
@@ -4074,6 +4207,7 @@ function synMethod(
         products,
         tools: knownEmpty,
         consumes: knownEmpty,
+        tick_arm: synTickArm(),
         requirements,
         spots: { state: 'known' as const, value: null },
         sources: [],

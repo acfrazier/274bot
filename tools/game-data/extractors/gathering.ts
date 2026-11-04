@@ -6,7 +6,7 @@ import { indexContent, parseDbRows, parseCoord, parseSections, scanMapSection, s
 import { parseBody, walkStatements, returns, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
 
 /** Extractor schema. Bump on any change to the wire shape below; the Rust decoder pins the same number. */
-export const GATHERING_SCHEMA = 3;
+export const GATHERING_SCHEMA = 4;
 
 /** Engine `PlayerStat` order (`src/engine/entity/PlayerStat.ts`): a protocol constant, not gathering data. */
 const SKILL = { attack: 0, woodcutting: 8, fishing: 10, mining: 14 } as const;
@@ -25,6 +25,25 @@ export type TargetWire = { kind: 'loc' | 'npc'; id: number; op: number; class: T
 export type YieldWire = { item: number; level: number };
 export type GateWire = { skill: number; level: number };
 export type ToolWire = { item: number; use_gate: GateWire | null; wield_gate: GateWire | null };
+
+export type TickArmKind = 'continuing' | 'ending' | 'none';
+export type TickRollSignal = 'always' | 'sometimes' | 'never';
+export type TickArmToolWire = { item: number; native_arm: number; no_gain: boolean; skill_anim: number };
+export type TickArmWire = {
+    kind: TickArmKind;
+    roll_signal: TickRollSignal;
+    delay_drop: boolean;
+    depletes: boolean;
+    native_arm: number | null;
+    act_min_d: number;
+    act_silent: boolean;
+    no_gain: boolean | null;
+    skill_anim: number | null;
+    roll_anim: number | null;
+    cast_anim: number | null;
+    fletch_anim: number;
+    tool_facts: TickArmToolWire[];
+};
 export type AmountWire = { item: number; count: number };
 export type RequirementWire = { id: string; source: Ref } & ({ kind: 'skill'; skill: number; level: number } | { kind: 'members' });
 export type MethodWire = {
@@ -36,6 +55,7 @@ export type MethodWire = {
     products: Know<YieldWire[]>;
     tools: Know<ToolWire[]>;
     consumes: Know<AmountWire[]>;
+    tick_arm: TickArmWire;
     requirements: Know<RequirementWire[]>;
     /** `known` means the placement rows of this method's resource targets are complete. */
     spots: Know<null>;
@@ -120,6 +140,69 @@ class Entities {
 }
 
 type Ctx = { idx: ContentIndex; entities: Entities };
+
+type TickArmCore = Omit<TickArmWire, 'fletch_anim' | 'tool_facts'>;
+
+function sequenceId(ctx: Ctx, alias: string): number {
+    const id = ctx.idx.packs.seq.get(alias);
+    if (id === undefined || !Number.isInteger(id) || id <= 0) throw new Error(`pack/seq.pack: missing valid sequence ${alias}`);
+    return id;
+}
+
+function itemAlias(ctx: Ctx, item: number, label: string): string {
+    let found: string | undefined;
+    for (const [alias, id] of ctx.idx.packs.obj) {
+        if (id !== item) continue;
+        if (found !== undefined) throw new Error(`${label}: pack/obj.pack maps item ${item} to multiple aliases`);
+        found = alias;
+    }
+    if (found === undefined) throw new Error(`${label}: pack/obj.pack lacks item ${item}`);
+    return found;
+}
+
+function tickToolFacts(ctx: Ctx, tools: Know<ToolWire[]>, skill: 'woodcutting' | 'mining' | 'fishing'): TickArmToolWire[] {
+    if (skill === 'fishing' || tools.state === 'unknown') return [];
+    const facts = tools.value.map(({ item }) => {
+        const label = `${skill} tick tool ${item}`;
+        const alias = itemAlias(ctx, item, label);
+        const section = ctx.idx.obj.get(alias);
+        const param = (name: string) => {
+            const values = section?.params.get(name);
+            if (values?.length !== 1) throw new Error(`${label}: expected one ${name} parameter`);
+            return values[0]!;
+        };
+        const animation = param(skill === 'mining' ? 'mining_animation' : 'woodcutting_anim');
+        const skillAnim = sequenceId(ctx, animation);
+        const nativeArm = skill === 'mining' ? Number(param('mining_rate')) : 3;
+        if (!Number.isInteger(nativeArm) || nativeArm < 1 || nativeArm > 255) {
+            throw new Error(`${label}: invalid native arm ${nativeArm}`);
+        }
+        return {
+            item,
+            native_arm: nativeArm,
+            no_gain: skill === 'mining' && alias === 'rune_pickaxe',
+            skill_anim: skillAnim,
+        };
+    });
+    facts.sort((a, b) => a.item - b.item);
+    if (facts.some((fact, index) => index > 0 && facts[index - 1]!.item === fact.item)) {
+        throw new Error(`${skill}: duplicate tick tool item`);
+    }
+    return facts;
+}
+
+function makeTickArm(
+    ctx: Ctx,
+    core: TickArmCore,
+    tools: Know<ToolWire[]>,
+    skill: 'woodcutting' | 'mining' | 'fishing',
+): TickArmWire {
+    return {
+        ...core,
+        fletch_anim: sequenceId(ctx, 'human_fletching'),
+        tool_facts: tickToolFacts(ctx, tools, skill),
+    };
+}
 
 // ---- statement helpers ---------------------------------------------------------------------------------
 
@@ -262,11 +345,12 @@ type RockClass = 'resource' | 'depleted' | 'hazard' | 'unclassified';
 type Rock = { alias: string; span: Span; class: RockClass; slot: number | null; label: string | null; gap: Gap | null };
 
 /** What one standard mining label (`get_ore_*`) is proven to do, by exact statement anchors. */
-type MiningLabel = { block: Rs2Block; depletes: boolean; scaledRespawn: boolean; gemRoll: boolean; dropTable: string | null; interceptProc: string | null; crestZone: Span | null; deletes: boolean };
+type MiningLabel = { block: Rs2Block; depletes: boolean; delayDrop: boolean; scaledRespawn: boolean; gemRoll: boolean; dropTable: string | null; interceptProc: string | null; crestZone: Span | null; deletes: boolean };
 
-const MINING_LABELS: Record<string, { anchors: (string | RegExp)[]; depletes: boolean }> = {
+const MINING_LABELS: Record<string, { anchors: (string | RegExp)[]; depletes: boolean; delayDrop: boolean }> = {
     get_ore_normal: {
         depletes: true,
+        delayDrop: true,
         anchors: [
             'db_find(mining_table:rock, loc_type)',
             'def_int $respawn = ~scale_by_playercount(db_getfield($data, mining_table:rock_respawnrate, 0))',
@@ -278,6 +362,7 @@ const MINING_LABELS: Record<string, { anchors: (string | RegExp)[]; depletes: bo
     },
     get_ore_fast: {
         depletes: true,
+        delayDrop: false,
         anchors: [
             'db_find(mining_table:rock, loc_type)',
             'def_int $respawn = ~scale_by_playercount(db_getfield($data, mining_table:rock_respawnrate, 0))',
@@ -288,6 +373,7 @@ const MINING_LABELS: Record<string, { anchors: (string | RegExp)[]; depletes: bo
     },
     get_ore_essence: {
         depletes: false,
+        delayDrop: false,
         anchors: [
             'db_find(mining_table:rock, loc_type)',
             'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1)',
@@ -296,6 +382,7 @@ const MINING_LABELS: Record<string, { anchors: (string | RegExp)[]; depletes: bo
     },
     get_ore_gem_rock: {
         depletes: true,
+        delayDrop: false,
         anchors: [
             'db_find(mining_table:rock, loc_type)',
             'def_int $respawn = ~scale_by_playercount(db_getfield($data, mining_table:rock_respawnrate, 0))',
@@ -313,12 +400,13 @@ function miningLabel(ctx: Ctx, name: string): MiningLabel | Gap {
     if (!block || !spec) return gap('mining-label-missing');
     const { flat, nodes } = flatten(block);
     const conds = conditions(nodes);
-    if (!spec.anchors.every((anchor) => hasStmt(flat, anchor)) || hasStmt(flat, /^loc_change\(/) !== spec.depletes) return gap('mining-label-shape', blockSpan(block));
+    if (!spec.anchors.every((anchor) => hasStmt(flat, anchor)) || hasStmt(flat, /^loc_change\(/) !== spec.depletes || hasStmt(flat, 'p_delay(0)') !== spec.delayDrop) return gap('mining-label-shape', blockSpan(block));
     const crest = conds.find((cond) => /^inzone\(\^crest_perfect_mine_lower_bound, \^crest_perfect_mine_upper_bound, coord\) = true$/.test(cond));
     const intercept = conds.map((cond) => /~(magnus_intercept_ore)\(/.exec(cond)).find(Boolean);
     return {
         block,
         depletes: spec.depletes,
+        delayDrop: spec.delayDrop,
         scaledRespawn: spec.depletes,
         gemRoll: conds.includes('random($chance) = ^true') && hasStmt(flat, 'def_namedobj $gem = ~mining_gem_table'),
         dropTable: name === 'get_ore_gem_rock' ? 'gem_rock_table' : null,
@@ -342,6 +430,34 @@ function firstSwingLabel(ctx: Ctx, header: { span: Span }): string | null {
     return match ? match[1] : null;
 }
 
+/** Fail closed if the first-swing and continuation handlers stop expressing the reviewed mining tick loop. */
+function miningTickLoop(ctx: Ctx) {
+    const first = uniqueBlock(ctx, 'label', 'mining_firstswing');
+    const continuation = uniqueBlock(ctx, 'label', 'mining_continue');
+    if (!first || !continuation) throw new Error(`${MINING_SCRIPT}: mining tick handlers are missing or duplicated`);
+    const a = flatten(first);
+    const c = flatten(continuation);
+    const rate = '%action_delay = calc(map_clock + $mining_rate)';
+    const animation = 'anim(oc_param($pickaxe, mining_animation), 0)';
+    const valid =
+        hasStmt(a.flat, 'def_int $mining_rate = oc_param($pickaxe, mining_rate)') &&
+        conditions(a.nodes).includes('%action_delay < map_clock') &&
+        hasStmt(a.flat, rate) &&
+        hasStmt(a.flat, 'p_oploc(1)') &&
+        hasStmt(a.flat, animation) &&
+        conditions(a.nodes).includes('%action_delay = map_clock') &&
+        hasStmt(a.flat, 'jump($get_ore)') &&
+        hasStmt(a.flat, 'p_oploc(3)') &&
+        hasStmt(c.flat, 'def_int $mining_rate = oc_param($pickaxe, mining_rate)') &&
+        conditions(c.nodes).includes('%action_delay < map_clock') &&
+        hasStmt(c.flat, rate) &&
+        conditions(c.nodes).includes('%action_delay = map_clock') &&
+        hasStmt(c.flat, animation) &&
+        hasStmt(c.flat, 'jump($get_ore)') &&
+        hasStmt(c.flat, 'p_oploc(3)');
+    if (!valid) throw new Error(`${MINING_SCRIPT}: mining tick handlers no longer match the reviewed loop`);
+}
+
 /** A custom-handled rock whose Mine handler provably yields one dbrow ore: ore group and handler span. */
 type CustomOre = { ore: string; handler: Span };
 
@@ -353,6 +469,52 @@ type MiningModel = {
     /** M-215: custom-handler rocks promoted to resource by their proven ore product. */
     customOre: Map<string, CustomOre>;
 };
+
+function miningTickArm(
+    ctx: Ctx,
+    model: MiningModel,
+    labels: Set<string>,
+    tools: Know<ToolWire[]>,
+): TickArmWire {
+    const facts: MiningLabel[] = [];
+    for (const name of labels) {
+        const label = model.labels.get(name);
+        if (!label || 'code' in label) throw new Error(`${MINING_SCRIPT}: ${name} has no reviewed tick facts`);
+        facts.push(label);
+    }
+    if (facts.length === 0) {
+        return makeTickArm(ctx, {
+            kind: 'none',
+            roll_signal: 'never',
+            delay_drop: false,
+            depletes: false,
+            native_arm: null,
+            act_min_d: 0,
+            act_silent: false,
+            no_gain: null,
+            skill_anim: null,
+            roll_anim: null,
+            cast_anim: null,
+        }, tools, 'mining');
+    }
+    const first = facts[0]!;
+    if (facts.some((label) => label.depletes !== first.depletes || label.delayDrop !== first.delayDrop)) {
+        throw new Error(`${MINING_SCRIPT}: one method mixes incompatible tick labels`);
+    }
+    return makeTickArm(ctx, {
+        kind: 'continuing',
+        roll_signal: 'always',
+        delay_drop: first.delayDrop,
+        depletes: first.depletes,
+        native_arm: null,
+        act_min_d: 0,
+        act_silent: false,
+        no_gain: null,
+        skill_anim: null,
+        roll_anim: null,
+        cast_anim: null,
+    }, tools, 'mining');
+}
 
 /** dbrow rock outputs mapped to the ore groups that yield them (M-215 custom-rock join key). */
 function oreOutputs(rows: DbRow[]): Map<string, string[]> {
@@ -568,6 +730,7 @@ function miningGemIds(ctx: Ctx): number[] {
 }
 
 function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Gap, zones: Zones): MiningOutput {
+    miningTickLoop(ctx);
     const dbtable = 'scripts/skill_mining/configs/mine.dbtable';
     for (const column of MINING_COLUMNS) if (!new RegExp(`^column=${column},`, 'm').test(ctx.idx.text(dbtable))) throw new Error(`${dbtable}: missing selected column ${column}`);
     const rows = parseDbRows(MINE_DBROW, ctx.idx.text(MINE_DBROW)).filter((row) => row.table === 'mining_table');
@@ -678,6 +841,7 @@ function extractMining(ctx: Ctx, pick: Know<ToolWire[]>, scale: PlayerScale | Ga
             targets: resources.length === 0 ? unknown('no-resource-target', group.map((row) => spanRef(row.span))) : partial([...targets.values()].sort(byTarget), targetGaps),
             products: productGaps.length > 0 && products.state === 'known' ? partial(products.value, productGaps) : products,
             tools: pick,
+            tick_arm: miningTickArm(ctx, model, labels, pick),
             consumes: labels.size === 0 ? unknown('no-mining-handler', group.map((row) => spanRef(row.span))) : partial([], consumeGaps),
             requirements: Number.isNaN(level) ? unknown('rock-level-missing', group.map((row) => spanRef(row.span))) : partial([{ id: `${id}.level`, source: spanRef(line(MINE_DBROW, levelData!.line)), kind: 'skill', skill: SKILL.mining, level }], requirementGaps),
             spots: resources.length === 0 ? unknown('no-resource-target', group.map((row) => spanRef(row.span))) : known(null),
@@ -723,7 +887,22 @@ function woodModel(ctx: Ctx): WoodModel | Gap {
     const a = flatten(attempt);
     const l = flatten(logs);
     const c = flatten(cut);
-    const anchored =
+
+    const timing =
+        conditions(a.nodes).includes('%action_delay < map_clock') &&
+        hasStmt(a.flat, '%action_delay = calc(map_clock + 3)') &&
+        hasStmt(a.flat, 'p_oploc(1)') &&
+        hasStmt(a.flat, 'anim(oc_param($axe, woodcutting_anim), 0)') &&
+        conditions(a.nodes).includes('%action_delay = map_clock') &&
+        hasStmt(a.flat, '@get_logs($data, $axe)') &&
+        hasStmt(a.flat, 'p_oploc(3)') &&
+        conditions(c.nodes).includes('%action_delay < map_clock') &&
+        hasStmt(c.flat, '%action_delay = calc(map_clock + 3)') &&
+        conditions(c.nodes).includes('%action_delay = map_clock') &&
+        hasStmt(c.flat, 'anim(oc_param($axe, woodcutting_anim), 0)') &&
+        hasStmt(c.flat, '@get_logs($data, $axe)') &&
+        hasStmt(c.flat, 'p_oploc(3)');
+    const anchored = timing &&
         ['db_find(woodcutting_trees:tree, loc_type)', 'def_namedobj $product = db_getfield($data, woodcutting_trees:product, 0)', 'def_int $level = db_getfield($data, woodcutting_trees:levelrequired, 0)'].every((each) => hasStmt(a.flat, each)) &&
         conditions(a.nodes).includes('stat(woodcutting) < $level') &&
         ['def_int $respawnrate = db_getfield($data, woodcutting_trees:respawnrate, 0)', 'def_int $deplete_chance = 8', 'inv_add(inv, $product, 1)', '$respawnrate = ~scale_by_playercount($respawnrate)', 'loc_change(loc_param(next_loc_stage), $respawnrate)'].every((each) => hasStmt(l.flat, each)) &&
@@ -742,6 +921,37 @@ function woodModel(ctx: Ctx): WoodModel | Gap {
     };
 }
 
+
+function woodcutTickArm(ctx: Ctx, tools: Know<ToolWire[]>, model: WoodModel | Gap, empty: boolean): TickArmWire {
+    if ('code' in model) throw new Error(`${WOODCUT_SCRIPT}: cannot classify tick facts from an unrecognized loop`);
+    return empty
+        ? makeTickArm(ctx, {
+            kind: 'none',
+            roll_signal: 'never',
+            delay_drop: false,
+            depletes: false,
+            native_arm: null,
+            act_min_d: 0,
+            act_silent: false,
+            no_gain: null,
+            skill_anim: null,
+            roll_anim: null,
+            cast_anim: null,
+        }, tools, 'woodcutting')
+        : makeTickArm(ctx, {
+            kind: 'continuing',
+            roll_signal: 'always',
+            delay_drop: false,
+            depletes: true,
+            native_arm: 3,
+            act_min_d: 0,
+            act_silent: false,
+            no_gain: null,
+            skill_anim: null,
+            roll_anim: null,
+            cast_anim: null,
+        }, tools, 'woodcutting');
+}
 function woodKey(table: string) {
     const suffix = '_tree_table';
     if (!table.endsWith(suffix) || table.length === suffix.length) throw new Error(`${table}: expected wood table key`);
@@ -831,6 +1041,7 @@ function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerSc
         }
         const empty = resources.length === 0;
         const why = 'code' in model ? model : gap('no-resource-target', row.span);
+        const tools = empty ? unknown<ToolWire[]>('no-resource-target', [spanRef(row.span)]) : axeCell;
         methods.push({
             id,
             skill: 'woodcutting',
@@ -838,7 +1049,8 @@ function extractWoodcutting(ctx: Ctx, axeCell: Know<ToolWire[]>, scale: PlayerSc
             op: empty || !opLabel ? null : { slot, label: opLabel },
             targets: empty ? unknown(why.code, why.sources) : partial([...targets.values()].sort(byTarget), targetGaps),
             products: empty ? unknown(why.code, why.sources) : known([{ item: ctx.entities.id('obj', productAlias, `${id} product`), level }]),
-            tools: empty ? unknown(why.code, why.sources) : axeCell,
+            tools,
+            tick_arm: woodcutTickArm(ctx, tools, model, empty),
             consumes: empty ? unknown(why.code, why.sources) : 'code' in model ? unknown(model.code, model.sources) : partial([], model.deletes ? [gap('inventory-effect', blockSpan(uniqueBlock(ctx, 'label', 'get_logs')!))] : []),
             requirements: empty ? unknown(why.code, why.sources) : partial(requirements, requirementGaps),
             spots: empty ? unknown(why.code, why.sources) : known(null),
@@ -1039,6 +1251,299 @@ const HEMENSTER_COMP_CONSTANTS = 'scripts/quests/quest_fishingcompo/configs/ques
 const HEMENSTER_NORTH_SPOT = '0_41_53_sinisterfishspot';
 const HEMENSTER_CARP_METHOD = `fishing.${HEMENSTER_NORTH_SPOT}.op1`;
 
+type FishingTickBlock = { kind: string; name: string };
+type FishingTickSpec = {
+    file: string;
+    attempt: string | null;
+    roll: FishingTickBlock | null;
+    kind: TickArmKind;
+    rollSignal: TickRollSignal;
+    nativeArm: number | null;
+    actMinD: number;
+    actSilent: boolean;
+    castAnim: string | null;
+    rollAnim: string | null;
+};
+
+// Exact method families from the reviewed tick loop table; changed handlers fail closed.
+const FISHING_TICK_SPECS: Readonly<Record<string, FishingTickSpec>> = {
+    'fishing.freshfish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/freshfish.rs2`,
+        attempt: 'attempt_fish_trout_salmon',
+        roll: { kind: 'label', name: 'fish_trout_salmon' },
+        kind: 'continuing',
+        rollSignal: 'always',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    'fishing.freshfish.op3': {
+        file: `${FISHING_SCRIPTS}fishing_spots/freshfish.rs2`,
+        attempt: 'attempt_fish_pike',
+        roll: { kind: 'label', name: 'fish_pike' },
+        kind: 'continuing',
+        rollSignal: 'always',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    'fishing.loc_2027.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/waterfall.rs2`,
+        attempt: null,
+        roll: { kind: 'oploc3', name: 'loc_2027' },
+        kind: 'continuing',
+        rollSignal: 'always',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    'fishing.loc_2027.op2': {
+        file: `${FISHING_SCRIPTS}fishing_spots/waterfall.rs2`,
+        attempt: null,
+        roll: { kind: 'oploc4', name: 'loc_2027' },
+        kind: 'continuing',
+        rollSignal: 'sometimes',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    'fishing.loc_2630.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/lavafish_loc.rs2`,
+        attempt: 'attempt_fish_lava_eel_loc',
+        roll: { kind: 'label', name: 'fish_lava_eel_loc' },
+        kind: 'continuing',
+        rollSignal: 'never',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: true,
+        castAnim: 'human_fishing_casting',
+        rollAnim: null,
+    },
+    'fishing.0_45_152_lavafish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/lavafish.rs2`,
+        attempt: 'attempt_fish_lava_eel',
+        roll: { kind: 'label', name: 'fish_lava_eel' },
+        kind: 'continuing',
+        rollSignal: 'never',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: true,
+        castAnim: 'human_fishing_casting',
+        rollAnim: null,
+    },
+    'fishing.saltfish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/saltfish.rs2`,
+        attempt: 'attempt_fish_shrimp',
+        roll: { kind: 'label', name: 'attempt_fish_shrimp' },
+        kind: 'ending',
+        rollSignal: 'never',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_smallnet',
+        rollAnim: null,
+    },
+    'fishing.saltfish.op3': {
+        file: `${FISHING_SCRIPTS}fishing_spots/saltfish.rs2`,
+        attempt: 'attempt_fish_sardine',
+        roll: { kind: 'label', name: 'attempt_fish_sardine' },
+        kind: 'ending',
+        rollSignal: 'always',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    'fishing.memberfish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/memberfish.rs2`,
+        attempt: 'attempt_fish_mackerel',
+        roll: { kind: 'label', name: 'attempt_fish_mackerel' },
+        kind: 'ending',
+        rollSignal: 'never',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_largenet',
+        rollAnim: null,
+    },
+    'fishing.memberfish.op3': {
+        file: `${FISHING_SCRIPTS}fishing_spots/memberfish.rs2`,
+        attempt: 'attempt_fish_shark',
+        roll: { kind: 'label', name: 'attempt_fish_shark' },
+        kind: 'ending',
+        rollSignal: 'always',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_harpoon',
+        rollAnim: 'human_harpoon',
+    },
+    'fishing.rarefish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/rarefish.rs2`,
+        attempt: 'attempt_fish_lobster',
+        roll: { kind: 'label', name: 'attempt_fish_lobster' },
+        kind: 'ending',
+        rollSignal: 'always',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_lobster',
+        rollAnim: 'human_lobster',
+    },
+    'fishing.rarefish.op3': {
+        file: `${FISHING_SCRIPTS}fishing_spots/rarefish.rs2`,
+        attempt: 'attempt_fish_swordfish',
+        roll: { kind: 'label', name: 'attempt_fish_swordfish' },
+        kind: 'ending',
+        rollSignal: 'always',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_harpoon',
+        rollAnim: 'human_harpoon',
+    },
+    'fishing.category_632.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/tbwt.rs2`,
+        attempt: 'attempt_fish_karambwanji',
+        roll: { kind: 'label', name: 'attempt_fish_karambwanji' },
+        kind: 'ending',
+        rollSignal: 'never',
+        nativeArm: 4,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_smallnet',
+        rollAnim: null,
+    },
+    'fishing.category_633.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/tbwt.rs2`,
+        attempt: 'attempt_fish_karambwan',
+        roll: null,
+        kind: 'none',
+        rollSignal: 'never',
+        nativeArm: null,
+        actMinD: 0,
+        actSilent: false,
+        castAnim: 'human_octopus_pot',
+        rollAnim: null,
+    },
+    'fishing.slimeyfish.op1': {
+        file: `${FISHING_SCRIPTS}fishing_spots/slimeyfish.rs2`,
+        attempt: 'attempt_fish_slimey_eel',
+        roll: { kind: 'label', name: 'attempt_fish_slimey_eel' },
+        kind: 'ending',
+        rollSignal: 'always',
+        nativeArm: 5,
+        actMinD: 1,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: 'human_fish_onspot',
+    },
+    [HEMENSTER_CARP_METHOD]: {
+        file: HEMENSTER_FISHING_SCRIPT,
+        attempt: 'attempt_fish_hemenster',
+        roll: null,
+        kind: 'none',
+        rollSignal: 'never',
+        nativeArm: null,
+        actMinD: 0,
+        actSilent: false,
+        castAnim: 'human_fishing_casting',
+        rollAnim: null,
+    },
+};
+
+function fishingTickArm(ctx: Ctx, id: string, start: Rs2Block): TickArmWire {
+    const spec = FISHING_TICK_SPECS[id];
+    if (!spec) throw new Error(`${id}: no reviewed fishing tick specification`);
+    if (start.span.file !== spec.file) throw new Error(`${id}: fishing entry moved from ${spec.file}`);
+
+    let attempt = start;
+    if (spec.attempt) {
+        if (codeText(start) !== `@${spec.attempt};`) throw new Error(`${id}: fishing entry no longer calls ${spec.attempt}`);
+        const found = uniqueBlock(ctx, 'label', spec.attempt);
+        if (!found || found.span.file !== spec.file) throw new Error(`${id}: missing reviewed attempt ${spec.attempt}`);
+        attempt = found;
+    }
+
+    const attemptShape = flatten(attempt);
+    if (spec.nativeArm === null) {
+        if (hasStmt(attemptShape.flat, /^%action_delay = calc\(map_clock \+ \d+\)$/)) throw new Error(`${id}: unclassified fishing action-delay write`);
+        const oneShotDelay = id === 'fishing.category_633.op1' ? 'p_delay(5)' : id === HEMENSTER_CARP_METHOD ? 'p_delay(4)' : null;
+        if (oneShotDelay && !hasStmt(attemptShape.flat, oneShotDelay)) throw new Error(`${id}: one-shot fishing delay changed`);
+    } else if (!hasStmt(attemptShape.flat, `%action_delay = calc(map_clock + ${spec.nativeArm})`)) {
+        throw new Error(`${id}: fishing native arm changed`);
+    }
+    if (spec.castAnim && !hasStmt(attemptShape.flat, `anim(${spec.castAnim}, 0)`)) throw new Error(`${id}: fishing cast animation changed`);
+
+    if (spec.actSilent) {
+        const silentCondition = '%action_delay = calc(map_clock + 3)';
+        const silentPath = attemptShape.flat.filter(({ path }) => path.some((each) => !each.polarity && each.cond === silentCondition));
+        if (!silentPath.some(({ stmt }) => stmt.text.startsWith('p_op'))
+            || silentPath.some(({ stmt }) => stmt.text.startsWith('anim(') || stmt.text.startsWith('mes('))) {
+            throw new Error(`${id}: lava-eel silent act branch changed`);
+        }
+    }
+
+    if (spec.roll === null) {
+        if (spec.rollSignal !== 'never' || spec.rollAnim !== null) throw new Error(`${id}: one-shot fishing method has a roll signal`);
+    } else {
+        const rollBlock = spec.roll.kind === 'label' && spec.roll.name === spec.attempt
+            ? attempt
+            : uniqueBlock(ctx, spec.roll.kind, spec.roll.name);
+        if (!rollBlock || rollBlock.span.file !== spec.file) throw new Error(`${id}: missing reviewed fishing roll block`);
+        const rollShape = flatten(rollBlock);
+        const d0 = '%action_delay = map_clock';
+        const d0Animations = rollShape.flat.filter(({ stmt, path }) =>
+            stmt.text.startsWith('anim(') && path.some((each) => each.polarity && each.cond === d0));
+        const expectedAnimation = spec.rollAnim ? `anim(${spec.rollAnim}, 0)` : null;
+        const rollAnimation = expectedAnimation && rollShape.flat.find(({ stmt, path }) => stmt.text === expectedAnimation && path.some((each) => each.polarity && each.cond === d0));
+        if (spec.rollSignal === 'always' && !rollAnimation) throw new Error(`${id}: expected roll animation disappeared`);
+        if (spec.rollSignal === 'never' && (spec.rollAnim !== null || d0Animations.length > 0)) throw new Error(`${id}: unexpected animation at the roll step`);
+        if (spec.rollSignal === 'sometimes') {
+            const recast = 'random(5) = 0';
+            const suppressesAnimation = (nodes: Node[]): boolean => nodes.some((node) => {
+                if (node.kind === 'while') return suppressesAnimation(node.body);
+                if (node.kind !== 'if') return false;
+                if (node.cond !== d0) return suppressesAnimation(node.then) || suppressesAnimation(node.els);
+                const [roll, branch, animation] = node.then;
+                return node.then.length === 3
+                    && roll?.kind === 'stmt' && roll.text === '~fish_roll_loc(raw_pike, null, fishing_bait)'
+                    && branch?.kind === 'if' && branch.cond === recast && branch.els.length === 0
+                    && branch.then.length === 2
+                    && branch.then[0]?.kind === 'stmt' && branch.then[0].text === 'p_oploc(2)'
+                    && branch.then[1]?.kind === 'stmt' && branch.then[1].text === 'return'
+                    && animation?.kind === 'stmt' && animation.text === expectedAnimation;
+            });
+            if (!rollAnimation || !suppressesAnimation(rollShape.nodes)) {
+                throw new Error(`${id}: waterfall recast no longer suppresses one roll animation`);
+            }
+        }
+    }
+
+    return makeTickArm(ctx, {
+        kind: spec.kind,
+        roll_signal: spec.rollSignal,
+        delay_drop: false,
+        depletes: false,
+        native_arm: spec.nativeArm,
+        act_min_d: spec.actMinD,
+        act_silent: spec.actSilent,
+        no_gain: false,
+        skill_anim: null,
+        roll_anim: spec.rollAnim ? sequenceId(ctx, spec.rollAnim) : null,
+        cast_anim: spec.castAnim ? sequenceId(ctx, spec.castAnim) : null,
+    }, known<ToolWire[]>([]), 'fishing');
+}
+
 /**
  * Prove the one quest-owned carp case from its exact dispatch, bait choice, catch branch and completion gate.
  * The normal fishing closure intentionally does not model direct quest yields or quest-state requirements.
@@ -1148,6 +1653,7 @@ function hemensterNorthCarp(ctx: Ctx): MethodWire | null {
         products: known([{ item: carp, level }]),
         tools: known([{ item: rod, use_gate: null, wield_gate: null }]),
         consumes: known([{ item: worm, count: 1 }]),
+        tick_arm: fishingTickArm(ctx, HEMENSTER_CARP_METHOD, dispatch),
         requirements: partial([{ id: `${HEMENSTER_CARP_METHOD}.level`, source: spanRef(levelSpan), kind: 'skill', skill: SKILL.fishing, level }], [questGate]),
         spots: known(null),
         forbidden_states: [],
@@ -1266,6 +1772,7 @@ function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose:
                     [...tools].map((alias) => ({ item: ctx.entities.id('obj', alias, `${id} tool`), use_gate: null, wield_gate: null })),
                 ),
                 consumes: partial(bait ? [{ item: ctx.entities.id('obj', bait, `${id} bait`), count: 1 }] : [], effectGaps),
+                tick_arm: fishingTickArm(ctx, id, start),
                 requirements: partial(reqs, requirementGaps),
                 spots: known(null),
                 forbidden_states: [...new Set(closure.forbiddenStates)].sort(),

@@ -816,3 +816,72 @@ first = "0.2.9"
 target = "0.2.9"
 severity = "low"
 owner = "Main backlog review"
+
+[[item]]
+id = "tick-normal-trees"
+kind = "not-in-release"
+area = "Gatherer"
+text = """The Knife tick technique is offered for oak and higher trees only.
+  Normal trees still use the ordinary gathering cadence."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-karambwan"
+kind = "not-in-release"
+area = "Gatherer"
+text = """Karambwan fishing uses a fixed delay rather than the skill delay.
+  No Knife arm applies; the Gatherer fishes it at the ordinary cadence."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-flinch"
+kind = "not-in-release"
+area = "Gatherer"
+text = """A sustained tick schedule based on auto-retaliate flinches is not
+  offered. An NPC hit can change the skill delay, but that schedule has not
+  been traced or designed."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-reclick"
+kind = "not-in-release"
+area = "Gatherer"
+text = """The rs2b0t four-tick fly re-click and iron-cadence re-click methods
+  give no gain in revision 289 and are not offered."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-rune-pickaxe"
+kind = "not-in-release"
+area = "Gatherer"
+text = """A rune pickaxe already mines every three ticks, which matches the
+  Knife cycle. Knife turns itself off with no-gain for that tool; ordinary
+  mining continues."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-eat-arm"
+kind = "not-in-release"
+area = "Gatherer"
+text = """Eating uses the existing checked eat action and pauses the Knife
+  technique for one cycle. A food-based tick arm is not offered; it needs
+  per-food delay facts and a live probe before its design is complete."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"

@@ -757,6 +757,133 @@ The observer therefore does not depend on sampling the transient bank-close stat
 Deposit conservation, withdrawal, return, fresh yield and XP requirements remain unchanged.
 Bank disposition does not require the separate Power disposal witness.
 
+### Knife-arm latency and qualification cells
+
+The ignored `gatherer_tick_live` tests in `gatherer_live.rs` use Engine L,
+game `127.0.0.1:47594` and assets `127.0.0.1:3080`. Set `LIVE=1`, `BOT_CPU=1`,
+`GATHERER_GAME_PORT=47594`, `GATHERER_HTTP_PORT=3080`, and a
+`BOT_LIVE_NAME_PREFIX` of one to four characters. The selected local profile
+must observe a members world. Do not change the engine tick or shared resources.
+
+Set the absolute engine, navigation and catalog paths above. Set
+`GATHERER_TICK_EVIDENCE` to a new absolute JSON filename, not a directory.
+Each cell refuses to overwrite evidence and logs out its account on failure.
+
+```sh
+cargo test -p host-play --no-default-features --features live-harness,test-support \
+  --test gatherer_live -- --ignored --exact gatherer_tick_live::probe_tick_landing --nocapture
+```
+
+The probe requires at least 300 completed cycles and real Fishing XP.
+It records all six verdict families, fresh animation serials, first-seen chat
+polls, inventory counts, host dispatch receipts and actual encoded packets.
+It does not impose a verified-fraction gate. The external verdict script
+derives that fraction from the probe before qualification starts.
+
+Three clocks are recorded separately. Frame windows and `native_dispatch_tick`
+use Play's native completion clock. `client_snapshot_tick` is the
+session-relative `GameSnapshot::tick()`. Each API receipt's `dispatch_tick`
+is the raw Client `PLAYER_INFO` generation, `snapshot.gens().player_info`,
+which the Client input observer also publishes. The API requires that raw
+generation to match both the context stamp and input lineage. Its live-owner
+callback separately fences the run, session and request. Do not substitute
+either other clock or a calculated offset for any of these checks.
+
+Then run `gatherer_fly_tick`, `gatherer_net_tick`, `gatherer_mine_iron_tick`,
+`gatherer_oak_tick` and `gatherer_tick_refused_rune` in the same module.
+Use a new evidence filename for each cell. The first four require at least
+60 completed cycles and real skill XP. The rune-pickaxe cell requires
+`Knife (off: no-gain)` and continued native Mining XP. Net qualification counts
+the observed opener/click cadence, not an invented roll animation. Its allowed
+Fletching-loss count and verified-fraction threshold must be fixed from the
+probe before the net cell runs.
+
+The iron cell seeds Mining 21, the selected mithril pickaxe's use minimum
+(`gathering.json:21132-21135`), rather than the design's Mining 15. This is an
+approved acceptance correction. It keeps the real iron rocks, mithril tool,
+60-cycle gate and replacement-rock handoff. Its oracle uses no Mining-15
+success probability; it checks measured cycles, XP and actual target changes.
+
+Player stands differ from fixed resource tiles. The river fixture starts at
+2503,3498 beside the real `loc_2027` at 2504,3498. The oak fixture starts at
+3016,3170 beside the tree at 3017,3170. Offline checks require standable tiles
+in the reviewed navigation pack. Setup uses `interact::tele_args` and then
+checks the actual tile, stats, items and loaded resource before Start.
+The net player starts at 3267,3149, north of the authored NPC 330 spawn at
+3267,3148. Mining starts at 3284,3368 beside the authored eastern iron rocks,
+with nearby copper rocks for the separate engine cases.
+
+### Knife-arm engine cases
+
+`crates/host-play/tests/tick_engine.rs` runs the native Gatherer through Play's
+operator Start path and the real encrypted Client driver. It requires both
+`live-harness` and `test-support`. These bounded cases are assigned Engine T on
+aubaine, game `127.0.0.1:48594`, assets `127.0.0.1:4080`, with the exact account
+prefix `tmx`. They do not use Engine L. Main alone starts, stops or patches T.
+
+Set `LIVE=1`, `BOT_LIVE_NAME_PREFIX=tmx`, absolute `GATHERER_ENGINE_DIR`,
+`GATHERER_NAV_PACK`, `GATHERER_CATALOG_ROOT`, `LIVE_EVIDENCE_DIR` and
+`TICK_ENGINE_PACKET_LOG`. The packet log is
+`/Volumes/dev-scratch/engines/lostcity-289-t/runtime/logs/packet-outcomes.jsonl`.
+Use a disposable HOME and the normal isolated-home runner. For example, after
+setting those inputs:
+
+```sh
+cargo test -p host-play --features live-harness,test-support --test tick_engine \
+  tick_engine_clean_continuing_river -- --ignored --exact --test-threads=1 --nocapture
+```
+
+The cases cover clean continuing and ending arms, the three distinct late
+histories, two copper histories, preflight target removal, Make without its
+click, two lone-opener histories, and members-only refusal on a free world.
+The suffix-drop case forwards the opener and Make, drops the remaining byte
+suffix, then requires an unknown-opcode refusal and a `read_eof` reconnect to a
+new Ready session. It does not require an old-session roll after EOF.
+The ending-net case observes twenty cycles. The free-world case requires
+Engine T's real `engine/data/config/world.json` to set `node.members=false`.
+The selected local profile must bind that guarded file; a client-side override
+cannot replace the engine mode. Only Main may prepare and restore that phase.
+
+The test-only hooks hold or split encoded transport, drop a suffix after
+`IF_BUTTON`, cancel a real request after an encoded prefix, remove a target from
+the dispatch snapshot, or suppress the snapshot's open-chat observation. They
+do not inject products, XP, animation signals or successful receipts.
+Non-`test-support` builds have neither the mutable snapshot variant nor these
+dispatch hooks.
+
+Each case writes the receipt and actual-wire streams, per-frame signals,
+status, transport history and account-filtered engine packet outcomes to its
+own evidence directory. Except for the suffix-drop case, the engine log's
+decoded relevant opcode order must match the Client's encoded stream. The
+suffix-drop case verifies the complete proxy byte accounting, accepted opener
+and Make, and the first post-drop unknown-opcode refusal; it records the
+client-session, slot-stream and host-log lifecycle through reconnect and Ready.
+Missing, incomplete or gapped engine records fail the case. The engine tick and
+Client observation tick are separate clocks. `handler_accepted` and
+`charged_user_event` report handler and event accounting; `outcome` separately
+records script acceptance, suspension or refusal. A true handler result can
+still have a refused script outcome. The printed accepted event counts use
+`charged_user_event`, not the outcome string. An `ENGINE_PACKET_LOG_FAILED`
+sink error invalidates the run.
+
+Signal assertions retain the packet-position intervals from the tick-manipulation
+facts, section 1.5. A chat line first seen at a wake of `t` belongs to `t + 1`;
+at an edge it is bounded to `[t, t + 1]`. A fresh inbound `IF_CLOSE` count is
+exact at a wake and bounded to `[t - 1, t]` at an edge. Retained counts prove no
+new close. A chat-only close does not require a main-modal transition stamp.
+
+Ordinary checked Interact clicks do not have ordered-dispatch receipts. Their
+actual `MOVE_OPCLICK`/resource-op pair must come from one Client frame; the
+independent engine stream still proves server handling. Three foreign events
+use the real Client's same-tile walk encoder, not paths into neighboring water.
+The net fixture finishes a real path to the currently observed ordinary spot
+before Start. The copper stand is adjacent to its authored rock. Case budgets,
+including the free-world refusal window, start at the actual Knife dispatch.
+
+All fixtures seed only the tested account before Start. Shared spots, rocks and
+trees remain real content. Each case stops the script and logs out its account,
+including on assertion failure.
+
 ### Target switching
 
 `gatherer_live::gatherer_mine_tier_power` supports a single selected ore through

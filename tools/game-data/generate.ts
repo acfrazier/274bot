@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
 import generatedInputPins from './generated-inputs.json';
 import { sha256, sourceFile, parseRows, parsePack, integer, parseParamDefinitions, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
-import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, hiddenSitesBytes, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, type GatherSiteWire, type HiddenSitesRecord } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, hiddenSitesBytes, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, type GatherSiteWire, type HiddenSitesRecord, type MethodWire } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityAnalysisFiles, questIdentityContentFiles } from './extractors/quests.ts';
 import { assertPrereqStepFacts, extractPrereqStepsFacts, prereqStepInputs, PREREQ_STEPS_SCHEMA } from './extractors/prereq-steps.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
@@ -2977,12 +2977,19 @@ export function serverOrderedInputPaths(engineDir: string, contentDir: string) {
     };
 }
 
+/** One static fishing method projection used only by the built-in Gatherer. */
+type BuiltinFishingCandidateMethod = Pick<MethodWire, 'skill' | 'op' | 'targets'>;
+
 /** Runtime admission rows contain no refused proofs or development inventories. */
-export function runtimeNpcOperations(evidence: NpcTransformClosureEvidence) {
+export function runtimeNpcOperations(
+    evidence: NpcTransformClosureEvidence,
+    methods: readonly BuiltinFishingCandidateMethod[],
+    hazardNpcs: readonly number[],
+) {
     const accepted = evidence.engine.complete ? evidence.proofs.filter(proof =>
         proof.status === 'unchanged' || proof.status === 'consistent') : [];
     return {
-        schema: 1,
+        schema: 2,
         evidence_sha256: crypto.createHash('sha256').update(npcEvidenceBytes(evidence)).digest('hex'),
         operations: accepted.map(proof => {
             const action = evidence.actions.find(row => row.npc_type_id === proof.npc_type_id && row.slot === proof.slot);
@@ -3000,7 +3007,41 @@ export function runtimeNpcOperations(evidence: NpcTransformClosureEvidence) {
             }
             return { npc_type_id: action.npc_type_id, slot: action.slot, operation_fingerprint: action.operation_fingerprint };
         }),
+        builtin_gatherer_fishing_operations: runtimeBuiltinGathererFishingOperations(evidence, methods, hazardNpcs),
     };
+}
+
+/** Admit only an exact selected fishing method, current ordinary NPC config and present action row. */
+export function runtimeBuiltinGathererFishingOperations(
+    evidence: NpcTransformClosureEvidence,
+    methods: readonly BuiltinFishingCandidateMethod[],
+    hazardNpcs: readonly number[],
+) {
+    if (!evidence.engine.complete) return [];
+    const excludedNpcTypes = new Set([390, 403, ...hazardNpcs]);
+    const npcTypes = new Map(evidence.npc_types.map(row => [row.npc_type_id, row] as const));
+    const actions = new Map(evidence.actions.map(row => [`${row.npc_type_id}:${row.slot}`, row] as const));
+    const accepted = new Map<string, { npc_type_id: number; slot: number; operation_fingerprint: string }>();
+    for (const method of methods) {
+        const op = method.op;
+        const targets = method.targets;
+        if (method.skill !== 'fishing' || !op || targets.state !== 'known') continue;
+        for (const target of targets.value) {
+            if (target.kind !== 'npc' || target.class !== 'resource' || target.op !== op.slot
+                || excludedNpcTypes.has(target.id)) continue;
+            const npcType = npcTypes.get(target.id);
+            const action = actions.get(`${target.id}:${target.op}`);
+            if (npcType?.config_state !== 'complete' || !action || action.state !== 'present'
+                || action.trigger_code === null || !action.operation_fingerprint) continue;
+            accepted.set(`${target.id}:${target.op}`, {
+                npc_type_id: target.id,
+                slot: target.op,
+                operation_fingerprint: action.operation_fingerprint,
+            });
+        }
+    }
+    return [...accepted.values()].sort((left, right) =>
+        left.npc_type_id - right.npc_type_id || left.slot - right.slot);
 }
 
 /** Stable development-only evidence serialization, never loaded by the product. */
@@ -3124,7 +3165,7 @@ async function generate(spec: Revision) {
             cacheId: spec.cacheIdentity.cache_id,
             contentId,
         }),
-        npc_transforms: runtimeNpcOperations(npcEvidence!),
+        npc_transforms: runtimeNpcOperations(npcEvidence!, gathering.payload.methods, gathering.payload.hazard_npcs),
     } : undefined;
     if (serverOrdered) Object.assign(facts, { server_ordered: serverOrdered });
     const cookRow = questIdentity.rows.find((row) => row.id === 'cook');

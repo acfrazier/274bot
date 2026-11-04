@@ -145,6 +145,174 @@ fn unbound_selected_data_refuses_the_gathering_family() {
         "{refused:?}"
     );
 }
+fn prepared_r289_gathering() -> std::sync::Arc<crate::gather_methods::GatherCatalog> {
+    crate::selected::FamilyPreparation::run(|worker| {
+        for_revision(ClientRevision::R289)
+            .unwrap()
+            .prepare_gathering(worker)
+            .unwrap()
+    })
+    .unwrap()
+    .join()
+    .unwrap()
+}
+
+fn tick_method<'a>(
+    catalog: &'a crate::gather_methods::GatherCatalog,
+    id: &str,
+) -> &'a crate::gather_methods::GatherMethod {
+    catalog.method(id).unwrap()
+}
+
+fn tick_tool<'a>(
+    catalog: &'a crate::gather_methods::GatherCatalog,
+    method: &'a crate::gather_methods::GatherMethod,
+    alias: &str,
+) -> &'a crate::gather_methods::TickArmTool {
+    let item = crate::gather_methods::known_rows(&method.tools)
+        .iter()
+        .find(|tool| catalog.alias(crate::selected::EntityId::Obj(tool.item)) == Some(alias))
+        .unwrap_or_else(|| panic!("{} has no tool {alias}", method.id.0.as_ref()))
+        .item;
+    method
+        .tick_arm
+        .for_tool(item)
+        .expect("tool tick facts exist")
+}
+
+#[test]
+fn r289_tick_arm_is_fully_classified_and_matches_reviewed_families() {
+    use crate::gather_methods::{GatherSkill, TickArmKind, TickRollSignal};
+
+    let catalog = prepared_r289_gathering();
+    assert_eq!(catalog.methods().len(), 41);
+    for method in catalog.methods() {
+        assert!(
+            matches!(
+                method.tick_arm.kind,
+                TickArmKind::Continuing | TickArmKind::Ending | TickArmKind::None
+            ),
+            "{} has a tick arm kind",
+            method.id.0.as_ref()
+        );
+        assert!(
+            matches!(
+                method.tick_arm.roll_signal,
+                TickRollSignal::Always | TickRollSignal::Sometimes | TickRollSignal::Never
+            ),
+            "{} has a roll signal",
+            method.id.0.as_ref()
+        );
+        assert!(
+            method.tick_arm.act_min_d <= 1,
+            "{} has a bounded action delay",
+            method.id.0.as_ref()
+        );
+        assert!(
+            method
+                .tick_arm
+                .tool_facts
+                .windows(2)
+                .all(|pair| pair[0].item < pair[1].item),
+            "{} tool facts are uniquely item-sorted",
+            method.id.0.as_ref()
+        );
+        for tool in crate::gather_methods::known_rows(&method.tools) {
+            if method.skill != GatherSkill::Fishing {
+                assert!(
+                    method.tick_arm.for_tool(tool.item).is_some(),
+                    "{} has facts for tool {}",
+                    method.id.0.as_ref(),
+                    tool.item
+                );
+            }
+        }
+    }
+
+    let fly = &tick_method(&catalog, "fishing.freshfish.op1").tick_arm;
+    assert_eq!(fly.kind, TickArmKind::Continuing);
+    assert_eq!(fly.roll_signal, TickRollSignal::Always);
+    assert_eq!(fly.native_arm, Some(4));
+    assert_eq!(fly.act_min_d, 1);
+    assert!(!fly.act_silent);
+    assert_eq!(fly.roll_anim, Some(623));
+    assert_eq!(fly.cast_anim, Some(622));
+    assert_eq!(fly.fletch_anim, Some(1248));
+
+    let waterfall_fly = &tick_method(&catalog, "fishing.loc_2027.op1").tick_arm;
+    let waterfall_pike = &tick_method(&catalog, "fishing.loc_2027.op2").tick_arm;
+    assert_eq!(waterfall_fly.roll_signal, TickRollSignal::Always);
+    assert_eq!(waterfall_pike.roll_signal, TickRollSignal::Sometimes);
+
+    let small_net = &tick_method(&catalog, "fishing.saltfish.op1").tick_arm;
+    assert_eq!(small_net.kind, TickArmKind::Ending);
+    assert_eq!(small_net.roll_signal, TickRollSignal::Never);
+    assert_eq!(small_net.roll_anim, None);
+    assert_eq!(small_net.cast_anim, Some(621));
+
+    let harpoon = &tick_method(&catalog, "fishing.rarefish.op3").tick_arm;
+    assert_eq!(harpoon.kind, TickArmKind::Ending);
+    assert_eq!(harpoon.roll_signal, TickRollSignal::Always);
+    assert_eq!(harpoon.roll_anim, Some(618));
+    assert_eq!(harpoon.cast_anim, Some(618));
+
+    let lava_eel = &tick_method(&catalog, "fishing.0_45_152_lavafish.op1").tick_arm;
+    assert_eq!(lava_eel.kind, TickArmKind::Continuing);
+    assert_eq!(lava_eel.native_arm, Some(5));
+    assert!(lava_eel.act_silent);
+    assert_eq!(lava_eel.roll_signal, TickRollSignal::Never);
+
+    let tree = tick_method(&catalog, "woodcutting.normal");
+    assert_eq!(tree.skill, GatherSkill::Woodcutting);
+    assert_eq!(tree.tick_arm.kind, TickArmKind::Continuing);
+    assert!(tree.tick_arm.depletes);
+    assert_eq!(tree.tick_arm.native_arm, Some(3));
+    assert_eq!(tree.tick_arm.act_min_d, 0);
+    for (alias, animation) in [
+        ("rune_axe", 867),
+        ("adamant_axe", 869),
+        ("mithril_axe", 871),
+        ("black_axe", 873),
+        ("steel_axe", 875),
+        ("iron_axe", 877),
+        ("bronze_axe", 879),
+    ] {
+        let tool = tick_tool(&catalog, tree, alias);
+        assert_eq!(tool.native_arm, 3, "{alias}");
+        assert!(!tool.no_gain, "{alias}");
+        assert_eq!(tool.skill_anim, animation, "{alias}");
+    }
+
+    let normal_mine = tick_method(&catalog, "mining.copper");
+    let fast_mine = tick_method(&catalog, "mining.iron");
+    assert!(normal_mine.tick_arm.delay_drop);
+    assert!(!fast_mine.tick_arm.delay_drop);
+    assert!(normal_mine.tick_arm.depletes);
+    assert!(fast_mine.tick_arm.depletes);
+    assert_eq!(normal_mine.tick_arm.native_arm, None);
+    assert_eq!(fast_mine.tick_arm.native_arm, None);
+    for (alias, arm, animation, no_gain) in [
+        ("bronze_pickaxe", 7, 625, false),
+        ("iron_pickaxe", 6, 626, false),
+        ("steel_pickaxe", 5, 627, false),
+        ("adamant_pickaxe", 3, 628, false),
+        ("mithril_pickaxe", 4, 629, false),
+        ("rune_pickaxe", 2, 624, true),
+    ] {
+        let tool = tick_tool(&catalog, normal_mine, alias);
+        assert_eq!(tool.native_arm, arm, "{alias}");
+        assert_eq!(tool.skill_anim, animation, "{alias}");
+        assert_eq!(tool.no_gain, no_gain, "{alias}");
+    }
+
+    assert_eq!(
+        tick_method(&catalog, "fishing.category_633.op1")
+            .tick_arm
+            .kind,
+        TickArmKind::None,
+        "the one-shot karambwan vessel is not an armable loop"
+    );
+}
 
 #[test]
 fn facts_old_data_is_refused_by_version() {

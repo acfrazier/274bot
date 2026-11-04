@@ -91,6 +91,7 @@ fn npc_bump_copies_list_once_then_idempotent() {
     assert_eq!(snap.npcs().len(), 1);
     assert_eq!(snap.npcs()[0].index, 7);
     assert_eq!(snap.npcs()[0].x, 100);
+    assert_eq!(snap.gens().npc_info, c.gens.npc_info);
 
     let ptr = snap.npcs().as_ptr();
     assert!(!snap.rebuild_family(&c, Family::Npc));

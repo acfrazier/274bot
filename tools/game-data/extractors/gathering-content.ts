@@ -226,7 +226,7 @@ function indexSections(sections: Section[]): SectionIndex {
 /** One pass over the content tree: packs, config sections, constants, enums and script headers. */
 export type ContentIndex = {
     root: string;
-    packs: { loc: Map<string, number>; npc: Map<string, number>; obj: Map<string, number> };
+    packs: { loc: Map<string, number>; npc: Map<string, number>; obj: Map<string, number>; seq: Map<string, number> };
     loc: SectionIndex;
     npc: SectionIndex;
     obj: SectionIndex;
@@ -247,6 +247,7 @@ export function indexContent(content: string): ContentIndex {
         loc: parsePack(requireGatherText(content, 'pack/loc.pack')),
         npc: parsePack(requireGatherText(content, 'pack/npc.pack')),
         obj: parsePack(requireGatherText(content, 'pack/obj.pack')),
+        seq: parsePack(requireGatherText(content, 'pack/seq.pack')),
     };
     for (const [name, pack] of Object.entries(packs)) if (pack.size === 0) throw new Error(`pack/${name}.pack: required file missing ids`);
     const texts = new Map<string, string>();

@@ -27,6 +27,8 @@ pub mod progress;
 pub mod public_worlds;
 pub mod quest_pair;
 pub mod servers;
+#[cfg(feature = "test-support")]
+pub mod tick_engine_test_support;
 pub mod walk_map;
 pub use client::Transport;
 pub use nav_identity::{

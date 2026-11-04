@@ -2,6 +2,7 @@
 use super::*;
 use api::interact::server_ordered::*;
 use api::interact::Driver;
+use api::interact::{ActionSpec, Interactions, OpTarget, SendResult};
 use api::prot::Send;
 use script::native::{
     ActionContext, ActionError, ActionHandle, NativeMachine, NativeTick, Script, ScriptFailure,
@@ -12,9 +13,22 @@ use std::task::Poll;
 
 const CIPHER_SEED: [i32; 4] = [17, 29, 41, 53];
 
+#[cfg(feature = "test-support")]
+struct TickHookReset;
+
+#[cfg(feature = "test-support")]
+impl Drop for TickHookReset {
+    fn drop(&mut self) {
+        let _ = crate::tick_engine_test_support::TickEngineTestHook::bind_current_for_account(
+            "so3-wire",
+        );
+    }
+}
+
 enum Emission {
     Content(ServerOrderedRequest),
     ContentThenDrop(ServerOrderedRequest),
+    DoubleContent(ServerOrderedRequest, ServerOrderedRequest),
     Advanced {
         operations: Vec<Send>,
         debug: Option<Arc<api::debug_commands::DebugCatalog>>,
@@ -25,28 +39,41 @@ struct OrderedMachine {
     request_id: u64,
     follow_drop: bool,
     drop_request: Option<u64>,
+    second_emission: Option<Result<u64, ActionError>>,
+}
+
+struct OrderedOutput {
+    receipt: ServerOrderedDispatch,
+    second_emission: Option<Result<u64, ActionError>>,
 }
 
 impl NativeMachine for OrderedMachine {
     type Args = Emission;
-    type Output = ServerOrderedDispatch;
-
+    type Output = OrderedOutput;
     fn begin(request: Emission, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         let follow_drop = matches!(&request, Emission::ContentThenDrop(_));
-        let request_id = match request {
+        let (request_id, second_emission) = match request {
             Emission::Content(request) | Emission::ContentThenDrop(request) => {
-                cx.emit_server_ordered(request)?
+                (cx.emit_server_ordered(request)?, None)
             }
-            Emission::Advanced { operations, debug } => match debug {
-                Some(debug) => script::surface::packet_context_for_test_with_debug(cx, debug)
-                    .send_batch(operations)?,
-                None => script::surface::packet_context_for_test(cx).send_batch(operations)?,
-            },
+            Emission::DoubleContent(first, second) => {
+                let request_id = cx.emit_server_ordered(first)?;
+                (request_id, Some(cx.emit_server_ordered(second)))
+            }
+            Emission::Advanced { operations, debug } => {
+                let request_id = match debug {
+                    Some(debug) => script::surface::packet_context_for_test_with_debug(cx, debug)
+                        .send_batch(operations)?,
+                    None => script::surface::packet_context_for_test(cx).send_batch(operations)?,
+                };
+                (request_id, None)
+            }
         };
         Ok(Self {
             request_id,
             follow_drop,
             drop_request: None,
+            second_emission,
         })
     }
 
@@ -68,18 +95,19 @@ impl NativeMachine for OrderedMachine {
                 return Poll::Pending;
             }
         }
-        Poll::Ready(Ok(receipt))
+        Poll::Ready(Ok(OrderedOutput {
+            receipt,
+            second_emission: self.second_emission.take(),
+        }))
     }
-
-    fn cancel(&mut self) {}
 }
 
 #[derive(Default)]
 struct Results {
     receipts: Vec<ServerOrderedDispatch>,
     errors: Vec<ActionError>,
+    second_emissions: Vec<Result<u64, ActionError>>,
 }
-
 struct OrderedScript {
     pending: VecDeque<Emission>,
     handle: Option<ActionHandle<OrderedMachine>>,
@@ -98,7 +126,13 @@ impl Script for OrderedScript {
         if let Some(handle) = self.handle.as_ref() {
             if let Poll::Ready(result) = tick.actions.poll(handle, &mut tick.cx) {
                 match result {
-                    Ok(receipt) => self.results.lock().unwrap().receipts.push(receipt),
+                    Ok(output) => {
+                        let mut results = self.results.lock().unwrap();
+                        results.receipts.push(output.receipt);
+                        if let Some(second) = output.second_emission {
+                            results.second_emissions.push(second);
+                        }
+                    }
                     Err(error) => self.results.lock().unwrap().errors.push(error),
                 }
                 self.handle = None;
@@ -164,6 +198,9 @@ impl Rig {
                 cache.objs[id].name = name.into();
                 cache.objs[id].iop[4] = Some("Drop".into());
             }
+            cache.locs.resize_with(1277, Default::default);
+            cache.locs[1276].width = 1;
+            cache.locs[1276].length = 1;
         }
         let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
         let mut snapshot = GameSnapshot::new();
@@ -204,9 +241,32 @@ impl Rig {
     }
 
     fn pump(&mut self, tick: u64) -> crate::script_runtime::ScriptObservation {
-        self.snapshot.seed_tick(u32::try_from(tick).unwrap());
-        self.input
-            .observe_input_tick(self.client.revision(), tick, self.client.gens.session);
+        self.pump_clocks(tick, tick)
+    }
+
+    fn pump_clocks(
+        &mut self,
+        tick: u64,
+        packet_tick: u64,
+    ) -> crate::script_runtime::ScriptObservation {
+        self.pump_three_clocks(tick, u32::try_from(packet_tick).unwrap(), packet_tick)
+    }
+
+    fn pump_three_clocks(
+        &mut self,
+        tick: u64,
+        session_relative_tick: u32,
+        raw_player_info_generation: u64,
+    ) -> crate::script_runtime::ScriptObservation {
+        self.snapshot.seed_tick(session_relative_tick);
+        self.snapshot
+            .seed_player_info_generation(raw_player_info_generation);
+        self.client.gens.player_info = raw_player_info_generation;
+        self.input.observe_input_tick(
+            self.client.revision(),
+            raw_player_info_generation,
+            self.client.gens.session,
+        );
         let cache = Arc::clone(&self.client.cache);
         crate::script_runtime::script_observe_cached_with_channels(
             &mut self.client,
@@ -720,6 +780,8 @@ fn start_drop(
     protected: bool,
 ) -> Arc<Mutex<Option<Result<script::gatherer::DropResult, ActionError>>>> {
     let result = Arc::new(Mutex::new(None));
+    let mut protected_ids = [0; script::gatherer::MAX_PROTECTED];
+    protected_ids[0] = 946;
     let slot = script_slot_or_insert(&rig.scripts, "so3-wire");
     slot.lock()
         .unwrap()
@@ -727,7 +789,7 @@ fn start_drop(
             Box::new(RealDropScript {
                 args: Some(script::gatherer::DropBatchArgs {
                     products: Arc::from([1511]),
-                    protected: [946, 0, 0, 0, 0, 0, 0, 0],
+                    protected: protected_ids,
                     protected_len: u8::from(protected),
                 }),
                 handle: None,
@@ -1361,7 +1423,7 @@ fn ordered_knife_ending_and_continuing_use_exact_unseen_make_and_move_op_order()
             Send::if_button(catalog.component("skill_multi3:make1_a").unwrap().id()).unwrap(),
         ];
         if continuing {
-            expected.push(Send::move_gameclick(false, 3207, 3205, &[]).unwrap());
+            expected.push(Send::move_opclick(false, 3207, 3205, &[]).unwrap());
             expected.push(Send::oploc1(3208, 3205, 1276).unwrap());
         }
         let expected: Vec<_> = expected
@@ -1391,9 +1453,15 @@ fn ordered_knife_last_row_static_failure_has_zero_prefix_bytes_and_cipher_moveme
     rig.pump(2);
     let receipt = rig.receipt();
     assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+    assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
     assert_eq!(receipt.rows[0], RowDispatch::NotAttempted);
     assert_eq!(receipt.rows[1], RowDispatch::NotAttempted);
-    assert!(matches!(receipt.rows[2], RowDispatch::Refused { .. }));
+    assert_eq!(
+        receipt.rows[2],
+        RowDispatch::Refused {
+            reason: ServerOrderedError::StaleTarget
+        }
+    );
     assert!(rig.decoded().is_empty());
     let mut after = rig.client.out.random.clone().unwrap();
     assert_eq!(before.next_int(), after.next_int());
@@ -1623,6 +1691,114 @@ fn ordered_delayed_request_counts_later_foreign_traffic_without_rate_admission()
     assert!(decoded[..3].iter().all(|packet| packet.0 == opcode));
     rig.input.with_server_ordered_input(|state| {
         assert_eq!(state.snapshot().packet_count(), 7);
+    });
+}
+
+fn checked_loc_click(rig: &mut Rig) -> u64 {
+    let before = rig.client.out.committed_packet_count().unwrap();
+    let loc = rig.snapshot.locs()[0].clone();
+    let x = loc.tile.x - rig.client.map_build_base_x;
+    let z = loc.tile.z - rig.client.map_build_base_z;
+    assert!(rig.client.world.add_scenery(
+        loc.tile.level,
+        x,
+        z,
+        0,
+        loc.typecode,
+        loc.shape,
+        loc.width,
+        loc.length,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ));
+    assert!(matches!(
+        Interactions::new(&rig.snapshot, &mut rig.client)
+            .interact(OpTarget::Loc(&loc), ActionSpec::Operation(1)),
+        SendResult::Sent { .. }
+    ));
+    rig.client.out.finish_packet();
+    rig.client
+        .out
+        .committed_packet_count()
+        .unwrap()
+        .checked_sub(before)
+        .unwrap()
+}
+
+#[test]
+fn ordered_knife_and_checked_click_have_no_host_rate_rule_across_adjacent_and_same_drain_ticks() {
+    let mut adjacent = Rig::new();
+    let request = knife_request(&mut adjacent, true);
+    adjacent.start([Emission::Content(request)]);
+    adjacent.pump(1);
+    adjacent.input.with_server_ordered_input(|state| {
+        assert_eq!(state.snapshot().category_counts(), [4, 0, 0]);
+        assert_eq!(state.snapshot().packet_count(), 4);
+    });
+    adjacent
+        .input
+        .observe_input_tick(adjacent.client.revision(), 2, adjacent.client.gens.session);
+    assert_eq!(checked_loc_click(&mut adjacent), 2);
+    adjacent.pump(2);
+    let receipt = adjacent.receipt();
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
+    assert!(receipt.terminal.is_none());
+    adjacent.input.with_server_ordered_input(|state| {
+        assert_eq!(state.snapshot().category_counts(), [2, 0, 0]);
+        assert_eq!(state.snapshot().packet_count(), 6);
+    });
+    assert_eq!(adjacent.decoded().len(), 6);
+
+    let mut same_drain = Rig::new();
+    let request = knife_request(&mut same_drain, true);
+    same_drain.start([Emission::Content(request)]);
+    same_drain.input.observe_input_tick(
+        same_drain.client.revision(),
+        1,
+        same_drain.client.gens.session,
+    );
+    assert_eq!(checked_loc_click(&mut same_drain), 2);
+    same_drain.pump(1);
+    same_drain.input.with_server_ordered_input(|state| {
+        assert_eq!(state.snapshot().category_counts(), [6, 0, 0]);
+        assert_eq!(state.snapshot().packet_count(), 6);
+        assert_eq!(state.snapshot().input_epoch(), 6);
+    });
+    same_drain.pump(2);
+    let receipt = same_drain.receipt();
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
+    assert!(receipt.terminal.is_none());
+    assert_eq!(same_drain.decoded().len(), 6);
+}
+
+#[test]
+fn ordered_native_budget_rejects_second_same_window_emission_before_dispatch() {
+    let mut rig = Rig::new();
+    let request = knife_request(&mut rig, true);
+    rig.start([Emission::DoubleContent(request, close_request())]);
+    rig.pump(1);
+    rig.input.with_server_ordered_input(|state| {
+        assert_eq!(state.snapshot().category_counts(), [4, 0, 0]);
+    });
+    rig.pump(2);
+
+    let receipt = rig.receipt();
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
+    assert!(receipt.terminal.is_none());
+    let results = rig.results.lock().unwrap();
+    assert!(matches!(
+        results.second_emissions.as_slice(),
+        [Err(ActionError::BudgetExhausted)]
+    ));
+    assert_eq!(results.receipts.len(), 1);
+    drop(results);
+    assert_eq!(rig.decoded().len(), 4);
+    rig.input.with_server_ordered_input(|state| {
+        assert_eq!(state.snapshot().packet_count(), 4);
+        assert_eq!(state.snapshot().category_counts(), [0, 0, 0]);
     });
 }
 
@@ -2139,6 +2315,331 @@ fn ordered_advanced_cheat_without_shared_catalog_refuses_the_whole_request() {
     assert_no_cipher_movement(&rig);
 }
 
+fn knife_npc_request(rig: &mut Rig, type_id: usize, operation: u8) -> ServerOrderedRequest {
+    {
+        let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
+        cache
+            .npcs
+            .resize_with(type_id + 1, client::config::NpcType::default);
+        let mut options = vec![None; 5];
+        options[usize::from(operation - 1)] = Some("Snapshot label is not proof".into());
+        cache.npcs[type_id] = client::config::NpcType {
+            id: i32::try_from(type_id).unwrap(),
+            name: "Fishing spot".into(),
+            op: options,
+            ..Default::default()
+        };
+    }
+    let mut npc = client::dash3d::ClientNpc::at(8, 5);
+    npc.r#type = Some(type_id);
+    rig.client.npc[7] = Some(Box::new(npc));
+    rig.client.npc_ids = vec![7];
+    rig.client.npc_count = 1;
+    rig.client.gens.npc += 1;
+    let mut request = knife_request(rig, true);
+    let reference =
+        ExactNpcReference::from_snapshot(&rig.snapshot, &rig.snapshot.npcs()[0], operation)
+            .unwrap();
+    if let ServerOrderedRequest::KnifeArm { shape, .. } = &mut request {
+        *shape = KnifeArmShape::Continuing {
+            click: ExactLocOrNpcRef::Npc(reference),
+        };
+    }
+    request
+}
+
+fn dispatch_with_builtin_gatherer_context(
+    rig: &mut Rig,
+    request: ServerOrderedRequest,
+) -> ServerOrderedDispatch {
+    rig.start([Emission::Content(request)]);
+    let slot = script_slot_or_insert(&rig.scripts, "so3-wire");
+    let action = {
+        let mut slot = slot.lock().unwrap();
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut rig.client,
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(&rig.snapshot),
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.take_native_action().expect("pending ordered request")
+    };
+    let authority = action.authority();
+    assert!(authority.live());
+    let script::native::HostEffect::ServerOrdered(envelope) = action.effect else {
+        panic!("expected the real pending ordered envelope")
+    };
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    super::dispatch_native_server_ordered(
+        &mut rig.client,
+        super::OrderedDispatchContext {
+            snapshot: &rig.snapshot,
+            selected: Some(&selected),
+            input: Some(&rig.input),
+            builtin_gatherer_knife: true,
+        },
+        &authority,
+        &envelope,
+    )
+}
+
+#[test]
+fn ordered_builtin_gatherer_knife_npc_fishing_uses_operation_click_then_exact_npc_op() {
+    for (type_id, operation) in [(309, 1), (309, 3), (800, 1)] {
+        let mut rig = Rig::new();
+        let request = knife_npc_request(&mut rig, type_id, operation);
+        let receipt = dispatch_with_builtin_gatherer_context(&mut rig, request);
+        assert_eq!(receipt.terminal, None, "{type_id}/{operation}: {receipt:?}");
+        assert_eq!(
+            (
+                receipt.row_count,
+                receipt.dispatched_prefix,
+                receipt.wire_events
+            ),
+            (3, 3, 4)
+        );
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let pin = selected.selected_pin().unwrap();
+        let catalog = selected.server_ordered_catalog(&pin).unwrap();
+        let npc_op = match operation {
+            1 => Send::opnpc1(7).unwrap(),
+            3 => Send::opnpc3(7).unwrap(),
+            _ => unreachable!(),
+        };
+        let expected = [
+            Send::opheldu(1511, 1, 3214, 946, 0, 3214).unwrap(),
+            Send::if_button(catalog.component("skill_multi3:make1_a").unwrap().id()).unwrap(),
+            Send::move_opclick(false, 3207, 3205, &[]).unwrap(),
+            npc_op,
+        ];
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|packet| {
+                (
+                    packet
+                        .validate_for_revision(rig.client.revision())
+                        .unwrap()
+                        .opcode,
+                    packet.body().to_vec(),
+                )
+            })
+            .collect();
+        assert_eq!(expected[2].0, 67, "289 mode-2 MOVE_OPCLICK");
+        assert_eq!(rig.decoded(), expected, "{type_id}/{operation}");
+    }
+}
+
+#[test]
+fn ordered_builtin_gatherer_knife_npc_packet_between_capture_and_dispatch_is_stale() {
+    for (intervening_packet, recapture) in [(false, false), (true, false), (true, true)] {
+        let mut rig = Rig::new();
+        let mut request = knife_npc_request(&mut rig, 309, 1);
+        let captured = rig.snapshot.gens().npc_info;
+        if intervening_packet {
+            // Retain slot, type and tile so only the packet watermark can
+            // reject this reference. Decode a real revision-289 NPC_INFO.
+            let mut packet = client::io::Packet::new(vec![1, 0]);
+            rig.client.psize = 2;
+            packet.set_frame_end(2);
+            rig.client
+                .handle_packet(client::io::ServerProt289::NPC_INFO, &mut packet);
+            assert!(rig.client.ingame);
+            assert_eq!(packet.pos, 2);
+            assert_eq!(rig.client.gens.npc_info, captured + 1);
+            let mut pump = host::Pump::new();
+            host::publish_snapshot(
+                &mut rig.snapshot,
+                &rig.client,
+                pump.drain_client(&rig.client),
+            );
+        }
+        if recapture {
+            request = knife_npc_request(&mut rig, 309, 1);
+        }
+        let receipt = dispatch_with_builtin_gatherer_context(&mut rig, request);
+        if intervening_packet && !recapture {
+            assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
+            assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+            assert_no_cipher_movement(&rig);
+        } else {
+            assert_eq!(receipt.terminal, None);
+            assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (3, 4));
+        }
+    }
+}
+
+#[test]
+fn ordered_builtin_gatherer_knife_refuses_event_and_unproved_npc_operations() {
+    for (type_id, operation) in [
+        (390, 1),
+        (403, 1),
+        (404, 1),
+        (405, 1),
+        (406, 1),
+        (309, 2),
+        (9, 1),
+        (9, 2),
+    ] {
+        let mut rig = Rig::new();
+        let request = knife_npc_request(&mut rig, type_id, operation);
+        let receipt = dispatch_with_builtin_gatherer_context(&mut rig, request);
+        assert_eq!(
+            receipt.terminal,
+            Some(ServerOrderedError::ContractUnavailable),
+            "{type_id}/{operation}: {receipt:?}"
+        );
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+    }
+}
+
+#[test]
+fn ordered_builtin_gatherer_knife_refuses_npc_transformed_since_request() {
+    for transformed_type in [390, 403, 404, 405, 406] {
+        let mut rig = Rig::new();
+        let posted = knife_npc_request(&mut rig, 309, 1);
+        let _transformed = knife_npc_request(&mut rig, transformed_type, 1);
+        let receipt = dispatch_with_builtin_gatherer_context(&mut rig, posted);
+        assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+    }
+}
+
+#[test]
+fn ordered_builtin_gatherer_context_keeps_non_knife_content_on_generic_dispatch() {
+    let mut rig = Rig::new();
+    let receipt = dispatch_with_builtin_gatherer_context(&mut rig, close_request());
+    assert_eq!(receipt.terminal, None);
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (1, 1));
+    let packet = Send::close_modal();
+    assert_eq!(
+        rig.decoded(),
+        vec![(
+            packet
+                .validate_for_revision(rig.client.revision())
+                .unwrap()
+                .opcode,
+            packet.body().to_vec(),
+        )]
+    );
+}
+
+#[test]
+fn ordered_knife_continuing_npc_fishing_requires_transform_closure() {
+    for type_id in [
+        309, 310, 311, 314, 315, 317, 318, 328, 329, 800, 927, 1189, 1190,
+    ] {
+        for operation in [1, 3] {
+            if type_id == 800 && operation == 3 {
+                continue;
+            }
+            let mut rig = Rig::new();
+            let request = knife_npc_request(&mut rig, type_id, operation);
+            rig.start([Emission::Content(request)]);
+            rig.pump(1);
+            rig.pump(2);
+            let receipt = rig.receipt();
+            assert_eq!(
+                receipt.terminal,
+                Some(ServerOrderedError::ContractUnavailable),
+                "{type_id}/{operation}: a current-type handler is not a transform-closure proof"
+            );
+            assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+            assert_no_cipher_movement(&rig);
+        }
+    }
+}
+
+#[test]
+fn ordered_knife_transformed_whirlpool_and_big_fish_never_arm() {
+    for transformed_type in [390, 403] {
+        let mut rig = Rig::new();
+        let posted = knife_npc_request(&mut rig, 309, 1);
+        let _transformed = knife_npc_request(&mut rig, transformed_type, 1);
+        rig.start([Emission::Content(posted)]);
+        rig.pump(1);
+        rig.pump(2);
+        let receipt = rig.receipt();
+        assert_eq!(receipt.terminal, Some(ServerOrderedError::StaleTarget));
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+
+        let mut rig = Rig::new();
+        let observed = knife_npc_request(&mut rig, transformed_type, 1);
+        rig.start([Emission::Content(observed)]);
+        rig.pump(1);
+        rig.pump(2);
+        let receipt = rig.receipt();
+        assert_eq!(
+            receipt.terminal,
+            Some(ServerOrderedError::ContractUnavailable)
+        );
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+    }
+}
+
+#[test]
+fn ordered_knife_npc_snapshot_action_without_content_handler_proof_emits_nothing() {
+    for (type_id, operation) in [(309, 2), (316, 1), (9, 2)] {
+        let mut rig = Rig::new();
+        let request = knife_npc_request(&mut rig, type_id, operation);
+        rig.start([Emission::Content(request)]);
+        rig.pump(1);
+        rig.pump(2);
+        let receipt = rig.receipt();
+        assert_eq!(
+            receipt.terminal,
+            Some(ServerOrderedError::ContractUnavailable)
+        );
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+    }
+}
+
+#[test]
+fn ordered_knife_npc_exact_generation_type_tile_and_index_must_match() {
+    for mismatch in ["generation", "type", "tile", "index"] {
+        let mut rig = Rig::new();
+        let mut request = knife_npc_request(&mut rig, 309, 1);
+        let npc = &rig.snapshot.npcs()[0];
+        let mut tile = npc.network;
+        if mismatch == "tile" {
+            tile.x += 1;
+        }
+        let reference = ExactNpcReference::new(
+            if mismatch == "index" { 8 } else { npc.index },
+            if mismatch == "type" { 310 } else { 309 },
+            tile,
+            rig.snapshot.gens().npc_info + u64::from(mismatch == "generation"),
+            1,
+        )
+        .unwrap();
+        if let ServerOrderedRequest::KnifeArm { shape, .. } = &mut request {
+            *shape = KnifeArmShape::Continuing {
+                click: ExactLocOrNpcRef::Npc(reference),
+            };
+        }
+        rig.start([Emission::Content(request)]);
+        rig.pump(1);
+        rig.pump(2);
+        let receipt = rig.receipt();
+        assert_eq!(
+            receipt.terminal,
+            Some(ServerOrderedError::StaleTarget),
+            "{mismatch}"
+        );
+        assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+        assert_no_cipher_movement(&rig);
+    }
+}
+
 #[test]
 fn ordered_current_numeric_npc_proofs_refuse_the_whole_knife_request() {
     let mut rig = Rig::new();
@@ -2215,3 +2716,10 @@ fn ordered_unbound_selected_pin_refuses_start_before_any_encrypted_input() {
     assert!(results.errors.is_empty());
     assert_no_cipher_movement(&rig);
 }
+
+#[cfg(feature = "test-support")]
+#[path = "script_server_ordered_tests/gatherer_relog.rs"]
+mod gatherer_relog;
+#[cfg(feature = "test-support")]
+#[path = "script_server_ordered_tests/native_relog.rs"]
+mod native_relog;

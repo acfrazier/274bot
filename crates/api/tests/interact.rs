@@ -2226,6 +2226,82 @@ fn configured_client_revision(revision: ClientRevision) -> Client {
     c
 }
 
+#[test]
+fn builtin_gatherer_knife_dispatch_refuses_non_knife_request_with_invalid_shape() {
+    use api::interact::server_ordered::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Default)]
+    struct Observer(AtomicU64);
+    impl client::io::PacketObserver for Observer {
+        fn packet_body_length(&self, opcode: u8) -> i16 {
+            i16::try_from(
+                api::prot::packet_metadata(ClientRevision::R289, opcode)
+                    .unwrap()
+                    .length,
+            )
+            .unwrap()
+        }
+        fn packet_committed(&self, _: u8, _: usize) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+        fn committed_packet_count(&self) -> Option<u64> {
+            Some(self.0.load(Ordering::Relaxed))
+        }
+    }
+
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let pin = selected.selected_pin().unwrap();
+    let catalog = selected.server_ordered_catalog(&pin).unwrap();
+    let request = ServerOrderedRequest::CloseModal {
+        expected_root: ExpectedModalRoot::Bank,
+        reason: CloseModalReason::TerminalBankExit,
+    };
+    // The same valid content request passes through generic dispatch. Only the
+    // built-in KnifeArm entry point must reject it, before changing the cipher.
+    for builtin in [false, true] {
+        let mut scene = scene_revision(ClientRevision::R289);
+        let client = &mut scene.client;
+        let seed = [17, 29, 41, 53];
+        client.out.set_observer(Some(Arc::new(Observer::default())));
+        client.out.random = Some(Isaac::new(&seed));
+        client.gens.player_info = 1;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(client);
+        let mut input = ServerOrderedInputState::default();
+        input.observe_tick(1);
+        let mut authority = || Ok(());
+        let context = ServerOrderedDispatchContext {
+            request_id: 1,
+            dispatch_tick: 1,
+            input: input.snapshot(),
+            debug: None,
+            authority: &mut authority,
+        };
+        let receipt = if builtin {
+            ServerOrderedInputs::dispatch_builtin_gatherer_knife(
+                catalog, &pin, &snapshot, client, &request, context,
+            )
+        } else {
+            ServerOrderedInputs::dispatch(catalog, &pin, &snapshot, client, &request, context)
+        };
+        if builtin {
+            assert_eq!(receipt.terminal, Some(ServerOrderedError::InvalidShape));
+            assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+            assert_eq!(client.out.pos, 0);
+            let mut actual = client.out.random.clone().unwrap();
+            let mut expected = Isaac::new(&seed);
+            for _ in 0..16 {
+                assert_eq!(actual.next_int(), expected.next_int());
+            }
+        } else {
+            assert_eq!(receipt.terminal, None);
+            assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (1, 1));
+            assert_eq!(client.out.pos, 1);
+        }
+    }
+}
+
 fn scene() -> Scene {
     scene_revision(ClientRevision::R274)
 }

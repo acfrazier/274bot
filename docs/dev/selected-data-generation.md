@@ -75,6 +75,21 @@ The extractor resolves that code through `combat_damagetypes.constant`.
 A missing default or an ambiguous constant stops generation.
 Version-1 rows require attack, defence, magic, the signed attack/defence bonus fields, and `max_dealt`; missing keys fail API decoding rather than becoming zero.
 
+## Gathering tick facts
+
+Gathering schema 4 requires a `tick_arm` row for every method.
+The extractor checks the reviewed attempt-script families and classifies each
+method as continuing, ending, or not armable. It also records the roll signal,
+depletion and delay-drop behavior, the native arm delay, and the animation ids
+resolved from the selected sequence pack.
+Mining and woodcutting keep item-sorted per-tool facts. Mining rates and skill
+animations come from the selected tool parameters. The decoder rejects missing
+classifications, unknown kinds, and tool rows that are duplicate or incomplete.
+
+Regenerate both revisions when changing this family schema. A revision 274
+catalog cannot retain schema 3 when the decoder requires schema 4. These facts
+do not enable tick manipulation or change gathering requests by themselves.
+
 ## Server-ordered content contracts
 
 The revision 289 core includes a generated `server_ordered` catalog.
@@ -87,7 +102,7 @@ The complete catalog source digests are in `provenance.server_ordered_inputs`.
 This exact read inventory is separate from the shared family, base, and debug input lists.
 Changes to server-ordered proof inputs do not change the existing quest or gathering digests.
 
-NPC numeric operations require a complete transform closure.
+Generic NPC numeric operations require a complete transform closure.
 Static transforms, scripted transforms, temporary types, and reversion all participate in that proof.
 For a visible temporary type, the closure first includes its possible base types.
 It then follows all forward transforms from those types.
@@ -104,6 +119,21 @@ If no local evidence file exists, the verifier writes freshly generated evidence
 A stale local evidence file fails the digest check.
 This development-only output is not shipped or loaded by the product.
 Unknown label callers and unsupported NPC parameters remain conservative analysis limits, not proved dynamic content.
+
+The built-in Gatherer's `KnifeArm` has one narrower fishing exception.
+Generation joins known fishing-resource targets to complete ordinary NPC type
+configurations and present static OPNPC/APNPC operations.
+It excludes Whirlpool, Big fish, and every catalog hazard NPC.
+These rows live in `builtin_gatherer_fishing_operations`, separate from the
+complete-closure allowlist.
+The host grants this authority only to the current built-in Gatherer run.
+Every other caller keeps the complete transform-closure rule.
+The consumer checks the observed type before each arm and checked ending click.
+A continuing request must also match the NPC index, current type, network
+identity, and NPC-info packet generation at dispatch.
+Ending arms contain no NPC click.
+The operator accepts the remaining same-tick transform race for this built-in
+consumer. The guardian still owns event handling.
 
 The API retains one immutable catalog with the selected game data.
 Its accessor requires the exact selected pin.

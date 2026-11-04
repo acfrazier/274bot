@@ -23,13 +23,19 @@ use std::sync::Arc;
 
 const COINS_ID: i32 = 995;
 const MAX_RESERVE_RUNES: usize = 3;
-const MAX_PLAN_ITEMS: usize = 8;
-const MAX_PROTECTED_IDS: usize = 8 + UNBANKABLE_ALIASES.len();
+const MAX_PLAN_ITEMS: usize = 10;
+const MAX_PROTECTED_IDS: usize = 10 + UNBANKABLE_ALIASES.len();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SupplyItemFact {
     pub id: i32,
     pub name: Arc<str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TickKit {
+    pub knife: SupplyItemFact,
+    pub logs: SupplyItemFact,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +72,8 @@ pub struct PreparedSupply {
     pub coin_name: Option<Arc<str>>,
     /// Selected spell and its selected-cache rune costs; absent for `Off`.
     pub reserve: Option<ReserveSpell>,
+    /// Fixed knife and normal-log kit, resolved without method applicability.
+    pub tick_kit: Option<TickKit>,
 }
 
 impl PreparedSupply {
@@ -90,13 +98,48 @@ impl PreparedSupply {
             ));
         }
         let reserve = resolve_reserve(settings, selected)?;
+        let tick_kit = resolve_tick_kit(settings, selected)?;
         Ok(Self {
             food,
             bait,
             coin_name,
             reserve,
+            tick_kit,
         })
     }
+}
+
+fn resolve_tick_kit(
+    settings: &GathererSettings,
+    selected: &SelectedGameData,
+) -> Result<Option<TickKit>, ConfigError> {
+    if settings.tick_method != "Knife" {
+        return Ok(None);
+    }
+    let resolve = |alias| {
+        selected
+            .resolve_item_name(alias)
+            .and_then(|item| {
+                item.name
+                    .as_deref()
+                    .filter(|name| !name.trim().is_empty())
+                    .map(|name| SupplyItemFact {
+                        id: item.id,
+                        name: Arc::from(name),
+                    })
+            })
+            .ok_or_else(|| {
+                ConfigError::new(
+                    "tickMethod",
+                    "item-unavailable",
+                    format!("the selected cache has no named {alias} item"),
+                )
+            })
+    };
+    Ok(Some(TickKit {
+        knife: resolve("knife")?,
+        logs: resolve("logs")?,
+    }))
 }
 
 fn resolve_food(
@@ -554,6 +597,10 @@ pub fn protected_ids(prepared: &Prepared, tool_id: i32) -> ProtectedIds {
             }
         }
     }
+    if let Some(kit) = &prepared.supply.tick_kit {
+        ids.push(kit.knife.id);
+        ids.push(kit.logs.id);
+    }
     ids
 }
 
@@ -601,6 +648,7 @@ pub struct SupplyPlan {
     items: [Option<SupplyItem>; MAX_PLAN_ITEMS],
     len: u8,
     missing: Option<Arc<str>>,
+    kit_missing: bool,
 }
 
 impl Default for SupplyPlan {
@@ -609,6 +657,7 @@ impl Default for SupplyPlan {
             items: std::array::from_fn(|_| None),
             len: 0,
             missing: None,
+            kit_missing: false,
         }
     }
 }
@@ -619,6 +668,12 @@ impl SupplyPlan {
     /// plan.
     pub fn missing(&self) -> Option<&Arc<str>> {
         self.missing.as_ref()
+    }
+
+    /// The optional technique kit cannot reach one held knife and log.
+    /// It never becomes a gating missing item or a trip by itself.
+    pub fn kit_missing(&self) -> bool {
+        self.kit_missing
     }
 
     fn note_missing(&mut self, missing: Arc<str>) {
@@ -690,7 +745,7 @@ impl SupplyPlan {
     /// The withdrawal batch over posted pack and worn pages and a bank that
     /// holds `banked(id)` of each id: the live rows at an open bank, or the
     /// bank memory before the walk.
-    fn build(
+    pub(super) fn build(
         prepared: &Prepared,
         stats: &[StatView],
         stock: Stock<'_>,
@@ -780,6 +835,20 @@ impl SupplyPlan {
                 }
             }
         }
+        if let Some(kit) = &prepared.supply.tick_kit {
+            let knife_held = held(kit.knife.id);
+            let logs_held = held(kit.logs.id);
+            let knife_banked = banked(kit.knife.id).max(0);
+            let logs_banked = banked(kit.logs.id).max(0);
+            if knife_held.saturating_add(knife_banked) < 1
+                || logs_held.saturating_add(logs_banked) < 1
+            {
+                plan.kit_missing = true;
+            } else {
+                top_up(&mut plan, &kit.knife, 1, 1, knife_held, knife_banked);
+                top_up(&mut plan, &kit.logs, 3, 1, logs_held, logs_banked);
+            }
+        }
         plan
     }
 
@@ -813,6 +882,10 @@ impl SupplyPlan {
     }
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the bounded ten-item supply plan stays inline rather than allocating per trip"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SupplyPlanResult {
     Pending,
@@ -822,6 +895,10 @@ pub enum SupplyPlanResult {
 
 /// What trip admission decided ([`SupplyPlan::plan`]; the verbs are
 /// design-bank-snapshot §2.4's Gatherer column).
+#[expect(
+    clippy::large_enum_variant,
+    reason = "trip admission retains its bounded supply plan without a heap allocation"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SupplyVerdict {
     /// The pack and worn kit lack nothing a trip would fetch.
@@ -845,6 +922,23 @@ fn supplies_due(supply: &PreparedSupply, settings: &GathererSettings, stock: Sto
                 .reserve
                 .as_ref()
                 .is_some_and(|reserve| !can_afford_cast(reserve, stock)))
+        || supply
+            .tick_kit
+            .as_ref()
+            .is_some_and(|kit| tick_kit_due(kit, stock))
+}
+
+fn tick_kit_due(kit: &TickKit, stock: Stock<'_>) -> bool {
+    let (Some(knife), Some(logs)) = (stock.held(kit.knife.id), stock.held(kit.logs.id)) else {
+        return false;
+    };
+    if knife >= 1 && logs >= 1 {
+        return false;
+    }
+    stock.bank.filter(|bank| bank.known()).is_none_or(|bank| {
+        (knife >= 1 || bank.count(kit.knife.id).is_some_and(|count| count >= 1))
+            && (logs >= 1 || bank.count(kit.logs.id).is_some_and(|count| count >= 1))
+    })
 }
 
 /// Runes are consumed from the pack: worn runes never pay a cast.
@@ -1077,6 +1171,115 @@ mod tests {
 
     fn due(prepared: &Prepared, stats: &[StatView], held: &[ItemView], worn: &[ItemView]) -> bool {
         SupplyPlan::due(prepared, stats, pages(held, worn))
+    }
+
+    #[test]
+    fn tick_kit_preparation_does_not_decide_method_or_tool_applicability() {
+        let prepared = prepare(crate::native::SettingsBag::new());
+        for (skill, method) in [
+            ("Woodcutting", "woodcutting.normal"),
+            ("Mining", "mining.copper"),
+            ("Fishing", "fishing.category_633.op1"),
+        ] {
+            let mut settings = crate::native::SettingsBag::new();
+            settings.insert("skill".into(), json!(skill));
+            settings.insert("tickMethod".into(), json!("Knife"));
+            let mut settings = GathererSettings::from_bag(&settings).unwrap();
+            let index = prepared
+                .catalog
+                .methods()
+                .iter()
+                .position(|row| row.id.0.as_ref() == method)
+                .unwrap();
+            // Exercise the supply boundary directly: the full card still
+            // rejects incomplete native methods for their existing reasons.
+            let supply = PreparedSupply::prepare(
+                &mut settings,
+                &prepared.selected,
+                &prepared.catalog,
+                &[index],
+            )
+            .unwrap();
+            let kit = supply.tick_kit.as_ref().unwrap();
+            assert_eq!(kit.knife.name.as_ref(), "Knife");
+            assert_eq!(kit.logs.name.as_ref(), "Logs");
+            assert_ne!(kit.knife.id, kit.logs.id);
+        }
+        assert!(prepared.supply.tick_kit.is_none());
+    }
+
+    #[test]
+    fn tick_kit_trips_only_for_unknown_or_usable_bank_stock() {
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("tickMethod".into(), json!("Knife"));
+        let prepared = prepare(settings);
+        let kit = prepared.supply.tick_kit.as_ref().unwrap();
+        let stats = stats(&prepared);
+        let (tool_id, tool_name) = known_tool(&prepared);
+        let held = [item(tool_id, &tool_name, 1, ItemContainer::Inventory)];
+        for origin in [Origin::Hint, Origin::Session] {
+            for logs in [1, 10] {
+                let bank = memory(&[(kit.knife.id, 1), (kit.logs.id, logs)], origin);
+                let stock = with_bank(&held, &[], &bank);
+                let SupplyVerdict::Trip(plan) = SupplyPlan::plan(&prepared, &stats, stock) else {
+                    panic!("a bank holding the usable kit must admit its trip");
+                };
+                assert_eq!(
+                    targets(&plan),
+                    vec![(kit.knife.id, 1), (kit.logs.id, logs.min(3))]
+                );
+                assert!(!plan.kit_missing());
+                assert_eq!(plan.missing(), None);
+            }
+            for rows in [vec![], vec![(kit.knife.id, 1)], vec![(kit.logs.id, 3)]] {
+                let bank = memory(&rows, origin);
+                let stock = with_bank(&held, &[], &bank);
+                assert_eq!(
+                    SupplyPlan::plan(&prepared, &stats, stock),
+                    SupplyVerdict::NotDue,
+                    "a known incomplete kit is not a trip or a gating missing item"
+                );
+                let plan =
+                    SupplyPlan::build(&prepared, &stats, stock, |id| bank.count(id).unwrap_or(0));
+                assert!(plan.kit_missing());
+                assert_eq!(plan.missing(), None);
+                assert!(targets(&plan).is_empty());
+            }
+        }
+        let unknown = memory(&[], Origin::Unknown);
+        assert_eq!(
+            SupplyPlan::plan(&prepared, &stats, with_bank(&held, &[], &unknown)),
+            SupplyVerdict::TripToLearn
+        );
+        let empty = memory(&[], Origin::Session);
+        let loaded = SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &[], Some(&[]));
+        let SupplyPlanResult::Ready(plan) = loaded else {
+            panic!("an unavailable optional kit must not fail a loaded-bank plan");
+        };
+        assert!(plan.kit_missing());
+        assert_eq!(plan.missing(), None);
+        let stocked = [
+            held[0].clone(),
+            item(kit.knife.id, &kit.knife.name, 1, ItemContainer::Inventory),
+            item(kit.logs.id, &kit.logs.name, 1, ItemContainer::Inventory),
+        ];
+        let stock = with_bank(&stocked, &[], &empty);
+        assert_eq!(
+            SupplyPlan::plan(&prepared, &stats, stock),
+            SupplyVerdict::NotDue
+        );
+        let plan = SupplyPlan::build(&prepared, &stats, stock, |_| 0);
+        assert!(!plan.kit_missing());
+        assert!(targets(&plan).is_empty());
+        let knife_held = &stocked[..2];
+        let logs_banked = memory(&[(kit.logs.id, 3)], Origin::Session);
+        let SupplyVerdict::Trip(plan) =
+            SupplyPlan::plan(&prepared, &stats, with_bank(knife_held, &[], &logs_banked))
+        else {
+            panic!("a held knife and banked logs form a usable kit");
+        };
+        assert_eq!(targets(&plan), vec![(kit.logs.id, 3)]);
+        assert!(!plan.kit_missing());
     }
 
     #[test]

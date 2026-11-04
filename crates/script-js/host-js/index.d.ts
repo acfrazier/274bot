@@ -955,6 +955,8 @@ export interface GatherSettings {
   fishingMethod?: string;
   /** default "Best tier", only when its card show-if holds */
   targetPreference?: 'Best tier' | 'Nearest';
+  /** default "Off", only when its card show-if holds */
+  tickMethod?: 'Off' | 'Knife';
   /** default "Start" */
   location?: 'Start' | 'Site' | 'Auto' | 'Custom';
   /** default "", only when its card show-if holds */
@@ -1006,6 +1008,17 @@ export interface GatherStatus {
   area: string;
   target: string;
   tool: string;
+  tick_method: string;
+  tick_cycle: number;
+  tick_verified: number;
+  tick_unobserved: number;
+  tick_slips: number;
+  tick_lost: number;
+  tick_delayed: number;
+  tick_paused: number;
+  tick_fallbacks: number;
+  tick_fallback_failed: number;
+  tick_events: number;
   bait: number;
   food: number;
   coins: number;

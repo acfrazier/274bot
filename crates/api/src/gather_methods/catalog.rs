@@ -23,6 +23,86 @@ pub enum GatherSkill {
     Mining,
     Fishing,
 }
+
+/// Whether a gathered method has a recurring tick loop that the tick manipulator can arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TickArmKind {
+    /// The interaction remains live after a roll and continues toward another roll.
+    Continuing,
+    /// The interaction ends after a roll and needs a new click to start another cycle.
+    Ending,
+    /// The method has no armable recurring interaction loop.
+    None,
+}
+
+/// Whether an eligible roll emits the animation signal used to observe its timing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TickRollSignal {
+    /// Every eligible roll emits its classified animation signal.
+    Always,
+    /// Only some eligible roll outcomes emit the animation signal.
+    Sometimes,
+    /// The eligible roll branch emits no animation signal.
+    Never,
+}
+
+/// Tick facts selected by one tool in a method's item-sorted tool set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TickArmTool {
+    /// Selected-cache object id of the tool.
+    pub item: i32,
+    /// `d < 0` action-delay offset written for this selected tool.
+    pub native_arm: u8,
+    /// Whether tick manipulation cannot shorten this tool's native cadence.
+    pub no_gain: bool,
+    /// Selected-cache sequence id used for this tool's skill animation.
+    pub skill_anim: i32,
+}
+
+/// Reviewed tick behavior for one gathering method.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TickArm {
+    /// Whether the method's interaction continues, ends, or has no armable loop.
+    pub kind: TickArmKind,
+    /// Whether an eligible roll emits its timing animation signal.
+    pub roll_signal: TickRollSignal,
+    /// Whether a successful roll delays the drop with `p_delay(0)`.
+    pub delay_drop: bool,
+    /// Whether a successful roll can deplete the resource.
+    pub depletes: bool,
+    /// Family `d < 0` action-delay offset; `None` means it is selected per tool.
+    pub native_arm: Option<u8>,
+    /// Smallest `d` at which a click still rolls on schedule.
+    pub act_min_d: u8,
+    /// Whether the family has a silent act step instead of an observable message or animation (lava eel).
+    pub act_silent: bool,
+    /// Whether tick manipulation cannot shorten the method's native cadence; `None` means it is tool-selected.
+    pub no_gain: Option<bool>,
+    /// Shared skill-animation sequence, or `None` when it is absent or tool-selected.
+    pub skill_anim: Option<i32>,
+    /// Fishing sequence emitted at the roll step, if that step has one.
+    pub roll_anim: Option<i32>,
+    /// Fishing sequence emitted by the cast branch, if the method has one.
+    pub cast_anim: Option<i32>,
+    /// Selected-cache sequence id for `human_fletching`, when available.
+    pub fletch_anim: Option<i32>,
+    /// Per-tool facts sorted by object id for allocation-free lookup.
+    pub tool_facts: Arc<[TickArmTool]>,
+}
+
+impl TickArm {
+    /// Find per-tool facts by binary search; returns `None` if the item is not in this method's table.
+    pub fn for_tool(&self, item_id: i32) -> Option<&TickArmTool> {
+        self.tool_facts
+            .binary_search_by_key(&item_id, |tool| tool.item)
+            .ok()
+            .map(|index| &self.tool_facts[index])
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TargetClass {
     Resource,
@@ -95,6 +175,8 @@ pub struct GatherMethod {
     pub consumes: Knowledge<Arc<[ItemAmount]>>,
     pub requirements: Knowledge<Arc<[Requirement]>>,
     pub spots: Knowledge<Arc<[GatherSpot]>>,
+    /// Reviewed timing, animation, depletion, and per-tool facts for tick manipulation.
+    pub tick_arm: TickArm,
 }
 
 /// What a content zone does to a method's yield for placements inside it.

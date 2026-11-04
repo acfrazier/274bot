@@ -4,7 +4,7 @@ use api::snapshot::ItemView;
 use std::sync::Arc;
 use std::task::Poll;
 
-const MAX_PROTECTED: usize = 8;
+pub const MAX_PROTECTED: usize = 10;
 const MAX_BATCH: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

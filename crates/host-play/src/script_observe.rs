@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use std::time::Duration;
@@ -29,6 +30,8 @@ use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
 use crate::play_login::SlotArm;
+#[cfg(feature = "test-support")]
+use crate::tick_engine_test_support::TickEngineTestHook;
 #[cfg(test)]
 use std::sync::{Condvar, LazyLock, Weak};
 
@@ -525,8 +528,51 @@ fn retire_run_status(statuses: Option<&Arc<Mutex<Vec<crate::SlotStatus>>>>, name
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn script_observe_cached_with_channels(
+/// Snapshot argument passed by the host observer. The mutable form is used
+/// only by the live tick-engine test hook at the ordered-dispatch boundary.
+pub(crate) enum SnapshotArgument<'a> {
+    ReadOnly(Option<&'a GameSnapshot>),
+    #[cfg(feature = "test-support")]
+    Mutable(&'a mut GameSnapshot),
+}
+
+impl<'a> From<Option<&'a GameSnapshot>> for SnapshotArgument<'a> {
+    fn from(snapshot: Option<&'a GameSnapshot>) -> Self {
+        Self::ReadOnly(snapshot)
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl<'a> From<&'a mut GameSnapshot> for SnapshotArgument<'a> {
+    fn from(snapshot: &'a mut GameSnapshot) -> Self {
+        Self::Mutable(snapshot)
+    }
+}
+
+impl SnapshotArgument<'_> {
+    fn read(&self) -> Option<&GameSnapshot> {
+        match self {
+            Self::ReadOnly(snapshot) => *snapshot,
+            #[cfg(feature = "test-support")]
+            Self::Mutable(snapshot) => Some(snapshot),
+        }
+    }
+}
+
+impl Deref for SnapshotArgument<'_> {
+    type Target = GameSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        self.read()
+            .expect("snapshot access requires a published snapshot")
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the shared observer preserves its established host call surface"
+)]
+pub(crate) fn script_observe_cached_with_channels<'a, S>(
     driver: &mut dyn Driver,
     name: &str,
     up: bool,
@@ -536,7 +582,7 @@ pub(crate) fn script_observe_cached_with_channels(
     here: Option<(i32, i32, i32)>,
     inv: Option<&[(i32, i32)]>,
     state: Option<Arc<WorldState>>,
-    snapshot: Option<&GameSnapshot>,
+    snapshot: S,
     bank_memory: Option<&parking_lot::RwLock<api::bank_memory::BankMemory>>,
     #[cfg(feature = "js")] npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
@@ -557,10 +603,16 @@ pub(crate) fn script_observe_cached_with_channels(
     mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
     service_arm: Option<&SlotArm>,
     statuses: Option<&Arc<Mutex<Vec<crate::SlotStatus>>>>,
-) -> ScriptObservation {
+) -> ScriptObservation
+where
+    S: Into<SnapshotArgument<'a>>,
+{
+    let snapshot = snapshot.into();
+    #[cfg(feature = "test-support")]
+    let mut snapshot = snapshot;
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
-        if let Some(snapshot) = snapshot {
+        if let Some(snapshot) = snapshot.read() {
             inp.observe_input_session(driver.revision(), snapshot.gens().session);
         }
         if !up || hold || guardian_hold {
@@ -637,7 +689,7 @@ pub(crate) fn script_observe_cached_with_channels(
         slot.observe_player_fix(tick, snapshot);
         slot.seat_host_hold(hold && !guardian_hold);
         let stop_prayers = slot.take_stop_prayer_cleanup();
-        let prayer_cleanup_hold = if let Some(snapshot) = snapshot.filter(|_| up) {
+        let prayer_cleanup_hold = if let Some(snapshot) = snapshot.read().filter(|_| up) {
             let mut bots = navs.lock().unwrap();
             if !stop_prayers.is_empty() {
                 let bot = bots.entry(name.to_owned()).or_default();
@@ -716,7 +768,9 @@ pub(crate) fn script_observe_cached_with_channels(
         slot.sync_compiled_clue(
             hold || ours
                 || !up
-                || !snapshot.is_some_and(|snap| snap.ingame() && snap.scene_state() == 2),
+                || !snapshot
+                    .read()
+                    .is_some_and(|snap| snap.ingame() && snap.scene_state() == 2),
         );
         // Deliver only the terminal belonging to this still-live native owner.
         // The slot repeats the run/action fence before accepting the receipt.
@@ -782,7 +836,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 pending_bank_op_active = true;
             } else {
                 slot.resume_pending_bank_op();
-                let valid_session = snapshot.is_some_and(|snap| {
+                let valid_session = snapshot.read().is_some_and(|snap| {
                     snap.bank_component_id() >= 0
                         && snap.bank_loaded()
                         && snap.bank_session_generation() == pending.bank_generation
@@ -800,7 +854,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     // the counted ops settle through.
                     slot.complete_bank_op(true);
                 } else {
-                    let current = snapshot.map_or(0, |snap| match pending.kind {
+                    let current = snapshot.read().map_or(0, |snap| match pending.kind {
                         script::slot::PendingBankOpKind::Deposit => snap
                             .bank_side()
                             .iter()
@@ -843,7 +897,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 pending_withdraw_x_active = true;
             } else {
                 slot.resume_pending_withdraw_x();
-                let valid_session = snapshot.is_some_and(|snap| {
+                let valid_session = snapshot.read().is_some_and(|snap| {
                     snap.bank_component_id() >= 0
                         && snap.bank_loaded()
                         && snap.bank_session_generation() == pending.bank_generation
@@ -855,8 +909,8 @@ pub(crate) fn script_observe_cached_with_channels(
                         script::slot::PendingWithdrawXPhase::Dialog => {
                             if pending.expired() {
                                 slot.complete_withdraw_x(false);
-                            } else if snapshot.is_some_and(GameSnapshot::count_dialog_open) {
-                                let sent = snapshot.is_some_and(|snap| {
+                            } else if snapshot.read().is_some_and(GameSnapshot::count_dialog_open) {
+                                let sent = snapshot.read().is_some_and(|snap| {
                                     matches!(
                                         api::interact::Interactions::new(snap, driver)
                                             .answer_count(pending.count),
@@ -881,13 +935,13 @@ pub(crate) fn script_observe_cached_with_channels(
                                         .filter(|(id, _)| *id == pending.item_id)
                                         .map(|(_, count)| *count)
                                         .sum::<i32>(),
-                                    snapshot.is_some_and(|snap| {
+                                    snapshot.read().is_some_and(|snap| {
                                         snap.inventory_size() > 0
                                             && rows.len() >= snap.inventory_size() as usize
                                     }),
                                 )
                             } else {
-                                snapshot.map_or((0, false), |snap| {
+                                snapshot.read().map_or((0, false), |snap| {
                                     (
                                         snap.inventory()
                                             .iter()
@@ -1043,7 +1097,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         .collect();
                 let packed = pack_cached_reach(
                     slot.reach_pack_cache(),
-                    snapshot,
+                    snapshot.read(),
                     here,
                     world.as_deref(),
                     canlight,
@@ -1054,7 +1108,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     here,
                     up,
                     inv,
-                    snapshot,
+                    snapshot.read(),
                     obj_names,
                     world.as_deref(),
                     npc_boxes,
@@ -1127,7 +1181,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         walk: None,
                         walk_with: None,
                         inv,
-                        snapshot,
+                        snapshot: snapshot.read(),
                         obj_names,
                         compiled: script::CompiledTick {
                             hold: isolate_hold,
@@ -1142,7 +1196,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 let packed = selected.as_ref().map(|_| {
                     pack_cached_reach(
                         slot.reach_pack_cache(),
-                        snapshot,
+                        snapshot.read(),
                         here,
                         world.as_deref(),
                         canlight,
@@ -1166,7 +1220,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         navs,
                         name,
                         world,
-                        snapshot,
+                        snapshot.read(),
                         walk_permissions,
                     )
                 });
@@ -1186,7 +1240,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     walk: None,
                     walk_with: None,
                     inv,
-                    snapshot,
+                    snapshot: snapshot.read(),
                     obj_names,
                     compiled: script::CompiledTick {
                         service_gate,
@@ -1269,15 +1323,17 @@ pub(crate) fn script_observe_cached_with_channels(
             }
             let ready = up
                 && here.is_some()
-                && snapshot.is_some_and(|snap| snap.ingame() && snap.scene_state() == 2);
+                && snapshot
+                    .read()
+                    .is_some_and(|snap| snap.ingame() && snap.scene_state() == 2);
             let frozen = hold || !ready || slot.state() == script::RunState::Paused;
             if ready {
-                if let Some(snapshot) = snapshot {
+                if let Some(snapshot) = snapshot.read() {
                     slot.note_levels(snapshot.stats().iter().map(|stat| stat.base));
                 }
             }
             let mut xp_slots = [0; 25];
-            let xp = if let Some(snapshot) = snapshot {
+            let xp = if let Some(snapshot) = snapshot.read() {
                 for (xp, stat) in xp_slots.iter_mut().zip(snapshot.stats()) {
                     *xp = stat.xp;
                 }
@@ -1320,7 +1376,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         other => apply_watchdog_nav_action(
                             other,
                             driver,
-                            snapshot,
+                            snapshot.read(),
                             here,
                             navs,
                             world,
@@ -1379,7 +1435,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 other => apply_watchdog_nav_action(
                     other,
                     driver,
-                    snapshot,
+                    snapshot.read(),
                     here,
                     navs,
                     world,
@@ -1406,7 +1462,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     }
                 } else {
                     let mut carried = None;
-                    if up && !hold && here.is_some() && snapshot.is_some() {
+                    if up && !hold && here.is_some() && snapshot.read().is_some() {
                         carried = take_carried_walk(navs, name, slot.runtime_generation());
                     }
                     if let Some(update) = update {
@@ -1415,7 +1471,8 @@ pub(crate) fn script_observe_cached_with_channels(
                     let queued = take_script_interacts(reqs, slot_input);
                     let resumed =
                         resumed_walk(carried, queued.iter().map(|q| &q.req), |dest, radius| {
-                            let (Some((x, z, level)), Some(snapshot)) = (here, snapshot) else {
+                            let (Some((x, z, level)), Some(snapshot)) = (here, snapshot.read())
+                            else {
                                 return false;
                             };
                             let view = pack_cached_reach(
@@ -1523,7 +1580,7 @@ pub(crate) fn script_observe_cached_with_channels(
         has_native_actions = false;
     }
     if up && !hold && (!interact.is_empty() || has_native_actions) {
-        if let Some(snapshot) = snapshot {
+        if snapshot.read().is_some() {
             #[cfg(test)]
             wait_dispatch_barrier();
             if let Some(dispatch_slot) = script_slot(scripts, name) {
@@ -1552,19 +1609,6 @@ pub(crate) fn script_observe_cached_with_channels(
                         bot.compat_v1 =
                             slot.surface_family() == Some(script::surface::SurfaceFamily::JsV1);
                     }
-                    let interact_context = InteractContext {
-                        snapshot,
-                        obj_names,
-                        here,
-                        navs,
-                        world,
-                        state: state.as_ref(),
-                        bank: bank_memory,
-                        name,
-                        compatibility_scope: compatibility_work_scope,
-                        cache: &cache,
-                        obj_names_arc: &obj_names_arc,
-                    };
                     // The native seat encodes release rows ahead of gameplay,
                     // but its two host consumers drain separately. Deliver JS
                     // Walk releases before the native action loop as well, so
@@ -1583,7 +1627,19 @@ pub(crate) fn script_observe_cached_with_channels(
                         interact = remaining;
                         wrote |= dispatch_script_interact_cached_scoped(
                             driver,
-                            &interact_context,
+                            &InteractContext {
+                                snapshot: &snapshot,
+                                obj_names,
+                                here,
+                                navs,
+                                world,
+                                state: state.as_ref(),
+                                bank: bank_memory,
+                                name,
+                                compatibility_scope: compatibility_work_scope,
+                                cache: &cache,
+                                obj_names_arc: &obj_names_arc,
+                            },
                             Some(&mut slot),
                             releases
                                 .into_iter()
@@ -1640,17 +1696,75 @@ pub(crate) fn script_observe_cached_with_channels(
                                 #[cfg(test)]
                                 run_ordered_dispatch_hook(&authority);
                                 let selected = slot.compiled_game_data();
-                                let dispatch = super::dispatch_native_server_ordered(
-                                    driver,
-                                    super::OrderedDispatchContext {
-                                        snapshot,
-                                        selected: selected.as_deref(),
-                                        tick,
-                                        input: slot_input,
-                                    },
-                                    &authority,
-                                    &envelope,
-                                );
+                                let builtin_gatherer_knife =
+                                    slot.is_builtin_gatherer_run(authority.run());
+                                let dispatch = {
+                                    let mut dispatch_with_snapshot =
+                                        |dispatch_snapshot: &GameSnapshot| {
+                                            super::dispatch_native_server_ordered(
+                                                driver,
+                                                super::OrderedDispatchContext {
+                                                    snapshot: dispatch_snapshot,
+                                                    selected: selected.as_deref(),
+                                                    input: slot_input,
+                                                    builtin_gatherer_knife,
+                                                },
+                                                &authority,
+                                                &envelope,
+                                            )
+                                        };
+                                    #[cfg(feature = "test-support")]
+                                    let dispatch = if let Some(hook) = TickEngineTestHook::current()
+                                    {
+                                        match &mut snapshot {
+                                            SnapshotArgument::Mutable(snapshot) => {
+                                                let guard = hook.begin_dispatch(
+                                                    Some(&mut **snapshot),
+                                                    tick as u32,
+                                                    &authority,
+                                                    &envelope,
+                                                );
+                                                let dispatch = dispatch_with_snapshot(
+                                                    guard
+                                                        .snapshot()
+                                                        .expect("mutable dispatch snapshot exists"),
+                                                );
+                                                hook.record_dispatch(
+                                                    dispatch,
+                                                    tick,
+                                                    guard.request_debug(),
+                                                    guard.mutation_applied(),
+                                                );
+                                                dispatch
+                                            }
+                                            SnapshotArgument::ReadOnly(snapshot) => {
+                                                let guard = hook.begin_dispatch(
+                                                    None,
+                                                    tick as u32,
+                                                    &authority,
+                                                    &envelope,
+                                                );
+                                                let dispatch = dispatch_with_snapshot(
+                                                    snapshot
+                                                        .as_deref()
+                                                        .expect("dispatch snapshot is published"),
+                                                );
+                                                hook.record_dispatch(
+                                                    dispatch,
+                                                    tick,
+                                                    guard.request_debug(),
+                                                    guard.mutation_applied(),
+                                                );
+                                                dispatch
+                                            }
+                                        }
+                                    } else {
+                                        dispatch_with_snapshot(&snapshot)
+                                    };
+                                    #[cfg(not(feature = "test-support"))]
+                                    let dispatch = dispatch_with_snapshot(&snapshot);
+                                    dispatch
+                                };
                                 wrote |= dispatch.wire_events != 0;
                                 slot.complete_native_server_ordered(
                                     &authority,
@@ -1713,7 +1827,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                                 ),
                                             };
                                         }
-                                        dispatch_native_bank_deposit(driver, snapshot, trace)
+                                        dispatch_native_bank_deposit(driver, &snapshot, trace)
                                     } else {
                                         BankDepositDispatch {
                                             accepted: false,
@@ -1731,7 +1845,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                         false
                                     } else if let Some(pending) =
                                         super::bank::dispatch_observed_withdraw_x(
-                                            driver, snapshot, obj_names, inv, &request,
+                                            driver, &snapshot, obj_names, inv, &request,
                                         )
                                     {
                                         slot.set_pending_withdraw_x(Some(pending));
@@ -1743,7 +1857,19 @@ pub(crate) fn script_observe_cached_with_channels(
                                 } else {
                                     dispatch_script_interact_cached_scoped(
                                         driver,
-                                        &interact_context,
+                                        &InteractContext {
+                                            snapshot: &snapshot,
+                                            obj_names,
+                                            here,
+                                            navs,
+                                            world,
+                                            state: state.as_ref(),
+                                            bank: bank_memory,
+                                            name,
+                                            compatibility_scope: compatibility_work_scope,
+                                            cache: &cache,
+                                            obj_names_arc: &obj_names_arc,
+                                        },
                                         Some(&mut slot),
                                         [request],
                                     )
@@ -1815,7 +1941,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                             proof_decoded,
                                             proof_wire_opcodes.as_deref().unwrap_or_default(),
                                         ),
-                                        snapshot,
+                                        &snapshot,
                                     );
                                 }
                                 wrote |= accepted;
@@ -1861,7 +1987,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     authority.request_id().get(),
                                     authority.action_id().get(),
                                     &request,
-                                    snapshot,
+                                    &snapshot,
                                 );
                                 let prereq_allow = super::walk_permissions::native_prereq_allow(
                                     navs,
@@ -1881,7 +2007,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                 // A refusal reaches the owner as a typed
                                 // `Refused` receipt on the next observation.
                                 arm.queue_native_route(
-                                    snapshot,
+                                    &snapshot,
                                     request,
                                     authority,
                                     walk_permissions,
@@ -1898,7 +2024,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     bank: super::slot_bank_memory::planner_rows(bank_memory),
                                 };
                                 arm.queue_native_assess(
-                                    snapshot,
+                                    &snapshot,
                                     request,
                                     authority.clone(),
                                     api::quest_progress::EvidenceStamp {
@@ -1968,7 +2094,7 @@ pub(crate) fn script_observe_cached_with_channels(
                             name,
                             tick,
                             std::slice::from_ref(&req),
-                            snapshot,
+                            &snapshot,
                         );
                         match req {
                             req @ (script::interact::InteractReq::Deposit { .. }
@@ -1976,7 +2102,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                 if pending_bank_op_active || armed_bank_op.is_some() {
                                     rejected_bank_op += 1;
                                 } else if let Some(pending) = dispatch_observed_bank_op(
-                                    driver, snapshot, obj_names, inv, &req,
+                                    driver, &snapshot, obj_names, inv, &req,
                                 ) {
                                     armed_bank_op = Some(pending);
                                     pending_bank_op_active = true;
@@ -1989,7 +2115,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                 let pending = (armed.is_none() && !pending_withdraw_x_active)
                                     .then(|| {
                                         super::bank::dispatch_observed_withdraw_x(
-                                            driver, snapshot, obj_names, inv, &req,
+                                            driver, &snapshot, obj_names, inv, &req,
                                         )
                                     })
                                     .flatten();
@@ -2006,7 +2132,19 @@ pub(crate) fn script_observe_cached_with_channels(
                     }
                     wrote |= dispatch_script_interact_cached_scoped(
                         driver,
-                        &interact_context,
+                        &InteractContext {
+                            snapshot: &snapshot,
+                            obj_names,
+                            here,
+                            navs,
+                            world,
+                            state: state.as_ref(),
+                            bank: bank_memory,
+                            name,
+                            compatibility_scope: compatibility_work_scope,
+                            cache: &cache,
+                            obj_names_arc: &obj_names_arc,
+                        },
                         Some(&mut slot),
                         dispatchable,
                     );
@@ -2157,7 +2295,7 @@ pub(crate) fn script_observe_cached_with_channels(
         };
         if api::interact::cheat(driver, &cmd) == client::CheatSend::Sent {
             #[cfg(test)]
-            if let Some(snapshot) = snapshot {
+            if let Some(snapshot) = snapshot.read() {
                 crate::combat_proof::record_other_request(
                     name,
                     Some(tick),
@@ -2170,7 +2308,9 @@ pub(crate) fn script_observe_cached_with_channels(
             }
             wrote = true;
             if observe_replies {
-                if let (Some(replies), Some(snapshot)) = (debug_replies.as_deref_mut(), snapshot) {
+                if let (Some(replies), Some(snapshot)) =
+                    (debug_replies.as_deref_mut(), snapshot.read())
+                {
                     replies.sent(name, cmd, snapshot);
                 }
             }

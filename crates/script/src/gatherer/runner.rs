@@ -36,6 +36,8 @@ use std::task::Poll;
 
 #[path = "recover.rs"]
 mod recover;
+#[path = "runner_timing.rs"]
+mod timing;
 
 const MAX_AVOID: usize = 8;
 const MAX_BANK_OPEN_ATTEMPTS: u8 = 3;
@@ -270,6 +272,11 @@ pub struct Gatherer {
     area: Option<WorkArea>,
     target: Option<TargetPlan>,
     active: Active,
+    tick_policy: crate::native::tickcycle::TickPolicy,
+    parked_cycle: Option<crate::native::tickcycle::TickCycle>,
+    tick_applicability: Option<crate::native::tickcycle::OffReason>,
+    tick_last_off: Option<crate::native::tickcycle::OffReason>,
+    tick_last_sequence: u32,
     tool: ToolState,
     avoid: [AvoidedTile; MAX_AVOID],
     scratch: Box<GatherScratch>,
@@ -330,6 +337,11 @@ impl Gatherer {
             area: None,
             target: None,
             active: Active::None,
+            tick_policy: Default::default(),
+            parked_cycle: None,
+            tick_applicability: None,
+            tick_last_off: None,
+            tick_last_sequence: 0,
             tool: ToolState {
                 id: -1,
                 worn: false,
@@ -403,6 +415,8 @@ impl Gatherer {
     }
 
     fn start_trip(&mut self) {
+        self.capture_live_timing();
+        self.parked_cycle = None;
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
@@ -853,6 +867,8 @@ impl Gatherer {
     }
 
     fn cancel_active(&mut self) {
+        self.capture_live_timing();
+        self.parked_cycle = None;
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
@@ -1237,12 +1253,13 @@ impl Gatherer {
     }
 
     fn start_drop(&mut self, tick: &mut NativeTick<'_>) {
+        self.parked_cycle = None;
         let snapshot = tick.cx.snapshot();
         let Some(inventory) = snapshot.inventory() else {
             return;
         };
         let products = Arc::clone(&self.prepared.products);
-        let mut protected = [0; 8];
+        let mut protected = [0; super::drop::MAX_PROTECTED];
         let ids = supply::protected_ids(&self.prepared, self.tool.id);
         let protected_len = ids.as_slice().len();
         protected[..protected_len].copy_from_slice(ids.as_slice());
@@ -1364,12 +1381,23 @@ impl Gatherer {
         let Some(plan) = self.target.clone() else {
             return;
         };
+        let timing = self.timing_for_target(&plan, &tick.cx);
+        self.begin_gather_target(plan, timing, tick);
+    }
+
+    fn begin_gather_target(
+        &mut self,
+        plan: TargetPlan,
+        timing: Option<super::gather::GatherTiming>,
+        tick: &mut NativeTick<'_>,
+    ) {
         match tick.actions.begin::<GatherRun>(
             GatherRunArgs {
                 target: plan,
                 stall_ticks: DEFAULT_STALL_TICKS,
                 catalog: Arc::clone(&self.prepared.catalog),
                 quest_owned: false,
+                timing,
             },
             &mut tick.cx,
         ) {
@@ -1443,6 +1471,10 @@ impl Gatherer {
     }
 
     fn handle_gather(&mut self, result: GatherResult, tick: &mut NativeTick<'_>) {
+        if let Some(timing) = result.timing {
+            self.tick_policy = timing.policy;
+            self.parked_cycle = Some(timing.cycle);
+        }
         self.needs_validate = true;
         if result.gained > 0 || result.xp > 0 {
             self.last_gameplay_tick = tick.cx.evidence().tick;
@@ -1980,6 +2012,9 @@ impl Gatherer {
         let kind = args.kind;
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
             Ok(handle) => {
+                if let Some(cycle) = &mut self.parked_cycle {
+                    cycle.pause(&mut self.tick_policy);
+                }
                 self.active = Active::Tend(handle);
                 self.survival_tend = true;
                 self.survival_deferred = false;
@@ -2561,6 +2596,9 @@ impl Gatherer {
             zone_gated: self.zone_gated,
             excluded_targets: Arc::clone(&self.prepared.excluded_targets),
             last_event: Arc::clone(&self.last_event),
+            tick_method: self.tick_method_status(),
+            tick_cycle: self.tick_policy.last_cycle_ticks().map_or(-1, i64::from),
+            tick_stats: self.tick_policy.stats(),
         }
     }
 
@@ -2589,6 +2627,7 @@ impl Gatherer {
     }
 
     fn publish(&mut self, tick: &mut NativeTick<'_>) {
+        self.refresh_tick_status();
         if !self.dirty {
             return;
         }
@@ -2624,6 +2663,10 @@ impl Script for Gatherer {
             self.run = tick.cx.run();
             self.observed_progress = None;
             self.cancel_active();
+            self.tick_policy = Default::default();
+            self.tick_applicability = None;
+            self.tick_last_off = None;
+            self.tick_last_sequence = 0;
             self.needs_validate = true;
             self.rebaseline_gameplay = true;
             self.death = crate::native::death::DeathLatch::from_watermark(self.retained.death_seq);
@@ -2887,6 +2930,134 @@ mod tests {
     }
 
     #[test]
+    fn tick_kit_drop_copy_and_withdrawal_batch_hold_all_nine_supply_ids() {
+        use crate::quester::families::tests::{def, with_tick};
+        use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let reserve = selected
+            .teleports()
+            .iter()
+            .find(|spell| spell.available() && spell.runes.len() == 3)
+            .unwrap();
+        let mut settings = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Fishing")),
+            ("fishingMethod", serde_json::json!("fishing.freshfish.op1")),
+            ("food", serde_json::json!("Lobster")),
+            ("foodTarget", serde_json::json!(1)),
+            ("coinTarget", serde_json::json!(1)),
+            ("reserveTeleport", serde_json::json!(reserve.name)),
+            ("reserveCasts", serde_json::json!(1)),
+            ("tickMethod", serde_json::json!("Knife")),
+        ] {
+            settings.insert(key.into(), value);
+        }
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(settings),
+                selected,
+                Arc::default(),
+                None,
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let prepared = Arc::clone(config.get::<Arc<Prepared>>().unwrap());
+        let tool = known_rows(&prepared.catalog.methods()[prepared.methods[0]].tools)[0].item;
+        let protected = supply::protected_ids(&prepared, tool);
+        assert_eq!(protected.as_slice().len(), 9);
+        let kit = prepared.supply.tick_kit.as_ref().unwrap();
+        let ordered = prepared
+            .selected
+            .server_ordered_catalog(prepared.catalog.pin())
+            .unwrap();
+        assert_eq!(kit.knife.id, ordered.knife().knife().id());
+        assert!(ordered
+            .knife()
+            .logs()
+            .iter()
+            .any(|logs| logs.id() == kit.logs.id));
+        assert_eq!((kit.knife.id, kit.logs.id), (946, 1511));
+        assert!(protected.as_slice().contains(&kit.knife.id));
+        assert!(protected.as_slice().contains(&kit.logs.id));
+        let row = |id, count, container| ItemView {
+            def: def(
+                id,
+                prepared
+                    .selected
+                    .item_by_id(id)
+                    .unwrap()
+                    .name
+                    .as_deref()
+                    .unwrap(),
+            ),
+            container,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count,
+            actions: Vec::new(),
+            component_id: -1,
+        };
+        let bank: Vec<_> = protected
+            .as_slice()
+            .iter()
+            .map(|&id| row(id, 10_000, ItemContainer::Bank))
+            .collect();
+        let stats = [StatView {
+            index: 10,
+            name: "fishing".into(),
+            base: 99,
+            effective: 99,
+            xp: 0,
+            used: true,
+        }];
+        let supply::SupplyPlanResult::Ready(plan) =
+            supply::SupplyPlan::from_loaded_bank(&prepared, &stats, &[], &[], Some(&bank))
+        else {
+            panic!("the complete nine-item bank must produce a withdrawal batch");
+        };
+        assert_eq!(plan.iter().count(), 9);
+        assert!(!plan.kit_missing());
+        let product = prepared.products[0];
+        let mut inventory: Vec<_> = protected
+            .as_slice()
+            .iter()
+            .map(|&id| row(id, 1, ItemContainer::Inventory))
+            .collect();
+        inventory.push(row(product, 1, ItemContainer::Inventory));
+        assert_eq!(
+            supply::bank_deposit_ids(&prepared, tool, &inventory).as_ref(),
+            &[product]
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(inventory, 28);
+        let mut gatherer = Gatherer::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            config,
+            Arc::clone(&prepared),
+            GatherRetained::default(),
+        );
+        gatherer.tool = ToolState {
+            id: tool,
+            worn: false,
+        };
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.start_drop(tick));
+        assert!(matches!(gatherer.active, Active::Drop(_)));
+    }
+
+    #[test]
     fn gatherer_resource_validation_uses_effective_level() {
         use crate::quester::families::tests::{local_player, with_tick};
         use api::snapshot::{GameSnapshot, WorldStateView};
@@ -3006,6 +3177,13 @@ mod tests {
             size_of::<crate::native::WalkGoals>(),
             size_of::<crate::native::WalkRequest>(),
             size_of::<crate::native::WalkReceipt>()
+        );
+        println!(
+            "TickPolicy={} ParkedCycle={} GatherTiming={} TickStats={}",
+            size_of::<crate::native::tickcycle::TickPolicy>(),
+            size_of::<Option<crate::native::tickcycle::TickCycle>>(),
+            size_of::<crate::gatherer::gather::GatherTiming>(),
+            size_of::<crate::gatherer::status::TickStats>(),
         );
     }
     #[test]

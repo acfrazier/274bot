@@ -330,7 +330,10 @@ impl SurvivalStep {
             OneOpKind::Drink { item_id, .. } => (ClickKind::Drink, item_id),
             OneOpKind::CureFruit { item_id, .. } => (ClickKind::Fruit, item_id),
             OneOpKind::Eat { item_id, .. } => (ClickKind::Food, item_id),
-            OneOpKind::Wear { .. } | OneOpKind::CloseModal | OneOpKind::ContinueDialog => {
+            OneOpKind::Wear { .. }
+            | OneOpKind::CloseModal
+            | OneOpKind::CloseChat { .. }
+            | OneOpKind::ContinueDialog => {
                 if let Some(sent) = &mut self.sent {
                     sent.awaiting = false;
                 }

@@ -3,7 +3,174 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## Unreleased
+## [0.2.9] — Unreleased
+
+### Gatherer
+
+- Knife arm stays off by default. The built-in Gatherer arms only an ordinary
+  NPC type and its fishing operation observed at the click tick; a same-tick
+  transform remains possible. Whirlpool and Big fish types stay unarmed; other
+  callers still need complete transform-closure proof.
+- NPC Knife tests cover the built-in fishing exception and its refusal paths.
+  Runtime content validation rejects every whirlpool type, including 404–406.
+- The host's disposal integration tests now use Gatherer's protected-item bound,
+  so the optional knife and log supply does not break their compilation.
+- Fishing at a fixed loc spot now selects the observed loc, approaches it when
+  unloaded, and returns to it after banking. Moving NPC spots keep their own
+  observation and return paths.
+- A successful depleting Knife cycle survives a skipped edge while a live
+  replacement is selected. Gatherer arms a live loc immediately only from an
+  exact current stand. For a remote loc, Gatherer keeps the cycle parked while
+  it completes the ordinary approach walk, then re-adopts the cycle after
+  arrival.
+- A continuing Knife cycle that needs a recovery Act cannot count as verified,
+  even when the native success roll arrives before the Act receipt. It remains
+  a slip and keeps the pending receipt's owner through depletion handoff.
+- Knife engine tests attribute chat and fresh `IF_CLOSE` packets by their
+  position against `PLAYER_INFO`. A chat-only close no longer requires a
+  main-modal transition, and a retained close count cannot stand for a new one.
+- Knife engine tests use actual ordinary-click packet pairs, keep foreign
+  event walks on the same tile, and prepare adjacent resource positions before
+  the measured Start. The free-world refusal window starts at its real arm.
+
+### API and native dispatch
+
+- Ordered input uses the raw Client `PLAYER_INFO` generation for both clock
+  guards. The session-relative snapshot tick and native completion tick stay
+  separate after relog. Stale generations and earlier-session owners are still
+  refused; no owner or event-budget check is bypassed.
+- A continuing KnifeArm routes its exact resource click as `MOVE_OPCLICK`,
+  not a ground-walk `MOVE_GAMECLICK`. Its packet count and owner checks stay
+  unchanged.
+
+### Fixed during development
+
+- Gatherer Knife requests now refuse NPC references captured before a later
+  `NPC_INFO` packet. Published snapshots carry the current packet generation,
+  including updates that leave the NPC's index, type and tile unchanged.
+
+### Not in this release
+
+- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
+  purging at a bank (`purgePackAtBank`) and coin withdrawal (`withdrawCoins`)
+  are **Planned**, not included here. These calls still report `not impl`;
+  moving existing banking into the native seat does not implement them. 0.2.4 to
+  0.2.8 have the same problem.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing.
+  0.2.4 to 0.2.8 have the same problem.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
+  bones reliably. In long fights it can run out of food before the dragon dies
+  and return to the bank without the bones. A fix is planned with the native
+  hunting rewrite. 0.2.4 to 0.2.8 have the same problem.
+- When Grinch banks, it uses the shared bank trip, which still waits up to a
+  fixed time for some bank steps. These waits are planned to become game-timed.
+  0.2.5 to 0.2.8 have the same problem.
+- A bot can't get through a door that another player closes again on every tick,
+  when that player's moves are handled before the bot's. The bot tries the door
+  until its retries run out and then stops at the door. Finding another way
+  around, changing worlds when allowed, and a clear "door held shut" result are
+  planned for a later release. 0.2.5 to 0.2.8 have the same problem.
+- Sherlock was meant to be a native clue solver. In practice it runs on the clue
+  machine ported for rs2b0t clue scripts, so it is available only in builds that
+  include the JS script runtime (every release build does). A native clue solver
+  is planned. 0.1.8 to 0.2.8 have the same problem.
+- The northern Desert Mining Camp mine stays hidden. Its minecart needs dialogue
+  and a chance-gated crossing that the bot does not yet support. There are still
+  85 hidden gathering sites on revision 289 and 66 on 274. 0.2.5 to 0.2.8 have
+  the same problem.
+- After a super antipoison the bot counts only the ordinary immunity time (120
+  game ticks instead of 570), so it may drink again sooner than needed. It is
+  still immune for the real time. Counting the super immunity is planned for a
+  later release. 0.2.7 to 0.2.8 have the same problem.
+- Cure poison does not interrupt Gatherer or Quester steps to drink a held
+  antipoison when poison makes a cure necessary. This behavior is not included.
+  0.2.7 to 0.2.8 have the same problem.
+- The panel and terminal app do not show a status row for a poison-related cure
+  need. A poison-need status row is not included. 0.2.7 to 0.2.8 have the same
+  problem.
+- The Knife tick technique is offered for oak and higher trees only. Normal
+  trees still use the ordinary gathering cadence.
+- Karambwan fishing uses a fixed delay rather than the skill delay. No Knife arm
+  applies; the Gatherer fishes it at the ordinary cadence.
+- A sustained tick schedule based on auto-retaliate flinches is not offered. An
+  NPC hit can change the skill delay, but that schedule has not been traced or
+  designed.
+- The rs2b0t four-tick fly re-click and iron-cadence re-click methods give no
+  gain in revision 289 and are not offered.
+- A rune pickaxe already mines every three ticks, which matches the Knife cycle.
+  Knife turns itself off with no-gain for that tool; ordinary mining continues.
+- Eating uses the existing checked eat action and pauses the Knife technique for
+  one cycle. A food-based tick arm is not offered; it needs per-food delay facts
+  and a live probe before its design is complete.
+
+### Known issues
+
+- **Navigation:** With the default Danger routing setting, **When survivable**,
+  bots can refuse walks and bank trips through dangerous monsters instead of
+  checking whether the account can survive the trip. For example, a bot at Rock
+  Crabs can report that no bank is reachable instead of walking to Seers'
+  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
+  zones). This permits dangerous routes. Use it only when the account can handle
+  the monsters on the route. 0.2.0 to 0.2.8 have the same problem.
+- **Quester:** The Quester has routes for 20 of the 68 quests. Routes for the
+  other quests are planned in waves. 0.2.0 to 0.2.8 have the same problem.
+- **Quester:** When the Quester cannot start a walk between quest steps, it can
+  stop the quest at once instead of trying again, and asks you to resolve the
+  condition and restart the Quester. 0.2.0 to 0.2.8 have the same problem.
+- **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
+  it cannot use. The cause is under investigation. 0.2.0 to 0.2.8 have the same
+  problem.
+- **Banking:** `Bank.depositAllMatching` checks about one item per game tick, so
+  large deposits can be slow. A fix is planned for a later release. 0.2.4 to
+  0.2.8 have the same problem.
+- **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
+  than the game requires after each stun, so it gains Thieving XP more slowly
+  than it could. A fix is planned with the native thieving rework. 0.2.4 to
+  0.2.8 have the same problem.
+- **Gatherer:** The lower Desert Mining Camp mine supports Power mode only and
+  requires The Tourist Trap complete. Bank mode refuses this site because the
+  bot cannot remove the slave kit to leave the camp. 0.2.5 to 0.2.8 have the
+  same problem.
+- **Scripts:** With "Pause script on manual movement" off, a script that acts in
+  place can continue after you move the bot yourself. This affects rs2b0t
+  scripts without a Gather or Combat session and built-in scripts other than
+  Quester fights. With the setting on, any running rs2b0t script pauses. A
+  built-in script pauses while it walks or acts, but not between actions. 0.2.6
+  to 0.2.8 have the same problem.
+- **Scripts:** During a Karamja trip to the mainland without the 30-coin boat
+  fare, the bot earns the fare by working for Luthas. You may see "I can't reach
+  that!" when the bot approaches Luthas or after he pays and before the boat
+  boards. The bot makes up to three attempts each time the bot goes to talk to
+  Luthas. If all three fail, the fare is not paid and the trip does not cross.
+  After payment, the fare is paid. In observed cases, the bot still boards. No
+  workaround is known. 0.2.8 has the same problem.
+- **Scripts:** When a script starts a trip to the mainland without the boat fare
+  from some places on Karamja, for example near the Brimhaven cart, the first
+  walk can fail at once. The bot then does not earn the fare and does not cross.
+  No workaround is known. 0.2.8 has the same problem.
+- **Scripts:** The rs2b0t FireGiant script can keep fighting after it eats its
+  last piece of food instead of leaving to bank, and it can attack a giant other
+  than the one hitting it. The bot can die in the fire giant room with an empty
+  pack. Watch the bot's food and stop the script when it runs low until the
+  script is fixed upstream. 0.2.6 to 0.2.8 have the same problem.
+- **Scripts:** The rs2b0t GnomeMagicChopper script can stop chopping when a
+  Strange fruit from a random event fills the last free backpack slot before it
+  holds a Magic log: it only goes to the bank when it holds logs. Clear one
+  backpack slot and the script resumes. The fix is in review upstream; update
+  your rs2b0t folder once it is merged. 0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** Some rs2b0t catalog scripts call script API members that 274bot
+  does not implement yet: `SettingsStore.save` and `onChange`,
+  `Bank.backpackReady` and `normalBackpackSnapshot`, `Reachability.probeable`,
+  `ScriptRunner.pause`, `resume`, `state` and `ctx`, and
+  `BotHost.addFrameListener`. Such a script stops with "not implemented" when it
+  reaches that call; for example, the current AutoFighter cannot start fighting.
+  Support is planned for 0.2.9. 0.2.0 to 0.2.8 have the same problem.
+- **Host:** Background work can stop for the rest of the session after one disk
+  operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
+  planned for 0.2.9. 0.2.6 to 0.2.8 have the same problem.
 
 ### Fixed during development
 
@@ -771,6 +938,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Scripts
 
+- The default-off Knife setting supports fly and net fishing, woodcutting from
+  oak upward, and gainful mining with bronze-to-adamant pickaxes. Its optional
+  kit can supply the knife and logs; rune pickaxes do not arm because they give
+  no gain. Live fly-fishing, net-fishing, oak-chopping and iron-mining checks
+  passed the fixed cadence gate.
 - Bank opening now waits for its own walk to finish. Before, a walk that a
   script had finished could be taken for the end of the bank walk, and the bank
   walk then ended before the bot reached the bank.

@@ -1985,6 +1985,15 @@ impl SlotScript {
         selected
     }
 
+    /// Permit the ordinary-fishing-type exception only for this active built-in run.
+    /// This does not grant packet authority or permission to any surface/API seat.
+    pub fn is_builtin_gatherer_run(&self, run: api::selected::RunKey) -> bool {
+        self.state == RunState::Running
+            && self.compiled.as_ref().is_some_and(|compiled| {
+                compiled.run == run && compiled.config.card() == crate::CompiledId("Gatherer")
+            })
+    }
+
     /// Apply registered card lifecycle hooks on the owning slot thread.
     /// Owed Stop or session-reset work runs even without an active card.
     /// Surface runs own their lifecycle hooks on their runtime thread.

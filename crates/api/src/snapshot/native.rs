@@ -258,6 +258,14 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
+    /// Latest received NPC-info generation while the scene is ready.
+    ///
+    /// Exact NPC operations use this generation with the posted type, tile,
+    /// and index. A later NPC-info packet makes that reference stale.
+    pub fn npc_info_generation(&self) -> Option<u64> {
+        Some(self.scene_ready()?.gens().npc_info)
+    }
+
     /// Latest received packet generation for the inv-tab component while its
     /// item table is available.
     pub fn inventory_packet_generation(&self) -> Option<u64> {
@@ -780,6 +788,41 @@ mod tests {
         let rows = view.main_make().unwrap();
         assert!(std::ptr::eq(rows.value, snapshot.main_make()));
         assert_eq!(rows.stamp, stamp);
+    }
+
+    #[test]
+    fn npc_info_generation_requires_a_ready_scene_and_uses_the_packet_generation() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 900,
+        };
+        assert_eq!(SnapshotView::new(None, stamp).npc_info_generation(), None);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.gens.npc_info = 41;
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            None,
+        );
+        snapshot.seed_ingame(1);
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            None,
+        );
+        snapshot.seed_ingame(2);
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            Some(41),
+        );
+        snapshot.gens.npc_info = 42;
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            Some(42),
+        );
     }
 
     #[test]

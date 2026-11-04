@@ -20,7 +20,7 @@ fn fixture() -> (Gatherer, GameSnapshot) {
             banks: Arc::default(),
             families,
         };
-        super::super::test_full_pack_fixture(&mut cx).unwrap()
+        super::super::test_full_pack_fixture(&mut cx, "normal", 1).unwrap()
     })
     .unwrap()
     .join()
@@ -853,6 +853,7 @@ fn catherby_product_and_gather_completion_each_renew_the_no_yield_window() {
                     end: GatherEnd::Depleted,
                     gained,
                     xp,
+                    timing: None,
                 },
                 tick,
             );
@@ -1465,6 +1466,7 @@ fn assert_target_handoff(depleted: bool) {
                         catalog: Arc::clone(&gatherer.prepared.catalog),
                         stall_ticks: DEFAULT_STALL_TICKS,
                         quest_owned: false,
+                        timing: None,
                     },
                     &mut tick.cx,
                 )

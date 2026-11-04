@@ -14,6 +14,21 @@ pub struct ServerOrderedCompletion {
 }
 
 impl ActionContext<'_> {
+    /// Preflight the native reservation without mutating the cycle or its budget.
+    pub(crate) fn server_ordered_available(&self) -> bool {
+        let Ok(owner) = self.owner() else {
+            return false;
+        };
+        let Some(ledger) = self.ledger.as_ref() else {
+            return false;
+        };
+        self.budget.events == 0
+            && ledger.outbox.len() < ledger.outbox.capacity()
+            && owner.batch_free() != 0
+            && !ledger
+                .server_ordered_request
+                .is_some_and(|request| owner.batch_live(request))
+    }
     /// Admit named native content, without an external-script declaration.
     /// The host revalidates the complete request against its drain snapshot.
     pub fn emit_server_ordered(
@@ -32,13 +47,7 @@ impl ActionContext<'_> {
         let ledger = self.ledger.as_ref().expect("owner checked");
         // Only this native runtime's emissions charge this observed tick.
         // Foreign packet observations never enter TickBudget.
-        if self.budget.events != 0
-            || ledger.outbox.len() == ledger.outbox.capacity()
-            || owner.batch_free() == 0
-            || ledger
-                .server_ordered_request
-                .is_some_and(|request| owner.batch_live(request))
-        {
+        if !self.server_ordered_available() {
             return Err(ActionError::BudgetExhausted);
         }
         let request_id = ledger.id_range(1)?;
@@ -68,8 +77,14 @@ impl ActionContext<'_> {
         Ok(request_id.get())
     }
 
-    /// Read the terminal dispatch for this owner. Server outcomes are separate.
+    /// Read the terminal dispatch for this owner. Its tick is the Client packet clock.
     pub fn server_ordered_receipt(&self, request_id: u64) -> Option<&ServerOrderedDispatch> {
+        self.server_ordered_completion(request_id)
+            .map(|completion| &completion.dispatch)
+    }
+
+    /// Read the owned completion, whose evidence retains the native runtime clock.
+    pub fn server_ordered_completion(&self, request_id: u64) -> Option<&ServerOrderedCompletion> {
         let ledger = self.ledger.as_ref()?;
         let owner = ledger.owner.as_ref()?;
         let completion = ledger.server_ordered.as_deref()?;
@@ -77,7 +92,7 @@ impl ActionContext<'_> {
             && owner.id.get() == self.action_id
             && completion.evidence.run == self.run()
             && completion.dispatch.request_id == request_id)
-            .then_some(&completion.dispatch)
+            .then_some(completion)
     }
 }
 
@@ -226,6 +241,30 @@ mod tests {
         frame.with(|cx| {
             assert_eq!(cx.server_ordered_receipt(id).unwrap().request_id, id);
             assert!(cx.server_ordered_receipt(id + 1).is_none());
+        });
+    }
+
+    #[test]
+    fn ordered_completion_keeps_native_evidence_separate_from_packet_tick() {
+        let mut frame = Frame::new();
+        frame.evidence.tick = 42;
+        frame.budget.observe(42);
+        let id = frame.with(|cx| cx.emit_server_ordered(request())).unwrap();
+        let action = frame.ledger.as_mut().unwrap().outbox.pop().unwrap();
+        frame.complete(&action.authority());
+        frame
+            .ledger
+            .as_mut()
+            .unwrap()
+            .server_ordered
+            .as_mut()
+            .unwrap()
+            .dispatch
+            .dispatch_tick = 7;
+        frame.with(|cx| {
+            assert_eq!(cx.server_ordered_receipt(id).unwrap().dispatch_tick, 7);
+            assert_eq!(cx.server_ordered_completion(id).unwrap().evidence.tick, 42);
+            assert!(cx.server_ordered_completion(id + 1).is_none());
         });
     }
 

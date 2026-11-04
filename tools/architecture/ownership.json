@@ -4167,6 +4167,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/native/tickcycle.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/native/walk.rs",
       "owner": "T2"
     },

@@ -354,6 +354,66 @@ fn successful_reconnect_generation_resets_snapshot_while_ingame_stays_true() {
 }
 
 #[test]
+fn npc_info_publication_advances_across_drains_and_resets_at_reconnect() {
+    use client::client::{ClientNpc, ClientPlayer};
+    use client::io::ServerProt;
+
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    client.ingame = true;
+    client.scene_state = 2;
+    client.local_player = Some(ClientPlayer::at(5, 6));
+    client.npc[7] = Some(Box::new(ClientNpc::at(8, 6)));
+    client.npc_ids[0] = 7;
+    client.npc_count = 1;
+    let mut pump = Pump::new();
+    let mut snapshot = GameSnapshot::new();
+
+    // One retained NPC, no movement or mask. Even unchanged rows get a new
+    // packet generation and invalidate references captured before this packet.
+    for generation in 1..=2 {
+        dispatch_packet(&mut client, ServerProt::NPC_INFO, vec![1, 0]);
+        publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
+        assert_eq!(client.gens.npc_info, generation);
+        assert_eq!(snapshot.gens().npc_info, generation);
+        assert_eq!(snapshot.npcs().len(), 1);
+        assert_eq!(snapshot.tick(), 0, "NPC_INFO is not a game tick");
+    }
+    publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
+    assert_eq!(snapshot.gens().npc_info, 2, "a quiet drain adds no packet");
+
+    reconnect_grant(&mut client);
+    let start = client.session_start_gens();
+    let drain = pump.drain_client(&client);
+    assert!(drain.session_changed);
+    publish_snapshot(&mut snapshot, &client, drain);
+    assert_eq!(snapshot.gens().npc_info, start.npc_info);
+    assert_eq!(snapshot.gens().session, start.session);
+    assert!(snapshot.npcs().is_empty(), "retained rows stay unavailable");
+
+    dispatch_packet(&mut client, ServerProt::NPC_INFO, vec![1, 0]);
+    publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
+    assert_eq!(snapshot.gens().npc_info, start.npc_info + 1);
+    assert_eq!(snapshot.npcs().len(), 1);
+
+    // Packets after the next grant can also arrive before its first drain.
+    reconnect_grant(&mut client);
+    let start = client.session_start_gens();
+    dispatch_packet(&mut client, ServerProt::NPC_INFO, vec![1, 0]);
+    let drain = pump.drain_client(&client);
+    assert!(drain.session_changed);
+    publish_snapshot(&mut snapshot, &client, drain);
+    assert_eq!(snapshot.gens().npc_info, start.npc_info + 1);
+    assert_eq!(snapshot.gens().session, start.session);
+    assert_eq!(snapshot.npcs().len(), 1);
+}
+
+#[test]
 fn rebuild_invalidation_refreshes_player_view_without_inventing_tick() {
     use client::client::ClientPlayer;
     use client::io::{Packet, ServerProt};

@@ -212,8 +212,9 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.dialogue_ui), JSON.stringify(extractDialogueUiFacts(pin.contentRoot)), `${revision} source-proven dialogue UI`);
     const contentId = spec.cacheIdentity.content_id;
     if (!contentId) throw new Error(`${revision}: selected content identity is missing`);
+    const gathering = extractGatheringFamily(pin.contentRoot);
     const npcEvidence = revision === 289 ? extractNpcTransformClosure(spec.engine, spec.content) : undefined;
-    const npcOperations = npcEvidence ? runtimeNpcOperations(npcEvidence) : undefined;
+    const npcOperations = npcEvidence ? runtimeNpcOperations(npcEvidence, gathering.payload.methods, gathering.payload.hazard_npcs) : undefined;
     if (npcEvidence) {
         const evidenceFile = path.join(root, 'tools/game-data/evidence/289-npc-transforms.json');
         const actualSha256 = npcEvidenceSha256(evidenceFile, npcEvidenceBytes(npcEvidence));
@@ -552,7 +553,6 @@ async function verifyRevision(revision: number) {
         if (packed !== row.id) throw new Error(`${revision}: equipment obj.pack mismatch ${JSON.stringify(row)} pack=${packed}`);
     }
     if (payload.gather_methods !== undefined || payload.gather_placements !== undefined || payload.provenance.placement_inputs !== undefined) throw new Error(`${revision}: gathering facts live in the gathering family, not the core asset`);
-    const gathering = extractGatheringFamily(pin.contentRoot);
     const upstream = familyInputs(spec, pinnedCommits);
     const familyFile = path.join(root, `crates/api/data/game-data/${revision}/gathering.json`);
     if (!fs.readFileSync(familyFile).equals(Buffer.from(familyBytes(upstream, gathering, 'gathering')))) throw new Error(`${revision}: gathering family differs from the writer extract`);

@@ -4194,6 +4194,9 @@ fn compiled_gatherer_paint_controls_pause_resume_and_stop() {
         zone_gated: 0,
         excluded_targets: Arc::from(""),
         last_event: Arc::from(""),
+        tick_method: Arc::from("Off"),
+        tick_cycle: -1,
+        tick_stats: Default::default(),
     };
     compiled_paint_controls_case(
         "native-gatherer-paint",
@@ -4235,6 +4238,9 @@ fn native_gatherer_paint_controls_pause_resume_and_stop() {
         zone_gated: 0,
         excluded_targets: Arc::from(""),
         last_event: Arc::from(""),
+        tick_method: Arc::from("Off"),
+        tick_cycle: -1,
+        tick_stats: Default::default(),
     };
     native_paint_controls_case(
         "native-gatherer-paint",

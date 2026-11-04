@@ -44,6 +44,11 @@ pub enum OneOpKind {
         before_count: i32,
     },
     CloseModal,
+    /// A stray page acknowledges its own close when that chat root leaves.
+    /// A replacement chat belongs to the next policy step, not this action.
+    CloseChat {
+        root: i32,
+    },
     ContinueDialog,
 }
 
@@ -64,6 +69,15 @@ pub struct OneOp {
 impl OneOpArgs {
     /// Shared Gatherer policy for a stray skill/unlock page or main modal.
     pub(crate) fn stray_modal(snapshot: api::snapshot::SnapshotView<'_>) -> Option<Self> {
+        if snapshot
+            .chat_modal()
+            .is_some_and(|modal| modal.value.root == 8880)
+        {
+            return Some(Self {
+                kind: OneOpKind::CloseChat { root: 8880 },
+                ..Self::close_modal()
+            });
+        }
         if snapshot
             .chat_continue()
             .is_some_and(|button| button.value >= 0)
@@ -237,6 +251,10 @@ impl NativeMachine for OneOp {
                         .is_none_or(|modal| modal.value.root < 0)
                     && !snapshot.count_dialog_open().is_some_and(|open| open.value)
             }
+            OneOpKind::CloseChat { root } => cx
+                .snapshot()
+                .chat_modal()
+                .is_some_and(|modal| modal.value.root != root),
             OneOpKind::ContinueDialog => cx.snapshot().chat_modal().is_some_and(|modal| {
                 // A chained unlock page acknowledges this page; the runner must
                 // issue a separate continue for the new modal.
@@ -256,4 +274,182 @@ impl NativeMachine for OneOp {
     }
 
     fn cancel(&mut self) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native::ledger::Ledger;
+    use crate::native::ActionHandle;
+    use crate::quester::families::tests::{def, with_tick};
+    use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+
+    fn snapshot() -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_main_modal(-1, vec![]);
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        snapshot
+    }
+
+    fn begin(
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<Ledger>>,
+        tick: u64,
+        args: OneOpArgs,
+    ) -> ActionHandle<OneOp> {
+        with_tick(snapshot, ledger, tick, |tick| {
+            tick.actions.begin::<OneOp>(args, &mut tick.cx).unwrap()
+        })
+    }
+
+    #[test]
+    fn closing_8880_accepts_a_different_chat_and_handles_it_separately() {
+        let mut snapshot = snapshot();
+        snapshot.seed_chat_modal(8880, vec!["Make".into()]);
+        let mut ledger = None;
+        let args = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            OneOpArgs::stray_modal(tick.cx.snapshot()).unwrap()
+        });
+        assert_eq!(args.kind, OneOpKind::CloseChat { root: 8880 });
+        let mut close = begin(&snapshot, &mut ledger, 1, args);
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            close.poll(&mut tick.cx)
+        })
+        .is_pending());
+
+        snapshot.seed_chat_modal(2437, vec!["Next page".into()]);
+        snapshot.seed_chat_options(vec![], 17);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| close.poll(&mut tick.cx)),
+            Poll::Ready(Ok(true))
+        ));
+        let args = with_tick(&snapshot, &mut ledger, 3, |tick| {
+            OneOpArgs::stray_modal(tick.cx.snapshot()).unwrap()
+        });
+        assert_eq!(args.kind, OneOpKind::ContinueDialog);
+        let mut next = begin(&snapshot, &mut ledger, 3, args);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            next.poll(&mut tick.cx)
+        })
+        .is_pending());
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_chat_options(vec![], -1);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 5, |tick| next.poll(&mut tick.cx)),
+            Poll::Ready(Ok(true))
+        ));
+    }
+
+    #[test]
+    fn survival_close_waits_for_every_chat_and_the_count_dialog() {
+        let mut snapshot = snapshot();
+        snapshot.seed_chat_modal(8880, vec!["Make".into()]);
+        let mut ledger = None;
+        let args = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            OneOpArgs::close_modal_if_open(tick.cx.snapshot()).unwrap()
+        });
+        assert_eq!(args.kind, OneOpKind::CloseModal);
+        let mut close = begin(&snapshot, &mut ledger, 1, args);
+        snapshot.seed_chat_modal(2437, vec!["Another chat".into()]);
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            close.poll(&mut tick.cx)
+        })
+        .is_pending());
+        snapshot.seed_chat_modal(-1, vec![]);
+        snapshot.seed_count_dialog(true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            close.poll(&mut tick.cx)
+        })
+        .is_pending());
+        snapshot.seed_count_dialog(false);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 4, |tick| close.poll(&mut tick.cx)),
+            Poll::Ready(Ok(true))
+        ));
+    }
+
+    #[test]
+    fn a_count_dialog_alone_requests_the_strict_survival_close() {
+        let mut snapshot = snapshot();
+        snapshot.seed_count_dialog(true);
+        let mut ledger = None;
+        let args = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            OneOpArgs::close_modal_if_open(tick.cx.snapshot()).unwrap()
+        });
+        assert_eq!(args.kind, OneOpKind::CloseModal);
+        let mut close = begin(&snapshot, &mut ledger, 1, args);
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            close.poll(&mut tick.cx)
+        })
+        .is_pending());
+        snapshot.seed_count_dialog(false);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| close.poll(&mut tick.cx)),
+            Poll::Ready(Ok(true))
+        ));
+    }
+
+    #[test]
+    fn drink_acknowledgement_remains_the_dose_drop_not_modal_state() {
+        let mut snapshot = snapshot();
+        snapshot.seed_inventory(
+            vec![ItemView {
+                def: def(2446, "Antipoison(4)"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count: 1,
+                actions: vec![],
+                component_id: 3214,
+            }],
+            28,
+        );
+        let mut ledger = None;
+        let mut drink = begin(
+            &snapshot,
+            &mut ledger,
+            1,
+            OneOpArgs::drink("Antipoison(4)", 2446, 1),
+        );
+        snapshot.seed_chat_modal(2437, vec!["Another chat".into()]);
+        snapshot.seed_count_dialog(true);
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            drink.poll(&mut tick.cx)
+        })
+        .is_pending());
+        snapshot.seed_inventory(vec![], 28);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| drink.poll(&mut tick.cx)),
+            Poll::Ready(Ok(true))
+        ));
+    }
+
+    #[test]
+    fn unreadiness_is_not_evidence_that_the_target_chat_closed() {
+        let mut snapshot = snapshot();
+        snapshot.seed_chat_modal(8880, vec!["Make".into()]);
+        let mut ledger = None;
+        let mut close = begin(
+            &snapshot,
+            &mut ledger,
+            1,
+            OneOpArgs {
+                kind: OneOpKind::CloseChat { root: 8880 },
+                ..OneOpArgs::close_modal()
+            },
+        );
+        snapshot.seed_ingame(0);
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            close.poll(&mut tick.cx)
+        })
+        .is_pending());
+        snapshot.seed_ingame(2);
+        snapshot.seed_chat_modal(-1, vec![]);
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 3, |tick| close.poll(&mut tick.cx)),
+            Poll::Ready(Ok(true))
+        ));
+    }
 }

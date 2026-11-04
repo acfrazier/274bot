@@ -1351,6 +1351,56 @@ without a walk. At the open bank the live rows are planned afresh and win over
 the memory. A wielded tool counts as carried, and so does a worn required item;
 consumed bait counts only from the pack.
 
+`tickMethod` is one restart-required setting for Woodcutting, Mining and
+Fishing. It defaults to `Off`; the other value is `Knife`. `Knife` prepares
+one selected-cache Knife and normal Logs: held targets 1 and 3, with at least
+one of each needed for the technique. Both item IDs are protected from
+deposits and product disposal. Preparation does not decide whether the
+selected method or observed tool can use the technique.
+
+An unknown bank admits the existing trip to learn its stock. A known bank
+without a usable knife-and-log kit does not cause a trip or `supply-missing`
+for that optional kit; ordinary gathering can continue. At an open bank,
+available stock tops up the kit only when both minimums can be met.
+The built-in Gatherer can use the kit in revision 289. External scripts do not
+get an unseen-button request from this setting. Shared server-ordered script
+authoring remains a separate capability.
+
+The knife technique shortens supported mining, fishing and oak-or-higher
+woodcutting cycles to three ticks when its inputs land on schedule. Normal
+trees are not in this release. A rune pickaxe has no gain, and karambwan
+fishing has no usable action-delay variable; those methods gather normally.
+The kit needs a members world, one knife and at least one normal log in the
+pack. A members-only refusal turns the technique off for the run. Eating
+uses the existing checked eat operation and pauses one technique cycle.
+
+A continuing cycle sends four user-event packets: knife on log, Make 1,
+movement intent and the resource click. An ending fishing cycle sends two
+packets to arm, then a checked movement-and-click pair two edges later.
+The ideal schedule sends 33.33% more user-event packets per second than the
+human-attainable schedule. Late or refused inputs can require one checked
+fallback click; the host's packet receipts are not server acknowledgements.
+A normal-rock success can delay the player through the next tick. The server
+refuses a batch it handles during that delay; `tick_delayed` counts the
+observed delayed cycles, not refused packets.
+A confirmed depleting cycle keeps its idle timing while targets change. A live
+loc replacement can arm from the current tile only when that tile is an exact
+loc-operation stand. When the loc needs an approach walk, the runner completes
+that walk before it re-adopts the parked cycle.
+
+A built-in fishing arm requires a generator-proven ordinary spot type on
+its click tick. Whirlpool, Big fish and unknown types are not armed. The
+remaining transform race within that server tick is accepted, as for an
+ordinary Gatherer click; the guardian still owns event handling. Other
+server-ordered callers keep the stricter transform-closure rule.
+
+Status shows `tick_method` (`Off`, `Knife`, or `Knife (off: reason)`),
+`tick_cycle` (last verified or unobserved interval, or -1), and run counters
+`tick_verified`, `tick_unobserved`, `tick_slips`, `tick_lost`, `tick_delayed`,
+`tick_paused`, `tick_fallbacks`, `tick_fallback_failed` and `tick_events`.
+The event counter sums actual host dispatch receipts plus two user events
+per accepted checked technique click. It does not claim server acceptance.
+
 `baitTarget` defaults to 100 (range 1–10,000). Only a selected fishing method
 that consumes bait uses it: zero held bait makes a trip due, and the next bank
 trip tops it up to the target. `food` is an optional selected-cache item name;

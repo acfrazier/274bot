@@ -419,9 +419,18 @@ impl GameSnapshot {
         self.scene_state = scene_state;
     }
 
-    /// Offline fixture seed for the host game-tick count.
+    /// Offline fixture seed for the session-relative snapshot tick.
+    /// This does not set the raw `PLAYER_INFO` generation used by ordered input.
     pub fn seed_tick(&mut self, tick: u32) {
         self.tick = tick;
+    }
+
+    /// Offline fixture seed for the raw Client `PLAYER_INFO` generation.
+    ///
+    /// This is the ordered-dispatch clock, not the session-relative
+    /// [`Self::tick`] or the host's native completion-evidence tick.
+    pub fn seed_player_info_generation(&mut self, generation: u64) {
+        self.gens.player_info = generation;
     }
 
     /// Offline fixture seed for a completed world build and its map origin.
@@ -652,7 +661,9 @@ impl GameSnapshot {
         };
     }
 
-    /// The generation counters this snapshot reflects.
+    /// The published generation counters. Family counters describe their
+    /// rebuilt views. Actor-packet counters follow the latest drain, while
+    /// `session` and `invalidations` retain the last session-reset watermark.
     pub fn gens(&self) -> ClientGens {
         self.gens
     }
@@ -772,6 +783,11 @@ impl GameSnapshot {
     /// Refresh the complete host view, retaining each family's generation
     /// gate and the cheap scalar reads that can change without a packet.
     /// Only a real PLAYER_INFO observation advances the host tick.
+    /// Publish both actor-packet generations, including `NPC_INFO` packets
+    /// that leave NPC rows unchanged. Exact NPC references use this generation
+    /// to refuse clicks captured before a later packet.
+    /// `session` and `invalidations` remain the [`Self::reset_session`]
+    /// watermark; the host handles session changes before this rebuild.
     pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
         let player_info_ticks = if player_info {
             client.gens.player_info.wrapping_sub(self.gens.player_info)
@@ -811,6 +827,7 @@ impl GameSnapshot {
         dirty |= self.rebuild_family(client, Family::Controls);
         dirty |= self.rebuild_family(client, Family::Menu);
         self.gens.player_info = client.gens.player_info;
+        self.gens.npc_info = client.gens.npc_info;
         dirty
     }
 
@@ -929,8 +946,9 @@ impl GameSnapshot {
         self.self_slot
     }
 
-    /// The game-tick count this snapshot reflects: one bump per
-    /// `PLAYER_INFO` (the host's `should_emit_tick` edge).
+    /// The session-relative game-tick count: one bump per observed `PLAYER_INFO`
+    /// since the session reset. This differs from the raw `gens().player_info`
+    /// generation used by ordered dispatch and the host's native evidence tick.
     pub fn tick(&self) -> u32 {
         self.tick
     }

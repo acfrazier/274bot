@@ -57,6 +57,9 @@ use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 use scenario::{RunnerStatus, ScenarioRunner};
 use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
+#[cfg(all(feature = "live-harness", feature = "test-support"))]
+#[path = "support/gatherer_tick_live.rs"]
+mod gatherer_tick_live;
 
 const PREP_DEADLINE: Duration = Duration::from_secs(180);
 const POWER_DEADLINE: Duration = Duration::from_secs(1800);

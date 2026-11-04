@@ -524,6 +524,9 @@ fn canonical_sample_status_wire_delta_stays_inside_two_kib() {
             zone_gated: 0,
             excluded_targets: Arc::from(""),
             last_event: Arc::from("dropped"),
+            tick_method: Arc::from("Off"),
+            tick_cycle: -1,
+            tick_stats: Default::default(),
         },
     );
     let page = GatherPage {

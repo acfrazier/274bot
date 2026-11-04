@@ -82,6 +82,8 @@ pub struct GathererSettings {
     pub fishing_method: String,
     #[serde(default = "default_target_preference")]
     pub target_preference: String,
+    #[serde(default = "default_tick_method")]
+    pub tick_method: String,
     #[serde(default = "default_location")]
     pub location: String,
     #[serde(default)]
@@ -139,6 +141,9 @@ fn default_fishing_method() -> String {
 fn default_target_preference() -> String {
     "Best tier".into()
 }
+fn default_tick_method() -> String {
+    "Off".into()
+}
 fn default_location() -> String {
     "Start".into()
 }
@@ -172,6 +177,7 @@ impl Default for GathererSettings {
             mining_resources: default_mining_resources(),
             fishing_method: default_fishing_method(),
             target_preference: default_target_preference(),
+            tick_method: default_tick_method(),
             location: default_location(),
             site: String::new(),
             custom_tile: None,
@@ -238,6 +244,17 @@ impl GathererSettings {
                 "targetPreference",
                 "invalid-option",
                 "targetPreference must be Best tier or Nearest",
+            ));
+        }
+        if self.tick_method.eq_ignore_ascii_case("off") {
+            self.tick_method = "Off".into();
+        } else if self.tick_method.eq_ignore_ascii_case("knife") {
+            self.tick_method = "Knife".into();
+        } else {
+            return Err(ConfigError::new(
+                "tickMethod",
+                "invalid-option",
+                "tickMethod must be Off or Knife",
             ));
         }
         if Location::parse(&self.location).is_none() {
@@ -399,6 +416,7 @@ impl GathererSettings {
             || self.woodcutting_resources != other.woodcutting_resources
             || self.mining_resources != other.mining_resources
             || self.fishing_method != other.fishing_method
+            || self.tick_method != other.tick_method
             || self.location != other.location
             || self.site != other.site
             || self.custom_tile != other.custom_tile
@@ -731,6 +749,14 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             None,
         ),
         setting(
+            "tickMethod",
+            "string",
+            Some("Off"),
+            &["Off", "Knife"],
+            Some("{ key: 'skill', anyOf: ['Woodcutting', 'Mining', 'Fishing'] }"),
+            None,
+        ),
+        setting(
             "location",
             "string",
             Some("Start"),
@@ -912,6 +938,36 @@ fn boolean_setting_show_if(id: &str, default: bool, show_if: &str) -> SettingDef
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn tick_method_is_default_off_validated_and_restart_required_for_all_skills() {
+        let off = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
+        assert_eq!(off.tick_method, "Off");
+        let definition = schema().iter().find(|def| def.id == "tickMethod").unwrap();
+        assert_eq!(definition.default.as_deref(), Some("Off"));
+        assert_eq!(definition.options, ["Off", "Knife"]);
+        assert_eq!(
+            definition.show_if.as_deref(),
+            Some("{ key: 'skill', anyOf: ['Woodcutting', 'Mining', 'Fishing'] }")
+        );
+        for skill in ["Woodcutting", "Mining", "Fishing"] {
+            let mut bag = SettingsBag::new();
+            bag.insert("skill".into(), json!(skill));
+            bag.insert("tickMethod".into(), json!("Knife"));
+            let knife = GathererSettings::from_bag(&bag).unwrap();
+            assert_eq!(knife.tick_method, "Knife");
+            assert!(off.restart_required_changed(&knife));
+            let same_skill_off = GathererSettings {
+                tick_method: "Off".into(),
+                ..knife.clone()
+            };
+            assert!(knife.restart_required_changed(&same_skill_off));
+            bag.insert("tickMethod".into(), json!("Fast"));
+            let error = GathererSettings::from_bag(&bag).unwrap_err();
+            assert_eq!(error.field.as_ref(), "tickMethod");
+            assert_eq!(error.code.as_ref(), "invalid-option");
+        }
+    }
 
     #[test]
     fn site_is_additive_required_only_when_active_and_restart_required() {
@@ -1202,6 +1258,21 @@ mod tests {
             consumes: Knowledge::Known(Arc::from([])),
             requirements: Knowledge::Known(Arc::from([])),
             spots: Knowledge::Known(Arc::from([])),
+            tick_arm: api::gather_methods::TickArm {
+                kind: api::gather_methods::TickArmKind::None,
+                roll_signal: api::gather_methods::TickRollSignal::Never,
+                delay_drop: false,
+                depletes: false,
+                native_arm: None,
+                act_min_d: 0,
+                act_silent: false,
+                no_gain: None,
+                skill_anim: None,
+                roll_anim: None,
+                cast_anim: None,
+                fletch_anim: Some(1),
+                tool_facts: Arc::from([]),
+            },
         };
         method.targets = Knowledge::Partial {
             known: Arc::from([complete, incomplete]),

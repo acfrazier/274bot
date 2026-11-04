@@ -306,8 +306,9 @@ pub(crate) fn dispatch_native_bank_deposit(
 pub(crate) struct OrderedDispatchContext<'a> {
     pub snapshot: &'a GameSnapshot,
     pub selected: Option<&'a api::game_data::SelectedGameData>,
-    pub tick: u64,
     pub input: Option<&'a host::SlotInput>,
+    /// Derived by the host from the exact active compiled Gatherer run, never the payload.
+    pub builtin_gatherer_knife: bool,
 }
 
 /// Dispatch both sealed modes through the same API planner and encrypted sink.
@@ -323,6 +324,10 @@ pub(crate) fn dispatch_native_server_ordered(
     };
     use script::surface::ServerOrderedPayload;
 
+    // Dispatch uses the raw Client PLAYER_INFO generation shared by the snapshot
+    // and input observer. The session-relative snapshot tick and Play's native
+    // completion tick are separate clocks, including after relogs.
+    let dispatch_tick = context.snapshot.gens().player_info;
     let request_id = authority.request_id().get();
     let row_count = match envelope.payload() {
         ServerOrderedPayload::Content(request) => request.row_count(),
@@ -331,7 +336,7 @@ pub(crate) fn dispatch_native_server_ordered(
     let Some(input) = context.input else {
         return ServerOrderedDispatch::refused(
             request_id,
-            context.tick,
+            dispatch_tick,
             row_count,
             0,
             ServerOrderedError::ObservationUnavailable,
@@ -353,7 +358,7 @@ pub(crate) fn dispatch_native_server_ordered(
             let Some(selected) = context.selected else {
                 return ServerOrderedDispatch::refused(
                     request_id,
-                    context.tick,
+                    dispatch_tick,
                     row_count,
                     0,
                     ServerOrderedError::ContractUnavailable,
@@ -362,7 +367,7 @@ pub(crate) fn dispatch_native_server_ordered(
             let Ok(pin) = selected.selected_pin() else {
                 return ServerOrderedDispatch::refused(
                     request_id,
-                    context.tick,
+                    dispatch_tick,
                     row_count,
                     0,
                     ServerOrderedError::ContractUnavailable,
@@ -371,27 +376,44 @@ pub(crate) fn dispatch_native_server_ordered(
             let Ok(catalog) = selected.server_ordered_catalog(&pin) else {
                 return ServerOrderedDispatch::refused(
                     request_id,
-                    context.tick,
+                    dispatch_tick,
                     row_count,
                     0,
                     ServerOrderedError::ContractUnavailable,
                 );
             };
             let _lineage = input.input_lineage(InputLineage::ContentRequest(request_id));
-            ServerOrderedInputs::dispatch(
-                catalog,
-                &pin,
-                context.snapshot,
-                driver,
-                request,
-                ServerOrderedDispatchContext {
-                    request_id,
-                    dispatch_tick: context.tick,
-                    input: observed,
-                    debug: None,
-                    authority: &mut live,
-                },
-            )
+            let dispatch_context = ServerOrderedDispatchContext {
+                request_id,
+                dispatch_tick,
+                input: observed,
+                debug: None,
+                authority: &mut live,
+            };
+            if context.builtin_gatherer_knife
+                && matches!(
+                    request,
+                    api::interact::server_ordered::ServerOrderedRequest::KnifeArm { .. }
+                )
+            {
+                ServerOrderedInputs::dispatch_builtin_gatherer_knife(
+                    catalog,
+                    &pin,
+                    context.snapshot,
+                    driver,
+                    request,
+                    dispatch_context,
+                )
+            } else {
+                ServerOrderedInputs::dispatch(
+                    catalog,
+                    &pin,
+                    context.snapshot,
+                    driver,
+                    request,
+                    dispatch_context,
+                )
+            }
         }
         ServerOrderedPayload::Advanced(operations) => {
             let _lineage = input.input_lineage(InputLineage::AdvancedRequest(request_id));
@@ -401,7 +423,7 @@ pub(crate) fn dispatch_native_server_ordered(
                 operations,
                 ServerOrderedDispatchContext {
                     request_id,
-                    dispatch_tick: context.tick,
+                    dispatch_tick,
                     input: observed,
                     debug: envelope.debug_catalog(),
                     authority: &mut live,
@@ -454,10 +476,10 @@ where
     )
 }
 
-/// The slot context of one interaction dispatch pass. An observe pass makes
-/// it once and every dispatch in that pass reads it; the driver stays a
-/// separate argument because the pass also writes through it between
-/// dispatches. `state` borrows the frame's gating facts: only an arm that
+/// The slot context at one interaction dispatch boundary. Dispatches borrow the
+/// same frame's gating facts; the snapshot borrow is confined to that dispatch
+/// so test-only ordered hooks can mutate it between requests. The driver stays
+/// separate because the pass also writes through it. Only an arm that
 /// queues work takes a shared `Arc` handle at the event boundary.
 #[derive(Clone, Copy)]
 pub(crate) struct InteractContext<'a> {

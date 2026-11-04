@@ -304,6 +304,7 @@ async function drive(): Promise<GatherOutcome> {
     miningResources: ['copper', 'tin'],
     fishingMethod: 'fishing.saltfish.op1',
     targetPreference: 'Nearest',
+    tickMethod: 'Knife',
     location: 'Custom',
     customTile: { x: 1, z: 2, level: 0 },
     radius: 12,
@@ -356,6 +357,9 @@ void narrow;
 
 // @ts-expect-error radius is a number, not a string
 const invalid: GatherSettings = { radius: 'wide' };
+// @ts-expect-error only Off and Knife are supported tick methods
+const invalidTickMethod: GatherSettings = { tickMethod: 'Fast' };
+void invalidTickMethod;
 void invalid;
 "#;
 

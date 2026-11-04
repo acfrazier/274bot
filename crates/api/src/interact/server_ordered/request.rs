@@ -11,6 +11,12 @@ use crate::{
 };
 use client::io::{ClientProt, ClientRevision};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NpcOperationAdmission {
+    CompleteTransformClosure,
+    BuiltinGathererFishing,
+}
+
 const MAX_ROWS: usize = 5;
 const MAX_ADVANCED_BYTES: usize = 8 * 1024;
 /// The fixed expectation phase used for bank count-dialog resumes.
@@ -493,7 +499,8 @@ impl From<PacketError> for ServerOrderedError {
 pub struct ServerOrderedDispatch {
     /// The one request identity used by the owner and completion envelope.
     pub request_id: u64,
-    /// The observed tick of this host drain frame.
+    /// Raw Client `PLAYER_INFO` generation at dispatch, not a session-relative
+    /// snapshot tick or the native completion-evidence tick.
     pub dispatch_tick: u64,
     /// Logical row results in request order; unused entries remain `NotAttempted`.
     pub rows: [RowDispatch; MAX_ROWS],
@@ -537,10 +544,18 @@ impl ServerOrderedDispatch {
 }
 
 /// Host-owned dispatch inputs. The authority predicate is checked before each packet.
+///
+/// `dispatch_tick` is the raw Client `PLAYER_INFO` generation. The first clock
+/// guard requires equality with `snapshot.gens().player_info`; the second
+/// requires equality with the input observer's raw generation.
+/// Raw generations outside the input observer's `u32` range are refused.
+/// Neither uses the session-relative `GameSnapshot::tick()` nor the native
+/// `EvidenceStamp::tick`. The authority callback separately fences the owning
+/// run, session and request, including immediately before each packet.
 pub struct ServerOrderedDispatchContext<'a> {
     /// The sole request identity for this dispatch.
     pub request_id: u64,
-    /// The observed tick of the drain frame.
+    /// The snapshot's raw Client `PLAYER_INFO` generation for this drain.
     pub dispatch_tick: u64,
     /// Detached slot input accounting and expectation state.
     pub input: ServerOrderedInputSnapshot,
@@ -562,6 +577,50 @@ impl ServerOrderedInputs {
         driver: &mut dyn Driver,
         request: &ServerOrderedRequest,
         context: ServerOrderedDispatchContext<'_>,
+    ) -> ServerOrderedDispatch {
+        Self::dispatch_with_npc_admission(
+            catalog,
+            pin,
+            snapshot,
+            driver,
+            request,
+            context,
+            NpcOperationAdmission::CompleteTransformClosure,
+        )
+    }
+
+    /// Preflight and dispatch a built-in Gatherer knife-arm request.
+    ///
+    /// Its exact NPC click may use the selected-content fishing row for the
+    /// snapshot's current ordinary type; all generic requests still require
+    /// complete transform closure.
+    pub fn dispatch_builtin_gatherer_knife(
+        catalog: &ServerOrderedCatalog,
+        pin: &SelectedPin,
+        snapshot: &GameSnapshot,
+        driver: &mut dyn Driver,
+        request: &ServerOrderedRequest,
+        context: ServerOrderedDispatchContext<'_>,
+    ) -> ServerOrderedDispatch {
+        Self::dispatch_with_npc_admission(
+            catalog,
+            pin,
+            snapshot,
+            driver,
+            request,
+            context,
+            NpcOperationAdmission::BuiltinGathererFishing,
+        )
+    }
+
+    fn dispatch_with_npc_admission(
+        catalog: &ServerOrderedCatalog,
+        pin: &SelectedPin,
+        snapshot: &GameSnapshot,
+        driver: &mut dyn Driver,
+        request: &ServerOrderedRequest,
+        context: ServerOrderedDispatchContext<'_>,
+        npc_admission: NpcOperationAdmission,
     ) -> ServerOrderedDispatch {
         let row_count = request.row_count();
         if let Err(error) =
@@ -611,19 +670,26 @@ impl ServerOrderedInputs {
                 error,
             );
         }
-        let plan =
-            match build_content_plan(catalog, pin.revision, snapshot, driver, request, &context) {
-                Ok(plan) => plan,
-                Err((row, error)) => {
-                    return ServerOrderedDispatch::refused_at(
-                        context.request_id,
-                        context.dispatch_tick,
-                        row_count,
-                        row,
-                        error,
-                    )
-                }
-            };
+        let plan = match build_content_plan(
+            catalog,
+            pin.revision,
+            snapshot,
+            driver,
+            request,
+            &context,
+            npc_admission,
+        ) {
+            Ok(plan) => plan,
+            Err((row, error)) => {
+                return ServerOrderedDispatch::refused_at(
+                    context.request_id,
+                    context.dispatch_tick,
+                    row_count,
+                    row,
+                    error,
+                )
+            }
+        };
         dispatch_plan(plan, pin.revision, driver, context)
     }
 
@@ -821,7 +887,13 @@ fn build_content_plan(
     driver: &dyn Driver,
     request: &ServerOrderedRequest,
     context: &ServerOrderedDispatchContext<'_>,
+    npc_admission: NpcOperationAdmission,
 ) -> Result<DispatchPlan, (u8, ServerOrderedError)> {
+    if npc_admission == NpcOperationAdmission::BuiltinGathererFishing
+        && !matches!(request, ServerOrderedRequest::KnifeArm { .. })
+    {
+        return Err((0, ServerOrderedError::InvalidShape));
+    }
     let row_count = request.row_count();
     let mut plan = DispatchPlan::new(row_count);
     match request {
@@ -880,7 +952,8 @@ fn build_content_plan(
                     return Err((2, ServerOrderedError::ContractUnavailable));
                 }
                 let (movement, packet) =
-                    build_click(catalog, snapshot, driver, *click).map_err(|error| (2, error))?;
+                    build_click(catalog, snapshot, driver, *click, npc_admission)
+                        .map_err(|error| (2, error))?;
                 packet
                     .validate_for_revision(revision)
                     .map_err(|error| (2, error.into()))?;
@@ -995,6 +1068,7 @@ fn build_click(
     snapshot: &GameSnapshot,
     driver: &dyn Driver,
     click: ExactLocOrNpcRef,
+    npc_admission: NpcOperationAdmission,
 ) -> Result<(MoveArgs, Send), ServerOrderedError> {
     let (tile, width, length, angle, shape, force_approach, packet) = match click {
         ExactLocOrNpcRef::Loc(reference) => {
@@ -1046,10 +1120,15 @@ fn build_click(
                             .is_some_and(Option::is_some)
                 })
                 .ok_or(ServerOrderedError::StaleTarget)?;
-            if catalog
-                .npc_operation(reference.type_id, reference.operation)
-                .is_none()
-            {
+            let admitted = match npc_admission {
+                NpcOperationAdmission::CompleteTransformClosure => catalog
+                    .npc_operation(reference.type_id, reference.operation)
+                    .is_some(),
+                NpcOperationAdmission::BuiltinGathererFishing => catalog
+                    .builtin_gatherer_fishing_operation(reference.type_id, reference.operation)
+                    .is_some(),
+            };
+            if !admitted {
                 return Err(ServerOrderedError::ContractUnavailable);
             }
             let index = i32::try_from(npc.index).map_err(|_| ServerOrderedError::StaleTarget)?;
@@ -1295,7 +1374,7 @@ fn emit_knife_click(
         movement.angle,
         movement.shape,
         movement.force_approach,
-        0,
+        2,
     );
     let after = driver.packet_commit_count().ok_or(EmitFailure {
         reason: ServerOrderedError::TransportUnavailable,
@@ -1340,13 +1419,16 @@ fn mark_dependencies_skipped(receipt: &mut ServerOrderedDispatch, first: usize) 
     }
 }
 
+/// Require one raw `PLAYER_INFO` generation in the snapshot, context and input
+/// observer. Session-relative snapshot time and native completion time are not
+/// dispatch authority; the separate live-owner callback enforces that fence.
 fn validate_dispatch_context(
     snapshot: &GameSnapshot,
     driver: &dyn Driver,
     input: ServerOrderedInputSnapshot,
     dispatch_tick: u64,
 ) -> Result<(), ServerOrderedError> {
-    if u64::from(snapshot.tick()) != dispatch_tick {
+    if snapshot.gens().player_info != dispatch_tick || u32::try_from(dispatch_tick).is_err() {
         return Err(ServerOrderedError::StaleOwner);
     }
     if input.observed_tick() != u32::try_from(dispatch_tick).ok() {

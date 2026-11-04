@@ -1689,7 +1689,14 @@ fn a_relog_advances_the_compiled_session_and_fences_pre_relog_evidence() {
 }
 
 fn gatherer_snapshot() -> api::snapshot::GameSnapshot {
-    FamilyPreparation::run(|families| {
+    gatherer_snapshot_for_resource("normal", 1)
+}
+
+fn gatherer_snapshot_for_resource(
+    resource: &'static str,
+    level: i32,
+) -> api::snapshot::GameSnapshot {
+    FamilyPreparation::run(move |families| {
         let selected = selected();
         let mut cx = PrepareContext {
             zones: None,
@@ -1698,7 +1705,9 @@ fn gatherer_snapshot() -> api::snapshot::GameSnapshot {
             banks: Arc::default(),
             families,
         };
-        crate::gatherer::test_full_pack_fixture(&mut cx).unwrap().1
+        crate::gatherer::test_full_pack_fixture(&mut cx, resource, level)
+            .unwrap()
+            .1
     })
     .unwrap()
     .join()
@@ -1720,11 +1729,19 @@ fn gatherer_tick(slot: &mut SlotScript, snapshot: &api::snapshot::GameSnapshot, 
 }
 
 fn gatherer_slot(incarnation: u64) -> SlotScript {
+    gatherer_slot_with_knife(incarnation, false)
+}
+
+fn gatherer_slot_with_knife(incarnation: u64, knife: bool) -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(incarnation);
     let mut bag = SettingsBag::new();
     bag.insert("disposition".into(), serde_json::json!("Power"));
     bag.insert("deathPolicy".into(), serde_json::json!("Stop"));
+    if knife {
+        bag.insert("tickMethod".into(), serde_json::json!("Knife"));
+        bag.insert("woodcuttingResources".into(), serde_json::json!(["oak"]));
+    }
     slot.start_compiled(
         "gatherer-lifecycle",
         crate::CompiledId("Gatherer"),
@@ -1736,6 +1753,30 @@ fn gatherer_slot(incarnation: u64) -> SlotScript {
     .unwrap();
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
     slot
+}
+
+#[test]
+fn builtin_gatherer_knife_permission_requires_the_live_compiled_run() {
+    let mut gatherer = gatherer_slot(0x544d_5801);
+    let first = gatherer.native_run().unwrap();
+    let (other, _) = receiver(0x544d_5802, SettingsApply::Applied);
+    let foreign = other.native_run().unwrap();
+    assert!(gatherer.is_builtin_gatherer_run(first));
+    assert!(!gatherer.is_builtin_gatherer_run(foreign));
+    assert!(!other.is_builtin_gatherer_run(foreign));
+    assert!(!other.is_builtin_gatherer_run(first));
+
+    gatherer.pause();
+    assert!(!gatherer.is_builtin_gatherer_run(first));
+    gatherer.resume();
+    assert!(gatherer.is_builtin_gatherer_run(first));
+    restart_and_settle(&mut gatherer, Instant::now());
+    let restarted = gatherer.native_run().unwrap();
+    assert_ne!(first, restarted);
+    assert!(!gatherer.is_builtin_gatherer_run(first));
+    assert!(gatherer.is_builtin_gatherer_run(restarted));
+    gatherer.stop();
+    assert!(!gatherer.is_builtin_gatherer_run(restarted));
 }
 
 fn take_gatherer_drop_actions(slot: &mut SlotScript) -> Vec<crate::native::HostAction> {
@@ -1934,12 +1975,42 @@ fn gatherer_stop_policy_death_cancels_undrained_drop() {
 
 #[test]
 fn gatherer_active_gather_allocates_nothing_on_one_thousand_unchanged_polls() {
-    let mut snapshot = gatherer_snapshot();
+    assert_gatherer_unchanged_poll_allocations(false);
+    assert_gatherer_unchanged_poll_allocations(true);
+}
+
+fn assert_gatherer_unchanged_poll_allocations(knife: bool) {
+    let mut snapshot = if knife {
+        gatherer_snapshot_for_resource("oak", 15)
+    } else {
+        gatherer_snapshot()
+    };
     snapshot.seed_inventory(Vec::new(), 28);
+    if knife {
+        snapshot.seed_inventory(
+            [946, 1511]
+                .into_iter()
+                .enumerate()
+                .map(|(slot, id)| api::snapshot::ItemView {
+                    def: crate::quester::families::tests::def(
+                        id,
+                        if id == 946 { "Knife" } else { "Logs" },
+                    ),
+                    container: api::snapshot::ItemContainer::Inventory,
+                    action_family: api::snapshot::ItemActionFamily::Held,
+                    slot: slot as i32,
+                    count: 1,
+                    actions: vec![],
+                    component_id: 3214,
+                })
+                .collect(),
+            28,
+        );
+    }
     let mut player = snapshot.local_player().unwrap().clone();
     player.player.actor.animation = 879;
     snapshot.seed_local_player(player);
-    let mut slot = gatherer_slot(86);
+    let mut slot = gatherer_slot_with_knife(if knife { 87 } else { 86 }, knife);
     let mut clicked_at = None;
     for tick in 1..17 {
         gatherer_tick(&mut slot, &snapshot, tick);
@@ -2262,147 +2333,173 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
 
 #[test]
 fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
-    fn measure_prepared(
-        incarnation: u64,
-    ) -> (
-        CompiledRun,
-        Arc<Mutex<RetainedMemory>>,
-        allocation_counter::AllocationInfo,
-    ) {
-        FamilyPreparation::run(move |families| {
-            let selected = selected();
-            let pin = selected.selected_pin().unwrap();
-            let mut cx = PrepareContext {
-                zones: None,
-                pin: Arc::clone(&pin),
-                selected: Arc::clone(&selected),
-                banks: Arc::default(),
-                families,
-            };
-            let mut prepared = None;
-            let mut retained = None;
-            let info = allocation_counter::measure(|| {
-                let mut bag = SettingsBag::new();
-                bag.insert("disposition".into(), serde_json::json!("Power"));
-                bag.insert("deathPolicy".into(), serde_json::json!("Stop"));
-                let config = (crate::gatherer::CARD.prepare)(&mut cx, 1, Arc::new(bag)).unwrap();
-                let run = RunKey {
-                    slot: incarnation,
+    fn measure_mode(knife: bool) -> i64 {
+        fn measure_prepared(
+            incarnation: u64,
+            knife: bool,
+        ) -> (
+            CompiledRun,
+            Arc<Mutex<RetainedMemory>>,
+            allocation_counter::AllocationInfo,
+        ) {
+            FamilyPreparation::run(move |families| {
+                let selected = selected();
+                let pin = selected.selected_pin().unwrap();
+                let mut cx = PrepareContext {
+                    zones: None,
+                    pin: Arc::clone(&pin),
+                    selected: Arc::clone(&selected),
+                    banks: Arc::default(),
+                    families,
+                };
+                let mut prepared = None;
+                let mut retained = None;
+                let info = allocation_counter::measure(|| {
+                    let mut bag = SettingsBag::new();
+                    bag.insert("disposition".into(), serde_json::json!("Power"));
+                    bag.insert("deathPolicy".into(), serde_json::json!("Stop"));
+                    if knife {
+                        bag.insert("tickMethod".into(), serde_json::json!("Knife"));
+                        bag.insert("woodcuttingResources".into(), serde_json::json!(["oak"]));
+                    }
+                    let config =
+                        (crate::gatherer::CARD.prepare)(&mut cx, 1, Arc::new(bag)).unwrap();
+                    let run = RunKey {
+                        slot: incarnation,
+                        run: 1,
+                        session: 0,
+                    };
+                    let mut memory = RetainedMemory::default();
+                    let script =
+                        (crate::gatherer::CARD.create)(run, Arc::clone(&config), &mut memory)
+                            .unwrap();
+                    retained = Some(Arc::new(Mutex::new(memory)));
+                    prepared = Some(CompiledRun {
+                        script: ScriptOwner(Some(script)),
+                        config,
+                        pending: None,
+                        run,
+                        selected,
+                        pin,
+                        output: Output {
+                            account: Some("gatherer-lifecycle".into()),
+                            ..Default::default()
+                        },
+                        actions: NativeActions { _private: () },
+                        pending_registry: None,
+                    });
+                });
+                (prepared.unwrap(), retained.unwrap(), info)
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+        }
+        fn seat_delivery_bytes(slot: &SlotScript) -> usize {
+            slot.seat_delivery.capacity() * std::mem::size_of::<SeatEffect>()
+                + slot.seat_native_delivery.capacity()
+                    * std::mem::size_of::<crate::native::HostAction>()
+        }
+        let snapshot = if knife {
+            let mut snapshot = gatherer_snapshot_for_resource("oak", 15);
+            let mut inventory = snapshot.inventory().to_vec();
+            for (item, id) in inventory.iter_mut().skip(24).zip([946, 1511, 1511, 1511]) {
+                item.def = crate::quester::families::tests::def(
+                    id,
+                    if id == 946 { "Knife" } else { "Logs" },
+                );
+            }
+            snapshot.seed_inventory(inventory, 28);
+            snapshot
+        } else {
+            gatherer_snapshot()
+        };
+        let (cold_prepared, cold_retained, cold) = measure_prepared(91, knife);
+        let mut warm = gatherer_slot_with_knife(92, knife);
+        // The first park can grow parking_lot's process-global table.
+        // Warm this thread before charging only the Gatherer and its seat.
+        let warm_lock = parking_lot::Mutex::new(());
+        parking_lot::Condvar::new().wait_for(&mut warm_lock.lock(), Duration::from_millis(1));
+        let mut shared_slot = None;
+        let shared_seat = allocation_counter::measure(|| {
+            let mut slot = SlotScript::new();
+            slot.bind_incarnation(94);
+            slot.arm_compiled_seat(
+                RunKey {
+                    slot: 94,
                     run: 1,
                     session: 0,
-                };
-                let mut memory = RetainedMemory::default();
-                let script =
-                    (crate::gatherer::CARD.create)(run, Arc::clone(&config), &mut memory).unwrap();
-                retained = Some(Arc::new(Mutex::new(memory)));
-                prepared = Some(CompiledRun {
-                    script: ScriptOwner(Some(script)),
-                    config,
-                    pending: None,
-                    run,
-                    selected,
-                    pin,
-                    output: Output {
-                        account: Some("gatherer-lifecycle".into()),
-                        ..Default::default()
-                    },
-                    actions: NativeActions { _private: () },
-                    pending_registry: None,
-                });
-            });
-            (prepared.unwrap(), retained.unwrap(), info)
-        })
-        .unwrap()
-        .join()
-        .unwrap()
-    }
-    fn seat_delivery_bytes(slot: &SlotScript) -> usize {
-        slot.seat_delivery.capacity() * std::mem::size_of::<SeatEffect>()
-            + slot.seat_native_delivery.capacity()
-                * std::mem::size_of::<crate::native::HostAction>()
-    }
-    let snapshot = gatherer_snapshot();
-    let (cold_prepared, cold_retained, cold) = measure_prepared(91);
-    let mut warm = gatherer_slot(92);
-    // The first park can grow parking_lot's process-global table.
-    // Warm this thread before charging only the Gatherer and its seat.
-    let warm_lock = parking_lot::Mutex::new(());
-    parking_lot::Condvar::new().wait_for(&mut warm_lock.lock(), Duration::from_millis(1));
-    let mut shared_slot = None;
-    let shared_seat = allocation_counter::measure(|| {
-        let mut slot = SlotScript::new();
-        slot.bind_incarnation(94);
-        slot.arm_compiled_seat(
-            RunKey {
-                slot: 94,
-                run: 1,
-                session: 0,
-            },
-            crate::CompiledId("Gatherer"),
+                },
+                crate::CompiledId("Gatherer"),
+            );
+            shared_slot = Some(slot);
+        });
+        let (prepared, retained, preparation) = measure_prepared(93, knife);
+        let prepare_bytes = preparation.bytes_current;
+        let mut measured = None;
+        // Charge preparation on its owning worker and installation on this thread.
+        // Polling the preparation broker inside this measurement can free worker-
+        // allocated handoff values here, making its thread-local net timing-dependent.
+        let previous_status_log_suppression =
+            compiled::set_heap_test_status_logging_suppressed(true);
+        let main = allocation_counter::measure(|| {
+            let mut slot = SlotScript::new();
+            slot.bind_incarnation(93);
+            slot.control_generation = prepared.run.run;
+            slot.retained = Some(retained);
+            slot.want_run = true;
+            slot.install_compiled(prepared);
+            let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
+            accept_gatherer_drop_actions(&mut slot, actions, tick, None);
+            measured = Some(slot);
+        });
+        compiled::set_heap_test_status_logging_suppressed(previous_status_log_suppression);
+        // Keep the historical pre-seat family bound: exclude the measured
+        // SlotScript/I-seat baseline and the shared seat delivery buffers that
+        // grow only when this five-action native batch is dispatched.
+        assert!(
+            shared_seat.bytes_current > 0,
+            "shared slot seat baseline is measured"
         );
-        shared_slot = Some(slot);
-    });
-    let (prepared, retained, preparation) = measure_prepared(93);
-    let prepare_bytes = preparation.bytes_current;
-    let mut measured = None;
-    // Charge preparation on its owning worker and installation on this thread.
-    // Polling the preparation broker inside this measurement can free worker-
-    // allocated handoff values here, making its thread-local net timing-dependent.
-    let previous_status_log_suppression = compiled::set_heap_test_status_logging_suppressed(true);
-    let main = allocation_counter::measure(|| {
-        let mut slot = SlotScript::new();
-        slot.bind_incarnation(93);
-        slot.control_generation = prepared.run.run;
-        slot.retained = Some(retained);
-        slot.want_run = true;
-        slot.install_compiled(prepared);
-        let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
-        accept_gatherer_drop_actions(&mut slot, actions, tick, None);
-        measured = Some(slot);
-    });
-    compiled::set_heap_test_status_logging_suppressed(previous_status_log_suppression);
-    // Keep the historical pre-seat family bound: exclude the measured
-    // SlotScript/I-seat baseline and the shared seat delivery buffers that
-    // grow only when this five-action native batch is dispatched.
-    assert!(
-        shared_seat.bytes_current > 0,
-        "shared slot seat baseline is measured"
-    );
-    let delivery_bytes = i64::try_from(
-        seat_delivery_bytes(measured.as_ref().unwrap())
-            .checked_sub(seat_delivery_bytes(shared_slot.as_ref().unwrap()))
-            .expect("the active seat includes its shared delivery buffers"),
-    )
-    .expect("bounded seat delivery capacity fits the signed allocation counter");
-    let slot_family_bytes = main
-        .bytes_current
-        .checked_sub(shared_seat.bytes_current)
-        .and_then(|remaining| remaining.checked_sub(delivery_bytes))
-        .expect("the measured Gatherer slot includes its shared seat and delivery baseline");
-    let exclusive = prepare_bytes + slot_family_bytes;
-    println!(
-        "Gatherer exclusive heap: shared slot/seat={}B, shared delivery={delivery_bytes}B, prepared={prepare_bytes}, slot={main:?}, total={exclusive}",
-        shared_seat.bytes_current
-    );
-    println!(
-        "Gatherer preparation: first={cold:?}, cached={preparation:?}, shared_delta={}, worker_transient_peak={}",
-        cold.bytes_current - prepare_bytes,
-        i128::from(cold.bytes_max) - i128::from(cold.bytes_current),
-    );
-    // Native-Cure b4e71198d adds 176 B of runner state and 80 B of
-    // published survival status (56 B field + 24 B text allocation).
-    // The last pre-Cure composed sample at fdf4f839e measured 7970 B.
-    // Current source 9bfa72d9b measures 8226 B after the same exclusions.
-    // Main accepts this conscious increase past 8 KiB, with 8 B headroom.
-    assert!(
-        (0..=8234).contains(&exclusive),
-        "exclusive Gatherer heap exceeds 8234 B (native-cure b4e71198d: +176 B runner, +56 B survival field, +24 B text. Measured 8226 B + 8 B headroom)"
-    );
-    measured.as_mut().unwrap().stop();
-    warm.stop();
-    drop(cold_prepared);
-    drop(cold_retained);
-    drop(shared_slot);
+        let delivery_bytes = i64::try_from(
+            seat_delivery_bytes(measured.as_ref().unwrap())
+                .checked_sub(seat_delivery_bytes(shared_slot.as_ref().unwrap()))
+                .expect("the active seat includes its shared delivery buffers"),
+        )
+        .expect("bounded seat delivery capacity fits the signed allocation counter");
+        let slot_family_bytes = main
+            .bytes_current
+            .checked_sub(shared_seat.bytes_current)
+            .and_then(|remaining| remaining.checked_sub(delivery_bytes))
+            .expect("the measured Gatherer slot includes its shared seat and delivery baseline");
+        let exclusive = prepare_bytes + slot_family_bytes;
+        println!(
+            "Gatherer exclusive heap: knife={knife}, shared slot/seat={}B, shared delivery={delivery_bytes}B, prepared={prepare_bytes}, slot={main:?}, total={exclusive}",
+            shared_seat.bytes_current
+        );
+        println!(
+            "Gatherer preparation: first={cold:?}, cached={preparation:?}, shared_delta={}, worker_transient_peak={}",
+            cold.bytes_current - prepare_bytes,
+            i128::from(cold.bytes_max) - i128::from(cold.bytes_current),
+        );
+        measured.as_mut().unwrap().stop();
+        warm.stop();
+        drop(cold_prepared);
+        drop(cold_retained);
+        drop(shared_slot);
+        exclusive
+    }
+    // Measure both modes before asserting so a larger ordinary mode does not
+    // hide the composed Knife sample. Source 53202c424 measured 8234 B at
+    // this unchanged cap, with no headroom after the typed bank receipt.
+    // A composed increase requires Main's separate attribution ruling.
+    let measurements = [false, true].map(|knife| (knife, measure_mode(knife)));
+    for (knife, exclusive) in measurements {
+        assert!(
+            (0..=8234).contains(&exclusive),
+            "exclusive Gatherer heap exceeds the unchanged 8234 B cap: knife={knife}, measured={exclusive}"
+        );
+    }
 }
 
 mod api_gather_seat {

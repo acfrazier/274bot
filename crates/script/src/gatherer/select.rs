@@ -682,6 +682,9 @@ fn classify_fishing_placement(
     avoided: &[AvoidedTile; MAX_AVOID],
     now: u64,
 ) -> PlacementClass {
+    if matches!(spot.entity, EntityId::Loc(_)) {
+        return classify_placement(spot, method, scene, avoided, now);
+    }
     let PlacementScene {
         world,
         npcs,
@@ -841,6 +844,38 @@ fn select_with_access(
                     zone_gated = zone_gated.saturating_add(1);
                     continue;
                 }
+                if matches!(spot.entity, EntityId::Loc(_)) {
+                    if classify_placement(
+                        spot,
+                        method,
+                        PlacementScene {
+                            world,
+                            locs,
+                            npcs,
+                            hazard_npcs: catalog.hazard_npcs(),
+                        },
+                        avoided,
+                        now,
+                    ) == PlacementClass::Live
+                        && danger.allows_live(spot.origin, spot.entity, snapshot)
+                    {
+                        consider_candidate(
+                            &mut best_live,
+                            preference,
+                            (
+                                method_index,
+                                method,
+                                spot,
+                                PlacementClass::Live,
+                                spot.origin,
+                                NO_NPC_INDEX,
+                                distance(here, spot.origin),
+                            ),
+                            skill_stat,
+                        );
+                    }
+                    continue;
+                }
                 let Some(bounds) = movement_bounds(spot) else {
                     continue;
                 };
@@ -977,9 +1012,17 @@ fn select_with_access(
                     avoided,
                     now,
                 );
-                let bounds = movement_bounds(spot).expect("eligible fishing movement");
                 let mut stand = spot.origin;
-                if matches!(class, PlacementClass::Unloaded | PlacementClass::Absent) {
+                if matches!(spot.entity, EntityId::Loc(_))
+                    && !matches!(class, PlacementClass::Live | PlacementClass::Absent)
+                    && !danger.allows_live(spot.origin, spot.entity, snapshot)
+                {
+                    continue;
+                }
+                if matches!(spot.entity, EntityId::Npc(_))
+                    && matches!(class, PlacementClass::Unloaded | PlacementClass::Absent)
+                {
+                    let bounds = movement_bounds(spot).expect("eligible fishing movement");
                     // Quest gather keeps only Live targets and discards any
                     // computed observation stand. Do not scan collision for a
                     // stand that will not be chosen.
@@ -1135,7 +1178,7 @@ fn select_with_access(
             skill_stat,
         );
         let mut goals = None;
-        if method.skill == GatherSkill::Fishing {
+        if matches!(spot.entity, EntityId::Npc(_)) {
             let survey = fishing.placement(method_index, spot.id.0);
             let bounds = movement_bounds(spot).expect("eligible fishing movement");
             match observation_goals(survey.unobserved_cells(bounds), collision, Some(tile)) {
@@ -1319,7 +1362,7 @@ pub fn resource_return_target(
             observation.skill_stat,
         );
         let mut goals = None;
-        if method.skill == GatherSkill::Fishing {
+        if matches!(spot.entity, EntityId::Npc(_)) {
             let bounds = movement_bounds(spot).expect("eligible fishing movement");
             match observation_goals(observation_cells(bounds), observation.collision, Some(tile)) {
                 Ok(candidates) => goals = Some(candidates),
@@ -1367,6 +1410,15 @@ fn fishing_return_stand(
     let until = avoid_until(spot, method.skill, observation.avoided);
     if until > observation.now {
         return ReturnStand::Excluded(until);
+    }
+    if matches!(spot.entity, EntityId::Loc(_)) {
+        return if has_area_arrival(observation.collision, spot.origin)
+            && danger.allows(spot.origin, None, nav_planner::contract::ArrivalKind::Area)
+        {
+            ReturnStand::Ready(spot.origin)
+        } else {
+            ReturnStand::Collision
+        };
     }
     // Observe the resource from the resource, never from `here`. Clamping
     // toward the player is how a Draynor bank trip lands a stand inside the
@@ -2697,6 +2749,21 @@ pub(crate) mod tests {
             products: Knowledge::Known(Arc::from([])),
             tools: Knowledge::Known(Arc::from([])),
             consumes: Knowledge::Known(Arc::from([])),
+            tick_arm: api::gather_methods::TickArm {
+                kind: api::gather_methods::TickArmKind::None,
+                roll_signal: api::gather_methods::TickRollSignal::Never,
+                delay_drop: false,
+                depletes: false,
+                native_arm: None,
+                act_min_d: 0,
+                act_silent: false,
+                no_gain: None,
+                skill_anim: None,
+                roll_anim: None,
+                cast_anim: None,
+                fletch_anim: Some(1),
+                tool_facts: Arc::from([]),
+            },
             requirements: Knowledge::Known(Arc::from([])),
             spots: Knowledge::Known(Arc::from([])),
         }
@@ -2802,6 +2869,119 @@ pub(crate) mod tests {
             level: tile.level,
             ..WorldStateView::default()
         }
+    }
+
+    fn static_fishing_loc_fixture() -> (Arc<GatherCatalog>, usize, WorkArea) {
+        let catalog = real_catalog();
+        let method = catalog.method("fishing.loc_2027.op1").unwrap();
+        let origin = WorldTile {
+            x: 2501,
+            z: 3506,
+            level: 0,
+        };
+        assert!(complete_spots(method).unwrap().iter().any(|spot| {
+            spot.entity == EntityId::Loc(2027)
+                && spot.origin == origin
+                && known_resource_target(method, spot.entity)
+        }));
+        let index = method_index(&catalog, method);
+        let area = WorkArea {
+            mode: super::super::area::AreaMode::Custom,
+            anchor: origin,
+            radius: 1,
+        };
+        (catalog, index, area)
+    }
+
+    #[test]
+    fn static_fishing_loc_is_selected_live() {
+        let (catalog, index, area) = static_fishing_loc_fixture();
+        let result = select(
+            &catalog,
+            &[index],
+            &GathererSettings::default(),
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &scene_around(area.anchor),
+                locs: &[loc(2027, area.anchor)],
+                npcs: &[],
+                here: area.anchor,
+                now: 1,
+                skill_stat: 10,
+                fishing: &mut FishingSurvey::default(),
+                collision: None,
+                snapshot: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
+            },
+        );
+        let target = result.target.expect("the authored fishing loc is live");
+        assert_eq!(target.class, PlacementClass::Live);
+        assert_eq!(target.plan.entity, EntityId::Loc(2027));
+        assert_eq!(target.plan.tile, area.anchor);
+        assert_eq!(target.plan.npc_index, NO_NPC_INDEX);
+        assert!(target.observation_goals.is_none());
+    }
+
+    #[test]
+    fn static_fishing_loc_is_selected_unloaded() {
+        let (catalog, index, area) = static_fishing_loc_fixture();
+        let here = WorldTile {
+            x: 2000,
+            z: 3000,
+            level: 0,
+        };
+        let result = select(
+            &catalog,
+            &[index],
+            &GathererSettings::default(),
+            area,
+            &[AvoidedTile::EMPTY; MAX_AVOID],
+            SelectionObservation {
+                world: &scene_around(here),
+                locs: &[],
+                npcs: &[],
+                here,
+                now: 1,
+                skill_stat: 10,
+                fishing: &mut FishingSurvey::default(),
+                collision: None,
+                snapshot: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
+            },
+        );
+        let target = result.target.expect("return to the authored fishing loc");
+        assert_eq!(target.class, PlacementClass::Unloaded);
+        assert_eq!(target.plan.entity, EntityId::Loc(2027));
+        assert_eq!(target.plan.tile, area.anchor);
+        assert_eq!(target.plan.npc_index, NO_NPC_INDEX);
+        assert!(target.observation_goals.is_none());
+    }
+
+    #[test]
+    fn static_fishing_loc_has_a_return_target() {
+        let (catalog, index, area) = static_fishing_loc_fixture();
+        let returned = resource_return_target(
+            &catalog,
+            &[index],
+            &GathererSettings::default(),
+            area,
+            ReturnObservation {
+                here: area.anchor,
+                now: 1,
+                skill_stat: 10,
+                avoided: &[AvoidedTile::EMPTY; MAX_AVOID],
+                collision: None,
+                walk_danger: Some(&crate::native::AllowWalkDanger),
+            },
+        );
+        let ResourceReturn::Ready(target) = returned else {
+            panic!("the authored fishing loc must remain a return target");
+        };
+        assert_eq!(target.plan.entity, EntityId::Loc(2027));
+        assert_eq!(target.plan.tile, area.anchor);
+        assert_eq!(target.plan.npc_index, NO_NPC_INDEX);
+        assert!(target.observation_goals.is_none());
     }
 
     fn radius_one_tiles(centre: WorldTile) -> impl Iterator<Item = WorldTile> {

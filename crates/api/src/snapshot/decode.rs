@@ -1351,6 +1351,7 @@ impl GameSnapshot {
             return false;
         }
         self.gens.npc = client.gens.npc;
+        self.gens.npc_info = client.gens.npc_info;
         self.npc.clear();
         self.npc.reserve(client.npc_count as usize);
         let base = (client.map_build_base_x, client.map_build_base_z);
