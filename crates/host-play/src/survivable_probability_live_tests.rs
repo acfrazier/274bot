@@ -836,7 +836,7 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
     }
     #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
     let mut walk_attempt_capture =
-        matches!(cell.mode, Mode::LongApproach).then(|| WalkAttemptCaptureGuard::start());
+        matches!(cell.mode, Mode::LongApproach).then(WalkAttemptCaptureGuard::start);
     #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
     if walk_attempt_capture.is_some() {
         rig.walk_attempt_capture_started_tick = Some(rig.snapshot.tick());
