@@ -6268,7 +6268,8 @@ fn s2b_admission_per_bot_layouts() {
         target_arch = "aarch64",
         not(feature = "memory-profile")
     ))]
-    // macOS tuple: BATCH-029-INT/w3-survivable-mac-layout-1/test.log:237-243 (+56 B, no heap).
+    // Typed bank receipt: macOS NavBot +8 B in BankPickState.native_receipt.
+    // Measured tuple: BATCH-029-INT/r2-bank-navbot-mac-3/test.log:15-21.
     assert_eq!(
         (
             std::mem::size_of::<NavBot>(),
@@ -6276,7 +6277,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4152, 1576, 520, 264)
+        (4160, 1576, 520, 264)
     );
     #[cfg(all(
         target_os = "linux",
