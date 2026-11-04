@@ -120,7 +120,7 @@ class TeardownTests(unittest.TestCase):
         return {"connection_id": "c000060", "started_monotonic_ns": started,
                 "closed_monotonic_ns": closed,
                 "stage_status": {"proxy_a": "failed" if failure["stage"] == "proxy_a" else "closed",
-                                 "proxy_b": "failed" if failure["stage"] == "proxy_b_websocket" else "closed",
+                                 "proxy_b": "closed",
                                  "tls_terminator": "failed" if failure["stage"] == "tls_terminator" else "closed"},
                 "websocket_handshake": {"upgrade_status": 101},
                 "proxy_a_ciphertext": {"client_to_terminator_ciphertext": counters,
