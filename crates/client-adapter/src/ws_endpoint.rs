@@ -1096,8 +1096,8 @@ impl WssEndpoint {
             if !self.peer_closed {
                 let close_result = {
                     #[cfg(feature = "test-support")]
-                    let _allocation_scope =
-                        self.allocation_scope(soak_observer::AllocationScopeKind::WssMessageStaging);
+                    let _allocation_scope = self
+                        .allocation_scope(soak_observer::AllocationScopeKind::WssMessageStaging);
                     self.websocket.as_mut().expect("connected WSS").close(None)
                 };
                 match close_result {
@@ -1935,13 +1935,17 @@ pub(crate) mod tests {
         type Target = WssEndpoint;
 
         fn deref(&self) -> &Self::Target {
-            self.0.as_ref().expect("test endpoint remains owned by fixture")
+            self.0
+                .as_ref()
+                .expect("test endpoint remains owned by fixture")
         }
     }
 
     impl std::ops::DerefMut for EndpointSlot {
         fn deref_mut(&mut self) -> &mut Self::Target {
-            self.0.as_mut().expect("test endpoint remains owned by fixture")
+            self.0
+                .as_mut()
+                .expect("test endpoint remains owned by fixture")
         }
     }
 
@@ -2015,7 +2019,11 @@ pub(crate) mod tests {
         /// Transfer the already-authenticated endpoint to the reactor's poll
         /// owner. The fixture retains only the server and its command channel.
         pub(crate) fn take_for_reactor(&mut self, registry: &Registry) -> WssEndpoint {
-            let mut endpoint = self.endpoint.0.take().expect("endpoint transfer occurs once");
+            let mut endpoint = self
+                .endpoint
+                .0
+                .take()
+                .expect("endpoint transfer occurs once");
             endpoint
                 .with_tls_mut(|tls| self.poll.registry().deregister(tls.socket.inner_mut()))
                 .unwrap();
@@ -2035,7 +2043,9 @@ pub(crate) mod tests {
 
         pub(crate) fn reset_for_reactor(&self) {
             let (done, result) = mpsc::channel();
-            self.commands.send(TestServerCommand::Reset { done }).unwrap();
+            self.commands
+                .send(TestServerCommand::Reset { done })
+                .unwrap();
             server_result(result);
         }
 

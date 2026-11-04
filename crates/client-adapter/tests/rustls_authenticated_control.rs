@@ -2130,7 +2130,10 @@ fn server_first_wss_close_replies_with_tls_notify_and_drains_on_tls13() {
         }
         assert!(Instant::now() < deadline, "TLS 1.3 drain did not complete");
         if !local {
-            attempt.poll.poll(&mut attempt.events, Some(POLL_SLICE)).unwrap();
+            attempt
+                .poll
+                .poll(&mut attempt.events, Some(POLL_SLICE))
+                .unwrap();
         }
     }
     endpoint.close(attempt.poll.registry());
@@ -2165,7 +2168,10 @@ fn server_close_with_pending_outbound_record_still_replies_before_tls_notify() {
         }
         assert!(Instant::now() < deadline, "peer FIN did not complete drain");
         if !local {
-            attempt.poll.poll(&mut attempt.events, Some(POLL_SLICE)).unwrap();
+            attempt
+                .poll
+                .poll(&mut attempt.events, Some(POLL_SLICE))
+                .unwrap();
         }
     }
     endpoint.close(attempt.poll.registry());

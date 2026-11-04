@@ -2032,7 +2032,10 @@ mod tests {
             assert!(!remaining.is_zero(), "WSS drain has no readable interest");
             reactor
                 .poll
-                .poll(&mut reactor.events, Some(remaining.min(Duration::from_millis(25))))
+                .poll(
+                    &mut reactor.events,
+                    Some(remaining.min(Duration::from_millis(25))),
+                )
                 .unwrap();
             let ready = reactor
                 .events
@@ -2070,7 +2073,10 @@ mod tests {
         reactor.live.get_mut(&index(id)).unwrap().graceful_by = Some(flush_by);
         reactor.enqueue(id);
         reactor.drive_local();
-        let live = reactor.live.get(&index(id)).expect("silent peer remains live");
+        let live = reactor
+            .live
+            .get(&index(id))
+            .expect("silent peer remains live");
         assert!(live.endpoint.draining_for_close());
         let drain_by = live.graceful_by.unwrap();
         let drain_start = Instant::now();
@@ -2084,10 +2090,16 @@ mod tests {
         poll_wss_readable(&mut reactor, id);
         reactor.drive_local();
         assert_eq!(fixture.shared.inbound.len(), 0, "close tail is discarded");
-        assert!(reactor.live.contains_key(&index(id)), "peer remains silent after data");
+        assert!(
+            reactor.live.contains_key(&index(id)),
+            "peer remains silent after data"
+        );
 
-        reactor.live.get_mut(&index(id)).unwrap().graceful_by =
-            Some(Instant::now().checked_sub(Duration::from_millis(1)).unwrap());
+        reactor.live.get_mut(&index(id)).unwrap().graceful_by = Some(
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .unwrap(),
+        );
         reactor.enqueue(id);
         reactor.drive_local();
         assert_eq!(health.graceful_close_timeouts(), 1);
@@ -2108,7 +2120,12 @@ mod tests {
         reactor.drive_local();
         assert!(reactor.live.get(&index(id)).unwrap().graceful_by.is_some());
         reactor.drive_local();
-        assert!(reactor.live.get(&index(id)).unwrap().endpoint.draining_for_close());
+        assert!(reactor
+            .live
+            .get(&index(id))
+            .unwrap()
+            .endpoint
+            .draining_for_close());
         drop(reactor);
         assert_eq!(health.graceful_close_shutdown_drops(), 1);
         assert_eq!(health.graceful_close_timeouts(), 0);
@@ -2123,7 +2140,12 @@ mod tests {
             Some(Instant::now() + GRACEFUL_PEER_DRAIN);
         reactor.enqueue(id);
         reactor.drive_local();
-        assert!(reactor.live.get(&index(id)).unwrap().endpoint.draining_for_close());
+        assert!(reactor
+            .live
+            .get(&index(id))
+            .unwrap()
+            .endpoint
+            .draining_for_close());
         fixture.reset_for_reactor();
         poll_wss_readable(&mut reactor, id);
         reactor.drive_local();

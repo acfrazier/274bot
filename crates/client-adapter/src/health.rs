@@ -122,7 +122,6 @@ impl ReactorHealth {
         self.graceful_close_shutdown_drops.load(Ordering::Relaxed)
     }
 
-
     pub fn record_wake_failure(&self, error: &io::Error) {
         let mut last = self
             .wake_failure
