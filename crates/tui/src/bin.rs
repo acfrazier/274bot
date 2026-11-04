@@ -3361,6 +3361,54 @@ impl TuiSession {
         }
     }
 
+    /// Submit the global "Start fights with players" setting
+    /// (`SetPvpStartFights`) the popup changed, then settle it in the shared
+    /// view rule. A refused or failed save (at once or later) shows its reason,
+    /// and the row shows the saved value again.
+    fn project_pvp_start_fights(&mut self, app: &mut TuiApp) {
+        if let Some(on) = app.pvp_start_fights_request.take() {
+            if !self.persist_ui {
+                // A `--live` run keeps its settings ephemeral: say so, once, at
+                // the shared command boundary, and show the saved value again.
+                const REASON: &str = "settings are not saved in a --live run";
+                self.core
+                    .refuse_unsubmitted(OperatorCommand::SetPvpStartFights(on), &[], REASON);
+                app.error = Some(format!("settings: start fights with players: {REASON}"));
+                app.pvp_start_fights.refuse();
+            } else {
+                match self.submit_raw_with(
+                    app,
+                    OperatorCommand::SetPvpStartFights(on),
+                    Targets::Application,
+                ) {
+                    Ok(submitted) => app.pvp_start_fights.submitted(submitted.request()),
+                    Err(error) => {
+                        app.error = Some(format!("settings: start fights with players: {error}"));
+                        app.pvp_start_fights.refuse();
+                    }
+                }
+            }
+        }
+        match app.pvp_start_fights.follow(&self.core) {
+            Some(frontend_core::PvpWrite::Failed) => {
+                app.error = Some(format!(
+                    "settings: {}",
+                    app.pvp_start_fights.failure(&self.core)
+                ));
+            }
+            Some(frontend_core::PvpWrite::Saved)
+                if app
+                    .error
+                    .as_deref()
+                    .is_some_and(frontend_core::is_start_fights_error) =>
+            {
+                app.error = None;
+            }
+            Some(frontend_core::PvpWrite::Saved) => {}
+            None => {}
+        }
+    }
+
     /// Submit the shared manual-walk pause preference
     /// (`SetNavPreference`): the core applies it to the current and future
     /// slots once it is saved. A refused save shows its reason and the
@@ -3644,6 +3692,7 @@ impl TuiSession {
         self.project_preference_error(app);
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
+        self.project_pvp_start_fights(app);
         self.project_quester_paths(app);
         // The benchmark's focus follows its run: select the member it
         // moved to.

@@ -166,6 +166,7 @@ mod tests {
                 action_id: self.owner.id.get(),
                 observed_walk_outcome_seq: 0,
                 observed_walk_cancel_reason: WalkCancelReason::None,
+                wilderness: None,
                 active_now: Duration::ZERO,
                 wall_now: Instant::now(),
                 ledger: &mut self.ledger,

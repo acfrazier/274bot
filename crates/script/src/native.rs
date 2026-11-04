@@ -166,12 +166,40 @@ pub struct WalkPermissions {
     pub allow_quest_start: bool,
 }
 
+/// The operator's global PvP setting, projected by the host from the shared
+/// preferences document (`pvp.start_fights`, PVP-DESIGN-1026 §2.7). The combat
+/// machine reads it once, at `begin`, and only for a request that starts a
+/// fight with a named player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PvpGlobals {
+    /// Whether any script may start a fight with a player without asking.
+    pub start_fights: bool,
+}
+
+impl PvpGlobals {
+    /// The setting a cold, refused or malformed preference store reads as:
+    /// no global permission.
+    pub const fn fail_closed() -> Self {
+        Self {
+            start_fights: false,
+        }
+    }
+}
+
 /// The host's danger decision for a candidate's actual walk access tiles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkDanger<'a> {
     Allowed,
     Denied { zone: &'a str },
     Unavailable,
+}
+
+/// The Wilderness level of a tile (content `~wilderness_level(coord)`: 0
+/// outside every zone, `areas/area_wilderness/scripts/wilderness_levels.rs2`),
+/// lent by the host from the selected nav pack. The script crate owns this
+/// shape so the combat machine reads no navigation implementation type.
+pub trait WildernessLevels: std::fmt::Debug {
+    fn level(&self, tile: WorldTile) -> i32;
 }
 
 /// A tick-borrowed query over the host's effective native walk permissions.
@@ -605,6 +633,10 @@ pub struct NativeTick<'a> {
     pub prompt_port: Option<&'a mut dyn SeatPromptPort>,
     /// Read-only danger admission for target selection, borrowed from the host.
     pub walk_danger: Option<&'a dyn WalkDangerQuery>,
+    /// The operator's global PvP setting for this tick (`pvp.start_fights`,
+    /// PVP-DESIGN-1026 §2.7). `None` when the host has no ready preferences;
+    /// a caller then uses [`PvpGlobals::fail_closed`].
+    pub pvp_globals: Option<PvpGlobals>,
     pub(crate) frame: HostFrame<'a>,
 }
 
@@ -747,6 +779,7 @@ pub fn with_test_tick<R>(
     let eligible = !frame.compiled().hold;
     let mut tick = NativeTick {
         walk_danger: None,
+        pvp_globals: None,
         state: None,
         service_authority: None,
         prompt_port: None,
@@ -770,6 +803,7 @@ pub fn with_test_tick<R>(
             pending_note_progress: None,
             budget: &mut budget,
             eligible,
+            wilderness: None,
         },
         output,
         pairs: None,
@@ -860,6 +894,10 @@ pub struct ActionContext<'a> {
     pub(crate) observed_walk_outcome_seq: u64,
     /// The host's cancel reason for `observed_walk_outcome_seq`.
     pub(crate) observed_walk_cancel_reason: WalkCancelReason,
+    /// The Wilderness levels the host lends for this frame; `None` when the
+    /// host has no nav pack. The combat machine's zone gate treats `None` as
+    /// "outside the wilderness".
+    pub(crate) wilderness: Option<&'a dyn WildernessLevels>,
 }
 /// Track manual takeover outcomes relative to one native step's begin.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1644,6 +1682,11 @@ impl<'a> ActionContext<'a> {
     pub fn snapshot(&self) -> SnapshotView<'a> {
         self.snapshot
     }
+    /// The Wilderness levels the host lends for this frame, when it has a nav
+    /// pack.
+    pub fn wilderness(&self) -> Option<&'a dyn WildernessLevels> {
+        self.wilderness
+    }
     /// The host's complete live condition, checked against the frame at entry.
     pub fn condition(&self) -> Option<&api::condition::BotCondition> {
         self.condition.as_ref()
@@ -1794,6 +1837,10 @@ pub enum ActionError {
     /// Typed capacity or duplicate refusal from exact ground-item Take.
     #[error("ground-item Take was refused: {0:?}")]
     GroundTake(api::ground_take::GroundRefusal),
+    /// A typed permanent refusal of a player-combat request at `begin`
+    /// (PVP-DESIGN-1026 §2.1).
+    #[error("player combat was refused: {0:?}")]
+    PvpRefused(crate::combat::PvpRefusal),
     /// Invalid bounded candidate-goal request, rejected before host admission.
     #[error("walk goals were refused: {0}")]
     WalkGoals(WalkGoalsError),

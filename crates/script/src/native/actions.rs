@@ -842,8 +842,9 @@ impl<M: NativeMachine> ActionHandle<M> {
         }
     }
 
-    /// Read the live machine without polling it; `None` once it completed.
-    pub(crate) fn inspect<R>(&self, read: impl FnOnce(&M) -> R) -> Option<R> {
+    /// Read the live machine without polling it; `None` once it completed. A
+    /// live proof reads a machine's own state with it (the PvP V2 switch trace).
+    pub fn inspect<R>(&self, read: impl FnOnce(&M) -> R) -> Option<R> {
         self.machine.borrow().as_ref().map(read)
     }
 
@@ -1213,6 +1214,7 @@ mod tests {
             action_id: owner.id.get(),
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            wilderness: None,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,
@@ -1728,6 +1730,7 @@ mod tests {
             action_id: 0,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            wilderness: None,
             active_now,
             wall_now: Instant::now(),
             ledger,

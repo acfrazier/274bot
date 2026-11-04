@@ -734,6 +734,15 @@ impl Preferences {
             .preferences_walk_globals(&self.shared.identity, PREFERENCES_FRESHNESS)
     }
 
+    /// The worker-projected, cached global PvP setting (`pvp.start_fights`).
+    /// A cold or refused store, or a malformed member, is the typed error a
+    /// caller must read as off.
+    pub fn pvp_globals(&self) -> Result<script::native::PvpGlobals, PreferenceError> {
+        self.shared
+            .service
+            .preferences_pvp_globals(&self.shared.identity, PREFERENCES_FRESHNESS)
+    }
+
     /// One top-level preference; `None` when it is absent or the store
     /// cannot be read.
     pub fn value(&self, key: &str) -> Option<Value> {

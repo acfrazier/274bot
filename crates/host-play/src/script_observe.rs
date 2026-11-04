@@ -35,6 +35,17 @@ use crate::tick_engine_test_support::TickEngineTestHook;
 #[cfg(test)]
 use std::sync::{Condvar, LazyLock, Weak};
 
+/// The selected pack's Wilderness levels, lent to the script crate's combat
+/// zone gate through the crate's own `WildernessLevels` trait.
+#[derive(Debug, Clone, Copy)]
+struct PackWilderness<'a>(nav_planner::contract::WildernessView<'a>);
+
+impl script::native::WildernessLevels for PackWilderness<'_> {
+    fn level(&self, tile: api::snapshot::WorldTile) -> i32 {
+        self.0.level(tile)
+    }
+}
+
 #[cfg(test)]
 pub(crate) struct DispatchBarrier {
     entered: (Mutex<bool>, Condvar),
@@ -1224,13 +1235,22 @@ where
                         walk_permissions,
                     )
                 });
+                let wilderness = world
+                    .as_deref()
+                    .and_then(|world| nav_planner::producer::wilderness_view(world).ok())
+                    .map(PackWilderness);
                 // Copy only the small fact, not the slot owner or its tables.
-                let (condition, poison_unknown_pulse) = {
+                let (condition, poison_unknown_pulse, pvp_globals) = {
                     let navs = navs.lock().unwrap();
                     let bot = navs.get(name);
                     (
                         bot.and_then(|bot| bot.condition.current().copied()),
                         bot.map(|bot| bot.condition.unknown_pulse()),
+                        // The cached, worker-built projection of the shared
+                        // preferences; a cold or refused store reads as no
+                        // setting, which a combat request then treats as off.
+                        bot.and_then(|bot| bot.walk_globals_store.as_ref())
+                            .and_then(|preferences| preferences.pvp_globals().ok()),
                     )
                 };
                 let mut ctx = ScriptCtx {
@@ -1255,6 +1275,10 @@ where
                             .as_deref()
                             .and_then(|world| nav_planner::producer::collision_view(world).ok()),
                         nav: nav.as_ref(),
+                        wilderness: wilderness
+                            .as_ref()
+                            .map(|levels| levels as &dyn script::native::WildernessLevels),
+                        pvp_globals,
                         walk_danger: walk_danger
                             .as_ref()
                             .map(|query| query as &dyn script::native::WalkDangerQuery),

@@ -619,6 +619,11 @@ pub struct TuiApp {
     pub pause_script_on_manual_walk_abort: bool,
     /// The global manual-movement pause preference changed; the session persists it.
     pub pause_script_on_manual_walk_abort_dirty: bool,
+    /// The global "Start fights with players" setting (`pvp.start_fights`):
+    /// what the popup row shows, with a click waiting for its saved value.
+    pub pvp_start_fights: frontend_core::PvpSettingView,
+    /// The popup set the row; the session submits this value (`SetPvpStartFights`).
+    pub pvp_start_fights_request: Option<bool>,
     shared_preferences: Option<frontend_core::UiPreferences>,
     /// Which saved settings have a write the core still holds pending
     /// (copied from the core each pump): their drafts stay the operator's.
@@ -769,6 +774,8 @@ impl TuiApp {
             quester_paths_dirty: false,
             pause_script_on_manual_walk_abort: true,
             pause_script_on_manual_walk_abort_dirty: false,
+            pvp_start_fights: frontend_core::PvpSettingView::default(),
+            pvp_start_fights_request: None,
             shared_preferences: None,
             pending: PendingSettings::default(),
             setting_feedback: Vec::new(),
@@ -941,6 +948,10 @@ impl TuiApp {
             ),
             WalkGlobalsView::read,
         );
+        if let Some(preferences) = self.shared_preferences.as_ref() {
+            self.pvp_start_fights
+                .adopt(frontend_core::pvp_start_fights(preferences).ok());
+        }
         if !self.preferences_adopted && self.shared_preferences.is_some() {
             self.walk_permissions = view;
         } else {

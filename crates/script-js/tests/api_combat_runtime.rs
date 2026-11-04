@@ -277,6 +277,7 @@ fn killed_report() -> CombatSummary {
         boost_doses: 0,
         antifire_doses: 0,
         protect_switches: 0,
+        pvp_source: None,
     }
 }
 
@@ -371,7 +372,8 @@ fn fight_marshals_the_request_and_settles_once_with_the_fought_report() {
                 "prayerDoses": 0,
                 "boostDoses": 0,
                 "antifireDoses": 0,
-                "protectSwitches": 0
+                "protectSwitches": 0,
+                "pvpSource": null
             }
         }
     });
@@ -614,7 +616,8 @@ fn host_terminals_map_to_their_json() {
                     "prayerDoses": 0,
                     "boostDoses": 0,
                     "antifireDoses": 0,
-                    "protectSwitches": 0
+                    "protectSwitches": 0,
+                    "pvpSource": null
                 }
             }
         })

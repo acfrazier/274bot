@@ -411,7 +411,7 @@ takes the native default. Field names in errors are these keys.
 
 | Key | Meaning |
 | --- | --- |
-| `target` | exactly one of `{ npc }`, `{ npcId }`, `{ attackers }` (below) |
+| `target` | exactly one of `{ npc }`, `{ npcId }`, `{ attackers }`, `{ player }` (below) |
 | `pick` | npc targets: `nearest` (default), `random` or `lowestHealth` |
 | `notTargetingOthers` | npc targets: skip npcs already fighting another player (default `true`) |
 | `area` | one `SceneRegionInput` box or 1..16 boxes a target must stand in |
@@ -427,6 +427,7 @@ takes the native default. Field names in errors are these keys.
 | `potions` | let the bot drink potions (default `true`) |
 | `retaliate` | the game's Auto Retaliate setting during the fight (default `true`) |
 | `budgetTicks` | fight budget, 1..65535 game ticks (default 1500); the fight settles `budget` |
+| `pvp` | `{ player }` targets: your opt-in to start the fight (default `false`); the operator's `pvp.start_fights` setting also opts in (below) |
 
 **Target.** `{ npc: 'cow' }` takes a selected npc config name; a name that is
 not a config name is matched against display names (ASCII case-insensitive),
@@ -438,6 +439,24 @@ the host; an unknown name is `done{end:'refused', reason:
 'invalid-setting:target:unknown-npc'}`, an npc with no Attack option is
 `invalid-setting:target:unattackable`, an unknown spell
 `invalid-setting:spells:unknown-spell`.
+
+**Player targets.** `{ player: 'bob' }` starts a fight with the named player
+(the name as the game shows it, matched exactly). The game allows player
+combat only in the Wilderness (level 1 or more for both players, and the
+Wilderness level at least the combat-level difference) and in a Duel Arena
+fight pen. Starting such a fight needs one opt-in: `pvp: true` on the request,
+or the operator's global setting "Start fights with players"
+(`pvp.start_fights`, off by default, in both the panel and the TUI). Without
+either, the session ends `refused` with
+`invalid-setting:target:pvp-not-allowed`. A refusal of the zone or the player
+ends the same way before any fight, with `invalid-setting:target:<code>`, where
+`<code>` is `pvp-no-attack-op`, `pvp-outside-wilderness`,
+`pvp-opponent-outside`, `pvp-level-range` or `pvp-challenge-area`. The attack
+verb is the one the game gives the player: `Attack` in the Wilderness and
+`Fight` in a duel. Fighting back needs no opt-in: `{ attackers: 'players' }`
+and the bot's defence against a player who attacks it never read `pvp` or the
+global setting, and a bot always defends itself. The setting is read once, when
+the fight begins; changing it during a fight does not end that fight.
 
 **Prayer.** Combat waits for one complete observation of all prayer rows,
 and any prayer already on then is the user's: the bot never clicks it off,
@@ -498,10 +517,13 @@ The terminal is the nested `value` of the `done` envelope:
   (`no-food`, `dragonfire`, `no-ammo`, `no-runes`, `unattackable`,
   `prep-failed:<weapon|shield|ammo|staff|arm>`,
   `prep-readiness:combat-root-missing`, `prep-readiness:combat-root-wrong`,
-  `prep-readiness:style-echo-missing`, `unresponsive`, ...), the
+  `prep-readiness:style-echo-missing`, `unresponsive`,
+  `pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>`
+  (a player fight the game or the zone stopped mid-fight), ...), the
   engaged `npcType` and the fight's counters (`ticks`, `swings`, `casts`,
   `damageTaken`, `food`, `prayerDoses`, `boostDoses`, `antifireDoses`,
-  `protectSwitches`).
+  `protectSwitches`) and `pvpSource` (`request`, `global` or `both`: what
+  opted in to a fight started with a player; `null` for every other fight).
 - `stopped`: `api.combat.stop()` ended it.
 - `interrupted` with `cause`: `pause` (operator Pause; the session settles
   after Resume), `died` (the host saw the death before Combat did; a death

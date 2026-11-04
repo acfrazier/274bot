@@ -4140,6 +4140,277 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     let _iso = iso;
 }
 
+/// PVP-V1 (design §2.7): the popup's "Start fights with players" row writes
+/// `pvp.start_fights` through `SetPvpStartFights`, the row shows the saved
+/// value, and a `--live` run (settings are not saved) refuses the click at the
+/// command boundary instead of writing.
+#[test]
+fn start_fights_with_players_in_the_settings_popup_is_saved_through_its_command() {
+    let iso = IsolatedStores::enter("tui-pvp-start-fights");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    assert!(!app.pvp_start_fights.shown(), "off by default");
+
+    app.settings_state.open = true;
+    app.settings_state.row = 18;
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None
+    );
+    assert!(app.pvp_start_fights.shown(), "the click shows at once");
+    settle_preferences(&mut session, &mut app);
+    assert_eq!(app.error, None);
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    assert_eq!(prefs["pvp"]["start_fights"], true);
+    assert!(app.pvp_start_fights.shown());
+    assert!(
+        frontend_core::pvp_start_fights(&session.preferences).unwrap(),
+        "the host's projection follows the saved member"
+    );
+
+    // Off again is the same command.
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None
+    );
+    settle_preferences(&mut session, &mut app);
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    assert_eq!(prefs["pvp"]["start_fights"], false);
+    assert!(!app.pvp_start_fights.shown());
+    let _iso = iso;
+}
+
+/// PVP-V1-R1 (review R3, R6): turning the setting off queues behind a busy
+/// disk and later fails. The row shows the click at once, then the saved value
+/// again with the failure reason, and a peer write stays visible afterwards. A
+/// later successful retry clears exactly that failure line.
+#[cfg(unix)]
+#[test]
+fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer() {
+    use std::os::unix::fs::PermissionsExt;
+    let iso = IsolatedStores::enter("tui-pvp-start-fights-deferred-failure");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    app.settings_state.open = true;
+    app.settings_state.row = 18;
+
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    settle_preferences(&mut session, &mut app);
+    assert!(app.pvp_start_fights.shown() && !app.pvp_start_fights.pending());
+    assert_eq!(app.error, None);
+
+    // The disk is busy: the write that turns it off stays queued.
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    session
+        .core
+        .local_state_for_test()
+        .unwrap()
+        .set_write_stall_for_test(Arc::new(move || {
+            let _ = entered.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        }));
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    assert!(!app.pvp_start_fights.shown(), "the click shows at once");
+    session.pump(&mut app);
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.pump(&mut app);
+    assert!(
+        !app.pvp_start_fights.shown() && app.pvp_start_fights.pending(),
+        "still waiting for the save"
+    );
+
+    // The state directory refuses the write once the disk answers.
+    let state_dir = session.preferences.path().parent().unwrap().to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.pvp_start_fights.pending() && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(!app.pvp_start_fights.pending(), "the write never settled");
+    assert!(
+        app.pvp_start_fights.shown(),
+        "the failed write shows the saved value (on), not the attempted off"
+    );
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("settings: start fights with players:")),
+        "{:?}",
+        app.error
+    );
+
+    // A peer turns it off: the row follows after the failure.
+    std::fs::write(
+        session.preferences.path(),
+        br#"{"pvp":{"start_fights":false}}"#,
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+    session.pump(&mut app);
+    session.pump(&mut app);
+    assert!(
+        !app.pvp_start_fights.shown(),
+        "a peer write stays visible after the failure"
+    );
+
+    // The retry turns it on again: the disk is busy once more, so the retry
+    // stays queued. The failure stays visible until the save resolves it.
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    assert!(app.pvp_start_fights.shown(), "the retry shows at once");
+    session.pump(&mut app);
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.pump(&mut app);
+    assert!(app.pvp_start_fights.pending(), "waiting for the retry");
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(frontend_core::is_start_fights_error),
+        "the failure stays until the retry succeeds: {:?}",
+        app.error
+    );
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while (app.pvp_start_fights.pending() || app.error.is_some()) && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.pvp_start_fights.pending(), "the retry never settled");
+    assert!(
+        frontend_core::pvp_start_fights(&session.preferences).unwrap(),
+        "the retry was saved"
+    );
+    assert!(app.pvp_start_fights.shown());
+    assert_eq!(
+        app.error, None,
+        "a successful save clears the failure it resolves"
+    );
+
+    // Another setting's error is not this save's to clear.
+    let other = "settings: walk permissions: the store is busy".to_string();
+    app.error = Some(other.clone());
+    release.send(()).unwrap();
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.pvp_start_fights.pending() && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Let the save's settlement reach the view before looking at the error.
+    for _ in 0..40 {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.pvp_start_fights.shown(), "the second save settled off");
+    assert_eq!(app.error, Some(other), "an unrelated error stays");
+    let _iso = iso;
+}
+
+/// PVP-V1-R3 (review R6): a peer saves the click's value after the click and
+/// before the pump submits the command. The pump refreshes the walk globals
+/// first, and that adoption ends the click's wait before `submitted`. The
+/// click's own save still clears the failure line of the earlier attempt, as
+/// an ordinary retry does, and an unrelated error stays.
+#[test]
+fn a_peer_write_between_the_click_and_its_submission_still_clears_the_earlier_failure() {
+    let iso = IsolatedStores::enter("tui-pvp-start-fights-peer-before-submit");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    app.settings_state.open = true;
+    app.settings_state.row = 18;
+    assert!(!app.pvp_start_fights.shown(), "off by default");
+
+    // The failure line a first attempt left.
+    app.error = Some("settings: start fights with players: store I/O error".to_string());
+
+    // The retry turns it on. A peer saves `on` before the next pump.
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    assert!(app.pvp_start_fights.shown(), "the retry shows at once");
+    std::fs::create_dir_all(session.preferences.path().parent().unwrap()).unwrap();
+    std::fs::write(
+        session.preferences.path(),
+        br#"{"pvp":{"start_fights":true}}"#,
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+    settle_preferences(&mut session, &mut app);
+    assert!(!app.pvp_start_fights.pending(), "the retry never settled");
+    assert!(app.pvp_start_fights.shown());
+    assert!(frontend_core::pvp_start_fights(&session.preferences).unwrap());
+    assert_eq!(
+        app.error, None,
+        "the click's own save clears the failure it resolves"
+    );
+
+    // An unrelated error is not this save's to clear.
+    let other = "settings: walk permissions: the store is busy".to_string();
+    app.error = Some(other.clone());
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    std::fs::write(
+        session.preferences.path(),
+        br#"{"pvp":{"start_fights":false}}"#,
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+    settle_preferences(&mut session, &mut app);
+    for _ in 0..40 {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.pvp_start_fights.shown());
+    assert_eq!(app.error, Some(other), "an unrelated error stays");
+    let _iso = iso;
+}
+
+#[test]
+fn a_live_run_refuses_the_start_fights_row_without_writing() {
+    let iso = IsolatedStores::enter("tui-pvp-start-fights-live");
+    let mut session = TuiSession::new(dummy_options());
+    session.persist_ui = false;
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    let refusals = session.core.refusals();
+
+    app.settings_state.open = true;
+    app.settings_state.row = 18;
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None
+    );
+    settle_preferences(&mut session, &mut app);
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("settings: start fights with players:")),
+        "{:?}",
+        app.error
+    );
+    assert!(
+        !app.pvp_start_fights.shown(),
+        "the row shows the saved value again"
+    );
+    assert_eq!(session.core.refusals(), refusals + 1, "one refusal");
+    assert!(
+        !session.preferences.path().exists(),
+        "nothing was written in a --live run"
+    );
+    let _iso = iso;
+}
+
 #[test]
 fn tui_refresh_preserves_unsaved_checkbox_and_folder_draft() {
     let _iso = IsolatedStores::enter("tui-preference-draft-refresh");

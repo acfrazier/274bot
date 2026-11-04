@@ -296,6 +296,7 @@ table ApiCombatOutcome {
   boost_doses: ubyte;
   antifire_doses: ubyte;
   protect_switches: ubyte;
+  pvp_source: ubyte; // 0 none, 1 request, 2 global, 3 both: what authorised a fight started with a player.
 }
 
 // One progress page for the most recent quest-progress request (Snapshot VT 274).
@@ -649,7 +650,7 @@ table AvoidRect {
 // One validated `api.combat.fight` request (Interact op "combat-fight").
 // Names are resolved against the slot's selected game data on the host.
 table CombatFight {
-  target: ubyte; // 1 npc config names, 2 npc type ids, 3 attackers.
+  target: ubyte; // 1 npc config names, 2 npc type ids, 3 attackers, 4 player.
   npc_names: [string];
   npc_ids: [int];
   attackers: ubyte; // 1 npcs, 2 players, 3 any.
@@ -670,6 +671,8 @@ table CombatFight {
   potions: bool = true;
   retaliate: bool = true;
   budget_ticks: ushort = 1500;
+  player: string; // The player's name, for target 4.
+  pvp: bool = false; // The script's opt-in to start a fight with a player.
 }
 
 enum SeatKind: ubyte {

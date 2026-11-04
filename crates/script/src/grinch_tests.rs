@@ -192,9 +192,11 @@ impl Driver {
                 eligible: true,
                 observed_walk_outcome_seq: 0,
                 observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+                wilderness: None,
             };
             let mut native = NativeTick {
                 walk_danger: None,
+                pvp_globals: None,
                 actions: &mut actions,
                 cx,
                 output: &mut self.output,
@@ -212,6 +214,8 @@ impl Driver {
                         poison_unknown_pulse: None,
                         cure_poison: crate::survival::CurePoison::WhenNeeded,
                         walk_danger: None,
+                        wilderness: None,
+                        pvp_globals: None,
                         selected: Some(&selected),
                         reach: None,
                         reach_flood: None,

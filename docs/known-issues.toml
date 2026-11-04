@@ -885,3 +885,19 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "gatherer-tick-manip"
+[[item]]
+id = "combat-prep-weapon-in-flight"
+kind = "known-issue"
+area = "Combat"
+text = """A combat step can end at its start with `prep-failed:weapon` even though
+  the weapon is in the pack. The server moves a worn weapon in one step, but
+  the game client applies the pack update and the worn update in separate
+  packets, so one frame can show the weapon in neither place. The machine reads
+  that frame as a missing weapon. A live run of the style switch showed the same
+  client behaviour; preparation has the same exposure and has not been seen to
+  fail yet. **Workaround:** run the combat step again; the weapon is worn by then."""
+first = "0.2.0"
+listed = "0.2.8"
+target = "none"
+severity = "low"
+owner = "combat (PvP slices)"

@@ -405,10 +405,15 @@ impl Script for Sherlock {
         }
         if let Some((id, request)) = self.pending.take() {
             if let Some(tables) = self.tables.as_ref() {
-                match tick
-                    .actions
-                    .begin::<Combat>((Arc::clone(&request), Arc::clone(tables)), &mut tick.cx)
-                {
+                match tick.actions.begin::<Combat>(
+                    (
+                        Arc::clone(&request),
+                        Arc::clone(tables),
+                        tick.pvp_globals
+                            .unwrap_or_else(script::native::PvpGlobals::fail_closed),
+                    ),
+                    &mut tick.cx,
+                ) {
                     Ok(handle) => {
                         self.fight = Some(Fight::Combat(handle));
                         self.combat_id = Some(id);
@@ -846,10 +851,15 @@ impl Sherlock {
             self.outcome = Some(Outcome::failed(d.id()));
             return;
         };
-        match tick
-            .actions
-            .begin::<Combat>((Arc::new(d.request()), Arc::clone(tables)), &mut tick.cx)
-        {
+        match tick.actions.begin::<Combat>(
+            (
+                Arc::new(d.request()),
+                Arc::clone(tables),
+                tick.pvp_globals
+                    .unwrap_or_else(script::native::PvpGlobals::fail_closed),
+            ),
+            &mut tick.cx,
+        ) {
             Ok(handle) => {
                 self.fight = Some(Fight::Combat(handle));
                 self.combat_id = Some(d.id());
@@ -1690,6 +1700,8 @@ mod tests {
                     poison_unknown_pulse: None,
                     cure_poison: script::survival::CurePoison::WhenNeeded,
                     walk_danger: None,
+                    wilderness: None,
+                    pvp_globals: None,
                     selected,
                     reach: None,
                     reach_flood: self.reach_flood.as_ref(),

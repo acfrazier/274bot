@@ -815,6 +815,7 @@ mod tests {
                 target: None,
             },
             reach: None,
+            wilderness: None,
         };
         RiskInput::capture(
             &frame,

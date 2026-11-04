@@ -829,6 +829,30 @@ impl LocalStateService {
         identity: &DomainIdentity,
         freshness: Duration,
     ) -> Result<crate::walk_permissions::WalkGlobals, PreferenceError> {
+        self.preferences_projection(identity, freshness, |projection| {
+            projection.walk_globals.clone()
+        })
+    }
+
+    pub(super) fn preferences_pvp_globals(
+        self: &Arc<Self>,
+        identity: &DomainIdentity,
+        freshness: Duration,
+    ) -> Result<script::native::PvpGlobals, PreferenceError> {
+        self.preferences_projection(identity, freshness, |projection| {
+            projection.pvp_globals.clone()
+        })
+    }
+
+    /// One worker-built projection of the cached preferences, read without
+    /// waiting for storage: a cold or refused store, or a projection the
+    /// worker could not build, is a typed error.
+    fn preferences_projection<T>(
+        self: &Arc<Self>,
+        identity: &DomainIdentity,
+        freshness: Duration,
+        pick: impl FnOnce(&files::PreferenceProjection) -> Result<T, Arc<str>>,
+    ) -> Result<T, PreferenceError> {
         if !self.is_open(identity.domain()) {
             return Err(self.shared.preference_not_ready.clone());
         }
@@ -837,7 +861,7 @@ impl LocalStateService {
         let Some(store) = state.stores.get(&key) else {
             return Err(self.shared.preference_not_ready.clone());
         };
-        let (walk_globals, stale) = match &store.file {
+        let (projected, stale) = match &store.file {
             FileState::Cold => return Err(self.shared.preference_not_ready.clone()),
             FileState::Rejected(rejection) => {
                 return Err(PreferenceError::from_cached(
@@ -854,16 +878,13 @@ impl LocalStateService {
                     .preferences
                     .as_ref()
                     .unwrap_or(&state.preference_default);
-                (
-                    projection.walk_globals.clone(),
-                    cached.refreshed_at.elapsed() >= freshness,
-                )
+                (pick(projection), cached.refreshed_at.elapsed() >= freshness)
             }
         };
         if stale {
             self.shared.request_readback(&mut state, &key);
         }
-        walk_globals.map_err(|cause| {
+        projected.map_err(|cause| {
             PreferenceError::from_cached(Arc::clone(&self.shared.preference_path), cause, None)
         })
     }
@@ -2158,6 +2179,24 @@ fn collect_preference_audit_change<'a>(
     if old == new {
         return;
     }
+    // The first write of the PvP setting adds the whole `pvp` object (and
+    // clearing it removes the object): show the one member's old and new
+    // value, not "set" for the object.
+    if path.as_slice() == ["pvp"] && old.is_none() != new.is_none() {
+        let present = old.or(new).and_then(serde_json::Value::as_object);
+        if present.is_some_and(|object| object.len() == 1 && object.contains_key("start_fights")) {
+            path.push("start_fights");
+            collect_preference_audit_change(
+                old.and_then(|value| value.get("start_fights")),
+                new.and_then(|value| value.get("start_fights")),
+                path,
+                changes,
+                total,
+            );
+            path.pop();
+            return;
+        }
+    }
     if !(path.len() == 1
         && matches!(
             path[0],
@@ -2306,6 +2345,7 @@ fn preference_audit_scalar_kind(path: &[&str]) -> Option<PreferenceAuditScalarKi
         {
             Some(PreferenceAuditScalarKind::Boolean)
         }
+        ["pvp", "start_fights"] => Some(PreferenceAuditScalarKind::Boolean),
         ["quester_paths", "enabled"] => Some(PreferenceAuditScalarKind::Boolean),
         ["map_bake"] => Some(PreferenceAuditScalarKind::MapBake),
         ["server_revision"] => Some(PreferenceAuditScalarKind::ServerRevision),
@@ -2464,6 +2504,30 @@ mod preference_audit_tests {
             before.as_object().expect("an object"),
         )
         .is_none());
+    }
+
+    #[test]
+    fn summary_shows_the_pvp_setting_old_and_new() {
+        let before = json!({ "nav": { "allow_teleports": true } });
+        let after = json!({ "nav": { "allow_teleports": true }, "pvp": { "start_fights": true } });
+        let summary = preference_audit_summary(
+            before.as_object().expect("an object"),
+            after.as_object().expect("an object"),
+        )
+        .expect("a changed preference document");
+        assert!(
+            summary.text.contains("pvp.start_fights"),
+            "{}",
+            summary.text
+        );
+        assert!(summary.text.contains("true"), "{}", summary.text);
+        let off = json!({ "pvp": { "start_fights": false } });
+        let summary = preference_audit_summary(
+            after.as_object().expect("an object"),
+            off.as_object().expect("an object"),
+        )
+        .expect("a changed preference document");
+        assert!(summary.text.contains("pvp.start_fights: true -> false"));
     }
 
     #[test]

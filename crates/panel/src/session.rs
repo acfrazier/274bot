@@ -1105,6 +1105,9 @@ pub struct Session {
     pub route_through_zones: bool,
     /// Shared durable walk-policy projection; `ui.nav` is only an edit/render buffer.
     pub(crate) walk_permissions: frontend_core::WalkGlobalsView,
+    /// The global "Start fights with players" setting (`pvp.start_fights`), as
+    /// the Settings window shows it; a click waits for its saved value.
+    pub(crate) pvp_start_fights: frontend_core::PvpSettingView,
     /// The operator preferences (`panel-ui.json`) through the process
     /// local-state service this session opened: the one handle every reader
     /// and writer of the panel's preferences goes through.
@@ -1768,6 +1771,8 @@ impl Session {
         let preferences_ready = preferences.ready();
         let mut ui = crate::ui_state::load(&preferences);
         let walk_permissions = core.adopt_operator_preferences();
+        let pvp_start_fights =
+            frontend_core::PvpSettingView::new(core.pvp_start_fights().unwrap_or(false));
         let mut quester_paths = frontend_core::QuesterPathsController::default();
         quester_paths.restore(&preferences);
         let quester_paths_folder_edit = quester_paths
@@ -1845,6 +1850,7 @@ impl Session {
             walkto_open: false,
             route_through_zones: false,
             walk_permissions,
+            pvp_start_fights,
             preferences,
             preferences_ready,
             startup_focus_pending: None,
@@ -1963,6 +1969,7 @@ impl Session {
         self.adopt_panel_preferences_if_ready();
         self.prune_pending_nav_members();
         self.walk_permissions = self.core.refresh_walk_globals();
+        self.follow_pvp_start_fights();
         apply_walk_permissions_to_nav(
             &mut self.ui.nav,
             self.walk_permissions,
@@ -1971,6 +1978,44 @@ impl Session {
         self.route_through_zones = self
             .walk_permissions
             .danger_this_walk(self.route_through_zones);
+    }
+
+    /// The global "Start fights with players" setting, through
+    /// `SetPvpStartFights`. The row shows the new value at once; a refused
+    /// command or a failed save (at once or later) shows its reason and the
+    /// saved value again ([`Self::follow_pvp_start_fights`]).
+    pub(crate) fn set_pvp_start_fights(&mut self, on: bool) {
+        self.pvp_start_fights.begin(on);
+        let Some(submitted) = self.submit(
+            frontend_core::OperatorCommand::SetPvpStartFights(on),
+            frontend_core::Targets::Application,
+        ) else {
+            self.pvp_start_fights.refuse();
+            return;
+        };
+        self.pvp_start_fights.submitted(submitted.request());
+        self.follow_pvp_start_fights();
+    }
+
+    /// Once per frame: settle the click's command in the shared view rule
+    /// ([`frontend_core::PvpSettingView::follow`]), show a failure on the
+    /// banner, and clear that line when a later save succeeds.
+    pub(crate) fn follow_pvp_start_fights(&mut self) {
+        match self.pvp_start_fights.follow(&self.core) {
+            Some(frontend_core::PvpWrite::Failed) => {
+                self.error = Some(self.pvp_start_fights.failure(&self.core).to_owned());
+            }
+            Some(frontend_core::PvpWrite::Saved)
+                if self
+                    .error
+                    .as_deref()
+                    .is_some_and(frontend_core::is_start_fights_error) =>
+            {
+                self.error = None;
+            }
+            Some(frontend_core::PvpWrite::Saved) => {}
+            None => {}
+        }
     }
 
     /// One reconciliation of the saved operator settings: the core settles

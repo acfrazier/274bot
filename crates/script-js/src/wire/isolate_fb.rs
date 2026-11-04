@@ -3382,6 +3382,10 @@ fn combat_fight_off<'b>(
         let offs: Vec<_> = spells.iter().map(|name| b.create_string(name)).collect();
         b.create_vector(&offs)
     });
+    let player = match &request.target {
+        TargetSpec::Player(name) => Some(b.create_string(name)),
+        _ => None,
+    };
     let mut table = CombatFightBuilder::new(b);
     match &request.target {
         TargetSpec::Names(_) => table.add_target(1),
@@ -3390,6 +3394,7 @@ fn combat_fight_off<'b>(
             table.add_target(3);
             table.add_attackers(u8::from(*npcs) | (u8::from(*players) << 1));
         }
+        TargetSpec::Player(_) => table.add_target(4),
     }
     if let Some(names) = names {
         table.add_npc_names(names);
@@ -3435,6 +3440,10 @@ fn combat_fight_off<'b>(
     table.add_potions(request.potions);
     table.add_retaliate(request.retaliate);
     table.add_budget_ticks(request.budget_ticks);
+    if let Some(player) = player {
+        table.add_player(player);
+    }
+    table.add_pvp(request.pvp);
     table.finish()
 }
 
@@ -3473,6 +3482,7 @@ fn decode_combat_fight(
             },
             _ => return Err(bad("target")),
         },
+        4 => TargetSpec::Player(Arc::from(fight.player().ok_or_else(|| bad("target"))?)),
         _ => return Err(bad("target")),
     };
     let request = CombatSessionRequest {
@@ -3533,6 +3543,7 @@ fn decode_combat_fight(
         potions: fight.potions(),
         retaliate: fight.retaliate(),
         budget_ticks: fight.budget_ticks(),
+        pvp: fight.pvp(),
     };
     request
         .check()
@@ -3571,6 +3582,7 @@ fn api_combat_outcome_off<'b>(
         table.add_boost_doses(report.boost_doses);
         table.add_antifire_doses(report.antifire_doses);
         table.add_protect_switches(report.protect_switches);
+        table.add_pvp_source(report.pvp_source.map_or(0, script::combat::PvpSource::code));
     }
     table.finish()
 }

@@ -119,6 +119,22 @@ fn cold_preferences_adopt_saved_startup_models_without_writing_defaults() {
     assert_eq!(std::fs::read(path).unwrap(), saved);
 }
 
+#[test]
+fn preferences_without_the_pvp_member_load_without_rewriting_the_saved_file() {
+    let dir = scratch("preferences-before-pvp");
+    let path = dir.join("state").join("panel-ui.json");
+    let saved =
+        br#"{"capture":false,"nav":{"allow_teleports":true},"legacy_extension":{"version":7}}"#;
+    vault::write_private_file(&path, saved).unwrap();
+
+    let driver = open_driver(&dir);
+    assert!(driver.session().preferences().unwrap().ready());
+    assert_eq!(driver.session().pvp_start_fights(), Some(false));
+    assert!(!driver.models.draw.capture());
+    assert!(driver.models.walk_globals.globals().allow_teleports());
+    assert_eq!(std::fs::read(path).unwrap(), saved);
+}
+
 /// A real vault file at `dir/vault` holding `names`.
 fn vault_with(dir: &Path, names: &[&str]) -> PathBuf {
     let path = dir.join("vault");
@@ -842,6 +858,295 @@ fn watched_setting_events_report_pending_failed_then_saved() {
         .expect("admitted");
     assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
     assert_eq!(d.session_mut().take_setting_events(), (Vec::new(), false));
+}
+
+/// PVP-V1 (design §2.7): `pvp.start_fights` is one member of the shared
+/// preferences document. Writing it settles `Done`, the file holds it, a new
+/// session reads it back, and the write logs exactly one audit info line
+/// that names the setting. A front end's refusal of the command (the TUI in
+/// `--live`, which has no preferences store) logs one `command refused` line.
+#[test]
+fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_line() {
+    use crate::log::{global, LogScope, LogView};
+    // The audit lines go to the process-wide log: no other test may write the
+    // setting while this one counts.
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-setting");
+    let mut d = driver_in(&dir, &["pvp1-alice"]);
+    let lines_with = |filter: &str, needle: &str| -> Vec<String> {
+        let mut view = LogView::new(LogScope::Process);
+        view.edit_filter(|f| f.set_text(filter));
+        global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|row| row.message().to_owned())
+            .filter(|line| line.contains(needle))
+            .collect()
+    };
+    assert_eq!(
+        crate::pvp_prefs::pvp_start_fights(&d.session().preferences().expect("bound")).ok(),
+        Some(false),
+        "off until the operator turns it on"
+    );
+    let audit_before = lines_with("pvp.start_fights", "pvp.start_fights").len();
+
+    let on = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    assert_eq!(settled_app(&mut d, on.request()), Some(done()));
+    assert_eq!(
+        preferences_file(&d)["pvp"]["start_fights"],
+        serde_json::Value::Bool(true)
+    );
+    let audit = lines_with("pvp.start_fights", "pvp.start_fights");
+    assert_eq!(
+        audit.len() - audit_before,
+        1,
+        "one write, one audit line: {audit:?}"
+    );
+    assert!(
+        audit.last().is_some_and(|line| line.contains("true")),
+        "{audit:?}"
+    );
+    assert!(
+        crate::pvp_prefs::pvp_start_fights(&d.session().preferences().expect("bound"))
+            .expect("the projection is ready"),
+    );
+    let again = open_driver(&dir);
+    assert_eq!(
+        crate::pvp_prefs::pvp_start_fights(&again.session().preferences().expect("bound")).ok(),
+        Some(true),
+        "a new session over the same state root"
+    );
+
+    let before = d.session().refusals();
+    d.session_mut().refuse_unsubmitted(
+        OperatorCommand::SetPvpStartFights(true),
+        &[],
+        "pvp-v1 test: no preferences store in this mode",
+    );
+    assert_eq!(d.session().refusals(), before + 1);
+    let refusal = lines_with("command refused: SetPvpStartFights", "pvp-v1 test");
+    assert_eq!(refusal.len(), 1, "{refusal:?}");
+}
+
+/// PVP-V1-R1 (review R3): a click that turns the setting off queues behind a
+/// busy disk and later fails. The view that showed the click at once shows the
+/// saved value (on) again when the command settles, with the owner's reason,
+/// and a peer's write after that stays visible. Panel and TUI call the same
+/// `PvpSettingView::follow`.
+#[cfg(unix)]
+#[test]
+fn the_pvp_setting_deferred_write_failure_shows_the_saved_value_and_a_peer_write_follows() {
+    use crate::{PvpSettingView, PvpWrite};
+    use std::os::unix::fs::PermissionsExt;
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-deferred-failure");
+    let mut d = driver_in(&dir, &["pvp2-alice"]);
+    let prefs = d.session().preferences().expect("bound");
+    let mut view = PvpSettingView::new(false);
+
+    // Saved on.
+    view.begin(true);
+    let on = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(on.request());
+    assert_eq!(settled_app(&mut d, on.request()), Some(done()));
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Saved));
+    assert!(view.shown() && !view.pending());
+
+    // Off: the disk is busy, so the write stays queued; the row shows off.
+    let release = hold_first_write(&d);
+    view.begin(false);
+    let off = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(false),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(off.request());
+    assert_eq!(terminal_app(&d, off.request()), None, "queued, not failed");
+    assert_eq!(view.follow(d.session()), None, "still waiting");
+    assert!(!view.shown() && view.pending());
+
+    // The state directory refuses the write once the disk answers.
+    let state_dir = prefs.path().parent().expect("a directory").to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    let terminal = settled_app(&mut d, off.request());
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the deferred write fails: {terminal:?}"
+    );
+
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Failed));
+    assert!(
+        crate::is_start_fights_error(view.failure(d.session())),
+        "the owner's reason: {}",
+        view.failure(d.session())
+    );
+    assert!(
+        view.shown() && !view.pending(),
+        "the saved value (on) is shown, not the attempted off"
+    );
+    assert_eq!(view.follow(d.session()), None, "reported once");
+    assert!(view.shown());
+
+    // A peer turns it off in the file: the row follows it after the failure.
+    vault::write_private_file(&prefs.path(), br#"{"pvp":{"start_fights":false}}"#).unwrap();
+    prefs.reload().unwrap();
+    d.poll();
+    assert_eq!(view.follow(d.session()), None);
+    assert!(
+        !view.shown(),
+        "a peer write stays visible after the failure"
+    );
+}
+
+/// The peer's write of `enabled` reaches the view between the click and the
+/// command's submission: a front end that refreshes its walk globals before it
+/// submits adopts the saved value there (the TUI pump does).
+fn peer_writes_pvp_before_submission(
+    d: &mut HeadlessDriver,
+    view: &mut crate::PvpSettingView,
+    enabled: bool,
+) {
+    let prefs = d.session().preferences().expect("bound");
+    let document = format!(r#"{{"pvp":{{"start_fights":{enabled}}}}}"#);
+    vault::write_private_file(&prefs.path(), document.as_bytes()).unwrap();
+    prefs.reload().unwrap();
+    d.poll();
+    view.adopt(crate::pvp_prefs::pvp_start_fights(&prefs).ok());
+}
+
+/// PVP-V1-R3 (review R6): a peer write that arrives after the click and before
+/// the command is submitted must not cut the click from its command. Whatever
+/// value the peer wrote, the click's own settlement is still reported, so a
+/// front end clears or sets the error exactly as for an ordinary retry.
+#[test]
+fn a_peer_write_before_submission_keeps_the_clicks_command_followed() {
+    use crate::{PvpSettingView, PvpWrite};
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-peer-before-submit");
+    let mut d = driver_in(&dir, &["pvp3-alice"]);
+    let mut view = PvpSettingView::new(false);
+
+    // The peer wrote the value the click asks for: the wait ends at once.
+    view.begin(true);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    assert!(view.shown() && !view.pending(), "the saved value agrees");
+    let click = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(click.request());
+    assert_eq!(settled_app(&mut d, click.request()), Some(done()));
+    assert_eq!(
+        view.follow(d.session()),
+        Some(PvpWrite::Saved),
+        "the click's own save is reported"
+    );
+    assert_eq!(view.follow(d.session()), None, "reported once");
+    assert!(view.shown() && !view.pending());
+
+    // The peer wrote the other value: the click keeps waiting and its save wins.
+    view.begin(false);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    assert!(!view.shown() && view.pending(), "the saved value differs");
+    let click = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(false),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(click.request());
+    assert_eq!(settled_app(&mut d, click.request()), Some(done()));
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Saved));
+    assert!(!view.shown() && !view.pending());
+
+    // A click that never became a command leaves nothing for a later submit.
+    view.begin(true);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    view.refuse();
+    let stray = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(stray.request());
+    assert_eq!(settled_app(&mut d, stray.request()), Some(done()));
+    assert_eq!(
+        view.follow(d.session()),
+        None,
+        "a refused click follows no command"
+    );
+}
+
+/// The same peer write, but the click's command fails: its failure is reported
+/// and the row shows the saved value, as for an ordinary click.
+#[cfg(unix)]
+#[test]
+fn a_peer_write_before_submission_still_reports_the_clicks_failure() {
+    use crate::{PvpSettingView, PvpWrite};
+    use std::os::unix::fs::PermissionsExt;
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-peer-before-submit-failure");
+    let mut d = driver_in(&dir, &["pvp4-alice"]);
+    let prefs = d.session().preferences().expect("bound");
+    let mut view = PvpSettingView::new(false);
+
+    let release = hold_first_write(&d);
+    view.begin(true);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    let click = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(click.request());
+    assert_eq!(
+        terminal_app(&d, click.request()),
+        None,
+        "queued, not failed"
+    );
+
+    let state_dir = prefs.path().parent().expect("a directory").to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    let terminal = settled_app(&mut d, click.request());
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the write fails: {terminal:?}"
+    );
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Failed));
+    assert!(
+        crate::is_start_fights_error(view.failure(d.session())),
+        "the owner's reason: {}",
+        view.failure(d.session())
+    );
 }
 
 /// T3.3 r5 (review finding 5): the newest command for a setting wins. An

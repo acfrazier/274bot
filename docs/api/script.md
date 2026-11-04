@@ -901,6 +901,21 @@ Offline magic replay stops at the same first full readiness predicate as the liv
 harness and also reports the verdict over the entire retained capture. Later
 timeout-tail activity is not erased or relabelled as a fresh live pass.
 
+### Quester player targets and the opt-in
+
+A `combat` step may start a fight with a named player: `target: {"player":
+"bob"}`, with the optional root `pvp: true`. The game allows player combat
+only in the Wilderness and in a Duel Arena fight pen. Starting such a fight
+needs one opt-in: the step's `pvp: true`, or the operator's global setting
+"Start fights with players" (`pvp.start_fights` in the shared preferences, off
+by default, in both the panel and the TUI). Without either the step fails with
+the typed refusal `PvpRefused(NotOptedIn)`. The step reads the setting only when
+it begins. A step that only defends (`target: {"attacker": {"players": true}}`),
+and the bot's defence against a player who attacks it during any step, never
+read `pvp` or the setting. The attack verb is the label the game gives the
+player: `Attack` in the Wilderness, `Fight` in a duel. `target.player` takes
+no `pick` or `not_targeting_others`.
+
 ### Exact loc use-on targets
 
 Item/widget use-on dispatch keeps the exact loc tile and applies every supplied

@@ -437,6 +437,10 @@ pub enum OperatorCommand {
     SetDangerLevel(DangerLevel),
     /// Turn the session log file on or off (`log_file::apply_session_log`).
     SetSessionLog(bool),
+    /// Allow or forbid every script to START a fight with a player (the shared
+    /// preference `pvp.start_fights`, `pvp_prefs.rs`). Fighting back against a
+    /// player is never affected.
+    SetPvpStartFights(bool),
     /// Persist the map-bake choice (`map_bake::persist_map_bake_choice`;
     /// `MapBakeGate::set_choice`).
     SetMapBakeChoice(MapBakeChoice),
@@ -717,7 +721,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 97] = [
+    pub const ALL: [OperatorCommand; 98] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -805,6 +809,7 @@ impl OperatorCommand {
         Self::SetNavPreference(NavPreference::AllowTeleports, true),
         Self::SetDangerLevel(DangerLevel::Never),
         Self::SetSessionLog(true),
+        Self::SetPvpStartFights(true),
         Self::SetMapBakeChoice(MapBakeChoice::Ask),
         Self::OpenMapDemand,
         Self::ReleaseMapDemand,
@@ -873,6 +878,7 @@ impl OperatorCommand {
             | Self::SetNavPreference(..)
             | Self::SetDangerLevel(_)
             | Self::SetSessionLog(_)
+            | Self::SetPvpStartFights(_)
             | Self::SetMapBakeChoice(_)
             | Self::OpenMapDemand
             | Self::ReleaseMapDemand

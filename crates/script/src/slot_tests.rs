@@ -1194,6 +1194,8 @@ fn compiled_ctx<'a>(
             poison_unknown_pulse: None,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
             walk_danger: None,
+            wilderness: None,
+            pvp_globals: None,
             selected,
             reach: None,
             reach_flood: None,

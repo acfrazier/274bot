@@ -63,6 +63,11 @@ required-features = ["test-hooks"]
 harness = false
 
 [[test]]
+name = "combat_summary_shape"
+required-features = ["test-hooks"]
+harness = false
+
+[[test]]
 name = "load_isolate"
 [[test]]
 name = "declared_abi"

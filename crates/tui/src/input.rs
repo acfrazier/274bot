@@ -715,6 +715,7 @@ impl TuiApp {
             &mut self.settings_state,
         )
         .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
+        .pvp_start_fights(&mut self.pvp_start_fights)
         .script_scope_notice_ack(&mut self.script_scope_notice_ack)
         .survivable_routing_notice_ack(&mut self.survivable_routing_notice_ack)
         .quester_paths(&mut self.quester_paths);
@@ -779,6 +780,7 @@ impl TuiApp {
             SettingsKey::PauseScriptOnManualWalkAbort => {
                 self.pause_script_on_manual_walk_abort_dirty = true;
             }
+            SettingsKey::PvpStartFights(on) => self.pvp_start_fights_request = Some(on),
             SettingsKey::QuesterPathsChanged => {
                 self.quester_paths_dirty = true;
                 return AppAction::DismissPathsNotice;

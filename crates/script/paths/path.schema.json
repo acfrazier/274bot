@@ -3495,8 +3495,19 @@
             "string",
             "null"
           ],
-          "description": "Optional named loadout for the encounter.",
+          "description": "Optional named loadout for the encounter: the loadout of the opening\n`tactic.style`.",
           "default": null
+        },
+        "loadouts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyleLoadoutsArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional named loadout per combat style. The machine wears the\nloadout of a style when it switches to that style in the middle of a\nfight (when the opponent protects against the opening style, when\nammunition or runes run out, and when the opponent stays out of melee\nreach). A style with no loadout is never a switch target. Naming the\nopening style here and in `loadout` is refused."
         },
         "spells": {
           "type": [
@@ -3557,6 +3568,11 @@
           "description": "Maximum distance in tiles before the target is considered lost.",
           "minimum": 0,
           "maximum": 255
+        },
+        "pvp": {
+          "type": "boolean",
+          "description": "Opt in to START a fight with the named `target.player`. The global\noperator setting `pvp.start_fights` also opts in; without either the\nstep is refused (`pvp-not-allowed`). Fighting back needs neither.",
+          "default": false
         },
         "kill_budget_ticks": {
           "type": "integer",
@@ -3652,7 +3668,11 @@
           "description": "Select NPCs or players that are already attacking the player."
         },
         "player": {
-          "description": "Player targeting is represented in the wire format but is unsupported.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A named player to fight. Where the game allows player combat (the\nWilderness and a duel pen) and the step or the global setting opts in.",
           "default": null
         },
         "not_targeting_others": {
@@ -3786,6 +3806,37 @@
         "defensive",
         "controlled"
       ]
+    },
+    "StyleLoadoutsArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "melee": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or Path-qualified name of the melee loadout.",
+          "default": null
+        },
+        "ranged": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or Path-qualified name of the ranged loadout.",
+          "default": null
+        },
+        "mage": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or Path-qualified name of the magic loadout.",
+          "default": null
+        }
+      },
+      "description": "The named loadout of each combat style (PVP-DESIGN-1026 §4.1)."
     },
     "AreaArg2": {
       "anyOf": [

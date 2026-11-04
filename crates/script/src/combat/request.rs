@@ -16,11 +16,25 @@ impl ActorRef {
         self.kind == other.kind && usize::from(self.index) == other.index
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Style {
     Melee,
     Ranged,
     Mage,
+}
+impl Style {
+    /// The three styles in their canonical order (also the `StyleKits` order).
+    pub const ALL: [Self; 3] = [Self::Melee, Self::Ranged, Self::Mage];
+    /// Dense index into a per-style array.
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+    /// The `headicons` bit of the protection prayer that blocks this style:
+    /// Protect from Melee, Missiles and Magic show as bits 3, 4 and 5
+    /// (`headicon.constant:4-6`).
+    pub const fn protect_bit(self) -> u8 {
+        1 << (3 + self as u8)
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
@@ -100,11 +114,81 @@ pub enum Target {
 pub struct CompiledKit {
     pub worn: Arc<[(u8, i32)]>,
     pub carry: Arc<[(i32, u32)]>,
+    /// The special-attack weapon of this style's loadout when it is not the
+    /// kit's main right hand (PVP-DESIGN-1026 §6.2). Read from V4 on.
+    pub special: Option<i32>,
+}
+/// One loadout per style (PVP-DESIGN-1026 §4.1). A style with no kit is never
+/// a switch target; the opening style may still run without one (the machine
+/// then picks its weapon from the pack by content facts, §4.2).
+#[derive(Debug, Clone, Default)]
+pub struct StyleKits {
+    pub melee: Option<Arc<CompiledKit>>,
+    pub ranged: Option<Arc<CompiledKit>>,
+    pub mage: Option<Arc<CompiledKit>>,
+}
+impl StyleKits {
+    pub fn get(&self, style: Style) -> Option<&Arc<CompiledKit>> {
+        match style {
+            Style::Melee => self.melee.as_ref(),
+            Style::Ranged => self.ranged.as_ref(),
+            Style::Mage => self.mage.as_ref(),
+        }
+    }
+    /// The same kits with `kit` as the loadout of `style`.
+    #[must_use]
+    pub fn with(mut self, style: Style, kit: Arc<CompiledKit>) -> Self {
+        match style {
+            Style::Melee => self.melee = Some(kit),
+            Style::Ranged => self.ranged = Some(kit),
+            Style::Mage => self.mage = Some(kit),
+        }
+        self
+    }
+}
+/// When the machine may change attack style mid-fight (PVP-DESIGN-1026 §4.1,
+/// §4.3). A trigger only ever targets a style that has a kit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SwitchPolicy {
+    /// T2/T3: leave a style the opponent protects against, and return to
+    /// `prefer[0]` once the opponent shows no protection.
+    pub on_protect: bool,
+    /// T1: switch instead of aborting when ammo or runes run out.
+    pub on_exhaustion: bool,
+    /// T4: leave melee when the opponent stays out of reach.
+    pub on_reach: bool,
+    /// The order tried: the opening style first by default, then the rest.
+    pub prefer: [Style; 3],
+}
+impl SwitchPolicy {
+    /// Every trigger on, `first` preferred, the other styles in canonical order.
+    pub fn for_style(first: Style) -> Self {
+        let mut prefer = [first; 3];
+        let mut next = 1;
+        for style in Style::ALL {
+            if style != first {
+                prefer[next] = style;
+                next += 1;
+            }
+        }
+        Self {
+            on_protect: true,
+            on_exhaustion: true,
+            on_reach: true,
+            prefer,
+        }
+    }
+}
+impl Default for SwitchPolicy {
+    fn default() -> Self {
+        Self::for_style(Style::Melee)
+    }
 }
 #[derive(Debug, Clone)]
 pub struct SpellRef {
     pub alias: Arc<str>,
 }
+/// What the machine may do on the bot's behalf. Every flag defaults to allowed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Allowances {
     pub prayer: bool,
@@ -112,6 +196,12 @@ pub struct Allowances {
     pub potions: bool,
     pub equipment: bool,
     pub retaliate_toggle: bool,
+    /// Wear positions the machine must never change, one bit per slot
+    /// (`player/configs/equip.constant:2-15`): the duel rules `NoWeapons`,
+    /// `NoArmour` and `NoJewelry` lock slots. A locked slot has no wanted item.
+    pub locked_slots: u16,
+    /// Whether a special attack may be used (false under the duel's `no_specs`).
+    pub special: bool,
 }
 impl Default for Allowances {
     fn default() -> Self {
@@ -121,6 +211,8 @@ impl Default for Allowances {
             potions: true,
             equipment: true,
             retaliate_toggle: true,
+            locked_slots: 0,
+            special: true,
         }
     }
 }
@@ -156,7 +248,9 @@ pub struct CombatRequest {
     pub style: Style,
     pub melee_mode: Option<MeleeMode>,
     pub ranged_style: RangedMode,
-    pub kit: Option<Arc<CompiledKit>>,
+    /// One loadout per style; the opening style's kit is `kits.get(style)`.
+    pub kits: StyleKits,
+    pub switch: SwitchPolicy,
     /// An explicit order always uses manual casts, even with an armed staff.
     /// `None` selects the strongest castable spell (the 16-row chooser when
     /// a staff is desired, otherwise manual). Manual casts are five ticks apart.
@@ -180,6 +274,11 @@ pub struct CombatRequest {
     pub retaliate: bool,
     pub prayer_mode: PrayerMode,
     pub until_ticks: u16,
+    /// The script's opt-in to START a fight with a named player. The global
+    /// operator setting `pvp.start_fights` is the other source; one predicate,
+    /// [`super::select::pvp_initiation_allowed`], reads both at `begin` and only
+    /// for [`Target::Player`]. Self-defence never reads this field.
+    pub pvp: bool,
 }
 impl Default for CombatRequest {
     fn default() -> Self {
@@ -190,7 +289,8 @@ impl Default for CombatRequest {
             },
             tactic: Tactic::Open,
             style: Style::Melee,
-            kit: None,
+            kits: StyleKits::default(),
+            switch: SwitchPolicy::default(),
             spells: None,
             fallback_spells: false,
             melee_mode: None,
@@ -207,6 +307,7 @@ impl Default for CombatRequest {
             retaliate: true,
             prayer_mode: PrayerMode::Hold,
             until_ticks: 0,
+            pvp: false,
         }
     }
 }
@@ -231,6 +332,58 @@ pub enum PrepReadiness {
     CombatRootWrong,
     StyleEchoMissing,
 }
+/// Why a player cannot be fought now (PVP-DESIGN-1026 §2.1). Carried by
+/// `ActionError::PvpRefused` at `begin` and by [`AbortReason::PvpRefused`]
+/// after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, thiserror::Error)]
+pub enum PvpRefusal {
+    /// `Target::Player` with neither `request.pvp` nor the global setting.
+    #[error("pvp-not-allowed")]
+    NotOptedIn,
+    /// The player row has neither the "Attack" nor the "Fight" op.
+    #[error("pvp-no-attack-op")]
+    NoAttackOp,
+    /// The bot stands outside the Wilderness and outside a duel pen.
+    #[error("pvp-outside-wilderness")]
+    OutsideWilderness,
+    /// The opponent stands outside the Wilderness.
+    #[error("pvp-opponent-outside")]
+    OpponentOutside,
+    /// The level difference exceeds the Wilderness level.
+    #[error("pvp-level-range")]
+    LevelRange {
+        /// The lower of the two Wilderness levels.
+        wilderness: u8,
+        /// The absolute combat-level difference.
+        difference: u8,
+    },
+    /// In the duel challenge area, not in a pen.
+    #[error("pvp-challenge-area")]
+    ChallengeArea,
+    /// The arena refused: the player is not the duel partner.
+    #[error("pvp-not-opponent")]
+    NotOpponent,
+    /// The duel has not started.
+    #[error("pvp-duel-not-started")]
+    DuelNotStarted,
+}
+
+impl PvpRefusal {
+    /// The stable code scripts match, equal to the variant's display text.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::NotOptedIn => "pvp-not-allowed",
+            Self::NoAttackOp => "pvp-no-attack-op",
+            Self::OutsideWilderness => "pvp-outside-wilderness",
+            Self::OpponentOutside => "pvp-opponent-outside",
+            Self::LevelRange { .. } => "pvp-level-range",
+            Self::ChallengeArea => "pvp-challenge-area",
+            Self::NotOpponent => "pvp-not-opponent",
+            Self::DuelNotStarted => "pvp-duel-not-started",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AbortReason {
     Unprotected(Unprotected),
@@ -241,6 +394,9 @@ pub enum AbortReason {
     PrepFailed(PrepItem),
     PrepReadiness(PrepReadiness),
     Unresponsive,
+    /// A mid-fight refusal: the server or the zone gate stopped the attack on
+    /// a player.
+    PvpRefused(PvpRefusal),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum CombatEnd {
@@ -277,6 +433,19 @@ pub struct CombatReport {
     pub flick_resets: u8,
     pub flick_misses: u8,
     pub flick_fallback: bool,
+    /// Player targets the candidate check refused to engage this run.
+    pub pvp_blocked: u8,
+    /// Which source authorised STARTING a fight; `None` for self-defence.
+    pub pvp_source: Option<super::select::PvpSource>,
+    /// Whether a server kill line was seen (never a gate; the zero bar is).
+    pub kill_line_seen: bool,
+    /// Completed style switches (PVP-DESIGN-1026 §4.1); not the protect-prayer
+    /// switches of `protect_switches`.
+    pub switches: u8,
+    /// Switches that ended `Failed`: the old style kept fighting.
+    pub switch_failed: u8,
+    /// The style the machine was executing when the fight ended.
+    pub active_style: Style,
 }
 const _: () = assert!(std::mem::size_of::<CombatReport>() <= 80);
 

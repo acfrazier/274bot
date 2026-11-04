@@ -2904,6 +2904,22 @@
       "classification": "owning",
       "owner": "T3",
       "reason": "Public cache owns profile and generation keys, the settings map, and an Arc-backed cached disclosure result."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/pvp_prefs.rs|PvpSettingView",
+      "path": "crates/frontend-core/src/pvp_prefs.rs",
+      "symbol": "PvpSettingView",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "PVP-V1-R1: the shown value of the global start-fights row (two small flags) shared by the panel and the TUI; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/pvp_prefs.rs|PvpWrite",
+      "path": "crates/frontend-core/src/pvp_prefs.rs",
+      "symbol": "PvpWrite",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "PVP-V1-R1 fix: how the global start-fights click settled (two cases, no payload); the reason text is borrowed through PvpSettingView::failure. Shared by the panel and the TUI; register in the introducing commit, no allowance."
     }
   ],
   "violations": [

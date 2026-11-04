@@ -423,6 +423,7 @@ pub(super) fn frame_context<'a>(
         pending_note_progress: Some(&mut runtime.pending_note_progress),
         budget: &mut runtime.budget,
         eligible: !ctx.compiled.hold,
+        wilderness: ctx.compiled.wilderness,
         observed_walk_outcome_seq: runtime.observed_walk_outcome.seq(),
         observed_walk_cancel_reason: if runtime.observed_walk_outcome.seq()
             == runtime.takeover_consumed_seq
@@ -548,6 +549,7 @@ impl CompiledRun {
                 service_authority: seat_ports.authority,
                 prompt_port: seat_ports.prompt,
                 walk_danger: ctx.compiled.walk_danger,
+                pvp_globals: ctx.compiled.pvp_globals,
                 frame: HostFrame {
                     here: ctx.here,
                     snapshot: ctx.snapshot,
@@ -564,6 +566,8 @@ impl CompiledRun {
                         collision: ctx.compiled.collision,
                         nav: ctx.compiled.nav,
                         walk_danger: ctx.compiled.walk_danger,
+                        wilderness: ctx.compiled.wilderness,
+                        pvp_globals: ctx.compiled.pvp_globals,
                         hold: ctx.compiled.hold,
                         service_gate: ctx.compiled.service_gate,
                         interacts,

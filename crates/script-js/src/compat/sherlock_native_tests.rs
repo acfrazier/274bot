@@ -389,6 +389,8 @@ fn with_tick<R>(
             poison_unknown_pulse: None,
             cure_poison: script::survival::CurePoison::WhenNeeded,
             walk_danger: None,
+            wilderness: None,
+            pvp_globals: None,
             selected: Some(&world.data),
             reach: None,
             reach_flood: None,
@@ -430,7 +432,14 @@ fn begin_policy_s2_combat(
     let tables = Arc::clone(script.tables.as_ref().expect("combat tables"));
     let handle = with_tick(world, ledger, 0, |tick| {
         tick.actions
-            .begin::<Combat>((Arc::new(request), tables), &mut tick.cx)
+            .begin::<Combat>(
+                (
+                    Arc::new(request),
+                    tables,
+                    script::native::PvpGlobals::fail_closed(),
+                ),
+                &mut tick.cx,
+            )
             .expect("begin policy Combat")
     });
     script.fight = Some(Fight::Combat(handle));
@@ -1257,6 +1266,8 @@ fn tick_sherlock_slot(slot: &mut script::slot::SlotScript, world: &World, tick: 
             condition: None,
             poison_unknown_pulse: None,
             walk_danger: None,
+            wilderness: None,
+            pvp_globals: None,
             cure_poison: script::survival::CurePoison::WhenNeeded,
             selected: Some(&world.data),
             reach: None,

@@ -6298,7 +6298,8 @@ fn s2b_admission_per_bot_layouts() {
         ),
         (4160, 1576, 520, 264)
     );
-    // Combat is 520 B with bounded approach retries; retain 8 B of headroom.
+    // Retain the last composed measurement and ceiling until the merged PvP
+    // layout is measured; the incoming branch's pins are not this composition.
     assert!(std::mem::size_of::<script::combat::Combat>() <= 528);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
 }

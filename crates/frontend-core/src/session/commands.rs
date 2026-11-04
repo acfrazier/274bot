@@ -1830,6 +1830,10 @@ impl<Io> OperatorSession<Io> {
                 let row = super::prefs::PrefRow::SessionLog(on);
                 self.pref_row(row, request, application_admitted, surface, submitted)
             }
+            OperatorCommand::SetPvpStartFights(on) => {
+                let row = super::prefs::PrefRow::PvpStartFights(on);
+                self.pref_row(row, request, application_admitted, surface, submitted)
+            }
             OperatorCommand::SetMapBakeChoice(choice) => {
                 let row = super::prefs::PrefRow::MapBake(choice);
                 self.pref_row(row, request, application_admitted, surface, submitted)

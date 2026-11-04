@@ -261,6 +261,46 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   to settle even if it finishes after the six-tick appearance window. The loot
   row advances only after the pickup settles, so a slow successful pickup is
   not reported as a missing drop.
+- Scripts can now start fights with other players where the game allows it:
+  in the Wilderness and in a Duel Arena fight pen. A script starts such a
+  fight only when it asks for it (`pvp: true` on the request) or the new
+  global setting **Start fights with players** allows it. The setting is off
+  by default, is saved with the other preferences, and has a row in both the
+  panel and the terminal app. Without either, the fight does not start and the
+  script gets the refusal `pvp-not-allowed`. Outside those places the refusal
+  names the place instead (for example `pvp-outside-wilderness`). Bots still defend themselves
+  against players: a bot that a player attacks fights back whatever the
+  request or the setting says. The attack uses the game's own label for the
+  player (`Attack` in the Wilderness, `Fight` in a duel).
+- The combat machine can now fight with one loadout per style (melee, ranged,
+  magic) and change style in the middle of a fight, through the same wear
+  repair it already used. It opens with the first style, in the order of its
+  preference list, that has a loadout and can attack now. It switches when its
+  ammunition or runes run out (instead of ending the fight; a style change
+  that was just made waits out its short settle first), when the player it
+  fights protects against its style (it rotates to the next style that is not
+  protected), back to its first preference once the opponent shows no
+  protection and stands within reach, and from melee to a ranged or magic style
+  when the opponent stays out of melee reach for two attack intervals. A switch
+  starts only when the style has a loadout and can attack now (its weapon is
+  held or worn, its arrows or runes exist; a thrown weapon needs no quiver; a
+  weapon or arrows that the game is still moving into the worn container count
+  as held) and never while equipment changes are not allowed. Duel rules that
+  lock the right hand leave unarmed melee and manual spells. Without a
+  loadout, melee weapons are picked from the pack by the game's own weapon
+  category and attack tier, not by display name; bows and staves are picked by
+  the arrows or runes that make them usable. The new loadouts and switches are
+  available to native callers and to Path combat steps (`loadouts`); the script
+  API does not expose them yet.
+- A Path combat step can name one loadout per style (`loadouts`: `melee`,
+  `ranged`, `mage`) beside `loadout`, which stays the loadout of the opening
+  style. Naming the opening style in both is refused.
+- A Path combat loadout that lists a two-handed weapon and a shield is now
+  refused when the Path is compiled.
+- A Path combat loadout now matches the items of its quiver, legs, hands, feet
+  and ring slots to the wear positions the game uses. Before, the machine
+  looked for those items in the wrong positions, never saw them worn, and the
+  step could end as unresponsive.
 
 ### Scripting
 

@@ -1,7 +1,7 @@
 use super::*;
 use api::snapshot::{WidgetKind, WidgetRoot, WidgetView};
 
-fn magic_scene(staff: Option<&str>, level: i32) -> Scene {
+pub(super) fn magic_scene(staff: Option<&str>, level: i32) -> Scene {
     let mut scene = Scene::new("khazard_warlord");
     scene.stat(6, level, level);
     scene
@@ -40,7 +40,7 @@ fn magic_scene(staff: Option<&str>, level: i32) -> Scene {
     refresh_magic(&mut scene, 3, false);
     scene
 }
-fn refresh_magic(scene: &mut Scene, value: i32, panel: bool) {
+pub(super) fn refresh_magic(scene: &mut Scene, value: i32, panel: bool) {
     let controls = scene.data.autocast_controls().unwrap();
     let (varp, root) = (
         controls.magic_varp,
@@ -89,7 +89,7 @@ fn component(scene: &Scene, alias: &str) -> i32 {
     let index = magic::spell_index(&scene.tables, alias).unwrap();
     scene.data.spells()[usize::from(index)].component_id
 }
-fn spend(scene: &mut Scene, alias: &str) {
+pub(super) fn spend(scene: &mut Scene, alias: &str) {
     let index = magic::spell_index(&scene.tables, alias).unwrap();
     let spell = &scene.data.spells()[usize::from(index)];
     let rhand = scene

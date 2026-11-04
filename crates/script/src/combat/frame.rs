@@ -28,6 +28,9 @@ pub struct Frame<'a> {
     /// attached one. Melee target selection uses it to refuse a target
     /// no wall-valid stand can reach; `None` leaves reachability unknown.
     pub reach: Option<&'a api::query::ReachQueryView>,
+    /// The Wilderness levels for this frame; `None` without a nav pack (every
+    /// tile then reads as outside the Wilderness).
+    pub wilderness: Option<&'a dyn crate::native::WildernessLevels>,
 }
 
 impl<'a> Frame<'a> {
@@ -74,7 +77,18 @@ impl<'a> Frame<'a> {
             varps,
             in_combat,
             reach,
+            wilderness: None,
         })
+    }
+
+    /// Attach the host's Wilderness levels to this frame.
+    #[must_use]
+    pub fn with_wilderness(
+        mut self,
+        wilderness: Option<&'a dyn crate::native::WildernessLevels>,
+    ) -> Self {
+        self.wilderness = wilderness;
+        self
     }
 
     #[inline]

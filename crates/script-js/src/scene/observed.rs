@@ -919,6 +919,7 @@ fn read_combat_outcome(page: ApiCombatOutcome<'_>) -> Option<CombatOutcomeObserv
                     boost_doses: page.boost_doses(),
                     antifire_doses: page.antifire_doses(),
                     protect_switches: page.protect_switches(),
+                    pvp_source: script::combat::PvpSource::from_code(page.pvp_source()),
                 },
             }
         }

@@ -43,6 +43,7 @@ pub(crate) enum PrefRow {
     Nav(NavPreference, bool),
     Danger(DangerLevel),
     SessionLog(bool),
+    PvpStartFights(bool),
     MapBake(MapBakeChoice),
     QuesterPaths,
     ReloadQuesterPaths,
@@ -57,6 +58,7 @@ impl PrefRow {
             Self::Nav(pref, on) => OperatorCommand::SetNavPreference(pref, on),
             Self::Danger(level) => OperatorCommand::SetDangerLevel(level),
             Self::SessionLog(on) => OperatorCommand::SetSessionLog(on),
+            Self::PvpStartFights(on) => OperatorCommand::SetPvpStartFights(on),
             Self::MapBake(choice) => OperatorCommand::SetMapBakeChoice(choice),
             Self::QuesterPaths => OperatorCommand::SetQuesterPaths,
             Self::ReloadQuesterPaths => OperatorCommand::ReloadQuesterPaths,
@@ -557,6 +559,13 @@ impl<Io> OperatorSession<Io> {
             .map(|preferences| crate::log_file::session_log_setting(&preferences))
     }
 
+    /// The saved global PvP setting (`pvp.start_fights`); `None` while the
+    /// preferences are unbound, cold or refused, or the member is malformed.
+    pub fn pvp_start_fights(&self) -> Option<bool> {
+        let preferences = self.preferences()?;
+        crate::pvp_prefs::pvp_start_fights(&preferences).ok()
+    }
+
     /// The saved map-bake choice; `None` without a bound preferences
     /// document.
     pub fn map_bake_preference(&self) -> Option<MapBakeChoice> {
@@ -620,6 +629,7 @@ impl<Io> OperatorSession<Io> {
             PrefRow::Nav(preference, on) => self.set_nav_preference(request, preference, on),
             PrefRow::Danger(level) => self.set_danger_level(request, level),
             PrefRow::SessionLog(on) => self.set_session_log(request, on),
+            PrefRow::PvpStartFights(on) => self.set_pvp_start_fights(request, on),
             PrefRow::MapBake(choice) => self.set_map_bake_choice(request, choice),
             PrefRow::QuesterPaths => self.set_quester_paths(request, surface),
             PrefRow::ReloadQuesterPaths => self.reload_quester_paths(request, surface),
@@ -835,6 +845,17 @@ impl<Io> OperatorSession<Io> {
         match crate::log_file::persist_session_log_setting(&preferences, on) {
             Ok(write) => self.after_write(request, setting, write, "session file setting"),
             Err(error) => self.refused(setting, not_accepted("session file setting", &error)),
+        }
+    }
+
+    fn set_pvp_start_fights(&mut self, request: RequestId, on: bool) -> Applied {
+        let setting = Setting::PvpStartFights;
+        let Some(preferences) = self.preferences() else {
+            return self.refused(setting, no_store());
+        };
+        match crate::pvp_prefs::write_pvp_start_fights(&preferences, on) {
+            Ok(write) => self.after_write(request, setting, write, "start fights with players"),
+            Err(error) => self.refused(setting, not_accepted("start fights with players", &error)),
         }
     }
 

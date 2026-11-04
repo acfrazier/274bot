@@ -13,6 +13,53 @@ use api::snapshot::{
 };
 use std::time::Instant;
 
+/// Test shorthand: make `kit` the loadout of the request's opening style.
+pub(super) trait SetKit {
+    fn set_kit(&mut self, kit: Arc<CompiledKit>);
+}
+impl SetKit for CombatRequest {
+    fn set_kit(&mut self, kit: Arc<CompiledKit>) {
+        self.kits = std::mem::take(&mut self.kits).with(self.style, kit);
+    }
+}
+
+/// One zone of a synthetic Wilderness (the shape of a `wilderness_zones` pair).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct TestZone {
+    pub(super) x1: i32,
+    pub(super) z1: i32,
+    pub(super) x2: i32,
+    pub(super) z2: i32,
+    pub(super) level1: i32,
+    pub(super) level2: i32,
+    pub(super) origin_z: i32,
+}
+
+/// A synthetic Wilderness the unit tests lend the machine: the content's level
+/// formula (`wilderness_levels.rs2:4-16`, one level per 8 tiles from the
+/// zone's south edge, starting at 1) over a list of zones. The script crate
+/// reads no navigation implementation type; the host adapts the real pack.
+#[derive(Debug, Clone, Default)]
+pub(super) struct TestWilderness {
+    pub(super) zones: Vec<TestZone>,
+}
+
+impl crate::native::WildernessLevels for TestWilderness {
+    fn level(&self, tile: api::WorldTile) -> i32 {
+        self.zones
+            .iter()
+            .find(|zone| {
+                tile.x >= zone.x1
+                    && tile.x <= zone.x2
+                    && tile.z >= zone.z1
+                    && tile.z <= zone.z2
+                    && tile.level >= zone.level1
+                    && tile.level <= zone.level2
+            })
+            .map_or(0, |zone| (tile.z - zone.origin_z) / 8 + 1)
+    }
+}
+
 struct Lease;
 impl NativeMachine for Lease {
     type Args = ();
@@ -37,6 +84,7 @@ struct Runtime {
     condition: Option<api::condition::BotCondition>,
     poison_unknown_pulse: u8,
     cure_poison: crate::survival::CurePoison,
+    wilderness: Option<TestWilderness>,
 }
 impl Runtime {
     fn context<R>(
@@ -72,6 +120,10 @@ impl Runtime {
             evidence,
             pin: &self.pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(self.reach.as_ref()),
+            wilderness: self
+                .wilderness
+                .as_ref()
+                .map(|levels| levels as &dyn crate::native::WildernessLevels),
             retained: &mut self.retained,
             action_id,
             active_now: Duration::from_millis(tick * 600),
@@ -143,21 +195,25 @@ impl Harness {
         Self::new_at(scene, request, 0)
     }
     fn new_at(scene: &Scene, request: CombatRequest, origin: u64) -> Self {
-        Self::new_inner(scene, request, origin, None)
+        Self::try_new(scene, request, origin).unwrap()
     }
     fn new_with_reach(
         scene: &Scene,
         request: CombatRequest,
         reach: api::query::ReachQueryView,
     ) -> Self {
-        Self::new_inner(scene, request, 0, Some(reach))
+        Self::new_inner(scene, request, 0, Some(reach)).unwrap()
+    }
+    /// Begin the machine, returning the refusal `begin` reports.
+    fn try_new(scene: &Scene, request: CombatRequest, origin: u64) -> Result<Self, ActionError> {
+        Self::new_inner(scene, request, origin, None)
     }
     fn new_inner(
         scene: &Scene,
         request: CombatRequest,
         origin: u64,
         reach: Option<api::query::ReachQueryView>,
-    ) -> Self {
+    ) -> Result<Self, ActionError> {
         let mut runtime = Runtime {
             pin: scene.data.selected_pin().unwrap(),
             retained: RetainedMemory::default(),
@@ -169,18 +225,22 @@ impl Harness {
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
+            wilderness: scene.wilderness.clone(),
         };
-        let (machine, lease) = runtime.context(&scene.snapshot, origin, origin, |actions, cx| {
-            let lease = actions.begin::<Lease>((), cx).unwrap();
-            let machine =
-                Combat::begin((Arc::new(request), Arc::clone(&scene.tables)), cx).unwrap();
-            (machine, lease)
-        });
-        Self {
+        let (machine, lease) =
+            runtime.context(&scene.snapshot, origin, origin, |actions, cx| {
+                let lease = actions.begin::<Lease>((), cx).unwrap();
+                let machine = Combat::begin(
+                    (Arc::new(request), Arc::clone(&scene.tables), scene.globals),
+                    cx,
+                )?;
+                Ok::<_, ActionError>((machine, lease))
+            })?;
+        Ok(Self {
             machine,
             runtime,
             _lease: lease,
-        }
+        })
     }
     fn poll(
         &mut self,
@@ -289,6 +349,8 @@ struct Scene {
     varps: Vec<VarpView>,
     inventory: Vec<ItemView>,
     equipment: Vec<ItemView>,
+    wilderness: Option<TestWilderness>,
+    globals: crate::native::PvpGlobals,
 }
 fn tile(x: i32, z: i32) -> api::WorldTile {
     api::WorldTile { x, z, level: 0 }
@@ -396,6 +458,8 @@ impl Scene {
             varps,
             inventory: Vec::new(),
             equipment: Vec::new(),
+            wilderness: None,
+            globals: crate::native::PvpGlobals::fail_closed(),
         };
         scene.refresh();
         scene
@@ -1119,6 +1183,18 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
     attacker.actor.animation = scene.melee_seq();
     attacker.actor.in_combat = true;
     scene.snapshot.seed_players(vec![attacker.clone()]);
+    // The fight is in a (synthetic) Wilderness: players are attackable only there.
+    scene.wilderness = Some(TestWilderness {
+        zones: vec![TestZone {
+            x1: 2500,
+            z1: 3150,
+            x2: 2700,
+            z2: 3300,
+            level1: 0,
+            level2: 3,
+            origin_z: 3150,
+        }],
+    });
     let mut request = scene.request();
     request.target = Target::Attacker {
         npcs: false,
@@ -1152,25 +1228,19 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
 }
 
 #[test]
-fn fail_closed_flick_and_pvp_modes_have_no_host_work() {
+fn fail_closed_flick_mode_has_no_host_work() {
     let scene = Scene::new("imp");
-    for change in [2, 3] {
-        let mut request = scene.request();
-        match change {
-            2 => request.prayer_mode = PrayerMode::Flick,
-            _ => {
-                request.target = Target::Player {
-                    name: Arc::from("someone"),
-                }
-            }
-        }
-        let mut harness = Harness::new(&scene, scene.request());
-        let result = harness.runtime.context(&scene.snapshot, 1, 1, |_, cx| {
-            Combat::begin((Arc::new(request), Arc::clone(&scene.tables)), cx)
-        });
-        assert!(matches!(result, Err(ActionError::Unavailable(_))));
-        assert!(harness.take().is_none());
-    }
+    let mut request = scene.request();
+    request.prayer_mode = PrayerMode::Flick;
+    let mut harness = Harness::new(&scene, scene.request());
+    let result = harness.runtime.context(&scene.snapshot, 1, 1, |_, cx| {
+        Combat::begin(
+            (Arc::new(request), Arc::clone(&scene.tables), scene.globals),
+            cx,
+        )
+    });
+    assert!(matches!(result, Err(ActionError::Unavailable(_))));
+    assert!(harness.take().is_none());
 }
 
 #[test]
@@ -2164,7 +2234,14 @@ fn case34_unattackable_rows_are_threats_not_targets_and_terminal_food_is_allowed
     assert_eq!(report.food, 1);
     assert_eq!(report.restorations, 0);
     let unavailable = harness.runtime.context(&scene.snapshot, 3, 3, |_, cx| {
-        Combat::begin((Arc::new(scene.request()), Arc::clone(&scene.tables)), cx)
+        Combat::begin(
+            (
+                Arc::new(scene.request()),
+                Arc::clone(&scene.tables),
+                scene.globals,
+            ),
+            cx,
+        )
     });
     assert!(matches!(unavailable, Err(ActionError::Unavailable(_))));
     assert!(harness.take().is_none());
@@ -2531,7 +2608,7 @@ fn case1_and2_prep_distinguishes_essential_and_optional_wear() {
         scene.inventory.push(item);
         scene.refresh();
         let mut request = scene.request();
-        request.kit = Some(Arc::new(CompiledKit {
+        request.set_kit(Arc::new(CompiledKit {
             worn: Arc::from([(slot, id)]),
             ..CompiledKit::default()
         }));
@@ -2575,7 +2652,7 @@ fn case1_and2_prep_distinguishes_essential_and_optional_wear() {
         let scene = Scene::new("imp");
         let id = scene.data.item_by_alias("bronze_scimitar").unwrap().id;
         let mut request = scene.request();
-        request.kit = Some(Arc::new(CompiledKit {
+        request.set_kit(Arc::new(CompiledKit {
             worn: Arc::from([(slot, id)]),
             ..CompiledKit::default()
         }));
@@ -2757,7 +2834,7 @@ fn case6_imp_skips_offensive_upkeep_unless_the_kit_carries_boosts() {
         scene.refresh();
         let mut request = scene.request();
         if in_kit {
-            request.kit = Some(Arc::new(CompiledKit {
+            request.set_kit(Arc::new(CompiledKit {
                 carry: Arc::from([(id, 1)]),
                 ..CompiledKit::default()
             }));
@@ -2798,7 +2875,7 @@ fn case13_dragon_shield_overrides_kit_and_rejects_two_handed_weapon() {
         scene.inventory.extend([weapon.clone(), shield.clone()]);
         scene.refresh();
         let mut request = scene.request();
-        request.kit = Some(Arc::new(CompiledKit {
+        request.set_kit(Arc::new(CompiledKit {
             worn: Arc::from([(3, weapon_id), (5, kit_shield_id)]),
             ..CompiledKit::default()
         }));
@@ -3418,7 +3495,7 @@ fn case45_wear_style_waits_for_the_exact_observed_combat_tab() {
     same_tab.combat_tab(hack_root);
     let mut request = same_tab.request();
     request.melee_mode = Some(MeleeMode::Aggressive);
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, rune_id)]),
         ..CompiledKit::default()
     }));
@@ -3474,7 +3551,7 @@ fn case45_wear_style_waits_for_the_exact_observed_combat_tab() {
     changed_tab.combat_tab(old_root);
     let mut request = changed_tab.request();
     request.melee_mode = Some(MeleeMode::Aggressive);
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, twohand_id)]),
         ..CompiledKit::default()
     }));
@@ -3518,7 +3595,7 @@ fn case45_wear_style_waits_for_the_exact_observed_combat_tab() {
     stale_tab.combat_tab(heavy_root);
     let mut request = stale_tab.request();
     request.melee_mode = Some(MeleeMode::Aggressive);
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, rune_id)]),
         ..CompiledKit::default()
     }));
@@ -4788,7 +4865,7 @@ fn ranged_readiness_fixture(style_echo: bool) -> (Scene, CombatRequest, i32) {
     let mut request = scene.request();
     request.style = Style::Ranged;
     request.ranged_style = RangedMode::Rapid;
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, bow_id), (13, arrow_id)]),
         ..CompiledKit::default()
     }));
@@ -5092,7 +5169,9 @@ fn ranged_thrown_uses_weapon_stack_without_ammo_slot() {
     let mut harness = Harness::new(&scene, request);
     attack(harness.pending(&scene, 1));
     assert_eq!(harness.machine.ranged().ammo_pick, id);
-    assert_eq!(harness.machine.desired(13), None);
+    let evidence = harness.runtime.evidence.unwrap();
+    let frame = Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
+    assert_eq!(harness.machine.desired(13, &frame), None);
     scene.install();
     // Route-head launch coordinates lead the rendered pose during a chase.
     scene.local.player.actor.tile.x += 3;
@@ -5163,7 +5242,7 @@ fn ranged_prep_waits_for_torn_thrown_weapon_wear_frame() {
 
     let mut request = scene.request();
     request.style = Style::Ranged;
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, id)]),
         ..CompiledKit::default()
     }));
@@ -5215,7 +5294,7 @@ fn ranged_fight_waits_for_torn_bow_ammo_wear_frame() {
 
     let mut request = scene.request();
     request.style = Style::Ranged;
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, bow_id), (13, arrow_id)]),
         ..CompiledKit::default()
     }));
@@ -5280,7 +5359,7 @@ fn ranged_missing_bow_ammo_wear_times_out_as_prep_failed_ammo() {
 
     let mut request = scene.request();
     request.style = Style::Ranged;
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, bow_id), (13, arrow_id)]),
         ..CompiledKit::default()
     }));
@@ -5316,7 +5395,7 @@ fn ranged_missing_thrown_weapon_wear_times_out_as_prep_failed_weapon() {
 
     let mut request = scene.request();
     request.style = Style::Ranged;
-    request.kit = Some(Arc::new(CompiledKit {
+    request.set_kit(Arc::new(CompiledKit {
         worn: Arc::from([(3, id)]),
         ..CompiledKit::default()
     }));
@@ -5726,3 +5805,9 @@ fn ranged_begin_does_not_count_a_previous_fights_instruction() {
 
 #[path = "magic_machine_tests.rs"]
 mod magic_tests;
+
+#[path = "pvp_machine_tests.rs"]
+mod pvp_tests;
+
+#[path = "switch_machine_tests.rs"]
+mod switch_tests;
