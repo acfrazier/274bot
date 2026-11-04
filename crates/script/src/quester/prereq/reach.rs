@@ -156,9 +156,20 @@ impl<M: PrereqMachine> PrereqAction<M> {
         if kind.policy().reconnect() != api::script_contract::ReconnectPolicy::Resume {
             return Err(ActionError::Stale);
         }
+        let previous = self.current_revoker().map(|owner| owner.run());
         match &mut self.phase {
             Phase::Reaching(handle) => actions.resume_kept(kind, handle, cx),
             Phase::Resolving(_) => {
+                if let Some(previous) = previous {
+                    let current = cx.run();
+                    if previous.slot != current.slot
+                        || previous.run != current.run
+                        || previous.session == current.session
+                    {
+                        return Err(ActionError::Stale);
+                    }
+                }
+                self.budget.session_changed();
                 // The journal owner belongs to the old session. Revalidate
                 // the original operation through the existing reissue budget,
                 // rather than restart a reader outside its timeout bound.

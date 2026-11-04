@@ -182,7 +182,6 @@ pub struct PrereqBudget {
     probes: u8,
     pub re_issues: u8,
     visited: [u16; MAX_DISTINCT_ROWS as usize],
-    current_session: u64,
     /// One bit per visited-row index in the current session.
     visited_in_session: u8,
     visited_len: u8,
@@ -191,12 +190,13 @@ impl PrereqBudget {
     // The logical reissue cap is global; session revalidation spends it too.
     pub const MAX_RE_ISSUES: u8 = MAX_DISTINCT_ROWS;
 
+    /// Clear only session-local admission, preserving the distinct-row roster.
+    pub(super) fn session_changed(&mut self) {
+        self.visited_in_session = 0;
+    }
+
     /// Keep one distinct-row slot across sessions and reject same-session repeats.
-    fn row(&mut self, row: u16, session: u64) -> bool {
-        if self.current_session != session {
-            self.current_session = session;
-            self.visited_in_session = 0;
-        }
+    fn row(&mut self, row: u16) -> bool {
         let index = match self.visited[..usize::from(self.visited_len)]
             .iter()
             .position(|&visited| visited == row)
@@ -464,7 +464,7 @@ impl PrereqRun {
             let step = journal_identity(journal);
             let floor = *self.required_after.get_or_insert(cx.evidence());
             if matches!(self.phase, Phase::Resolve) {
-                if !budget.row(ordinal, cx.run().session) {
+                if !budget.row(ordinal) {
                     return Poll::Ready(Err(PrereqRefusal::StepRepeated {
                         gate: self.gate.gate.clone(),
                     }));
@@ -651,7 +651,7 @@ impl PrereqRun {
                             switch,
                         }));
                     }
-                    if !budget.row(ordinal, cx.run().session) {
+                    if !budget.row(ordinal) {
                         return Poll::Ready(Err(PrereqRefusal::StepRepeated {
                             gate: self.gate.gate.clone(),
                         }));
