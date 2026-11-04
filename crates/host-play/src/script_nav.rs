@@ -3806,6 +3806,12 @@ fn publish_unsubmitted_route_failure(
     {
         return;
     }
+    api::host_log!(
+        api::hostlog::Category::NavTrace,
+        api::hostlog::Level::Debug,
+        slot = name,
+        "[DEBUG-b29-prereq] route-unsubmitted generation={generation} request_id={request_id} detail={detail}",
+    );
     bot.pending_route = None;
     match kind {
         RouteDemandKind::Advisory {
@@ -4074,6 +4080,12 @@ fn publish_accepted_route_refusal(
     detail: &str,
     refusal: Option<script::native::WalkRefusal>,
 ) {
+    api::host_log!(
+        api::hostlog::Category::NavTrace,
+        api::hostlog::Level::Debug,
+        slot = name,
+        "[DEBUG-b29-prereq] route-refused generation={generation} request_id={request_id} detail={detail}",
+    );
     let mut all = navs.lock().expect("navigation state mutex is not poisoned");
     let Some(bot) = all.get_mut(name) else {
         return;
