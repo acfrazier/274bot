@@ -3257,3 +3257,465 @@ fn kitchen_journal_hero_password_establishes_pre_completion_eligibility() {
         Some(Truth::True),
     );
 }
+
+type KitchenSelectAction = crate::quester::prereq::reach::PrereqSelect;
+type KitchenSelectArgs = crate::bank::SelectArgs;
+type KitchenSelectLedger = Option<Box<ledger::Ledger>>;
+type KitchenPickAuthority = crate::native::ledger::HostAuthority;
+
+fn kitchen_select_args() -> KitchenSelectArgs {
+    KitchenSelectArgs {
+        facts: Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+            api::named_banks::NamedBank::new(
+                "First test bank",
+                WorldTile {
+                    x: 2784,
+                    z: 3190,
+                    level: 0,
+                },
+            ),
+            api::named_banks::NamedBank::new(
+                "Selected test bank",
+                WorldTile {
+                    x: 2790,
+                    z: 3190,
+                    level: 0,
+                },
+            ),
+        ])),
+        from: kitchen_journal_gate().crossing.takeoff,
+        preferences: api::named_banks::BankPreferences {
+            use_mage_bank: true,
+            use_zanaris_bank: false,
+        },
+        options: crate::native::WalkOptions {
+            allow_teleports: crate::native::WalkBit::Forbid,
+            allow_wilderness: crate::native::WalkBit::Allow,
+            ..crate::native::WalkOptions::default()
+        },
+        explicit: Some(Arc::from("Selected test bank")),
+        allow_air_fallback: false,
+    }
+}
+
+fn kitchen_select_fixture() -> (
+    KitchenSelectAction,
+    KitchenSelectArgs,
+    GameSnapshot,
+    KitchenSelectLedger,
+    SlotState,
+) {
+    let _ = &*CATALOG;
+    let gate = kitchen_journal_gate();
+    let mut snapshot = snapshot(gate.crossing.takeoff);
+    snapshot.seed_quest_statuses(
+        vec![api::snapshot::QuestStatusView {
+            name: "Shield of Arrav".into(),
+            component_id: 42,
+            colour: 0x00f800,
+        }],
+        true,
+    );
+    let args = kitchen_select_args();
+    let state = state();
+    let mut ledger = None;
+    let action = with_tick(&snapshot, &mut ledger, 1, |native| {
+        let mut action =
+            KitchenSelectAction::begin(args.clone(), native.actions, &mut native.cx).unwrap();
+        assert!(action
+            .poll(native.actions, &mut native.cx, Some(&state))
+            .is_pending());
+        action
+    });
+    (action, args, snapshot, ledger, state)
+}
+
+fn kitchen_select_poll(
+    action: &mut KitchenSelectAction,
+    snapshot: &GameSnapshot,
+    ledger: &mut KitchenSelectLedger,
+    tick: u64,
+    state: &SlotState,
+) -> Poll<Result<crate::bank::SelectedBank, crate::native::ActionError>> {
+    with_tick(snapshot, ledger, tick, |native| {
+        native.cx.active_now = Duration::ZERO;
+        action.poll(native.actions, &mut native.cx, Some(state))
+    })
+}
+
+fn last_live_kitchen_bank_pick(
+    ledger: &KitchenSelectLedger,
+) -> Option<(crate::bank::BankPickRequest, KitchenPickAuthority)> {
+    ledger.as_ref()?.outbox.iter().rev().find_map(|action| {
+        if !action.live() {
+            return None;
+        }
+        match &action.effect {
+            HostEffect::BankPick(request) => Some((request.clone(), action.authority())),
+            _ => None,
+        }
+    })
+}
+
+fn assert_kitchen_bank_pick_args(
+    request: &crate::bank::BankPickRequest,
+    args: &KitchenSelectArgs,
+) {
+    assert!(Arc::ptr_eq(&request.facts, &args.facts));
+    assert_eq!(request.facts.as_ref(), args.facts.as_ref());
+    assert_eq!(request.from, args.from);
+    assert_eq!(request.preferences, args.preferences);
+    assert_eq!(request.options, args.options);
+    assert_eq!(request.eligible.as_ref(), &[0, 1]);
+    assert_eq!(request.explicit_bank, Some(1));
+    assert_eq!(request.allow_air_fallback, args.allow_air_fallback);
+}
+
+fn publish_kitchen_bank_pick(
+    ledger: &mut KitchenSelectLedger,
+    authority: &KitchenPickAuthority,
+    request_id: u64,
+    tick: u64,
+    outcome: crate::bank::BankPickOutcome,
+) {
+    ledger.as_mut().unwrap().complete_bank_pick(
+        authority,
+        crate::bank::BankPickReceipt {
+            request_id,
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            outcome,
+        },
+    );
+}
+
+fn start_kitchen_journal(
+    action: &mut KitchenSelectAction,
+    snapshot: &GameSnapshot,
+    ledger: &mut KitchenSelectLedger,
+    state: &SlotState,
+    authority: &KitchenPickAuthority,
+    gate: ActionableGate,
+    allow: PrereqAllow,
+    tick: u64,
+) -> Poll<Result<crate::bank::SelectedBank, crate::native::ActionError>> {
+    let gates: Arc<[ActionableGate]> = Arc::from([gate]);
+    publish_kitchen_bank_pick(
+        ledger,
+        authority,
+        authority.request_id().get(),
+        tick,
+        crate::bank::BankPickOutcome::NeedsStep { gates, allow },
+    );
+    with_tick(snapshot, ledger, tick, |native| {
+        let observed_allow = action
+            .inspect_in(&mut native.cx, |select, cx| select.prereq_allow(cx))
+            .flatten();
+        assert_eq!(observed_allow, Some(allow));
+        native.cx.active_now = Duration::ZERO;
+        action.poll(native.actions, &mut native.cx, Some(state))
+    })
+}
+
+fn seed_kitchen_journal_page(snapshot: &mut GameSnapshot, lines: &[&str]) {
+    let mut widgets = vec![crate::quest_journal::test_widget(
+        crate::quest_journal::TITLE_289,
+        "@dre@Shield of Arrav",
+    )];
+    widgets.extend(
+        lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| crate::quest_journal::test_widget(8145 + index as i32, line)),
+    );
+    snapshot.seed_main_modal(crate::quest_journal::ROOT_289, widgets);
+}
+
+fn assert_no_kitchen_bank_reissue(ledger: &KitchenSelectLedger, original_request_id: u64) {
+    let outbox = &ledger.as_ref().unwrap().outbox;
+    assert!(outbox.iter().all(|action| {
+        !matches!(&action.effect, HostEffect::BankPick(_))
+            || action.authority().request_id().get() == original_request_id
+    }));
+}
+
+#[test]
+fn bank_select_reissues_only_after_the_real_journal_owner_proves_the_gate() {
+    let (mut action, args, mut snapshot, mut ledger, state) = kitchen_select_fixture();
+    let gate = kitchen_journal_gate();
+    let (first_request, first_authority) =
+        last_live_kitchen_bank_pick(&ledger).expect("Select emitted its bank-pick request");
+    assert_kitchen_bank_pick_args(&first_request, &args);
+
+    let allow = PrereqAllow {
+        dialogue: true,
+        quest_start: false,
+    };
+    assert!(start_kitchen_journal(
+        &mut action,
+        &snapshot,
+        &mut ledger,
+        &state,
+        &first_authority,
+        gate.clone(),
+        allow,
+        2,
+    )
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::IfButton { component_id: 42 }
+    ));
+    accept_last(&mut ledger, 2, 0);
+
+    seed_kitchen_journal_page(
+        &mut snapshot,
+        &[
+            "@str@I searched the Phoenix Gang Headquarters and found",
+            "@str@half of the Shield of Arrav.",
+            "@red@QUEST COMPLETE!",
+        ],
+    );
+    assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, 3, &state).is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::CloseModal
+    ));
+    accept_last(&mut ledger, 3, 0);
+    snapshot.seed_main_modal(-1, vec![]);
+    assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, 4, &state).is_pending());
+    assert_eq!(state.prereq_snapshot().facts().len(), 1);
+    assert_eq!(
+        state
+            .prereq_snapshot()
+            .observe(
+                &gate.gate,
+                EvidenceStamp {
+                    run: first_authority.run(),
+                    tick: 3,
+                    sequence: 3,
+                },
+            )
+            .map(|fact| fact.truth),
+        Some(Truth::True),
+        "the bank owner may reissue only after acquired page proof and observed close"
+    );
+
+    let mut reissued = last_live_kitchen_bank_pick(&ledger)
+        .filter(|(_, authority)| authority.request_id() != first_authority.request_id());
+    for tick in 5..=8 {
+        if reissued.is_some() {
+            break;
+        }
+        assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, tick, &state).is_pending());
+        reissued = last_live_kitchen_bank_pick(&ledger)
+            .filter(|(_, authority)| authority.request_id() != first_authority.request_id());
+    }
+    let (reissued_request, reissued_authority) =
+        reissued.expect("a fresh bank-pick request follows the journal proof");
+    assert_ne!(
+        reissued_authority.request_id(),
+        first_authority.request_id()
+    );
+    assert_kitchen_bank_pick_args(&reissued_request, &args);
+    assert!(!first_authority.live(), "the first bank owner has been retired");
+
+    let stale_selected = crate::bank::SelectedBank {
+        bank_index: 0,
+        access_tile: args.facts.banks()[0].tile,
+        kind: crate::bank::PickKind::Reachable,
+        access: None,
+    };
+    publish_kitchen_bank_pick(
+        &mut ledger,
+        &first_authority,
+        first_authority.request_id().get(),
+        9,
+        crate::bank::BankPickOutcome::Selected(stale_selected.clone()),
+    );
+    publish_kitchen_bank_pick(
+        &mut ledger,
+        &reissued_authority,
+        first_authority.request_id().get(),
+        9,
+        crate::bank::BankPickOutcome::Selected(stale_selected),
+    );
+    assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, 9, &state).is_pending());
+
+    let selected = crate::bank::SelectedBank {
+        bank_index: 1,
+        access_tile: args.facts.banks()[1].tile,
+        kind: crate::bank::PickKind::Reachable,
+        access: None,
+    };
+    publish_kitchen_bank_pick(
+        &mut ledger,
+        &reissued_authority,
+        reissued_authority.request_id().get(),
+        10,
+        crate::bank::BankPickOutcome::Selected(selected.clone()),
+    );
+    assert!(matches!(
+        kitchen_select_poll(&mut action, &snapshot, &mut ledger, 11, &state),
+        Poll::Ready(Ok(found)) if found == selected
+    ));
+}
+
+#[test]
+fn false_journal_page_does_not_reissue_or_select_a_bank() {
+    let (mut action, _, mut snapshot, mut ledger, state) = kitchen_select_fixture();
+    let gate = kitchen_journal_gate();
+    let (_, first_authority) =
+        last_live_kitchen_bank_pick(&ledger).expect("Select emitted its bank-pick request");
+    let allow = PrereqAllow {
+        dialogue: false,
+        quest_start: false,
+    };
+    assert!(start_kitchen_journal(
+        &mut action,
+        &snapshot,
+        &mut ledger,
+        &state,
+        &first_authority,
+        gate.clone(),
+        allow,
+        2,
+    )
+    .is_pending());
+    accept_last(&mut ledger, 2, 0);
+
+    seed_kitchen_journal_page(
+        &mut snapshot,
+        &[
+            "@str@allowed me to join the Black Arm Gang.",
+            "@str@I searched the Black Arm Gang Headquarters and found",
+            "@str@half of the Shield of Arrav.",
+            "@red@QUEST COMPLETE!",
+        ],
+    );
+    assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, 3, &state).is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::CloseModal
+    ));
+    accept_last(&mut ledger, 3, 0);
+    snapshot.seed_main_modal(-1, vec![]);
+    let result = kitchen_select_poll(&mut action, &snapshot, &mut ledger, 4, &state);
+    assert!(matches!(
+        &result,
+        Poll::Ready(Err(crate::native::ActionError::Prerequisite(refusal)))
+            if matches!(refusal.as_ref(), PrereqRefusal::PreconditionMissing { .. })
+    ));
+    assert_eq!(
+        state
+            .prereq_snapshot()
+            .observe(
+                &gate.gate,
+                EvidenceStamp {
+                    run: first_authority.run(),
+                    tick: 3,
+                    sequence: 3,
+                },
+            )
+            .map(|fact| fact.truth),
+        Some(Truth::False)
+    );
+    assert_no_kitchen_bank_reissue(&ledger, first_authority.request_id().get());
+}
+
+#[test]
+fn bank_select_journal_timeout_stops_after_two_reads_without_reissue() {
+    let (mut action, _, snapshot, mut ledger, state) = kitchen_select_fixture();
+    let gate = kitchen_journal_gate();
+    let (_, first_authority) =
+        last_live_kitchen_bank_pick(&ledger).expect("Select emitted its bank-pick request");
+    let allow = PrereqAllow {
+        dialogue: true,
+        quest_start: false,
+    };
+    assert!(start_kitchen_journal(
+        &mut action,
+        &snapshot,
+        &mut ledger,
+        &state,
+        &first_authority,
+        gate,
+        allow,
+        2,
+    )
+    .is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::IfButton { component_id: 42 }
+    ));
+    let first_read_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .authority()
+        .request_id();
+    accept_last(&mut ledger, 2, 0);
+    for tick in 3..=7 {
+        assert!(
+            kitchen_select_poll(&mut action, &snapshot, &mut ledger, tick, &state).is_pending(),
+            "first journal read at tick {tick}"
+        );
+    }
+
+    assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, 8, &state).is_pending());
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::IfButton { component_id: 42 }
+    ));
+    let second_read_id = ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .last()
+        .unwrap()
+        .authority()
+        .request_id();
+    assert_ne!(second_read_id, first_read_id);
+    accept_last(&mut ledger, 8, 0);
+    for tick in 9..=12 {
+        assert!(
+            kitchen_select_poll(&mut action, &snapshot, &mut ledger, tick, &state).is_pending(),
+            "second journal read at tick {tick}"
+        );
+    }
+
+    let result = kitchen_select_poll(&mut action, &snapshot, &mut ledger, 13, &state);
+    assert!(matches!(
+        &result,
+        Poll::Ready(Err(crate::native::ActionError::Prerequisite(refusal)))
+            if matches!(
+                refusal.as_ref(),
+                PrereqRefusal::StepFailed {
+                    why: PrereqFailure::Action(detail),
+                    ..
+                } if detail.as_ref() == "the native action failed: journal modal timeout"
+            )
+    ));
+    let outbox = &ledger.as_ref().unwrap().outbox;
+    let page_reads: Vec<_> = outbox
+        .iter()
+        .filter(|action| {
+            matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::IfButton { component_id: 42 })
+            )
+        })
+        .map(|action| action.authority().request_id())
+        .collect();
+    assert!(page_reads.len() <= 2);
+    assert!(page_reads
+        .iter()
+        .all(|request_id| *request_id == first_read_id || *request_id == second_read_id));
+    assert_no_kitchen_bank_reissue(&ledger, first_authority.request_id().get());
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
