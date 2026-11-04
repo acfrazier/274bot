@@ -9421,6 +9421,29 @@ mod bank_closure_oracle_tests {
             false,
         );
         slot.snapshot.seed_ingame(2);
+        // Keep the existing deposit guard active. Verify a real fixture
+        // transfer before testing either the legacy text or decoded closure.
+        let mut receipt = BankTripReceipt::new(
+            1,
+            BTreeMap::from([(1521, 1)]),
+            &[1521],
+            BTreeMap::new(),
+            0,
+            &[1521],
+            0,
+        );
+        receipt
+            .observe_deposit(
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                true,
+                &BTreeMap::from([(1521, 1)]),
+                1,
+                true,
+            )
+            .unwrap();
+        assert!(receipt.deposit_verified);
+        slot.witness.pending_bank_trip = Some(receipt);
         slot
     }
 
@@ -9518,7 +9541,7 @@ mod bank_closure_oracle_tests {
             bank_withdrawal_confirmed: true,
             last_status_yielded: 1,
             last_xp: 1,
-            ..Witness::default()
+            ..slot.witness
         };
         slot.witness.products_seen.insert(1521);
         slot.witness.oak_live_tiles.insert((
