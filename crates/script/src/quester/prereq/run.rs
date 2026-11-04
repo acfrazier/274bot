@@ -183,18 +183,32 @@ pub struct PrereqBudget {
     probes: u8,
     pub re_issues: u8,
     visited: [u16; MAX_DISTINCT_ROWS as usize],
+    visited_session: [u64; MAX_DISTINCT_ROWS as usize],
     visited_len: u8,
 }
 impl PrereqBudget {
-    // One original-walk reissue is available per distinct prerequisite row.
+    // The logical reissue cap is global; session revalidation spends it too.
     pub const MAX_RE_ISSUES: u8 = MAX_DISTINCT_ROWS;
-    fn row(&mut self, row: u16) -> bool {
-        if self.rows_run >= MAX_DISTINCT_ROWS
-            || self.visited[..usize::from(self.visited_len)].contains(&row)
+
+    /// Keep one distinct-row slot across sessions. A kept operation may
+    /// revisit that row once per new session, but never twice in one session.
+    fn row(&mut self, row: u16, session: u64) -> bool {
+        if let Some(index) = self.visited[..usize::from(self.visited_len)]
+            .iter()
+            .position(|&visited| visited == row)
         {
+            if self.visited_session[index] == session {
+                return false;
+            }
+            self.visited_session[index] = session;
+            return true;
+        }
+        if self.rows_run >= MAX_DISTINCT_ROWS {
             return false;
         }
-        self.visited[usize::from(self.visited_len)] = row;
+        let index = usize::from(self.visited_len);
+        self.visited[index] = row;
+        self.visited_session[index] = session;
         self.visited_len += 1;
         self.rows_run += 1;
         true
@@ -447,7 +461,7 @@ impl PrereqRun {
             let step = journal_identity(journal);
             let floor = *self.required_after.get_or_insert(cx.evidence());
             if matches!(self.phase, Phase::Resolve) {
-                if !budget.row(ordinal) {
+                if !budget.row(ordinal, cx.run().session) {
                     return Poll::Ready(Err(PrereqRefusal::StepRepeated {
                         gate: self.gate.gate.clone(),
                     }));
@@ -634,7 +648,7 @@ impl PrereqRun {
                             switch,
                         }));
                     }
-                    if !budget.row(ordinal) {
+                    if !budget.row(ordinal, cx.run().session) {
                         return Poll::Ready(Err(PrereqRefusal::StepRepeated {
                             gate: self.gate.gate.clone(),
                         }));

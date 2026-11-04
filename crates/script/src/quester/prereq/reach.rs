@@ -89,9 +89,12 @@ impl<M: PrereqMachine> PrereqAction<M> {
         error: ActionError,
         allow: PrereqAllow,
         cx: &ActionContext<'_>,
-    ) -> Result<Self, ActionError> {
+    ) -> Result<Self, (M::Args, ActionError)> {
         let budget = PrereqBudget::default();
-        let run = resolution(error, allow, cx, &budget)?;
+        let run = match resolution(error, allow, cx, &budget) {
+            Ok(run) => run,
+            Err(error) => return Err((args, error)),
+        };
         Ok(Self {
             args,
             phase: Phase::Resolving(Box::new(run)),
@@ -99,6 +102,11 @@ impl<M: PrereqMachine> PrereqAction<M> {
             resolve: true,
             allow: Some(allow),
         })
+    }
+
+    /// Recover the original arguments after a terminal prerequisite refusal.
+    pub(crate) fn into_args(self) -> M::Args {
+        self.args
     }
 
     #[cfg(test)]

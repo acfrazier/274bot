@@ -8,9 +8,10 @@ use api::local_state::{
 };
 use api::prereq_knowledge::CatalogRef;
 use api::prereq_steps::PrereqCrossing;
-use api::selected::{ClientRevision, FamilyPreparation};
+use api::selected::{ClientRevision, FamilyPreparation, RunKey};
 use api::snapshot::{
     ChatLineView, GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, NpcView,
+    SnapshotView,
 };
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -3330,6 +3331,40 @@ fn kitchen_select_fixture() -> (
     (action, args, snapshot, ledger, state)
 }
 
+fn set_kitchen_session<'a>(
+    native: &mut crate::native::NativeTick<'a>,
+    snapshot: &'a GameSnapshot,
+    tick: u64,
+    session: u64,
+) {
+    let evidence = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session,
+        },
+        tick,
+        sequence: tick,
+    };
+    native.cx.evidence = evidence;
+    native.cx.snapshot = SnapshotView::new(Some(snapshot), evidence);
+}
+
+fn kitchen_select_poll_in_session(
+    action: &mut KitchenSelectAction,
+    snapshot: &GameSnapshot,
+    ledger: &mut KitchenSelectLedger,
+    tick: u64,
+    state: &SlotState,
+    session: u64,
+) -> Poll<Result<crate::bank::SelectedBank, crate::native::ActionError>> {
+    with_tick(snapshot, ledger, tick, |native| {
+        set_kitchen_session(native, snapshot, tick, session);
+        native.cx.active_now = Duration::ZERO;
+        action.poll(native.actions, &mut native.cx, Some(state))
+    })
+}
+
 fn kitchen_select_poll(
     action: &mut KitchenSelectAction,
     snapshot: &GameSnapshot,
@@ -3337,10 +3372,7 @@ fn kitchen_select_poll(
     tick: u64,
     state: &SlotState,
 ) -> Poll<Result<crate::bank::SelectedBank, crate::native::ActionError>> {
-    with_tick(snapshot, ledger, tick, |native| {
-        native.cx.active_now = Duration::ZERO;
-        action.poll(native.actions, &mut native.cx, Some(state))
-    })
+    kitchen_select_poll_in_session(action, snapshot, ledger, tick, state, 1)
 }
 
 fn last_live_kitchen_bank_pick(
@@ -3354,6 +3386,21 @@ fn last_live_kitchen_bank_pick(
             HostEffect::BankPick(request) => Some((request.clone(), action.authority())),
             _ => None,
         }
+    })
+}
+
+fn last_live_kitchen_journal_authority(
+    ledger: &KitchenSelectLedger,
+) -> Option<KitchenPickAuthority> {
+    ledger.as_ref()?.outbox.iter().rev().find_map(|action| {
+        if !action.live() {
+            return None;
+        }
+        matches!(
+            &action.effect,
+            HostEffect::Interaction(InteractReq::IfButton { component_id: 42 })
+        )
+        .then(|| action.authority())
     })
 }
 
@@ -3398,7 +3445,30 @@ fn start_kitchen_journal(
     gate: ActionableGate,
     allow: PrereqAllow,
 ) -> Poll<Result<crate::bank::SelectedBank, crate::native::ActionError>> {
-    let tick = 2;
+    start_kitchen_journal_at(
+        action,
+        snapshot,
+        ledger,
+        state,
+        authority,
+        gate,
+        allow,
+        2,
+        authority.run().session,
+    )
+}
+
+fn start_kitchen_journal_at(
+    action: &mut KitchenSelectAction,
+    snapshot: &GameSnapshot,
+    ledger: &mut KitchenSelectLedger,
+    state: &SlotState,
+    authority: &KitchenPickAuthority,
+    gate: ActionableGate,
+    allow: PrereqAllow,
+    tick: u64,
+    session: u64,
+) -> Poll<Result<crate::bank::SelectedBank, crate::native::ActionError>> {
     let gates: Arc<[ActionableGate]> = Arc::from([gate]);
     publish_kitchen_bank_pick(
         ledger,
@@ -3408,6 +3478,7 @@ fn start_kitchen_journal(
         crate::bank::BankPickOutcome::NeedsStep { gates, allow },
     );
     with_tick(snapshot, ledger, tick, |native| {
+        set_kitchen_session(native, snapshot, tick, session);
         let observed_allow = action
             .inspect_in(&mut native.cx, |select, cx| select.prereq_allow(cx))
             .flatten();
@@ -3564,6 +3635,297 @@ fn bank_select_reissues_only_after_the_real_journal_owner_proves_the_gate() {
 }
 
 #[test]
+fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
+    let (mut action, args, mut snapshot, mut ledger, state) = kitchen_select_fixture();
+    let gate = kitchen_journal_gate();
+    let (first_request, first_authority) =
+        last_live_kitchen_bank_pick(&ledger).expect("Select emitted its bank-pick request");
+    assert_kitchen_bank_pick_args(&first_request, &args);
+    let allow = PrereqAllow {
+        dialogue: true,
+        quest_start: false,
+    };
+    assert!(start_kitchen_journal(
+        &mut action,
+        &snapshot,
+        &mut ledger,
+        &state,
+        &first_authority,
+        gate.clone(),
+        allow,
+    )
+    .is_pending());
+    let old_reader = last_live_kitchen_journal_authority(&ledger)
+        .expect("the first session owns a real journal read");
+    assert_eq!(old_reader.run().session, 1);
+
+    let resumed = with_tick(&snapshot, &mut ledger, 3, |native| {
+        set_kitchen_session(native, &snapshot, 3, 2);
+        action.resume_after_session(
+            native.actions,
+            crate::native::request::NativeKind::BankPlan,
+            &mut native.cx,
+        )
+    });
+    assert!(resumed.is_ok(), "{resumed:?}");
+    assert!(!old_reader.live(), "the old-session reader is retired");
+
+    let mut reissued = None;
+    for tick in 4..=8 {
+        let result =
+            kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, tick, &state, 2);
+        assert!(
+            result.is_pending(),
+            "session-2 selection at tick {tick}: {result:?}"
+        );
+        reissued = last_live_kitchen_bank_pick(&ledger)
+            .filter(|(_, authority)| authority.request_id() != first_authority.request_id());
+        if reissued.is_some() {
+            break;
+        }
+    }
+    let (reissued_request, reissued_authority) =
+        reissued.expect("the kept operation revalidates selection in session 2");
+    assert_eq!(reissued_authority.run().session, 2);
+    assert_kitchen_bank_pick_args(&reissued_request, &args);
+    assert_eq!(action.original_allow(), Some(allow));
+    assert!(!first_authority.live(), "the original bank owner is retired");
+
+    let changed_allow = PrereqAllow {
+        dialogue: false,
+        quest_start: true,
+    };
+    assert!(start_kitchen_journal_at(
+        &mut action,
+        &snapshot,
+        &mut ledger,
+        &state,
+        &reissued_authority,
+        gate.clone(),
+        changed_allow,
+        9,
+        2,
+    )
+    .is_pending());
+    assert_eq!(
+        action.original_allow(),
+        Some(allow),
+        "the first effective grants remain authoritative after revalidation"
+    );
+    let new_reader = last_live_kitchen_journal_authority(&ledger)
+        .expect("the reissued selection starts a genuine new-session journal read");
+    assert_eq!(new_reader.run().session, 2);
+    assert!(!old_reader.live());
+    assert!(!reissued_authority.live());
+    accept_last(&mut ledger, 9, 0);
+
+    seed_kitchen_journal_page(
+        &mut snapshot,
+        &[
+            "@str@I searched the Phoenix Gang Headquarters and found",
+            "@str@half of the Shield of Arrav.",
+            "@red@QUEST COMPLETE!",
+        ],
+    );
+    assert!(kitchen_select_poll_in_session(
+        &mut action,
+        &snapshot,
+        &mut ledger,
+        10,
+        &state,
+        2
+    )
+    .is_pending());
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
+    accept_last(&mut ledger, 10, 0);
+    snapshot.seed_main_modal(-1, vec![]);
+    assert!(kitchen_select_poll_in_session(
+        &mut action,
+        &snapshot,
+        &mut ledger,
+        11,
+        &state,
+        2
+    )
+    .is_pending());
+    assert_eq!(
+        state
+            .prereq_snapshot()
+            .observe(
+                &gate.gate,
+                EvidenceStamp {
+                    run: reissued_authority.run(),
+                    tick: 10,
+                    sequence: 10,
+                },
+            )
+            .map(|fact| fact.truth),
+        Some(Truth::True),
+        "the new-session page proof completes the prerequisite"
+    );
+
+    let mut completed_selection = None;
+    for tick in 12..=16 {
+        let result =
+            kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, tick, &state, 2);
+        assert!(
+            result.is_pending(),
+            "completed selection at tick {tick}: {result:?}"
+        );
+        completed_selection = last_live_kitchen_bank_pick(&ledger)
+            .filter(|(_, authority)| authority.request_id() != reissued_authority.request_id());
+        if completed_selection.is_some() {
+            break;
+        }
+    }
+    let (request, authority) =
+        completed_selection.expect("the journal completion reissues the original bank pick");
+    assert_eq!(authority.run().session, 2);
+    assert_kitchen_bank_pick_args(&request, &args);
+    assert_eq!(action.original_allow(), Some(allow));
+
+    let selected = crate::bank::SelectedBank {
+        bank_index: 1,
+        access_tile: args.facts.banks()[1].tile,
+        kind: crate::bank::PickKind::Reachable,
+        access: None,
+    };
+    publish_kitchen_bank_pick(
+        &mut ledger,
+        &authority,
+        authority.request_id().get(),
+        17,
+        crate::bank::BankPickOutcome::Selected(selected.clone()),
+    );
+    assert!(matches!(
+        kitchen_select_poll_in_session(&mut action, &snapshot, &mut ledger, 17, &state, 2),
+        Poll::Ready(Ok(found)) if found == selected
+    ));
+}
+
+#[test]
+fn bank_select_same_row_session_reissues_stop_at_global_cap() {
+    let (mut action, args, snapshot, mut ledger, state) = kitchen_select_fixture();
+    let gate = kitchen_journal_gate();
+    let (first_request, first_authority) =
+        last_live_kitchen_bank_pick(&ledger).expect("Select emitted its bank-pick request");
+    assert_kitchen_bank_pick_args(&first_request, &args);
+    let allow = PrereqAllow {
+        dialogue: true,
+        quest_start: false,
+    };
+    assert!(start_kitchen_journal(
+        &mut action,
+        &snapshot,
+        &mut ledger,
+        &state,
+        &first_authority,
+        gate.clone(),
+        allow,
+    )
+    .is_pending());
+    let mut bank_request_ids = vec![first_authority.request_id()];
+    let mut journal_request_ids = vec![
+        last_live_kitchen_journal_authority(&ledger)
+            .expect("first session journal reader")
+            .request_id(),
+    ];
+    let mut previous_bank_request = first_authority.request_id();
+    let mut tick = 3;
+
+    for session in 2..=4 {
+        let old_reader = last_live_kitchen_journal_authority(&ledger)
+            .expect("each prior session owns a real journal read");
+        assert_eq!(old_reader.run().session, session - 1);
+        let resumed = with_tick(&snapshot, &mut ledger, tick, |native| {
+            set_kitchen_session(native, &snapshot, tick, session);
+            action.resume_after_session(
+                native.actions,
+                crate::native::request::NativeKind::BankPlan,
+                &mut native.cx,
+            )
+        });
+        assert!(resumed.is_ok(), "{resumed:?}");
+        assert!(!old_reader.live(), "session change retires the old journal owner");
+        tick += 1;
+
+        let mut reissued = None;
+        for _ in 0..5 {
+            let result = kitchen_select_poll_in_session(
+                &mut action,
+                &snapshot,
+                &mut ledger,
+                tick,
+                &state,
+                session,
+            );
+            assert!(
+                result.is_pending(),
+                "session-{session} selection: {result:?}"
+            );
+            reissued = last_live_kitchen_bank_pick(&ledger)
+                .filter(|(_, authority)| authority.request_id() != previous_bank_request);
+            tick += 1;
+            if reissued.is_some() {
+                break;
+            }
+        }
+        let (request, authority) =
+            reissued.expect("each allowed logical reissue sends a fresh bank selection");
+        assert_eq!(authority.run().session, session);
+        assert_kitchen_bank_pick_args(&request, &args);
+        bank_request_ids.push(authority.request_id());
+        previous_bank_request = authority.request_id();
+
+        publish_kitchen_bank_pick(
+            &mut ledger,
+            &authority,
+            authority.request_id().get(),
+            tick,
+            crate::bank::BankPickOutcome::NeedsStep {
+                gates: Arc::from([gate.clone()]),
+                allow,
+            },
+        );
+        let result = kitchen_select_poll_in_session(
+            &mut action,
+            &snapshot,
+            &mut ledger,
+            tick,
+            &state,
+            session,
+        );
+        if session < 4 {
+            assert!(
+                result.is_pending(),
+                "the same row is actionable in session {session}: {result:?}"
+            );
+            let reader = last_live_kitchen_journal_authority(&ledger)
+                .expect("same prerequisite starts a new-session journal read");
+            assert_eq!(reader.run().session, session);
+            journal_request_ids.push(reader.request_id());
+        } else {
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(crate::native::ActionError::Prerequisite(refusal)))
+                    if matches!(refusal.as_ref(), PrereqRefusal::StepRepeated { .. })
+            ));
+            assert_eq!(
+                journal_request_ids.len(),
+                3,
+                "the logical reissue cap stops before a fourth session reader"
+            );
+        }
+        tick += 1;
+    }
+
+    assert_eq!(bank_request_ids.len(), 4);
+    assert!(bank_request_ids.windows(2).all(|ids| ids[0] != ids[1]));
+    assert_eq!(journal_request_ids.len(), 3);
+    assert_eq!(action.original_allow(), Some(allow));
+}
+
+#[test]
 fn false_journal_page_does_not_reissue_or_select_a_bank() {
     let (mut action, _, mut snapshot, mut ledger, state) = kitchen_select_fixture();
     let gate = kitchen_journal_gate();
@@ -3710,6 +4072,91 @@ fn bank_select_journal_timeout_stops_after_two_reads_without_reissue() {
     assert!(page_reads
         .iter()
         .all(|request_id| *request_id == first_read_id || *request_id == second_read_id));
+    assert_no_kitchen_bank_reissue(&ledger, first_authority.request_id().get());
+    assert!(state.prereq_snapshot().facts().is_empty());
+}
+
+#[test]
+fn bank_select_cancel_during_second_journal_read_does_not_retry_or_reissue() {
+    let (mut action, _, snapshot, mut ledger, state) = kitchen_select_fixture();
+    let gate = kitchen_journal_gate();
+    let (_, first_authority) =
+        last_live_kitchen_bank_pick(&ledger).expect("Select emitted its bank-pick request");
+    let allow = PrereqAllow {
+        dialogue: true,
+        quest_start: false,
+    };
+    assert!(start_kitchen_journal(
+        &mut action,
+        &snapshot,
+        &mut ledger,
+        &state,
+        &first_authority,
+        gate,
+        allow,
+    )
+    .is_pending());
+    let first_read_id = last_live_kitchen_journal_authority(&ledger)
+        .expect("first journal owner")
+        .request_id();
+    accept_last(&mut ledger, 2, 0);
+    for tick in 3..=7 {
+        assert!(kitchen_select_poll(
+            &mut action,
+            &snapshot,
+            &mut ledger,
+            tick,
+            &state
+        )
+        .is_pending());
+    }
+
+    assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, 8, &state).is_pending());
+    let second_reader = last_live_kitchen_journal_authority(&ledger)
+        .expect("timeout retry starts the bounded second journal reader");
+    assert_ne!(second_reader.request_id(), first_read_id);
+    assert!(matches!(
+        last_interaction(&ledger),
+        InteractReq::IfButton { component_id: 42 }
+    ));
+
+    action.cancel();
+    assert!(
+        !second_reader.live(),
+        "cancellation during the second read revokes its native owner"
+    );
+    for tick in 9..=20 {
+        let result = kitchen_select_poll(&mut action, &snapshot, &mut ledger, tick, &state);
+        if tick == 9 {
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(crate::native::ActionError::Cancelled))
+            ));
+        } else {
+            assert!(matches!(
+                result,
+                Poll::Ready(Err(crate::native::ActionError::Stale))
+            ));
+        }
+    }
+
+    let outbox = &ledger.as_ref().unwrap().outbox;
+    let journal_sends: Vec<_> = outbox
+        .iter()
+        .filter(|action| {
+            matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::IfButton { component_id: 42 })
+            )
+        })
+        .map(|action| action.authority().request_id())
+        .collect();
+    assert!(journal_sends.len() <= 2);
+    assert!(journal_sends
+        .iter()
+        .all(|request_id| {
+            *request_id == first_read_id || *request_id == second_reader.request_id()
+        }));
     assert_no_kitchen_bank_reissue(&ledger, first_authority.request_id().get());
     assert!(state.prereq_snapshot().facts().is_empty());
 }
