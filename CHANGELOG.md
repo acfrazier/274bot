@@ -7,6 +7,24 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Fixed during development
 
+- A Quester trade between two of your own accounts (the Arrav shield halves and
+  certificate, for example) no longer fails with "partner offers changed after
+  agreement". When both accounts accept, the game empties both offer lists
+  before it opens the confirm screen, and the Quester took that for a changed
+  offer. It now waits for the confirm screen and checks the items on that
+  screen against what the two accounts agreed before it makes the final accept.
+  Each active trade retains 16 bytes more for its observed clock.
+  The decoded confirm lists exist only while the confirm screen is open.
+- When a Quester trade fails, the Quester now closes the trade screen with the
+  one request the game honours. Before, it clicked the Decline button, which
+  does nothing, and the trade screen stayed open for about a second more.
+- The Quester's trade waits (for the other account's accept, for the screen to
+  close, and the trade's own limit, `timeout_ticks`) now count game ticks, as
+  the other Quester waits do. Before, they counted clock time, so on a server
+  that runs faster than 600 ms per tick a trade got more game ticks than its
+  limit. A hold on either account (guardian, readiness, welcome) spends none of
+  those ticks, so a trade that was held for longer than its limit carries on
+  when the hold ends. An explicit Pause still ends the trade.
 - A conversation script's pause after a page now keeps the run button held
   when the host had already ended the hold on the wait before it. The host
   ends a hold one game tick after the script's time limit when the script

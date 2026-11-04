@@ -350,6 +350,9 @@ impl LiveProfileControl {
     }
 }
 
+/// A pair oracle: both accounts' snapshots in role order (Phoenix, Black Arm).
+/// `Ok(Some(receipt))` ends the run as passed.
+pub type ObservePair = Box<dyn FnMut([&GameSnapshot; 2]) -> Result<Option<Value>, String> + Send>;
 /// A receipt emitted by a cell-specific observer during live polling.
 pub type ObserveTick = Box<dyn FnMut(&GameSnapshot, Option<&ScriptStatus>) -> Option<Value> + Send>;
 
@@ -1391,7 +1394,7 @@ fn run_inner(
         observe_family,
         observe_tick,
         quester_path,
-        (blocked_policy, profile_control),
+        (blocked_policy, profile_control, None),
     )
 }
 
@@ -1429,7 +1432,46 @@ pub fn run_pair(pair: PairCell) -> Result<Value, String> {
         None,
         None,
         false,
-        (FamilyBlockedPolicy::Reject, None),
+        (FamilyBlockedPolicy::Reject, None, None),
+    )
+}
+
+/// Run the pair with a cell-specific success oracle that sees both accounts'
+/// snapshots once both have Started. The oracle ends the run; an account that
+/// parks or blocks still fails it. [`PairMode`] only names the run for receipts
+/// and validation: the oracle, not the mode, decides success.
+pub fn run_pair_observed(pair: PairCell, observe: ObservePair) -> Result<Value, String> {
+    let PairCell { roles, mode } = pair;
+    let cells: Vec<LiveCell> = roles
+        .into_iter()
+        .map(|cell| {
+            let Cell {
+                quest,
+                display,
+                label,
+                scenario,
+                start_settings,
+                observe_start,
+                ..
+            } = cell;
+            LiveCell {
+                quest,
+                display,
+                label,
+                scenario,
+                start_settings,
+                observe_start,
+            }
+        })
+        .collect();
+    run_cells(
+        cells,
+        RunPlan::Pair(mode),
+        None,
+        None,
+        None,
+        false,
+        (FamilyBlockedPolicy::Reject, None, Some(observe)),
     )
 }
 
@@ -1444,9 +1486,13 @@ fn run_cells(
     mut observe_family: Option<ObserveFamily>,
     mut observe_tick: Option<ObserveTick>,
     quester_path: bool,
-    controls: (FamilyBlockedPolicy, Option<LiveProfileControl>),
+    controls: (
+        FamilyBlockedPolicy,
+        Option<LiveProfileControl>,
+        Option<ObservePair>,
+    ),
 ) -> Result<Value, String> {
-    let (blocked_policy, mut profile_control) = controls;
+    let (blocked_policy, mut profile_control, mut observe_pair) = controls;
     #[cfg(feature = "js")]
     script_js::install_cards().map_err(|error| error.to_string())?;
     if cells.len() != if mode.is_pair() { 2 } else { 1 } {
@@ -2443,7 +2489,7 @@ fn run_cells(
         }
         let terminal: Vec<bool> = observations
             .iter()
-            .map(|actor| observe_family.is_none() && actor.terminal)
+            .map(|actor| observe_family.is_none() && observe_pair.is_none() && actor.terminal)
             .collect();
         if let Some(target) = mode.pair_death_target() {
             let cancellation_ready = match shared.lock() {
@@ -2918,6 +2964,22 @@ fn run_cells(
                 }
             }
         }
+        if starts.iter().all(|started| *started > 0) {
+            if let Some(observe) = observe_pair.as_mut() {
+                let state = match shared.lock() {
+                    Ok(state) => state,
+                    Err(_) => break 'run Err("live state poisoned".into()),
+                };
+                match observe([&state.actors[0].snapshot, &state.actors[1].snapshot]) {
+                    Ok(Some(receipt)) => {
+                        family_receipt = Some(receipt);
+                        break 'run Ok(());
+                    }
+                    Ok(None) => {}
+                    Err(error) => break 'run Err(format!("pair proof: {error}")),
+                }
+            }
+        }
         match &mode {
             RunPlan::Single(Mode::Stage { expect }) => {
                 let stage_ok = observe_family.is_none()
@@ -3342,6 +3404,36 @@ fn run_cells(
         ));
     }
 
+    // A pair-oracle run ends with both accounts logged out through the normal
+    // operator Logout, observed on the slot status rather than assumed.
+    let mut logged_out = vec![false; names.len()];
+    if observe_pair.is_some() {
+        for account in &names {
+            play.script_stop(account);
+        }
+        for account in &names {
+            if let Some(arm) = play.arm(account) {
+                arm.request_logout();
+            }
+            play.wake(account);
+        }
+        let logout_deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let statuses = play.statuses();
+            for (index, account) in names.iter().enumerate() {
+                logged_out[index] = statuses
+                    .iter()
+                    .any(|status| status.username == *account && !status.ingame);
+            }
+            if logged_out.iter().all(|done| *done) || Instant::now() >= logout_deadline {
+                break;
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+        if result.is_ok() && !logged_out.iter().all(|done| *done) {
+            result = Err(format!("an account did not log out: {logged_out:?}"));
+        }
+    }
     let actor_receipts = {
         let state = shared.lock().map_err(|_| "live state poisoned")?;
         state
@@ -3436,6 +3528,8 @@ fn run_cells(
             "nav_pack": profile.nav_pack(),
             "roles": actor_receipts,
             "inventory_proof": inventory_proof_receipt,
+            "pair_receipt": family_receipt,
+            "logged_out": logged_out,
         })
     } else {
         let actor = &actor_receipts[0];

@@ -419,9 +419,13 @@ joined role, or a peer bound to the same compiled pair, can extend a phase's
 ten-minute inactivity bound, never its sixty-minute wall-clock total bound.
 Unrelated gameplay, polls and duplicate receipts cannot extend either deadline.
 Retryable trade-start conditions keep the planned transfer and wait for the next
-eligible frame. A failed, still-owned trade enters bounded decline/close cleanup
-and retains the original failure until screen closure is observed and debounced
-or the cleanup deadline expires. Revoked owners cannot send cleanup input.
+eligible frame. A trade's own limits (`timeout_ticks`, the waits for the other
+account's accept and for the screen to close, and the cleanup limit) count observed
+game ticks on which the run is driven and its pair is ready: a transient hold
+spends none of them. A failed, still-owned trade enters bounded cleanup, one
+close-modal request, and retains the original failure until screen closure is
+observed and debounced or the cleanup deadline expires. Revoked owners cannot
+send cleanup input.
 
 Miniquest Paths use an owned typed progress reader instead of inventing a quest-tab
 row. The reader runs initially and after advancing steps, and only matching fresh
