@@ -480,10 +480,10 @@ fallible reservations.
 Per-job admission uses the largest diagnosed requirement count admitted for
 the request, capped by the unchanged graph bound. Undo storage and post-bank
 inventory and worn reservations use that same admitted count. A smaller
-later diagnosis does not reduce the bound while earlier Hint overlay rows
-can return. A new diagnosis ends the current search job before bank buffers
-grow. The production continuation must pass fresh admission before work
-resumes. A larger reservation that exceeds the limit is refused.
+later diagnosis never reduces the bound during the request, even when no
+Hint overlay rows exist. A new diagnosis ends the current search job before
+bank buffers grow. The production continuation must pass fresh admission
+before work resumes. A larger reservation that exceeds the limit is refused.
 
 Route execution separates completed searches into private jobs in the existing
 Route family. A later job charges retained routes, diagnosis and plan storage

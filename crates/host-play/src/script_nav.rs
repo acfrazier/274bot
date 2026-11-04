@@ -263,6 +263,18 @@ const _: fn() = || {
     let _ = assert_send_sync::<WorkCancellation<RouteWorkSpec>>;
 };
 
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct RouteBankCharges {
+    planning: usize,
+    rows: usize,
+    fetch: usize,
+    plan: usize,
+    overlay: usize,
+    undo: usize,
+    post_bank_state: usize,
+}
+
 #[derive(Clone, Copy)]
 struct RouteSubmission {
     revision: InputRevision,
@@ -271,6 +283,8 @@ struct RouteSubmission {
     result_bytes: usize,
     assessment_future_bytes: usize,
     plan_item_rows: usize,
+    #[cfg(test)]
+    bank_charges: RouteBankCharges,
 }
 
 struct RoutePreflights {
@@ -752,6 +766,18 @@ impl RouteSubmission {
                 result_bytes,
                 assessment_future_bytes,
                 plan_item_rows,
+                // Record the same terms used in the admission sums, not a
+                // second calculation of what those terms ought to charge.
+                #[cfg(test)]
+                bank_charges: RouteBankCharges {
+                    planning: planner_bytes,
+                    rows: planned_rows_bytes,
+                    fetch: bank_direct_bytes.max(bank_planned_bytes),
+                    plan: bank_plan_bytes,
+                    overlay: fetchable_state_bytes,
+                    undo: bank_undo_bytes,
+                    post_bank_state: post_bank_state_bytes,
+                },
             },
             preflights,
         ))
@@ -9693,49 +9719,25 @@ mod diagnostic_tests {
     }
 
     struct BankReservationBounds {
-        planning: usize,
-        rows: usize,
-        fetch: usize,
-        plan: usize,
-        overlay: usize,
-        undo: usize,
-        inventory: usize,
-        overlay_inventory: usize,
-        worn: usize,
+        charged: RouteBankCharges,
+        inventory_input: usize,
+        worn_input: usize,
     }
 
     impl BankReservationBounds {
         fn at_admission(job: &RouteJob) -> Self {
-            let count = job.submission.plan_item_rows;
-            let bank = job.bank_rows_limit;
-            let planned = bank.checked_add(count).unwrap();
-            let growth = job.state.growth_bound(count, count).unwrap();
-            let overlay_growth = job.state.growth_bound(planned, 0).unwrap();
+            let input = job.state.growth_bound(0, 0).unwrap();
             Self {
-                planning: PlanningRowsCursor::heap_bound(bank, count).unwrap(),
-                rows: PlanningRowsCursor::rows_heap_bound(bank, count).unwrap(),
-                fetch: BankFetchCursor::heap_bound(planned, count, job.request.world.banks().len())
-                    .unwrap(),
-                plan: BankFetchPlan::heap_bound(count).unwrap(),
-                overlay: FetchableStateCursor::heap_bound(
-                    &job.state,
-                    planned,
-                    !job.request.world.banks().is_empty(),
-                )
-                .unwrap(),
-                undo: count * 2 * std::mem::size_of::<RouteBankUndo>(),
-                inventory: growth.inventory_old_bytes.max(growth.inventory_new_bytes),
-                overlay_inventory: overlay_growth
-                    .inventory_old_bytes
-                    .max(overlay_growth.inventory_new_bytes),
-                worn: growth.worn_old_bytes.max(growth.worn_new_bytes),
+                charged: job.submission.bank_charges,
+                inventory_input: input.inventory_old_bytes,
+                worn_input: input.worn_old_bytes,
             }
         }
 
         fn assert_retained(&self, job: &RouteJob) {
             if let Some(cursor) = &job.planning_cursor {
                 assert!(
-                    cursor.peak_retained_bytes() <= self.planning,
+                    cursor.peak_retained_bytes() <= self.charged.planning,
                     "planning rows"
                 );
             }
@@ -9743,34 +9745,40 @@ mod diagnostic_tests {
                 .into_iter()
                 .flatten()
             {
-                assert!(route_vec_bytes(rows).unwrap() <= self.rows, "retained rows");
+                assert!(
+                    route_vec_bytes(rows).unwrap() <= self.charged.rows,
+                    "retained rows"
+                );
             }
             if let Some(cursor) = &job.bank_cursor {
-                assert!(cursor.peak_retained_bytes() <= self.fetch, "fetch cursor");
+                assert!(
+                    cursor.peak_retained_bytes() <= self.charged.fetch,
+                    "fetch cursor"
+                );
             }
             if let Some(plan) = &job.bank_plan {
-                assert!(plan.retained_bytes() <= self.plan, "bank plan");
+                assert!(plan.retained_bytes() <= self.charged.plan, "bank plan");
             }
             assert!(
-                route_vec_bytes(&job.bank_undo).unwrap() <= self.undo,
+                route_vec_bytes(&job.bank_undo).unwrap() <= self.charged.undo,
                 "undo capacity exceeds its admitted component",
             );
             let state = job.state.growth_bound(0, 0).unwrap();
             if job.bank_apply_reserved {
+                let retained = state.inventory_old_bytes + state.worn_old_bytes;
+                let input = self.inventory_input + self.worn_input;
                 assert!(
-                    state.inventory_old_bytes <= self.inventory,
-                    "inventory capacity exceeds its admitted component",
-                );
-                assert!(
-                    state.worn_old_bytes <= self.worn,
-                    "worn capacity exceeds its admitted component",
+                    retained.saturating_sub(input) <= self.charged.post_bank_state,
+                    "post-bank state capacity exceeds its admitted component",
                 );
             }
             if let Some(cursor) = &job.fetchable_cursor {
-                assert!(cursor.retained_bytes().unwrap() <= self.overlay, "overlay");
+                let growth = state
+                    .inventory_old_bytes
+                    .saturating_sub(self.inventory_input);
                 assert!(
-                    state.inventory_old_bytes <= self.overlay_inventory,
-                    "overlay inventory capacity exceeds its admitted component",
+                    cursor.retained_bytes().unwrap() + growth <= self.charged.overlay,
+                    "overlay capacity exceeds its admitted component",
                 );
             }
         }
@@ -9910,6 +9918,32 @@ mod diagnostic_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn worn_diagnosis_keeps_withdraw_and_wear_undo_charged() {
+        let mut request = carry_diagnosis_request(1, 4097, Origin::Session, false);
+        let mut world = Arc::try_unwrap(request.world).ok().unwrap();
+        world.graph.edges[0].item_req.clear();
+        world.graph.edges[0].worn_req = vec![1];
+        let stands = world.banks().to_vec();
+        request.world = Arc::new(NavWorld::from_parts(world.collision, world.graph, stands));
+        let (job, _) = next_diagnosis_boundary(request);
+        assert_eq!(job.missing_requirements.as_ref().unwrap().len(), 1);
+        let mut job = readmit_route_continuation(job);
+        for index in 0..8 {
+            job.identity = Some(stage_identity(index + 48));
+            let mut worker = RouteWorkJob::new(job);
+            let (result, _, _, applied) = drive_stage_with_bank_bounds(&mut worker);
+            if applied {
+                return;
+            }
+            let RouteStageResult::Continue(next) = result else {
+                panic!("the worn fixture must reach post-bank search");
+            };
+            job = readmit_route_continuation(next);
+        }
+        panic!("the worn guard must check withdrawal and wear reservations");
     }
 
     #[test]
