@@ -64,6 +64,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   shutdown before releasing the socket. The client discards any late
   server bytes for at most one second and reports drain failures and timeouts
   in network health.
+- After the server closes a connection, the bot notices the end of the
+  session after a short graceful close: normally under 0.1 s, at most about
+  2 s.
 - HTTPS configuration-generation observer arguments compile only with
   `test-support`; feature-off builds contain no placeholder observer arguments.
 ### Panel and terminal app
