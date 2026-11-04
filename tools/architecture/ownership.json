@@ -1583,6 +1583,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/quester_partner_trade_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/quester_path_live.rs",
       "owner": "T1"
     },
