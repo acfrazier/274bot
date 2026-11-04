@@ -167,7 +167,7 @@ impl Rig {
                     "expires_client_cycle": player.entity.damage_cycles,
                 })
             });
-            let mut frame = json!({
+            let frame = json!({
                 "tick": self.snapshot.tick(), "tile": self.snapshot.tile(),
                 "hp": fact.hp, "poison": format!("{:?}", fact.poison),
                 "poison_window": format!("{:?}", fact.poison_window),
@@ -175,6 +175,8 @@ impl Rig {
                 "route_armed": bot.route.is_some(),
                 "refusal": format!("{:?}", bot.risk_refusal),
             });
+            #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+            let mut frame = frame;
             #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
             if crate::script_runtime::NavBot::walk_attempt_capture_active() {
                 let route_path_len = bot.route_path_for_follow().and_then(|route| {
