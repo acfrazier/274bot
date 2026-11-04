@@ -891,16 +891,17 @@ The shared `CombatPlan` also grows by 8 B per program, not per bot.
 A `MakeRun` measures 1,176 B once per running Make step, including its retained
 prerequisite walk. Its ceiling is 1,184 B, also with 8 B of headroom.
 These are retained type sizes, not process memory or per-bot capacity.
-At composed Cure source `219bac20e`, the default/test-hooks native-seat
-measurement retains 8,840 B on Linux and 8,904 B on macOS.
-Their ceilings are 8,848 B and 8,912 B, each with 8 B of headroom.
+With the typed bank receipt, the native-seat measurement retains 8,848 B on
+Linux (source `71082cd12`) and 8,912 B on macOS (source `b8c4d5bf8`).
+Those are also the unchanged ceilings, so both have 0 B of headroom.
 Preparation owns 2,994 B on Linux and 3,058 B on macOS.
-Installation owns 824 B and polling owns 5,022 B on both platforms.
+Installation owns 824 B and polling owns 5,030 B on both platforms.
 The 64 B platform difference is the retained Darwin mutex, not shared memory.
 The existing combat index measures 5,408 B once per process, outside those totals.
 Cure adds 176 B of runner state and 80 B of published survival status.
-The separate native Gatherer family measure grows from 7,970 B at `fdf4f839e`
-to 8,226 B, with a consciously increased 8,234 B ceiling.
+The separate Linux native Gatherer family measure grows from 7,970 B at
+`fdf4f839e` through Cure's 8,226 B to 8,234 B with the typed bank receipt.
+Its ceiling remains 8,234 B, also with 0 B of headroom.
 That family measure excludes its shared seat and delivery buffers.
 Do not add these overlapping measurements or infer RSS, Windows storage, or capacity.
 No state is boxed to exclude it from a bound.
@@ -1073,6 +1074,14 @@ reassessed before the deadline; an unresolved deadline reports
 `PoisonUnsettled { waited, cause }`. If there is no safe retreat index, the
 clear bound admits without a hold. Poison alone never refuses a route without
 entering crossings.
+
+The `poison_long_approach` live test proves Clear before retreat through the
+captured route identity, a unique owned WalkAttempt aim before the retreat
+index, its acknowledged map flag, and observed movement toward that aim.
+The client can move between authored route points, so the sampled player tile
+is not treated as an exact route index. Missing capture facts, changed
+ownership, and retreat or off-route aims do not qualify. The 31-tick Clear
+window and all movement and hold limits are unchanged.
 
 `RiskTables` is immutable and reused across assessments. Ordinary slot
 creation does not construct it. Host admission initializes combat/risk facts

@@ -14,8 +14,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   and a genuine route failure keeps its detail. This fixes a development regression
   exposed by the corrected Priest in Peril colour-authority data.
   A refused prerequisite keeps the existing opening fallback and bank backoff.
-  On Linux, the typed result adds eight bytes to each allocated native ledger
-  and eight bytes to each bot's host navigation state.
+  On Linux and macOS, the typed result adds eight bytes to each allocated native
+  ledger and eight bytes to each bot's host navigation state.
 
 - The Gatherer live bank tests now observe decoded bank closure within the same
   login session. A missed status message no longer hides a completed bank trip.

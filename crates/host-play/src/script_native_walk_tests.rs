@@ -6269,7 +6269,7 @@ fn s2b_admission_per_bot_layouts() {
         not(feature = "memory-profile")
     ))]
     // Typed bank receipt: macOS NavBot +8 B in BankPickState.native_receipt.
-    // Measured tuple: BATCH-029-INT/r2-bank-navbot-mac-3/test.log:15-21.
+    // Passing measurement: BATCH-029-INT/r2-bank-navbot-mac-4/receipt.json.
     assert_eq!(
         (
             std::mem::size_of::<NavBot>(),

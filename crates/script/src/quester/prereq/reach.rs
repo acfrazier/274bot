@@ -180,6 +180,9 @@ impl<M: PrereqMachine> PrereqAction<M> {
                 self.phase = Phase::Reissue;
                 Ok(())
             }
+            // The sole production caller, slot::bank's ResumePrereqOpening,
+            // enters only after bank_session_boundary handles a reconnect.
+            // Reissue has no live owner here to authenticate that boundary.
             Phase::Reissue => {
                 self.budget.session_changed();
                 Ok(())

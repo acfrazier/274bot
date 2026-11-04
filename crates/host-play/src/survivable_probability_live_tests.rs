@@ -739,6 +739,258 @@ fn poison_start(
     ))
 }
 
+fn captured_tile(value: &Value) -> Option<WorldTile> {
+    let (x, z, level) = if let Some(values) = value.as_array() {
+        let [x, z, level] = values.as_slice() else {
+            return None;
+        };
+        (x, z, level)
+    } else {
+        (value.get("x")?, value.get("z")?, value.get("level")?)
+    };
+    Some(WorldTile {
+        x: i32::try_from(x.as_i64()?).ok()?,
+        z: i32::try_from(z.as_i64()?).ok()?,
+        level: i32::try_from(level.as_i64()?).ok()?,
+    })
+}
+
+/// The client can cut between authored points while following a valid aim.
+/// Require an owned, acknowledged pre-retreat aim and observed progress toward
+/// it instead of treating the player's tile as an exact RoutePath index.
+/// Missing capture facts never fall back to authored-point membership.
+fn clear_approach_aim(
+    frames: &[Value],
+    path: script::combat::risk::RoutePath<'_>,
+    until_index: u16,
+) -> Option<u16> {
+    let clear_index = frames.iter().position(|frame| frame["poison"] == "Clear")?;
+    let previous_index = clear_index.checked_sub(1)?;
+    let current = frames[clear_index].get("route_execution")?;
+    let previous = frames[previous_index].get("route_execution")?;
+    let identity = current.get("route_identity")?;
+    for field in [
+        "generation",
+        "request_id",
+        "walk_request_id",
+        "map_route_generation",
+    ] {
+        identity.get(field)?.as_u64()?;
+    }
+    let destination = path
+        .point(u16::try_from(path.len().checked_sub(1)?).ok()?)?
+        .tile;
+    path.point(until_index)?;
+    let (attempt_index, attempt) = (0..=clear_index).rev().find_map(|index| {
+        frames[index]
+            .get("route_execution")?
+            .get("walk_attempts")?
+            .as_array()?
+            .last()
+            .map(|attempt| (index, attempt))
+    })?;
+    let [index] = attempt.get("aim_route_indices")?.as_array()?.as_slice() else {
+        return None;
+    };
+    let index = u16::try_from(index.as_u64()?).ok()?;
+    let aim = captured_tile(attempt.get("aim")?)?;
+    let at = captured_tile(attempt.get("at")?)?;
+    if attempt.get("event")? != "WalkAttempt"
+        || !attempt.get("refusal")?.is_null()
+        || attempt.get("route_identity")? != identity
+        || captured_tile(attempt.get("route_destination")?)? != destination
+        || attempt.get("route_path_len")?.as_u64()? != path.len() as u64
+        || attempt.get("route_index_limit")?.as_u64()? != u64::from(until_index)
+        || attempt.get("aim_index_status")? != "unique"
+        || index >= until_index
+        || path.point(index)?.tile != aim
+        || attempt.get("tick")?.as_u64()? != frames[attempt_index].get("tick")?.as_u64()?
+        || frames[previous_index].get("tick")?.as_u64()? < attempt.get("tick")?.as_u64()?
+        || frames[clear_index].get("tick")?.as_u64()?
+            <= frames[previous_index].get("tick")?.as_u64()?
+        || previous.get("active_follow_index_limit")?.as_u64()? != u64::from(until_index)
+    {
+        return None;
+    }
+    for frame in &frames[attempt_index..=clear_index] {
+        let execution = frame.get("route_execution")?;
+        if !frame.get("route_armed")?.as_bool()?
+            || frame.get("refusal")? != "None"
+            || !execution.get("route_armed")?.as_bool()?
+            || execution.get("route_identity")? != identity
+            || captured_tile(execution.get("route_destination")?)? != destination
+            || execution.get("route_path_len")?.as_u64()? != path.len() as u64
+            || execution.get("safe_prefix_retreat_index")?.as_u64()? != u64::from(until_index)
+            || captured_tile(execution.get("player_tile")?)? != captured_tile(frame.get("tile")?)?
+        {
+            return None;
+        }
+        execution.get("walk_attempts")?.as_array()?;
+    }
+    let map_flag = current.get("map_flag")?;
+    map_flag.get("lx")?.as_u64()?;
+    map_flag.get("lz")?.as_u64()?;
+    if frames[attempt_index]
+        .get("route_execution")?
+        .get("map_flag")?
+        == map_flag
+    {
+        return None;
+    }
+    let acknowledged = (attempt_index + 1..clear_index)
+        .find(|&index| frames[index]["route_execution"]["map_flag"] == *map_flag)?;
+    if frames[acknowledged..=clear_index]
+        .iter()
+        .any(|frame| frame["route_execution"]["map_flag"] != *map_flag)
+    {
+        return None;
+    }
+    let before = captured_tile(previous.get("player_tile")?)?;
+    let clear = captured_tile(current.get("player_tile")?)?;
+    let toward_aim = |tile: WorldTile| tile.x.abs_diff(aim.x).max(tile.z.abs_diff(aim.z));
+    if !previous.get("movement")?.get("moving")?.as_bool()?
+        || !current.get("movement")?.get("moving")?.as_bool()?
+        || toward_aim(clear) >= toward_aim(before)
+        || [before, clear].iter().any(|tile| {
+            tile.level != aim.level
+                || tile.level != at.level
+                || !(at.x.min(aim.x)..=at.x.max(aim.x)).contains(&tile.x)
+                || !(at.z.min(aim.z)..=at.z.max(aim.z)).contains(&tile.z)
+        })
+    {
+        return None;
+    }
+    Some(index)
+}
+
+mod clear_approach_tests {
+    use super::*;
+
+    fn fixture(aim_index: usize) -> (NavWorld, Route, Vec<Value>) {
+        let world = NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
+                origin: tile(0, 0),
+                width: 16,
+                height: 16,
+                walk: vec![0; 16 * 16],
+                blocked: vec![0; (16_usize * 16).div_ceil(64)],
+                flags: None,
+            },
+            Default::default(),
+            Vec::new(),
+        );
+        let tiles = vec![
+            tile(2, 0),
+            tile(3, 1),
+            tile(3, 2),
+            tile(2, 3),
+            tile(1, 4),
+            tile(0, 5),
+            tile(0, 6),
+            tile(0, 7),
+            tile(0, 8),
+            tile(0, 9),
+        ];
+        let aim = tiles[aim_index];
+        let destination = *tiles.last().unwrap();
+        let route_len = tiles.len();
+        let route = Route {
+            legs: vec![Leg::Walk { tiles }],
+            dest: destination,
+            ticks: 9.0,
+        };
+        let identity = json!({"generation": 1, "request_id": 1, "walk_request_id": 1, "map_route_generation": 0});
+        let attempt = json!({
+            "event": "WalkAttempt", "tick": 17, "at": [2, 0, 0],
+            "aim": [aim.x, aim.z, aim.level], "refusal": null,
+            "route_identity": identity,
+            "route_destination": [destination.x, destination.z, destination.level],
+            "route_index_limit": 8, "route_path_len": route_len,
+            "aim_route_indices": [aim_index], "aim_index_status": "unique",
+        });
+        let frames = [(17, [2, 0, 0]), (18, [2, 1, 0]), (31, [1, 2, 0]), (32, [1, 3, 0])]
+            .into_iter()
+            .map(|(tick, at)| json!({
+                "tick": tick, "tile": at, "poison": if tick == 32 { "Clear" } else { "Unknown { since: 0 }" },
+                "route_armed": true, "refusal": "None",
+                "route_execution": {
+                    "route_armed": true, "route_identity": identity,
+                    "route_destination": destination, "route_path_len": route_len,
+                    "safe_prefix_retreat_index": 8,
+                    "active_follow_index_limit": if tick == 32 { None } else { Some(8) },
+                    "player_tile": at, "movement": { "moving": true, "running": false },
+                    "map_flag": if tick == 17 { json!({"lx": 8, "lz": 8}) } else { json!({"lx": aim.x, "lz": aim.z}) },
+                    "walk_attempts": if tick == 17 { vec![attempt.clone()] } else { vec![] },
+                },
+            }))
+            .collect();
+        (world, route, frames)
+    }
+
+    fn proof(world: &NavWorld, route: &Route, frames: &[Value]) -> Option<u16> {
+        clear_approach_aim(
+            frames,
+            script::combat::risk::RoutePath::new(
+                nav_planner::producer::route_view(world, route).unwrap(),
+            )
+            .unwrap(),
+            8,
+        )
+    }
+
+    #[test]
+    fn clear_progress_before_retreat_does_not_require_an_authored_player_tile() {
+        let (world, route, frames) = fixture(5);
+        let Leg::Walk { tiles } = &route.legs[0] else {
+            unreachable!()
+        };
+        assert!(!tiles.contains(&tile(1, 3)));
+        assert_eq!(proof(&world, &route, &frames), Some(5));
+    }
+
+    #[test]
+    fn clear_progress_rejects_retreat_and_after_retreat_aims() {
+        for index in [8, 9] {
+            let (world, route, frames) = fixture(index);
+            assert_eq!(proof(&world, &route, &frames), None);
+        }
+    }
+
+    #[test]
+    fn clear_progress_rejects_off_route_aims_and_movement() {
+        let (world, route, mut frames) = fixture(5);
+        frames[0]["route_execution"]["walk_attempts"][0]["aim"] = json!([8, 8, 0]);
+        assert_eq!(proof(&world, &route, &frames), None);
+        let (world, route, mut frames) = fixture(5);
+        for (index, at) in [(2, [15, 2, 0]), (3, [14, 3, 0])] {
+            frames[index]["tile"] = json!(at);
+            frames[index]["route_execution"]["player_tile"] = json!(at);
+        }
+        assert_eq!(proof(&world, &route, &frames), None);
+    }
+
+    #[test]
+    fn clear_progress_requires_correlated_ownership_acknowledgement_and_motion() {
+        for field in ["route_identity", "map_flag", "movement"] {
+            let (world, route, mut frames) = fixture(5);
+            frames[3]["route_execution"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert_eq!(proof(&world, &route, &frames), None, "missing {field}");
+        }
+        let (world, route, mut frames) = fixture(5);
+        frames[3]["route_execution"]["route_identity"]["walk_request_id"] = json!(2);
+        assert_eq!(proof(&world, &route, &frames), None);
+        let (world, route, mut frames) = fixture(5);
+        frames[3]["route_execution"]["movement"]["moving"] = json!(false);
+        assert_eq!(proof(&world, &route, &frames), None);
+        let (world, route, mut frames) = fixture(5);
+        frames[3]["route_execution"]["map_flag"] = json!({"lx": 8, "lz": 8});
+        assert_eq!(proof(&world, &route, &frames), None);
+    }
+}
+
 fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
     let mut fixture_geometry = None;
     if matches!(
@@ -999,13 +1251,9 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
             nav_planner::producer::route_view(rig.world.as_ref(), &route).unwrap(),
         )
         .unwrap();
-        assert!(
-            (0..until_index).any(|index| {
-                let at = path.point(index).unwrap().tile;
-                first_clear["tile"] == json!([at.x, at.z, at.level])
-            }),
-            "Clear must be observed on the safe approach, before retreat"
-        );
+        let aim_index = clear_approach_aim(frames, path, until_index)
+            .expect("Clear needs correlated progress toward an owned aim before retreat");
+        receipt["clear_approach_aim_index"] = json!(aim_index);
         let PoisonState::Unknown { since } = input.poison else {
             unreachable!()
         };
