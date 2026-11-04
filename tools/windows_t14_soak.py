@@ -46,6 +46,7 @@ PROCESS_VM_READ = 0x0010
 SYNCHRONIZE = 0x00100000
 WAIT_TIMEOUT = 0x00000102
 WAIT_OBJECT_0 = 0x00000000
+MINIDUMP_WITH_THREAD_INFO = 0x00001000
 ERROR_NO_MORE_FILES = 18
 ERROR_INVALID_PARAMETER = 87
 ERROR_NOT_FOUND = 1168
@@ -182,6 +183,7 @@ def thread_census(kernel32, process_id: int) -> tuple[list[dict], int]:
         if not kernel32.Thread32First(snapshot, ctypes.byref(entry)):
             raise win_error("Thread32First")
         while True:
+            thread_times_error = None
             if entry.th32OwnerProcessID == process_id:
                 thread_id = int(entry.th32ThreadID)
                 access = THREAD_QUERY_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION
@@ -199,35 +201,53 @@ def thread_census(kernel32, process_id: int) -> tuple[list[dict], int]:
                             ctypes.byref(kernel), ctypes.byref(user),
                         ):
                             code = ctypes.get_last_error()
-                            if code in (6, ERROR_INVALID_PARAMETER, ERROR_NOT_FOUND):
-                                continue
-                            raise OSError(code, f"GetThreadTimes({thread_id}): {ctypes.FormatError(code).strip()}")
-                        name_pointer = ctypes.c_void_p()
-                        hr = kernel32.GetThreadDescription(thread_handle, ctypes.byref(name_pointer))
-                        if hr < 0:
-                            raise OSError(f"GetThreadDescription({thread_id}) HRESULT=0x{hr & 0xffffffff:08x}")
-                        try:
-                            description = ctypes.wstring_at(name_pointer.value) if name_pointer.value else ""
-                        finally:
-                            if name_pointer.value:
-                                kernel32.LocalFree(name_pointer)
-                        rows.append({
-                            "tid": thread_id,
-                            "windows_thread_description": description,
-                            "thread_creation_filetime": filetime_value(created),
-                        })
+                            if code not in (6, ERROR_INVALID_PARAMETER, ERROR_NOT_FOUND):
+                                thread_times_error = OSError(
+                                    code,
+                                    f"GetThreadTimes({thread_id}): {ctypes.FormatError(code).strip()}",
+                                )
+                        else:
+                            name_pointer = ctypes.c_void_p()
+                            hr = kernel32.GetThreadDescription(
+                                thread_handle, ctypes.byref(name_pointer)
+                            )
+                            if hr < 0:
+                                raise OSError(
+                                    f"GetThreadDescription({thread_id}) "
+                                    f"HRESULT=0x{hr & 0xffffffff:08x}"
+                                )
+                            try:
+                                description = (
+                                    ctypes.wstring_at(name_pointer.value)
+                                    if name_pointer.value else ""
+                                )
+                            finally:
+                                if name_pointer.value:
+                                    kernel32.LocalFree(name_pointer)
+                            rows.append({
+                                "tid": thread_id,
+                                "windows_thread_description": description,
+                                "thread_creation_filetime": filetime_value(created),
+                            })
                     finally:
                         kernel32.CloseHandle(thread_handle)
                 else:
                     code = ctypes.get_last_error()
                     if code not in (6, ERROR_INVALID_PARAMETER, ERROR_NOT_FOUND):
-                        raise OSError(code, f"OpenThread({thread_id}): {ctypes.FormatError(code).strip()}")
+                        raise OSError(
+                            code,
+                            f"OpenThread({thread_id}): {ctypes.FormatError(code).strip()}",
+                        )
             ctypes.set_last_error(0)
             if not kernel32.Thread32Next(snapshot, ctypes.byref(entry)):
                 code = ctypes.get_last_error()
                 if code != ERROR_NO_MORE_FILES:
                     raise OSError(code, f"Thread32Next: {ctypes.FormatError(code).strip()}")
+                if thread_times_error is not None:
+                    raise thread_times_error
                 break
+            if thread_times_error is not None:
+                raise thread_times_error
     finally:
         kernel32.CloseHandle(snapshot)
     if not rows:
@@ -253,7 +273,7 @@ def thread_census(kernel32, process_id: int) -> tuple[list[dict], int]:
 
 def capture_thread_projection(process_handle, process_id: int, output: Path,
                               index: int, descriptions: dict[int, str]) -> dict:
-    """Capture one bounded Windows minidump for first-seen unnamed threads."""
+    """Capture a thread-info minidump projection for first-seen unnamed threads."""
     import msvcrt
 
     provenance = output / "thread-provenance"
@@ -267,8 +287,10 @@ def capture_thread_projection(process_handle, process_id: int, output: Path,
     write_dump.restype = wintypes.BOOL
     with dump.open("xb") as stream:
         file_handle = wintypes.HANDLE(msvcrt.get_osfhandle(stream.fileno()))
-        if not write_dump(process_handle, process_id, file_handle, 0,
-                          None, None, None):
+        if not write_dump(
+            process_handle, process_id, file_handle, MINIDUMP_WITH_THREAD_INFO,
+            None, None, None,
+        ):
             raise win_error("MiniDumpWriteDump")
     projection = t14_windows_thread_evidence.analyze(dump, descriptions, process_id)
     path = provenance / f"snapshot-{index:04}.json"
@@ -289,16 +311,37 @@ def bind_unnamed_provenance(threads: list[dict], process_id: int,
            if row["windows_thread_description"] == ""
            and not row["windows_process_main_thread"]
            and (process_id, row["tid"], row["thread_creation_filetime"]) not in cache]
+    transient_errors = {}
     if new:
         try:
             projection = capture({row["tid"]: row["windows_thread_description"]
                                   for row in threads})
-            captured = {row["tid"]: row for row in projection["threads"]}
+            if projection["sampled_pid"] != process_id:
+                raise ValueError("thread projection process ID mismatch")
+            captured = {}
+            for observed in projection["threads"]:
+                if isinstance(observed, dict) and isinstance(observed.get("tid"), int):
+                    captured[observed["tid"]] = observed
             for row in new:
                 identity = (process_id, row["tid"], row["thread_creation_filetime"])
                 observed = captured.get(row["tid"])
-                if observed is None or observed["description_first_sample"] != "":
-                    cache[identity] = {"error": "thread missing from matched minidump"}
+                if observed is None:
+                    error = "thread missing from matched minidump"
+                elif "error" in observed:
+                    error = str(observed["error"])
+                elif observed.get("description_first_sample") != "":
+                    error = "thread description does not match first sample"
+                elif observed.get("thread_creation_filetime") != row["thread_creation_filetime"]:
+                    error = "thread creation FILETIME does not match first sample"
+                elif not all(field in observed for field in (
+                    "start_module", "ip_module", "stack_window_bytes",
+                    "candidate_return_address_module_counts",
+                )):
+                    error = "thread projection lacks required evidence fields"
+                else:
+                    error = None
+                if error is not None:
+                    transient_errors[identity] = {"error": error}
                     continue
                 cache[identity] = {
                     "schema": projection["schema"],
@@ -309,6 +352,7 @@ def bind_unnamed_provenance(threads: list[dict], process_id: int,
                     "dump_path": projection["dump_path"],
                     "dump_sha256": projection["dump_sha256"],
                     "ip_module": observed["ip_module"],
+                    "start_module": observed["start_module"],
                     "stack_window_bytes": observed["stack_window_bytes"],
                     "candidate_return_address_module_counts":
                         observed["candidate_return_address_module_counts"],
@@ -316,13 +360,14 @@ def bind_unnamed_provenance(threads: list[dict], process_id: int,
                 }
         except (OSError, ValueError, KeyError, TypeError) as error:
             for row in new:
-                cache[(process_id, row["tid"], row["thread_creation_filetime"])] = {
+                identity = (process_id, row["tid"], row["thread_creation_filetime"])
+                transient_errors[identity] = {
                     "error": f"{type(error).__name__}: {error}"
                 }
     for row in threads:
         if row["windows_thread_description"] == "" and not row["windows_process_main_thread"]:
-            row["os_runtime_provenance"] = cache.get(
-                (process_id, row["tid"], row["thread_creation_filetime"]))
+            identity = (process_id, row["tid"], row["thread_creation_filetime"])
+            row["os_runtime_provenance"] = cache.get(identity, transient_errors.get(identity))
 
 
 def write_jsonl_row(stream, value: dict) -> None:

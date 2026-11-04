@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import io
 import json
+import shutil
 from pathlib import Path
 import tempfile
 import sys
@@ -674,21 +675,25 @@ class WindowsRuntimeCensusTests(unittest.TestCase):
             "windows_process_id": 500, "thread_creation_filetime": created,
         }
 
-    def witness(self, modules=None, *, stack_bytes=2048):
-        os_module = "C:\\Windows\\System32\\ntdll.dll"
-        modules = {os_module: 2} if modules is None else modules
+    def witness(self, modules=None, *, stack_bytes=4096, start_module=None):
+        ntdll = "C:\\Windows\\System32\\ntdll.dll"
+        kernel32 = "C:\\Windows\\System32\\kernel32.dll"
+        modules = {ntdll: 2, kernel32: 1} if modules is None else modules
+        start_module = ntdll if start_module is None else start_module
         evidence = {
             "schema": "t14-windows-thread-minidump-stack-projection-v2",
             "sampled_pid": 500, "tid": 13, "thread_creation_filetime": 100,
             "capture_sample_monotonic_ns": 100, "dump_path": "snapshot-0001.dmp",
-            "dump_sha256": "a" * 64, "ip_module": {"module": os_module, "offset": "0x123"},
-            "stack_window_bytes": stack_bytes,
+            "dump_sha256": "a" * 64, "ip_module": {"module": ntdll, "offset": "0x123"},
+            "start_module": start_module, "stack_window_bytes": stack_bytes,
             "candidate_return_address_module_counts": modules,
         }
         projection = {
             "dump_sha256": "a" * 64, "sampled_pid": 500,
             "threads": [{"tid": 13, "description_first_sample": "",
+                         "thread_creation_filetime": 100,
                          "ip_module": evidence["ip_module"],
+                         "start_module": start_module,
                          "stack_window_bytes": stack_bytes,
                          "candidate_return_address_module_counts": modules}],
         }
@@ -713,33 +718,107 @@ class WindowsRuntimeCensusTests(unittest.TestCase):
                 errors = []
                 result = summary.check_census(
                     folder, [sample], {"slots": [],
-                                       "run": {"phase_zero_monotonic_ns": None}},
+                                       "run": {"phase_zero_monotonic_ns": None,
+                                               "warmup_end_monotonic_ns": 300}},
                     config, errors)
             return errors, result
 
-    def test_os_only_stack_is_explicit_O(self):
+    def test_archived_baseline_dump_classifies_six_os_workers(self):
+        dump = Path(
+            "/Volumes/dev-scratch/274bot-evidence/TRACK-T1/T1.4/closeout-1103/"
+            "windows/thread-stack-export-2/T14-THREAD-DIAGNOSTIC-BASELINE/"
+            "thread-snapshot.dmp")
+        if not dump.is_file():
+            self.skipTest("archived baseline Windows minidump not mounted")
+        tids = (10512, 4956, 4468, 5140, 1524, 3036)
+        projection = summary.t14_windows_thread_evidence.analyze(
+            dump, {tid: "" for tid in tids}, 9896)
+        self.assertEqual(projection["sampled_pid"], 9896)
+        self.assertEqual(projection["dump_sha256"],
+                         "77a4467efd4c105604942f8753bf9bfcffcd2279c441f2608ec0e68af6f6d04b")
+        by_tid = {row["tid"]: row for row in projection["threads"] if row["tid"] in tids}
+        self.assertEqual(set(by_tid), set(tids))
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            saved = folder / "thread-provenance"
+            saved.mkdir()
+            shutil.copyfile(dump, saved / "snapshot-0001.dmp")
+            workers = []
+            for tid in tids:
+                row = by_tid[tid]
+                worker = {
+                    "tid": tid, "comm": "", "windows_thread_description": "",
+                    "windows_process_main_thread": False, "windows_process_id": 9896,
+                    "thread_creation_filetime": row["thread_creation_filetime"],
+                    "os_runtime_provenance": {
+                        "schema": projection["schema"], "sampled_pid": 9896,
+                        "tid": tid, "thread_creation_filetime": row["thread_creation_filetime"],
+                        "capture_sample_monotonic_ns": 100, "dump_path": "snapshot-0001.dmp",
+                        "dump_sha256": projection["dump_sha256"],
+                        "ip_module": row["ip_module"], "start_module": row["start_module"],
+                        "stack_window_bytes": row["stack_window_bytes"],
+                        "candidate_return_address_module_counts":
+                            row["candidate_return_address_module_counts"],
+                    },
+                }
+                workers.append(worker)
+            fixed = [
+                {"tid": 5332, "comm": "t14_soak_live-", "windows_thread_description": "",
+                 "windows_process_main_thread": True, "windows_process_id": 9896,
+                 "thread_creation_filetime": 100},
+                {"tid": 11, "comm": "t14_local_wss_s",
+                 "windows_thread_description": "t14_local_wss_s",
+                 "windows_process_main_thread": False, "windows_process_id": 9896,
+                 "thread_creation_filetime": 100},
+            ]
+            sample = {
+                "sample_monotonic_ns": 200, "elapsed_seconds": 0,
+                "sampler_platform": "windows", "process_id": 9896, "pid": 5332,
+                "task_count": 8, "threads": fixed + workers,
+            }
+            errors = []
+            census = summary.check_census(
+                folder, [sample],
+                {"slots": [], "run": {"phase_zero_monotonic_ns": None,
+                                       "warmup_end_monotonic_ns": 300}},
+                {"run": {"slots": 0},
+                 "limits": {"fixed_threads": 14, "max_request_threads": 64}},
+                errors)
+            self.assertEqual(errors, [])
+            self.assertEqual(census["term_maxima"]["W"], 6)
+
+    def test_os_only_stack_is_explicit_W(self):
         evidence, projection = self.witness()
         errors, result = self.check(evidence, projection)
         self.assertEqual(errors, [])
-        self.assertEqual(result["term_maxima"]["O"], 1)
+        self.assertEqual(result["term_maxima"]["W"], 1)
         self.assertEqual(result["term_maxima"]["F"], 1)
         self.assertEqual(result["unclassified_tasks"], [])
 
     def test_product_frame_missing_stack_and_generic_start_stay_unclassified(self):
         product = r"C:\274bot-work\repo\target\release\deps\t14_soak_live.exe"
-        for modules, stack_bytes in (({product: 1}, 2048), ({}, 2048),
-                                     ({"C:\\Windows\\System32\\ntdll.dll": 1}, 0)):
-            with self.subTest(modules=modules, stack_bytes=stack_bytes):
-                evidence, projection = self.witness(modules, stack_bytes=stack_bytes)
+        ntdll = "C:\\Windows\\System32\\ntdll.dll"
+        kernel32 = "C:\\Windows\\System32\\kernel32.dll"
+        for modules, stack_bytes, start in (
+            ({product: 1}, 4096, None),
+            ({ntdll: 2, kernel32: 1, product: 1}, 4096, None),
+            ({}, 4096, None),
+            ({ntdll: 2, kernel32: 1}, 0, None),
+            ({ntdll: 2, kernel32: 1}, 4096, product),
+        ):
+            with self.subTest(modules=modules, stack_bytes=stack_bytes, start=start):
+                evidence, projection = self.witness(
+                    modules, stack_bytes=stack_bytes, start_module=start)
                 errors, result = self.check(evidence, projection)
                 self.assertTrue(any("unclassified task tid=13" in error for error in errors))
-                self.assertEqual(result["term_maxima"]["O"], 0)
+                self.assertEqual(result["term_maxima"]["W"], 0)
         evidence, projection = self.witness()
-        for missing in (None, {"error": "missing stack"}, {"start_address": "ntdll.dll+0xACAC0"}):
+        for missing in (None, {"error": "missing stack"},
+                        {"start_address": "ntdll.dll+0xACAC0"}):
             with self.subTest(missing=missing):
                 errors, result = self.check(missing, projection)
                 self.assertTrue(any("unclassified task tid=13" in error for error in errors))
-                self.assertEqual(result["term_maxima"]["O"], 0)
+                self.assertEqual(result["term_maxima"]["W"], 0)
 
     def test_product_instruction_pointer_and_unverified_dump_fail_closed(self):
         evidence, projection = self.witness()
@@ -748,18 +827,137 @@ class WindowsRuntimeCensusTests(unittest.TestCase):
         projection["threads"][0]["ip_module"] = evidence["ip_module"]
         errors, result = self.check(evidence, projection)
         self.assertTrue(any("unclassified task tid=13" in error for error in errors))
-        self.assertEqual(result["term_maxima"]["O"], 0)
+        self.assertEqual(result["term_maxima"]["W"], 0)
         evidence, projection = self.witness()
         projection["dump_sha256"] = "b" * 64
         errors, result = self.check(evidence, projection)
         self.assertTrue(any("unclassified task tid=13" in error for error in errors))
-        self.assertEqual(result["term_maxima"]["O"], 0)
+        self.assertEqual(result["term_maxima"]["W"], 0)
 
     def test_provenance_cannot_cross_thread_lifetime(self):
         evidence, projection = self.witness()
         errors, result = self.check(evidence, projection, created=101)
         self.assertTrue(any("unclassified task tid=13" in error for error in errors))
-        self.assertEqual(result["term_maxima"]["O"], 0)
+        self.assertEqual(result["term_maxima"]["W"], 0)
+
+    def test_provenance_binds_dump_pid_creation_and_start(self):
+        product = r"C:\274bot-work\repo\target\release\deps\t14_soak_live.exe"
+        for corrupted in ("dump_pid", "dump_creation", "sampler_start"):
+            with self.subTest(corrupted=corrupted):
+                evidence, projection = self.witness()
+                if corrupted == "dump_pid":
+                    projection["sampled_pid"] = 501
+                elif corrupted == "dump_creation":
+                    projection["threads"][0]["thread_creation_filetime"] = 101
+                else:
+                    evidence["start_module"] = product
+                errors, result = self.check(evidence, projection)
+                self.assertTrue(any("unclassified task tid=13" in error for error in errors))
+                self.assertEqual(result["term_maxima"]["W"], 0)
+
+    def test_missing_dump_is_not_accepted_as_os_provenance(self):
+        evidence, _ = self.witness()
+        unknown = self.identity(13, "")
+        unknown["os_runtime_provenance"] = evidence
+        sample = {
+            "sample_monotonic_ns": 200, "elapsed_seconds": 0,
+            "sampler_platform": "windows", "process_id": 500, "pid": 10,
+            "task_count": 3,
+            "threads": [self.identity(10, "main", main=True),
+                        self.identity(11, "t14_local_wss_s"), unknown],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            errors = []
+            result = summary.check_census(
+                Path(temporary), [sample],
+                {"slots": [], "run": {"phase_zero_monotonic_ns": None,
+                                       "warmup_end_monotonic_ns": 300}},
+                {"run": {"slots": 0},
+                 "limits": {"fixed_threads": 14, "max_request_threads": 64}},
+                errors)
+        self.assertTrue(any("unclassified task tid=13" in error for error in errors))
+        self.assertEqual(result["term_maxima"]["W"], 0)
+
+    def test_os_worker_cannot_grow_after_warmup(self):
+        projections = {}
+        workers = []
+        for tid in range(13, 53):
+            evidence, projection = self.witness()
+            evidence["tid"] = tid
+            evidence["dump_path"] = f"snapshot-{tid:04d}.dmp"
+            projection["threads"][0]["tid"] = tid
+            projections[tid] = projection
+            worker = self.identity(tid, "")
+            worker["os_runtime_provenance"] = evidence
+            workers.append(worker)
+        fixed = [self.identity(10, "main", main=True),
+                 self.identity(11, "t14_local_wss_s")]
+        samples = [
+            {"sample_monotonic_ns": at, "elapsed_seconds": at // 100,
+             "sampler_platform": "windows", "process_id": 500, "pid": 10,
+             "task_count": 2 + len(tasks), "threads": fixed + tasks}
+            for at, tasks in ((200, workers[:1]), (400, workers))
+        ]
+        with mock.patch.object(summary.t14_windows_thread_evidence, "analyze",
+                               side_effect=lambda _path, descriptions, _pid:
+                               projections[next(iter(descriptions))]):
+            errors = []
+            result = summary.check_census(
+                Path("run"), samples,
+                {"slots": [], "run": {"phase_zero_monotonic_ns": None,
+                                       "warmup_end_monotonic_ns": 300}},
+                {"run": {"slots": 0},
+                 "limits": {"fixed_threads": 14, "max_request_threads": 64}},
+                errors)
+        self.assertEqual(result["term_maxima"]["W"], 40)
+        self.assertTrue(any("W grew after warm-up" in error for error in errors))
+
+    def test_candidate_worker_count_exceeding_baseline_fails_pair(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folders = ArmReasonTests.folders(temporary)
+            censuses = [
+                {"term_maxima": {"W": 6}, "per_sample": []},
+                {"term_maxima": {"W": 10},
+                 "per_sample": [{"terms": {"W": 10}, "elapsed_seconds": 30}]},
+            ]
+            with mock.patch.object(summary, "check_workload", return_value={}), \
+                    mock.patch.object(summary, "check_samples", return_value=[]), \
+                    mock.patch.object(summary, "check_census", side_effect=censuses), \
+                    mock.patch.object(summary, "check_proxy", return_value={}), \
+                    mock.patch.object(summary, "check_candidate", return_value={}):
+                result = summary.evaluate(*folders, smoke=True)
+        self.assertEqual(result["verdict"], "FAIL")
+        self.assertTrue(any("W exceeded baseline maximum" in reason
+                            for reason in result["reasons"]))
+
+    def test_linux_census_output_keeps_old_shape(self):
+        sample = {
+            "sample_monotonic_ns": 200, "elapsed_seconds": 0, "pid": 10,
+            "task_count": 3, "threads": [
+                {"tid": 10, "comm": "t14_soak_live-"},
+                {"tid": 11, "comm": "t14_local_wss_s"},
+                {"tid": 13, "comm": "mystery"},
+            ],
+        }
+        errors = []
+        result = summary.check_census(
+            Path("run"), [sample],
+            {"slots": [], "run": {"phase_zero_monotonic_ns": None}},
+            {"run": {"slots": 0},
+             "limits": {"fixed_threads": 14, "max_request_threads": 64}},
+            errors)
+        self.assertEqual(set(result["term_maxima"]), set(summary.TERMS))
+        self.assertEqual(set(result["per_sample"][0]["terms"]), set(summary.TERMS))
+        self.assertEqual(result["unclassified_tasks"], [{"tid": 13, "comm": "mystery"}])
+        self.assertTrue(any("unclassified task tid=13" in error for error in errors))
+
+    def test_normalized_system32_path_cannot_escape(self):
+        self.assertTrue(summary.windows_os_module(
+            r"C:\Windows\System32\VCRUNTIME140.dll"))
+        self.assertFalse(summary.windows_os_module(
+            r"C:\Windows\System32\..\product.dll"))
+        self.assertFalse(summary.windows_os_module(
+            r"C:\274bot-work\VCRUNTIME140.dll"))
 
 
 if __name__ == "__main__":
