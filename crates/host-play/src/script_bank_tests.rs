@@ -605,12 +605,13 @@ fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_im
     let navs = navs(banks);
     navs.lock().unwrap().get_mut("test").unwrap().quest_context =
         super::super::script_nav::route_quest_context(&slot, 1);
+    let state = Arc::new(WorldState::empty());
     queue_native_bank_pick_scoped(
         &navs,
         "test",
         api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&state),
         &snapshot,
         NativeBankPickInput {
             request,
@@ -630,6 +631,10 @@ fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_im
         .quest_evidence
         .clone()
         .expect("bank search receives the composed quest evidence");
+    assert!(
+        state.quest_evidence.is_none(),
+        "cached base stays immutable"
+    );
     assert_eq!(captured.test(&gate), api::selected::Truth::True);
     snapshot.seed_quest_statuses(Vec::new(), false);
     assert_eq!(
