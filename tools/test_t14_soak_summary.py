@@ -189,6 +189,33 @@ class TeardownTests(unittest.TestCase):
                     if arm == "baseline":
                         self.assertFalse(observations[0]["non_gating"])
 
+    def test_reason_lists_match_the_old_rules_exactly_on_decided_edges(self):
+        # The old rules decide FAIL for a proxy-A BrokenPipe outside the
+        # 24-byte window with only the deficit reason, for both arms.
+        for arm in ("baseline", "candidate"):
+            with self.subTest(arm=arm):
+                out_of_window = self.event(
+                    {"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"})
+                out_of_window["proxy_a_ciphertext"]["terminator_to_client_ciphertext"] = {
+                    "bytes_read": 30, "bytes_written": 0}
+                self.assertEqual(self.check(out_of_window, arm=arm), [
+                    "run: connection c000060: ciphertext/plaintext deficit extends "
+                    "beyond terminal WS Close"])
+        # The old rules decide FAIL for a failed proxy B with an incomplete
+        # handshake with the one combined reason, never the same reason twice.
+        incomplete = self.event(
+            {"stage": "proxy_a",
+             "error": "ConnectionResetError: [Errno 54] Connection reset by peer"})
+        incomplete["failures"] = []
+        incomplete["stage_status"]["proxy_a"] = "closed"
+        incomplete["stage_status"]["proxy_b"] = "failed"
+        incomplete["tls_terminator"]["handshake"]["completed"] = 0
+        for arm in ("baseline", "candidate"):
+            with self.subTest(arm=arm):
+                self.assertEqual(self.check(incomplete, arm=arm), [
+                    "run: connection c000060: application relay or TLS handshake "
+                    "did not complete"])
+
     def test_new_baseline_rule_requires_zero_deficit(self):
         reset = {"stage": "proxy_a",
                  "error": "ConnectionResetError: [Errno 54] Connection reset by peer"}

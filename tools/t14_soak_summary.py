@@ -438,11 +438,8 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
     tls_out = deficit(tls["proxy_b_to_client_plaintext"])
     failures = event.get("failures", [])
     prefix = f"{folder.name}: connection {identifier}"
-    demand(tls["handshake"].get("completed") == 1,
+    demand(stage.get("proxy_b") == "closed" and tls["handshake"].get("completed") == 1,
            errors, f"{prefix}: application relay or TLS handshake did not complete")
-    if status != 101:
-        demand(stage.get("proxy_b") == "closed", errors,
-               f"{prefix}: application relay or TLS handshake did not complete")
     if status == 200:
         # A complete HTTPS response is not a failed transfer merely because
         # the client closed its read side before the TLS pump's final recv.
@@ -506,17 +503,14 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
             return (
                 accepted_tls_close_error(
                     failure, stage, (a_in, a_out, tls_in, tls_out), before_phase_zero)
-                or (failure == {"stage": "proxy_a",
-                                "error": "BrokenPipeError: [Errno 32] Broken pipe"}
-                    and (arm == "candidate" or (0 <= a_out <= 24 and 0 <= tls_out <= 2)))
+                or failure == {"stage": "proxy_a",
+                               "error": "BrokenPipeError: [Errno 32] Broken pipe"}
                 or (setup_reset and failure == {
                     "stage": "proxy_a",
                     "error": "ConnectionResetError: [Errno 104] Connection reset by peer",
                 })
             )
 
-        demand(stage.get("proxy_b") == "closed", errors,
-               f"{prefix}: application relay or TLS handshake did not complete")
         if arm == "baseline" and observations is not None:
             for failure in failures:
                 observations.append({
