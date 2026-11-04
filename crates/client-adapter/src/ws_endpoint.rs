@@ -60,6 +60,13 @@ enum WorkStop {
     HighWater,
     Closed,
 }
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+enum ClosePhase {
+    #[default]
+    Open,
+    NotifyQueued,
+    WriteHalfClosed,
+}
 
 #[derive(Debug, Default)]
 struct TlsTurnBudget {
@@ -361,6 +368,66 @@ impl TlsIo {
     }
 }
 
+impl TlsIo {
+    // The stopped session discards all peer records. The local terminator
+    // sends TCP FIN without a reciprocal TLS close_notify.
+    fn drain_after_close(&mut self) -> io::Result<bool> {
+        if self.peer_tls_closed {
+            return Ok(true);
+        }
+        let mut discard = [0u8; 4096];
+        loop {
+            if self.budget.rustls_operations >= TURN_IO_ATTEMPTS
+                || self.budget.plaintext_read >= TURN_BYTE_LIMIT
+            {
+                self.budget.read_stop = WorkStop::Budget;
+                return Ok(false);
+            }
+            let allowed = discard.len().min(TURN_BYTE_LIMIT - self.budget.plaintext_read);
+            self.budget.rustls_operations += 1;
+            match self.conn.reader().read(&mut discard[..allowed]) {
+                Ok(0) => {
+                    if self.peer_tls_closed {
+                        return Ok(true);
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Ok(read) => {
+                    self.budget.plaintext_read += read;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+            if self.budget.rustls_operations >= TURN_IO_ATTEMPTS {
+                self.budget.read_stop = WorkStop::Budget;
+                return Ok(false);
+            }
+            self.budget.rustls_operations += 1;
+            match self.conn.read_tls(&mut self.socket) {
+                Ok(0) => {
+                    self.budget.read_stop = WorkStop::Closed;
+                    return Ok(true);
+                }
+                Ok(_) => {
+                    self.process_packets()?;
+                    if self.peer_tls_closed {
+                        return Ok(true);
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    self.budget.read_stop = match self.socket.budget().read_stop() {
+                        StopReason::Budget => WorkStop::Budget,
+                        _ => WorkStop::SocketWouldBlock,
+                    };
+                    return Ok(false);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+
 #[derive(Debug, Clone)]
 struct TlsStreamHandle(Arc<Mutex<TlsIo>>);
 
@@ -417,7 +484,7 @@ pub struct WssEndpoint {
     pending_inbound: Option<Vec<u8>>,
     ws_write_pending: bool,
     graceful_ws_started: bool,
-    close_notify_sent: bool,
+    close_phase: ClosePhase,
     peer_closed: bool,
     clean_rebind: bool,
     boundary_dirty: bool,
@@ -477,7 +544,7 @@ impl WssEndpoint {
             pending_inbound: None,
             ws_write_pending: false,
             graceful_ws_started: false,
-            close_notify_sent: false,
+            close_phase: ClosePhase::Open,
             peer_closed: false,
             clean_rebind: false,
             boundary_dirty: false,
@@ -576,7 +643,9 @@ impl WssEndpoint {
         if self.setup_error.is_some() {
             return None;
         }
-        let read = if self.is_connected() {
+        let read = if self.close_phase == ClosePhase::WriteHalfClosed {
+            true
+        } else if self.is_connected() {
             !self.tls_read_paused
                 && !self.read_suspended
                 && !self.peer_closed
@@ -584,7 +653,9 @@ impl WssEndpoint {
         } else {
             !self.tls_read_paused
         };
-        let write = if self.is_connected() {
+        let write = if self.close_phase == ClosePhase::WriteHalfClosed {
+            false
+        } else if self.is_connected() {
             self.has_write_work() && !self.write_local
         } else {
             !self.write_local && (self.handshake_write_pending() || self.tls_wants_write())
@@ -636,9 +707,10 @@ impl WssEndpoint {
     /// reactor invokes `drive` for its one fair session turn.
     pub fn on_event(&mut self, readable: bool, writable: bool, now: Instant) -> WssStep {
         if readable
-            && !self.tls_read_paused
-            && !self.read_suspended
-            && !self.shared.rebind_disabled()
+            && (self.close_phase == ClosePhase::WriteHalfClosed
+                || (!self.tls_read_paused
+                    && !self.read_suspended
+                    && !self.shared.rebind_disabled()))
         {
             self.read_local = true;
             self.clean_rebind = false;
@@ -997,15 +1069,13 @@ impl WssEndpoint {
         Ok(self.turn_result(stop, read_bytes, written_bytes))
     }
 
-    /// Flush accepted game records, then send the WebSocket close frame and
-    /// rustls close_notify. The reactor owns the absolute ≤1 s linger deadline.
+    /// Flush accepted records and WebSocket Close, then send TLS close_notify.
+    /// Half-close the write side and drain peer TLS records until an alert or
+    /// TCP FIN. The reactor bounds flushing and draining separately.
     pub fn flush_for_close(&mut self) -> io::Result<(bool, bool)> {
         self.read_suspended = true;
         self.read_local = false;
-        if !self.shared.outbound.is_empty()
-            || self.shared.records.front().is_some()
-            || self.ws_write_pending
-        {
+        if !self.shared.outbound.is_empty() || self.shared.records.front().is_some() {
             self.write_local = true;
             let turn = self.drive()?;
             if turn.stop == TcpStop::PeerClosed {
@@ -1018,6 +1088,9 @@ impl WssEndpoint {
         }
 
         self.with_tls_mut(TlsIo::reset_turn);
+        if self.close_phase == ClosePhase::WriteHalfClosed {
+            return self.drain_close_turn();
+        }
         if !self.graceful_ws_started {
             let close_result = {
                 #[cfg(feature = "test-support")]
@@ -1067,7 +1140,7 @@ impl WssEndpoint {
             Err(error) => return Err(websocket_io_error(error)),
         }
 
-        if !self.close_notify_sent {
+        if self.close_phase == ClosePhase::Open {
             if !self
                 .with_tls(|tls| tls.budget.rustls_operations.saturating_add(1) <= TURN_IO_ATTEMPTS)
             {
@@ -1087,21 +1160,35 @@ impl WssEndpoint {
                 self.publish_error(&error);
                 return Err(error);
             }
-            self.close_notify_sent = true;
+            self.close_phase = ClosePhase::NotifyQueued;
         }
-        match self.flush_tls() {
-            Ok(()) => {
-                let complete = !self.with_tls(|tls| tls.wants_write());
-                self.write_local = false;
-                Ok((complete, false))
+        if self.close_phase == ClosePhase::NotifyQueued {
+            match self.flush_tls() {
+                Ok(()) => {
+                    self.with_tls_mut(|tls| tls.socket.inner_mut().shutdown(Shutdown::Write))?;
+                    self.close_phase = ClosePhase::WriteHalfClosed;
+                    self.write_local = false;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    let local = self.write_work_locally_runnable();
+                    self.write_local = local;
+                    return Ok((false, local));
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                let local = self.write_work_locally_runnable();
-                self.write_local = local;
-                Ok((false, local))
-            }
-            Err(error) => Err(error),
         }
+        self.drain_close_turn()
+    }
+
+    fn drain_close_turn(&mut self) -> io::Result<(bool, bool)> {
+        let complete = self.with_tls_mut(TlsIo::drain_after_close)?;
+        self.read_local = !complete
+            && self.with_tls(|tls| tls.budget.read_stop == WorkStop::Budget);
+        Ok((complete, self.read_local))
+    }
+
+    pub fn draining_for_close(&self) -> bool {
+        self.close_phase == ClosePhase::WriteHalfClosed
     }
 
     pub fn attempt_failure(&self, now: Instant) -> Option<io::ErrorKind> {
@@ -1345,8 +1432,8 @@ impl WssEndpoint {
         Ok(())
     }
 
-    /// Immediate cancellation/abort: skip both WebSocket close and TLS
-    /// close_notify, shut down the registered socket, then deregister/drop it.
+    /// Physical retirement. An abort skips both WebSocket Close and TLS
+    /// close_notify; a deliberate close reaches here only after its drain.
     pub fn close(mut self, registry: &Registry) {
         self.drop_socket(Some(registry));
         self.retire.ack();

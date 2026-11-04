@@ -30,6 +30,10 @@ use super::ws_endpoint::{WssEndpoint, WssStep};
 use client::Transport;
 
 const WAKE_TOKEN: Token = Token(0);
+// The existing close flush has one second. The captured server-first WS
+// closes returned the client FIN in 47 and 84 ms (F9, 2026-11-04 review).
+// Allow a separate second for a delayed peer TLS alert or TCP FIN.
+const GRACEFUL_PEER_DRAIN: Duration = Duration::from_secs(1);
 static NEXT_INCARNATION: AtomicU64 = AtomicU64::new(1);
 static PROCESS_TRANSPORT: LazyLock<Result<Arc<TransportService>, io::ErrorKind>> =
     LazyLock::new(|| TransportService::start().map_err(|error| error.kind()));
@@ -635,6 +639,10 @@ impl Endpoint {
             Self::Wss(endpoint) => endpoint.flush_for_close(),
             Self::InitialTls(_) => Ok((true, false)),
         }
+    }
+
+    fn draining_for_close(&self) -> bool {
+        matches!(self, Self::Wss(endpoint) if endpoint.draining_for_close())
     }
 
     fn drive(&mut self) -> io::Result<super::tcp::TcpTurnResult> {
@@ -1462,6 +1470,9 @@ impl Reactor {
                     }
                 })
             });
+            if attempt_failure.is_none() && live.graceful_by.is_some_and(|by| now >= by) {
+                self.health.record_graceful_close_timeout();
+            }
             if attempt_failure.is_some() || live.graceful_by.is_some_and(|by| now >= by) {
                 let failure = attempt_failure
                     .filter(|_| !live.connected_reply)
@@ -1544,9 +1555,15 @@ impl Reactor {
                 }
             } else if let Some(by) = live.graceful_by {
                 if Instant::now() >= by {
+                    self.health.record_graceful_close_timeout();
                     TurnOutcome::Close
                 } else {
-                    match live.endpoint.flush_for_close() {
+                    let was_draining = live.endpoint.draining_for_close();
+                    let result = live.endpoint.flush_for_close();
+                    if !was_draining && live.endpoint.draining_for_close() {
+                        live.graceful_by = Some(Instant::now() + GRACEFUL_PEER_DRAIN);
+                    }
+                    match result {
                         Ok((true, _)) | Err(_) => TurnOutcome::Close,
                         Ok((false, true)) => TurnOutcome::Local,
                         Ok((false, false)) => TurnOutcome::Wait,
@@ -2078,7 +2095,12 @@ mod tests {
             .live
             .get(&index(reused_id))
             .is_some_and(|live| live.registration.id == reused_id));
-        reactor.close(reused_id, None);
+        let close_by = Instant::now() + GRACEFUL_PEER_DRAIN;
+        reactor.live.get_mut(&index(reused_id)).unwrap().graceful_by = Some(close_by);
+        reactor.scan_deadlines(close_by - Duration::from_nanos(1));
+        assert!(!shared.is_closed(), "peer-drain deadline has not passed");
+        reactor.scan_deadlines(close_by);
+        assert_eq!(service.health().graceful_close_timeouts(), 1);
         assert!(shared.is_closed());
         assert_eq!(retire.ack_count(), 1);
         assert!(reactor.live.is_empty());

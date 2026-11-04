@@ -52,6 +52,7 @@ pub struct WakeFailure {
 pub struct ReactorHealth {
     epoch: Instant,
     progress_ns: AtomicU64,
+    graceful_close_timeouts: AtomicU64,
     checker: Mutex<CheckerWindow>,
     wake_failure: Mutex<Option<WakeFailure>>,
     latched: AtomicU8,
@@ -69,6 +70,7 @@ impl ReactorHealth {
         Self {
             epoch,
             progress_ns: AtomicU64::new(0),
+            graceful_close_timeouts: AtomicU64::new(0),
             checker: Mutex::new(CheckerWindow::default()),
             wake_failure: Mutex::new(None),
             latched: AtomicU8::new(0),
@@ -84,6 +86,16 @@ impl ReactorHealth {
             return;
         };
         self.progress_ns.store(nanos, Ordering::Release);
+    }
+
+    /// Count a bounded session close that reached its flush or peer-drain
+    /// deadline. This does not make the process network service unavailable.
+    pub fn record_graceful_close_timeout(&self) {
+        self.graceful_close_timeouts.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn graceful_close_timeouts(&self) -> u64 {
+        self.graceful_close_timeouts.load(Ordering::Relaxed)
     }
 
     pub fn record_wake_failure(&self, error: &io::Error) {
