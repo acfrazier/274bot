@@ -45,10 +45,13 @@ impl DrainCounters {
         }
     }
 
+    /// True only when some counter strictly grew. A restarted network service
+    /// republishes its counters from zero: that reset is not an increase and
+    /// must never reach the log with a negative-looking delta.
     fn increased(&self, previous: &Self) -> bool {
-        self.timeouts != previous.timeouts
-            || self.drain_errors != previous.drain_errors
-            || self.shutdown_drops != previous.shutdown_drops
+        self.timeouts > previous.timeouts
+            || self.drain_errors > previous.drain_errors
+            || self.shutdown_drops > previous.shutdown_drops
     }
 }
 
@@ -154,14 +157,18 @@ impl ServiceHealth {
                     Level::Warn,
                     "bounded WSS close drain advanced timeouts={} (+{}) drain_errors={} (+{}) shutdown_drops={} (+{})",
                     drain.timeouts,
-                    drain.timeouts - last.timeouts,
+                    drain.timeouts.saturating_sub(last.timeouts),
                     drain.drain_errors,
-                    drain.drain_errors - last.drain_errors,
+                    drain.drain_errors.saturating_sub(last.drain_errors),
                     drain.shutdown_drops,
-                    drain.shutdown_drops - last.shutdown_drops,
+                    drain.shutdown_drops.saturating_sub(last.shutdown_drops),
                 );
-                *last = drain;
             }
+            // Every observation becomes the next baseline, not only logged
+            // ones: after a service restart the counters start again from
+            // zero, and the next real increase must log its true delta
+            // against those republished counters.
+            *last = drain;
         }
         effects
     }
@@ -311,5 +318,175 @@ mod tests {
             HealthEffects::default()
         );
         assert_eq!(*health.last_drain.lock().unwrap(), expected);
+    }
+
+    /// The structured log sink is single-install per process, so a test that
+    /// asserts on recorded lines must own a process: it re-runs itself as an
+    /// isolated child, the way `script_observe` and the native-walk takeover
+    /// test already do. Returns whether this invocation is that child.
+    fn isolated_sink_child(path: &str, marker: &str) -> bool {
+        if std::env::var(marker).as_deref() == Ok("1") {
+            return true;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", path, "--nocapture"])
+            .env(marker, "1")
+            .env_remove("BOT_DEBUG")
+            .output()
+            .expect("run isolated drain log child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed; 0 failed;"),
+            "isolated drain log child {path} failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        false
+    }
+
+    /// Records only the bounded WSS close drain lines.
+    struct DrainLines(std::sync::Mutex<Vec<String>>);
+
+    impl api::hostlog::Sink for DrainLines {
+        fn record(&self, record: &api::hostlog::Record<'_>) {
+            if record.message.contains("bounded WSS close drain advanced") {
+                self.0.lock().unwrap().push(record.message.to_owned());
+            }
+        }
+    }
+
+    fn drain_service_health(nonce: u64, start: Instant) -> ServiceHealth {
+        ServiceHealth::new(
+            ProcessIncarnation::from_start_nonce(NonZeroU64::new(nonce).unwrap()),
+            ProcessOrigin::at(start),
+        )
+    }
+
+    #[test]
+    fn drain_reset_does_not_log_or_panic() {
+        if !isolated_sink_child(
+            "transport_health::tests::drain_reset_does_not_log_or_panic",
+            "T14_DRAIN_RESET_LOG_TEST",
+        ) {
+            return;
+        }
+        static LINES: DrainLines = DrainLines(std::sync::Mutex::new(Vec::new()));
+        assert!(api::hostlog::install_sink(&LINES));
+        let start = Instant::now();
+        let health = drain_service_health(12, start);
+        health.observe(
+            start,
+            None,
+            None,
+            None,
+            DrainCounters {
+                timeouts: 3,
+                drain_errors: 2,
+                shutdown_drops: 1,
+            },
+        );
+        assert_eq!(LINES.0.lock().unwrap().len(), 1);
+        // The network service restarted and republished its counters from
+        // zero: no log line, no subtract underflow, and the reset becomes the
+        // next baseline.
+        health.observe(start, None, None, None, DrainCounters::default());
+        assert_eq!(
+            LINES.0.lock().unwrap().len(),
+            1,
+            "a counter reset must not log"
+        );
+        assert_eq!(*health.last_drain.lock().unwrap(), DrainCounters::default());
+    }
+
+    #[test]
+    fn drain_increase_after_reset_logs_delta_from_reset_value() {
+        if !isolated_sink_child(
+            "transport_health::tests::drain_increase_after_reset_logs_delta_from_reset_value",
+            "T14_DRAIN_REBASE_LOG_TEST",
+        ) {
+            return;
+        }
+        static LINES: DrainLines = DrainLines(std::sync::Mutex::new(Vec::new()));
+        assert!(api::hostlog::install_sink(&LINES));
+        let start = Instant::now();
+        let health = drain_service_health(13, start);
+        health.observe(
+            start,
+            None,
+            None,
+            None,
+            DrainCounters {
+                timeouts: 4,
+                drain_errors: 1,
+                shutdown_drops: 1,
+            },
+        );
+        health.observe(start, None, None, None, DrainCounters::default());
+        health.observe(
+            start,
+            None,
+            None,
+            None,
+            DrainCounters {
+                timeouts: 5,
+                drain_errors: 1,
+                shutdown_drops: 1,
+            },
+        );
+        assert_eq!(
+            *health.last_drain.lock().unwrap(),
+            DrainCounters {
+                timeouts: 5,
+                drain_errors: 1,
+                shutdown_drops: 1,
+            },
+        );
+        let lines = LINES.0.lock().unwrap();
+        assert_eq!(lines.len(), 2, "only real increases log");
+        assert_eq!(
+            lines.last().unwrap(),
+            "bounded WSS close drain advanced timeouts=5 (+5) drain_errors=1 (+1) shutdown_drops=1 (+1)",
+        );
+    }
+
+    #[test]
+    fn drain_normal_increase_still_logs_one_line_per_increase() {
+        if !isolated_sink_child(
+            "transport_health::tests::drain_normal_increase_still_logs_one_line_per_increase",
+            "T14_DRAIN_NORMAL_LOG_TEST",
+        ) {
+            return;
+        }
+        static LINES: DrainLines = DrainLines(std::sync::Mutex::new(Vec::new()));
+        assert!(api::hostlog::install_sink(&LINES));
+        let start = Instant::now();
+        let health = drain_service_health(14, start);
+        health.observe(
+            start,
+            None,
+            None,
+            None,
+            DrainCounters {
+                timeouts: 1,
+                drain_errors: 1,
+                shutdown_drops: 1,
+            },
+        );
+        health.observe(
+            start,
+            None,
+            None,
+            None,
+            DrainCounters {
+                timeouts: 2,
+                drain_errors: 2,
+                shutdown_drops: 3,
+            },
+        );
+        let lines = LINES.0.lock().unwrap();
+        assert_eq!(lines.len(), 2, "one line per real increase");
+        assert_eq!(
+            lines.last().unwrap(),
+            "bounded WSS close drain advanced timeouts=2 (+1) drain_errors=2 (+1) shutdown_drops=3 (+2)",
+        );
     }
 }
