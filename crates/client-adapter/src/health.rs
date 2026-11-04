@@ -53,6 +53,8 @@ pub struct ReactorHealth {
     epoch: Instant,
     progress_ns: AtomicU64,
     graceful_close_timeouts: AtomicU64,
+    graceful_close_drain_errors: AtomicU64,
+    graceful_close_shutdown_drops: AtomicU64,
     checker: Mutex<CheckerWindow>,
     wake_failure: Mutex<Option<WakeFailure>>,
     latched: AtomicU8,
@@ -71,6 +73,8 @@ impl ReactorHealth {
             epoch,
             progress_ns: AtomicU64::new(0),
             graceful_close_timeouts: AtomicU64::new(0),
+            graceful_close_drain_errors: AtomicU64::new(0),
+            graceful_close_shutdown_drops: AtomicU64::new(0),
             checker: Mutex::new(CheckerWindow::default()),
             wake_failure: Mutex::new(None),
             latched: AtomicU8::new(0),
@@ -97,6 +101,27 @@ impl ReactorHealth {
     pub fn graceful_close_timeouts(&self) -> u64 {
         self.graceful_close_timeouts.load(Ordering::Relaxed)
     }
+    /// Count a peer reset or fatal TLS alert while discarding a stopped
+    /// session's transport tail. A clean peer close is not an error.
+    pub fn record_graceful_close_drain_error(&self) {
+        self.graceful_close_drain_errors
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn graceful_close_drain_errors(&self) -> u64 {
+        self.graceful_close_drain_errors.load(Ordering::Relaxed)
+    }
+
+    /// Count each unfinished drain that service shutdown retires.
+    pub fn record_graceful_close_shutdown_drop(&self) {
+        self.graceful_close_shutdown_drops
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn graceful_close_shutdown_drops(&self) -> u64 {
+        self.graceful_close_shutdown_drops.load(Ordering::Relaxed)
+    }
+
 
     pub fn record_wake_failure(&self, error: &io::Error) {
         let mut last = self

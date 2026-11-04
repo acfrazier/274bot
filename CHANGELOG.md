@@ -60,6 +60,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   its error kind and operating-system error number, to the login status and
   the session exit reason on Linux, macOS and Windows. Before, the reactor
   discarded the error and the bot saw a plain end of stream.
+- WSS sessions now reply to a server Close and finish their TLS and TCP
+  shutdown before releasing the socket. The client discards any late
+  server bytes for at most one second and reports drain failures and timeouts
+  in network health.
 - HTTPS configuration-generation observer arguments compile only with
   `test-support`; feature-off builds contain no placeholder observer arguments.
 ### Panel and terminal app

@@ -708,10 +708,9 @@ impl WssEndpoint {
     /// reactor invokes `drive` for its one fair session turn.
     pub fn on_event(&mut self, readable: bool, writable: bool, now: Instant) -> WssStep {
         if readable
-            && (self.close_phase == ClosePhase::WriteHalfClosed
-                || (!self.tls_read_paused
-                    && !self.read_suspended
-                    && !self.shared.rebind_disabled()))
+            && !self.tls_read_paused
+            && !self.read_suspended
+            && !self.shared.rebind_disabled()
         {
             self.read_local = true;
             self.clean_rebind = false;
@@ -1076,12 +1075,13 @@ impl WssEndpoint {
     pub fn flush_for_close(&mut self) -> io::Result<(bool, bool)> {
         self.read_suspended = true;
         self.read_local = false;
-        if !self.shared.outbound.is_empty() || self.shared.records.front().is_some() {
+        // A server-first Close already queued tungstenite's reply. Do not
+        // attempt to send stale game records after the peer closed.
+        if !self.peer_closed
+            && (!self.shared.outbound.is_empty() || self.shared.records.front().is_some())
+        {
             self.write_local = true;
             let turn = self.drive()?;
-            if turn.stop == TcpStop::PeerClosed {
-                return Ok((true, false));
-            }
             let records_drained = self.shared.outbound.is_empty()
                 && self.shared.records.front().is_none()
                 && !self.ws_write_pending;
@@ -1093,23 +1093,26 @@ impl WssEndpoint {
             return self.drain_close_turn();
         }
         if !self.graceful_ws_started {
-            let close_result = {
-                #[cfg(feature = "test-support")]
-                let _allocation_scope =
-                    self.allocation_scope(soak_observer::AllocationScopeKind::WssMessageStaging);
-                self.websocket.as_mut().expect("connected WSS").close(None)
-            };
-            match close_result {
-                Ok(()) => self.graceful_ws_started = true,
-                Err(WsError::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
-                    self.graceful_ws_started = true;
-                    self.ws_write_pending = true;
-                    let local = self.write_work_locally_runnable();
-                    self.write_local = local;
-                    return Ok((false, local));
+            if !self.peer_closed {
+                let close_result = {
+                    #[cfg(feature = "test-support")]
+                    let _allocation_scope =
+                        self.allocation_scope(soak_observer::AllocationScopeKind::WssMessageStaging);
+                    self.websocket.as_mut().expect("connected WSS").close(None)
+                };
+                match close_result {
+                    Ok(()) => {}
+                    Err(WsError::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
+                        self.graceful_ws_started = true;
+                        self.ws_write_pending = true;
+                        let local = self.write_work_locally_runnable();
+                        self.write_local = local;
+                        return Ok((false, local));
+                    }
+                    Err(error) => return Err(websocket_io_error(error)),
                 }
-                Err(error) => return Err(websocket_io_error(error)),
             }
+            self.graceful_ws_started = true;
             self.ws_write_pending = true;
         }
 
@@ -1190,6 +1193,11 @@ impl WssEndpoint {
 
     pub fn draining_for_close(&self) -> bool {
         self.close_phase == ClosePhase::WriteHalfClosed
+    }
+    /// A received WebSocket Close needs the same TLS and TCP shutdown as a
+    /// locally requested close, including when its reply is still flushing.
+    pub fn peer_closed_for_close(&self) -> bool {
+        self.peer_closed
     }
 
     pub fn attempt_failure(&self, now: Instant) -> Option<io::ErrorKind> {
@@ -1891,7 +1899,7 @@ fn tls_io_error(error: rustls::Error) -> io::Error {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName};
     use std::net::{TcpListener, TcpStream as StdTcpStream};
@@ -1903,6 +1911,9 @@ mod tests {
         SendFrames {
             frames: Vec<Vec<u8>>,
             done: Sender<io::Result<usize>>,
+        },
+        Reset {
+            done: Sender<io::Result<()>>,
         },
         DrainBinaries {
             expected_binary: Vec<u8>,
@@ -1918,17 +1929,33 @@ mod tests {
         Stop,
     }
 
-    struct WssFixture {
-        endpoint: WssEndpoint,
-        shared: Arc<SharedConnection>,
-        binding: BindingId,
+    struct EndpointSlot(Option<WssEndpoint>);
+
+    impl std::ops::Deref for EndpointSlot {
+        type Target = WssEndpoint;
+
+        fn deref(&self) -> &Self::Target {
+            self.0.as_ref().expect("test endpoint remains owned by fixture")
+        }
+    }
+
+    impl std::ops::DerefMut for EndpointSlot {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.0.as_mut().expect("test endpoint remains owned by fixture")
+        }
+    }
+
+    pub(crate) struct WssFixture {
+        endpoint: EndpointSlot,
+        pub(crate) shared: Arc<SharedConnection>,
+        pub(crate) binding: BindingId,
         commands: Sender<TestServerCommand>,
         poll: mio::Poll,
         server: Option<JoinHandle<io::Result<()>>>,
     }
 
     impl WssFixture {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let address = listener.local_addr().unwrap();
             let (commands, receiver) = mpsc::channel();
@@ -1974,7 +2001,7 @@ mod tests {
             )
             .unwrap();
             let mut fixture = Self {
-                endpoint,
+                endpoint: EndpointSlot(Some(endpoint)),
                 shared,
                 binding,
                 commands,
@@ -1983,6 +2010,33 @@ mod tests {
             };
             fixture.complete_upgrade();
             fixture
+        }
+
+        /// Transfer the already-authenticated endpoint to the reactor's poll
+        /// owner. The fixture retains only the server and its command channel.
+        pub(crate) fn take_for_reactor(&mut self, registry: &Registry) -> WssEndpoint {
+            let mut endpoint = self.endpoint.0.take().expect("endpoint transfer occurs once");
+            endpoint
+                .with_tls_mut(|tls| self.poll.registry().deregister(tls.socket.inner_mut()))
+                .unwrap();
+            endpoint.registered = false;
+            endpoint.last_interest = None;
+            endpoint.apply_interest(registry).unwrap();
+            endpoint
+        }
+
+        pub(crate) fn send_frames_for_reactor(&self, frames: Vec<Vec<u8>>) {
+            let (done, result) = mpsc::channel();
+            self.commands
+                .send(TestServerCommand::SendFrames { frames, done })
+                .unwrap();
+            let _: usize = server_result(result);
+        }
+
+        pub(crate) fn reset_for_reactor(&self) {
+            let (done, result) = mpsc::channel();
+            self.commands.send(TestServerCommand::Reset { done }).unwrap();
+            server_result(result);
         }
 
         fn complete_upgrade(&mut self) {
@@ -2175,7 +2229,9 @@ mod tests {
 
     impl Drop for WssFixture {
         fn drop(&mut self) {
-            self.endpoint.drop_socket(Some(self.poll.registry()));
+            if let Some(endpoint) = self.endpoint.0.as_mut() {
+                endpoint.drop_socket(Some(self.poll.registry()));
+            }
             let _ = self.commands.send(TestServerCommand::Stop);
             if let Some(server) = self.server.take() {
                 let _ = server.join();
@@ -2300,6 +2356,12 @@ mod tests {
                     let wire = written.load(std::sync::atomic::Ordering::SeqCst) - wire_before;
                     let _ = done.send(result.map(|()| wire));
                 }
+                TestServerCommand::Reset { done } => {
+                    let result = socket2::SockRef::from(&websocket.get_mut().sock.inner)
+                        .set_linger(Some(Duration::ZERO));
+                    let _ = done.send(result);
+                    break;
+                }
                 TestServerCommand::DrainBinaries {
                     expected_binary,
                     expected_binary_count,
@@ -2398,7 +2460,7 @@ mod tests {
         Ok(head)
     }
 
-    fn raw_ws_frame(fin: bool, opcode: u8, payload: &[u8]) -> Vec<u8> {
+    pub(crate) fn raw_ws_frame(fin: bool, opcode: u8, payload: &[u8]) -> Vec<u8> {
         let mut frame = Vec::with_capacity(payload.len() + 10);
         frame.push(if fin { 0x80 | opcode } else { opcode });
         match payload.len() {

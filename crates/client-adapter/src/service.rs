@@ -61,6 +61,12 @@ pub struct NetworkHealth {
     pub reactor: Option<ReactorLoss>,
     pub resolver: Option<ResolverUnavailable>,
     pub wake_failure: Option<WakeFailure>,
+    /// Bounded WSS Close flush and drain deadlines reached since service start.
+    pub graceful_close_timeouts: u64,
+    /// Peer resets or fatal TLS alerts during the post-Close drain.
+    pub graceful_close_drain_errors: u64,
+    /// Unfinished WSS drains retired when the reactor stops.
+    pub graceful_close_shutdown_drops: u64,
 }
 
 /// A registration owned by an actual panel/TUI/headless/embedder event loop.
@@ -226,6 +232,9 @@ impl NetworkService {
             reactor: self.reactor.maintain(now),
             resolver: self.resolver.maintain().unavailable,
             wake_failure: self.reactor.health().wake_failure(),
+            graceful_close_timeouts: self.reactor.health().graceful_close_timeouts(),
+            graceful_close_drain_errors: self.reactor.health().graceful_close_drain_errors(),
+            graceful_close_shutdown_drops: self.reactor.health().graceful_close_shutdown_drops(),
         }
     }
 }

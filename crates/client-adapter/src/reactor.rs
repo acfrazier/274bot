@@ -30,9 +30,9 @@ use super::ws_endpoint::{WssEndpoint, WssStep};
 use client::Transport;
 
 const WAKE_TOKEN: Token = Token(0);
-// The existing close flush has one second. The captured server-first WS
-// closes returned the client FIN in 47 and 84 ms (F9, 2026-11-04 review).
-// Allow a separate second for a delayed peer TLS alert or TCP FIN.
+// The phase-four proxy stalls one chunk for 750 ms. The captured engine
+// server-first close took 47-84 ms to reach the client FIN. Allow roughly
+// 150 ms beyond a stalled ~80 ms round trip, separately from the flush bound.
 const GRACEFUL_PEER_DRAIN: Duration = Duration::from_secs(1);
 static NEXT_INCARNATION: AtomicU64 = AtomicU64::new(1);
 static PROCESS_TRANSPORT: LazyLock<Result<Arc<TransportService>, io::ErrorKind>> =
@@ -643,6 +643,9 @@ impl Endpoint {
 
     fn draining_for_close(&self) -> bool {
         matches!(self, Self::Wss(endpoint) if endpoint.draining_for_close())
+    }
+    fn peer_closed_for_close(&self) -> bool {
+        matches!(self, Self::Wss(endpoint) if endpoint.peer_closed_for_close())
     }
 
     fn drive(&mut self) -> io::Result<super::tcp::TcpTurnResult> {
@@ -1564,7 +1567,16 @@ impl Reactor {
                         live.graceful_by = Some(Instant::now() + GRACEFUL_PEER_DRAIN);
                     }
                     match result {
-                        Ok((true, _)) | Err(_) => TurnOutcome::Close,
+                        Ok((true, _)) => TurnOutcome::Close,
+                        Err(error) => {
+                            if was_draining || live.endpoint.draining_for_close() {
+                                self.health.record_graceful_close_drain_error();
+                            }
+                            if let Some(errno) = error.raw_os_error() {
+                                live.registration.shared.publish_os_failure(errno);
+                            }
+                            TurnOutcome::Close
+                        }
                         Ok((false, true)) => TurnOutcome::Local,
                         Ok((false, false)) => TurnOutcome::Wait,
                     }
@@ -1573,6 +1585,13 @@ impl Reactor {
                 Self::drive_rebind(live)
             } else {
                 match live.endpoint.drive() {
+                    Ok(_) if live.endpoint.peer_closed_for_close() => {
+                        // Tungstenite has already queued the Close reply. Run
+                        // the same bounded TLS/FIN/drain path as a local close.
+                        live.graceful_by = Some(Instant::now() + GRACEFUL_PEER_DRAIN);
+                        live.registration.shared.disable_for_rebind();
+                        TurnOutcome::Local
+                    }
                     Ok(turn) if turn.stop == TcpStop::PeerClosed => TurnOutcome::Close,
                     Ok(turn) if turn.stop == TcpStop::LocalWork => TurnOutcome::Local,
                     Ok(_) => TurnOutcome::Wait,
@@ -1664,6 +1683,20 @@ impl Reactor {
                 live.registration.shared.control.publish_primary(reply);
                 TurnOutcome::Wait
             }
+            Ok(RebindBoundary::PeerClosed) if live.endpoint.peer_closed_for_close() => {
+                let pending = live.rebind.take().expect("rebind command retained");
+                pending.retire.ack();
+                live.registration
+                    .shared
+                    .control
+                    .publish_primary(PrimaryReply::Rejected {
+                        binding: pending.next,
+                        reason: RejectedCommand::Closed,
+                    });
+                live.graceful_by = Some(Instant::now() + GRACEFUL_PEER_DRAIN);
+                live.registration.shared.disable_for_rebind();
+                TurnOutcome::Local
+            }
             Ok(RebindBoundary::PeerClosed) | Err(_) => TurnOutcome::Close,
         }
     }
@@ -1711,6 +1744,9 @@ impl Drop for Reactor {
         // Return physical custody before publishing failure and releasing
         // charges; the owner health turn latches Panicked after unwind.
         for (slot, mut live) in self.live.drain() {
+            if live.graceful_by.is_some() && live.endpoint.draining_for_close() {
+                self.health.record_graceful_close_shutdown_drop();
+            }
             let binding = live.endpoint.binding();
             let shared = Arc::clone(&live.registration.shared);
             let pending_connect = !live.connected_reply;
@@ -1935,6 +1971,167 @@ mod tests {
             })
             .unwrap();
         (binding, shared, retire)
+    }
+
+    fn connected_wss_reactor() -> (
+        Reactor,
+        super::super::ws_endpoint::tests::WssFixture,
+        Arc<ReactorHealth>,
+    ) {
+        let mut fixture = super::super::ws_endpoint::tests::WssFixture::new();
+        let poll = Poll::new().unwrap();
+        let bus = Arc::new(CommandBus::new(Arc::new(
+            Waker::new(poll.registry(), WAKE_TOKEN).unwrap(),
+        )));
+        let registry = Arc::new(Mutex::new(Registered::new()));
+        let health = Arc::new(ReactorHealth::new(Instant::now()));
+        let mut reactor = Reactor::new(
+            poll,
+            Arc::clone(&registry),
+            bus,
+            ResourceLedger::new(),
+            Arc::clone(&health),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Mutex::new(None)),
+        );
+        let binding = fixture.binding;
+        let registration = Arc::new(Registration {
+            id: binding.connection,
+            initial: binding,
+            shared: Arc::clone(&fixture.shared),
+            submitted: AtomicBool::new(true),
+            charge: Mutex::new(None),
+        });
+        registry
+            .lock()
+            .unwrap()
+            .entries
+            .insert(index(binding.connection), Arc::clone(&registration));
+        let endpoint = fixture.take_for_reactor(reactor.poll.registry());
+        reactor.active.push(binding.connection);
+        reactor.live.insert(
+            index(binding.connection),
+            Live {
+                registration,
+                endpoint: Endpoint::Wss(endpoint),
+                connected_reply: true,
+                queued: false,
+                rebind: None,
+                graceful_by: None,
+                close_ack: None,
+                tls: None,
+            },
+        );
+        (reactor, fixture, health)
+    }
+
+    fn poll_wss_readable(reactor: &mut Reactor, id: u64) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "WSS drain has no readable interest");
+            reactor
+                .poll
+                .poll(&mut reactor.events, Some(remaining.min(Duration::from_millis(25))))
+                .unwrap();
+            let ready = reactor
+                .events
+                .iter()
+                .filter(|event| event.token() == Token(id as usize) && event.is_readable())
+                .map(|event| (event.is_readable(), event.is_writable()))
+                .collect::<Vec<_>>();
+            reactor.events.clear();
+            if ready.is_empty() {
+                continue;
+            }
+            for (readable, writable) in ready {
+                let live = reactor.live.get_mut(&index(id)).unwrap();
+                let Endpoint::Wss(endpoint) = &mut live.endpoint else {
+                    panic!("reactor owns a WSS endpoint");
+                };
+                assert!(matches!(
+                    endpoint.on_event(readable, writable, Instant::now()),
+                    WssStep::Ready
+                ));
+                endpoint.apply_interest(reactor.poll.registry()).unwrap();
+                reactor.enqueue(id);
+            }
+            return;
+        }
+    }
+
+    #[test]
+    fn wss_drain_resets_bound_reads_on_reactor_readiness_and_times_out_in_turn() {
+        use super::super::ws_endpoint::tests::raw_ws_frame;
+
+        let (mut reactor, fixture, health) = connected_wss_reactor();
+        let id = fixture.binding.connection;
+        let flush_by = Instant::now() + Duration::from_millis(250);
+        reactor.live.get_mut(&index(id)).unwrap().graceful_by = Some(flush_by);
+        reactor.enqueue(id);
+        reactor.drive_local();
+        let live = reactor.live.get(&index(id)).expect("silent peer remains live");
+        assert!(live.endpoint.draining_for_close());
+        let drain_by = live.graceful_by.unwrap();
+        let drain_start = Instant::now();
+        assert!(
+            drain_by >= drain_start + Duration::from_millis(700)
+                && drain_by <= drain_start + Duration::from_secs(2),
+            "peer-drain deadline must reset to the bounded one-second window"
+        );
+
+        fixture.send_frames_for_reactor(vec![raw_ws_frame(true, 2, &[0x42; 4096])]);
+        poll_wss_readable(&mut reactor, id);
+        reactor.drive_local();
+        assert_eq!(fixture.shared.inbound.len(), 0, "close tail is discarded");
+        assert!(reactor.live.contains_key(&index(id)), "peer remains silent after data");
+
+        reactor.live.get_mut(&index(id)).unwrap().graceful_by =
+            Some(Instant::now().checked_sub(Duration::from_millis(1)).unwrap());
+        reactor.enqueue(id);
+        reactor.drive_local();
+        assert_eq!(health.graceful_close_timeouts(), 1);
+        assert!(!reactor.live.contains_key(&index(id)));
+        assert!(fixture.shared.is_closed());
+        drop(reactor);
+        drop(fixture);
+    }
+
+    #[test]
+    fn server_first_close_enters_reactor_drain_and_shutdown_records_drop() {
+        use super::super::ws_endpoint::tests::raw_ws_frame;
+
+        let (mut reactor, fixture, health) = connected_wss_reactor();
+        let id = fixture.binding.connection;
+        fixture.send_frames_for_reactor(vec![raw_ws_frame(true, 8, &[])]);
+        poll_wss_readable(&mut reactor, id);
+        reactor.drive_local();
+        assert!(reactor.live.get(&index(id)).unwrap().graceful_by.is_some());
+        reactor.drive_local();
+        assert!(reactor.live.get(&index(id)).unwrap().endpoint.draining_for_close());
+        drop(reactor);
+        assert_eq!(health.graceful_close_shutdown_drops(), 1);
+        assert_eq!(health.graceful_close_timeouts(), 0);
+        drop(fixture);
+    }
+
+    #[test]
+    fn peer_reset_during_drain_is_counted_and_retired() {
+        let (mut reactor, fixture, health) = connected_wss_reactor();
+        let id = fixture.binding.connection;
+        reactor.live.get_mut(&index(id)).unwrap().graceful_by =
+            Some(Instant::now() + GRACEFUL_PEER_DRAIN);
+        reactor.enqueue(id);
+        reactor.drive_local();
+        assert!(reactor.live.get(&index(id)).unwrap().endpoint.draining_for_close());
+        fixture.reset_for_reactor();
+        poll_wss_readable(&mut reactor, id);
+        reactor.drive_local();
+        assert_eq!(health.graceful_close_drain_errors(), 1);
+        assert_eq!(health.graceful_close_timeouts(), 0);
+        assert!(!reactor.live.contains_key(&index(id)));
+        drop(reactor);
+        drop(fixture);
     }
 
     #[test]

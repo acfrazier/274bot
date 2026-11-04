@@ -1989,15 +1989,18 @@ fn assert_client_fin(server: &ControlServer) {
 fn deliberate_wss_close_drains_unread_server_records_before_socket_drop() {
     let pki = TestPki::new();
     let config = pki.client_config();
-    let server = ControlServer::spawn(configure_tls12(pki.identity));
-    let (mut attempt, mut endpoint, _) = connect_wss(&server, config);
+    let server = ControlServer::spawn(configure_tls13(pki.identity));
+    let (mut attempt, mut endpoint, handshake) = connect_wss(&server, config);
+    assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
     begin_bounded_graceful_close(&mut attempt, &mut endpoint);
     assert_client_close_then_tls_notify(&server);
     server.send_record(ContentType::ApplicationData, &[0x88, 0x00]);
-    server.send_record(
-        ContentType::ApplicationData,
-        &server_binary_frame(b"discard-after-close"),
-    );
+    for _ in 0..8 {
+        server.send_record(
+            ContentType::ApplicationData,
+            &server_binary_frame(&[0x55; 4096]),
+        );
+    }
     server.send_record(ContentType::Alert, &TLS_CLOSE_NOTIFY);
     server.half_close_write();
     let deadline = Instant::now() + IO_TIMEOUT;
@@ -2098,6 +2101,76 @@ fn deliberate_wss_close_silent_server_remains_pending_and_reset_ends_drain() {
     }
     endpoint.close(attempt.poll.registry());
     reset_server.stop();
+}
+
+#[test]
+fn server_first_wss_close_replies_with_tls_notify_and_drains_on_tls13() {
+    let pki = TestPki::new();
+    let config = pki.client_config();
+    let server = ControlServer::spawn(configure_tls13(pki.identity));
+    let (mut attempt, mut endpoint, handshake) = connect_wss(&server, config);
+    assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+
+    server.send_record(ContentType::ApplicationData, &[0x88, 0x00]);
+    let turn = next_readable_turn(&mut attempt, &mut endpoint).unwrap();
+    assert!(endpoint.peer_closed_for_close());
+    assert!(
+        matches!(turn.stop, TcpStop::PeerClosed | TcpStop::LocalWork),
+        "peer Close may retain an outbound reply"
+    );
+    begin_bounded_graceful_close(&mut attempt, &mut endpoint);
+    assert_client_close_then_tls_notify(&server);
+    server.send_record(ContentType::Alert, &TLS_CLOSE_NOTIFY);
+    server.half_close_write();
+    let deadline = Instant::now() + IO_TIMEOUT;
+    loop {
+        let (complete, local) = endpoint.flush_for_close().unwrap();
+        if complete {
+            break;
+        }
+        assert!(Instant::now() < deadline, "TLS 1.3 drain did not complete");
+        if !local {
+            attempt.poll.poll(&mut attempt.events, Some(POLL_SLICE)).unwrap();
+        }
+    }
+    endpoint.close(attempt.poll.registry());
+    assert_client_fin(&server);
+    server.stop();
+}
+
+#[test]
+fn server_close_with_pending_outbound_record_still_replies_before_tls_notify() {
+    let pki = TestPki::new();
+    let config = pki.client_config();
+    let server = ControlServer::spawn(configure_tls13(pki.identity));
+    let (mut attempt, mut endpoint, handshake) = connect_wss(&server, config);
+    assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+
+    attempt
+        .shared
+        .publish_record(attempt.binding, b"queued-before-server-close")
+        .unwrap();
+    endpoint.kick_output();
+    server.send_record(ContentType::ApplicationData, &[0x88, 0x00]);
+    next_readable_turn(&mut attempt, &mut endpoint).unwrap();
+    assert!(endpoint.peer_closed_for_close());
+    begin_bounded_graceful_close(&mut attempt, &mut endpoint);
+    assert_client_close_then_tls_notify(&server);
+    server.half_close_write();
+    let deadline = Instant::now() + IO_TIMEOUT;
+    loop {
+        let (complete, local) = endpoint.flush_for_close().unwrap();
+        if complete {
+            break;
+        }
+        assert!(Instant::now() < deadline, "peer FIN did not complete drain");
+        if !local {
+            attempt.poll.poll(&mut attempt.events, Some(POLL_SLICE)).unwrap();
+        }
+    }
+    endpoint.close(attempt.poll.registry());
+    assert_client_fin(&server);
+    server.stop();
 }
 
 /// Publish complete authenticated WSS game records, one at a time, until a
