@@ -120,7 +120,7 @@ class TeardownTests(unittest.TestCase):
         return {"connection_id": "c000060", "started_monotonic_ns": started,
                 "closed_monotonic_ns": closed,
                 "stage_status": {"proxy_a": "failed" if failure["stage"] == "proxy_a" else "closed",
-                                 "proxy_b": "closed",
+                                 "proxy_b": "failed" if failure["stage"] == "proxy_b_websocket" else "closed",
                                  "tls_terminator": "failed" if failure["stage"] == "tls_terminator" else "closed"},
                 "websocket_handshake": {"upgrade_status": 101},
                 "proxy_a_ciphertext": {"client_to_terminator_ciphertext": counters,
@@ -165,8 +165,46 @@ class TeardownTests(unittest.TestCase):
     def test_baseline_tls12_does_not_mask_real_teardown_failure(self):
         event = self.event({"stage": "proxy_b_websocket", "error": "FrameError: bad frame"})
         event["tls_terminator"]["handshake"]["tls_version"] = "TLSv1.2"
-        self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
-                            self.check(event, arm="baseline")))
+        event["proxy_b_websocket"]["engine_to_client"]["opcodes_written"]["8"] = 0
+        self.assertTrue(any("no complete zero-payload bidirectional WS Close" in reason
+                            for reason in self.check(event, arm="baseline")))
+
+    def test_baseline_teardown_is_observed_only_after_lossless_close(self):
+        failures = (
+            {"stage": "proxy_a", "error": "ConnectionResetError: [Errno 54] Connection reset by peer"},
+            {"stage": "tls_terminator", "error": "BrokenPipeError: [Errno 32] Broken pipe"},
+            {"stage": "proxy_b_websocket", "error": "FrameError: client frames must be masked"},
+        )
+        for failure in failures:
+            with self.subTest(failure=failure):
+                event = self.event(failure, started=35, closed=40)
+                observations = []
+                errors = []
+                summary.check_transport_teardown(Path("baseline"), "baseline", event,
+                                                 self.close_frames(), 30, errors, observations)
+                self.assertEqual(errors, [])
+                self.assertEqual(observations[0]["failure"], failure)
+                self.assertTrue(observations[0]["non_gating"])
+                self.assertTrue(any("unexpected TLS/segmentation error" in reason
+                                    for reason in self.check(event, phase_zero=30, arm="candidate")))
+
+                missing = self.close_frames()
+                missing["engine_to_client"] = []
+                errors = []
+                summary.check_transport_teardown(Path("baseline"), "baseline", event,
+                                                 missing, 30, errors)
+                self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in errors))
+
+                partial = self.event(failure, started=35, closed=40)
+                partial["proxy_a_ciphertext"]["client_to_terminator_ciphertext"] = {
+                    "bytes_read": 1, "bytes_written": 0}
+                self.assertTrue(any("unexpected TLS/segmentation error" in reason
+                                    for reason in self.check(partial, phase_zero=30, arm="baseline")))
+
+    def test_unknown_baseline_failure_still_gates(self):
+        failure = {"stage": "tls_terminator", "error": "SSLError: certificate verify failed"}
+        self.assertTrue(any("unexpected TLS/segmentation error" in reason
+                            for reason in self.check(self.event(failure), arm="baseline")))
 
     def test_ssl_eof_accepts_changed_source_line_not_changed_class_or_message(self):
         original = {"stage": "tls_terminator",
@@ -336,7 +374,7 @@ class ArmReasonTests(unittest.TestCase):
                 errors.append(f"{folder.name}: scene error")
                 return {"accounts": 2}
 
-            def fail_proxy(folder, _arm, _full, errors):
+            def fail_proxy(folder, _arm, _full, errors, _observations=None):
                 errors.append(f"{folder.name}: proxy error")
                 return {}
 
@@ -357,11 +395,61 @@ class ArmReasonTests(unittest.TestCase):
             self.assertIn("candidate: run: proxy error", result["reasons"])
             self.assertIn("candidate: ledger error", result["reasons"])
 
+    def test_pair_verdict_retains_candidate_gate_and_baseline_observation(self):
+        fault = {"stage": "proxy_a",
+                 "error": "ConnectionResetError: [Errno 54] Connection reset by peer"}
+        for faulty_arm, expected in (("baseline", "PASS"), ("candidate", "FAIL")):
+            with self.subTest(faulty_arm=faulty_arm), tempfile.TemporaryDirectory() as temporary:
+                folders = self.folders(temporary, smoke=False)
+                events = {}
+                for arm in ("baseline", "candidate"):
+                    event = TeardownTests.event(fault, started=35, closed=40)
+                    if arm != faulty_arm:
+                        event["failures"] = []
+                        event["stage_status"]["proxy_a"] = "closed"
+                    events[arm] = event
+
+                def proxy_receipt(folder, arm, _full, errors, observations=None):
+                    summary.check_transport_teardown(folder, arm, events[arm],
+                                                     TeardownTests.close_frames(), 30,
+                                                     errors, observations)
+                    return {123: events[arm]}
+
+                with mock.patch.object(summary, "check_nav_identity"), \
+                        mock.patch.object(summary, "check_workload", return_value={}), \
+                        mock.patch.object(summary, "check_samples", return_value=[]), \
+                        mock.patch.object(summary, "check_census", return_value={}), \
+                        mock.patch.object(summary, "check_proxy", side_effect=proxy_receipt), \
+                        mock.patch.object(summary, "check_candidate", return_value={}), \
+                        mock.patch.object(summary, "rss_arm_summary", return_value=(0, 3600, 100)) as rss, \
+                        mock.patch.object(summary, "rss_thresholds", return_value=(200, 1)):
+                    result = summary.evaluate(*folders, smoke=False)
+                    if faulty_arm == "baseline":
+                        (folders[0] / "cohort-exit.json").write_text('{"code":1}')
+                        self.assertTrue(any("baseline: cohort process failed" in reason
+                                            for reason in summary.evaluate(*folders, smoke=False)["reasons"]))
+                        (folders[0] / "cohort-exit.json").write_text('{"code":0}')
+                        hashes = events["baseline"]["binary_payload_hashes_match_at_proxy_b"]
+                        hashes["engine_to_client"] = False
+                        self.assertTrue(any("baseline: " in reason and "hash diverged" in reason
+                                            for reason in summary.evaluate(*folders, smoke=False)["reasons"]))
+                        hashes["engine_to_client"] = True
+                        rss.side_effect = [(0, 3600, 100), (2, 3600, 100)]
+                        self.assertTrue(any("candidate post-warmup RSS slope exceeded baseline" in reason
+                                            for reason in summary.evaluate(*folders, smoke=False)["reasons"]))
+                self.assertEqual(result["verdict"], expected, result["reasons"])
+                if faulty_arm == "baseline":
+                    self.assertEqual(result["baseline"]["teardown_observations"][0]["failure"], fault)
+                    self.assertTrue(result["baseline"]["teardown_observations"][0]["non_gating"])
+                    self.assertEqual(result["reasons"], [])
+                else:
+                    self.assertTrue(any(reason.startswith("candidate: ") for reason in result["reasons"]))
+
     def test_baseline_tls_version_is_recorded_in_result(self):
         with tempfile.TemporaryDirectory() as temporary:
             folders = self.folders(temporary)
 
-            def proxy_receipt(_folder, arm, _full, _errors):
+            def proxy_receipt(_folder, arm, _full, _errors, _observations=None):
                 version = "TLSv1.2" if arm == "baseline" else "TLSv1.3"
                 return {123: {"tls_terminator": {"handshake": {"tls_version": version}}}}
 

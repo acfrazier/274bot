@@ -398,9 +398,33 @@ def accepted_tls_close_error(failure: dict, stage: dict,
             ) is not None)
 
 
+def baseline_teardown_fault(failure: dict, stage: dict) -> bool:
+    """Recognize witnessed relay teardown classes, never arbitrary faults."""
+    if not isinstance(failure, dict) or len(failure) != 2:
+        return False
+    origin, error = failure.get("stage"), failure.get("error")
+    if not isinstance(error, str):
+        return False
+    if origin == "proxy_a" and stage.get("proxy_a") == "failed":
+        return error in (
+            "BrokenPipeError: [Errno 32] Broken pipe",
+            "ConnectionResetError: [Errno 54] Connection reset by peer",
+            "ConnectionResetError: [Errno 104] Connection reset by peer",
+        )
+    if origin == "tls_terminator" and stage.get("tls_terminator") == "failed":
+        return (error == "BrokenPipeError: [Errno 32] Broken pipe"
+                or re.fullmatch(
+                    r"SSLEOFError: EOF occurred in violation of protocol(?: \(_ssl\.c:\d+\))?",
+                    error) is not None)
+    if origin == "proxy_b_websocket" and stage.get("proxy_b") == "failed":
+        return error.startswith("FrameError: ")
+    return False
+
+
 def check_transport_teardown(folder: Path, arm: str, event: dict,
                              close_frames: dict[str, list[dict]],
-                             phase_zero_ns: int | None, errors: list[str]) -> None:
+                             phase_zero_ns: int | None, errors: list[str],
+                             observations: list[dict] | None = None) -> None:
     identifier = event["connection_id"]
     stage = event["stage_status"]
     handshake = event["websocket_handshake"]
@@ -416,8 +440,11 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
     tls_out = deficit(tls["proxy_b_to_client_plaintext"])
     failures = event.get("failures", [])
     prefix = f"{folder.name}: connection {identifier}"
-    demand(stage.get("proxy_b") == "closed" and tls["handshake"].get("completed") == 1,
+    demand(tls["handshake"].get("completed") == 1,
            errors, f"{prefix}: application relay or TLS handshake did not complete")
+    if status != 101:
+        demand(stage.get("proxy_b") == "closed", errors,
+               f"{prefix}: application relay or TLS handshake did not complete")
     if status == 200:
         # A complete HTTPS response is not a failed transfer merely because
         # the client closed its read side before the TLS pump's final recv.
@@ -466,6 +493,25 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
                        and (a_in, a_out, tls_in, tls_out) == (0, 0, 0, 0)
                        and event["binary_payload_hashes_match_at_proxy_b"].get("client_to_engine") is True
                        and event["binary_payload_hashes_match_at_proxy_b"].get("engine_to_client") is True)
+        matching_hashes = (
+            event["binary_payload_hashes_match_at_proxy_b"].get("client_to_engine") is True
+            and event["binary_payload_hashes_match_at_proxy_b"].get("engine_to_client") is True)
+        baseline_end = (arm == "baseline" and completed_close and matching_hashes
+                        and tls["handshake"].get("completed") == 1
+                        and (a_in, a_out, tls_in, tls_out) == (0, 0, 0, 0))
+        baseline_faults = (baseline_end and bool(failures)
+                           and all(baseline_teardown_fault(failure, stage)
+                                   for failure in failures))
+        demand(stage.get("proxy_b") == "closed"
+               or (stage.get("proxy_b") == "failed" and baseline_faults),
+               errors, f"{prefix}: application relay or TLS handshake did not complete")
+        if arm == "baseline" and observations is not None:
+            for failure in failures:
+                observations.append({
+                    "connection_id": identifier, "failure": failure,
+                    "non_gating": baseline_end and baseline_teardown_fault(failure, stage),
+                    "byte_deficits": [a_in, a_out, tls_in, tls_out],
+                })
         # Both transports support TLS 1.2. This soak exercises the candidate
         # on TLS 1.3; the native-tls baseline may negotiate either version.
         version = tls["handshake"].get("tls_version")
@@ -473,9 +519,11 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
         demand(version_ok and all(
             accepted_tls_close_error(failure, stage, (a_in, a_out, tls_in, tls_out),
                                      before_phase_zero)
-            or failure == {"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"}
+            or (failure == {"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"}
+                and (arm == "candidate" or (a_in, a_out, tls_in, tls_out) == (0, 0, 0, 0)))
             or (setup_reset and failure == {"stage": "proxy_a",
                                              "error": "ConnectionResetError: [Errno 104] Connection reset by peer"})
+            or (baseline_end and baseline_teardown_fault(failure, stage))
             for failure in failures
         ), errors, f"{prefix}: unexpected TLS/segmentation error")
         if not failures:
@@ -486,7 +534,8 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
                f"{prefix}: incomplete non-200/non-101 HTTP transfer")
 
 
-def check_proxy(folder: Path, arm: str, full: bool, errors: list[str]) -> dict[int, dict]:
+def check_proxy(folder: Path, arm: str, full: bool, errors: list[str],
+                observations: list[dict] | None = None) -> dict[int, dict]:
     fixture_config = document(folder / "effective-config.json")["proxy"]
     modulus = fixture_config["local_login_modulus"]
     source_sha256 = fixture_config["local_login_key_source_sha256"]
@@ -541,7 +590,8 @@ def check_proxy(folder: Path, arm: str, full: bool, errors: list[str]) -> dict[i
                    errors, f"{folder.name}: local Engine RSA fixture provenance differs")
         check_transport_teardown(
             folder, arm, event, close_frames.get(event["connection_id"], {}),
-            phase_zeros[0]["phase_zero_monotonic_ns"] if len(phase_zeros) == 1 else None, errors)
+            phase_zeros[0]["phase_zero_monotonic_ns"] if len(phase_zeros) == 1 else None,
+            errors, observations)
         if event.get("websocket_handshake", {}).get("upgrade_status") != 101:
             continue  # HTTPS asset transfer retains raw bytes; not a WSS pair.
         port = event.get("client_peer_port")
@@ -670,6 +720,7 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
     errors: list[str] = []
     base_errors: list[str] = []
     cand_errors: list[str] = []
+    baseline_teardown: list[dict] = []
     lhs = arm_evidence("baseline", document, baseline / "run-manifest.json")
     rhs = arm_evidence("candidate", document, candidate / "run-manifest.json")
     for receipt, arm in ((lhs, "baseline"), (rhs, "candidate")):
@@ -722,7 +773,8 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
                                baseline, base_samples, base_summary, left_config, base_errors)
     cand_census = arm_evidence(rhs["build"], check_census,
                                candidate, cand_samples, cand_summary, right_config, cand_errors)
-    base_proxy = arm_evidence(lhs["build"], check_proxy, baseline, "baseline", not smoke, base_errors)
+    base_proxy = arm_evidence(lhs["build"], check_proxy, baseline, "baseline", not smoke,
+                              base_errors, baseline_teardown)
     cand_proxy = arm_evidence(rhs["build"], check_proxy, candidate, "candidate", not smoke, cand_errors)
     limit = arm_evidence("candidate", lambda: right_config["limits"]["connection_bytes"])
     candidate_receipts = arm_evidence(
@@ -732,6 +784,7 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
         "baseline_commit": lhs["commit"], "candidate_commit": rhs["commit"],
         "shared_harness_sha256": lhs["shared_harness_sha256"],
         "baseline": {**base_work, "proxy_wss_connections": len(base_proxy),
+                     "teardown_observations": baseline_teardown,
                      "tls_versions_observed": sorted({
                          row["tls_terminator"]["handshake"]["tls_version"]
                          for row in base_proxy.values()
