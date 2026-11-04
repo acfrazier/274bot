@@ -363,6 +363,9 @@ impl Play {
             reactor,
             resolver,
             observed.and_then(|health| health.wake_failure),
+            observed.map_or(transport_health::DrainCounters::default(), |observed| {
+                transport_health::DrainCounters::from_network_health(observed)
+            }),
         );
     }
 

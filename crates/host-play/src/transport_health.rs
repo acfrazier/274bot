@@ -23,10 +23,40 @@ pub struct HealthEffects {
     pub resolver_unavailable: bool,
 }
 
+/// Cumulative bounded WSS close drain counts, copied from one
+/// [`client_adapter::service::NetworkHealth`] turn at the Play health cadence.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DrainCounters {
+    /// Bounded reply-flush or drain deadlines reached since service start.
+    pub timeouts: u64,
+    /// Peer resets or fatal TLS alerts during the post-Close drain.
+    pub drain_errors: u64,
+    /// Unfinished drains retired when the reactor stopped.
+    pub shutdown_drops: u64,
+}
+
+impl DrainCounters {
+    /// Copy the three bounded-close counters out of one network health turn.
+    pub fn from_network_health(health: client_adapter::service::NetworkHealth) -> Self {
+        Self {
+            timeouts: health.graceful_close_timeouts,
+            drain_errors: health.graceful_close_drain_errors,
+            shutdown_drops: health.graceful_close_shutdown_drops,
+        }
+    }
+
+    fn increased(&self, previous: &Self) -> bool {
+        self.timeouts != previous.timeouts
+            || self.drain_errors != previous.drain_errors
+            || self.shutdown_drops != previous.shutdown_drops
+    }
+}
+
 pub struct ServiceHealth {
     origin: ProcessOrigin,
     conditions: Mutex<ProcessConditions>,
     last_wake_failure: AtomicU64,
+    last_drain: Mutex<DrainCounters>,
 }
 
 impl ServiceHealth {
@@ -35,6 +65,7 @@ impl ServiceHealth {
             origin,
             conditions: Mutex::new(ProcessConditions::new(incarnation)),
             last_wake_failure: AtomicU64::new(0),
+            last_drain: Mutex::new(DrainCounters::default()),
         }
     }
 
@@ -47,6 +78,7 @@ impl ServiceHealth {
         reactor: Option<ReactorLoss>,
         resolver: Option<ResolverUnavailable>,
         wake_failure: Option<WakeFailure>,
+        drain: DrainCounters,
     ) -> HealthEffects {
         let mut effects = HealthEffects::default();
         let mut conditions = self.conditions.lock().unwrap();
@@ -114,6 +146,23 @@ impl ServiceHealth {
                 );
             }
         }
+        {
+            let mut last = self.last_drain.lock().unwrap();
+            if drain.increased(&last) {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Warn,
+                    "bounded WSS close drain advanced timeouts={} (+{}) drain_errors={} (+{}) shutdown_drops={} (+{})",
+                    drain.timeouts,
+                    drain.timeouts - last.timeouts,
+                    drain.drain_errors,
+                    drain.drain_errors - last.drain_errors,
+                    drain.shutdown_drops,
+                    drain.shutdown_drops - last.shutdown_drops,
+                );
+                *last = drain;
+            }
+        }
         effects
     }
 
@@ -164,6 +213,7 @@ mod tests {
                 Some(ReactorLoss::ProgressLost),
                 Some(resolver),
                 None,
+                DrainCounters::default(),
             ),
             HealthEffects {
                 reactor_unavailable: true,
@@ -176,6 +226,7 @@ mod tests {
                 Some(ReactorLoss::StartFailed),
                 Some(resolver),
                 None,
+                DrainCounters::default(),
             ),
             HealthEffects::default(),
         );
@@ -211,12 +262,12 @@ mod tests {
             raw_os_error: Some(32),
         };
         assert_eq!(
-            health.observe(start, None, None, Some(failure)),
+            health.observe(start, None, None, Some(failure), DrainCounters::default()),
             HealthEffects::default()
         );
         assert_eq!(health.last_wake_failure.load(Ordering::Acquire), 2);
         assert_eq!(
-            health.observe(start, None, None, Some(failure)),
+            health.observe(start, None, None, Some(failure), DrainCounters::default()),
             HealthEffects::default()
         );
         health.with_conditions(|conditions| {
@@ -224,5 +275,41 @@ mod tests {
                 .latched(ProcessServiceCode::ReactorUnavailable)
                 .is_none());
         });
+    }
+
+    #[test]
+    fn drain_counters_reach_transport_health_from_one_service_turn() {
+        let driver = client_adapter::service::NetworkService::start_composition()
+            .expect("network composition starts for the health test");
+        let service = driver.service();
+        let reactor_health = service.reactor().health();
+        let before = service.maintain(Instant::now());
+        reactor_health.record_graceful_close_timeout();
+        reactor_health.record_graceful_close_drain_error();
+        reactor_health.record_graceful_close_shutdown_drop();
+        let observed = service.maintain(Instant::now());
+        assert!(
+            observed.graceful_close_timeouts > before.graceful_close_timeouts,
+            "the network health turn must report the timeout counter"
+        );
+        assert!(
+            observed.graceful_close_drain_errors > before.graceful_close_drain_errors,
+            "the network health turn must report the drain-error counter"
+        );
+        assert!(
+            observed.graceful_close_shutdown_drops > before.graceful_close_shutdown_drops,
+            "the network health turn must report the shutdown-drop counter"
+        );
+        let expected = DrainCounters::from_network_health(observed);
+        let start = Instant::now();
+        let health = ServiceHealth::new(
+            ProcessIncarnation::from_start_nonce(NonZeroU64::new(11).unwrap()),
+            ProcessOrigin::at(start),
+        );
+        assert_eq!(
+            health.observe(start, None, None, None, expected),
+            HealthEffects::default()
+        );
+        assert_eq!(*health.last_drain.lock().unwrap(), expected);
     }
 }
