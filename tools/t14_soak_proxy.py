@@ -977,7 +977,17 @@ def _tcp_copy(
         while True:
             data = source.recv(TCP_READ_BYTES)
             if not data:
+                if stage == "proxy_a":
+                    runtime.write_event({
+                        "type": "tcp_eof", "connection_id": context.identifier,
+                        "direction": direction, "monotonic_ns": time.monotonic_ns(),
+                    })
                 _send_half_close(destination)
+                if stage == "proxy_a":
+                    runtime.write_event({
+                        "type": "tcp_half_close", "connection_id": context.identifier,
+                        "direction": direction, "monotonic_ns": time.monotonic_ns(),
+                    })
                 return
             context.inc(counter_stage, direction, "bytes_read", len(data))
             context.inc(counter_stage, direction, "chunks_read")
@@ -992,10 +1002,35 @@ def _tcp_copy(
 
                 _send_counted(destination, data, on_sent)
     except (OSError, ssl.SSLError, ConnectionError, ConfigError) as exc:
+        pending_client_bytes = 0
+        if stage == "proxy_a":
+            with context.lock:
+                client = context.a["client_to_terminator_ciphertext"]
+                pending_client_bytes = client["bytes_read"] - client["bytes_written"]
+            runtime.write_event({
+                "type": "tcp_copy_error", "connection_id": context.identifier,
+                "direction": direction, "monotonic_ns": time.monotonic_ns(),
+                "error": repr(exc), "pending_client_bytes": pending_client_bytes,
+            })
         if not runtime.stop.is_set():
             context.add_failure(stage, exc)
+        if stage == "proxy_a" and direction == "terminator_to_client_ciphertext" and pending_client_bytes > 0:
+            # The other worker owns bytes it already read. Let it finish the
+            # delayed write before the connection owner closes both sockets.
+            runtime.write_event({
+                "type": "tcp_reverse_error_draining_client_tail",
+                "connection_id": context.identifier,
+                "monotonic_ns": time.monotonic_ns(),
+                "pending_client_bytes": pending_client_bytes,
+            })
+            return
         _safe_shutdown(source)
         _safe_shutdown(destination)
+        if stage == "proxy_a":
+            runtime.write_event({
+                "type": "tcp_shutdown_complete", "connection_id": context.identifier,
+                "direction": direction, "monotonic_ns": time.monotonic_ns(),
+            })
 
 
 def _relay_pair(
@@ -1066,6 +1101,13 @@ def _a_connection(runtime: Runtime, client: socket.socket, peer: tuple[Any, ...]
         _nodelay(term)
         runtime.track_socket(term)
         runtime.register_route("term", term.getsockname(), context)
+        runtime.write_event({
+            "type": "proxy_a_route", "connection_id": context.identifier,
+            "client_peer_port": peer[1], "term_peer_port": term.getsockname()[1],
+            "a_port": client.getsockname()[1],
+            "terminator_port": term.getpeername()[1],
+            "monotonic_ns": time.monotonic_ns(),
+        })
         _relay_pair(
             runtime,
             context,

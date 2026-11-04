@@ -4,6 +4,7 @@
 import socket
 import threading
 from types import SimpleNamespace
+from unittest.mock import patch
 import unittest
 
 import t14_soak_proxy as proxy
@@ -155,6 +156,96 @@ class CloseReceiptTests(unittest.TestCase):
             source.close()
             writer.close()
 
+
+    def test_reverse_write_failure_drains_client_close_already_read(self):
+        events = []
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(faults=SimpleNamespace(seed=1027)),
+            stop=threading.Event(),
+            phase_started=lambda: True,
+            write_event=events.append,
+        )
+        connection = proxy.ConnectionState(runtime, "c1", ("127.0.0.1", 1234))
+        client, client_peer = socket.socketpair()
+        terminator, terminator_peer = socket.socketpair()
+        client_read = threading.Event()
+        allow_client_write = threading.Event()
+        close_record = b"\x17\x03\x03\x00\x06\x88\x80\x01\x02\x03\x04"
+
+        def fault_send(_runtime, context, direction, destination, data):
+            if direction == "terminator_to_client_ciphertext":
+                self.assertTrue(client_read.wait(2))
+                raise BrokenPipeError("reverse write failed")
+            client_read.set()
+            self.assertTrue(allow_client_write.wait(2))
+            destination.sendall(data)
+            context.inc("a", direction, "bytes_written", len(data))
+
+        try:
+            client_peer.sendall(close_record)
+            client_peer.shutdown(socket.SHUT_WR)
+            terminator_peer.sendall(b"server")
+            with patch.object(proxy, "_tcp_fault_send", side_effect=fault_send):
+                forward = threading.Thread(target=proxy._tcp_copy, args=(
+                    runtime, connection, client, terminator, "proxy_a",
+                    "client_to_terminator_ciphertext", True,
+                ))
+                reverse = threading.Thread(target=proxy._tcp_copy, args=(
+                    runtime, connection, terminator, client, "proxy_a",
+                    "terminator_to_client_ciphertext", True,
+                ))
+                forward.start()
+                reverse.start()
+                self.assertTrue(client_read.wait(2))
+                reverse.join(2)
+                self.assertFalse(reverse.is_alive())
+                allow_client_write.set()
+                forward.join(2)
+                self.assertFalse(forward.is_alive())
+            self.assertEqual(terminator_peer.recv(100), close_record)
+            self.assertEqual(terminator_peer.recv(1), b"")
+            self.assertEqual(
+                connection.a["client_to_terminator_ciphertext"]["bytes_read"],
+                connection.a["client_to_terminator_ciphertext"]["bytes_written"],
+            )
+            self.assertEqual(len(connection.failures), 1)
+            self.assertTrue(any(event["type"] == "tcp_reverse_error_draining_client_tail"
+                                and event["pending_client_bytes"] == len(close_record)
+                                for event in events))
+            self.assertFalse(any(event["type"] == "tcp_shutdown_complete" for event in events))
+        finally:
+            allow_client_write.set()
+            for sock in (client, client_peer, terminator, terminator_peer):
+                sock.close()
+
+    def test_reverse_failure_without_pending_client_bytes_shuts_down_and_records_failure(self):
+        events = []
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(faults=SimpleNamespace(seed=1027)),
+            stop=threading.Event(),
+            phase_started=lambda: True,
+            write_event=events.append,
+        )
+        connection = proxy.ConnectionState(runtime, "c1", ("127.0.0.1", 1234))
+        client, client_peer = socket.socketpair()
+        terminator, terminator_peer = socket.socketpair()
+        try:
+            terminator_peer.sendall(b"server")
+            with patch.object(proxy, "_tcp_fault_send", side_effect=BrokenPipeError("reverse write failed")):
+                proxy._tcp_copy(runtime, connection, terminator, client, "proxy_a",
+                                "terminator_to_client_ciphertext", True)
+            self.assertEqual(len(connection.failures), 1)
+            self.assertEqual(client_peer.recv(1), b"")
+            self.assertEqual(terminator_peer.recv(1), b"")
+            self.assertTrue(any(event["type"] == "tcp_copy_error"
+                                and event["direction"] == "terminator_to_client_ciphertext"
+                                and event["pending_client_bytes"] == 0 for event in events))
+            self.assertTrue(any(event["type"] == "tcp_shutdown_complete" for event in events))
+            self.assertFalse(any(event["type"] == "tcp_reverse_error_draining_client_tail"
+                                 for event in events))
+        finally:
+            for sock in (client, client_peer, terminator, terminator_peer):
+                sock.close()
 
 if __name__ == "__main__":
     unittest.main()
