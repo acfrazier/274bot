@@ -53,6 +53,36 @@ struct Rig {
     last_recorded: u32,
     setup_path: PathBuf,
     setup_events: Vec<Value>,
+    #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+    walk_attempts: Vec<Value>,
+    #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+    walk_attempt_capture_started_tick: Option<u32>,
+    #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+    walk_attempt_capture_ended_tick: Option<u32>,
+    #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+    diagnostic_retreat_index: Option<u16>,
+    #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+    walk_attempt_capture_first_clear_tick: Option<u32>,
+    #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+    walk_attempt_capture_retreat_tick: Option<u32>,
+}
+
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+struct WalkAttemptCaptureGuard;
+
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+impl Drop for WalkAttemptCaptureGuard {
+    fn drop(&mut self) {
+        crate::script_runtime::NavBot::stop_walk_attempt_capture();
+    }
+}
+
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+impl WalkAttemptCaptureGuard {
+    fn start() -> Self {
+        crate::script_runtime::NavBot::start_walk_attempt_capture();
+        Self
+    }
 }
 impl Drop for Rig {
     fn drop(&mut self) {
@@ -82,6 +112,8 @@ impl Rig {
         let checkpoint = self.navs.lock().unwrap()[&self.name]
             .condition
             .dispatch_checkpoint(&self.client);
+        #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+        let mut tick_walk_attempts = Vec::new();
         if follow && drain.player_info {
             crate::script_runtime::step_nav_bot(
                 &mut self.client,
@@ -96,6 +128,12 @@ impl Rig {
                 None,
                 || Arc::new(api::query::ReachQueryView::unavailable()),
             );
+            #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+            {
+                tick_walk_attempts = crate::script_runtime::NavBot::drain_walk_attempt_capture();
+                self.walk_attempts
+                    .extend(tick_walk_attempts.iter().cloned());
+            }
         }
         if let Some(checkpoint) = checkpoint {
             self.navs
@@ -129,14 +167,51 @@ impl Rig {
                     "expires_client_cycle": player.entity.damage_cycles,
                 })
             });
-            self.frames.push(json!({
+            let mut frame = json!({
                 "tick": self.snapshot.tick(), "tile": self.snapshot.tile(),
                 "hp": fact.hp, "poison": format!("{:?}", fact.poison),
                 "poison_window": format!("{:?}", fact.poison_window),
                 "hold": hold, "hitmarks": hits,
                 "route_armed": bot.route.is_some(),
                 "refusal": format!("{:?}", bot.risk_refusal),
-            }));
+            });
+            #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+            if crate::script_runtime::NavBot::walk_attempt_capture_active() {
+                let route_path_len = bot.route_path_for_follow().and_then(|route| {
+                    let view = route.view_in(&self.world)?;
+                    script::combat::risk::RoutePath::new(view)
+                        .ok()
+                        .map(|path| path.len())
+                });
+                let motion = self.snapshot.local_player().map(|player| {
+                    json!({
+                        "moving": player.player.actor.moving,
+                        "running": player.player.actor.running,
+                    })
+                });
+                frame["route_execution"] = json!({
+                    "route_armed": bot.has_route(),
+                    "route_identity": {
+                        "generation": bot.route_generation,
+                        "request_id": bot.route_request_id,
+                        "walk_request_id": bot.walk_request_id,
+                        "map_route_generation": bot.map_route_generation,
+                    },
+                    "route_destination": bot.route_destination(),
+                    "route_path_len": route_path_len,
+                    "safe_prefix_retreat_index": self.diagnostic_retreat_index,
+                    "active_follow_index_limit":
+                        bot.poison_hold.as_ref().map(|hold| hold.until_index),
+                    "player_tile": self.snapshot.tile(),
+                    "sampled_player_tile_route_index": null,
+                    "sampled_player_tile_index_semantics":
+                        "not treated as an exact RoutePath point",
+                    "movement": motion,
+                    "map_flag": self.snapshot.map_flag(),
+                    "walk_attempts": tick_walk_attempts,
+                });
+            }
+            self.frames.push(frame);
             if ingame && fact.hp_max != 0 {
                 assert_ne!(fact.hp, 0, "death at {:?}", self.snapshot.tile());
             }
@@ -360,6 +435,18 @@ fn prepare(
         last_recorded: 0,
         setup_path,
         setup_events: Vec::new(),
+        #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+        walk_attempts: Vec::new(),
+        #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+        walk_attempt_capture_started_tick: None,
+        #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+        walk_attempt_capture_ended_tick: None,
+        #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+        diagnostic_retreat_index: None,
+        #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+        walk_attempt_capture_first_clear_tick: None,
+        #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+        walk_attempt_capture_retreat_tick: None,
     };
     rig.until(150, false, |rig| {
         rig.snapshot.ingame() && rig.snapshot.attached() && rig.snapshot.scene_state() == 2
@@ -745,6 +832,17 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
             PoisonTest::WaitForClear { .. }
         ));
     }
+    #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+    let mut walk_attempt_capture =
+        matches!(cell.mode, Mode::LongApproach).then(|| WalkAttemptCaptureGuard::start());
+    #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+    if walk_attempt_capture.is_some() {
+        rig.walk_attempt_capture_started_tick = Some(rig.snapshot.tick());
+        rig.diagnostic_retreat_index = fixture_geometry
+            .as_ref()
+            .and_then(|geometry| geometry["retreat_index"].as_u64())
+            .and_then(|index| u16::try_from(index).ok());
+    }
     {
         let mut navs = rig.navs.lock().unwrap();
         let bot = navs.get_mut(&rig.name).unwrap();
@@ -779,6 +877,29 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
                 bot.condition.published().poison,
             )
         };
+        #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+        if walk_attempt_capture.is_some() {
+            if rig.walk_attempt_capture_first_clear_tick.is_none()
+                && matches!(poison, PoisonState::Clear)
+            {
+                rig.walk_attempt_capture_first_clear_tick = Some(rig.snapshot.tick());
+            }
+            if rig.walk_attempt_capture_retreat_tick.is_none()
+                && rig.snapshot.tile().is_some_and(|(x, z, level)| {
+                    fixture_geometry
+                        .as_ref()
+                        .is_some_and(|geometry| geometry["retreat"] == json!([x, z, level]))
+                })
+            {
+                rig.walk_attempt_capture_retreat_tick = Some(rig.snapshot.tick());
+            }
+            if rig.walk_attempt_capture_first_clear_tick.is_some()
+                && rig.walk_attempt_capture_retreat_tick.is_some()
+            {
+                drop(walk_attempt_capture.take());
+                rig.walk_attempt_capture_ended_tick = Some(rig.snapshot.tick());
+            }
+        }
         if matches!(cell.mode, Mode::PoisonDuringHold) && !seeded_poison && hold_wait.is_some() {
             rig.cheat("~poison 30");
             seeded_poison = true;
@@ -897,6 +1018,18 @@ fn save(directory: &Path, rig: &Rig, receipt: &mut Value, log_start: usize) {
     receipt["frames"] = json!(rig.frames);
     receipt["nav_logs"] = json!(LOGS.0.lock().unwrap()[log_start..].to_vec());
     receipt["setup_events"] = json!(rig.setup_events);
+    #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+    if receipt["cell"] == "poison_long_approach" {
+        receipt["walk_attempt_capture"] = json!({
+            "started_tick": rig.walk_attempt_capture_started_tick,
+            "ended_tick": rig.walk_attempt_capture_ended_tick,
+            "safe_prefix_retreat_index": rig.diagnostic_retreat_index,
+            "first_clear_tick": rig.walk_attempt_capture_first_clear_tick,
+            "retreat_tile_tick": rig.walk_attempt_capture_retreat_tick,
+            "ended_after_first_clear_and_retreat": rig.walk_attempt_capture_ended_tick.is_some(),
+            "attempts": &rig.walk_attempts,
+        });
+    }
     std::fs::write(
         directory.join("receipt.json"),
         serde_json::to_vec_pretty(receipt).unwrap(),

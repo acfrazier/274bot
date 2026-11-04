@@ -31,6 +31,50 @@ thread_local! {
     // Count the actual pump lock sites without adding release-path state.
     static STEP_NAV_LOCK_COUNT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+thread_local! {
+    static WALK_ATTEMPT_CAPTURE: std::cell::RefCell<Option<Vec<serde_json::Value>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+fn is_walk_attempt_capture_active() -> bool {
+    WALK_ATTEMPT_CAPTURE.with(|capture| capture.borrow().is_some())
+}
+
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+fn record_walk_attempt_capture(event: serde_json::Value) {
+    WALK_ATTEMPT_CAPTURE.with(|capture| {
+        if let Some(events) = capture.borrow_mut().as_mut() {
+            events.push(event);
+        }
+    });
+}
+
+#[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+impl NavBot {
+    pub(crate) fn start_walk_attempt_capture() {
+        WALK_ATTEMPT_CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+    }
+
+    pub(crate) fn walk_attempt_capture_active() -> bool {
+        is_walk_attempt_capture_active()
+    }
+
+    pub(crate) fn drain_walk_attempt_capture() -> Vec<serde_json::Value> {
+        WALK_ATTEMPT_CAPTURE.with(|capture| {
+            capture
+                .borrow_mut()
+                .as_mut()
+                .map(std::mem::take)
+                .unwrap_or_default()
+        })
+    }
+
+    pub(crate) fn stop_walk_attempt_capture() {
+        WALK_ATTEMPT_CAPTURE.with(|capture| *capture.borrow_mut() = None);
+    }
+}
 
 /// Pumps a non-Walk BankBudget step may wait before a truthful abort.
 const BANK_STEP_ATTEMPTS: u32 = 32;
@@ -1627,6 +1671,77 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                     .map(|hold| hold.until_index),
                                 ..TravelOptions::default()
                             };
+                            #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
+                            if is_walk_attempt_capture_active() {
+                                let route_generation = bot.route_generation;
+                                let route_request_id = bot.route_request_id;
+                                let walk_request_id = bot.walk_request_id;
+                                let map_route_generation = bot.map_route_generation;
+                                let route_index_limit = options.route_index_limit;
+                                let route_destination = route.destination();
+                                let route_path = borrowed_world
+                                    .and_then(|world| route.view_in(world))
+                                    .and_then(|view| {
+                                        script::combat::risk::RoutePath::new(view).ok()
+                                    });
+                                options.on_event = Some(Box::new(move |event| {
+                                    let nav_executor::TravelEvent::WalkAttempt {
+                                        tick,
+                                        at,
+                                        aim,
+                                        refusal,
+                                    } = event
+                                    else {
+                                        return;
+                                    };
+                                    let mut aim_route_indices = Vec::new();
+                                    let (route_path_len, aim_index_status) =
+                                        if let Some(path) = route_path {
+                                            for index in 0..path.len() {
+                                                let Ok(index) = u16::try_from(index) else {
+                                                    break;
+                                                };
+                                                if path
+                                                    .point(index)
+                                                    .is_some_and(|point| point.tile == aim)
+                                                {
+                                                    aim_route_indices.push(index);
+                                                }
+                                            }
+                                            let status = match aim_route_indices.len() {
+                                                0 => "unmatched",
+                                                1 => "unique",
+                                                _ => "ambiguous",
+                                            };
+                                            (Some(path.len()), status)
+                                        } else {
+                                            (None, "route_path_unavailable")
+                                        };
+                                    record_walk_attempt_capture(serde_json::json!({
+                                        "event": "WalkAttempt",
+                                        "tick": tick,
+                                        "at": [at.x, at.z, at.level],
+                                        "aim": [aim.x, aim.z, aim.level],
+                                        "refusal": refusal.map(|reason| format!("{reason:?}")),
+                                        "route_identity": {
+                                            "generation": route_generation,
+                                            "request_id": route_request_id,
+                                            "walk_request_id": walk_request_id,
+                                            "map_route_generation": map_route_generation,
+                                        },
+                                        "route_destination": [
+                                            route_destination.x,
+                                            route_destination.z,
+                                            route_destination.level,
+                                        ],
+                                        "route_index_limit": route_index_limit,
+                                        "route_path_len": route_path_len,
+                                        "aim_route_indices": aim_route_indices,
+                                        "aim_index_status": aim_index_status,
+                                    }));
+                                }));
+                            }
+
                             if let Some(content) = route.prereq_content() {
                                 options.refusal_texts = Arc::clone(&content.refusal_texts);
                                 options.crossing_passes = Arc::clone(&content.crossing_passes);
