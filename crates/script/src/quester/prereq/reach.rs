@@ -157,18 +157,22 @@ impl<M: PrereqMachine> PrereqAction<M> {
             return Err(ActionError::Stale);
         }
         let previous = self.current_revoker().map(|owner| owner.run());
+        if let Some(previous) = previous {
+            let current = cx.run();
+            if previous.slot != current.slot
+                || previous.run != current.run
+                || previous.session == current.session
+            {
+                return Err(ActionError::Stale);
+            }
+        }
         match &mut self.phase {
-            Phase::Reaching(handle) => actions.resume_kept(kind, handle, cx),
+            Phase::Reaching(handle) => {
+                actions.resume_kept(kind, handle, cx)?;
+                self.budget.session_changed();
+                Ok(())
+            }
             Phase::Resolving(_) => {
-                if let Some(previous) = previous {
-                    let current = cx.run();
-                    if previous.slot != current.slot
-                        || previous.run != current.run
-                        || previous.session == current.session
-                    {
-                        return Err(ActionError::Stale);
-                    }
-                }
                 self.budget.session_changed();
                 // The journal owner belongs to the old session. Revalidate
                 // the original operation through the existing reissue budget,
@@ -176,7 +180,10 @@ impl<M: PrereqMachine> PrereqAction<M> {
                 self.phase = Phase::Reissue;
                 Ok(())
             }
-            Phase::Reissue => Ok(()),
+            Phase::Reissue => {
+                self.budget.session_changed();
+                Ok(())
+            }
             Phase::Cancelled | Phase::Complete => Err(ActionError::Stale),
         }
     }

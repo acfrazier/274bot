@@ -3681,7 +3681,10 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
         same_session,
         Err(crate::native::ActionError::Stale)
     ));
-    assert!(old_reader.live(), "same-session misuse leaves the old reader intact");
+    assert!(
+        old_reader.live(),
+        "same-session misuse leaves the old reader intact"
+    );
 
     let resumed = with_tick(&snapshot, &mut ledger, 4, |native| {
         set_kitchen_session(native, &snapshot, 4, 2);
