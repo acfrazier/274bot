@@ -655,7 +655,10 @@ fn acquire_reissues_original_bank_pick_after_real_journal_close_and_opens_bank()
     assert!(run.bank.is_none());
     assert_no_acquire_bank_work(&ledger, original_id);
 
-    assert!(is_close(&complete_interaction(&mut ledger, 3)));
+    assert!(matches!(
+        complete_interaction(&mut ledger, 3),
+        HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
+    ));
     snapshot.seed_main_modal(-1, vec![]);
     assert!(poll_with_journal(&mut run, &snapshot, &mut ledger, 4, OpenGate::Open).is_pending());
     assert_eq!(
