@@ -3470,10 +3470,11 @@ fn start_kitchen_journal(
         ledger,
         state,
         authority,
-        gate,
-        allow,
+        crate::bank::BankPickOutcome::NeedsStep {
+            gates: Arc::from([gate]),
+            allow,
+        },
         2,
-        authority.run().session,
     )
 }
 
@@ -3483,20 +3484,21 @@ fn start_kitchen_journal_at(
     ledger: &mut KitchenSelectLedger,
     state: &SlotState,
     authority: &KitchenPickAuthority,
-    gate: ActionableGate,
-    allow: PrereqAllow,
+    outcome: crate::bank::BankPickOutcome,
     tick: u64,
-    session: u64,
 ) -> Poll<Result<crate::bank::SelectedBank, crate::native::ActionError>> {
-    let gates: Arc<[ActionableGate]> = Arc::from([gate]);
+    let allow = match &outcome {
+        crate::bank::BankPickOutcome::NeedsStep { allow, .. } => *allow,
+        _ => panic!("the journal fixture starts from a prerequisite diagnosis"),
+    };
     publish_kitchen_bank_pick(
         ledger,
         authority,
         authority.request_id().get(),
         tick,
-        crate::bank::BankPickOutcome::NeedsStep { gates, allow },
+        outcome,
     );
-    with_kitchen_session(snapshot, ledger, tick, session, |native| {
+    with_kitchen_session(snapshot, ledger, tick, authority.run().session, |native| {
         let observed_allow = action
             .inspect_in(&mut native.cx, |select, cx| select.prereq_allow(cx))
             .flatten();
@@ -3737,10 +3739,11 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
         &mut ledger,
         &state,
         &reissued_authority,
-        gate.clone(),
-        changed_allow,
+        crate::bank::BankPickOutcome::NeedsStep {
+            gates: Arc::from([gate.clone()]),
+            allow: changed_allow,
+        },
         10,
-        2,
     )
     .is_pending());
     assert_eq!(
