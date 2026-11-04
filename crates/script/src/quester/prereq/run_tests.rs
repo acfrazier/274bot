@@ -3357,10 +3357,7 @@ fn last_live_kitchen_bank_pick(
     })
 }
 
-fn assert_kitchen_bank_pick_args(
-    request: &crate::bank::BankPickRequest,
-    args: &KitchenSelectArgs,
-) {
+fn assert_kitchen_bank_pick_args(request: &crate::bank::BankPickRequest, args: &KitchenSelectArgs) {
     assert!(Arc::ptr_eq(&request.facts, &args.facts));
     assert_eq!(request.facts.as_ref(), args.facts.as_ref());
     assert_eq!(request.from, args.from);
@@ -3480,10 +3477,7 @@ fn bank_select_reissues_only_after_the_real_journal_owner_proves_the_gate() {
         ],
     );
     assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, 3, &state).is_pending());
-    assert!(matches!(
-        last_interaction(&ledger),
-        InteractReq::CloseModal
-    ));
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
     accept_last(&mut ledger, 3, 0);
     snapshot.seed_main_modal(-1, vec![]);
     assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, 4, &state).is_pending());
@@ -3510,7 +3504,9 @@ fn bank_select_reissues_only_after_the_real_journal_owner_proves_the_gate() {
         if reissued.is_some() {
             break;
         }
-        assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, tick, &state).is_pending());
+        assert!(
+            kitchen_select_poll(&mut action, &snapshot, &mut ledger, tick, &state).is_pending()
+        );
         reissued = last_live_kitchen_bank_pick(&ledger)
             .filter(|(_, authority)| authority.request_id() != first_authority.request_id());
     }
@@ -3521,7 +3517,10 @@ fn bank_select_reissues_only_after_the_real_journal_owner_proves_the_gate() {
         first_authority.request_id()
     );
     assert_kitchen_bank_pick_args(&reissued_request, &args);
-    assert!(!first_authority.live(), "the first bank owner has been retired");
+    assert!(
+        !first_authority.live(),
+        "the first bank owner has been retired"
+    );
 
     let stale_selected = crate::bank::SelectedBank {
         bank_index: 0,
@@ -3597,10 +3596,7 @@ fn false_journal_page_does_not_reissue_or_select_a_bank() {
         ],
     );
     assert!(kitchen_select_poll(&mut action, &snapshot, &mut ledger, 3, &state).is_pending());
-    assert!(matches!(
-        last_interaction(&ledger),
-        InteractReq::CloseModal
-    ));
+    assert!(matches!(last_interaction(&ledger), InteractReq::CloseModal));
     accept_last(&mut ledger, 3, 0);
     snapshot.seed_main_modal(-1, vec![]);
     let result = kitchen_select_poll(&mut action, &snapshot, &mut ledger, 4, &state);

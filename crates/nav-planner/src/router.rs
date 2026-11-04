@@ -898,6 +898,22 @@ pub enum BlockerDiagnosis {
     FirstGoal,
 }
 
+/// Quest truth that a diagnostic search may relax. Neither mode admits a route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GateRelaxation {
+    /// Preserve the existing catalog-backed diagnosis of unknown or false gates.
+    EstablishableFalse,
+    /// Read-only evidence diagnosis. A proven-false gate always remains closed.
+    UnknownOnly,
+}
+
+impl GateRelaxation {
+    fn allows(self, state: &WorldState, edge: &TransportEdge) -> bool {
+        (self == Self::EstablishableFalse || state.quest_gates(edge) != Truth::False)
+            && state.quest_gates_actionable(edge)
+    }
+}
+
 /// Owned request for one cooperative route search or route diagnosis. Input
 /// arrays and compact routes move into the cursor without cloning.
 pub enum SearchRequest {
@@ -957,6 +973,7 @@ pub enum SearchRequest {
         options: FindOptions,
         avoid: Box<[AvoidRect]>,
         max_settles: usize,
+        relaxation: GateRelaxation,
     },
     EntranceRequirements {
         from: WorldTile,
@@ -1021,6 +1038,7 @@ pub enum SearchRequestShape {
         options: FindOptions,
         avoid_capacity: usize,
         max_settles: usize,
+        relaxation: GateRelaxation,
     },
     EntranceRequirements {
         target_capacity: usize,
@@ -1123,12 +1141,14 @@ impl SearchRequestShape {
                 options,
                 avoid,
                 max_settles,
+                relaxation,
                 ..
             } => Self::ActionableQuestGates {
                 target_capacity: targets.len(),
                 options: *options,
                 avoid_capacity: avoid.len(),
                 max_settles: *max_settles,
+                relaxation: *relaxation,
             },
             SearchRequest::EntranceRequirements {
                 targets,
@@ -1313,15 +1333,18 @@ impl SearchRequestShape {
                     options,
                     avoid_capacity,
                     max_settles,
+                    relaxation,
                 },
                 Self::ActionableQuestGates {
                     target_capacity: actual_targets,
                     options: actual_options,
                     avoid_capacity: actual_avoid,
                     max_settles: actual_settles,
+                    relaxation: actual_relaxation,
                 },
             ) => {
                 options == actual_options
+                    && relaxation == actual_relaxation
                     && target_capacity >= actual_targets
                     && avoid_capacity >= actual_avoid
                     && max_settles >= actual_settles
@@ -6919,6 +6942,7 @@ async fn run_search_request(
             options,
             avoid,
             max_settles,
+            relaxation,
         } => {
             let (gates, settled) = actionable_quest_cursor_search(
                 collision,
@@ -6930,6 +6954,7 @@ async fn run_search_request(
                 &avoid,
                 max_settles,
                 reservation.max_quest_gates,
+                relaxation,
                 progress,
             )
             .await?;
@@ -7156,6 +7181,7 @@ async fn actionable_quest_cursor_search(
     avoid: &[AvoidRect],
     budget: usize,
     max_quest_gates: usize,
+    relaxation: GateRelaxation,
     progress: Option<&AtomicUsize>,
 ) -> Result<
     (
@@ -7183,7 +7209,7 @@ async fn actionable_quest_cursor_search(
         &[],
         options,
         state,
-        Relax::ActionableQuest,
+        Relax::ActionableQuest(relaxation),
         avoid,
         FIRST_TARGET_BUDGET.min(budget),
         budget,
@@ -7225,7 +7251,10 @@ async fn actionable_quest_cursor_search(
         for gate in gates.gates() {
             work_unit().await;
             let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
-            if truth == Truth::True || !state.gate_actionable(gate) {
+            if truth == Truth::True
+                || (relaxation == GateRelaxation::UnknownOnly && truth == Truth::False)
+                || !state.gate_actionable(gate)
+            {
                 continue;
             }
             let leg =
@@ -7357,7 +7386,7 @@ pub fn find_actionable_quest_gates(
         &[],
         opts,
         state,
-        Relax::ActionableQuest,
+        Relax::ActionableQuest(GateRelaxation::EstablishableFalse),
         avoid,
         NODE_BUDGET,
         NODE_BUDGET,
@@ -8074,7 +8103,7 @@ enum Relax {
     /// The actionable-quest diagnosis: every snapshot requirement stays
     /// strict; each non-`True` stage gate must be implied by an
     /// API-established window.
-    ActionableQuest,
+    ActionableQuest(GateRelaxation),
     /// Entrance diagnosis names exclusions, unknown absence observations,
     /// and missing conjunctive worn items. Other positive gates stay strict.
     EntranceExclusions,
@@ -8093,7 +8122,9 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
         Relax::UnknownQuest => {
             state.snapshot_allows(edge) && state.quest_gates(edge) != Truth::False
         }
-        Relax::ActionableQuest => state.snapshot_allows(edge) && state.quest_gates_actionable(edge),
+        Relax::ActionableQuest(relaxation) => {
+            state.snapshot_allows(edge) && relaxation.allows(state, edge)
+        }
         Relax::EntranceExclusions => {
             state.snapshot_allows_ignoring_exclusions(edge)
                 && state.quest_gates(edge) == Truth::True
@@ -8120,7 +8151,7 @@ fn proof_edge_allowed(
             relax,
             Relax::Strict
                 | Relax::UnknownQuest
-                | Relax::ActionableQuest
+                | Relax::ActionableQuest(_)
                 | Relax::EntranceExclusions
         )
     {
@@ -8141,7 +8172,7 @@ fn prefer_worn_slash_for_web(
 ) -> bool {
     if !matches!(
         relax,
-        Relax::Strict | Relax::ActionableQuest | Relax::EntranceExclusions
+        Relax::Strict | Relax::ActionableQuest(_) | Relax::EntranceExclusions
     ) || !edge.is_slashable_web()
         || edge.option != 0
         || edge.item_req.is_empty()

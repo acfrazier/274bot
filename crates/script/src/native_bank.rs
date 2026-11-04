@@ -3090,12 +3090,14 @@ mod tests {
     #[test]
     fn select_needs_step_receipt_preserves_gates_and_original_grants() {
         let (snapshot, mut ledger, handle, authority) = select_waiter_dispatched_at(false, 1);
-        let at = WorldTile { x: 5, z: 5, level: 0 };
-        let gates: Arc<[api::prereq_steps::ActionableGate]> = Arc::from([
-            api::prereq_steps::ActionableGate {
-                gate: api::selected::QuestGate::Complete(api::selected::FactKey::new(
-                    "bank-gate",
-                )),
+        let at = WorldTile {
+            x: 5,
+            z: 5,
+            level: 0,
+        };
+        let gates: Arc<[api::prereq_steps::ActionableGate]> =
+            Arc::from([api::prereq_steps::ActionableGate {
+                gate: api::selected::QuestGate::Complete(api::selected::FactKey::new("bank-gate")),
                 truth: Truth::Unknown,
                 leg: 0,
                 crossing: api::prereq_steps::CrossingId {
@@ -3103,11 +3105,14 @@ mod tests {
                     option: 0,
                     at,
                     takeoff: at,
-                    to: WorldTile { x: 6, z: 5, level: 0 },
+                    to: WorldTile {
+                        x: 6,
+                        z: 5,
+                        level: 0,
+                    },
                     kind: api::prereq_steps::CrossingKind::Ladder,
                 },
-            },
-        ]);
+            }]);
         let allow = crate::native::PrereqAllow {
             dialogue: true,
             quest_start: false,
@@ -3164,7 +3169,13 @@ mod tests {
             let result = poll_select_waiter(&snapshot, &mut ledger, &handle, 2, Duration::ZERO);
             if allow_air_fallback {
                 assert!(
-                    matches!(&result, Poll::Ready(Ok(SelectedBank { kind: PickKind::AirFallback, .. }))),
+                    matches!(
+                        &result,
+                        Poll::Ready(Ok(SelectedBank {
+                            kind: PickKind::AirFallback,
+                            ..
+                        }))
+                    ),
                     "{result:?}"
                 );
             } else {
@@ -3175,7 +3186,6 @@ mod tests {
             }
         }
     }
-
 
     fn fishing(base: i32) -> [StatView; 1] {
         [StatView {

@@ -142,6 +142,11 @@ pub(super) fn request(
         authority: native.authority,
         evidence: native.evidence,
         allow_air_fallback: native.request.allow_air_fallback,
+        // This isolated CPU replay never owns prerequisite consent.
+        prereq_allow: script::native::PrereqAllow {
+            dialogue: false,
+            quest_start: false,
+        },
     });
     super::make_bank_pick_request(
         request_id,

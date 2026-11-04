@@ -80,7 +80,7 @@ export default class Probe extends LoopingBot {
                     tick,
                     sequence: tick,
                 },
-                selected: SelectedBank {
+                outcome: script::native_bank::BankPickOutcome::Selected(SelectedBank {
                     bank_index: 1,
                     access_tile: WorldTile {
                         x: 3200,
@@ -89,7 +89,7 @@ export default class Probe extends LoopingBot {
                     },
                     kind: PickKind::Reachable,
                     access: None,
-                },
+                }),
             },
         );
         slot.tick_from_input(tick, &snapshot, Default::default());
@@ -187,7 +187,7 @@ export function tick(api) {
                 tick: 2,
                 sequence: 2,
             },
-            selected: SelectedBank {
+            outcome: script::native_bank::BankPickOutcome::Selected(SelectedBank {
                 bank_index: 1,
                 access_tile: WorldTile {
                     x: 3200,
@@ -196,7 +196,7 @@ export function tick(api) {
                 },
                 kind: PickKind::Reachable,
                 access: None,
-            },
+            }),
         },
     );
     snapshot.tick = 2;
@@ -320,7 +320,7 @@ export function tick(api) {
                         tick,
                         sequence: tick,
                     },
-                    selected: SelectedBank {
+                    outcome: script::native_bank::BankPickOutcome::Selected(SelectedBank {
                         bank_index: index,
                         access_tile: WorldTile {
                             x: 3200,
@@ -329,7 +329,7 @@ export function tick(api) {
                         },
                         kind: PickKind::Reachable,
                         access: None,
-                    },
+                    }),
                 },
             );
         };

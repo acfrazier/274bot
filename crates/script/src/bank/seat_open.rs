@@ -13,8 +13,8 @@ use crate::bank::request::{
 use crate::bank::seat_transfer::{TransferAnswer, TransferCall, TransferHooks};
 use crate::interact::InteractReq;
 use crate::native::{
-    ActionContext, ActionError, NativeMachine, PrereqAllow, WalkAllow, WalkBit, WalkEnd, WalkOptions,
-    WalkRequest,
+    ActionContext, ActionError, NativeMachine, PrereqAllow, WalkAllow, WalkBit, WalkEnd,
+    WalkOptions, WalkRequest,
 };
 use crate::native_bank::{
     nearest_eligible_bank as select_nearest_eligible_bank, BankSelector, PickKind, Select,
@@ -185,9 +185,11 @@ impl Opening {
         match &self.core {
             Core::Select(select) => select.prereq_allow(cx),
             Core::Banking(banking) => banking.prereq_allow(cx),
-            Core::Immediate(_) | Core::Booth(_) | Core::Object(_) | Core::Npc(_) | Core::Access(_) => {
-                None
-            }
+            Core::Immediate(_)
+            | Core::Booth(_)
+            | Core::Object(_)
+            | Core::Npc(_)
+            | Core::Access(_) => None,
         }
     }
 }

@@ -394,26 +394,6 @@ impl PrereqRun {
             retry_after: *retry_after,
         })
     }
-    pub(crate) fn restart_after_session(
-        &mut self,
-        cx: &ActionContext<'_>,
-    ) -> Result<(), ActionError> {
-        match &mut self.phase {
-            Phase::Resolve => {
-                self.required_after = None;
-                Ok(())
-            }
-            Phase::Journal {
-                handle, retry_after, ..
-            } => {
-                handle.take();
-                *retry_after = None;
-                self.required_after = Some(cx.evidence());
-                Ok(())
-            }
-            _ => Err(ActionError::Stale),
-        }
-    }
     fn step(&self, row: &PrereqStep) -> PrereqStepIdentity {
         step_identity(row, &self.gate.crossing)
     }

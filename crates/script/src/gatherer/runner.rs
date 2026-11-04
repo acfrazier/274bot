@@ -1787,8 +1787,7 @@ impl Gatherer {
                 match select.poll(tick.actions, &mut tick.cx, tick.state) {
                     Poll::Pending => self.active = Active::Select(select),
                     Poll::Ready(Ok(selected)) => {
-                        if selected.kind == PickKind::NoCandidate
-                            || selected.bank_index == u16::MAX
+                        if selected.kind == PickKind::NoCandidate || selected.bank_index == u16::MAX
                         {
                             self.bank_label =
                                 Arc::from(format!("{}; NoCandidate", self.settings().bank));

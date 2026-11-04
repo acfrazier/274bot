@@ -13,8 +13,8 @@ use nav_planner::bank_fetch::SAME_BANK;
 #[cfg(any(test, all(target_os = "linux", feature = "test-support")))]
 use nav_planner::router::{find_first_with, find_many_with_avoid_bounded, find_with};
 use nav_planner::router::{
-    CursorStep, FindOptions, SearchCursor, SearchOutcome, SearchPreflight, SearchRequest,
-    SearchRequestShape, BANK_TARGET_BUDGET, NODE_BUDGET,
+    CursorStep, FindOptions, GateRelaxation, RouteError, SearchCursor, SearchOutcome,
+    SearchPreflight, SearchRequest, SearchRequestShape, BANK_TARGET_BUDGET, NODE_BUDGET,
 };
 use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
@@ -22,7 +22,7 @@ use script::bank::ops;
 use script::native::snapshot_source::BankSelectionInput;
 use script::native::HostAuthority;
 use script::native_bank::{
-    AccessKind as NativeAccessKind, BankPickReceipt as NativeBankPickReceipt,
+    AccessKind as NativeAccessKind, BankPickOutcome, BankPickReceipt as NativeBankPickReceipt,
     BankPickRequest as NativeBankPickRequest, BankStandAccess, PickKind as NativePickKind,
     SelectedBank,
 };
@@ -44,6 +44,8 @@ const BANK_SELECTION_WINDOW: Duration =
     Duration::from_millis(script::native_bank::BANK_PICK_HOST_WINDOW_MS);
 
 const BANK_PICK_JOB_BYTES: usize = 192 * 1024 * 1024;
+const BANK_PICK_FAILURE_BYTES: usize =
+    2 * std::mem::size_of::<usize>() + "bank selection failed: BudgetExhausted".len();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PickKind {
@@ -124,6 +126,8 @@ impl BankPickState {
             && left.target_count == right.target_count
             && left.walk_generation.is_some() == right.walk_generation.is_some()
             && left.native.is_some() == right.native.is_some()
+            && left.native.as_ref().map(|native| native.prereq_allow)
+                == right.native.as_ref().map(|native| native.prereq_allow)
             && left.allow_air_fallback() == right.allow_air_fallback()
             && left.order.len() == right.order.len()
             && left
@@ -239,6 +243,7 @@ struct NativePickContext {
     authority: HostAuthority,
     evidence: EvidenceStamp,
     allow_air_fallback: bool,
+    prereq_allow: script::native::PrereqAllow,
 }
 
 struct BankCandidate {
@@ -283,6 +288,8 @@ pub(super) struct PickResult {
     route: Option<nav_planner::router::CompactRoute>,
     nav_lease: Option<nav_planner::contract::NavLease>,
     plan: Option<CompactPlan>,
+    prereq_gates: Option<Arc<[api::prereq_steps::ActionableGate]>>,
+    failure_detail: Option<Arc<str>>,
 }
 
 impl PickResult {
@@ -294,15 +301,27 @@ impl PickResult {
             route: None,
             nav_lease: None,
             plan: None,
+            prereq_gates: None,
+            failure_detail: None,
         }
     }
 
-    fn owner_result_bytes(&self) -> Option<usize> {
-        let retained = self
+    fn retained_bytes(&self) -> Option<usize> {
+        let route = self
             .route
             .as_ref()
             .map_or(Some(0), nav_planner::producer::compact_route_storage_bytes)?;
-        nav_planner::producer::OwnerResultLedger::owner_result_bytes::<Self>(retained)
+        let gates = self.prereq_gates.as_ref().map_or(Some(0), |gates| {
+            std::mem::size_of_val(gates.as_ref()).checked_add(2 * std::mem::size_of::<usize>())
+        })?;
+        let detail = self.failure_detail.as_ref().map_or(Some(0), |detail| {
+            detail.len().checked_add(2 * std::mem::size_of::<usize>())
+        })?;
+        route.checked_add(gates)?.checked_add(detail)
+    }
+
+    fn owner_result_bytes(&self) -> Option<usize> {
+        nav_planner::producer::OwnerResultLedger::owner_result_bytes::<Self>(self.retained_bytes()?)
     }
 
     fn into_owner_result(
@@ -402,6 +421,7 @@ enum BankPickSearchKind {
     Single,
     Many,
     First,
+    Journal,
 }
 type BankPickTargetResult =
     Result<nav_planner::router::TargetCost, nav_planner::router::TargetError>;
@@ -414,6 +434,7 @@ struct BankPickSearchPreflight {
 struct BankPickPreflights {
     primary: Option<BankPickSearchPreflight>,
     fallback: Option<SearchPreflight>,
+    journal: Option<SearchPreflight>,
 }
 
 struct CooperativeBankPickJob {
@@ -478,14 +499,9 @@ impl CooperativeBankPickJob {
         kind: PickKind,
         route: Option<nav_planner::router::CompactRoute>,
     ) -> PickResult {
-        PickResult {
-            index,
-            access_tile,
-            kind,
-            route,
-            nav_lease: None,
-            plan: None,
-        }
+        let mut result = PickResult::plain(index, access_tile, kind);
+        result.route = route;
+        result
     }
 
     fn release_search_storage(&mut self, keep_fallback: bool) {
@@ -495,6 +511,7 @@ impl CooperativeBankPickJob {
         self.search_preflights.primary = None;
         if !keep_fallback {
             self.search_preflights.fallback = None;
+            self.search_preflights.journal = None;
         }
     }
 
@@ -525,6 +542,11 @@ impl CooperativeBankPickJob {
             ));
             self.stage = BankPickStage::Finish;
         }
+    }
+    fn start_journal_search(&mut self) {
+        self.release_search_storage(true);
+        self.search_kind = Some(BankPickSearchKind::Journal);
+        self.stage = BankPickStage::StartSearch;
     }
 
     fn start_timeout_fallback(&mut self) {
@@ -560,6 +582,10 @@ impl CooperativeBankPickJob {
         );
         self.search_kind = None;
         match kind {
+            BankPickSearchKind::Journal => {
+                // The strict NoPath and its detail remain the failure outcome.
+                self.stage = BankPickStage::Finish;
+            }
             BankPickSearchKind::First => {
                 self.result = Some(self.record_result(None, None, PickKind::NoCandidate, None));
                 self.stage = BankPickStage::Finish;
@@ -624,7 +650,7 @@ impl CooperativeBankPickJob {
                 }
                 Ok(())
             }
-            BankPickSearchKind::Many | BankPickSearchKind::First => {
+            BankPickSearchKind::Many | BankPickSearchKind::First | BankPickSearchKind::Journal => {
                 let mut targets = Vec::new();
                 targets
                     .try_reserve_exact(self.job.request.target_count)
@@ -650,7 +676,7 @@ impl CooperativeBankPickJob {
                     .routable
                     .then_some(request.facts.banks()[candidate.index].tile)
             }
-            BankPickSearchKind::First => {
+            BankPickSearchKind::First | BankPickSearchKind::Journal => {
                 let Some(candidate) = request.order.get(self.build_order) else {
                     return Ok(());
                 };
@@ -716,12 +742,27 @@ impl CooperativeBankPickJob {
                     max_settles: self.job.request.target_budget(),
                 }
             }
+            BankPickSearchKind::Journal => {
+                let mut options = self.job.request.opts;
+                options.allow_teleports = false;
+                SearchRequest::ActionableQuestGates {
+                    from: self.job.request.from,
+                    targets,
+                    options,
+                    avoid: Box::default(),
+                    max_settles: self.job.request.target_budget(),
+                    relaxation: GateRelaxation::UnknownOnly,
+                }
+            }
             BankPickSearchKind::Single => unreachable!("single searches have no target array"),
         });
         Ok(())
     }
 
     fn current_preflight(&mut self) -> Option<SearchPreflight> {
+        if self.search_kind == Some(BankPickSearchKind::Journal) {
+            return self.search_preflights.journal.take();
+        }
         if self.fallback_started {
             self.search_preflights.fallback.take()
         } else {
@@ -757,11 +798,10 @@ impl CooperativeJob for CooperativeBankPickJob {
         let route_bytes = self.pending_route.as_ref().map_or(0, |route| {
             nav_planner::producer::compact_route_storage_bytes(route).unwrap_or(usize::MAX)
         });
-        let result_bytes = self.result.as_ref().map_or(0, |result| {
-            result.route.as_ref().map_or(0, |route| {
-                nav_planner::producer::compact_route_storage_bytes(route).unwrap_or(usize::MAX)
-            })
-        });
+        let result_bytes = self
+            .result
+            .as_ref()
+            .map_or(0, |result| result.retained_bytes().unwrap_or(usize::MAX));
         let many_result_bytes = self.pending_many_results.as_ref().map_or(0, |results| {
             results
                 .len()
@@ -824,12 +864,12 @@ impl CooperativeJob for CooperativeBankPickJob {
                         SearchRequest::Single { .. } => BankPickSearchKind::Single,
                         SearchRequest::Many { .. } => BankPickSearchKind::Many,
                         SearchRequest::First { .. } => BankPickSearchKind::First,
+                        SearchRequest::ActionableQuestGates { .. } => BankPickSearchKind::Journal,
                         SearchRequest::MissingItemReqs { .. }
                         | SearchRequest::MissingItemReqsForRoute { .. }
                         | SearchRequest::BlockingZones { .. }
                         | SearchRequest::EntranceRequirements { .. }
-                        | SearchRequest::UnresolvedQuestGates { .. }
-                        | SearchRequest::ActionableQuestGates { .. } => {
+                        | SearchRequest::UnresolvedQuestGates { .. } => {
                             unreachable!("bank-pick request uses a route search variant")
                         }
                     };
@@ -952,13 +992,26 @@ impl CooperativeJob for CooperativeBankPickJob {
                                             self.job.request.target_count,
                                             self.job.request.target_budget(),
                                         );
-                                        self.result = Some(self.record_result(
+                                        let mut result = self.record_result(
                                             None,
                                             None,
                                             PickKind::NoCandidate,
                                             None,
-                                        ));
-                                        self.stage = BankPickStage::Finish;
+                                        );
+                                        result.failure_detail = Some(Arc::from(match error {
+                                            RouteError::NoPath => "bank selection failed: NoPath",
+                                            RouteError::BudgetExhausted => {
+                                                "bank selection failed: BudgetExhausted"
+                                            }
+                                        }));
+                                        self.result = Some(result);
+                                        if error == RouteError::NoPath
+                                            && self.search_preflights.journal.is_some()
+                                        {
+                                            self.start_journal_search();
+                                        } else {
+                                            self.stage = BankPickStage::Finish;
+                                        }
                                     }
                                 },
                                 SearchOutcome::Many { results, best } => {
@@ -980,12 +1033,20 @@ impl CooperativeJob for CooperativeBankPickJob {
                                         self.stage = BankPickStage::ResolveManyBest;
                                     }
                                 }
+                                SearchOutcome::ActionableQuestGates(gates) => {
+                                    if let Ok(Some(gates)) = gates {
+                                        self.result
+                                            .as_mut()
+                                            .expect("journal diagnosis retains the strict failure")
+                                            .prereq_gates = Some(gates.into());
+                                    }
+                                    self.stage = BankPickStage::Finish;
+                                }
                                 SearchOutcome::MissingItemReqs(_)
                                 | SearchOutcome::MissingItemReqsForRoute { .. }
                                 | SearchOutcome::BlockingZones(_)
                                 | SearchOutcome::EntranceRequirements(_)
-                                | SearchOutcome::UnresolvedQuestGates(_)
-                                | SearchOutcome::ActionableQuestGates(_) => {
+                                | SearchOutcome::UnresolvedQuestGates(_) => {
                                     unreachable!("bank-pick search returns a route outcome")
                                 }
                             }
@@ -1139,6 +1200,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                     }
                     self.search_preflights.primary = None;
                     self.search_preflights.fallback = None;
+                    self.search_preflights.journal = None;
                     self.search_kind = None;
                     self.search_request = None;
                     self.target_buffer = None;
@@ -1310,6 +1372,30 @@ impl BankPickRequest {
         } else {
             None
         };
+        let journal = if self.native.is_some()
+            && !route_only
+            && self
+                .state
+                .establishable
+                .as_ref()
+                .is_some_and(|windows| !windows.is_empty())
+        {
+            let mut options = self.opts;
+            options.allow_teleports = false;
+            Some(SearchCursor::preflight(
+                SearchRequestShape::ActionableQuestGates {
+                    target_capacity: self.target_count,
+                    options,
+                    avoid_capacity: 0,
+                    max_settles: self.target_budget(),
+                    relaxation: GateRelaxation::UnknownOnly,
+                },
+                &self.lease,
+                &self.state,
+            )?)
+        } else {
+            None
+        };
 
         let mut base_input_bytes = std::mem::size_of::<Self>()
             .checked_add(std::mem::size_of::<ActivePick>())?
@@ -1343,12 +1429,22 @@ impl BankPickRequest {
 
         // The preflight peak includes the co-live search, backtrace, and
         // result heap. `result_bytes` is an output bound, not another charge.
+        let failure_bytes = if self.native.is_some() {
+            BANK_PICK_FAILURE_BYTES
+        } else {
+            0
+        };
         let phase_charge = |preflight: &SearchPreflight| -> Option<WorkCharge> {
             let reservation = preflight.reservation();
             let input_bytes = base_input_bytes
                 .checked_add(preflight.input_bytes())?
                 .checked_add(reservation.future_layout_bytes)?;
-            Some(WorkCharge::new(input_bytes, reservation.peak_bytes, 0, 0))
+            Some(WorkCharge::new(
+                input_bytes,
+                reservation.peak_bytes.checked_add(failure_bytes)?,
+                0,
+                0,
+            ))
         };
         let primary_charge = phase_charge(&primary)?;
         let fallback_charge = match fallback.as_ref() {
@@ -1360,11 +1456,34 @@ impl BankPickRequest {
             Some(charge) => charge.total_bytes()?,
             None => 0,
         };
-        let charge = if fallback_total > primary_total {
+        let mut charge = if fallback_total > primary_total {
             fallback_charge.expect("a larger fallback charge is present")
         } else {
             primary_charge
         };
+        if let Some(preflight) = &journal {
+            let reservation = preflight.reservation();
+            // The strict failure stays live during diagnosis. Box-to-Arc
+            // conversion also briefly retains both gate result allocations.
+            let conversion_bytes = reservation
+                .result_bytes
+                .checked_mul(2)?
+                .checked_add(2 * std::mem::size_of::<usize>())?;
+            let journal_charge = WorkCharge::new(
+                base_input_bytes
+                    .checked_add(preflight.input_bytes())?
+                    .checked_add(reservation.future_layout_bytes)?,
+                reservation
+                    .peak_bytes
+                    .max(conversion_bytes)
+                    .checked_add(failure_bytes)?,
+                0,
+                0,
+            );
+            if journal_charge.total_bytes()? > charge.total_bytes()? {
+                charge = journal_charge;
+            }
+        }
         if charge.total_bytes()? > BANK_PICK_JOB_BYTES {
             return None;
         }
@@ -1380,6 +1499,7 @@ impl BankPickRequest {
                     token: primary,
                 }),
                 fallback,
+                journal,
             },
         ))
     }
@@ -1396,7 +1516,14 @@ impl BankPickJob {
     }
 }
 impl BankPickJob {
-    fn pending_inline(self, scope: Scope, result: PickResult) -> PendingInlinePick {
+    fn pending_inline(self, scope: Scope, mut result: PickResult) -> PendingInlinePick {
+        let selected = self.request.native.as_ref().and_then(|_| {
+            self.request
+                .selected(result.index, result.kind, result.access_tile)
+        });
+        if self.request.native.is_some() && selected.is_none() && result.failure_detail.is_none() {
+            result.failure_detail = Some(Arc::from("bank selection found no candidate"));
+        }
         let posted = (self.request.walk_generation.is_none() && self.request.native.is_none())
             .then(|| self.result(result.index, result.kind));
         let native_receipt = self.request.native.as_ref().and_then(|native| {
@@ -1406,11 +1533,20 @@ impl BankPickJob {
                     NativeBankPickReceipt {
                         request_id: native.authority.request_id().get(),
                         evidence: native.evidence,
-                        selected: self.request.selected(
-                            result.index,
-                            result.kind,
-                            result.access_tile,
-                        ),
+                        outcome: if let Some(gates) = &result.prereq_gates {
+                            BankPickOutcome::NeedsStep {
+                                gates: Arc::clone(gates),
+                                allow: native.prereq_allow,
+                            }
+                        } else if let Some(selected) = selected {
+                            BankPickOutcome::Selected(selected)
+                        } else {
+                            BankPickOutcome::NoCandidate {
+                                detail: Arc::clone(result.failure_detail.as_ref().expect(
+                                    "native no-candidate outcome retains its failure detail",
+                                )),
+                            }
+                        },
                     },
                 )
             })
@@ -1495,47 +1631,40 @@ impl BankPickRequest {
         index: Option<usize>,
         kind: PickKind,
         access_tile: Option<WorldTile>,
-    ) -> SelectedBank {
-        let Some(candidate) =
-            index.and_then(|index| self.order.iter().find(|candidate| candidate.index == index))
-        else {
-            return native_no_candidate();
-        };
+    ) -> Option<SelectedBank> {
+        let candidate =
+            index.and_then(|index| self.order.iter().find(|candidate| candidate.index == index))?;
         let index = candidate.index;
-        let Ok(bank_index) = u16::try_from(index) else {
-            return native_no_candidate();
-        };
+        let bank_index = u16::try_from(index).ok()?;
         if bank_index == u16::MAX {
-            return native_no_candidate();
+            return None;
         }
         if kind == PickKind::AirFallback && self.allow_air_fallback() {
-            return SelectedBank {
+            return Some(SelectedBank {
                 bank_index,
                 access_tile: self.facts.banks()[index].air_tile(),
                 kind: NativePickKind::AirFallback,
                 access: None,
-            };
+            });
         }
-        let Some((tiles, access)) = candidate.access.as_ref() else {
-            return native_no_candidate();
-        };
+        let (tiles, access) = candidate.access.as_ref()?;
         let access_tile = match (kind, access_tile) {
             (PickKind::Reachable, Some(tile)) if tiles.contains(&tile) => tile,
             (PickKind::NearShortcut, None) if self.allow_air_fallback() => self.route_target(index),
             (PickKind::AirFallback, None) => self.route_target(index),
-            _ => return native_no_candidate(),
+            _ => return None,
         };
-        SelectedBank {
+        Some(SelectedBank {
             bank_index,
             access_tile,
             kind: match kind {
                 PickKind::NearShortcut => NativePickKind::NearShortcut,
                 PickKind::Reachable => NativePickKind::Reachable,
                 PickKind::AirFallback => NativePickKind::AirFallback,
-                PickKind::NoCandidate => NativePickKind::NoCandidate,
+                PickKind::NoCandidate => return None,
             },
             access: Some(Arc::new(access.clone())),
-        }
+        })
     }
 }
 
@@ -1654,19 +1783,6 @@ impl BankPickRequest {
         }
         drop(routes);
         self.legacy_fallback(world)
-    }
-}
-
-pub(super) fn native_no_candidate() -> SelectedBank {
-    SelectedBank {
-        bank_index: u16::MAX,
-        access_tile: WorldTile {
-            x: 0,
-            z: 0,
-            level: 0,
-        },
-        kind: NativePickKind::NoCandidate,
-        access: None,
     }
 }
 
@@ -1894,6 +2010,12 @@ pub(super) fn queue_native_bank_pick_scoped(
     let from = input.request.from;
     let preferences = input.request.preferences;
     let request_id = input.authority.request_id().get();
+    let prereq_allow = super::walk_permissions::native_prereq_allow(
+        navs,
+        name,
+        input.request.options,
+        session_permissions,
+    );
     queue_bank(
         navs,
         name,
@@ -1917,6 +2039,7 @@ pub(super) fn queue_native_bank_pick_scoped(
         None,
         false,
         Some(input),
+        Some(prereq_allow),
     );
 }
 
@@ -1949,6 +2072,7 @@ pub(super) fn queue_bank_walk_scoped(
         fishing_base,
         true,
         None,
+        None,
     )
 }
 
@@ -1974,6 +2098,7 @@ fn queue_bank(
     fishing_base: Option<i32>,
     walking: bool,
     native: Option<NativeBankPickInput>,
+    prereq_allow: Option<script::native::PrereqAllow>,
 ) -> bool {
     let queued_at = Instant::now();
     drain_bank_pick_cancellation(navs, name);
@@ -2056,11 +2181,23 @@ fn queue_bank(
                 native.as_ref().map(|native| native.evidence),
             )
         });
-        super::script_nav::patch_route_quest_evidence(state, evidence)
-            .ok()
-            .map(|state| (world, facts, state))
+        let patched = if native.is_some() {
+            super::script_nav::patch_bank_quest_evidence(
+                state,
+                evidence,
+                bot.quest_context.as_ref(),
+            )
+        } else {
+            super::script_nav::patch_route_quest_evidence(state, evidence)
+        };
+        patched.ok().map(|state| (world, facts, state))
     });
     let Some((world, facts, state)) = admitted else {
+        let detail: Option<Arc<str>> = native
+            .as_ref()
+            .map(|_| Arc::from("bank selection input unavailable"));
+        let mut result = PickResult::plain(None, None, PickKind::NoCandidate);
+        result.failure_detail = detail.clone();
         let native_receipt = native.as_ref().and_then(|native| {
             native.authority.live().then(|| {
                 (
@@ -2068,7 +2205,11 @@ fn queue_bank(
                     NativeBankPickReceipt {
                         request_id,
                         evidence: native.evidence,
-                        selected: native_no_candidate(),
+                        outcome: BankPickOutcome::NoCandidate {
+                            detail: Arc::clone(
+                                detail.as_ref().expect("native refusal retains its detail"),
+                            ),
+                        },
                     },
                 )
             })
@@ -2085,7 +2226,7 @@ fn queue_bank(
             scope,
             job: None,
             ticket: None,
-            result: PickResult::plain(None, None, PickKind::NoCandidate),
+            result,
             posted,
             native_receipt,
         }));
@@ -2124,6 +2265,8 @@ fn queue_bank(
         authority: native.authority,
         evidence: native.evidence,
         allow_air_fallback: native.request.allow_air_fallback,
+        prereq_allow: prereq_allow
+            .expect("native admission captures its original prerequisite grants"),
     });
     let request = make_bank_pick_request(
         request_id,

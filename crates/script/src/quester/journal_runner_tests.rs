@@ -2409,21 +2409,19 @@ impl NestedBankFixture {
                         tick,
                         sequence: tick,
                     },
-                    outcome: crate::bank::BankPickOutcome::Selected(
-                        crate::bank::SelectedBank {
-                            bank_index: 0,
-                            access_tile: self.bank_tile,
-                            kind: crate::bank::PickKind::Reachable,
-                            access: Some(Arc::new(crate::bank::BankStandAccess {
-                                bank: self.bank_fixture,
-                                stand_tile: self.bank_tile,
-                                kind: crate::bank::AccessKind::Booth,
-                                stand_op: 1,
-                                name: None,
-                                choose: None,
-                            })),
-                        },
-                    ),
+                    outcome: crate::bank::BankPickOutcome::Selected(crate::bank::SelectedBank {
+                        bank_index: 0,
+                        access_tile: self.bank_tile,
+                        kind: crate::bank::PickKind::Reachable,
+                        access: Some(Arc::new(crate::bank::BankStandAccess {
+                            bank: self.bank_fixture,
+                            stand_tile: self.bank_tile,
+                            kind: crate::bank::AccessKind::Booth,
+                            stand_op: 1,
+                            name: None,
+                            choose: None,
+                        })),
+                    }),
                 },
             );
             self.selected_bank = true;

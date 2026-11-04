@@ -1,12 +1,13 @@
-//! A step-layer Reach owner that resolves a navigation prerequisite before retrying.
+//! Reissue a native operation after the existing bounded prerequisite owner resolves its gate.
 use super::run::{PrereqBudget, PrereqRun, RunEntry};
+use crate::bank::seat_open::{Opening, OpeningArgs};
 use crate::local_state::SlotState;
 use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, PrereqAllow,
     PrereqRefusal,
 };
 use crate::native_bank::{Select, SelectArgs};
-use crate::bank::seat_open::{Opening, OpeningArgs};
+use crate::quester::families::reach::{GroundTake, Reach, ReachArgs};
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -18,7 +19,7 @@ enum Phase<M: PrereqMachine> {
     Complete,
 }
 
-/// The two projections share the same Reach machine and prerequisite loop.
+/// Reach, pickup, bank selection and bank opening use one prerequisite loop.
 pub(crate) trait PrereqMachine: NativeMachine {
     fn clone_args(args: &Self::Args) -> Self::Args;
     fn grants(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow>;
@@ -141,7 +142,13 @@ impl<M: PrereqMachine> PrereqAction<M> {
         }
         match &mut self.phase {
             Phase::Reaching(handle) => actions.resume_kept(kind, handle, cx),
-            Phase::Resolving(run) => run.restart_after_session(cx),
+            Phase::Resolving(_) => {
+                // The journal owner belongs to the old session. Revalidate
+                // the original operation through the existing reissue budget,
+                // rather than restart a reader outside its timeout bound.
+                self.phase = Phase::Reissue;
+                Ok(())
+            }
             Phase::Reissue => Ok(()),
             Phase::Cancelled | Phase::Complete => Err(ActionError::Stale),
         }
@@ -162,7 +169,7 @@ impl<M: PrereqMachine> PrereqAction<M> {
         loop {
             match &mut self.phase {
                 Phase::Reaching(handle) => {
-                    // Observe the terminal's grants before polling retires the inline Walk.
+                    // Capture the terminal's grants before polling retires its native owner.
                     let allow = handle
                         .inspect_in(cx, M::grants)
                         .flatten()

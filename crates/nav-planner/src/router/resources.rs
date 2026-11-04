@@ -1302,7 +1302,7 @@ impl ResourceBudget {
 
 pub(super) fn fixed_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool {
     let fixed_requirements = match relax {
-        Relax::Strict | Relax::UnknownQuest | Relax::ActionableQuest => {
+        Relax::Strict | Relax::UnknownQuest | Relax::ActionableQuest(_) => {
             state.fixed_reqs_allow(edge)
         }
         Relax::EntranceExclusions => state.fixed_reqs_allow_ignoring_exclusions(edge),
@@ -1316,7 +1316,7 @@ pub(super) fn fixed_allowed(state: &WorldState, edge: &TransportEdge, relax: Rel
         && match relax {
             Relax::Strict | Relax::EntranceExclusions => state.quest_gates(edge) == Truth::True,
             Relax::UnknownQuest => state.quest_gates(edge) != Truth::False,
-            Relax::ActionableQuest => state.quest_gates_actionable(edge),
+            Relax::ActionableQuest(relaxation) => relaxation.allows(state, edge),
             Relax::CarryWorn | Relax::CarryWornUnknownQuest => {
                 unreachable!("unmetered diagnosis")
             }

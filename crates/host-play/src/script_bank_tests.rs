@@ -234,9 +234,12 @@ export async function tick(api) {{
             std::thread::yield_now();
         };
         if expected == "Canifis" {
-            assert_eq!(receipt.selected.bank_index, 0);
-            assert_eq!(receipt.selected.kind, NativePickKind::AirFallback);
-            assert!(receipt.selected.access.is_none());
+            let BankPickOutcome::Selected(selected) = &receipt.outcome else {
+                panic!("eligible compatibility bank must retain its air fallback");
+            };
+            assert_eq!(selected.bank_index, 0);
+            assert_eq!(selected.kind, NativePickKind::AirFallback);
+            assert!(selected.access.is_none());
         }
         slot.complete_native_bank_pick(&authority, receipt);
         for _ in 0..8 {
@@ -407,14 +410,19 @@ fn typed_select_air_fallback_is_opt_in_when_no_route_target_exists() {
                 .take_native_receipt()
                 .expect("zero-target selection settles inline");
             if allow_air_fallback {
-                assert_eq!(receipt.selected.bank_index, 0);
-                assert_eq!(receipt.selected.kind, NativePickKind::AirFallback);
-                assert_eq!(receipt.selected.access_tile, expected_air);
+                let BankPickOutcome::Selected(selected) = &receipt.outcome else {
+                    panic!("explicit air fallback must select a bank");
+                };
+                assert_eq!(selected.bank_index, 0);
+                assert_eq!(selected.kind, NativePickKind::AirFallback);
+                assert_eq!(selected.access_tile, expected_air);
+                assert!(selected.access.is_none());
             } else {
-                assert_eq!(receipt.selected.bank_index, u16::MAX);
-                assert_eq!(receipt.selected.kind, NativePickKind::NoCandidate);
+                assert!(
+                    matches!(&receipt.outcome, BankPickOutcome::NoCandidate { detail }
+                    if detail.as_ref() == "bank selection found no candidate")
+                );
             }
-            assert!(receipt.selected.access.is_none());
             slot.stop();
         }
     }
@@ -528,9 +536,12 @@ fn typed_select_routes_before_using_a_closer_air_fallback_with_compatibility_bou
         assert!(Instant::now() < deadline, "bounded route selection stalled");
         std::thread::yield_now();
     };
-    assert_eq!(receipt.selected.bank_index, 1);
-    assert_eq!(receipt.selected.kind, NativePickKind::Reachable);
-    assert!(receipt.selected.access.is_some());
+    let BankPickOutcome::Selected(selected) = &receipt.outcome else {
+        panic!("reachable bank must precede compatibility fallback");
+    };
+    assert_eq!(selected.bank_index, 1);
+    assert_eq!(selected.kind, NativePickKind::Reachable);
+    assert!(selected.access.is_some());
     assert!(
         navs.lock().unwrap()["test"].route.is_none(),
         "select does not walk"
@@ -552,7 +563,10 @@ fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_im
         script::preparation::PreparationKind::Profile,
         Scope::Process,
         input,
-        move |worker| worker_data.prepare_quests(worker),
+        move |worker| {
+            worker_data.prepare_quests(worker)?;
+            worker_data.prepare_prereq_steps(worker)
+        },
     )
     .expect("submit quest preparation")
     .join()
@@ -636,6 +650,33 @@ fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_im
         "cached base stays immutable"
     );
     assert_eq!(captured.test(&gate), api::selected::Truth::True);
+    assert!(
+        state.establishable.is_none(),
+        "the cached base has no journal projection"
+    );
+    {
+        let all = navs.lock().unwrap();
+        let captured_state = &all["test"]
+            .bank_pick
+            .current
+            .as_ref()
+            .unwrap()
+            .job
+            .request
+            .state;
+        let windows = captured_state
+            .establishable
+            .as_ref()
+            .expect("prepared journal windows");
+        assert!(!windows.is_empty());
+        let catalog = selected.try_prereq_steps().unwrap();
+        assert!(
+            windows.iter().all(|window| catalog
+                .for_journal(&api::selected::QuestGate::Window(window.clone()))
+                .is_some()),
+            "bank diagnosis must not establish a world-interaction-only gate"
+        );
+    }
     snapshot.seed_quest_statuses(Vec::new(), false);
     assert_eq!(
         captured.test(&gate),
@@ -2369,6 +2410,7 @@ mod bank_pick_capture {
                 None,
                 walking,
                 None,
+                None,
             ));
             let all = navs.lock().unwrap();
             let bot = &all["test"];
@@ -2967,4 +3009,236 @@ export default class T extends LoopingBot {
         "a completed bank has no callback wake"
     );
     slot.lock().unwrap().stop();
+}
+
+mod journal_diagnosis {
+    use super::*;
+    use api::prereq_knowledge::Observation;
+    use api::quest_progress::EvidenceProvider;
+    use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow, Truth};
+    use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
+    use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId, QuestGates};
+    use nav_planner::transport::{TransportEdge, TransportKind};
+    use std::num::NonZeroU32;
+
+    struct GateEvidence {
+        stamp: EvidenceStamp,
+        false_gate: Option<QuestGate>,
+    }
+
+    impl EvidenceProvider for GateEvidence {
+        fn observe_gate(&self, gate: &QuestGate, required: EvidenceStamp) -> Option<Observation> {
+            Some(Observation {
+                truth: if self.stamp.meets(required) && self.false_gate.as_ref() == Some(gate) {
+                    Truth::False
+                } else {
+                    Truth::Unknown
+                },
+                observed: Some(self.stamp),
+            })
+        }
+    }
+
+    fn pick(false_first: bool, second: bool, public: bool) -> BankPickOutcome {
+        let family = QuestFamilyId::new([7; 32], std::num::NonZeroU16::MIN);
+        let windows = ["first", "second"].map(|signal| StageWindow {
+            quest: FactKey::new("bank-journal"),
+            signal: FactKey::new(signal),
+            values: InclusiveRange {
+                min: Some(1),
+                max: Some(1),
+            },
+        });
+        let mut flags = vec![0; 4 * 16 * 16];
+        for z in 0..16 {
+            flags[z * 16 + 6] =
+                CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        }
+        // Each candidate has its own gated compartment. The unknown gate
+        // cannot provide an alternate route to the proven-false candidate.
+        for x in 7..16 {
+            flags[8 * 16 + x] =
+                CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
+        }
+        let mut graph = TransportGraph {
+            quest_family: Some(family),
+            ..TransportGraph::default()
+        };
+        for (index, z) in [2, 12].into_iter().enumerate() {
+            let at = tile(5, z);
+            graph.at.entry(at).or_default().push(index);
+            graph.edges.push(TransportEdge {
+                takeoff: None,
+                worn_all_req: vec![],
+                forbidden_held: vec![],
+                forbidden_worn: vec![],
+                kind: TransportKind::Door,
+                player_delta: None,
+                at,
+                to: tile(7, z),
+                loc_id: 1530 + i32::try_from(index).unwrap(),
+                option: 1,
+                ticks: 1,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                consumed_req: vec![],
+                item_returns: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+                wildy_cap: None,
+                quest_gates: Some(
+                    QuestGates::new(family, vec![QuestGate::Window(windows[index].clone())])
+                        .unwrap(),
+                ),
+            });
+        }
+        let mut banks = vec![bank("first", 12, 2)];
+        if second {
+            banks.push(bank("second", 12, 12));
+        }
+        if public {
+            banks.push(bank("public", 0, 15));
+        }
+        let stands = banks
+            .iter()
+            .map(|bank| nav_planner::pack::BankStand {
+                name: "Bank booth".into(),
+                tile: bank.tile,
+                access: nav_planner::pack::BankAccess::Booth { op: 2 },
+            })
+            .collect();
+        let (walk, blocked) = pack_walk(&flags);
+        let world = Arc::new(NavWorld::from_parts(
+            WorldCollision {
+                origin: tile(0, 0),
+                width: 16,
+                height: 16,
+                walk,
+                blocked,
+                flags: None,
+            },
+            graph,
+            stands,
+        ));
+        let (mut slot, action) = native_pick_action(banks, tile(0, 2), None, false);
+        let authority = action.authority();
+        let script::native::HostEffect::BankPick(request) = action.effect else {
+            panic!("real Select emits BankPick");
+        };
+        let stamp = EvidenceStamp {
+            run: authority.run(),
+            tick: 1,
+            sequence: 1,
+        };
+        let state = WorldState::empty()
+            .with_establishable(Arc::from(windows.clone()))
+            .with_quest_evidence(QuestEvidence::new(
+                Arc::new(GateEvidence {
+                    stamp,
+                    false_gate: false_first.then(|| QuestGate::Window(windows[0].clone())),
+                }),
+                family,
+                stamp,
+            ));
+        let mut request = super::super::harness::request(
+            &world,
+            authority.request_id().get(),
+            1,
+            tile(0, 2),
+            state,
+            false,
+            Some(NativeBankPickInput {
+                request,
+                authority,
+                evidence: stamp,
+            }),
+        );
+        let allow = script::native::PrereqAllow {
+            dialogue: false,
+            quest_start: true,
+        };
+        Arc::get_mut(&mut request)
+            .unwrap()
+            .native
+            .as_mut()
+            .unwrap()
+            .prereq_allow = allow;
+        let (input, preflights) = request.work_input(1, false, "test").unwrap();
+        assert!(preflights.journal.is_some());
+        let job = BankPickJob {
+            generation: 1,
+            request,
+            deadline: None,
+        };
+        let mut worker = CooperativeBankPickJob::new(job.clone(), input, preflights);
+        let cancellation = SharedCancellation::new();
+        let clock = SystemClock;
+        for _ in 0..4096 {
+            let mut context = StepContext::new(
+                &clock,
+                SliceBudget::new(
+                    NonZeroU32::new(64).unwrap(),
+                    api::identity::Deadline::after(clock.now(), Duration::from_millis(10)),
+                ),
+                &cancellation,
+            );
+            match worker.step(&mut context) {
+                StepOutcome::Yielded => {}
+                StepOutcome::Completed(result) => {
+                    assert!(result.route.is_none(), "selection never arms a route");
+                    let pending = job.pending_inline(
+                        Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
+                        result,
+                    );
+                    let (_, receipt) = pending.native_receipt.unwrap();
+                    slot.stop();
+                    return receipt.outcome;
+                }
+                StepOutcome::Failed(never) => match never {},
+            }
+        }
+        panic!("tiny bank diagnosis did not complete within its bounded slices");
+    }
+
+    #[test]
+    fn unknown_bank_gate_requests_a_journal_with_original_grants() {
+        let BankPickOutcome::NeedsStep { gates, allow } = pick(false, false, false) else {
+            panic!("an unknown journal-establishable gate needs a read");
+        };
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].truth, Truth::Unknown);
+        assert_eq!(gates[0].crossing.loc_id, 1530);
+        assert!(!allow.dialogue && allow.quest_start);
+    }
+
+    #[test]
+    fn proven_false_bank_gate_preserves_the_real_no_path_detail() {
+        assert!(
+            matches!(pick(true, false, false), BankPickOutcome::NoCandidate { detail }
+            if detail.as_ref() == "bank selection failed: NoPath")
+        );
+    }
+
+    #[test]
+    fn a_false_candidate_does_not_hide_a_later_unknown_candidate() {
+        let BankPickOutcome::NeedsStep { gates, .. } = pick(true, true, false) else {
+            panic!("the unknown candidate remains diagnosable after a false candidate");
+        };
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].truth, Truth::Unknown);
+        assert_eq!(gates[0].crossing.loc_id, 1531);
+    }
+
+    #[test]
+    fn a_strictly_reachable_candidate_precedes_every_journal_diagnosis() {
+        let BankPickOutcome::Selected(selected) = pick(false, false, true) else {
+            panic!("a reachable public bank must not request a journal");
+        };
+        assert_eq!(selected.bank_index, 1);
+        assert_eq!(selected.kind, NativePickKind::Reachable);
+    }
 }

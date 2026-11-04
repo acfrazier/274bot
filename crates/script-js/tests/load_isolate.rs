@@ -5232,23 +5232,25 @@ export default class T extends LoopingBot {
                 tick: 1,
                 sequence: 1,
             },
-            selected: script::native_bank::SelectedBank {
-                bank_index: 0,
-                access_tile: bank_tile,
-                kind: script::native_bank::PickKind::Reachable,
-                access: Some(std::sync::Arc::new(script::native_bank::BankStandAccess {
-                    bank: api::named_banks::NamedBank::new("Selected bank", bank_tile),
-                    stand_tile: api::snapshot::WorldTile {
-                        x: 300,
-                        z: 400,
-                        level: 0,
-                    },
-                    kind: script::native_bank::AccessKind::Booth,
-                    stand_op: 2,
-                    name: Some(std::sync::Arc::from("Bank booth")),
-                    choose: None,
-                })),
-            },
+            outcome: script::native_bank::BankPickOutcome::Selected(
+                script::native_bank::SelectedBank {
+                    bank_index: 0,
+                    access_tile: bank_tile,
+                    kind: script::native_bank::PickKind::Reachable,
+                    access: Some(std::sync::Arc::new(script::native_bank::BankStandAccess {
+                        bank: api::named_banks::NamedBank::new("Selected bank", bank_tile),
+                        stand_tile: api::snapshot::WorldTile {
+                            x: 300,
+                            z: 400,
+                            level: 0,
+                        },
+                        kind: script::native_bank::AccessKind::Booth,
+                        stand_op: 2,
+                        name: Some(std::sync::Arc::from("Bank booth")),
+                        choose: None,
+                    })),
+                },
+            ),
         },
     );
 
@@ -11610,15 +11612,8 @@ export default class T extends LoopingBot {
                 tick: 1,
                 sequence: 1,
             },
-            selected: script::native_bank::SelectedBank {
-                bank_index: u16::MAX,
-                access_tile: api::snapshot::WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                kind: script::native_bank::PickKind::NoCandidate,
-                access: None,
+            outcome: script::native_bank::BankPickOutcome::NoCandidate {
+                detail: std::sync::Arc::from("bank selection failed: NoPath"),
             },
         },
     );

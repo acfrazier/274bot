@@ -156,15 +156,8 @@ fn no_bank_candidate(slot: &mut BankSlot, action: &HostAction, tick: u64) {
                 tick,
                 sequence: tick,
             },
-            selected: script::native_bank::SelectedBank {
-                bank_index: u16::MAX,
-                access_tile: api::snapshot::WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                kind: script::native_bank::PickKind::NoCandidate,
-                access: None,
+            outcome: script::native_bank::BankPickOutcome::NoCandidate {
+                detail: std::sync::Arc::from("bank selection failed: NoPath"),
             },
         },
     );

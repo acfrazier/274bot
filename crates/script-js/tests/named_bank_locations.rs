@@ -334,7 +334,7 @@ export default class T extends LoopingBot {{
                     tick: 2,
                     sequence: 2,
                 },
-                selected: selected.clone(),
+                outcome: script::native_bank::BankPickOutcome::Selected(selected.clone()),
             },
         );
         snapshot.tick = 2;
@@ -353,7 +353,7 @@ export default class T extends LoopingBot {{
                     tick: 3,
                     sequence: 3,
                 },
-                selected,
+                outcome: script::native_bank::BankPickOutcome::Selected(selected),
             },
         );
         snapshot.tick = 3;

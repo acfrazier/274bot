@@ -1514,6 +1514,7 @@ fn actionable_quest_diagnosis_preserves_strict_route_and_crossing_identity() {
                 options,
                 avoid: Box::new([]),
                 max_settles: crate::router::NODE_BUDGET,
+                relaxation: crate::router::GateRelaxation::EstablishableFalse,
             },
             &lease,
             &state,
@@ -1532,6 +1533,30 @@ fn actionable_quest_diagnosis_preserves_strict_route_and_crossing_identity() {
         assert_eq!(cursor_gates[0].truth, actionable[0].truth, "{label}");
         assert_eq!(cursor_gates[0].leg, actionable[0].leg, "{label}");
         assert_eq!(cursor_gates[0].crossing, actionable[0].crossing, "{label}");
+
+        let unknown_only = advance_real_route_completion(
+            crate::router::SearchRequest::ActionableQuestGates {
+                from,
+                targets: Box::new([to]),
+                options,
+                avoid: Box::new([]),
+                max_settles: crate::router::NODE_BUDGET,
+                relaxation: crate::router::GateRelaxation::UnknownOnly,
+            },
+            &lease,
+            &state,
+        );
+        let crate::router::SearchOutcome::ActionableQuestGates(unknown_gates) =
+            unknown_only.into_parts().0
+        else {
+            panic!("unknown-only diagnosis returned the wrong result shape");
+        };
+        let unknown_gates = unknown_gates.unwrap();
+        if truth == Truth::Unknown {
+            assert_eq!(unknown_gates.as_deref(), Some(cursor_gates.as_ref()));
+        } else {
+            assert!(unknown_gates.is_none(), "a false gate must stay closed");
+        }
     }
 
     let not_implied: Arc<[StageWindow]> = Arc::from([StageWindow {

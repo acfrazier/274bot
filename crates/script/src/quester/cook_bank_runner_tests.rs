@@ -250,19 +250,21 @@ impl CookFixture {
                     crate::bank::BankPickReceipt {
                         request_id: authority.request_id().get(),
                         evidence,
-                        outcome: crate::bank::BankPickOutcome::Selected(crate::bank::SelectedBank {
-                            bank_index: 0,
-                            access_tile: self.bank_fixture.tile,
-                            kind: crate::bank::PickKind::Reachable,
-                            access: Some(Arc::new(crate::bank::BankStandAccess {
-                                bank: self.bank_fixture,
-                                stand_tile: self.bank_fixture.tile,
-                                kind: crate::bank::AccessKind::Booth,
-                                stand_op: 1,
-                                name: None,
-                                choose: None,
-                            })),
-                        }),
+                        outcome: crate::bank::BankPickOutcome::Selected(
+                            crate::bank::SelectedBank {
+                                bank_index: 0,
+                                access_tile: self.bank_fixture.tile,
+                                kind: crate::bank::PickKind::Reachable,
+                                access: Some(Arc::new(crate::bank::BankStandAccess {
+                                    bank: self.bank_fixture,
+                                    stand_tile: self.bank_fixture.tile,
+                                    kind: crate::bank::AccessKind::Booth,
+                                    stand_op: 1,
+                                    name: None,
+                                    choose: None,
+                                })),
+                            },
+                        ),
                     },
                 ),
                 HostEffect::Walk(request) => {

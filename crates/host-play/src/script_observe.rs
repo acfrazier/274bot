@@ -1922,7 +1922,12 @@ pub(crate) fn script_observe_cached_with_channels(
                                         script::native_bank::BankPickReceipt {
                                             request_id: authority.request_id().get(),
                                             evidence,
-                                            selected: super::bank::native_no_candidate(),
+                                            outcome:
+                                                script::native_bank::BankPickOutcome::NoCandidate {
+                                                    detail: Arc::from(
+                                                        "bank selection has no current work scope",
+                                                    ),
+                                                },
                                         },
                                     );
                                     continue;

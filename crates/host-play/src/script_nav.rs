@@ -438,6 +438,7 @@ impl RouteSubmission {
                     options,
                     avoid_capacity,
                     max_settles,
+                    relaxation: nav_planner::router::GateRelaxation::EstablishableFalse,
                 })
             })
             .transpose()?;
@@ -1932,6 +1933,7 @@ impl RouteJob {
                     options,
                     avoid,
                     max_settles,
+                    relaxation: nav_planner::router::GateRelaxation::EstablishableFalse,
                 },
                 self.lease.clone(),
                 Arc::clone(&self.state),
@@ -5241,6 +5243,52 @@ pub(super) fn patch_route_quest_evidence(
     let mut private =
         super::try_clone_world_state(&state).map_err(|_| RouteJobError::Allocation)?;
     private.quest_evidence = evidence;
+    Ok(Arc::new(private))
+}
+
+/// Bank diagnosis may request a journal observation, not a world interaction.
+/// Keep the cached snapshot immutable and use the normal fallible private copy.
+pub(super) fn patch_bank_quest_evidence(
+    state: Arc<WorldState>,
+    evidence: Option<nav_planner::quest_gates::QuestEvidence>,
+    context: Option<&RouteQuestContext>,
+) -> Result<Arc<WorldState>, RouteJobError> {
+    // No matched request-time provider means no journal diagnosis authority.
+    let context = context.filter(|_| evidence.is_some());
+    let establishable =
+        if let Some(catalog) = context.and_then(|context| context.prereq_catalog.as_ref()) {
+            let all = catalog.establishable_windows();
+            let journal = |window: &api::selected::StageWindow| {
+                catalog
+                    .for_journal(&api::selected::QuestGate::Window(window.clone()))
+                    .is_some()
+            };
+            if all.is_empty() {
+                None
+            } else if all.iter().all(journal) {
+                Some(all)
+            } else {
+                let mut windows = Vec::new();
+                windows
+                    .try_reserve_exact(all.len())
+                    .map_err(|_| RouteJobError::Allocation)?;
+                windows.extend(all.iter().filter(|window| journal(window)).cloned());
+                (!windows.is_empty()).then(|| Arc::from(windows))
+            }
+        } else {
+            None
+        };
+    if evidence.is_none()
+        && state.quest_evidence.is_none()
+        && establishable.is_none()
+        && state.establishable.is_none()
+    {
+        return Ok(state);
+    }
+    let mut private =
+        super::try_clone_world_state(&state).map_err(|_| RouteJobError::Allocation)?;
+    private.quest_evidence = evidence;
+    private.establishable = establishable;
     Ok(Arc::new(private))
 }
 

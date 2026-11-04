@@ -7,6 +7,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Fixed during development
 
+- Native Gatherer, acquisition and bank-opening selection can read a supported
+  quest journal when unknown access gates prevent every eligible bank route.
+  They then reselect with fresh evidence through the existing prerequisite owner.
+  Proven-false gates stay closed. Journal and reissue limits remain unchanged,
+  and a genuine route failure keeps its detail. This fixes a development regression
+  exposed by the corrected Priest in Peril colour-authority data.
+
 - The Gatherer live bank tests now observe decoded bank closure within the same
   login session. A missed status message no longer hides a completed bank trip.
   This changes test observations only. All gameplay completion requirements remain.

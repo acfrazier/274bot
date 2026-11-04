@@ -725,6 +725,15 @@ or multiple matches leave the gate closed. A failed journal read also leaves
 the gate closed and blocks the walk. The session remembers only the proved
 signal range and its content-checked preservation range.
 
+Bank selection uses the same owner after a strict `NoPath`, with a narrower
+diagnostic policy. `GateRelaxation::UnknownOnly` keeps proven-false gates closed.
+Its request-owned establishment set contains only journal-supported windows,
+not world-interaction repairs. `EstablishableFalse` preserves the existing walk
+diagnostic policy. Neither diagnostic admits an executable route.
+The bank request retains its original grants and arguments through reissue.
+After a session change, it revalidates selection through the existing reissue
+budget instead of restarting the old journal owner.
+
 A logical walk can resolve at most three distinct prerequisite rows.
 Each distinct row permits one reissue of the original walk from fresh evidence.
 The reissue cap and visited-row storage use the same row budget.

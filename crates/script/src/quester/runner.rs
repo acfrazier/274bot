@@ -7830,14 +7830,12 @@ mod tests {
                 crate::bank::BankPickReceipt {
                     request_id,
                     evidence,
-                    outcome: crate::bank::BankPickOutcome::Selected(
-                        crate::bank::SelectedBank {
-                            bank_index: 0,
-                            access_tile: stand,
-                            kind: crate::bank::PickKind::Reachable,
-                            access: Some(Arc::clone(&access)),
-                        },
-                    ),
+                    outcome: crate::bank::BankPickOutcome::Selected(crate::bank::SelectedBank {
+                        bank_index: 0,
+                        access_tile: stand,
+                        kind: crate::bank::PickKind::Reachable,
+                        access: Some(Arc::clone(&access)),
+                    }),
                 },
             );
         };

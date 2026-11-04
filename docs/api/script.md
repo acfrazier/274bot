@@ -586,6 +586,14 @@ route successfully and fails closed otherwise. Compatibility bank selection
 and `WalkNearestBank` retain their frozen four-tile shortcut,
 500,000-expansion budget, five-second timeout and air fallback.
 
+If strict native bank selection finds no route, it can diagnose an `Unknown`
+quest gate that a catalog-backed journal can establish. The existing prerequisite
+owner reads and closes that journal, then reissues selection with the original
+arguments and grants. Gatherer, acquisition and bank-opening callers share this
+owner. A proven-false gate stays closed, and a strictly reachable candidate wins
+without a journal read. Failed or inconclusive reads do not select a bank.
+The journal and reissue limits do not change. A genuine `NoPath` keeps its detail.
+
 An authored Path bank tile is not an exclusive destination by default:
 `{"tile": [3092, 3242, 0], "source": "author reference"}` still selects the
 cheapest routable bank. Add `"required": true` only when that particular bank
