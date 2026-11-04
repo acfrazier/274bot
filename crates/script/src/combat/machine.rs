@@ -284,9 +284,8 @@ const SINGLE_WAY_END: u8 = 3;
 const DUEL_WAIT_END: u8 = 3;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
-// The pre-PvP composed measurement is 520 B with a 528 B ceiling. Keep that
-// guard until the merged layout is measured and any growth is attributed.
-const _: usize = 528 - std::mem::size_of::<Combat>();
+// Composed Linux Combat is 552 B at 7ab903712; Main keeps 8 B of headroom.
+const _: usize = 560 - std::mem::size_of::<Combat>();
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
 impl NativeMachine for Combat {
@@ -510,8 +509,8 @@ impl NativeMachine for Combat {
         }
         // begin may have no frame; choose the weapon on the first complete
         // observation so Prep knows the wear request before it can drink.
-        if self.flags & OBSERVED == 0 && self.rhand_pick < 0 {
-            self.pick_weapon(&frame);
+        if self.flags & OBSERVED == 0 && self.rhand_pick[self.active.index()] < 0 {
+            self.pick_weapons(&frame);
         }
         self.capture_prayer_baseline(&prayer_observation(&frame));
         let tick = evidence.tick as u16;

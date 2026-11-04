@@ -6296,11 +6296,11 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4160, 1576, 520, 264)
+        (4160, 1576, 552, 264)
     );
-    // Retain the last composed measurement and ceiling until the merged PvP
-    // layout is measured; the incoming branch's pins are not this composition.
-    assert!(std::mem::size_of::<script::combat::Combat>() <= 528);
+    // Linux Combat is 552 B at 7ab903712; Main retains 8 B of headroom.
+    // NavBot and SlotScript pins still need their composed measurements.
+    assert!(std::mem::size_of::<script::combat::Combat>() <= 560);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
 }
 

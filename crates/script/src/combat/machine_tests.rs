@@ -1665,7 +1665,7 @@ fn case20_steady_nonemitting_combat_ticks_allocate_nothing() {
     assert_eq!(allocations.count_total, 0);
     assert!(harness.machine.counters.swings >= 50);
     assert_eq!(harness.machine.counters.food, 0);
-    assert!(std::mem::size_of::<Combat>() <= 528);
+    assert!(std::mem::size_of::<Combat>() <= 560);
     assert!(std::mem::size_of::<CombatReport>() <= 80);
     println!("Combat={} CombatReport={} CombatRequest={} ArcRequest={} ActionHandle={} HostAction={} Ledger={} InteractionReceipt={} WalkReceipt={}",
         std::mem::size_of::<Combat>(), std::mem::size_of::<CombatReport>(), std::mem::size_of::<CombatRequest>(), std::mem::size_of::<Arc<CombatRequest>>(),
