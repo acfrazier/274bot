@@ -118,8 +118,10 @@ impl NavWorld {
         if self.named_banks.get().is_some() {
             return Err("bank facts already bound");
         }
+        let catalog =
+            api::named_banks::bank_catalog().map_err(|_| "local bank catalog unavailable")?;
         let facts = Arc::new(crate::named_banks::resolve(
-            api::named_banks::BANK_CATALOG,
+            catalog,
             data.bank_placements()
                 .map_or(&[], |facts| facts.rows.as_slice()),
             |tile| self.collision.standable(tile),

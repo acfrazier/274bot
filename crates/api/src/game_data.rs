@@ -3,7 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::io::{BufReader, Read};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+use std::sync::OnceLock;
 
 use client::io::ClientRevision;
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]

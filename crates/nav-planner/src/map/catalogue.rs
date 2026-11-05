@@ -117,7 +117,6 @@ const GAME_DATA_TYPED_OBJECT_ROW_BYTES: usize = {
     use std::mem::{align_of, size_of};
 
     let rows = [
-        size_of::<data::SourceInput>(),
         size_of::<data::GameItem>(),
         size_of::<data::NamedFact>(),
         size_of::<data::StatChange>(),

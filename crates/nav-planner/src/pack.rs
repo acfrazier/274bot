@@ -33,6 +33,7 @@ use crate::collision::WorldCollision;
 use crate::grid::{DoorEdge, StepGrid};
 use crate::quest_gates::QuestGates;
 use crate::tile::Tile;
+use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
 
 mod banks;
 mod coord;

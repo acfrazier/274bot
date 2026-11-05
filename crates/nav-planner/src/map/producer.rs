@@ -182,7 +182,6 @@ pub fn catalogue_policy() -> CataloguePolicy {
                 "../../../../vendor/fr-client-rust/crates/client/src/config/npc_type.rs"
             ),
             include_bytes!("../../../../crates/api/src/game_data.rs"),
-            include_bytes!("../../../../crates/api/data/game-data/manifest.json"),
         ]),
     }
 }
