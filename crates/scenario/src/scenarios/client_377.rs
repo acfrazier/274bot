@@ -103,10 +103,9 @@ pub(crate) fn client_377_scenario() -> Scenario {
                         else {
                             return true;
                         };
-                        match Interactions::new(snapshot, client).interact(
-                            OpTarget::Npc(npc),
-                            ActionSpec::Label("Talk-to".into()),
-                        ) {
+                        match Interactions::new(snapshot, client)
+                            .interact(OpTarget::Npc(npc), ActionSpec::Label("Talk-to".into()))
+                        {
                             SendResult::Sent { .. } => {
                                 *talked = true;
                                 true
@@ -326,7 +325,10 @@ mod tests {
                 RunnerStatus::Running { step: 0, total: 1 },
                 "a distant or wandering Hans keeps the retry armed"
             );
-            assert_eq!(client.out.pos, 0, "Hans outside 16 tiles must not be targeted");
+            assert_eq!(
+                client.out.pos, 0,
+                "Hans outside 16 tiles must not be targeted"
+            );
         }
 
         publish_hans(&mut client, Some((36, 16)));
@@ -347,7 +349,10 @@ mod tests {
         );
 
         next_game_tick(&mut runner, &mut client);
-        assert_eq!(client.out.pos, after_talk, "wait for chat instead of re-talking");
+        assert_eq!(
+            client.out.pos, after_talk,
+            "wait for chat instead of re-talking"
+        );
         assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
     }
 }

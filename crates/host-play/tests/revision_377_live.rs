@@ -531,7 +531,11 @@ fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: Option<usize>) -> Opti
         .min_by_key(|npc| (npc.distance, npc.type_id, npc.index))
 }
 
-fn direct_step_toward(scene: &SceneView, from: WorldTile, to: WorldTile) -> Result<WorldTile, String> {
+fn direct_step_toward(
+    scene: &SceneView,
+    from: WorldTile,
+    to: WorldTile,
+) -> Result<WorldTile, String> {
     if !lumbridge(from) || !lumbridge(to) {
         return Err(format!(
             "direct walk endpoints must remain in Lumbridge: {from:?} to {to:?}"
@@ -555,10 +559,7 @@ fn direct_step_toward(scene: &SceneView, from: WorldTile, to: WorldTile) -> Resu
             z: from.z + step_z,
             level: from.level,
         };
-        if candidate != from
-            && lumbridge(candidate)
-            && scene.can_step(from, candidate)
-        {
+        if candidate != from && lumbridge(candidate) && scene.can_step(from, candidate) {
             return Ok(candidate);
         }
     }
