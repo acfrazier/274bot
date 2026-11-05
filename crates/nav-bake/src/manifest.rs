@@ -20,7 +20,7 @@ pub fn capture_nav_manifest(
     zone_count: u32,
     zone_npc_count: u32,
 ) -> Result<NavManifest, GenerationError> {
-    if revision != 274 && revision != 289 {
+    if !matches!(revision, 274 | 289 | 377) {
         return Err(GenerationError::UnsupportedRevision { revision });
     }
     if cache.revision != revision {

@@ -9,6 +9,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 - Revision 377 cache manifests now pass the navigation identity checks.
   Revision mismatches and changed archive bytes still fail.
+- The existing navigation baker accepts explicit revision 377 inputs and
+  reads their config through the revision-377 decoder. The pack format
+  remains version 17.
 
 ### Gatherer
 

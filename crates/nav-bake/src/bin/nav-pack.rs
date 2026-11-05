@@ -16,7 +16,7 @@
 //! `content/maps`, matching doors configs under that content tree, and
 //! `<engine>/data/pack/config`. Pass all three paths to use a different tree.
 //! Revision-bound bakes use explicit inputs:
-//! `nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR
+//! `nav-pack --revision 274|289|377 --content CONTENT_DIR --cache CACHE_DIR
 //! --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out NAV_FLAGS]
 //! [--snapshot-root SNAPSHOT_ROOT]`.
 //! Runtime-compatible packs require `--snapshot-root`: the parent containing
@@ -25,7 +25,7 @@
 //! This mode verifies every cache archive and the selected config before
 //! baking, then emits `<NAV_PACK>.json` using [`nav_planner::manifest::NavManifest`].
 //! Revision 274 reads the server `data/pack/config` beside the `client/`
-//! cache directory; revision 289 reads `data/pack/client/config`.
+//! cache directory. Revisions 289 and 377 read `config` inside the cache directory.
 //! Door loc ids come from the `*.loc` door configs plus
 //! `scripts/general_use/configs/gates.loc` (derived from the maps dir's
 //! parent, the Server `content/` root); the loc definitions
@@ -195,9 +195,9 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
                 }
                 let parsed = value
                     .parse::<u16>()
-                    .map_err(|_| "--revision must be 274 or 289".to_string())?;
-                if !matches!(parsed, 274 | 289) {
-                    return Err("--revision must be 274 or 289".into());
+                    .map_err(|_| "--revision must be 274, 289 or 377".to_string())?;
+                if !matches!(parsed, 274 | 289 | 377) {
+                    return Err("--revision must be 274, 289 or 377".into());
                 }
                 revision = Some(parsed);
             }
@@ -221,7 +221,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         }
     }
     let revision =
-        revision.ok_or_else(|| "explicit mode requires --revision 274|289".to_string())?;
+        revision.ok_or_else(|| "explicit mode requires --revision 274|289|377".to_string())?;
     let content =
         content.ok_or_else(|| "explicit mode requires --content CONTENT_DIR".to_string())?;
     let cache_dir =
