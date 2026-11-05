@@ -17,6 +17,7 @@ fn embedded(revision: ClientRevision) -> Option<&'static [u8]> {
     Some(match revision {
         ClientRevision::R274 => QUESTS_274,
         ClientRevision::R289 => QUESTS_289,
+        ClientRevision::R377 => return None,
     })
 }
 
@@ -32,14 +33,14 @@ struct Slot {
 
 /// One process-shared catalog slot per supported selected revision.
 struct Cache {
-    slots: Mutex<[Option<Slot>; 2]>,
+    slots: Mutex<[Option<Slot>; 3]>,
     preparing: Mutex<()>,
 }
 
 impl Cache {
     const fn new() -> Self {
         Self {
-            slots: Mutex::new([None, None]),
+            slots: Mutex::new([None, None, None]),
             preparing: Mutex::new(()),
         }
     }
@@ -48,6 +49,7 @@ impl Cache {
         match revision {
             ClientRevision::R274 => 0,
             ClientRevision::R289 => 1,
+            ClientRevision::R377 => 2,
         }
     }
 
@@ -109,6 +111,21 @@ mod tests {
     use crate::selected::{ClientRevision, Knowledge};
 
     #[test]
+    fn unavailable_revision_377_is_not_prepared_or_cached() {
+        let cache = Cache::new();
+        let revision = ClientRevision::R377;
+        let error = cache
+            .prepare(revision, || {
+                let bytes = embedded(revision).ok_or_else(unavailable)?;
+                let facts = wire::decode(bytes)?;
+                QuestCatalog::from_identity(Some(&facts))
+            })
+            .unwrap_err();
+        assert_eq!(error, unavailable());
+        assert!(cache.lookup(revision).is_none());
+    }
+
+    #[test]
     fn selected_quest_catalogs_are_cached_per_revision() {
         let Some(data_274) = crate::game_data::test_data(ClientRevision::R274) else {
             return;
@@ -138,6 +155,7 @@ mod tests {
                         Err(FactError::UnknownKey(_))
                     )),
                     ClientRevision::R289 => assert!(catalog.quest("routequest").is_ok()),
+                    ClientRevision::R377 => unreachable!("377 is not in these fixtures"),
                 }
             }
         })
