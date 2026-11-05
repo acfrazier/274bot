@@ -174,5 +174,83 @@
         "sha256": "3eeb1085547fb3af66db55ec4368357dbbad5178b7747f8b7cb0339fdd04a4ce"
       }
     ]
+  },
+  "377": {
+    "engine_commit": "bc47497ee8cf6148dbfb7239714ddd5045c40194",
+    "content_commit": "a15d0faa809f5f8455ef43e1ae4edfdd22512bb2",
+    "content": [
+      {
+        "path": "pack/category.pack",
+        "bytes": 5522,
+        "sha256": "b0ceb9789280d37b7d597c6b39a03fb3c31607f2dfd849560087c7b8b69c866d"
+      },
+      {
+        "path": "pack/dbrow.pack",
+        "bytes": 42598,
+        "sha256": "0232431b4b793101651a33062ee090f344f26f016ab5ed6de26bf9b7e9c4d337"
+      },
+      {
+        "path": "pack/dbtable.pack",
+        "bytes": 543,
+        "sha256": "5274e367f12a8ea3a37c61f9762b634bdb1507312ecad2bf13fb574a18da4b81"
+      },
+      {
+        "path": "pack/enum.pack",
+        "bytes": 4116,
+        "sha256": "42e3d4951da115fd1f8d9699a5efd526fa3ad90c4bb0a79812b5c3d7e1b82266"
+      },
+      {
+        "path": "pack/hunt.pack",
+        "bytes": 1625,
+        "sha256": "46adcef2814933bc7e3aa1203ecb8ef32021715beeeab66afe0155623de67515"
+      },
+      {
+        "path": "pack/mesanim.pack",
+        "bytes": 166,
+        "sha256": "4da1d07b0a83c30ce7319a8b3884b618f0e23493a2e201f44f408fda7dbcfb21"
+      },
+      {
+        "path": "pack/param.pack",
+        "bytes": 4552,
+        "sha256": "c0413e9e10e7fbb8f77faa49cfb181454ef62311f67465c76ae45770751bccb9"
+      },
+      {
+        "path": "pack/script.pack",
+        "bytes": 476530,
+        "sha256": "657fe29aa3a078ac3ec492c4295dd0dd43f10257aa264730460eebe125af08ec"
+      },
+      {
+        "path": "pack/struct.pack",
+        "bytes": 3605,
+        "sha256": "c81cb3fd66148a53a558cb215e115cf8f67fb14c71ef614ef963054d4d8f5159"
+      },
+      {
+        "path": "pack/varn.pack",
+        "bytes": 325,
+        "sha256": "4dbe2039235678b363f32dbd0028d9d2c8e52552aa58a2ffadb5d5bc80ede357"
+      },
+      {
+        "path": "pack/vars.pack",
+        "bytes": 1013,
+        "sha256": "c891131ed6763393ff27bec932becdaa48a9898e0f443ae50f831e43b53a63a7"
+      }
+    ],
+    "engine": [
+      {
+        "path": "data/pack/server/obj.dat",
+        "bytes": 286356,
+        "sha256": "5dbc031d48ca8d9737787a0e7a4607b223f404f5bf7699203783f133991fc6dc"
+      },
+      {
+        "path": "data/pack/server/npc.dat",
+        "bytes": 188651,
+        "sha256": "cedb949351e8f09e81b12898c2c684f8ad744450d335ac37d03f771122774c69"
+      },
+      {
+        "path": "data/pack/client/config",
+        "bytes": 533980,
+        "sha256": "0ffd31ceb7240b79907fd200c19cfa05bce207b1b8b7287060fe83a6fc5dc69a"
+      }
+    ]
   }
 }

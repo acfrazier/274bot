@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
-import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, assertServerOrderedPinned, revisions, requestedRevisions } from './generate.ts';
+import { generate, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, assertServerOrderedPinned, revisions, requestedRevisions } from './generate.ts';
 import { parsePack, walkContentFiles } from './extractors/common.ts';
 import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
@@ -19,7 +19,7 @@ import { extractNpcTransformClosure } from './extractors/npc-transforms.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
-    engineRoot: spec.engine, contentRoot: spec.content, cache: spec.cacheIdentity,
+    get engineRoot() { return spec.engine; }, get contentRoot() { return spec.content; }, cache: spec.cacheIdentity,
 }]));
 const kqDropNames = ['Adamant spear', 'Amulet of power', 'Blood rune', 'Chaos talisman', 'Death rune', 'Dragon chainbody', 'Dragon spear', 'Fire rune', 'Half of a key', 'Iron arrow', 'Lava battlestaff', 'Law rune', 'Lobster', 'Mithril arrow', 'Nature rune', 'Nature talisman', 'Oyster pearls', 'Rune arrow', 'Rune axe', 'Rune chainbody', 'Rune javelin', 'Rune spear', 'Rune warhammer', 'Shield left half', 'Uncut diamond', 'Uncut emerald', 'Uncut ruby', 'Uncut sapphire', 'Wine of zamorak'];
 const expectedDropNames: Record<number, Record<string, string[]>> = {
@@ -191,6 +191,24 @@ async function verifyRevision(revision: number) {
     const pinnedCommits = assertPinned(spec);
     assertServerOrderedPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
+    if (revision === 377) {
+        // Re-extract every family from the selected source/cache. The legacy
+        // assertions below deliberately pin 274/289 values, not the 377 corpus.
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-377-verify-'));
+        try {
+            const regenerated = await generate({ ...spec, output: path.join(directory, '377.json') });
+            for (const relative of ['377.json', '377/gathering.json', '377/quests.json', '377/debug.json']) {
+                const actual = fs.readFileSync(path.join(root, 'crates/api/data/game-data', relative));
+                const fresh = fs.readFileSync(path.join(directory, relative));
+                if (!actual.equals(fresh)) throw new Error(`377 ${relative}: published bytes differ from selected-source extraction`);
+            }
+            assertEqual(JSON.stringify({ ...regenerated, output: manifestRow.output }), JSON.stringify(manifestRow), '377 complete manifest summary');
+            results.push({ revision, records: payload.items.length, verification: 'all core and family bytes re-extracted from selected sources', coverage: payload.coverage });
+        } finally {
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
+        return;
+    }
     const baseContentFiles = baseProvenanceInputs(pin.engineRoot, pin.contentRoot).content_inputs.map((input) => input.path);
     const npcNames = extractNpcNamesFacts(pin.contentRoot, revision);
     const combatScripts = parseCombatScripts(pin.contentRoot);

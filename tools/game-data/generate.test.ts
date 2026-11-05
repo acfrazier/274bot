@@ -22,6 +22,7 @@ import './npc-transforms.test.ts';
 import './npc-stat-default.test.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
 import type { NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
+import { extractCookSurfaces } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -1457,6 +1458,7 @@ try {
     fs.rmSync(gateContent, { recursive: true, force: true });
 }
 assert.deepEqual(requestedRevisions(['--revision', '289']), [289]);
+assert.deepEqual(requestedRevisions(['--revision', '377']), [377]);
 assert.throws(() => requestedRevisions(['--revision', '999']), /usage/);
 
 function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
@@ -4060,6 +4062,70 @@ const noOverrides: readonly SiteOverride[] = [];
         { id: 2, params: new Map() },
     ]);
     assert.deepEqual(bonus, [], 'sa_energy is not a worn combat bonus');
+}
+
+{
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'cook-surfaces-377-'));
+    const files = {
+        'scripts/skill_cooking/scripts/cooking.rs2': '[oplocu,_cooking_oven] @attempt_cook_item(last_useitem);\n[oplocu,_cooking_fire]\n@attempt_cook_item(last_useitem);\n',
+        'scripts/test.loc': '[new_oven]\nname=Selected oven\ncategory=cooking_oven\n[new_fire]\nname=Selected fire\ncategory=cooking_fire\n[legacy_name_only]\nname=Range\n',
+        'pack/loc.pack': '700=new_oven\n701=new_fire\n702=legacy_name_only\n',
+        'maps/m50_50.jm2': '==== LOC ====\n0 1 2: 700\n0 3 4: 701\n0 5 6: 702\n',
+    };
+    for (const [relative, text] of Object.entries(files)) {
+        fs.mkdirSync(path.dirname(path.join(content, relative)), { recursive: true });
+        fs.writeFileSync(path.join(content, relative), text);
+    }
+    execFileSync('git', ['init', '-q'], { cwd: content });
+    execFileSync('git', ['add', 'maps'], { cwd: content });
+    const selected = extractCookSurfaces(content, undefined, 377);
+    assert.deepEqual(selected.facts.rows, [
+        { x: 3201, z: 3202, level: 0, name: 'Selected oven', debugname: 'new_oven', kind: 'oven' },
+        { x: 3203, z: 3204, level: 0, name: 'Selected fire', debugname: 'new_fire', kind: 'fire' },
+    ], '377 kinds and identities derive from selected categories, not frozen aliases or display names');
+    assert.equal(selected.inputs.handlers?.[0].path, 'scripts/skill_cooking/scripts/cooking.rs2');
+    fs.writeFileSync(path.join(content, 'scripts/skill_cooking/scripts/cooking.rs2'), '[oplocu,_cooking_fire] @attempt_cook_item(last_useitem);\n');
+    assert.throws(() => extractCookSurfaces(content, undefined, 377), /cooking_oven cooking handler is not derived/);
+    fs.rmSync(content, { recursive: true });
+}
+
+// The real 377 selected corpus exercises the same source joins, never the
+// 274/289 identity/count/coordinate pins. Optional only for legacy-only runs.
+if (process.env.GAME_DATA_377_CONTENT) {
+    const spec377 = revisions.find(spec => spec.revision === 377)!;
+    const payload = JSON.parse(fs.readFileSync(spec377.output, 'utf8'));
+    const selectedItems = pinDecodedItems(377);
+    assert.equal(payload.revision, 377);
+    assert.equal(payload.provenance.engine_commit, spec377.expectedEngine);
+    assert.equal(payload.provenance.content_commit, spec377.expectedContent);
+    assert.deepEqual(payload.provenance.cache_identity, spec377.cacheIdentity);
+    assert.deepEqual(payload.prayers, extractPrayerFacts(spec377.content, 377).prayers);
+    assert.deepEqual(payload.trails, extractTrailFacts(spec377.content, selectedItems, 377));
+    assert.equal(payload.trails.rows.some((row: { access?: string }) => row.access !== undefined), false, '377 must not inherit the 289 constrained-clue annotation');
+    assert.deepEqual(payload.talk_key, extractTalkKeyFacts(spec377.content, selectedItems).facts);
+    assert.deepEqual(payload.trio_givers, extractTrioGiversFacts(spec377.content).facts);
+    assert.deepEqual(payload.quest_identity, extractQuestIdentityFacts(spec377.content, 377));
+    assert.deepEqual(payload.quest_starts, extractQuestStartFacts(spec377.content, payload.quest_identity.rows, 377, spec377.cacheIdentity.content_id!));
+    assert.deepEqual(payload.teleports, extractTeleportSpells(spec377.content, selectedItems));
+    const magic377 = extractMagicFacts(spec377.content, selectedItems);
+    assert.deepEqual(payload.spells, magic377.spells);
+    assert.deepEqual(payload.staves, magic377.staves);
+    assert.deepEqual(payload.equipment_names, extractEquipmentNamesFacts(payload.items, parsePack(fs.readFileSync(path.join(spec377.content, 'pack/obj.pack'), 'utf8')), repoRoot, 377));
+    assert.deepEqual(payload.cook_surfaces, extractCookSurfaces(spec377.content, undefined, 377).facts);
+    assert.equal('catalog' in payload.provenance.cook_inputs, false, '377 does not inherit frozen camp/stand inputs');
+    for (const family of ['autocast', 'special', 'nurmof_essence', 'flour_six', 'server_ordered']) {
+        assert.equal(family in payload, false, `${family}: no legacy facts may be substituted on 377`);
+        assert.ok(payload.coverage.some((row: { family: string; status: string; reason: string }) => row.family === family && row.status === 'UNKNOWN' && row.reason.length > 0), `${family}: omitted family needs named UNKNOWN coverage`);
+    }
+    const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'crates/api/data/game-data/manifest.json'), 'utf8'));
+    const manifest377 = manifest.revisions.find((row: { revision: number }) => row.revision === 377);
+    assert.ok(manifest377);
+    assert.equal(manifest377.sha256, sha256(spec377.output).sha256);
+    for (const family of ['gathering', 'quests', 'debug']) {
+        const descriptor = manifest377.families[family];
+        const artifact = path.join(path.dirname(spec377.output), descriptor.path);
+        assert.deepEqual({ bytes: descriptor.bytes, sha256: descriptor.sha256 }, sha256(artifact), `${family}: exact 377 family bytes`);
+    }
 }
 
 console.log('generate fixture passed');
