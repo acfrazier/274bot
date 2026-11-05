@@ -209,8 +209,10 @@ fn validate_identity_shape(identity: &BundledNavIdentity) -> Result<(), String> 
         }
     }
     match identity.revision {
-        274 | 289 => Ok(()),
-        revision => Err(format!("unsupported revision {revision}; use 274 or 289")),
+        274 | 289 | 377 => Ok(()),
+        revision => Err(format!(
+            "unsupported revision {revision}; use 274, 289 or 377"
+        )),
     }
 }
 
@@ -368,6 +370,40 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn revision_377_selects_its_bundle_but_rejects_a_malformed_digest() {
+        let mut selected = identity("nav/377/274bot.navpack");
+        selected.revision = 377;
+        selected.cache_id = "cache-377".into();
+        let external = Path::new("/qualification/377/external.navpack");
+        let origin = select_nav_origin(
+            &[selected.clone()],
+            Some(Path::new("/app/Resources")),
+            377,
+            "cache-377",
+            false,
+            external,
+        )
+        .unwrap();
+        assert!(matches!(
+            origin,
+            NavOrigin::Bundled { path, .. }
+                if path == Path::new("/app/Resources/nav/377/274bot.navpack")
+        ));
+
+        selected.nav_sha256 = "invalid".into();
+        let error = select_nav_origin(
+            &[selected],
+            Some(Path::new("/app/Resources")),
+            377,
+            "cache-377",
+            false,
+            external,
+        )
+        .unwrap_err();
+        assert!(error.contains("nav_sha256"), "{error}");
     }
 
     #[test]
