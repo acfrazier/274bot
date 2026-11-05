@@ -280,7 +280,10 @@ impl Driver for Client {
                     };
                     let length =
                         usize::from(u16::from_be_bytes([bytes[cursor], bytes[cursor + 1]]));
-                    if crate::prot::PacketLength::VarShort.validate(length).is_err() {
+                    if crate::prot::PacketLength::VarShort
+                        .validate(length)
+                        .is_err()
+                    {
                         return false;
                     }
                     cursor = end;
