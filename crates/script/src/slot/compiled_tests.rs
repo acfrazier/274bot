@@ -2333,9 +2333,10 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
 
 #[test]
 fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
-    fn measure_mode(knife: bool) -> i64 {
+    fn measure_mode(oak: bool, knife: bool) -> i64 {
         fn measure_prepared(
             incarnation: u64,
+            oak: bool,
             knife: bool,
         ) -> (
             CompiledRun,
@@ -2358,8 +2359,11 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
                     let mut bag = SettingsBag::new();
                     bag.insert("disposition".into(), serde_json::json!("Power"));
                     bag.insert("deathPolicy".into(), serde_json::json!("Stop"));
-                    if knife {
-                        bag.insert("tickMethod".into(), serde_json::json!("Knife"));
+                    if oak {
+                        bag.insert(
+                            "tickMethod".into(),
+                            serde_json::json!(if knife { "Knife" } else { "Off" }),
+                        );
                         bag.insert("woodcuttingResources".into(), serde_json::json!(["oak"]));
                     }
                     let config =
@@ -2400,7 +2404,7 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
                 + slot.seat_native_delivery.capacity()
                     * std::mem::size_of::<crate::native::HostAction>()
         }
-        let snapshot = if knife {
+        let snapshot = if oak {
             let mut snapshot = gatherer_snapshot_for_resource("oak", 15);
             let mut inventory = snapshot.inventory().to_vec();
             for (item, id) in inventory.iter_mut().skip(24).zip([946, 1511, 1511, 1511]) {
@@ -2414,7 +2418,7 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
         } else {
             gatherer_snapshot()
         };
-        let (cold_prepared, cold_retained, cold) = measure_prepared(91, knife);
+        let (cold_prepared, cold_retained, cold) = measure_prepared(91, oak, knife);
         let mut warm = gatherer_slot_with_knife(92, knife);
         // The first park can grow parking_lot's process-global table.
         // Warm this thread before charging only the Gatherer and its seat.
@@ -2434,7 +2438,7 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
             );
             shared_slot = Some(slot);
         });
-        let (prepared, retained, preparation) = measure_prepared(93, knife);
+        let (prepared, retained, preparation) = measure_prepared(93, oak, knife);
         let prepare_bytes = preparation.bytes_current;
         let mut measured = None;
         // Charge preparation on its owning worker and installation on this thread.
@@ -2474,7 +2478,7 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
             .expect("the measured Gatherer slot includes its shared seat and delivery baseline");
         let exclusive = prepare_bytes + slot_family_bytes;
         println!(
-            "Gatherer exclusive heap: knife={knife}, shared slot/seat={}B, shared delivery={delivery_bytes}B, prepared={prepare_bytes}, slot={main:?}, total={exclusive}",
+            "Gatherer exclusive heap: oak={oak}, knife={knife}, shared slot/seat={}B, shared delivery={delivery_bytes}B, prepared={prepare_bytes}, slot={main:?}, total={exclusive}",
             shared_seat.bytes_current
         );
         println!(
@@ -2489,15 +2493,16 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
         drop(shared_slot);
         exclusive
     }
-    // Measure both modes before asserting so a larger ordinary mode does not
-    // hide the composed Knife sample. Source 53202c424 measured 8234 B at
-    // this unchanged cap, with no headroom after the typed bank receipt.
-    // A composed increase requires Main's separate attribution ruling.
-    let measurements = [false, true].map(|knife| (knife, measure_mode(knife)));
-    for (knife, exclusive) in measurements {
+    // Preserve the original ordinary sample. The two oak samples have identical
+    // bag keys and resource/stock, differing only in Off versus Knife. Bag
+    // construction remains inside the same measured scope.
+    // Capture all samples before the unchanged cap assertions.
+    let measurements = [(false, false), (true, false), (true, true)]
+        .map(|(oak, knife)| (oak, knife, measure_mode(oak, knife)));
+    for (oak, knife, exclusive) in measurements {
         assert!(
             (0..=8234).contains(&exclusive),
-            "exclusive Gatherer heap exceeds the unchanged 8234 B cap: knife={knife}, measured={exclusive}"
+            "exclusive Gatherer heap exceeds the unchanged 8234 B cap: oak={oak}, knife={knife}, measured={exclusive}"
         );
     }
 }
@@ -3350,22 +3355,24 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
-        // Composed Cure source 219bac20e measures 8840 B on Linux and
-        // 8904 B on macOS. Native-Cure b4e71198d adds 176 B of runner
-        // state plus 80 B of survival status (56 B field + 24 B text).
-        // Keep the prior QuietRead.hold_until +16 B in Ledger 992 -> 1008.
-        // macOS owns a further 64 B Darwin retained mutex, first locked
-        // in prepare. The shared combat index is charged once per process.
-        // The typed bank outcome adds 8 B inside the retained Ledger.
-        // Linux measures 8848 B and macOS measures 8912 B, both with 0 B
-        // headroom. Mac source b8c4d5bf8: BATCH-029-INT/r2-bank-api-seat-mac-1.
+        // The source-532 baseline is 8,848 B Linux / 8,912 B macOS, including
+        // Cure, QuietRead and the typed bank receipt. Shared tables stay excluded.
+        // Tick preparation +483 B = boxed Gatherer +408 + Prepared fields +72
+        // + retained "Off" +3. Polls +640 B = 11 StatusField rows * 56 + a 24 B
+        // Arc<str> for "Off". Installation is unchanged. Linux measures 9,971 B
+        // and macOS independently measures 10,035 B (BATCH-029-INT/
+        // r2-pvp-v2-mac-api-seat-1). Main permits 8 B headroom on each platform.
+        // Non-blocking follow-up: "Off" could use &'static str or a shared
+        // static Arc instead of a separate allocation per bot.
         #[cfg(target_os = "macos")]
-        let exclusive_limit = 8912;
-        #[cfg(not(target_os = "macos"))]
+        let exclusive_limit = 10043;
+        #[cfg(target_os = "linux")]
+        let exclusive_limit = 9979;
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let exclusive_limit = 8848;
         assert!(
             exclusive <= exclusive_limit,
-            "exclusive API seat exceeds {exclusive_limit} B (native-cure b4e71198d: +176 B runner +80 B survival status. QuietRead.hold_until +16 B, typed bank receipt +8 B, Darwin retained mutex +64 B; measured Linux/macOS headroom 0 B)"
+            "exclusive API seat exceeds {exclusive_limit} B (Tick preparation +483 B; polling +640 B; shared tables excluded; platform cap is source-bound)"
         );
         let stopped = allocation_counter::measure(|| stop_in_seat(&mut slot, 209));
         println!("API gather post-Stop retained={}B (exclusive live + Stop delta), Stop={stopped:?}, worker transient_peak={}B", exclusive + stopped.bytes_current, i128::from(worker.bytes_max) - i128::from(worker.bytes_current));

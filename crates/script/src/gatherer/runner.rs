@@ -3150,10 +3150,15 @@ mod tests {
         // Quest-list retry state adds 24 B to the 64 B hold-resume adapter.
         // Both resume paths reuse the same replay allocation.
         assert_eq!(size_of::<Walk>(), 88, "Walk inline layout changed");
-        // SURVIVAL-DESIGN-1022/design-final.md:A11:745 allows 192 B for
-        // SurvivalStep. The prior 1,024 B bound plus 192 B gives 1,216 B.
+        // Measured 1,176 -> 1,584 B: parked_cycle 120 + tick_policy 80 +
+        // sequence 4 + applicability 1 + last-off 1 = 206 B; Active 280 -> 480
+        // adds 200 B when Gather 472 becomes its largest variant; padding 2 -> 4
+        // adds 2 B. Main approves 1,592 B, leaving 8 B of headroom.
+        // Follow-up question: if policy/parked state can stay cold for users
+        // who never enable tick manipulation, Option<Box<...>> could save
+        // about 200 B per runner, at the cost of an activation allocation.
         assert!(
-            size_of::<Gatherer>() <= 1216,
+            size_of::<Gatherer>() <= 1592,
             "Gatherer={} exceeds its inline budget",
             size_of::<Gatherer>()
         );
