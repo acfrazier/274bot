@@ -19,10 +19,11 @@ use std::sync::Arc;
 const GATHERING_274: &[u8] = include_bytes!("../../data/game-data/274/gathering.json");
 const GATHERING_289: &[u8] = include_bytes!("../../data/game-data/289/gathering.json");
 
-fn embedded(revision: ClientRevision) -> &'static [u8] {
+fn embedded(revision: ClientRevision) -> Result<&'static [u8], FactError> {
     match revision {
-        ClientRevision::R274 => GATHERING_274,
-        ClientRevision::R289 => GATHERING_289,
+        ClientRevision::R274 => Ok(GATHERING_274),
+        ClientRevision::R289 => Ok(GATHERING_289),
+        ClientRevision::R377 => Err(FactError::FamilyUnavailable(GATHERING_FAMILY.clone())),
     }
 }
 
@@ -108,9 +109,7 @@ pub fn prepare(
     _worker: &mut FamilyPreparation,
 ) -> Result<Arc<GatherCatalog>, FactError> {
     let pin = data.selected_pin()?;
-    CACHE.prepare(Key::of(&pin), || {
-        load(&pin, MANIFEST, embedded(pin.revision))
-    })
+    CACHE.prepare(Key::of(&pin), || load(&pin, MANIFEST, embedded(pin.revision)?))
 }
 
 /// The prepared catalog if the selected manifest was already decoded. Never decodes or waits for preparation.
@@ -146,6 +145,14 @@ mod tests {
     fn real() -> GatherCatalog {
         let pin = pin_289();
         load(&pin, MANIFEST, GATHERING_289).expect("the checked 289 family loads")
+    }
+
+    #[test]
+    fn revision_377_gathering_asset_is_unavailable() {
+        assert_eq!(
+            embedded(ClientRevision::R377),
+            Err(FactError::FamilyUnavailable(GATHERING_FAMILY.clone()))
+        );
     }
 
     #[test]
