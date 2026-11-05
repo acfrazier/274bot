@@ -1477,6 +1477,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
         &door_ids,
         &parsed_door_configs,
         quest_source.as_ref(),
+        request.revision,
     );
     assert_transmitted_varp_reqs(content_root, &graph);
     require_wilderness_teleport_legality(content_root, &graph).map_err(|detail| {
