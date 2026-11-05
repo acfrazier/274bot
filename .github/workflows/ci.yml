@@ -18,19 +18,12 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # GitHub runners have no canonical 289 engine/content tree, so the build
-  # stages no navigation bundle (checked-in identities only). Release builds
-  # and LIVE runs keep the default `require` on machines with the inputs.
+  # Hosted CI has no derived inputs, so it does not bake or stage navigation.
   BOT_NAV_BUILD: skip
   # Every test binary links V8; with debuginfo the host + client test builds
   # outgrow the runner disk.
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
-  # The reviewed v18 reference is published separately from application releases.
-  # Main and the operator publish these immutable assets before this CI cutover.
-  CI_NAV_PACK_RELEASE: "nav-reference-v18"
-  CI_NAV_PACK_SHA256: 81e5ca84568b4e3d9b0e7f428a2d43d5e945c73cd74910645db626c89bd4de36
-  CI_NAV_FLAGS_SHA256: 67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a
 
 # GitHub is a subset of local CI (see CONTRIBUTING.md): no LIVE=1, no GPU
 # adapter (SKIP_GPU=1). The cargo graph is the same as local — host workspace
@@ -170,7 +163,6 @@ jobs:
             free_disk: true
             cache_key: workspace
             save_cache: true
-            real_nav_pack: true
             os: ubuntu-24.04
           - lane: vendor
             free_disk: false
@@ -181,19 +173,16 @@ jobs:
             free_disk: false
             cache_key: workspace
             save_cache: false
-            real_nav_pack: true
             os: ubuntu-24.04
           - lane: script-no-default
             free_disk: false
             cache_key: workspace
             save_cache: false
-            real_nav_pack: true
             os: ubuntu-24.04
           - lane: native-only
             free_disk: false
             cache_key: workspace
             save_cache: false
-            real_nav_pack: true
             os: ubuntu-24.04
           - lane: grinch-oracles
             free_disk: false
@@ -219,7 +208,6 @@ jobs:
             free_disk: false
             cache_key: workspace
             save_cache: false
-            real_nav_pack: true
             os: ubuntu-24.04
           - lane: panel-render-diagnostics
             free_disk: false
@@ -281,30 +269,6 @@ jobs:
           workspaces: |
             . -> target
             vendor/fr-client-rust -> target
-      - name: Cache the 289 nav pack
-        if: ${{ matrix.real_nav_pack }}
-        id: nav-pack-cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/nav-289
-          key: nav-289-${{ env.CI_NAV_PACK_SHA256 }}
-      - name: Fetch the 289 nav pack
-        if: ${{ matrix.real_nav_pack && steps.nav-pack-cache.outputs.cache-hit != 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/nav-289"
-          gh release download "$CI_NAV_PACK_RELEASE" -R "$GITHUB_REPOSITORY" \
-            -p "274bot-289-v18.navpack" -p "274bot-289-v18.navflags" \
-            -D "$RUNNER_TEMP/nav-289"
-      - name: Use the 289 nav pack
-        if: ${{ matrix.real_nav_pack }}
-        run: |
-          echo "$CI_NAV_PACK_SHA256  $RUNNER_TEMP/nav-289/274bot-289-v18.navpack" | sha256sum -c -
-          echo "$CI_NAV_FLAGS_SHA256  $RUNNER_TEMP/nav-289/274bot-289-v18.navflags" | sha256sum -c -
-          echo "NAV_PACK=$RUNNER_TEMP/nav-289/274bot-289-v18.navpack" >> "$GITHUB_ENV"
-          echo "WORLD_NAV_PACK=$RUNNER_TEMP/nav-289/274bot-289-v18.navpack" >> "$GITHUB_ENV"
-          echo "NAV_ARRIVAL_PACK=$RUNNER_TEMP/nav-289/274bot-289-v18.navpack" >> "$GITHUB_ENV"
       - name: Test ${{ matrix.lane }}
         run: cargo run --locked -p xtask -- ci test-${{ matrix.lane }}
 
