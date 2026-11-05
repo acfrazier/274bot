@@ -631,6 +631,27 @@ fn run_live_interaction() -> Result<(), String> {
                     && state.tile().is_some()
             },
         )?;
+        record(
+            "mainland-hop-request",
+            &snapshot,
+            json!({"expected_region": [LUMBRIDGE_REGION, LUMBRIDGE_REGION, 0]}),
+        );
+        interact::mainland_hop(&mut client);
+        wait_for(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            "mainland-hop-arrival",
+            Duration::from_secs(30),
+            |state| {
+                state.ingame()
+                    && state.attached()
+                    && state.scene_state() == 2
+                    && state
+                        .tile()
+                        .is_some_and(|(x, z, level)| lumbridge(WorldTile { x, z, level }))
+            },
+        )?;
         let (x, z, level) = snapshot.tile().ok_or("scene2 has no player tile")?;
         let origin = WorldTile { x, z, level };
         if !lumbridge(origin) {
