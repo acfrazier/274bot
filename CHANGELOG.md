@@ -11,6 +11,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   engine, content and cache. Gathering, quest and debug assets keep independent
   identity checks. Unproved 289-only controls and tactics remain unavailable;
   they are not copied into the 377 data.
+- Revision 377 generated-input pins now come from a fresh engine/content
+  build, without inherited generated IDs. Regeneration requires clean-checkout
+  pack outputs and a navigation rebake before the final identity binding.
 
 ### Navigation
 
