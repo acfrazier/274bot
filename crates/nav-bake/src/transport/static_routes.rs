@@ -350,27 +350,40 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
 ];
 
 /// Revision 377 resolves each dock NPC from the selected maps. The legacy
-/// origin identifies only the dock's mapsquare and plane (customs officer 380
-/// serves two docks); its tile is never a fallback. Missing or ambiguous
-/// spawns omit the journey. Legacy revisions retain their exact route table.
+/// origin identifies only the dock's mapsquare and plane, never a fallback.
+/// All candidates must select this journey under the script's spawn rule;
+/// choose the lexicographically first proven spawn, independent of map order.
+/// Legacy revisions retain their exact route table.
 fn boat_start_377(
     route: &BoatRoute,
     positions: &HashMap<i32, Vec<NpcPlacement>>,
 ) -> Option<WorldTile> {
-    let mut candidates = positions.get(&route.npc)?.iter().filter(|spawn| {
+    let candidates = positions.get(&route.npc)?.iter().filter(|spawn| {
         spawn.level == route.at.level
             && spawn.x.div_euclid(64) == route.at.x.div_euclid(64)
             && spawn.z.div_euclid(64) == route.at.z.div_euclid(64)
     });
-    let spawn = candidates.next()?;
-    if candidates.next().is_some() {
-        return None;
+    let mut selected = None;
+    for spawn in candidates {
+        // customs_officer.rs2:82 selects Ardougne iff coordx(npc_coord)
+        // < 2815; fare and delay are identical on both branches. The other
+        // curated handlers do not branch on the NPC's spawn coordinate.
+        let matches_trip = match route.npc {
+            380 => match (route.to.x, route.to.z, route.to.level) {
+                (2683, 3268, 1) => spawn.x < 2815,
+                (3032, 3217, 1) => spawn.x >= 2815,
+                _ => false,
+            },
+            378 | 381 | 518 | 657 | 658 => true,
+            _ => false,
+        };
+        if !matches_trip {
+            return None;
+        }
+        let tile = (spawn.x, spawn.z, spawn.level);
+        selected = Some(selected.map_or(tile, |previous| std::cmp::min(previous, tile)));
     }
-    Some(WorldTile {
-        x: spawn.x,
-        z: spawn.z,
-        level: spawn.level,
-    })
+    selected.map(|(x, z, level)| WorldTile { x, z, level })
 }
 
 /// One `Talk-to` edge per admitted journey, plus loc-backed gangplanks.
