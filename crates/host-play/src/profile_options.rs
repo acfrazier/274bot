@@ -22,7 +22,10 @@ pub fn parse_revision(value: &str) -> Result<ClientRevision, String> {
     match value {
         "274" => Ok(ClientRevision::R274),
         "289" => Ok(ClientRevision::R289),
-        _ => Err(format!("unsupported revision {value:?}; use 274 or 289")),
+        "377" => Ok(ClientRevision::R377),
+        _ => Err(format!(
+            "unsupported revision {value:?}; use 274, 289 or 377"
+        )),
     }
 }
 
