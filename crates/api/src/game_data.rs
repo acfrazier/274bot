@@ -2027,7 +2027,7 @@ impl SelectedGameData {
                     .any(|side| !QUEST_IDENTITY_UNKNOWN_SIDES.contains(&side.as_str()))
             }) {
                 return Err(
-                    "quest_identity contains an unsupported unknown_sides value".to_string(),
+                    "quest_identity contains an unsupported unknown_sides value".to_string()
                 );
             }
             if facts.rows.iter().any(|row| {

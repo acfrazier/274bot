@@ -1404,12 +1404,13 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
         Ok(bytes) => {
             let jag = JagFile::new(bytes);
             let (npcs, locs) = if request.revision == Some(377) {
-                let cache = client::config::config_377::Cache377::unpack(&jag).map_err(|source| {
-                    crate::GenerationError::ConfigDecode377 {
-                        path: request.config_jag.to_path_buf(),
-                        source,
-                    }
-                })?;
+                let cache =
+                    client::config::config_377::Cache377::unpack(&jag).map_err(|source| {
+                        crate::GenerationError::ConfigDecode377 {
+                            path: request.config_jag.to_path_buf(),
+                            source,
+                        }
+                    })?;
                 (
                     cache.npcs.into_iter().map(Into::into).collect(),
                     cache.locs.into_iter().map(Into::into).collect(),

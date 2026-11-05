@@ -16,6 +16,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   landings and one-tick cost. An explicit real-pack qualification covers
   city routes, bidirectional doors, stairs and the Port Sarim ship journey.
 
+### Host
+
+- Adds explicit `local-377` host selection with revision-specific strict
+  cache decoding and bundled navigation admission. Other revision defaults
+  and all navigation digest/provenance checks stay unchanged.
+- Adds the `client_377` direct-walk and Hans interaction proof scenario.
+
 ### Gatherer
 
 - After a death, the Gatherer no longer stops on the first blocked step of its

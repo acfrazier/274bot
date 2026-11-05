@@ -292,7 +292,9 @@ pub fn hash_bytes_with_progress(bytes: &[u8], mut progress: impl FnMut(u64, u64)
 fn validate_revision(revision: u16) -> Result<(), String> {
     match revision {
         274 | 289 | 377 => Ok(()),
-        _ => Err(format!("unsupported revision {revision}; use 274, 289 or 377")),
+        _ => Err(format!(
+            "unsupported revision {revision}; use 274, 289 or 377"
+        )),
     }
 }
 

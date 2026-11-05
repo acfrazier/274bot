@@ -80,7 +80,10 @@ fn explicit_377_selects_its_own_cache_and_decoded_snapshot() {
     .unwrap();
     assert_eq!(inputs.revision, Some(377));
     assert_eq!(inputs.maps_dir, PathBuf::from("/fixture/377/content/maps"));
-    assert_eq!(inputs.config_jag, PathBuf::from("/fixture/377/cache/config"));
+    assert_eq!(
+        inputs.config_jag,
+        PathBuf::from("/fixture/377/cache/config")
+    );
     assert_eq!(
         inputs.snapshot_root,
         Some(PathBuf::from("/fixture/377/unpack"))

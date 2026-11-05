@@ -329,8 +329,8 @@ mod tests {
         use client::io::ClientRevision;
 
         let bytes = include_bytes!("../data/game-data/377/debug.json");
-        let data = crate::game_data::for_revision(ClientRevision::R377)
-            .expect("selected 377 game data");
+        let data =
+            crate::game_data::for_revision(ClientRevision::R377).expect("selected 377 game data");
         let catalog = super::DebugCatalog::decode(bytes, ClientRevision::R377, data)
             .expect("the 377 debug asset matches the selected revision");
         assert_eq!(catalog.revision(), ClientRevision::R377);
@@ -347,8 +347,8 @@ mod tests {
     fn load_selects_the_377_debug_asset() {
         use client::io::ClientRevision;
 
-        let data = crate::game_data::for_revision(ClientRevision::R377)
-            .expect("selected 377 game data");
+        let data =
+            crate::game_data::for_revision(ClientRevision::R377).expect("selected 377 game data");
         let catalog =
             super::DebugCatalog::load(ClientRevision::R377, data).expect("loaded 377 debug asset");
         assert_eq!(catalog.revision(), ClientRevision::R377);
