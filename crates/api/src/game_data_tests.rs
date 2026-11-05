@@ -99,7 +99,10 @@ fn revision_377_refuses_unproved_effects_and_duel_buttons() {
         assert_eq!(duel.rule_button(bit), None, "unproved rule bit {bit}");
     }
     for bit in [0, 1, 4, 5, 6, 7, 8, 9, 10, 12, 13] {
-        assert!(duel.rule_button(bit).is_some(), "source-proven rule bit {bit}");
+        assert!(
+            duel.rule_button(bit).is_some(),
+            "source-proven rule bit {bit}"
+        );
     }
 }
 
