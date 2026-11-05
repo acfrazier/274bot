@@ -158,7 +158,10 @@ mod tests {
         };
         FamilyPreparation::run(move |worker| {
             let catalog = data.prepare_quests(worker).expect("prepared 377 quests");
-            assert!(!catalog.is_empty(), "the 377 quest family has identity rows");
+            assert!(
+                !catalog.is_empty(),
+                "the 377 quest family has identity rows"
+            );
             assert!(Arc::ptr_eq(
                 &catalog,
                 &data.try_quests().expect("preparation caches its catalog")

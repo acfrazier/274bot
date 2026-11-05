@@ -954,6 +954,37 @@ try {
 } finally {
     fs.writeFileSync(combatParamFile, combatParams);
 }
+
+// Every revision retains the declared default and validates explicit wire rates.
+fs.writeFileSync(combatParamFile, combatParams
+    .replace(declaredRate, '[attackrate]\ntype=int\ndefault=6')
+    + '[attackrange]\ntype=int\ndefault=0\n[levelrequire]\ntype=int\ndefault=0\n');
+try {
+    for (const revision of [274, 289, 377]) {
+        const weapon = (rate: number | string | undefined) => ({
+            id: 52,
+            category: 12,
+            params: new Map<number, number | string>(rate === undefined ? [] : [[9, rate]]),
+        });
+        const extractRate = (rate: number | string | undefined) =>
+            extractCombatStyleFacts(content, [weapon(rate)], [], combatScripts, true, revision).weapon_styles[0]!.attackrate;
+        assert.equal(extractRate(undefined), 6, `${revision}: selected attackrate fallback`);
+        for (const rate of [0, 4, 255]) {
+            assert.equal(extractRate(rate), rate, `${revision}: valid explicit attackrate ${rate}`);
+        }
+        assert.throws(() => extractRate('4'), /obj 52: attackrate is not numeric/, `${revision}: reject a string rate`);
+        for (const rate of [-1, 256, 1.5, NaN, Infinity, -Infinity]) {
+            assert.throws(
+                () => extractRate(rate),
+                new RegExp(`obj 52: attackrate ${String(rate).replace('.', '\\.')} is out of range`),
+                `${revision}: reject invalid explicit attackrate ${rate}`,
+            );
+        }
+    }
+} finally {
+    fs.writeFileSync(combatParamFile, combatParams);
+}
+
 const combatParamIds = parsePack(fs.readFileSync(path.join(pack, 'param.pack'), 'utf8'));
 const itemCombatBonuses = extractItemCombatBonus(content, [
     {
@@ -2770,6 +2801,16 @@ function trioGiverRow(facts: TrioGiverFacts, alias: string) {
 
 const trioGiverFacts = extractTrioGiversFacts(trioGiverFixture());
 
+const trioGiver377Root = trioGiverFixture((files) => {
+    files['scripts/_unpack/377/all.npc'] = Object.values(TRIO_GIVER_CONFIGS).map(file => files[file]).join('\n');
+    for (const file of Object.values(TRIO_GIVER_CONFIGS)) delete files[file];
+});
+const trioGiver377 = extractTrioGiversFacts(trioGiver377Root, 377);
+assert.deepEqual(trioGiver377, trioGiverFacts, '377 joins its actual unpacked NPC configs without legacy per-area paths');
+fs.rmSync(path.join(trioGiver377Root, 'scripts/_unpack/377/all.npc'));
+assert.throws(() => extractTrioGiversFacts(trioGiver377Root, 377), /all\.npc: required file missing/);
+fs.rmSync(trioGiver377Root, { recursive: true });
+
 // The closed set in file order: one row per giver, one packed id, one .npc name,
 // one world tile converted from the mapsquare filename and the local coordinates.
 assert.deepEqual(trioGiverFacts, {
@@ -3082,6 +3123,7 @@ assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.rmSy
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.rmSync(path.join(rootDir, 'maps'), { recursive: true }))), /maps.*required directory missing|ENOENT/);
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.writeFileSync(path.join(rootDir, 'maps/m50_50.jm2'), '==== LOC ====\n0 10 10: 2092 10 0 extra tokens\n'))), /tokens/);
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/skill_mining/configs/mine.dbrow', 'data=rock,copperrock1', 'data=rock,not_a_packed_loc'))), /failed join/);
+
 
 
 
@@ -3662,6 +3704,7 @@ default=1000
         fs.mkdirSync(path.dirname(path.join(content, relative)), { recursive: true });
         fs.writeFileSync(path.join(content, relative), text);
     }
+
     const selected = extractCookSurfaces(content, undefined, 377);
     assert.deepEqual(selected.facts.rows, [
         { x: 3201, z: 3202, level: 0, name: 'Selected oven', debugname: 'new_oven', kind: 'oven' },
@@ -3706,7 +3749,8 @@ if (process.env.GAME_DATA_377_CONTENT) {
     assert.deepEqual(payload.spells, magic377.spells);
     assert.deepEqual(payload.staves, magic377.staves);
     assert.deepEqual(payload.herbs, extractHerbFacts(spec377.content, decoded377Items, 377).herbs);
-    assert.deepEqual(payload.equipment_names, extractEquipmentNamesFacts(payload.items, parsePack(fs.readFileSync(path.join(spec377.content, 'pack/obj.pack'), 'utf8')), repoRoot, 377));
+    const equipment377 = extractEquipmentNamesFacts(payload.items, parsePack(fs.readFileSync(path.join(spec377.content, 'pack/obj.pack'), 'utf8')), repoRoot, 377);
+    assert.deepEqual(payload.equipment_names, JSON.parse(JSON.stringify(equipment377)), 'the wire omits undefined optional metadata');
     assert.deepEqual(payload.cook_surfaces, extractCookSurfaces(spec377.content, undefined, 377).facts);
     const aliases377 = new Map<number, string>();
     for (const item of payload.items) if (typeof item.alias === 'string') aliases377.set(item.id, item.alias);
