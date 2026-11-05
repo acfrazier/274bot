@@ -61,10 +61,19 @@ The verifier reruns the 377 extractors into a temporary directory and compares
 all four artifacts and the complete manifest row. It does not change the
 historical verifier's checks or require byte equality with 289 facts.
 
+Weapon attack rates must be integers in `0..=255` for every revision, including
+explicit per-object parameters. An invalid rate refuses generation with its
+object ID; it is not clamped or replaced by a default. Missing rates retain the
+historical default of 4 for 274/289; 377 reads and validates its selected
+`combat.param` default before validating each resolved weapon rate.
+
 The initial nav bake verifies the quest family through the offline upstream
 identity seam, before nav/flag hashes exist. Rebind the core and manifest to the
 real bake's hashes afterward. Runtime selection still requires the complete
 selected pin; an offline bake identity is not a runtime pin.
+
+The committed manifest's 377 row records the current real nav/flag digests.
+Rebinding changes those identities, not the offline/runtime verification boundary.
 
 The 377 core records named `UNKNOWN` gaps in `coverage`. In particular, it does
 not inherit the 289 autocast control contract, special-attack arm timing, the
@@ -78,6 +87,8 @@ neither alone proves the existing single-root contract.
 Frozen equipment and bank lists select queries, not numeric 377 facts: resolved
 rows must join the selected configs, packs and map placements. Missing matches
 remain absent or explicitly missing.
+Same-name eligible variants remain ambiguous with their selected candidate IDs;
+the frozen query does not establish a preferred 377 variant.
 The NPC attack-kind field is nullable for both proven melee and unclassified
 custom attack bodies. The 377 coverage record names this schema limit as
 UNKNOWN; a null value is not an independent melee-only proof.

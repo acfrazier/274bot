@@ -833,6 +833,7 @@ export function extractCombatStyleFacts(
         const rawRate = parameterValue(object.params, paramIds, 'attackrate');
         if (rawRate !== undefined && typeof rawRate !== 'number') throw new Error(`obj ${object.id}: attackrate is not numeric`);
         const attackrate = rawRate ?? attackrateDefault;
+        if (!Number.isInteger(attackrate) || attackrate < 0 || attackrate > 255) throw new Error(`obj ${object.id}: attackrate ${attackrate} is out of range`);
         const tab = combatTabs.byCategory.has(category)
             ? combatTabs.byCategory.get(category) ?? null
             : combatTabs.fallback;
