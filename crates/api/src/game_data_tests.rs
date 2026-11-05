@@ -11,6 +11,10 @@ fn raw_game_data(revision: ClientRevision) -> Option<Vec<u8>> {
             concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
             "revision 289 game data for API tests",
         ),
+        ClientRevision::R377 => (
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/377.json"),
+            "revision 377 game data for API tests",
+        ),
     };
     let path = crate::test_support::local_asset_path("", path, description)?;
     Some(
@@ -33,7 +37,7 @@ fn raw_debug_catalog() -> Option<Vec<u8>> {
 
 #[test]
 fn generated_game_data_gzip_preserves_every_source_byte() {
-    for revision in [ClientRevision::R274, ClientRevision::R289] {
+    for revision in [ClientRevision::R274, ClientRevision::R289, ClientRevision::R377] {
         let Some(source) = raw_game_data(revision) else {
             return;
         };
@@ -41,6 +45,7 @@ fn generated_game_data_gzip_preserves_every_source_byte() {
         let compressed = Some(match revision {
             ClientRevision::R274 => REVISION_274,
             ClientRevision::R289 => REVISION_289,
+            ClientRevision::R377 => REVISION_377,
         });
         #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
         let compressed: Option<&[u8]> = None;
@@ -59,6 +64,19 @@ fn generated_game_data_gzip_preserves_every_source_byte() {
             revision.as_i32()
         );
     }
+}
+
+#[test]
+fn revision_377_selects_and_shares_its_actual_core_asset() {
+    let Some(data) = crate::game_data::test_data(ClientRevision::R377) else {
+        return;
+    };
+    assert_eq!(data.revision(), 377);
+    assert_eq!(data.selected_revision(), Some(ClientRevision::R377));
+    assert!(Arc::ptr_eq(
+        &data,
+        &for_revision(ClientRevision::R377).expect("cached 377 game data")
+    ));
 }
 
 #[test]
@@ -1174,6 +1192,70 @@ fn partial_quest_identity_row_decodes() {
     assert_eq!(facts.rows[0].requirements.qualification, "partial");
     assert!(!facts.rows[0].requirements.unknown_as_satisfied);
     assert!(facts.coverage.is_empty());
+}
+
+#[test]
+fn revision_377_quest_identity_accepts_named_unknown_sides_only() {
+    for &side in QUEST_IDENTITY_UNKNOWN_SIDES {
+        let mut wire: serde_json::Value =
+            serde_json::from_str(&minimal_json("")).expect("minimal selected data");
+        wire["revision"] = serde_json::json!(377);
+        wire["quest_identity"] = serde_json::json!({
+            "rows": [{
+                "id": "test",
+                "component": "test",
+                "display": "Test",
+                "varp": "test",
+                "varp_id": 1,
+                "complete": 1,
+                "quest_points": 1,
+                "unknown_sides": [side],
+                "requirements": {
+                    "qualification": "partial",
+                    "skills": [],
+                    "items": [],
+                    "empty_must_have": true,
+                    "unknown_as_satisfied": false
+                }
+            }],
+            "coverage": []
+        });
+        let bytes = serde_json::to_vec(&wire).expect("serialized test facts");
+        let data = SelectedGameData::decode(bytes.as_slice(), ClientRevision::R377)
+            .expect("the named unknown side is representable");
+        assert_eq!(
+            data.quest_identity().expect("quest facts").rows[0].unknown_sides,
+            vec![side.to_string()]
+        );
+    }
+
+    let mut wire: serde_json::Value =
+        serde_json::from_str(&minimal_json("")).expect("minimal selected data");
+    wire["revision"] = serde_json::json!(377);
+    wire["quest_identity"] = serde_json::json!({
+        "rows": [{
+            "id": "test",
+            "component": "test",
+            "display": "Test",
+            "varp": "test",
+            "varp_id": 1,
+            "complete": 1,
+            "quest_points": 1,
+            "unknown_sides": ["future_side"],
+            "requirements": {
+                "qualification": "partial",
+                "skills": [],
+                "items": [],
+                "empty_must_have": true,
+                "unknown_as_satisfied": false
+            }
+        }],
+        "coverage": []
+    });
+    let bytes = serde_json::to_vec(&wire).expect("serialized test facts");
+    let error = SelectedGameData::decode(bytes.as_slice(), ClientRevision::R377)
+        .expect_err("unknown vocabulary values are refused");
+    assert!(error.contains("unsupported unknown_sides"), "{error}");
 }
 
 #[test]
