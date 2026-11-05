@@ -30,13 +30,13 @@ for its runtime pins and rule-change process. This repo holds the
 local-convenience-only runner `tools/architecture/run.sh`, which fetches
 `274bot-arch` `main` into a local cache and runs it against a tree. CI
 does not use the runner and never executes a candidate-tree script. The
-fine data the checker reads — exactly `tools/architecture/ownership.json`,
-`tools/architecture/inventories.json`, and
-`tools/architecture/foreign_types.json` — stays in this repo beside the
-runner and is reviewed like code. Everything that creates or activates the
-graph stays protected: workspace members, edges/kinds/migrations, the
-configuration feature/activation fields (including optional-dependency
-activation), and the graph provenance baseline.
+only candidate-side rule input is semantic foreign-type classification in
+`tools/architecture/foreign_types.json`, reviewed like code. The checker derives
+seam ownership classes from syntax. Exact existing seam/import exceptions live
+in protected `seam-exceptions.json`; candidate code cannot add an exception.
+There is no file-owner ledger, exhaustive type/test registry, `thread_local!`
+inventory or graph-provenance baseline. Workspace members, edges, kinds,
+per-kind feature limits and supported feature configurations stay protected.
 Agents and Main use the same runner locally.
 
 ```bash
@@ -102,7 +102,7 @@ Unicode look-alike names are outside this refusal because Cargo on Linux does no
 One limit stays with review. A product build script can rewrite a vendored
 manifest on disk during a CI job, between steps.
 The checker reads committed manifests only. It does not run build scripts.
-A new `build.rs` needs an ownership row, so a reviewer sees it.
+Build-script behavior remains a review requirement; no file-owner row is required.
 Dependency aliases are tracked by package name, not by alias or version.
 Default-feature and dev-dependency activation is checked for every protected
 member and listed path package, even when no named configuration reaches it.
@@ -124,14 +124,14 @@ candidate-tree script (including `tools/architecture/run.sh`) and has no
 `clippy`, or `test`. Those gates stay as they are.
 
 The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml):
-workspace members, edges with their kinds and migrations, and the
-configuration feature/activation fields, all protected. The fine data lives
-beside the runner and is reviewed like code:
-[`tools/architecture/ownership.json`](../../tools/architecture/ownership.json),
-[`tools/architecture/inventories.json`](../../tools/architecture/inventories.json),
+workspace members, edges with their kinds and migrations, dependency feature
+limits and supported feature configurations are protected. A feature-limited
+edge must disable dependency defaults and may request only its listed features.
+The tooling-only bake and planner normal API edges request no embedding; their
+test-only API edges may enable `embedded-game-data`, not raw packet recorders.
+Semantic foreign-type classification stays in
 [`tools/architecture/foreign_types.json`](../../tools/architecture/foreign_types.json).
-The checker loads that data from the checked tree, refuses malformed or
-stale data, and cannot widen the protected edge policy.
+No candidate ownership, seam-type or test-exception inventory is loaded.
 Every workspace member must appear in protected `policy.toml`. Every edge
 the manifests declare needs an `[[allow]]` or migration with its kind.
 Unknown members and unlisted edges fail closed. crates.io and other
@@ -146,7 +146,7 @@ workspace member; it is listed as an architecture external.
 | `vault` | Encrypted profile store, secret strings, owner-only file helpers | A dependant of api/host/ui |
 | `api` | Host-facing read/act/settle types mapped onto `client`; selected game facts | A dependant of host, nav, script, or UI |
 | `host` | Native slot/tick APIs, login FIFO, guardian | A dependant of nav, script, host-play, or UI |
-| `nav` | Packed world, router, map data | Script isolate or operator UI |
+| `nav-planner` | Packed world, router, map data | Script isolate or operator UI |
 | `nav-executor` | Pollable `Traveller` follow run, walk and transport hops | Planner search, script isolate, or operator UI |
  | `script` | Native card machines (Quester, Gatherer, Combat), slot lifecycle and typed native facades over the packed world | A production dependant of `client`; a JS runtime owner |
  | `script-js` | JS runtime: V8 isolate, compat machines (including Sherlock and the clue machine), catalog and library, isolate wire schema and JS assets | A native card owner; a production dependant of `client` except through dev fixtures |
@@ -214,17 +214,18 @@ graph, derived from the manifests:
   from the **member** table. `[workspace.dependencies]` cannot set
   `optional` (Cargo: "workspace dependencies cannot be optional"); that
   form is rejected rather than inherited.
- - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
-   (bake/stage nav identity). Both kinds are listed.
+ - **`host-play` → `nav-planner`** is a runtime edge. The std-only host build
+   stages local nav payloads; it neither builds nor invokes the bake tool.
  - **`script-js` → `client` and `script-js` → `nav-planner` are `[dev-dependencies]` only.** Production JS code uses the Core `script` nav facade. Promoting either to a normal dependency fails the checker.
  - **`host-play` → `script-js` and `frontend-core` → `script-js` are optional production edges enabled by `js`.** Both consumers also declare dev edges for test fixtures. With `js`, the slot binds the JS surface factory and hosts install its cards with `script_js::install_cards()`. Native-only builds do not construct a JS library or bind that factory.
 
 For a new edge, kind, migration, optional-dependency activation, vendored path
 package, or checker change, follow [Changing a boundary](#changing-a-boundary).
-Include the regenerated baseline in the same arch commit as the protected
-rule change. Outside the pinned client manifests, purely local features without
-optional or cross-crate activation need no operator commit. Ownership, inventory, and foreign-type rows remain
-ordinary product diffs. Do not add a second hidden graph.
+Propose the protected rule change with its reason and semantic test evidence.
+There is no generated provenance baseline to refresh. Outside the pinned client
+manifests, purely local features without optional or cross-crate activation need
+no operator commit. Semantic foreign-type classification is ordinary reviewed
+product data; candidate inventory exceptions are not. Do not add a hidden graph.
 
 ## Cargo features
 
@@ -407,19 +408,18 @@ five existing files from `target/local-data/nav/<revision>/`. The
 tooling edge.
 
 
-The planner's and baker's `clippy.toml` files deny action types, functions, methods, and
-macros by compiler identity. `tools/architecture/nav_clippy.py --write`
-generates the lists and their inventory from rustdoc JSON.
-`python3 -B tools/architecture/nav_clippy.py --check` checks the inventory
-and runs the external-crate probes. The Clippy CI job runs this check.
-The inventory reads `api` with default features and `client` with default and
-`test-support` features. This includes feature-gated seed items such as
-`client::io::client_stream::connect_ws_plain` in the generated deny list.
+The planner's and baker's `clippy.toml` files deny action types, functions,
+methods and macros by compiler identity. `tools/architecture/nav_clippy.py
+--write` derives those lists from Rustdoc JSON.
+`python3 -B tools/architecture/nav_clippy.py --check` derives the current deny
+surface, compares the actual Clippy files and runs the external-crate probes.
+The CI step stays in place. There is no stored public-item or source-hash
+baseline, so a source-only edit does not need a baseline refresh.
 
-The inventory includes public constants and statics, which Clippy cannot
-deny as values. The compiler check rejects new wrappers of denied types
-that these lints cannot detect. Source hashes also detect changes to
-inactive, feature-gated seed code.
+The compiler profiles read `api` with default features and `client` with
+default plus `test-support` features. This includes gated methods such as
+`client::io::client_stream::connect_ws_plain`. The probes retain their actual
+denial assertions and documented value-read limits.
 
 The exact compiler-lint limit is a value-only read of an external constant
 or static: `let _ = &api::S`, `let _ = api::C`, or
@@ -436,19 +436,12 @@ World-state unit tests use import- and function-level expects to construct
 a cache-less client and populate snapshot families. These method expects
 are test-only. The production planner has no method-lint exception.
 
-Both scans read the standard Cargo roots: `build.rs`, `src/main.rs`,
-`src/lib.rs`, each direct `src/bin/*.rs`, each direct `examples/*.rs`, and
-each direct `tests/*.rs`. They also follow attached modules and `include!`
-files. They report unsupported source forms and unattached Rust files under
-`src`.
-
-The `nav` scan rejects production paths to const, static, and associated-
-constant values in the generated `api` and `client` seed inventory. It
-ignores those value paths in test scope. It does not replace Clippy's
-compiler-resolved action checks.
-
-The `nav-executor` scan enforces separate production and test allowlists for
-`nav` paths in executor source. It does not scan planner source in `nav`.
+The protected source checker enforces the retained script and frontend-core
+navigation/client boundaries and owning/borrowed/scalar seams. These syntax
+checks complement, but do not replace, the compiler-resolved Clippy action
+denials. Neither a source hash nor a per-file inventory claims coverage of
+inactive cfg items; the compiler profiles and explicit probes define that
+coverage.
 
 ### nav-executor
 

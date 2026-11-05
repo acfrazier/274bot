@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 """Generate the nav action deny list from compiler-resolved Rustdoc items.
 
-The inventory reads ``api`` with default features and ``client`` with default
+The deny list reads ``api`` with default features and ``client`` with default
 features plus ``test-support``. The wider client profile includes methods that
 Cargo feature unification can expose to planner production code.
 The generated config marks feature-gated paths ``allow-invalid`` when the
-default build cannot resolve them.
-SHA-256 rows for each seed module's source files and subtrees make edits,
-including inactive ``cfg`` declarations and relocated exported macros,
-require a deliberate baseline refresh.
+default build cannot resolve them. Checks derive the deny surface from the
+compiler and compare the actual Clippy configuration; there is no source-hash
+or public-item inventory baseline. Compiler probes retain the denial checks.
 """
 
 from __future__ import annotations
 
 import argparse
 import bisect
-import hashlib
 import json
 import os
 import shutil
@@ -31,7 +29,6 @@ CONFIG_PATHS = (
     ROOT / "crates" / "nav-planner" / "clippy.toml",
     ROOT / "crates" / "nav-bake" / "clippy.toml",
 )
-INVENTORY_PATH = ROOT / "tools" / "architecture" / "nav-clippy-inventory.json"
 PROBE_SOURCE = ROOT / "tools" / "architecture" / "nav_clippy_probes.rs"
 PROBE_MANIFEST = ROOT / "tools" / "architecture" / "nav_clippy_probes.json"
 EXTERNAL_FACADE_SOURCE = ROOT / "tools" / "architecture" / "nav_clippy_external_facade" / "src" / "lib.rs"
@@ -56,29 +53,6 @@ FEATURED_SEED_METHODS = {
     "client/test-support": ("client::io::client_stream::connect_ws_plain",),
 }
 
-SOURCE_FILES = [
-    "crates/api/src/lib.rs",
-    "crates/api/src/interact.rs",
-    "crates/api/src/settle.rs",
-    "crates/api/src/prot.rs",
-    "vendor/fr-client-rust/crates/client/src/lib.rs",
-    "vendor/fr-client-rust/crates/client/src/client/mod.rs",
-    "vendor/fr-client-rust/crates/client/src/client/client.rs",
-    "vendor/fr-client-rust/crates/client/src/io/mod.rs",
-    "vendor/fr-client-rust/crates/client/src/io/client_prot.rs",
-    "vendor/fr-client-rust/crates/client/src/io/client_prot_289.rs",
-    "vendor/fr-client-rust/crates/client/src/io/client_stream.rs",
-]
-
-SOURCE_SUBTREES = [
-    "crates/api/src/interact",
-    "crates/api/src/settle",
-    "crates/api/src/prot",
-    "vendor/fr-client-rust/crates/client/src/client/client",
-    "vendor/fr-client-rust/crates/client/src/io/client_prot",
-    "vendor/fr-client-rust/crates/client/src/io/client_prot_289",
-    "vendor/fr-client-rust/crates/client/src/io/client_stream",
-]
 
 LINT_NAMES = {
     "type": "types",
@@ -936,44 +910,9 @@ class SeedCollector:
             if referenced_types & denied_types
         ]
 
-def source_hashes() -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
-    file_hashes: dict[str, str] = {}
-    for relative in SOURCE_FILES:
-        path = ROOT / relative
-        if not path.is_file():
-            raise InventoryError(f"seed source file is missing: {relative}")
-        file_hashes[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-
-    subtree_rows: list[dict[str, Any]] = []
-    for relative in SOURCE_SUBTREES:
-        root = ROOT / relative
-        files = sorted(path for path in root.rglob("*.rs") if path.is_file()) if root.is_dir() else []
-        subtree_hash = hashlib.sha256()
-        file_names: list[str] = []
-        for path in files:
-            source_path = path.relative_to(ROOT).as_posix()
-            contents_hash = hashlib.sha256(path.read_bytes()).digest()
-            file_hashes[source_path] = contents_hash.hex()
-            subtree_hash.update(source_path.encode("utf-8"))
-            subtree_hash.update(b"\0")
-            subtree_hash.update(contents_hash)
-            subtree_hash.update(b"\n")
-            file_names.append(source_path)
-        subtree_rows.append(
-            {
-                "path": relative,
-                "sha256": subtree_hash.hexdigest(),
-                "files": file_names,
-            }
-        )
-    file_rows = [
-        {"path": path, "sha256": digest}
-        for path, digest in sorted(file_hashes.items())
-    ]
-    return file_rows, sorted(subtree_rows, key=lambda row: row["path"])
 
 
-def build_inventory() -> dict[str, Any]:
+def derive_deny_surface() -> dict[str, Any]:
     target_dir = cargo_target_directory()
     docs: dict[str, Rustdoc] = {}
     for package_name, features in RUSTDOC_FEATURES.items():
@@ -1007,27 +946,12 @@ def build_inventory() -> dict[str, Any]:
         collector.external_aliases.values(),
         key=lambda alias: (alias["path"], alias["kind"], alias["target"]),
     )
-    source_files, source_subtrees = source_hashes()
     return {
-        "schema": 2,
-        "rustdoc_features": {
-            crate: ["default", *features]
-            for crate, features in RUSTDOC_FEATURES.items()
-        },
-        "coverage_limits": [
-            "Inactive cfg items are not resolved into Clippy paths; edits to seed source files and subtrees change the SHA-256 tripwires.",
-            "Exported macros relocated to crate root are source-hashed but are not name-resolved from the seed module by this inventory.",
-            "Aliases defined by unrelated third-party crates are not enumerable; public seed-crate reexports and type aliases are added as deny paths.",
-            "Value-only reads of public const/static items are not caught by Clippy; external value-read controls B1-B3 document this limit, and seed-backed typed values are enumerated in unlinted_value_items.",
-        ],
-        "seeds": [seed for crate_seeds in SEEDS.values() for seed in crate_seeds],
         "clippy_paths": clippy_paths,
         "public_items": items,
         "external_aliases": external_aliases,
         "value_items": value_items,
         "unlinted_value_items": unlinted_values,
-        "source_files": source_files,
-        "source_subtrees": source_subtrees,
     }
 
 
@@ -1035,11 +959,11 @@ def toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
-def config_text(inventory: dict[str, Any]) -> str:
+def config_text(surface: dict[str, Any]) -> str:
     lines = [
         "# Generated by tools/architecture/nav_clippy.py. Do not edit by hand.",
         "# Paths include public seed items, reexports, and public aliases of seed types.",
-        "# Value-only const/static uses are inventoried but not denied by Clippy.",
+        "# Value-only const/static reads are not denied by Clippy; compiler probes record this limit.",
         "",
         "allow-unwrap-in-tests = true",
     ]
@@ -1047,13 +971,13 @@ def config_text(inventory: dict[str, Any]) -> str:
     featured_methods = {
         path for paths in FEATURED_SEED_METHODS.values() for path in paths
     }
-    for option, inventory_key in (
+    for option, lint_key in (
         ("disallowed-types", "types"),
         ("disallowed-methods", "methods"),
         ("disallowed-macros", "macros"),
     ):
         lines.extend(["", f"{option} = ["])
-        for path in inventory["clippy_paths"][inventory_key]:
+        for path in surface["clippy_paths"][lint_key]:
             allow_invalid = (
                 ", allow-invalid = true"
                 if option == "disallowed-methods" and path in featured_methods
@@ -1074,77 +998,38 @@ def write_atomic(path: Path, content: str) -> None:
     os.replace(temporary, path)
 
 
-def inventory_diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
-    lines: list[str] = []
-    for collection, label, key_field in (
-        ("public_items", "item", "path"),
-        ("external_aliases", "external-alias", "path"),
-        ("unlinted_value_items", "unlinted-value", "path"),
-        ("source_files", "source-file", "path"),
-        ("source_subtrees", "source-subtree", "path"),
-    ):
-        old_rows = {
-            f"{row[key_field]}|{row.get('kind', '')}": row
-            for row in old.get(collection, [])
-        }
-        new_rows = {
-            f"{row[key_field]}|{row.get('kind', '')}": row
-            for row in new.get(collection, [])
-        }
-        for key in sorted(new_rows.keys() - old_rows.keys()):
-            lines.append(f"+ {label}: {key}")
-        for key in sorted(old_rows.keys() - new_rows.keys()):
-            lines.append(f"- {label}: {key}")
-        for key in sorted(old_rows.keys() & new_rows.keys()):
-            if old_rows[key] != new_rows[key]:
-                lines.append(f"~ {label}: {key}")
-    return lines
 
 
 def write_generated_files() -> None:
-    inventory = build_inventory()
-    write_atomic(INVENTORY_PATH, json.dumps(inventory, indent=2, sort_keys=True) + "\n")
+    surface = derive_deny_surface()
+    config = config_text(surface)
     for path in CONFIG_PATHS:
-        write_atomic(path, config_text(inventory))
+        write_atomic(path, config)
     print(
-        "Generated nav Clippy inventory: "
-        f"{len(inventory['public_items'])} public paths, "
-        f"{len(inventory['clippy_paths']['types'])} types, "
-        f"{len(inventory['clippy_paths']['methods'])} methods, "
-        f"{len(inventory['clippy_paths']['macros'])} macros, "
-        f"{len(inventory['external_aliases'])} external aliases, "
-        f"{len(inventory['unlinted_value_items'])} unlinted typed values, "
-        f"{len(inventory['source_files'])} source files and "
-        f"{len(inventory['source_subtrees'])} source subtrees."
+        "Generated nav Clippy deny lists: "
+        f"{len(surface['clippy_paths']['types'])} types, "
+        f"{len(surface['clippy_paths']['methods'])} methods, "
+        f"{len(surface['clippy_paths']['macros'])} macros."
     )
 
 
 def check_generated_files() -> bool:
-    inventory = build_inventory()
-    if not INVENTORY_PATH.is_file() or any(not path.is_file() for path in CONFIG_PATHS):
-        print("Missing generated nav Clippy files. Run --write first.", file=sys.stderr)
-        return False
-    expected_inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+    surface = derive_deny_surface()
+    expected_config = config_text(surface)
     okay = True
-    if inventory != expected_inventory:
-        print("nav Clippy inventory differs from its Rustdoc/source-hash baseline:", file=sys.stderr)
-        changes = inventory_diff(expected_inventory, inventory)
-        for line in changes:
-            print(line, file=sys.stderr)
-        if not changes:
-            print("~ inventory metadata or derived Clippy paths", file=sys.stderr)
-        okay = False
-    expected_config = config_text(inventory)
     for path in CONFIG_PATHS:
-        if path.read_text(encoding="utf-8") != expected_config:
-            print(f"{path.relative_to(ROOT)} differs from the generated deny list.", file=sys.stderr)
+        if not path.is_file():
+            print(f"Missing {path.relative_to(ROOT)}. Run --write first.", file=sys.stderr)
+            okay = False
+        elif path.read_text(encoding="utf-8") != expected_config:
+            print(f"{path.relative_to(ROOT)} differs from the compiler-derived deny list.", file=sys.stderr)
             okay = False
     if okay:
         print(
-            "nav Clippy inventory is current: "
-            f"{len(inventory['public_items'])} public paths, "
-            f"{len(inventory['value_items'])} values and "
-            f"{len(inventory['source_files'])} source files explicitly inventoried."
+            "nav Clippy deny lists match the compiler-derived surface: "
+            f"{len(surface['public_items'])} public paths and "
+            f"{len(surface['value_items'])} values; "
+            f"{len(surface['unlinted_value_items'])} typed values retain the documented value-read limit."
         )
     return okay
 
@@ -1640,7 +1525,7 @@ def run_probes() -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--write", action="store_true", help="Generate clippy.toml and its inventory baseline")
+    mode.add_argument("--write", action="store_true", help="Generate compiler-derived clippy.toml deny lists")
     mode.add_argument("--check", action="store_true", help="Check Rustdoc coverage, generated config, and compiler probes")
     mode.add_argument("--probes-only", action="store_true", help="Run only the compiler-resolved Clippy probes")
     args = parser.parse_args()
@@ -1650,9 +1535,9 @@ def main() -> int:
             return 0
         if args.probes_only:
             return 0 if run_probes() else 1
-        inventory_ok = check_generated_files()
+        deny_lists_ok = check_generated_files()
         probes_ok = run_probes()
-        return 0 if inventory_ok and probes_ok else 1
+        return 0 if deny_lists_ok and probes_ok else 1
     except (InventoryError, OSError, json.JSONDecodeError) as error:
         print(f"nav Clippy check failed: {error}", file=sys.stderr)
         return 1
