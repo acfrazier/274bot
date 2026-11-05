@@ -118,7 +118,6 @@ pub(crate) fn prepare(
     let pin = data.selected_pin()?;
     CACHE.prepare(Key::of(&pin), || load(&pin, MANIFEST, embedded(pin.revision)))
 }
-
 /// Return a prepared catalog without decoding or waiting for a preparation.
 pub(crate) fn cached(data: &SelectedGameData) -> Option<Arc<QuestCatalog>> {
     let pin = data.selected_pin().ok()?;

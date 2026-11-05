@@ -16,6 +16,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 - Revision 377 cache manifests now pass the navigation identity checks.
   Revision mismatches and changed archive bytes still fail.
+- The existing navigation baker accepts explicit revision 377 inputs and
+  reads their config through the revision-377 decoder. The pack format
+  remains version 17.
+- Revision 377's named Lumbridge stair handlers retain their script-derived
+  landings and one-tick cost. An explicit real-pack qualification covers
+  city routes, bidirectional doors, stairs and the Port Sarim ship journey.
 - An offline quest-family bake verifies the actual core, manifest, family
   bytes and source provenance before navigation exists. Runtime selected pins
   still require the final real navigation and flags digests.
@@ -23,6 +29,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Client-derived image/catalogue jobs keep their existing decoder admission,
   and sidecar revision and digest mismatches still fail.
 
+### Host
+
+- Adds explicit `local-377` host selection with revision-specific strict
+  cache decoding and bundled navigation admission. Other revision defaults
+  and all navigation digest/provenance checks stay unchanged.
+- Adds the `client_377` direct-walk and Hans interaction proof scenario.
 ### Gatherer
 
 - After a death, the Gatherer no longer stops on the first blocked step of its

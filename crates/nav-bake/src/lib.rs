@@ -27,7 +27,7 @@ pub enum GenerationError {
     #[error(transparent)]
     Canlight(#[from] canlight::CanlightError),
     /// A selected release revision is not supported.
-    #[error("unsupported revision {revision}; use 274 or 289")]
+    #[error("unsupported revision {revision}; use 274, 289 or 377")]
     UnsupportedRevision { revision: u16 },
     /// A selected revision's embedded game data could not be loaded.
     #[error("{detail}")]
@@ -71,6 +71,13 @@ pub enum GenerationError {
     ConfigCacheMismatch {
         revision: u16,
         path: std::path::PathBuf,
+    },
+    /// The revision-377 config archive could not be decoded.
+    #[error("revision 377 config {path}: {source}")]
+    ConfigDecode377 {
+        path: std::path::PathBuf,
+        #[source]
+        source: client::config::config_377::DecodeError377,
     },
     /// The decoded cache identity could not be computed.
     #[error(transparent)]
