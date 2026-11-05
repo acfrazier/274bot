@@ -123,7 +123,9 @@ fn manifest_capture_failures_have_typed_causes() {
 fn revision_377_manifest_keeps_profile_and_content_binding() {
     let cache = CacheManifest {
         revision: 377,
-        archives: [("config".to_owned(), "cd".repeat(32))].into_iter().collect(),
+        archives: [("config".to_owned(), "cd".repeat(32))]
+            .into_iter()
+            .collect(),
     };
     let manifest = capture_nav_manifest(377, &cache, b"nav", None, None, None, None, 3, 2).unwrap();
     manifest
