@@ -1542,9 +1542,8 @@ fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {
 
 #[test]
 fn native_food_guard_uses_bound_377_tables_for_condition_and_food_rows() {
-    let selected =
-        api::game_data::for_revision(api::selected::ClientRevision::R377)
-            .expect("selected revision 377 facts");
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected revision 377 facts");
     let food = selected
         .item_by_alias("cooked_chompy")
         .expect("revision 377 cooked chompy");
@@ -1602,7 +1601,10 @@ fn native_food_guard_uses_bound_377_tables_for_condition_and_food_rows() {
     assert_eq!(combat.selected().revision(), 377);
     assert!(Arc::ptr_eq(combat.selected(), &selected));
     assert_eq!(
-        combat.food(food_id).expect("selected cooked-chompy row").heal,
+        combat
+            .food(food_id)
+            .expect("selected cooked-chompy row")
+            .heal,
         selected
             .consumable("cooked_chompy")
             .expect("selected food fact")
