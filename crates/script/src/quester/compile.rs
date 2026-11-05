@@ -562,6 +562,7 @@ pub fn compile_path_for_gang(
     let revision = match selected.revision() {
         274 => 274,
         289 => 289,
+        377 => 377,
         _ => return Err(CompileError::code("unsupported-revision")),
     };
     let key = CacheKey {
