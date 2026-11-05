@@ -14,13 +14,13 @@ use std::sync::Arc;
 
 const QUESTS_274: &[u8] = include_bytes!("../../data/game-data/274/quests.json");
 const QUESTS_289: &[u8] = include_bytes!("../../data/game-data/289/quests.json");
+const QUESTS_377: &[u8] = include_bytes!("../../data/game-data/377/quests.json");
 
-fn embedded(revision: ClientRevision) -> Result<&'static [u8], FactError> {
+fn embedded(revision: ClientRevision) -> &'static [u8] {
     match revision {
-        ClientRevision::R274 => Ok(QUESTS_274),
-        ClientRevision::R289 => Ok(QUESTS_289),
-        ClientRevision::R377 => Err(FactError::FamilyUnavailable(QUESTS_FAMILY.clone())),
-
+        ClientRevision::R274 => QUESTS_274,
+        ClientRevision::R289 => QUESTS_289,
+        ClientRevision::R377 => QUESTS_377,
     }
 }
 
@@ -46,16 +46,16 @@ struct Slot {
     identity: QuestFamilyIdentity,
 }
 
-/// Slots hold only the two pinned revisions. Lookup locks never wait for decode.
+/// Slots hold only the three pinned revisions. Lookup locks never wait for decode.
 struct Cache {
-    slots: Mutex<[Option<Slot>; 2]>,
+    slots: Mutex<[Option<Slot>; 3]>,
     preparing: Mutex<()>,
 }
 
 impl Cache {
     const fn new() -> Self {
         Self {
-            slots: Mutex::new([None, None]),
+            slots: Mutex::new([None, None, None]),
             preparing: Mutex::new(()),
         }
     }
@@ -116,11 +116,9 @@ pub(crate) fn prepare(
     _worker: &mut FamilyPreparation,
 ) -> Result<Arc<QuestCatalog>, FactError> {
     let pin = data.selected_pin()?;
-    CACHE.prepare(Key::of(&pin), || {
-        load(&pin, MANIFEST, embedded(pin.revision)?)
-    })
-
+    CACHE.prepare(Key::of(&pin), || load(&pin, MANIFEST, embedded(pin.revision)))
 }
+
 /// Return a prepared catalog without decoding or waiting for a preparation.
 pub(crate) fn cached(data: &SelectedGameData) -> Option<Arc<QuestCatalog>> {
     let pin = data.selected_pin().ok()?;
@@ -144,13 +142,14 @@ fn load(
 }
 
 /// The offline bake consumes identity rows, not a runtime progress catalog.
-/// Keep verification shared with normal worker preparation while avoiding
-/// construction of a catalog that the bake would immediately discard.
+/// Authenticate the decoded core and artifact against the same manifest even
+/// before nav/flags exist; runtime preparation still requires SelectedPin.
 pub(crate) fn for_bake(
     data: &SelectedGameData,
+    manifest: &[u8],
 ) -> Result<(crate::game_data::QuestIdentityFacts, QuestFamilyIdentity), FactError> {
-    let pin = data.selected_pin()?;
-    verified_identity(&pin, MANIFEST, embedded(pin.revision)?)
+    let source = data.family_source_for_bake(manifest)?;
+    verified_source_identity(&source, manifest, embedded(source.revision))
 }
 
 fn verified_identity(
@@ -158,13 +157,21 @@ fn verified_identity(
     manifest: &[u8],
     family: &[u8],
 ) -> Result<(crate::game_data::QuestIdentityFacts, QuestFamilyIdentity), FactError> {
+    verified_source_identity(&family_asset::FamilySource::from(pin), manifest, family)
+}
+
+fn verified_source_identity(
+    source: &family_asset::FamilySource<'_>,
+    manifest: &[u8],
+    family: &[u8],
+) -> Result<(crate::game_data::QuestIdentityFacts, QuestFamilyIdentity), FactError> {
     let verified =
-        family_asset::verify_family(pin, manifest, &QUESTS_FAMILY, wire::SCHEMA, family)?;
+        family_asset::verify_family_source(source, manifest, &QUESTS_FAMILY, wire::SCHEMA, family)?;
     let schema = NonZeroU16::new(verified.schema).ok_or(FactError::Schema {
         expected: wire::SCHEMA,
         actual: verified.schema,
     })?;
-    let facts = wire::decode(pin, family)?;
+    let facts = wire::decode(source, family)?;
     Ok((
         facts,
         QuestFamilyIdentity {
@@ -218,14 +225,6 @@ mod tests {
     }
 
     #[test]
-    fn revision_377_quest_asset_is_unavailable() {
-        assert_eq!(
-            embedded(ClientRevision::R377),
-            Err(FactError::FamilyUnavailable(QUESTS_FAMILY.clone()))
-        );
-    }
-
-    #[test]
     fn selected_quests_prepare_identity_only_catalogs_for_both_revisions() {
         FamilyPreparation::run(|worker| {
             for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -246,28 +245,57 @@ mod tests {
                 let identity = data
                     .quest_family_identity()
                     .expect("verified artifact identity is cached");
-                let bytes = embedded(revision).unwrap();
+                let bytes = embedded(revision);
                 let actual_sha256: [u8; 32] = Sha256::digest(bytes).into();
                 assert_eq!(identity.sha256, actual_sha256);
                 assert_eq!(identity.schema, NonZeroU16::new(wire::SCHEMA).unwrap());
 
-                match revision {
-                    ClientRevision::R274 => {
-                        assert!(matches!(
-                            catalog.quest("routequest"),
-                            Err(FactError::UnknownKey(_))
-                        ));
-                        assert!(catalog.identity_coverage().iter().any(|fact| {
-                            fact.alias == "routequest" && fact.on_revision == 274 && !fact.copied
-                        }));
-                    }
-                    ClientRevision::R289 => {
-                        assert!(catalog.quest("routequest").is_ok());
-                        assert!(catalog.identity_coverage().is_empty());
-                    }
-                    ClientRevision::R377 => panic!("revision 377 is not in this test"),
+                if revision == ClientRevision::R274 {
+                    assert!(matches!(
+                        catalog.quest("routequest"),
+                        Err(FactError::UnknownKey(_))
+                    ));
+                    assert!(catalog.identity_coverage().iter().any(|fact| {
+                        fact.alias == "routequest" && fact.on_revision == 274 && !fact.copied
+                    }));
+                }
+                if revision == ClientRevision::R289 {
+                    assert!(catalog.quest("routequest").is_ok());
+                    assert!(catalog.identity_coverage().is_empty());
                 }
             }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn selected_377_quest_family_uses_its_bound_asset() {
+        FamilyPreparation::run(|worker| {
+            let data = crate::game_data::for_revision(ClientRevision::R377)
+                .expect("selected 377 game data");
+            let pin = data.selected_pin().expect("377 pin");
+            assert_eq!(pin.revision, ClientRevision::R377);
+
+            let catalog = data.prepare_quests(worker).expect("prepared 377 quests");
+            assert!(!catalog.is_empty(), "the 377 quest family has identity rows");
+            assert!(Arc::ptr_eq(
+                &catalog,
+                &data.try_quests().expect("preparation caches its catalog")
+            ));
+
+            let identity = data
+                .quest_family_identity()
+                .expect("verified 377 artifact identity is cached");
+            let actual_sha256: [u8; 32] = Sha256::digest(QUESTS_377).into();
+            assert_eq!(identity.sha256, actual_sha256);
+            assert_eq!(identity.schema, NonZeroU16::new(wire::SCHEMA).unwrap());
+            assert_eq!(
+                load(&pin, MANIFEST, QUESTS_289).err().unwrap(),
+                FactError::PinMismatch,
+                "the 289 family is not selected for the 377 pin"
+            );
         })
         .unwrap()
         .join()

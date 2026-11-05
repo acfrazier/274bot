@@ -421,9 +421,9 @@ function parseEngineCommands(text: string) {
         const index = match.index ?? 0;
         const lineEnd = text.indexOf('\n', index);
         const condition = text.slice(index, lineEnd < 0 ? text.length : lineEnd);
-        const productionGate: EngineProductionGate = /&&\s*!\s*Environment\.node\.production\b/.test(condition)
+        const productionGate: EngineProductionGate = /&&\s*!\s*Environment\.(?:node\.production|NODE_PRODUCTION)\b/.test(condition)
             ? 'non-production'
-            : /&&\s*Environment\.node\.production\b/.test(condition)
+            : /&&\s*Environment\.(?:node\.production|NODE_PRODUCTION)\b/.test(condition)
               ? 'production'
               : 'none';
         found.set(match[2], { name: match[2], productionGate });

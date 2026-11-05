@@ -1,6 +1,7 @@
 // M-296 owns full-roster extraction/resolution programs; this preserves the existing query asset.
 import fs from 'node:fs';
-import { integer, parsePack, requireGatherText } from './common.ts';
+import path from 'node:path';
+import { integer, parsePack, requireGatherText, walkContentFiles } from './common.ts';
 import { parseRs2Blocks, stripComment, type Rs2Block } from './gathering-content.ts';
 import { parseBody, walkStatements } from './gathering-rs2.ts';
 export const questIdentityContentFiles = [
@@ -11,6 +12,34 @@ export const questIdentityContentFiles = [
     'scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2',
     'scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2',
 ];
+export function questIdentityContentFilesForRevision(revision: number, content?: string): string[] {
+    if (revision !== 377) return questIdentityContentFiles;
+    const files = [
+        'scripts/general/scripts/quests.rs2',
+        'scripts/general/configs/quest.constant',
+        'scripts/interfaces/questlist.if',
+        'pack/varp.pack',
+        'scripts/quests/quest_cook/scripts/quest_cook.rs2',
+        'scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2',
+        'scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2',
+        'scripts/quests/quest_barcrawl/configs/quest_barcrawl.constant',
+        'scripts/quests/quest_barcrawl/configs/quest_barcrawl.varp',
+        'scripts/quests/quest_barcrawl/scripts/quest_barcrawl.rs2',
+        'scripts/areas/area_barbarian_outpost/scripts/barbarian_outpost_guard.rs2',
+        'scripts/areas/area_ardougne_east/scripts/bartender.rs2',
+    ];
+    if (content) {
+        const questRoot = path.join(content, 'scripts/quests');
+        files.push(...walkContentFiles(questRoot, '.constant')
+            .filter((file) => !file.includes('/_test/') && !file.includes('/_unpack/'))
+            .map((file) => path.relative(content, file).split(path.sep).join('/')));
+        files.push(...walkContentFiles(questRoot, '.rs2')
+            .filter((file) => file.includes('journal'))
+            .map((file) => path.relative(content, file).split(path.sep).join('/')));
+    }
+    return [...new Set(files)];
+}
+
 const QUEST_IDENTITY_SEEDS = [
     { id: 'cook', component: 'cook' },
     { id: 'runemysteries', component: 'runemysteries' },
@@ -30,6 +59,22 @@ type QuestRequirements = {
     unknown_as_satisfied: false;
 };
 
+type QuestIdentityOutputRow = {
+    id: string;
+    component: string;
+    display: string;
+    varp: string;
+    varp_id: number;
+    complete: number;
+    quest_points: number;
+    unknown_sides: string[];
+    requirements: QuestRequirements;
+    members: boolean;
+    kind: 'quest' | 'stub' | 'miniquest';
+    journal_title: string | null;
+    journal_script: string | null;
+};
+
 function parseQuestColourCalls(text: string) {
     const calls: { component: string; progress: string; complete: string }[] = [];
     for (const raw of text.split(/\r?\n/)) {
@@ -42,19 +87,42 @@ function parseQuestColourCalls(text: string) {
     return calls;
 }
 
-function parseQuestConstants(text: string) {
+function parseQuestConstants(text: string, label = 'quest.constant', allowEmpty = false) {
     const out = new Map<string, number>();
     for (const raw of text.split(/\r?\n/)) {
         const line = raw.trim();
         if (!line || line.startsWith('//')) continue;
         const match = /^\^([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*(?:\/\/.*)?$/.exec(line);
         if (!match) continue;
-        if (out.has(match[1])) throw new Error(`quest.constant: duplicate ^${match[1]}`);
+        if (out.has(match[1])) throw new Error(`${label}: duplicate ^${match[1]}`);
         out.set(match[1], integer(match[2], `^${match[1]}`));
     }
-    if (out.size === 0) throw new Error('quest.constant: no constants');
+    if (out.size === 0 && !allowEmpty) throw new Error(`${label}: no constants`);
     return out;
 }
+function questConstantsFor377(content: string, base: ReadonlyMap<string, number>) {
+    const values = new Map(base);
+    const ambiguous = new Set<string>();
+    const root = path.join(content, 'scripts/quests');
+    const files = walkContentFiles(root, '.constant')
+        .filter((file) => !file.includes('/_test/') && !file.includes('/_unpack/'));
+    for (const file of files) {
+        const label = path.relative(content, file).split(path.sep).join('/');
+        const local = parseQuestConstants(fs.readFileSync(file, 'utf8'), label, true);
+        for (const [name, value] of local) {
+            if (ambiguous.has(name)) continue;
+            const previous = values.get(name);
+            if (previous !== undefined && previous !== value) {
+                values.delete(name);
+                ambiguous.add(name);
+            } else {
+                values.set(name, value);
+            }
+        }
+    }
+    return { values, ambiguous };
+}
+
 
 function parseQuestListText(text: string) {
     const out = new Map<string, string>();
@@ -272,18 +340,196 @@ function firstVarpCall(calls: { component: string; progress: string; complete: s
     const found = calls.filter((call) => call.component === component);
     return found.find((call) => call.progress.startsWith('%')) ?? found[0] ?? null;
 }
+function questProgressFor377(calls: { progress: string }[], varpPack: ReadonlyMap<string, number>) {
+    const expressions = [...new Set(calls.map((call) => call.progress))];
+    const varps = [...new Set(expressions.flatMap((expression) => {
+        const match = /^%([A-Za-z0-9_]+)$/.exec(expression);
+        return match ? [match[1]] : [];
+    }))];
+    if (varps.length !== 1 || expressions.some((expression) => expression !== `%${varps[0]}` && expression !== '1')) {
+        return {
+            varp: expressions.length === 1 ? expressions[0] : expressions.join(' | '),
+            varpId: -1,
+            unknownSides: ['progress_operand'],
+        };
+    }
+    const varp = varps[0];
+    const varpId = varpPack.get(varp);
+    if (varpId === undefined) return { varp, varpId: -1, unknownSides: ['varp_pack_id'] };
+    return { varp, varpId, unknownSides: [] as string[] };
+}
+
+function questCompletionThreshold377(
+    operand: string,
+    constants: ReadonlyMap<string, number>,
+    ambiguous: ReadonlySet<string>,
+): number | null {
+    const constant = /^\^([A-Za-z0-9_]+)$/.exec(operand);
+    if (constant) return ambiguous.has(constant[1]) ? null : constants.get(constant[1]) ?? null;
+    if (/^-?\d+$/.test(operand)) return integer(operand, `quest completion ${operand}`);
+    const bitMask = /^sub\(\s*pow\(\s*2\s*,\s*\^([A-Za-z0-9_]+)\s*\)\s*,\s*1\s*\)$/.exec(operand);
+    if (!bitMask || ambiguous.has(bitMask[1])) return null;
+    const bits = constants.get(bitMask[1]);
+    if (bits === undefined) return null;
+    const value = 2 ** bits - 1;
+    return Number.isSafeInteger(value) ? value : null;
+}
+
+function questCompletionFor377(
+    component: string,
+    calls: { complete: string }[],
+    constants: ReadonlyMap<string, number>,
+    ambiguous: ReadonlySet<string>,
+) {
+    if (calls.length === 0) {
+        const name = `${component}_complete`;
+        const complete = ambiguous.has(name) ? undefined : constants.get(name);
+        return complete === undefined
+            ? { complete: -1, unknownSides: ['completion_operand'] }
+            : { complete, unknownSides: [] as string[] };
+    }
+    const values = calls.map((call) => questCompletionThreshold377(call.complete, constants, ambiguous));
+    if (values.length === 0 || values.some((value) => value === null)) {
+        return { complete: -1, unknownSides: ['completion_operand'] };
+    }
+    const unique = new Set(values);
+    if (unique.size !== 1) return { complete: -1, unknownSides: ['completion_operand'] };
+    return { complete: values[0]!, unknownSides: [] as string[] };
+}
+
+function questPointsFor377(
+    component: string,
+    calls: { complete: string }[],
+    constants: ReadonlyMap<string, number>,
+    ambiguous: ReadonlySet<string>,
+) {
+    const directName = `${component}_questpoints`;
+    const direct = ambiguous.has(directName) ? undefined : constants.get(directName);
+    if (direct !== undefined) return direct;
+    const candidates = new Set(calls.flatMap((call) => {
+        const stage = /^\^([A-Za-z0-9_]+)_complete$/.exec(call.complete);
+        const name = stage && `${stage[1]}_questpoints`;
+        const value = name && !ambiguous.has(name) ? constants.get(name) : undefined;
+        return value === undefined ? [] : [value];
+    }));
+    return candidates.size === 1 ? [...candidates][0] : null;
+}
+
+function questIdentityRowsFor377(
+    content: string,
+    entries: { component: string; display: string; members: boolean; stub: boolean }[],
+    calls: { component: string; progress: string; complete: string }[],
+    constants: ReadonlyMap<string, number>,
+    ambiguous: ReadonlySet<string>,
+    varpPack: ReadonlyMap<string, number>,
+    journals: Map<string, { title: string; script: string }>,
+): QuestIdentityOutputRow[] {
+    return entries.map((entry): QuestIdentityOutputRow => {
+        const componentCalls = calls.filter((call) => call.component === entry.component);
+        const progress = questProgressFor377(componentCalls, varpPack);
+        const completion = questCompletionFor377(entry.component, componentCalls, constants, ambiguous);
+        const questPoints = questPointsFor377(entry.component, componentCalls, constants, ambiguous);
+        const requirements = requirementsFor(entry.component, content);
+        const unknownSides = new Set([...progress.unknownSides, ...completion.unknownSides, 'requirements']);
+        if (questPoints === null) unknownSides.add('quest_points');
+        const journal = journals.get(entry.component);
+        const incompleteIdentity = progress.unknownSides.length > 0 || completion.unknownSides.length > 0;
+        return {
+            id: entry.component,
+            component: entry.component,
+            display: entry.display,
+            varp: progress.varp,
+            varp_id: progress.varpId,
+            complete: completion.complete,
+            quest_points: questPoints ?? -1,
+            unknown_sides: [...unknownSides].sort(),
+            requirements,
+            members: entry.members,
+            kind: entry.stub || incompleteIdentity ? 'stub' : 'quest',
+            journal_title: journal?.title ?? null,
+            journal_script: journal?.script ?? null,
+        };
+    });
+}
+
+function questVarpConfigName(text: string): string {
+    const names = [...text.matchAll(/^\s*\[([A-Za-z0-9_]+)\]\s*$/gm)].map((match) => match[1]);
+    if (names.length !== 1) throw new Error(`quest_barcrawl.varp: expected one varp section, got ${names.length}`);
+    return names[0]!;
+}
+
+function barcrawlDisplay(text: string): string {
+    const names = new Set([...text.matchAll(/"[^"\r\n]*\bdoing\s+([^"\r\n]+)"/g)]
+        .map((match) => match[1].replace(/[.!?]+$/, '').trim())
+        .filter((name) => /barcrawl/i.test(name)));
+    if (names.size !== 1) throw new Error(`barcrawl: expected one source dialogue name, got ${names.size}`);
+    return [...names][0]!;
+}
+
+function barcrawlIdentityFor377(content: string, varpPack: ReadonlyMap<string, number>): QuestIdentityOutputRow {
+    const label = 'quest_barcrawl.constant';
+    const constants = parseQuestConstants(requireGatherText(content, `scripts/quests/quest_barcrawl/configs/${label}`), label);
+    const varp = questVarpConfigName(requireGatherText(content, 'scripts/quests/quest_barcrawl/configs/quest_barcrawl.varp'));
+    const complete = constants.get(`${varp}_complete`);
+    if (complete === undefined) throw new Error(`${label}: missing ^${varp}_complete`);
+    if (constants.get(`${varp}_not_started`) === undefined) throw new Error(`${label}: missing ^${varp}_not_started`);
+    const varpId = varpPack.get(varp);
+    if (varpId === undefined) throw new Error(`quest_barcrawl.varp: %${varp} missing from varp.pack`);
+    const questScript = requireGatherText(content, 'scripts/quests/quest_barcrawl/scripts/quest_barcrawl.rs2');
+    scriptHas(questScript, new RegExp(`%${varp}\\b`), 'quest_barcrawl.rs2: missing barcrawl varp reference');
+    const outpost = requireGatherText(content, 'scripts/areas/area_barbarian_outpost/scripts/barbarian_outpost_guard.rs2');
+    scriptHas(outpost, new RegExp(`%${varp}\\s*=\\s*\\^${varp}_complete\\b`), 'barbarian_outpost_guard.rs2: missing completion write');
+    const bartender = requireGatherText(content, 'scripts/areas/area_ardougne_east/scripts/bartender.rs2');
+    const display = barcrawlDisplay(bartender);
+    return {
+        id: varp,
+        component: varp,
+        display,
+        varp,
+        varp_id: varpId,
+        complete,
+        quest_points: -1,
+        unknown_sides: ['quest_points', 'requirements'],
+        requirements: emptyMustHave(),
+        members: true,
+        kind: 'miniquest',
+        journal_title: null,
+        journal_script: null,
+    };
+}
+
 
 export function extractQuestIdentityFacts(content: string, revision: number) {
     const quests = requireGatherText(content, 'scripts/general/scripts/quests.rs2');
     const constants = parseQuestConstants(requireGatherText(content, 'scripts/general/configs/quest.constant'));
-    const questlistText = requireGatherText(content, 'scripts/player/interfaces/questlist.if');
-    const displays = parseQuestListText(questlistText);
+    const questlistPath = revision === 377 ? 'scripts/interfaces/questlist.if' : 'scripts/player/interfaces/questlist.if';
+    const questlistText = requireGatherText(content, questlistPath);
     const listEntries = parseQuestListEntries(questlistText);
     const varpPack = parsePack(requireGatherText(content, 'pack/varp.pack'));
-    const enumNames = parseQuestEnumDisplays(requireGatherText(content, 'scripts/general/configs/quest.enum'));
     if (varpPack.size === 0) throw new Error('pack/varp.pack: required file missing ids');
     const calls = parseQuestColourCalls(quests);
     const journals = journalIndex(content);
+    if (revision === 377) {
+        const questConstants = questConstantsFor377(content, constants);
+        const rows = questIdentityRowsFor377(
+            content,
+            listEntries,
+            calls,
+            questConstants.values,
+            questConstants.ambiguous,
+            varpPack,
+            journals,
+        );
+        const barcrawl = barcrawlIdentityFor377(content, varpPack);
+        if (!rows.some((row) => row.id === barcrawl.id)) rows.push(barcrawl);
+        if (rows.length === 0) throw new Error('quest_identity: no extracted rows');
+        if (rows.some((row) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied)) {
+            throw new Error('quest_identity: requirements must stay partial');
+        }
+        return { rows, coverage: [] };
+    }
+    const displays = parseQuestListText(questlistText);
+    const enumNames = parseQuestEnumDisplays(requireGatherText(content, 'scripts/general/configs/quest.enum'));
     const seedIds = new Set(QUEST_IDENTITY_SEEDS.map((seed) => seed.id));
     const rows = QUEST_IDENTITY_SEEDS.map((seed) => {
         const found = calls.filter((call) => call.component === seed.component);

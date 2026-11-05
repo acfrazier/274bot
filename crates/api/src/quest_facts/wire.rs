@@ -1,7 +1,8 @@
 //! Wire format for the identity-only `quests.json` family.
 
+use crate::family_asset::FamilySource;
 use crate::game_data::QuestIdentityFacts;
-use crate::selected::{FactError, SelectedPin, SourceSpan};
+use crate::selected::{FactError, SourceSpan};
 use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -51,29 +52,32 @@ fn invalid(reason: impl Into<String>) -> FactError {
     }
 }
 
-fn check_header(pin: &SelectedPin, header: &Header<'_>) -> Result<(), FactError> {
+fn check_header(source: &FamilySource<'_>, header: &Header<'_>) -> Result<(), FactError> {
     if header.schema != SCHEMA {
         return Err(FactError::Schema {
             expected: SCHEMA,
             actual: header.schema,
         });
     }
-    if header.revision != pin.revision.as_i32()
-        || header.engine_commit != &*pin.engine_commit
-        || header.content_commit != &*pin.content_commit
-        || header.cache_id != &*pin.cache_id
-        || header.content_id != &*pin.content_id
+    if header.revision != source.revision.as_i32()
+        || header.engine_commit != source.engine_commit
+        || header.content_commit != source.content_commit
+        || header.cache_id != source.cache_id
+        || header.content_id != source.content_id
     {
         return Err(FactError::PinMismatch);
     }
     Ok(())
 }
 
-/// Decode facts only after checking the family header against the selected pin.
-pub(super) fn decode(pin: &SelectedPin, bytes: &[u8]) -> Result<QuestIdentityFacts, FactError> {
+/// Decode facts only after checking the family header against authenticated source provenance.
+pub(super) fn decode(
+    source: &FamilySource<'_>,
+    bytes: &[u8],
+) -> Result<QuestIdentityFacts, FactError> {
     let header: Header<'_> = serde_json::from_slice(bytes)
         .map_err(|error| invalid(format!("quests family header: {error}")))?;
-    check_header(pin, &header)?;
+    check_header(source, &header)?;
     let family: Family = serde_json::from_slice(bytes)
         .map_err(|error| invalid(format!("quests family: {error}")))?;
     Ok(family.facts)

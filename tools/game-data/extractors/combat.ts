@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parsePack, parseParamDefinitions, parseRows, requireGatherText, walkContentFiles } from './common.ts';
+import { parseBody } from './gathering-rs2.ts';
 
 export const STYLE = {
     MELEE: 0x01,
@@ -48,6 +49,7 @@ type CombatObject = {
 };
 type CombatDbRow = { name: string; values: Record<string, string[][]> };
 
+// 377 declares ai_queue1..20: queue1 retaliates; queue2/3 handle damage/death. Queue1 stays in the legacy trigger set.
 const AI_KINDS = new Set(['ai_applayer2', 'ai_opplayer2', 'ai_queue1']);
 
 function stripComments(text: string) {
@@ -161,12 +163,14 @@ function matchingTriggers(config: string, category: string | null, scripts: Comb
 }
 
 
+// 377 engine.rs2 declares gosub(proc) and jump(label); retain the legacy ~ and @ aliases.
 function referencedProcedures(body: string) {
     const names = new Set<string>();
     for (const match of body.matchAll(/(?:~|@)([A-Za-z][A-Za-z0-9_]*)\s*(?=\(|;|$)/g)) names.add(match[1]!);
     for (const match of body.matchAll(/\b(?:gosub|gosub_with_params|goto|jump)\s*\(\s*([A-Za-z][A-Za-z0-9_]*)/g)) names.add(match[1]!);
     return names;
 }
+
 
 const GENERIC_ATTACK_PROCEDURES = new Set([
     'npc_default_attack',
@@ -183,7 +187,8 @@ function expandSections(body: string, script: CombatScript, scripts: CombatScrip
     const seen = new Set<string>();
     const visit = (current: string, depth: number) => {
         if (depth >= 16) return;
-        for (const name of referencedProcedures(current)) {
+        const references = referencedProcedures(current);
+        for (const name of references) {
             if (skipGenericAttack && GENERIC_ATTACK_PROCEDURES.has(name)) continue;
             const candidates = script.procedures.get(name) ?? scripts.procedures.get(name) ?? [];
             for (const procedure of candidates) {
@@ -196,6 +201,17 @@ function expandSections(body: string, script: CombatScript, scripts: CombatScrip
     };
     visit(body, 0);
     return expanded;
+}
+
+function isResolvedControlFlowBody(body: string, script: CombatScript, scripts: CombatScripts) {
+    const transfer = /(?:@([A-Za-z][A-Za-z0-9_]*)\s*(?:\([^;]*\))?\s*;?|(?:gosub(?:_with_params)?|goto|jump)\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:,[^)]*)?\)\s*;?)/g;
+    const targets = [...body.matchAll(transfer)]
+        .map((match) => match[1] ?? match[2])
+        .filter((name): name is string => name !== undefined);
+    const rest = body.replace(transfer, '');
+    return targets.length > 0
+        && /^[\s{};]*$/.test(rest)
+        && targets.every((name) => script.procedures.has(name) || scripts.procedures.has(name));
 }
 
 function expandBody(body: string, script: CombatScript, scripts: CombatScripts, skipGenericAttack = false) {
@@ -224,6 +240,9 @@ function isSharedAttackBody(body: string) {
     return found && /^[\s{};]*$/.test(rest);
 }
 
+// These paths include legacy extractor spellings. 377 directly contains the
+// Elvarg and chromatic paths; the old metal-dragon path is not in its tree.
+// Other 377 dragon-resist scripts remain the explicit "other" class.
 function dragonfireKind(relative: string): DragonfireKind {
     const source = relative.replace(/\\/g, '/');
     if (source.endsWith('quests/quest_dragon/scripts/elvarg.rs2')) return 'elvarg';
@@ -253,9 +272,23 @@ function spellMaxHits(content: string) {
     return maxHits;
 }
 
-function bodyAttackFacts(body: string, maxHits: ReadonlyMap<string, number>) {
-    const ranged = /~(?:npc_rangeattack|dagannoth_rangeattack)\s*\(/.test(body) || /~(?:npc_rangeattack|dagannoth_rangeattack)\s*;/.test(body);
-    const magic = /~(?:npc_cast_spell(?:_with_forced_max_hit)?|npc_magicattack)\s*\(/.test(body) || /~(?:npc_cast_spell(?:_with_forced_max_hit)?|npc_magicattack)\s*;/.test(body);
+// 377 reaches helpers through gosub/jump and @label aliases; direct legacy calls stay exact for 274/289.
+function bodyAttackFacts(body: string, maxHits: ReadonlyMap<string, number>, revision: number = 289) {
+    let ranged: boolean;
+    let magic: boolean;
+    let melee: boolean;
+    if (revision === 377) {
+        const references = referencedProcedures(body);
+        ranged = references.has('npc_rangeattack') || references.has('dagannoth_rangeattack');
+        magic = ['npc_cast_spell', 'npc_cast_spell_with_forced_max_hit', 'npc_magicattack']
+            .some((name) => references.has(name));
+        melee = references.has('npc_default_attack') || references.has('npc_meleeattack');
+    } else {
+        ranged = /~(?:npc_rangeattack|dagannoth_rangeattack)\s*\(/.test(body) || /~(?:npc_rangeattack|dagannoth_rangeattack)\s*;/.test(body);
+        magic = /~(?:npc_cast_spell(?:_with_forced_max_hit)?|npc_magicattack)\s*\(/.test(body)
+            || /~(?:npc_cast_spell(?:_with_forced_max_hit)?|npc_magicattack)\s*;/.test(body);
+        melee = /~(?:npc_default_attack|npc_meleeattack)\s*(?:\(|;)/.test(body);
+    }
     const forced: number[] = [];
     for (const match of body.matchAll(/~npc_cast_spell_with_forced_max_hit\s*\(\s*\^?([A-Za-z0-9_]+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)/g)) {
         forced.push(Number(match[3]));
@@ -268,41 +301,57 @@ function bodyAttackFacts(body: string, maxHits: ReadonlyMap<string, number>) {
         const hit = maxHits.get(match[1]!);
         if (hit !== undefined) forced.push(hit);
     }
-    return { ranged, magic, forcedMaxHit: forced.length ? Math.max(...forced) : null };
+    return { ranged, magic, melee, forcedMaxHit: forced.length ? Math.max(...forced) : null };
 }
 
-export function extractNpcCombatFacts(config: string, category: string | null, scripts: CombatScripts, maxHits: ReadonlyMap<string, number>): CombatNpcFacts {
+export function extractNpcCombatFacts(
+    config: string,
+    category: string | null,
+    scripts: CombatScripts,
+    maxHits: ReadonlyMap<string, number>,
+    revision: number = 289,
+): CombatNpcFacts {
     const matched = matchingTriggers(config, category, scripts);
     const relevant = matched.filter(({ section }) => AI_KINDS.has(section.kind));
     const apTriggers = relevant.filter(({ section }) => section.kind === 'ai_applayer2');
     const opTriggers = relevant.filter(({ section }) => section.kind === 'ai_opplayer2');
     const queueTriggers = relevant.filter(({ section }) => section.kind === 'ai_queue1');
-    const apAttack = apTriggers.length > 0 || queueTriggers.some(({ section }) => referencedProcedures(section.body).has('npc_default_retaliate_ap'));
-    const bespoke = relevant.some(({ section }) => !isSharedAttackBody(section.body));
+    const apAttack = apTriggers.length > 0 || queueTriggers.some(({ section }) =>
+        referencedProcedures(section.body).has('npc_default_retaliate_ap'));
+    const bespokeTriggers = revision === 377 ? [...apTriggers, ...opTriggers] : relevant;
+    const bespoke = bespokeTriggers.some(({ section }) => !isSharedAttackBody(section.body));
     const fireScript = matched.find(({ script }) => script.dragonResist);
     const dragonfire = fireScript ? dragonfireKind(fireScript.script.relative) : null;
-    const attackSections = [...apTriggers, ...opTriggers].flatMap(({ script, section }) => expandSections(section.body, script, scripts, true));
-    const attacks = attackSections.map(({ body }) => bodyAttackFacts(body, maxHits));
+    const attackSections = [...apTriggers, ...opTriggers].flatMap(({ script, section }) =>
+        expandSections(section.body, script, scripts, true).map((expanded) => ({ ...expanded, script })));
+    const attacks = attackSections.map(({ body }) => bodyAttackFacts(body, maxHits, revision));
     const hasDragonBreath = dragonfire !== null || attackSections.some(({ body }) => /\b(?:firebreath_attack|fireblast_travel|fireblast_impact)\b/.test(body));
-    const sectionKinds = new Set();
+    const sectionKinds = new Set<string>();
     let mixedSection = false;
-    for (const { body } of attackSections) {
-        const facts = bodyAttackFacts(body, maxHits);
-        const melee = /~(?:npc_default_attack|npc_meleeattack)\s*(?:\(|;)/.test(body);
-        const kinds = [];
+    let unknownSection = false;
+    for (const { body, script } of attackSections) {
+        const facts = bodyAttackFacts(body, maxHits, revision);
+        const kinds: string[] = [];
         if (facts.ranged) kinds.push('ranged');
         if (facts.magic) kinds.push('magic');
-        if (melee || kinds.length === 0) kinds.push('melee');
+        // 289's fallback treated any unclassified attack section as melee.
+        // 377 keeps an unclassified branch UNKNOWN instead of promoting it.
+        if (facts.melee || (kinds.length === 0 && revision !== 377)) kinds.push('melee');
+        if (kinds.length === 0 && revision === 377 && !isResolvedControlFlowBody(body, script, scripts)) unknownSection = true;
         if (kinds.length > 1) mixedSection = true;
         for (const kind of kinds) sectionKinds.add(kind);
     }
     let attackKind: NpcAttackKind | null = null;
-    if (hasDragonBreath || mixedSection || sectionKinds.size > 1) attackKind = 'mixed';
+    const knownMixed = hasDragonBreath || mixedSection || sectionKinds.size > 1;
+    if (knownMixed) attackKind = 'mixed';
+    else if (unknownSection && revision === 377) attackKind = null;
     else if (sectionKinds.has('ranged')) attackKind = 'ranged';
     else if (sectionKinds.has('magic')) attackKind = 'magic';
     // Protect-counter behavior is NPC-specific; shared or expanded helpers do not count.
     const counterProtect = [...apTriggers, ...opTriggers].some(({ section }) =>
-        /~check_protect_prayer\s*(?:\(|;)/.test(section.body));
+        revision === 377
+            ? referencedProcedures(section.body).has('check_protect_prayer')
+            : /~check_protect_prayer\s*(?:\(|;)/.test(section.body));
     const forced = attacks.flatMap((attack) => attack.forcedMaxHit === null ? [] : [attack.forcedMaxHit]);
     return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke, counter_protect: counterProtect };
 }
@@ -336,15 +385,27 @@ function addMask(map: Map<number, number>, id: number | null, mask: number) {
     map.set(id, (map.get(id) ?? 0) | mask);
 }
 
-function sourceStyleMask(body: string, triggerKind: string, npc: CombatNpcSource) {
+function sourceStyleMask(body: string, triggerKind: string, npc: CombatNpcSource, revision: number) {
     const fire = /\b(?:firebreath_attack|fireblast_travel|fireblast_impact|dragon_firebreath_middle_attack)\b/.test(body);
     if (fire) return STYLE.DRAGONFIRE;
-    const range = /~(?:npc_rangeattack|dagannoth_rangeattack)\s*(?:\(|;)/.test(body);
-    const magic = /~(?:npc_cast_spell(?:_with_forced_max_hit)?|npc_magicattack)\s*(?:\(|;)/.test(body);
+    let range: boolean;
+    let magic: boolean;
+    let melee: boolean;
+    if (revision === 377) {
+        const references = referencedProcedures(body);
+        range = references.has('npc_rangeattack') || references.has('dagannoth_rangeattack');
+        magic = ['npc_cast_spell', 'npc_cast_spell_with_forced_max_hit', 'npc_magicattack']
+            .some((name) => references.has(name));
+        melee = references.has('npc_default_attack') || references.has('npc_meleeattack');
+    } else {
+        range = /~(?:npc_rangeattack|dagannoth_rangeattack)\s*(?:\(|;)/.test(body);
+        magic = /~(?:npc_cast_spell(?:_with_forced_max_hit)?|npc_magicattack)\s*(?:\(|;)/.test(body);
+        melee = /~(?:npc_default_attack|npc_meleeattack)\s*(?:\(|;)/.test(body);
+    }
     if (range && magic) return STYLE.RANGED | STYLE.MAGIC;
     if (range) return STYLE.RANGED;
     if (magic) return STYLE.MAGIC;
-    if (/~(?:npc_default_attack|npc_meleeattack)\s*(?:\(|;)/.test(body)) return STYLE.MELEE;
+    if (melee) return STYLE.MELEE;
     if (triggerKind === 'ai_opplayer2' && npc.attack_kind === 'mixed') return STYLE.MELEE | STYLE.RANGED;
     return 0;
 }
@@ -638,6 +699,7 @@ function rangedObjectFacts(
     objects: readonly CombatObject[],
     categories: ReadonlyMap<number, string>,
     paramIds: ReadonlyMap<string, number>,
+    revision: number,
 ) {
     const objectIds = parsePack(requireGatherText(content, 'pack/obj.pack'));
     const rangedWeapons: RangedWeaponRow[] = [];
@@ -651,10 +713,30 @@ function rangedObjectFacts(
         ['ogre_arrows', 'ogre_arrow'],
         ['bolts', 'bolt'],
     ]);
+    // 274/289 already treated an absent levelrequire as zero. 377 derives
+    // both ranged object defaults from the selected combat.param definitions.
+    const rangedParamDefaults = new Map<string, number>();
+    if (revision === 377) {
+        const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
+        for (const name of ['attackrange', 'levelrequire']) {
+            const definition = definitions.get(name);
+            if (definition?.type !== 'int') throw new Error(`combat.param: ${name} is not an integer parameter`);
+            const defaultRaw = definition.default;
+            const defaultValue = defaultRaw === undefined ? NaN : Number(defaultRaw);
+            if (!Number.isInteger(defaultValue) || defaultValue < 0 || defaultValue > 255) {
+                throw new Error(`combat.param: invalid ${name} default ${defaultRaw ?? 'missing'}`);
+            }
+            rangedParamDefaults.set(name, defaultValue);
+        }
+    }
     const param = (object: CombatObject, name: string): number => {
         const value = parameterValue(object.params, paramIds, name);
-        // ParamType.defaultInt is -1 for an omitted levelrequire; the u8 fact uses zero for no minimum level.
-        if (name === 'levelrequire' && (value === undefined || value === -1)) return 0;
+        if (value === undefined || value === -1) {
+            const defaultValue = revision === 377
+                ? rangedParamDefaults.get(name)
+                : name === 'levelrequire' ? 0 : undefined;
+            if (defaultValue !== undefined) return defaultValue;
+        }
         if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 255) {
             throw new Error(`obj ${object.id}: ${name} is missing or out of range`);
         }
@@ -691,7 +773,13 @@ function rangedObjectFacts(
     return { rangedWeapons, rangedAmmo };
 }
 
-export function extractCombatStyleFacts(content: string, objects: readonly CombatObject[], npcs: readonly CombatNpcSource[], scripts: CombatScripts) {
+export function extractCombatStyleFacts(
+    content: string,
+    objects: readonly CombatObject[],
+    npcs: readonly CombatNpcSource[],
+    scripts: CombatScripts,
+    revision: number = 289,
+) {
     const seqPack = parsePack(requireGatherText(content, 'pack/seq.pack'));
     const spotanimPack = parsePack(requireGatherText(content, 'pack/spotanim.pack'));
     const categoryPack = parsePack(requireGatherText(content, 'pack/category.pack'));
@@ -701,7 +789,7 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
     const rangedModes = combatModeFacts(content, interfacePack, combatTabs, RANGED_MODE_CONSTANTS, RANGED_MODE_CODES);
     const paramIds = packParameterIds(content);
     const categoryNames = new Map([...categoryPack.entries()].map(([name, id]) => [id, name]));
-    const ranged = rangedObjectFacts(content, objects, categoryNames, paramIds);
+    const ranged = rangedObjectFacts(content, objects, categoryNames, paramIds, revision);
     const sequences = new Map<number, number>();
     const spotanims = new Map<number, { style: number; where: SpotanimWhere }>();
     const weaponStyles: { obj_id: number; style: number; attackrate: number; category: number; tab: number | null }[] = [];
@@ -719,6 +807,19 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         ['crushattack_anim', STYLE.MELEE],
         ['rangeattack_anim', STYLE.RANGED],
     ];
+    // 274/289 retain the historical extractor default; 377 reads attackrate from its combat.param definition.
+    let attackrateDefault = 4;
+    if (revision === 377) {
+        const attackrateDefinition = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param')).get('attackrate');
+        if (attackrateDefinition?.type !== 'int') {
+            throw new Error('combat.param: attackrate is not an integer parameter');
+        }
+        const attackrateDefaultRaw = attackrateDefinition?.default;
+        attackrateDefault = attackrateDefaultRaw === undefined ? NaN : Number(attackrateDefaultRaw);
+        if (!Number.isInteger(attackrateDefault) || attackrateDefault < 0 || attackrateDefault > 255) {
+            throw new Error(`combat.param: invalid attackrate default ${attackrateDefaultRaw ?? 'missing'}`);
+        }
+    }
     for (const object of objects) {
         for (const [name, mask] of paramToSequence) addMask(sequences, seqId(parameterValue(object.params, paramIds, name), `obj ${object.id} ${name}`), mask);
         addSpot(spotId(parameterValue(object.params, paramIds, 'proj_launch'), `obj ${object.id} proj_launch`), STYLE.RANGED, 'attacker', `obj ${object.id}`);
@@ -731,8 +832,7 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         const style = categoryCode >= 1 && categoryCode <= 4 ? STYLE.RANGED : categoryCode === 5 ? STYLE.MAGIC : STYLE.MELEE;
         const rawRate = parameterValue(object.params, paramIds, 'attackrate');
         if (rawRate !== undefined && typeof rawRate !== 'number') throw new Error(`obj ${object.id}: attackrate is not numeric`);
-        const attackrate = rawRate ?? 4;
-        if (!Number.isInteger(attackrate) || attackrate < 0 || attackrate > 255) throw new Error(`obj ${object.id}: attackrate ${attackrate} is out of range`);
+        const attackrate = rawRate ?? attackrateDefault;
         const tab = combatTabs.byCategory.has(category)
             ? combatTabs.byCategory.get(category) ?? null
             : combatTabs.fallback;
@@ -748,7 +848,7 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         for (const { script, section } of matchingTriggers(npc.config, npc.category, scripts)) {
             if (section.kind !== 'ai_applayer2' && section.kind !== 'ai_opplayer2') continue;
             for (const expanded of expandSections(section.body, script, scripts, true)) {
-                const mask = sourceStyleMask(expanded.body, section.kind, npc);
+                const mask = sourceStyleMask(expanded.body, section.kind, npc, revision);
                 for (const name of npcAnimations(expanded.body)) addMask(sequences, seqId(name, `npc ${npc.config} npc_anim`), mask);
             }
         }
@@ -1062,6 +1162,10 @@ export function extractItemCombatBonus(
 }
 
 export type MeleeWeaponTierWire = { obj_id: number; tier: number; quest_gated: boolean; strength: number };
+export type MeleeWeaponTierFacts = {
+    rows: MeleeWeaponTierWire[];
+    unknown: { obj_id: number; alias: string; reason: string }[];
+};
 
 const MELEE_TIER_FILES = [
     'scripts/levelrequire/scripts/tier1.rs2',
@@ -1085,7 +1189,7 @@ const QUEST_ATTACK_HANDLERS = new Set([
     'levelrequire_regicide_quest_attack_strength',
 ]);
 
-function meleeTierGate(handler: string, args: string): { tier: number; quest_gated: boolean; strength: number } {
+function meleeTierGate(handler: string, args: string, revision: number): { tier: number; quest_gated: boolean; strength: number } {
     const parts = args.split(',').map((part) => Number(part.trim()));
     const level = parts[0];
     if (!Number.isInteger(level) || (level as number) < 0 || (level as number) > 255) {
@@ -1111,14 +1215,37 @@ function meleeTierGate(handler: string, args: string): { tier: number; quest_gat
     if (handler === 'levelrequire_attack_and_strength') {
         return { tier: level as number, quest_gated: false, strength: strengthArg(handler) };
     }
+    if (revision === 377 && handler === 'levelrequire_attack_and_strength2') {
+        return { tier: level as number, quest_gated: false, strength: level as number };
+    }
+    if (revision === 377 && handler === 'levelrequire_mm_quest_attack') {
+        return { tier: level as number, quest_gated: true, strength: 0 };
+    }
     throw new Error(`melee tier: unexpected attack handler @${handler}(${args})`);
+}
+
+function literalMeleeTierGate(body: string): { tier: number; quest_gated: boolean; strength: number } | undefined {
+    const nodes = parseBody(body.split('\n').map((text, line) => ({ text, line: line + 1 })));
+    if (nodes.length !== 2 || nodes[0].kind !== 'if' || nodes[1].kind !== 'stmt'
+        || nodes[1].text !== '~equip(last_slot)') return undefined;
+    const gate = nodes[0];
+    const levels = /^stat_base\(attack\)\s*<\s*(\d+)\s*\|\s*stat_base\(strength\)\s*<\s*(\d+)$/.exec(gate.cond);
+    const failure = gate.then.at(-1);
+    if (!levels || gate.els.length !== 0 || !failure
+        || failure.kind !== 'stmt' || failure.text !== 'return'
+        || !gate.then.slice(0, -1).every(node => node.kind === 'stmt' && /^mes\(.*\)$/.test(node.text))) return undefined;
+    const tier = Number(levels[1]);
+    const strength = Number(levels[2]);
+    if (tier > 255 || strength > 255) throw new Error('melee tier: literal attack/strength gate exceeds 255');
+    return { tier, quest_gated: false, strength };
 }
 
 export function extractMeleeWeaponTiers(
     content: string,
     weaponStyles: readonly { obj_id: number; category: number }[],
     idToAlias: ReadonlyMap<number, string>,
-): MeleeWeaponTierWire[] {
+    revision = 289,
+): MeleeWeaponTierFacts {
     // `weapon_styles` category 0 is melee; bows, crossbows, thrown, javelins
     // and staves tier through the ranged, magic and defence gates instead.
     // Only aliases of melee weapons are gated here; every other wield row
@@ -1134,8 +1261,16 @@ export function extractMeleeWeaponTiers(
     // on the same line or opens a multi-line quest block (the viking rows of
     // `tier30.rs2:18-45`) whose final attack call is the tier and whose
     // `%varp < ^varp_complete` check is the quest gate.
-    type WieldBlock = { alias: string; file: string; calls: { handler: string; args: string }[]; questVarp: boolean };
+    type WieldBlock = { alias: string; file: string; calls: { handler: string; args: string }[]; questVarp: boolean; body?: string };
     const parseBlocks = (file: string, text: string): WieldBlock[] => {
+        if (revision === 377) return parseSections(stripComments(text))
+            .filter(section => section.kind === 'opheld2' && section.target !== null && /^[A-Za-z][A-Za-z0-9_]*$/.test(section.target))
+            .map(section => ({
+                alias: section.target!, file, body: section.body,
+                calls: [...section.body.matchAll(/@([A-Za-z][A-Za-z0-9_]*)\(([^)]*)\)\s*;/g)]
+                    .map(call => ({ handler: call[1]!, args: call[2]! })),
+                questVarp: /%\w+\s*<\s*\^\w+_complete/.test(section.body),
+            }));
         const blocks: WieldBlock[] = [];
         let current: WieldBlock | null = null;
         for (const raw of text.split(/\r?\n/)) {
@@ -1154,6 +1289,7 @@ export function extractMeleeWeaponTiers(
         return blocks;
     };
     const gates = new Map<string, { tier: number; quest_gated: boolean; strength: number }>();
+    const unknown = new Map<string, string>();
     for (const file of MELEE_TIER_FILES) {
         const text = requireGatherText(content, file);
         for (const block of parseBlocks(file, text)) {
@@ -1175,13 +1311,20 @@ export function extractMeleeWeaponTiers(
             }
             const attackCalls = block.calls.filter((call) =>
                 PLAIN_ATTACK_HANDLERS.has(call.handler) || QUEST_ATTACK_HANDLERS.has(call.handler) ||
-                call.handler === 'levelrequire_attack_and_strength',
+                call.handler === 'levelrequire_attack_and_strength'
+                || (revision === 377 && ['levelrequire_attack_and_strength2', 'levelrequire_mm_quest_attack'].includes(call.handler)),
             );
             if (attackCalls.length === 0) {
+                if (revision === 377) {
+                    const literal = literalMeleeTierGate(block.body!);
+                    if (literal) gates.set(block.alias, literal);
+                    else unknown.set(block.alias, `wield gate is outside the attack/strength/quest contract in ${block.file}`);
+                    continue;
+                }
                 throw new Error(`melee tier: melee weapon ${block.alias} (${block.file}) has no attack gate`);
             }
             const last = attackCalls[attackCalls.length - 1]!;
-            const gate = meleeTierGate(last.handler, last.args);
+            const gate = meleeTierGate(last.handler, last.args, revision);
             const questGated = gate.quest_gated || block.questVarp;
             const prior = gates.get(block.alias);
             if (prior && (prior.tier !== gate.tier || prior.quest_gated !== questGated || prior.strength !== gate.strength)) {
@@ -1191,12 +1334,21 @@ export function extractMeleeWeaponTiers(
         }
     }
     const rows: MeleeWeaponTierWire[] = [];
+    const unknownRows: MeleeWeaponTierFacts['unknown'] = [];
     for (const weapon of weaponStyles) {
         if (weapon.category !== 0) continue;
         const alias = idToAlias.get(weapon.obj_id);
         const gate = alias === undefined ? undefined : gates.get(alias);
+        if (revision === 377 && (alias === undefined || unknown.has(alias) || !gate)) {
+            unknownRows.push({
+                obj_id: weapon.obj_id, alias: alias ?? '<unmapped>',
+                reason: alias === undefined ? 'selected obj alias is unavailable'
+                    : unknown.get(alias) ?? 'no selected wield gate proves a tier; the legacy tier-0 fallback is not inherited',
+            });
+            continue;
+        }
         // No tier script is tier 0 (`combat.param:81-83`), never excluded.
         rows.push({ obj_id: weapon.obj_id, tier: gate?.tier ?? 0, quest_gated: gate?.quest_gated ?? false, strength: gate?.strength ?? 0 });
     }
-    return rows.sort((a, b) => a.obj_id - b.obj_id);
+    return { rows: rows.sort((a, b) => a.obj_id - b.obj_id), unknown: unknownRows.sort((a, b) => a.obj_id - b.obj_id) };
 }

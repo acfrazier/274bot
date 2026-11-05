@@ -1,8 +1,8 @@
 # Generate the selected game data
 
 > **Audience:** contributors who regenerate the game data that ships in the
-> `api` crate. You need local checkouts of the 274 and 289 engines and content.
-> This text moved here from CONTRIBUTING.md; only relative links changed.
+> `api` crate. You need the pinned engine and content checkouts for the revisions
+> you verify. Revision 377 is selected explicitly; it is not a default.
 
 The one entry point is `tools/game-data/generate.ts`; its verifier can run a
 single revision without requiring the other source checkout to be clean.
@@ -32,6 +32,63 @@ revisions: 289 is required, while unavailable/dirty 274 is reported as
 on refusal. Cross-pin corroboration is reported as unchecked unless both
 revisions passed. Regenerating one revision preserves the other manifest row;
 it does not claim to repair or verify that row.
+
+### Revision 377
+
+Keep the four historical source-root variables above set: the existing revision
+registry reads them when it loads. Add the selected 377 roots and snapshot:
+
+```bash
+export GAME_DATA_377_ENGINE=/absolute/path/to/377-engine
+export GAME_DATA_377_CONTENT=/absolute/path/to/377-content
+export GAME_DATA_377_SNAPSHOTS=/absolute/path/to/377-snapshots
+bun tools/game-data/generate.ts --revision 377
+bun tools/game-data/verify.ts --revision 377
+```
+
+The 377 source pins are engine `bc47497ee8cf6148dbfb7239714ddd5045c40194`
+and content `a15d0faa809f5f8455ef43e1ae4edfdd22512bb2`.
+Use a members-world decode (`NODE_MEMBERS=true`). Build the server pack with the
+selected engine's full build. For Fairy Ring's modified content, that build uses
+`BUILD_VERIFY=false`; this does not bypass the generator's input-pin checks.
+The client inputs are the published 377 cache, not a newly repacked versionlist.
+`cache-content-id` must verify that cache against its complete decoded snapshot.
+The generator never invents a snapshot or copies another revision's identity.
+
+The API embeds `377.json` and its `377/{gathering,quests,debug}.json` families.
+It requires the exact selected revision, schema, source pins and family digests.
+The verifier reruns the 377 extractors into a temporary directory and compares
+all four artifacts and the complete manifest row. It does not change the
+historical verifier's checks or require byte equality with 289 facts.
+
+The initial nav bake verifies the quest family through the offline upstream
+identity seam, before nav/flag hashes exist. Rebind the core and manifest to the
+real bake's hashes afterward. Runtime selection still requires the complete
+selected pin; an offline bake identity is not a runtime pin.
+
+The 377 core records named `UNKNOWN` gaps in `coverage`. In particular, it does
+not inherit the 289 autocast control contract, special-attack arm timing, the
+frozen `SPECIAL_SPECS` effect table, Nurmof/essence and flour stand tactics,
+constrained-clue access annotation, the
+single-common-root dialogue document contract, or server-ordered/NPC-transform
+proof. Optional families stay absent when their contract is not derived; the
+API does not replace them with another revision. In 377, ordinary quest
+completion uses `questscroll_death`, while Seaslug/Watchtower use `questscroll`;
+neither alone proves the existing single-root contract.
+Frozen equipment and bank lists select queries, not numeric 377 facts: resolved
+rows must join the selected configs, packs and map placements. Missing matches
+remain absent or explicitly missing.
+The NPC attack-kind field is nullable for both proven melee and unclassified
+custom attack bodies. The 377 coverage record names this schema limit as
+UNKNOWN; a null value is not an independent melee-only proof.
+377 melee tiers omit unsupported or unproved wield gates instead of inheriting
+the legacy tier-0 fallback. Their alias/ID-specific reasons are in `coverage`.
+Duel rules retain their selected bit positions: an unproved button stays at
+the existing unavailable sentinel 0, which `rule_button` returns as `None`.
+
+A generated result proves consistency with the selected Fairy Ring scripts.
+It does not prove historical RuneScape accuracy.
+
 
 Input identity covers tracked scripts/packs/maps and engine decoder/limit
 sources, plus the ignored generated files pinned by size and SHA-256 in

@@ -1,5 +1,5 @@
 //! Process-shared bounded cache of the prepared gathering catalog, keyed by
-//! the selected manifest. There are exactly two pinned revision manifests.
+//! the selected manifest. There are exactly three pinned revision manifests.
 //!
 //! Preparation (`prepare`) needs the off-pump `FamilyPreparation` capability: it verifies the
 //! embedded family file against the pin before retaining its decoded catalog. The first caller
@@ -18,12 +18,13 @@ use std::sync::Arc;
 
 const GATHERING_274: &[u8] = include_bytes!("../../data/game-data/274/gathering.json");
 const GATHERING_289: &[u8] = include_bytes!("../../data/game-data/289/gathering.json");
+const GATHERING_377: &[u8] = include_bytes!("../../data/game-data/377/gathering.json");
 
-fn embedded(revision: ClientRevision) -> Result<&'static [u8], FactError> {
+fn embedded(revision: ClientRevision) -> &'static [u8] {
     match revision {
-        ClientRevision::R274 => Ok(GATHERING_274),
-        ClientRevision::R289 => Ok(GATHERING_289),
-        ClientRevision::R377 => Err(FactError::FamilyUnavailable(GATHERING_FAMILY.clone())),
+        ClientRevision::R274 => GATHERING_274,
+        ClientRevision::R289 => GATHERING_289,
+        ClientRevision::R377 => GATHERING_377,
     }
 }
 
@@ -51,14 +52,14 @@ struct Slot {
 /// Slots are only touched under brief locks; `preparing` serializes decodes
 /// while `lookup` (the tick path) never waits behind a decode.
 struct Cache {
-    slots: Mutex<[Option<Slot>; 2]>,
+    slots: Mutex<[Option<Slot>; 3]>,
     preparing: Mutex<()>,
 }
 
 impl Cache {
     const fn new() -> Self {
         Self {
-            slots: Mutex::new([None, None]),
+            slots: Mutex::new([None, None, None]),
             preparing: Mutex::new(()),
         }
     }
@@ -109,7 +110,7 @@ pub fn prepare(
     _worker: &mut FamilyPreparation,
 ) -> Result<Arc<GatherCatalog>, FactError> {
     let pin = data.selected_pin()?;
-    CACHE.prepare(Key::of(&pin), || load(&pin, MANIFEST, embedded(pin.revision)?))
+    CACHE.prepare(Key::of(&pin), || load(&pin, MANIFEST, embedded(pin.revision)))
 }
 
 /// The prepared catalog if the selected manifest was already decoded. Never decodes or waits for preparation.
@@ -148,14 +149,6 @@ mod tests {
     }
 
     #[test]
-    fn revision_377_gathering_asset_is_unavailable() {
-        assert_eq!(
-            embedded(ClientRevision::R377),
-            Err(FactError::FamilyUnavailable(GATHERING_FAMILY.clone()))
-        );
-    }
-
-    #[test]
     fn a_prepared_catalog_is_shared_after_the_last_caller_drops() {
         let cache = Cache::new();
         let key = Key::of(&pin_289());
@@ -183,6 +176,11 @@ mod tests {
         let key_274 = Key::of(&pin_274);
         let pin_289 = pin_289();
         let key_289 = Key::of(&pin_289);
+        let pin_377 = crate::game_data::for_revision(ClientRevision::R377)
+            .unwrap()
+            .selected_pin()
+            .unwrap();
+        let key_377 = Key::of(&pin_377);
         let cold_274 = Instant::now();
         let catalog_274 = cache
             .prepare(key_274, || load(&pin_274, MANIFEST, GATHERING_274))
@@ -201,18 +199,38 @@ mod tests {
             GATHERING_289.len(),
             cold_289.elapsed()
         );
+        let cold_377 = Instant::now();
+        let catalog_377 = cache
+            .prepare(key_377, || {
+                load(&pin_377, MANIFEST, embedded(pin_377.revision))
+            })
+            .unwrap();
+        println!(
+            "pinned gathering decode 377: input={}B cold={:?}",
+            GATHERING_377.len(),
+            cold_377.elapsed()
+        );
+        assert_eq!(catalog_377.pin(), &*pin_377);
+        assert_eq!(
+            load(&pin_377, MANIFEST, GATHERING_289).unwrap_err(),
+            FactError::PinMismatch,
+            "the 289 family is not selected for the 377 pin"
+        );
         assert!(!Arc::ptr_eq(&catalog_274, &catalog_289));
-        drop((catalog_274, catalog_289));
+        assert!(!Arc::ptr_eq(&catalog_274, &catalog_377));
+        assert!(!Arc::ptr_eq(&catalog_289, &catalog_377));
+        drop((catalog_274, catalog_289, catalog_377));
         assert!(cache.lookup(&key_274).is_some());
         assert!(cache.lookup(&key_289).is_some());
+        assert!(cache.lookup(&key_377).is_some());
         let unknown = Key {
-            revision: key_289.revision,
+            revision: key_377.revision,
             manifest: [0; 32],
         };
         assert!(cache.lookup(&unknown).is_none());
         assert_eq!(
             cache
-                .prepare(unknown, || panic!("a third pin cannot expand the cache"))
+                .prepare(unknown, || panic!("a fourth pin cannot expand the cache"))
                 .unwrap_err(),
             FactError::PinMismatch
         );
