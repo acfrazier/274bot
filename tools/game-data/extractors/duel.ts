@@ -1,4 +1,6 @@
 import { parsePack, requireGatherText } from './common.ts';
+import { parseRs2Blocks } from './gathering-content.ts';
+import { parseBody, walkStatements } from './gathering-rs2.ts';
 
 // PvP V0 duel facts (PVP-DESIGN-1026 §3.2, §3.3, §7.6).
 //
@@ -39,7 +41,7 @@ const RULE_BUTTONS = [
     'no_specs',
 ] as const;
 
-export function extractDuelRuleButtons(content: string): DuelRuleButtonWire[] {
+export function extractDuelRuleButtons(content: string, revision = 289): DuelRuleButtonWire[] {
     const interfaces = parsePack(requireGatherText(content, 'pack/interface.pack'));
     const bits = new Map<string, number>();
     for (const raw of requireGatherText(content, 'scripts/minigames/game_duelarena/configs/duelarena.constant').split(/\r?\n/)) {
@@ -54,13 +56,33 @@ export function extractDuelRuleButtons(content: string): DuelRuleButtonWire[] {
     const settings = requireGatherText(content, 'scripts/minigames/game_duelarena/scripts/duel_arena_settings.rs2');
     const buttons = [...settings.matchAll(/^\[if_button,duel_select_type:([A-Za-z][A-Za-z0-9_]*)\]/gm)].map((match) => match[1]!);
     const names = [...new Set(buttons)].sort();
-    const expected = [...RULE_BUTTONS].sort();
-    if (JSON.stringify(names) !== JSON.stringify(expected)) {
-        throw new Error(`duel rules: settings buttons [${names.join(',')}] are not the 14 known rules`);
+    const expected: string[] = [...RULE_BUTTONS].sort();
+    const selected377 = revision === 377;
+    if (selected377
+        ? names.length === 0 || names.length !== buttons.length || names.some(name => !expected.includes(name))
+        : JSON.stringify(names) !== JSON.stringify(expected)) {
+        throw new Error(`duel rules: settings buttons [${names.join(',')}] are not ${selected377 ? 'a unique subset of the 14 known rules' : 'the 14 known rules'}`);
     }
-    return RULE_BUTTONS.map((rule) => {
+    const blocks = selected377 ? parseRs2Blocks('duel_arena_settings.rs2', settings) : [];
+    const hasStatement = (kind: string, name: string, expected: string): boolean => {
+        const matches = blocks.filter(block => block.kind === kind && block.name === name);
+        if (matches.length !== 1) return false;
+        let found = false;
+        walkStatements(parseBody(matches[0].body), statement => { if (statement.text === expected) found = true; });
+        return found;
+    };
+    if (selected377 && !hasStatement('proc', 'toggle_duel_setting', '%dueloptions = togglebit(%dueloptions, $setting)')) {
+        throw new Error('duel rules: selected toggle proc does not toggle dueloptions');
+    }
+    const selectedBits = new Set<number>();
+    return RULE_BUTTONS.filter(rule => !selected377 || names.includes(rule)).map((rule) => {
         const bit = bits.get(rule);
         if (bit === undefined) throw new Error(`duel rules: duelarena.constant lacks ^${rule}`);
+        if (selected377 && (bit < 0 || bit >= 14 || selectedBits.has(bit))) throw new Error(`duel rules: invalid or duplicate bit for ${rule}`);
+        selectedBits.add(bit);
+        if (selected377 && !hasStatement('if_button', `duel_select_type:${rule}`, `~toggle_duel_setting(^${rule})`)) {
+            throw new Error(`duel rules: selected ${rule} handler does not toggle its named setting`);
+        }
         const component = interfaces.get(`duel_select_type:${rule}`);
         if (component === undefined) throw new Error(`duel rules: interface.pack lacks duel_select_type:${rule}`);
         return { bit, component };
