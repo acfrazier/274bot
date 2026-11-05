@@ -12,6 +12,31 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   revision-selected. Unproved 289-only controls and tactics remain unavailable;
   they are not copied into the 377 data.
 
+  engine, content and cache inputs. Gathering, quest and debug facts decode
+  separately. Unproved 289-only controls and tactics remain unavailable;
+  they are not copied into the 377 data.
+
+### Navigation
+
+- The navigation baker accepts explicit revision 377 inputs and uses the
+  revision-377 config decoder. It writes the current v19 pack and local sidecars.
+- Revision 377's named Lumbridge stair handlers retain their script-derived
+  landings and one-tick cost. An explicit real-pack qualification covers
+  city routes, bidirectional doors, stairs and the Port Sarim ship journey.
+- An offline quest-family bake verifies the actual core, manifest, family
+  bytes and source provenance before navigation exists. Runtime selected pins
+  still require the final real navigation and flags digests.
+- Source-derived service POI sidecars accept explicit revision 377 packs.
+  Client-derived image/catalogue jobs keep their existing decoder admission,
+  and sidecar revision and digest mismatches still fail.
+
+### Host
+
+- Adds explicit `local-377` host selection with revision-specific strict
+  cache decoding and local navigation inputs. Revision 274/289 defaults stay
+  unchanged.
+- Adds the `client_377` direct-walk and Hans interaction proof scenario.
+
 ### Breaking changes
 
 - Source builds require local game-data and navigation generation before the product build.

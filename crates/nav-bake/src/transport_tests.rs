@@ -3278,6 +3278,46 @@ switch_coord (loc_coord) {
 }
 
 #[test]
+fn revision_377_lumbridge_stair_names_keep_script_landings_and_costs() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "1738=scenery_1738\n1739=scenery_1739\n1740=scenery_1740\n",
+    );
+    fx.write(
+        "maps/m50_50.jm2",
+        "==== MAP ====\n0 0 0: h1 o6 u50\n==== LOC ====\n0 4 7: 1738 10 0\n1 4 7: 1739 10 0\n2 5 8: 1740 10 0\n",
+    );
+    fx.write(
+        "scripts/ladders+stairs/scripts/stairs.rs2",
+        "[oploc1,scenery_1738]\nswitch_coord (loc_coord) {\ncase 0_50_50_4_7 : p_telejump(1_50_50_5_9);\n}\n\
+         [oploc2,scenery_1739]\nswitch_coord (loc_coord) {\ncase 1_50_50_4_7 : p_telejump(2_50_50_5_9);\n}\n\
+         [oploc3,scenery_1739]\nswitch_coord (loc_coord) {\ncase 1_50_50_4_7 : p_telejump(0_50_50_5_9);\n}\n\
+         [oploc1,scenery_1740]\nswitch_coord (loc_coord) {\ncase 2_50_50_5_8 : p_telejump(1_50_50_5_9);\n}\n",
+    );
+    let defs = loc_defs(&[(1738, 1, 1), (1739, 1, 1), (1740, 1, 1)]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    for (id, option, level) in [(1738, 1, 1), (1739, 2, 2), (1739, 3, 0), (1740, 1, 1)] {
+        let edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.loc_id == id && edge.option == option)
+            .expect("revision-377 staircase is priced and resolved");
+        assert_eq!(edge.kind, TransportKind::Stairs);
+        assert_eq!(
+            edge.to,
+            WorldTile {
+                x: 3205,
+                z: 3209,
+                level
+            }
+        );
+        assert_eq!(edge.ticks, 1);
+    }
+}
+
+#[test]
 fn parse_script_records_unguarded_statements_as_fallback() {
     let mut rules = HashMap::new();
     parse_script(
