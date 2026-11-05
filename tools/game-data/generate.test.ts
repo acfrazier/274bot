@@ -2746,6 +2746,17 @@ function trioGiverRow(facts: TrioGiverFacts, alias: string) {
 const trioGiverExtract = extractTrioGiversFacts(trioGiverFixture());
 const trioGiverFacts = trioGiverExtract.facts;
 
+const trioGiver377Root = trioGiverFixture((files) => {
+    files['scripts/_unpack/377/all.npc'] = Object.values(TRIO_GIVER_CONFIGS).map(file => files[file]).join('\n');
+    for (const file of Object.values(TRIO_GIVER_CONFIGS)) delete files[file];
+});
+const trioGiver377 = extractTrioGiversFacts(trioGiver377Root, 377);
+assert.deepEqual(trioGiver377.facts, trioGiverFacts, '377 joins its actual unpacked NPC configs without legacy per-area paths');
+assert.deepEqual(trioGiver377.inputs.npc_configs.map(input => input.path), ['scripts/_unpack/377/all.npc'], 'the shared selected config is inventoried once');
+fs.rmSync(path.join(trioGiver377Root, 'scripts/_unpack/377/all.npc'));
+assert.throws(() => extractTrioGiversFacts(trioGiver377Root, 377), /all\.npc: required file missing/);
+fs.rmSync(trioGiver377Root, { recursive: true });
+
 // The closed set in file order: one row per giver, one packed id, one .npc name,
 // one world tile converted from the mapsquare filename and the local coordinates.
 assert.deepEqual(trioGiverFacts, {
@@ -3591,6 +3602,22 @@ for (const relative of [...BASE_ENGINE_INPUT_PATHS, ...DEBUG_ENGINE_INPUT_PATHS]
     fs.writeFileSync(file, `stub ${relative}\n`);
 }
 const baseContentFiles = baseContentFileList();
+const base377ContentFiles = baseContentFileList(377);
+for (const relative of [
+    'scripts/areas/area_falador/configs/dwarven_mine.inv',
+    'scripts/areas/area_falador/configs/dwarven_mine.npc',
+    'scripts/skill_runecraft/configs/runecraft.constant',
+    'maps/m45_75.jm2',
+    'scripts/quests/quest_murder/configs/quest_murder.loc',
+    'scripts/general/configs/quest.enum',
+    'maps/m42_55.jm2',
+]) {
+    assert.equal(base377ContentFiles.includes(relative), false, `${relative} belongs only to an omitted legacy route family`);
+    assert.ok(baseContentFiles.includes(relative), 'legacy route inputs remain unchanged');
+}
+for (const relative of ['pack/npc.pack', 'pack/loc.pack', 'pack/obj.pack']) {
+    assert.ok(base377ContentFiles.includes(relative), `${relative} remains a selected shared pack input`);
+}
 for (const relative of [
     'scripts/quests/quest_itexam/scripts/digsite_workman.rs2',
     'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2',
@@ -4178,7 +4205,7 @@ const noOverrides: readonly SiteOverride[] = [];
         fs.writeFileSync(path.join(content, relative), text);
     }
     execFileSync('git', ['init', '-q'], { cwd: content });
-    execFileSync('git', ['add', 'maps'], { cwd: content });
+    execFileSync('git', ['add', '-A'], { cwd: content });
     const selected = extractCookSurfaces(content, undefined, 377);
     assert.deepEqual(selected.facts.rows, [
         { x: 3201, z: 3202, level: 0, name: 'Selected oven', debugname: 'new_oven', kind: 'oven' },
@@ -4228,7 +4255,8 @@ if (process.env.GAME_DATA_377_CONTENT) {
     assert.deepEqual(payload.spells, magic377.spells);
     assert.deepEqual(payload.staves, magic377.staves);
     assert.deepEqual(payload.herbs, extractHerbFacts(spec377.content, selectedItems, 377).herbs);
-    assert.deepEqual(payload.equipment_names, extractEquipmentNamesFacts(payload.items, parsePack(fs.readFileSync(path.join(spec377.content, 'pack/obj.pack'), 'utf8')), repoRoot, 377));
+    const equipment377 = extractEquipmentNamesFacts(payload.items, parsePack(fs.readFileSync(path.join(spec377.content, 'pack/obj.pack'), 'utf8')), repoRoot, 377);
+    assert.deepEqual(payload.equipment_names, JSON.parse(JSON.stringify(equipment377)), 'the wire omits undefined optional metadata');
     assert.deepEqual(payload.cook_surfaces, extractCookSurfaces(spec377.content, undefined, 377).facts);
     assert.equal('catalog' in payload.provenance.cook_inputs, false, '377 does not inherit frozen camp/stand inputs');
     const aliases377 = new Map<number, string>();
