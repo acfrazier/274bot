@@ -22,6 +22,11 @@ type ObjType = { id: number; debugname: string | null; name: string | null; cost
 type NpcType = { id: number; debugname?: string | null; name: string | null; respawnrate?: number };
 /** `NpcType.respawnrate` default: "default to 1-minute" (`engine/src/cache/config/NpcType.ts:105`). */
 const ENGINE_DEFAULT_NPC_RESPAWN_TICKS = 100;
+export type SelectedItemRow = {
+    alias: string | null; id: number; name: string | null; cost: number; stackable: boolean; members: boolean;
+    certificate_link: number; certificate_template: number; wear_position: number; wear_position_2: number; wear_position_3: number;
+    worn_model: boolean; category: string | null; tradeable: boolean; stack_variant: boolean; destroy_death?: boolean;
+};
 
 const root = path.resolve(import.meta.dirname, '../..');
 type Revision = { revision: number; engine: string; content: string; output: string };
@@ -34,6 +39,7 @@ export function requireEnvPath(name: string, label: string): string {
 export const revisions: Revision[] = [
     { revision: 274, engine: requireEnvPath('GAME_DATA_274_ENGINE', 'the 274 engine root'), content: requireEnvPath('GAME_DATA_274_CONTENT', 'the 274 content root'), output: path.join(root, 'crates/api/data/game-data/274.json') },
     { revision: 289, engine: requireEnvPath('GAME_DATA_289_ENGINE', 'the 289 engine root'), content: requireEnvPath('GAME_DATA_289_CONTENT', 'the 289 content root'), output: path.join(root, 'crates/api/data/game-data/289.json') },
+    { revision: 377, get engine() { return requireEnvPath('GAME_DATA_377_ENGINE', 'the 377 engine root'); }, get content() { return requireEnvPath('GAME_DATA_377_CONTENT', 'the 377 content root'); }, output: path.join(root, 'crates/api/data/game-data/377.json') }
 ];
 const dropContentFiles = [
     'scripts/_unpack/225/all.npc',
@@ -74,7 +80,7 @@ export function categoryName(obj: ObjType, categories: ReadonlyMap<number, strin
     return name;
 }
 
-function row(obj: ObjType, piles: ReadonlySet<number>, categories: ReadonlyMap<number, string>, destroyDeathParam: number | undefined, pvpV0: boolean) {
+function row(obj: ObjType, piles: ReadonlySet<number>, categories: ReadonlyMap<number, string>, destroyDeathParam: number | undefined, pvpV0: boolean): SelectedItemRow {
     if (typeof obj.tradeable !== 'boolean') throw new Error(`obj ${obj.id}: engine decode has no tradeable flag`);
     // PvP V0 `GameItem.destroy_death`: true when the obj carries
     // `param=destroy_death,^true` (`player/configs/death.param:1-3`), through
@@ -295,21 +301,12 @@ const EQUIPMENT_EXACT_NAME_JOIN: EquipmentExactNameJoin = {
         note: 'Frozen BOLTS members (Bronze bolts … Bone bolts) are absent under exact join. Generic Bolts / Bolts(p) are not substitutes and are not mapped onto those tier strings.',
     },
 };
-type EquipmentItemFact = {
-    alias: string | null;
-    id: number;
-    name: string | null;
-    certificate_template: number;
-    wear_position: number;
-    wear_position_2: number;
-    wear_position_3: number;
-};
 
-function isWearableRow(item: EquipmentItemFact) {
+function isWearableRow(item: SelectedItemRow) {
     return item.wear_position >= 0 || item.wear_position_2 >= 0 || item.wear_position_3 >= 0;
 }
 
-function isBankNoteRow(item: EquipmentItemFact) {
+function isBankNoteRow(item: SelectedItemRow) {
     return item.certificate_template >= 0;
 }
 
@@ -344,7 +341,7 @@ function requireObjPack(objPack: Map<string, number> | undefined): Map<string, n
 export function joinEquipmentName(
     family: EquipmentFamilyId,
     requestedName: string,
-    items: EquipmentItemFact[],
+    items: SelectedItemRow[],
     objPack: Map<string, number>,
 ): EquipmentNameEntry {
     const pack = requireObjPack(objPack);
@@ -428,11 +425,14 @@ export function joinEquipmentName(
     };
 }
 
-export function extractEquipmentNamesFacts(items: EquipmentItemFact[], objPack: Map<string, number>, repoRoot: string = root): EquipmentNamesFacts {
+export function extractEquipmentNamesFacts(items: SelectedItemRow[], objPack: Map<string, number>, repoRoot: string = root, revision = 289): EquipmentNamesFacts {
     const pack = requireObjPack(objPack);
     const curated = loadEquipmentNamesCurated(repoRoot);
     const out: EquipmentNamesFacts = {
-        exact_name_join: EQUIPMENT_EXACT_NAME_JOIN,
+        exact_name_join: revision === 377 ? {
+            ...EQUIPMENT_EXACT_NAME_JOIN,
+            bolts: { ...EQUIPMENT_EXACT_NAME_JOIN.bolts, note: 'Frozen bolt names are exact queries. Each row derives its selected identity or absence; generic Bolts / Bolts(p) are never substituted for a tier name.' },
+        } : EQUIPMENT_EXACT_NAME_JOIN,
         bows: [],
         crossbows: [],
         darts: [],
@@ -503,7 +503,7 @@ export function parsePrayerInterface(text: string) {
     return out;
 }
 
-export function extractPrayerFacts(content: string) {
+export function extractPrayerFacts(content: string, revision = 289) {
     const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
     const varps = parsePack(fs.readFileSync(path.join(content, 'pack/varp.pack'), 'utf8'));
     const constants = parsePrayerConstants(
@@ -562,7 +562,37 @@ export function extractPrayerFacts(content: string) {
         });
     }
     if (prayers.length === 0) throw new Error('prayer: missing prayer rows');
+    if (revision !== 377 && prayers.length !== 15) throw new Error(`prayer: expected 15 rows, got ${prayers.length}`);
     prayers.sort((a, b) => a.button_com - b.button_com || a.name.localeCompare(b.name));
+    if (revision === 377) return { prayers };
+    const thick = prayers[0]!;
+    const melee = prayers[14]!;
+    if (
+        thick.name !== 'Thick Skin'
+        || thick.level !== 1
+        || thick.button_com !== 5609
+        || thick.varp !== 83
+        || thick.varp_alias !== 'prayer0'
+    ) {
+        throw new Error(`prayer: Thick Skin anchor mismatch ${JSON.stringify(thick)}`);
+    }
+    if (
+        melee.name !== 'Protect from Melee'
+        || melee.level !== 43
+        || melee.button_com !== 5623
+        || melee.varp !== 97
+        || melee.varp_alias !== 'prayer14'
+    ) {
+        throw new Error(`prayer: Protect from Melee anchor mismatch ${JSON.stringify(melee)}`);
+    }
+    for (let index = 0; index < prayers.length; index += 1) {
+        const expectedCom = 5609 + index;
+        const expectedVarp = 83 + index;
+        const prayer = prayers[index]!;
+        if (prayer.button_com !== expectedCom || prayer.varp !== expectedVarp) {
+            throw new Error(`prayer: expected com ${expectedCom}/varp ${expectedVarp}, got ${prayer.button_com}/${prayer.varp} for ${prayer.name}`);
+        }
+    }
     return { prayers };
 }
 
@@ -1399,7 +1429,7 @@ function trailJoin(objPack: Map<string, number>, itemIds: Map<string, { id: numb
  * casket needs no obj block. Every join must equal the decoded item id.
  * Challenge answers are a sibling list, not membership rows.
  */
-export function extractTrailFacts(content: string, items: ObjType[]): TrailFacts {
+export function extractTrailFacts(content: string, items: ObjType[], revision = 289): TrailFacts {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const objPack = parsePack(requireGatherText(content, 'pack/obj.pack'));
     if (objPack.size === 0) throw new Error('pack/obj.pack: required file missing ids');
@@ -1428,7 +1458,12 @@ export function extractTrailFacts(content: string, items: ObjType[]): TrailFacts
         const joined = trailJoin(objPack, itemIds, alias, 'trail_casket param');
         rows.push({ alias: joined.alias, id: joined.id, role: 'casket', params: blocks.get(alias) ?? [] });
     }
-    for (const row of rows) if (row.alias === TRAIL_CONSTRAINED.alias) row.access = 'constrained';
+    if (revision !== 377) {
+        const constrained = rows.filter((row) => row.alias === TRAIL_CONSTRAINED.alias);
+        if (constrained.length !== 1) throw new Error(`trails: ${TRAIL_CONSTRAINED.alias} must be one membership row`);
+        if (constrained[0]!.id !== TRAIL_CONSTRAINED.id) throw new Error(`trails: ${TRAIL_CONSTRAINED.alias} pack id ${constrained[0]!.id}, expected ${TRAIL_CONSTRAINED.id}`);
+        constrained[0]!.access = 'constrained';
+    }
     const challenge_answers: TrailChallengeAnswer[] = [];
     for (const [alias, params] of blocks) {
         const answers = params.filter((param) => param.key === 'trail_challenge_answer');
@@ -2341,20 +2376,38 @@ export function parseJm2LinkBelow(text: string) {
     return tiles;
 }
 
-/** Extract cook surfaces from the selected local LOC configs and map placements. */
-export function extractCookSurfaces(content: string, catalog: CookCatalog) {
+/**
+ * Cook surfaces placed in the selected map pack. Legacy revisions retain the
+ * frozen kind queries and camp checks. Revision 377 derives kinds from the
+ * selected cooking categories and does not inherit curated camp coordinates.
+ */
+export function extractCookSurfaces(content: string, catalog: CookCatalog | undefined, revision = 289) {
     const locFiles = contentTreeFiles(content, 'scripts', '.loc');
     const maps = placementMapFiles(content);
     const packed = parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'));
+    if (revision !== 377 && !catalog) throw new Error('cook surfaces: legacy catalog is required');
+    const kinds: Record<string, CookKind> = revision === 377 ? {} : catalog!.kinds;
+    if (revision === 377) {
+        const handlerPath = 'scripts/skill_cooking/scripts/cooking.rs2';
+        const text = fs.readFileSync(path.join(content, handlerPath), 'utf8').replace(/\/\/[^\n]*/g, '');
+        for (const category of ['cooking_oven', 'cooking_fire']) {
+            const section = text.split(/(?=^\[)/m).find(block => block.startsWith(`[oplocu,_${category}]`));
+            if (!section?.includes('@attempt_cook_item(last_useitem)')) throw new Error(`cook surfaces: ${category} cooking handler is not derived`);
+        }
+    }
     const names = new Map<string, string>();
     for (const file of locFiles) {
         for (const [alias, config] of parseNpcConfigSections(fs.readFileSync(path.join(content, file), 'utf8'))) {
-            if (catalog.kinds[alias] !== undefined && config.name !== undefined) names.set(alias, config.name);
+            if (revision === 377) {
+                if (config.category === 'cooking_oven') kinds[alias] = 'oven';
+                else if (config.category === 'cooking_fire') kinds[alias] = 'fire';
+            }
+            if (kinds[alias] !== undefined && config.name !== undefined) names.set(alias, config.name);
         }
     }
     const wanted = new Map<number, { debugname: string; name: string; kind: CookKind }>();
     for (const [alias, id] of packed) {
-        const kind = catalog.kinds[alias];
+        const kind = kinds[alias];
         if (kind !== undefined) wanted.set(id, { debugname: alias, name: names.get(alias) ?? alias, kind });
     }
     if (wanted.size === 0) throw new Error('cook surfaces: no surface loc types in loc.pack');
@@ -2535,9 +2588,10 @@ async function generate(spec: Revision, stage: GenerationStage) {
     for (const requiredInput of ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config']) {
         if (!fs.existsSync(path.join(spec.engine, requiredInput))) throw new Error(`${spec.revision}: missing ${requiredInput}`);
     }
+    // The selected engine root chooses the decoder module; static imports cannot target each revision.
     process.chdir(spec.engine);
-    const environment = (await import(pathToFileURL(path.join(spec.engine, 'src/util/Environment.ts')).href)) as { default: { node: { members: boolean } } };
-    if (environment.default.node.members !== true) throw new Error(`${spec.revision}: generate with a members world config (NODE_MEMBERS) so tradeable is decoded correctly`);
+    const environment = (await import(pathToFileURL(path.join(spec.engine, 'src/util/Environment.ts')).href)) as { default: { node?: { members: boolean }; NODE_MEMBERS?: boolean } };
+    if ((environment.default.node?.members ?? environment.default.NODE_MEMBERS) !== true) throw new Error(`${spec.revision}: generate with a members world config (NODE_MEMBERS) so tradeable is decoded correctly`);
     const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } };
     objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } };
@@ -2560,17 +2614,26 @@ async function generate(spec: Revision, stage: GenerationStage) {
     const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs);
     const magic = extractMagicFacts(spec.content, objModule.default.configs);
     const herbs = extractHerbFacts(spec.content, objModule.default.configs);
-    const autocast = extractAutocastControls(spec.content);
+    if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`);
+    if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`);
+    const autocast = spec.revision === 377 ? undefined : extractAutocastControls(spec.content);
     const duel = extractDuelControls(spec.content);
-    const special = extractSpecialControls(spec.content, objModule.default.configs);
+    const special = spec.revision === 377 ? undefined : extractSpecialControls(spec.content, objModule.default.configs);
     const teleports = extractTeleportSpells(spec.content, objModule.default.configs);
-    const prayer = extractPrayerFacts(spec.content);
-    const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs);
-    const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs);
-    const objPack = parsePack(fs.readFileSync(path.join(spec.content, 'pack/obj.pack'), 'utf8'));
+    if (spec.revision !== 377 && (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455)) {
+        throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);
+    }
+    const prayer = extractPrayerFacts(spec.content, spec.revision);
+    if (spec.revision !== 377 && prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`);
+    const nurmofEssence = spec.revision === 377 ? undefined : extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs);
+    if (nurmofEssence && nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);
+    const flourSix = spec.revision === 377 ? undefined : extractFlourSixFacts(spec.content, objModule.default.configs);
+    if (flourSix && (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662)) throw new Error(`${spec.revision}: flour six join mismatch`);
+    const objPackPath = path.join(spec.content, 'pack/obj.pack');
+    if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`);
+    const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8'));
     if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`);
-    const equipmentNames = extractEquipmentNamesFacts(items, objPack);
-
+    const equipmentNames = extractEquipmentNamesFacts(items, objPack, root, spec.revision);
     const gathering = extractGatheringFamily(spec.content);
     const gatheringFile = path.join(path.dirname(spec.output), String(spec.revision), 'gathering.json');
     fs.mkdirSync(path.dirname(gatheringFile), { recursive: true });
@@ -2589,12 +2652,20 @@ async function generate(spec: Revision, stage: GenerationStage) {
         npc_transforms: runtimeNpcOperations(npcEvidence!, gathering.payload.methods, gathering.payload.hazard_npcs),
     } : undefined;
     if (serverOrdered) Object.assign(facts, { server_ordered: serverOrdered });
-
+    const cookRow = questIdentity.rows.find((row) => row.id === 'cook');
+    const deathRow = questIdentity.rows.find((row) => row.id === 'death');
+    if (!cookRow || !deathRow || (spec.revision !== 377 && (deathRow.varp !== 'death_equiproom' || deathRow.varp_id !== 314 || deathRow.complete !== 80)) || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied)) {
+        throw new Error(`${spec.revision}: quest identity join mismatch`);
+    }
+    if (spec.revision === 289 && (questIdentity.rows.length !== 69 || !questIdentity.rows.some((row) => row.id === 'barcrawl') || !questIdentity.rows.some((row) => row.id === 'hauntedmine' && row.kind === 'stub'))) {
+        throw new Error(`${spec.revision}: expected 69 identity rows, got ${questIdentity.rows.length}`);
+    }
     const combatScripts = parseCombatScripts(spec.content);
     const spellMaxHits = buildSpellMaxHits(spec.content);
     const npcTypeSource = fs.readFileSync(path.join(spec.engine, 'src/cache/config/NpcType.ts'), 'utf8');
     const npcNames = extractNpcNamesFacts(spec.content, spec.revision, npcTypeSource, combatScripts, spellMaxHits);
     const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts, pvpV0);
+    // PvP V0 facts use content aliases to join decoded obj configurations.
     const aliasToId = new Map(items.filter((item) => item.alias !== null).map((item) => [item.alias as string, item.id]));
     const idToAlias = new Map(items.filter((item) => item.alias !== null).map((item) => [item.id, item.alias as string]));
     Object.assign(facts, {
@@ -2629,9 +2700,13 @@ async function generate(spec: Revision, stage: GenerationStage) {
     const npcPlacements = extractNpcPlacementsFacts(spec.content);
     const karamja = extractKaramjaFacts(spec.content, npcNames, locNames, npcPlacements);
     Object.assign(facts, { karamja: karamja.facts });
-
+    if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) {
+        throw new Error(`${spec.revision}: quest coverage mismatch`);
+    }
+    if (spec.revision === 289 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`);
     const quests: FamilyDraft = { schema: QUESTS_SCHEMA, payload: questIdentity };
     const questsFile = path.join(path.dirname(spec.output), String(spec.revision), 'quests.json');
+    fs.mkdirSync(path.dirname(questsFile), { recursive: true });
     fs.writeFileSync(questsFile, familyBytes(quests, 'quests'));
     let prereqStepsFile: string | undefined;
     if (stage === 2 && spec.revision === 289) {
@@ -2642,7 +2717,7 @@ async function generate(spec: Revision, stage: GenerationStage) {
         fs.writeFileSync(prereqStepsFile, familyBytes(prereqFamily, 'prereq_steps'));
     }
 
-    const trails = extractTrailFacts(spec.content, objModule.default.configs);
+    const trails = extractTrailFacts(spec.content, objModule.default.configs, spec.revision);
     const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs);
     assertTalkKeyNpcJoins(talkKey, npcModule.default.configs);
     const trioGivers = extractTrioGiversFacts(spec.content);
@@ -2652,27 +2727,26 @@ async function generate(spec: Revision, stage: GenerationStage) {
     const bankSource = path.join(rs2b0tRoot, 'src/bot/api/bank/BankLocations.ts');
     const bankCatalog = await extractBankCatalog(spec.engine, fs.readFileSync(bankSource, 'utf8'));
     const bankPlacements = extractBankPlacements(spec.content, bankCatalog);
-    fs.writeFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.json'), bankCatalogJson(bankCatalog));
+    if (spec.revision !== 377) fs.writeFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.json'), bankCatalogJson(bankCatalog));
     const cookFiles = {
         cookLocations: 'src/bot/data/cookLocations.ts',
         cookingRanges: 'src/bot/data/cookingRanges.ts',
         genCookSurfaces: 'tools/cooking/gen-cooksurfaces.ts',
     };
-    const cookCatalog = await extractCookCatalog(spec.engine, {
+    const cookCatalog = spec.revision === 377 ? undefined : await extractCookCatalog(spec.engine, {
         cookLocations: fs.readFileSync(path.join(rs2b0tRoot, cookFiles.cookLocations), 'utf8'),
         cookingRanges: fs.readFileSync(path.join(rs2b0tRoot, cookFiles.cookingRanges), 'utf8'),
         genCookSurfaces: fs.readFileSync(path.join(rs2b0tRoot, cookFiles.genCookSurfaces), 'utf8'),
     });
-    const cookSurfaces = extractCookSurfaces(spec.content, cookCatalog);
-    fs.writeFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.json'), cookCatalogJson(cookCatalog));
+    const cookSurfaces = extractCookSurfaces(spec.content, cookCatalog, spec.revision);
+    if (cookCatalog) fs.writeFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.json'), cookCatalogJson(cookCatalog));
     fs.rmSync(path.join(root, 'crates/api/data/game-data/bank-catalog.rs'), { force: true });
     fs.rmSync(path.join(root, 'crates/api/data/game-data/cook-catalog.rs'), { force: true });
     const shops = extractShopFacts(spec.content, items);
-
     const gatherItemNames = new Map<number, string>();
     for (const item of items) if (item.name !== null && item.name !== '') gatherItemNames.set(item.id, item.name);
     const gatherResourceRows = gatherResources(gathering.payload, gatherItemNames);
-    const gatherSiteResult = gatherSites(gathering.payload, gatherResourceRows, spec.content, bankCatalog);
+    const gatherSiteResult = gatherSites(gathering.payload, gatherResourceRows, spec.content, bankCatalog, { revision: spec.revision });
     hiddenSites.set(spec.revision, gatherSiteResult.hidden);
     Object.assign(facts, { gather_resources: gatherResourceRows, gather_sites: gatherSiteResult.rows });
 
@@ -2704,6 +2778,16 @@ async function generate(spec: Revision, stage: GenerationStage) {
         cook_surfaces: cookSurfaces.facts,
         mining_hazards: miningHazards(gathering.payload),
     };
+    if (spec.revision === 377) Object.assign(payload, { coverage: [
+        { family: 'autocast', status: 'UNKNOWN', reason: '377 uses autocast_set/autocast_spell; the legacy single-varp armed/selected contract is not derived' },
+        { family: 'special', status: 'UNKNOWN', reason: 'legacy arm_confirm_ticks is a host tactic, not a 377 content fact; source-derived special_weapons are separate' },
+        { family: 'nurmof_essence', status: 'UNKNOWN', reason: 'legacy shop/essence family embeds frozen 289 bank and stand tactics' },
+        { family: 'flour_six', status: 'UNKNOWN', reason: 'legacy family embeds frozen 289 stand and bank tactics' },
+        { family: 'trails.access', status: 'UNKNOWN', reason: '289 curated constrained-clue annotation is not a 377 script proof' },
+        { family: 'cook_tactics', status: 'UNKNOWN', reason: 'cooking surfaces derive selected source categories and map placements; frozen 289 stand and camp pairings are not 377 facts' },
+        { family: 'gather_sites.access_and_reachability', status: 'UNKNOWN', reason: '377 sites derive selected resource placements and geometry; no 274/289 quest/access curation or nav reachability proof is inherited' },
+        { family: 'server_ordered', status: 'UNKNOWN', reason: 'existing route and NPC-transform proof is owned by revision 289' },
+    ] });
     const debugArtifact = buildDebugArtifact(spec.revision, debugCatalog);
     const debugFile = path.join(path.dirname(spec.output), String(spec.revision), 'debug.json');
     fs.mkdirSync(path.dirname(debugFile), { recursive: true });
@@ -2737,14 +2821,14 @@ export function parseGenerationArgs(args: string[]): GenerationOptions {
         if (flag === '--stage' && (value === '1' || value === '2') && stage === undefined) {
             stage = Number(value) as GenerationStage;
             index++;
-        } else if (flag === '--revision' && (value === '274' || value === '289') && revision === undefined) {
+        } else if (flag === '--revision' && ['274', '289', '377'].includes(value ?? '') && revision === undefined) {
             revision = Number(value);
             index++;
         } else {
-            throw new Error('usage: --stage 1|2 [--revision 274|289]');
+            throw new Error('usage: --stage 1|2 [--revision 274|289|377]');
         }
     }
-    if (stage === undefined) throw new Error('usage: --stage 1|2 [--revision 274|289]');
+    if (stage === undefined) throw new Error('usage: --stage 1|2 [--revision 274|289|377]');
     return { stage, revisions: revision === undefined ? [274, 289] : [revision] };
 }
 async function main() {

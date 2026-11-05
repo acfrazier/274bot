@@ -53,6 +53,7 @@ import './npc-transforms.test.ts';
 import './npc-stat-default.test.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
 import type { NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
+import { extractCookSurfaces } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 const bankJsonFixture = bankCatalogJson([
@@ -1488,6 +1489,11 @@ assert.equal(karil?.disposition, 'absent');
 assert.equal(karil?.absent_class, 'no_exact_selected_match');
 assert.equal(equipmentFacts.exact_name_join.bolts.generic_is_substitute, false);
 
+// revision 377 derives the same equipment rows; only the frozen-bolt note is revision-specific
+const equipmentFacts377 = extractEquipmentNamesFacts(equipmentItems, equipmentPack, repoRoot, 377);
+assert.deepEqual(equipmentFacts377.bows.map((row) => row.requested_name), equipmentFacts.bows.map((row) => row.requested_name));
+assert.equal(equipmentFacts377.exact_name_join.bolts.note, 'Frozen bolt names are exact queries. Each row derives its selected identity or absence; generic Bolts / Bolts(p) are never substituted for a tier name.');
+
 const noteOnly = extractEquipmentNamesFacts([
     { alias: 'cert_shortbow', id: 842, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: 841, certificate_template: 799, wear_position: -1, wear_position_2: -1, wear_position_3: -1 },
 ], new Map([['cert_shortbow', 842]]));
@@ -1531,8 +1537,10 @@ assert.equal(
 
 assert.deepEqual(parseGenerationArgs(['--stage', '1']), { stage: 1, revisions: [274, 289] });
 assert.deepEqual(parseGenerationArgs(['--revision', '289', '--stage', '2']), { stage: 2, revisions: [289] });
+assert.deepEqual(parseGenerationArgs(['--stage', '2', '--revision', '377']), { stage: 2, revisions: [377] });
 assert.throws(() => parseGenerationArgs([]), /usage/);
 assert.throws(() => parseGenerationArgs(['--stage', '1', '--revision', '999']), /usage/);
+
 function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
     const files: Record<string, string> = {
         'scripts/general/scripts/quests.rs2': `~send_quest_progress_colour($component, $progress, $complete_progress);
@@ -2301,6 +2309,11 @@ const constrainedRows = trailFacts.rows.filter((row) => 'access' in row);
 assert.deepEqual(constrainedRows.map((row) => [row.alias, row.id, row.access]), [['trail_clue_hard_sextant028', 3554, 'constrained']]);
 assert.equal(constrainedRows[0].role, 'clue');
 assert.equal(JSON.stringify(trailFacts).includes('"open"'), false);
+
+// revision 377 derives the same membership but never inherits the 289 constrained-clue annotation
+const trailFacts377 = extractTrailFacts(trailFixture(), trailFixtureItems, 377);
+assert.equal(trailFacts377.rows.some((row) => 'access' in row), false);
+assert.deepEqual(trailFacts377.rows.map((row) => row.alias).sort(), trailFacts.rows.map((row) => row.alias).sort());
 
 // a constant-table coordinate is not selected when the obj param is absent
 assert.deepEqual(trailRow(trailFacts, 'trail_clue_easy_vague003').params, [{ key: 'trail_desc', value: 'Dig near the drawers.' }]);
@@ -3534,6 +3547,28 @@ default=1000
         { id: 2, params: new Map() },
     ]);
     assert.deepEqual(bonus, [], 'sa_energy is not a worn combat bonus');
+}
+
+{
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'cook-surfaces-377-'));
+    const files = {
+        'scripts/skill_cooking/scripts/cooking.rs2': '[oplocu,_cooking_oven] @attempt_cook_item(last_useitem);\n[oplocu,_cooking_fire]\n@attempt_cook_item(last_useitem);\n',
+        'scripts/test.loc': '[new_oven]\nname=Selected oven\ncategory=cooking_oven\n[new_fire]\nname=Selected fire\ncategory=cooking_fire\n[legacy_name_only]\nname=Range\n',
+        'pack/loc.pack': '700=new_oven\n701=new_fire\n702=legacy_name_only\n',
+        'maps/m50_50.jm2': '==== LOC ====\n0 1 2: 700\n0 3 4: 701\n0 5 6: 702\n',
+    };
+    for (const [relative, text] of Object.entries(files)) {
+        fs.mkdirSync(path.dirname(path.join(content, relative)), { recursive: true });
+        fs.writeFileSync(path.join(content, relative), text);
+    }
+    const selected = extractCookSurfaces(content, undefined, 377);
+    assert.deepEqual(selected.facts.rows, [
+        { x: 3201, z: 3202, level: 0, name: 'Selected oven', debugname: 'new_oven', kind: 'oven' },
+        { x: 3203, z: 3204, level: 0, name: 'Selected fire', debugname: 'new_fire', kind: 'fire' },
+    ], '377 kinds and identities derive from selected categories, not frozen aliases or display names');
+    fs.writeFileSync(path.join(content, 'scripts/skill_cooking/scripts/cooking.rs2'), '[oplocu,_cooking_fire] @attempt_cook_item(last_useitem);\n');
+    assert.throws(() => extractCookSurfaces(content, undefined, 377), /cooking_oven cooking handler is not derived/);
+    fs.rmSync(content, { recursive: true });
 }
 
 console.log('generate fixture passed');
