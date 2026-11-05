@@ -17,6 +17,10 @@ const COOK_CATALOG_JSON: &str = "data/game-data/cook-catalog.json";
 const LOCAL_ASSETS: &[&str] = &[
     "data/game-data/274.json",
     "data/game-data/289.json",
+    "data/game-data/377.json",
+    "data/game-data/377/debug.json",
+    "data/game-data/377/quests.json",
+    "data/game-data/377/gathering.json",
     "data/game-data/274/debug.json",
     "data/game-data/289/debug.json",
     "data/game-data/274/quests.json",
@@ -69,7 +73,7 @@ fn main() -> io::Result<()> {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
     fs::write(out.join("bank_catalog.rs"), bank_catalog_rust)?;
     fs::write(out.join("cook_catalog.rs"), cook_catalog_rust)?;
-    for (revision, source) in [(274, &paths[0]), (289, &paths[1])] {
+    for (revision, source) in [(274, &paths[0]), (289, &paths[1]), (377, &paths[2])] {
         let mut input = File::open(source)?;
         let output = File::create(out.join(format!("game-data-{revision}.json.gz")))?;
         let mut encoder = GzEncoder::new(output, Compression::best());

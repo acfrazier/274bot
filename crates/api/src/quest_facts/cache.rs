@@ -11,12 +11,15 @@ use std::sync::Arc;
 const QUESTS_274: &[u8] = include_bytes!("../../data/game-data/274/quests.json");
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 const QUESTS_289: &[u8] = include_bytes!("../../data/game-data/289/quests.json");
+#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+const QUESTS_377: &[u8] = include_bytes!("../../data/game-data/377/quests.json");
 
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 fn embedded(revision: ClientRevision) -> Option<&'static [u8]> {
     Some(match revision {
         ClientRevision::R274 => QUESTS_274,
         ClientRevision::R289 => QUESTS_289,
+        ClientRevision::R377 => QUESTS_377,
     })
 }
 
@@ -32,14 +35,14 @@ struct Slot {
 
 /// One process-shared catalog slot per supported selected revision.
 struct Cache {
-    slots: Mutex<[Option<Slot>; 2]>,
+    slots: Mutex<[Option<Slot>; 3]>,
     preparing: Mutex<()>,
 }
 
 impl Cache {
     const fn new() -> Self {
         Self {
-            slots: Mutex::new([None, None]),
+            slots: Mutex::new([None, None, None]),
             preparing: Mutex::new(()),
         }
     }
@@ -48,6 +51,7 @@ impl Cache {
         match revision {
             ClientRevision::R274 => 0,
             ClientRevision::R289 => 1,
+            ClientRevision::R377 => 2,
         }
     }
 
@@ -138,8 +142,27 @@ mod tests {
                         Err(FactError::UnknownKey(_))
                     )),
                     ClientRevision::R289 => assert!(catalog.quest("routequest").is_ok()),
+                    ClientRevision::R377 => unreachable!("377 has its own catalog test"),
                 }
             }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn selected_377_quest_family_uses_its_selected_asset() {
+        let Some(data) = crate::game_data::test_data(ClientRevision::R377) else {
+            return;
+        };
+        FamilyPreparation::run(move |worker| {
+            let catalog = data.prepare_quests(worker).expect("prepared 377 quests");
+            assert!(!catalog.is_empty(), "the 377 quest family has identity rows");
+            assert!(Arc::ptr_eq(
+                &catalog,
+                &data.try_quests().expect("preparation caches its catalog")
+            ));
         })
         .unwrap()
         .join()

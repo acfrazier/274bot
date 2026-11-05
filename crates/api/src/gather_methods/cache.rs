@@ -15,12 +15,15 @@ use std::sync::Arc;
 const GATHERING_274: &[u8] = include_bytes!("../../data/game-data/274/gathering.json");
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 const GATHERING_289: &[u8] = include_bytes!("../../data/game-data/289/gathering.json");
+#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+const GATHERING_377: &[u8] = include_bytes!("../../data/game-data/377/gathering.json");
 
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 fn embedded(revision: ClientRevision) -> Option<&'static [u8]> {
     Some(match revision {
         ClientRevision::R274 => GATHERING_274,
         ClientRevision::R289 => GATHERING_289,
+        ClientRevision::R377 => GATHERING_377,
     })
 }
 
@@ -50,14 +53,14 @@ struct Slot {
 /// Slots are only touched under brief locks; `preparing` serializes decodes
 /// while `lookup` (the tick path) never waits behind a decode.
 struct Cache {
-    slots: Mutex<[Option<Slot>; 2]>,
+    slots: Mutex<[Option<Slot>; 3]>,
     preparing: Mutex<()>,
 }
 
 impl Cache {
     const fn new() -> Self {
         Self {
-            slots: Mutex::new([None, None]),
+            slots: Mutex::new([None, None, None]),
             preparing: Mutex::new(()),
         }
     }
@@ -150,6 +153,13 @@ mod tests {
                 ),
                 "revision 289 gathering family for API tests",
             ),
+            ClientRevision::R377 => (
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/data/game-data/377/gathering.json"
+                ),
+                "revision 377 gathering family for API tests",
+            ),
         };
         let path = crate::test_support::local_asset_path("", path, description)?;
         if let Some(bytes) = embedded(revision) {
@@ -187,6 +197,7 @@ mod tests {
         let cache = Cache::new();
         let key_274 = Key::of(ClientRevision::R274);
         let key_289 = Key::of(ClientRevision::R289);
+        let key_377 = Key::of(ClientRevision::R377);
         let cold_274 = Instant::now();
         let Some((bytes_274, len_274)) = real(ClientRevision::R274) else {
             return;
@@ -207,9 +218,23 @@ mod tests {
             len_289,
             cold_289.elapsed()
         );
+        let Some((bytes_377, len_377)) = real(ClientRevision::R377) else {
+            return;
+        };
+        let cold_377 = Instant::now();
+        let catalog_377 = cache.prepare(key_377, || load(&bytes_377)).unwrap();
+        println!(
+            "gathering decode 377: input={}B cold={:?}",
+            len_377,
+            cold_377.elapsed()
+        );
         assert!(!Arc::ptr_eq(&catalog_274, &catalog_289));
+        assert!(!Arc::ptr_eq(&catalog_274, &catalog_377));
+        assert!(!Arc::ptr_eq(&catalog_289, &catalog_377));
+        drop((catalog_274, catalog_289, catalog_377));
         assert!(cache.lookup(&key_274).is_some());
         assert!(cache.lookup(&key_289).is_some());
+        assert!(cache.lookup(&key_377).is_some());
     }
 
     #[test]

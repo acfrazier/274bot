@@ -92,6 +92,7 @@ impl DebugCatalog {
         let bytes: &[u8] = match revision {
             ClientRevision::R274 => include_bytes!("../data/game-data/274/debug.json"),
             ClientRevision::R289 => include_bytes!("../data/game-data/289/debug.json"),
+            ClientRevision::R377 => include_bytes!("../data/game-data/377/debug.json"),
         };
         Self::decode(bytes, revision, items)
     }
@@ -328,11 +329,55 @@ mod tests {
             )
             .unwrap(),
         );
-        for revision in [ClientRevision::R274, ClientRevision::R289] {
+        for revision in [ClientRevision::R274, ClientRevision::R289, ClientRevision::R377] {
             let catalog = super::DebugCatalog::decode(bytes, revision, items.clone())
                 .expect("debug facts decode under the caller-selected revision");
             assert_eq!(catalog.revision(), revision);
         }
+    }
+
+    #[test]
+    fn selected_377_catalog_decodes_its_actual_asset() {
+        use client::io::ClientRevision;
+
+        let Some(data) = crate::game_data::test_data(ClientRevision::R377) else {
+            return;
+        };
+        let Some(path) = crate::test_support::local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/377/debug.json"),
+            "revision 377 debug catalog",
+        ) else {
+            return;
+        };
+        let bytes = std::fs::read(path).unwrap();
+        let catalog = super::DebugCatalog::decode(&bytes, ClientRevision::R377, data)
+            .expect("the 377 debug asset matches the selected revision");
+        assert_eq!(catalog.revision(), ClientRevision::R377);
+        assert_eq!(
+            super::DebugCatalog::decode(
+                &bytes,
+                ClientRevision::R289,
+                crate::game_data::for_revision(ClientRevision::R289).unwrap()
+            )
+            .unwrap()
+            .revision(),
+            ClientRevision::R289,
+            "ADR 0019 selects the caller's revision without input identity verification"
+        );
+    }
+
+    #[cfg(feature = "debug-catalog")]
+    #[test]
+    fn load_selects_the_377_debug_asset() {
+        use client::io::ClientRevision;
+
+        let Some(data) = crate::game_data::test_data(ClientRevision::R377) else {
+            return;
+        };
+        let catalog =
+            super::DebugCatalog::load(ClientRevision::R377, data).expect("loaded 377 debug asset");
+        assert_eq!(catalog.revision(), ClientRevision::R377);
     }
 
     fn command(args: Vec<DebugArgument>) -> DebugCommand {
