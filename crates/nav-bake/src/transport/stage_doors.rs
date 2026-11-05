@@ -383,10 +383,10 @@ fn retain_quest_upper_bounds(
 struct QuestStageFacts {
     colour_authoritative: bool,
     stage_domain: Option<api::selected::InclusiveRange>,
-    transmission: api::quest_facts::Transmission,
+    transmission: api::game_data::Transmission,
 }
 fn authoritative_stage_domain(facts: QuestStageFacts, complete: i32) -> Option<(i32, i32)> {
-    if facts.transmission != api::quest_facts::Transmission::NotTransmitted || complete <= 0 {
+    if facts.transmission != api::game_data::Transmission::NotTransmitted || complete <= 0 {
         return None;
     }
     let domain = facts.stage_domain?;

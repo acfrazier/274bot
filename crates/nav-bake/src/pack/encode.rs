@@ -8,6 +8,7 @@ use nav_planner::pack::{
     validate_takeoff_admission, BankAccess, BankStand, PackError, DOOR_BYTES, MAGIC, MAGIC_GRID,
     MAX_GRID, PLAYER_RELATIVE, VERSION, VERSION_GRID,
 };
+use nav_planner::quest_gates::QuestGates;
 use nav_planner::reachability::ReachabilityAtlas;
 use nav_planner::transport::{DoorDir, TransportGraph, TransportKind, WildernessRules};
 

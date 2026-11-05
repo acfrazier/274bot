@@ -4,6 +4,7 @@ use std::path::Path;
 
 use api::query::loc_approach::LocApproach;
 use api::selected::{FactKey, QuestGate};
+use nav_planner::quest_gates::QuestGates;
 use nav_planner::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
 
 use super::*;

@@ -1529,13 +1529,13 @@ mod stage_window_tests {
         let facts = QuestStageFacts {
             colour_authoritative: true,
             stage_domain: Some(range(0, 20)),
-            transmission: api::quest_facts::Transmission::NotTransmitted,
+            transmission: api::game_data::Transmission::NotTransmitted,
         };
         assert_eq!(authoritative_stage_domain(facts, 15), Some((0, 20)));
         assert_eq!(
             authoritative_stage_domain(
                 QuestStageFacts {
-                    transmission: api::quest_facts::Transmission::PostedByContent,
+                    transmission: api::game_data::Transmission::PostedByContent,
                     ..facts
                 },
                 15,
@@ -1590,7 +1590,7 @@ mod stage_window_tests {
                 QuestStageFacts {
                     colour_authoritative,
                     stage_domain: None,
-                    transmission: api::quest_facts::Transmission::NotTransmitted,
+                    transmission: api::game_data::Transmission::NotTransmitted,
                 },
             )]),
             quest_signals: HashMap::from([(

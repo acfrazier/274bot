@@ -214,7 +214,7 @@ if (%heroquest >= ^hero_complete) {
         min: Some(0),
         max: Some(20),
     });
-    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    row.transmission = api::game_data::Transmission::NotTransmitted;
     let quests = QuestSource { facts: &facts };
 
     let (graph, _) = derive_stage_with_quests(&fx, &[900], &quests);
@@ -283,7 +283,7 @@ fn with_authoritative_hero(check: impl FnOnce(&QuestSource<'_>)) {
         min: Some(0),
         max: Some(20),
     });
-    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    row.transmission = api::game_data::Transmission::NotTransmitted;
     check(&QuestSource { facts: &facts });
 }
 
@@ -301,7 +301,7 @@ fn with_journal_only_hero(check: impl FnOnce(&QuestSource<'_>)) {
         .unwrap();
     row.colour_authoritative = false;
     row.stage_domain = None;
-    row.transmission = api::quest_facts::Transmission::NotTransmitted;
+    row.transmission = api::game_data::Transmission::NotTransmitted;
     check(&QuestSource { facts: &facts });
 }
 

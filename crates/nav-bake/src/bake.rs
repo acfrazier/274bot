@@ -18,7 +18,6 @@ use crate::pack::{
     derive_banks, encode_canlight_sidecar, encode_flags_sidecar, encode_reach_sidecar,
     encode_with_atlas, produce_multiway_keys_from_path,
 };
-use crate::services::StepStrategy;
 use crate::transport::{
     assert_transmitted_varp_reqs, derive_transports_for_bake, require_members_guards,
     require_wilderness_teleport_legality,

@@ -191,7 +191,7 @@ impl ObservableGates {
                         return None;
                     };
                     (row.colour_authoritative
-                        && row.transmission == api::quest_facts::Transmission::NotTransmitted
+                        && row.transmission == api::game_data::Transmission::NotTransmitted
                         && !row.varp.is_empty()
                         && row.varp_id >= 0
                         && row.complete > 0
