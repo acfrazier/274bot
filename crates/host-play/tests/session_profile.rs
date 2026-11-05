@@ -515,6 +515,7 @@ fn revision_377_requires_an_engine_and_rejects_a_named_revision_conflict() {
 }
 
 #[test]
+
 fn removed_legacy_flags_and_profile_conflicts_fail_before_vault_access() {
     let fixture = Fixture::new();
     for args in [
