@@ -754,9 +754,11 @@ All account fixtures finish before the native machine starts:
 - Cow combat receives Attack, Strength, Defence and Hitpoints 40, one bronze
   sword, and five lobsters. It starts inside the real Lumbridge cow pasture.
   The native Combat action must report a kill and a swing.
-  Combat XP must increase. Native Reach must then take a new cowhide.
-- Survival eating receives Hitpoints 15, drains 12 HP, and receives five
-  lobsters. Poison severity 50 supplies the poison line before Start.
+  Combat XP must increase. Native Reach waits for the death drop, then takes
+  a new cowhide.
+- Survival eating receives Hitpoints 15, takes 12 HP of pre-Start damage
+  through the supported `~hit` fixture, and receives five lobsters.
+  Poison severity 50 supplies the poison line before Start.
   Cure policy remains `never`. A native food-guarded walk must move, consume
   food, and increase observed HP.
 - Survival cure receives Hitpoints 40, five lobsters, and one single-dose
@@ -766,6 +768,7 @@ All account fixtures finish before the native machine starts:
 - Sherlock receives one selected Hans clue, either easy `simple005` or hard
   `riddle012`. Its handoff must remove that clue and produce another clue or
   casket. This does not qualify the rest of the generated trail.
+  The cell installs the canonical `script-js` card slice, as the host binary does.
 
 The cells seed no scene entities, loot, replacement clues or post-Start actions.
 They capture prepared and result frames from the real client renderer.
