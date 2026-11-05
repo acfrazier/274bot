@@ -2,9 +2,11 @@
 """The live final Close barrier needs the proxy's monotonic receipt time."""
 
 from pathlib import Path
+import statistics
 import socket
 import ssl
 import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
@@ -385,6 +387,13 @@ class CloseReceiptTests(unittest.TestCase):
         ), "proxy-b-frames")
         masked_close = b"\x88\x80\x01\x02\x03\x04"
         try:
+            latencies = []
+            for _ in range(8):
+                start = time.monotonic()
+                proxy_b.sendall(b"\x81\x01x")
+                self.assertEqual(client.recv(3), b"\x81\x01x")
+                latencies.append(time.monotonic() - start)
+            self.assertLess(statistics.median(latencies), 0.03)
             # Proxy B finishes writing the server Close first. Its write EOF
             # must not remove the TLS decoder while the client is still live.
             proxy_b.sendall(b"\x88\x00")
@@ -438,6 +447,63 @@ class CloseReceiptTests(unittest.TestCase):
             with self.subTest(attempt=attempt):
                 self._check_https_response_half_close(partial_body=False)
 
+    def test_https_close_does_not_wait_for_peer_reply(self):
+        self._check_https_response_half_close(partial_body=False, keep_client_open=True)
+
+    def test_client_eof_before_upstream_eof_skips_tls_shutdown(self):
+        with patch.object(ssl.SSLSocket, "unwrap",
+                          side_effect=AssertionError("early client EOF must not unwrap")):
+            self._check_https_response_half_close(partial_body=False, early_client_close=True)
+
+    def test_stalled_tls_write_does_not_block_client_read(self):
+        original = ssl.SSLSocket.send
+        armed = threading.Event()
+        entered = threading.Event()
+
+        def blocked_once(sock, *args, **kwargs):
+            if sock.server_side and armed.is_set() and not entered.is_set():
+                entered.set()
+                threading.Event().wait(sock.gettimeout() or 2)
+                raise socket.timeout("simulated TLS backpressure")
+            return original(sock, *args, **kwargs)
+
+        def before_response(client, proxy_b, response):
+            armed.set()
+            proxy_b.sendall(response)
+            self.assertTrue(entered.wait(1))
+            client.sendall(b"x")
+            proxy_b.settimeout(0.2)
+            self.assertEqual(proxy_b.recv(1), b"x")
+            return True
+
+        with patch.object(ssl.SSLSocket, "send", blocked_once):
+            self._check_https_response_half_close(
+                partial_body=False, before_response=before_response)
+
+    def test_partial_tls_read_does_not_block_server_write(self):
+        original = ssl.SSLSocket.recv
+        armed = threading.Event()
+        entered = threading.Event()
+
+        def incomplete_record_once(sock, *args, **kwargs):
+            if sock.server_side and armed.is_set() and not entered.is_set():
+                entered.set()
+                threading.Event().wait(sock.gettimeout() or 2)
+                raise socket.timeout("simulated incomplete TLS record")
+            return original(sock, *args, **kwargs)
+
+        def before_response(client, proxy_b, response):
+            armed.set()
+            client.sendall(b"x")
+            self.assertTrue(entered.wait(1))
+            proxy_b.sendall(response)
+            client.settimeout(0.2)
+            return client.recv(4096)
+
+        with patch.object(ssl.SSLSocket, "recv", incomplete_record_once):
+            self._check_https_response_half_close(
+                partial_body=False, before_response=before_response)
+
     def test_tls_socket_calls_never_overlap(self):
         active = {}
         overlaps = []
@@ -488,7 +554,8 @@ class CloseReceiptTests(unittest.TestCase):
 
 
     def _check_https_response_half_close(
-        self, *, partial_body, before_response=None, tls_version=None
+        self, *, partial_body, before_response=None, tls_version=None,
+        early_client_close=False, keep_client_open=False
     ):
         events = []
         def spawn(target, name, *args):
@@ -550,9 +617,10 @@ class CloseReceiptTests(unittest.TestCase):
                 received_request.extend(chunk)
             self.assertEqual(received_request, request)
             connection.set_handshake("upgrade_status", 200)
-            response_sent = before_response(client, proxy_b, response) if before_response else False
+            response_effect = before_response(client, proxy_b, response) if before_response else None
+            response_sent = response_effect is not None and response_effect is not False
             client.settimeout(1)
-            received = bytearray()
+            received = bytearray(response_effect if isinstance(response_effect, bytes) else b"")
             if partial_body:
                 proxy_b.sendall(response[:-2])
                 while len(received) < len(response) - 2:
@@ -562,12 +630,22 @@ class CloseReceiptTests(unittest.TestCase):
                 proxy_b.sendall(response[-2:])
             elif not response_sent:
                 proxy_b.sendall(response)
-            proxy_b.shutdown(socket.SHUT_WR)
-            while chunk := client.recv(4096):
-                received.extend(chunk)
-            self.assertEqual(received, response)
-            client.close()
-            relay.join(3)
+            if early_client_close:
+                while len(received) < len(response):
+                    received.extend(client.recv(len(response) - len(received)))
+                self.assertEqual(received, response)
+                client.close()
+                proxy_b.settimeout(1)
+                self.assertEqual(proxy_b.recv(1), b"")
+                proxy_b.shutdown(socket.SHUT_WR)
+            else:
+                proxy_b.shutdown(socket.SHUT_WR)
+                while chunk := client.recv(4096):
+                    received.extend(chunk)
+                self.assertEqual(received, response)
+                if not keep_client_open:
+                    client.close()
+            relay.join(1 if keep_client_open else 3)
             self.assertFalse(relay.is_alive())
             self.assertTrue(all(not worker.is_alive() for worker in workers))
             self.assertEqual(connection.failures, [])

@@ -416,7 +416,78 @@ def baseline_teardown_fault(failure: dict, stage: dict) -> bool:
                 or re.fullmatch(
                     r"SSLEOFError: EOF occurred in violation of protocol(?: \(_ssl\.c:\d+\))?",
                     error) is not None)
-    return False
+
+
+def accepted_https_proxy_a_reset(failure: dict, stage: dict) -> bool:
+    """Recognize exact connection-reset spellings for supported platforms."""
+    return (
+        isinstance(failure, dict) and len(failure) == 2
+        and failure.get("stage") == "proxy_a" and stage.get("proxy_a") == "failed"
+        and failure.get("error") in (
+            "ConnectionResetError: [Errno 54] Connection reset by peer",
+            "ConnectionResetError: [Errno 104] Connection reset by peer",
+            "ConnectionResetError: [WinError 10054] "
+            "An existing connection was forcibly closed by the remote host",
+        )
+    )
+
+
+def has_observed_zero_transport_deficits(a: dict, tls: dict,
+                                         deficits: tuple[int, int, int, int]) -> bool:
+    """Require all four byte-counter pairs, not defaulted missing counters."""
+    counters = (
+        a.get("client_to_terminator_ciphertext"),
+        a.get("terminator_to_client_ciphertext"),
+        tls.get("client_to_proxy_b_plaintext"),
+        tls.get("proxy_b_to_client_plaintext"),
+    )
+    return (
+        deficits == (0, 0, 0, 0)
+        and all(
+            isinstance(pair, dict)
+            and type(pair.get("bytes_read")) is int
+            and pair["bytes_read"] >= 0
+            and type(pair.get("bytes_written")) is int
+            and pair["bytes_written"] >= 0
+            for pair in counters
+        )
+    )
+
+
+def has_complete_http_response(handshake: dict, output: dict,
+                               fixture: dict | None) -> bool:
+    """Require explicit complete body and header counters for the HTTP reset rule."""
+    if fixture is not None:
+        expected_body = fixture.get("body_bytes")
+        written_body = output.get("wire_bytes_written")
+        body_complete = (
+            type(expected_body) is int and expected_body >= 0
+            and type(written_body) is int and written_body == expected_body
+        )
+    else:
+        body_read = output.get("proxy_b_http_fallback_bytes_read")
+        body_written = output.get("proxy_b_http_fallback_bytes_written")
+        body_complete = (
+            type(body_read) is int and body_read >= 0
+            and type(body_written) is int and body_written >= 0
+            and body_read == body_written
+        )
+    response_bytes = handshake.get("response_bytes")
+    header_written = output.get("http_header_bytes_written")
+    header_complete = (
+        type(response_bytes) is int and response_bytes > 0
+        and type(header_written) is int and header_written == response_bytes
+    )
+    return body_complete and header_complete
+
+
+def matching_binary_payload_hashes(event: dict) -> bool:
+    hashes = event.get("binary_payload_hashes_match_at_proxy_b")
+    return (
+        isinstance(hashes, dict)
+        and hashes.get("client_to_engine") is True
+        and hashes.get("engine_to_client") is True
+    )
 
 
 def check_transport_teardown(folder: Path, arm: str, event: dict,
@@ -453,11 +524,37 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
                              == out.get("proxy_b_http_fallback_bytes_written", 0))
         demand(body_complete and out.get("http_header_bytes_written") == handshake["response_bytes"],
                errors, f"{prefix}: HTTPS response body/header did not finish at proxy B")
-        demand((a_in, a_out, tls_in, tls_out) == (0, 0, 0, 0), errors,
+        deficits = (a_in, a_out, tls_in, tls_out)
+        demand(deficits == (0, 0, 0, 0), errors,
                f"{prefix}: HTTPS transfer has unmatched ciphertext or plaintext bytes")
-        demand(failures in ([], [{"stage": "tls_terminator",
-                                  "error": "BrokenPipeError: [Errno 32] Broken pipe"}]),
-               errors, f"{prefix}: HTTPS teardown error is not the witnessed terminal TLS write")
+        proxy_reset = (
+            isinstance(failures, list) and len(failures) == 1
+            and accepted_https_proxy_a_reset(failures[0], stage)
+        )
+        accepted_response_reset = (
+            proxy_reset
+            and stage.get("proxy_b") == "closed"
+            and tls["handshake"].get("completed") == 1
+            and has_complete_http_response(handshake, out, fixture)
+            and has_observed_zero_transport_deficits(a, tls, deficits)
+            and matching_binary_payload_hashes(event)
+        )
+        if accepted_response_reset and observations is not None:
+            observations.append({
+                "connection_id": identifier,
+                "failure": failures[0],
+                "reason": (
+                    "post-response proxy-A reset after a complete status-200 HTTPS "
+                    "body and header, zero transport deficits, and matching binary hashes"
+                ),
+                "non_gating": True,
+                "byte_deficits": [a_in, a_out, tls_in, tls_out],
+            })
+        demand(
+            failures in ([], [{"stage": "tls_terminator",
+                               "error": "BrokenPipeError: [Errno 32] Broken pipe"}])
+            or accepted_response_reset,
+            errors, f"{prefix}: HTTPS teardown error is not the witnessed terminal TLS write")
     elif status == 101:
         ws = event["proxy_b_websocket"]
         completed_close = all(
@@ -723,6 +820,7 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
     base_errors: list[str] = []
     cand_errors: list[str] = []
     baseline_teardown: list[dict] = []
+    candidate_teardown: list[dict] = []
     lhs = arm_evidence("baseline", document, baseline / "run-manifest.json")
     rhs = arm_evidence("candidate", document, candidate / "run-manifest.json")
     for receipt, arm in ((lhs, "baseline"), (rhs, "candidate")):
@@ -777,7 +875,8 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
                                candidate, cand_samples, cand_summary, right_config, cand_errors)
     base_proxy = arm_evidence(lhs["build"], check_proxy, baseline, "baseline", not smoke,
                               base_errors, baseline_teardown)
-    cand_proxy = arm_evidence(rhs["build"], check_proxy, candidate, "candidate", not smoke, cand_errors)
+    cand_proxy = arm_evidence(rhs["build"], check_proxy, candidate, "candidate", not smoke,
+                              cand_errors, candidate_teardown)
     limit = arm_evidence("candidate", lambda: right_config["limits"]["connection_bytes"])
     candidate_receipts = arm_evidence(
         rhs["build"], check_candidate, candidate, cand_proxy, limit, cand_errors)
@@ -792,7 +891,8 @@ def evaluate(baseline: Path, candidate: Path, smoke: bool) -> dict:
                          for row in base_proxy.values()
                          if isinstance(row["tls_terminator"]["handshake"].get("tls_version"), str)
                      }), "census": base_census},
-        "candidate": {**cand_work, **candidate_receipts, "census": cand_census},
+        "candidate": {**cand_work, **candidate_receipts, "census": cand_census,
+                      "teardown_observations": candidate_teardown},
     }
     if not smoke:
         baseline_slope, baseline_window, final_base = arm_evidence(

@@ -137,6 +137,21 @@ class TeardownTests(unittest.TestCase):
                 "failures": [failure]}
 
     @staticmethod
+    def http_event(failure):
+        event = TeardownTests.event(failure)
+        event["websocket_handshake"] = {
+            "upgrade_status": 200,
+            "response_bytes": 37,
+            "local_login_key_fixture": {"body_bytes": 7},
+        }
+        event["proxy_b_websocket"]["engine_to_client"].update({
+            "wire_bytes_written": 7,
+            "http_header_bytes_written": 37,
+        })
+        return event
+
+
+    @staticmethod
     def close_frames():
         return {direction: [{"status_code": None, "reason": ""}]
                 for direction in ("client_to_engine", "engine_to_client")}
@@ -388,6 +403,178 @@ class TeardownTests(unittest.TestCase):
         self.assertTrue(any("unexpected TLS/segmentation error" in reason for reason in
                             self.check(hash_mismatch)))
 
+    def test_post_response_proxy_a_resets_are_observed_non_gating_for_both_arms(self):
+        reset_errors = (
+            "ConnectionResetError: [Errno 54] Connection reset by peer",
+            "ConnectionResetError: [Errno 104] Connection reset by peer",
+            "ConnectionResetError: [WinError 10054] "
+            "An existing connection was forcibly closed by the remote host",
+        )
+        for error in reset_errors:
+            observations_by_arm = {}
+            for arm in ("baseline", "candidate"):
+                with self.subTest(arm=arm, error=error):
+                    failure = {"stage": "proxy_a", "error": error}
+                    event = self.http_event(failure)
+                    observations = []
+                    errors = []
+                    summary.check_transport_teardown(
+                        Path(arm), arm, event, self.close_frames(), 30, errors, observations)
+                    self.assertEqual(errors, [])
+                    self.assertEqual(observations, [{
+                        "connection_id": event["connection_id"],
+                        "failure": failure,
+                        "reason": (
+                            "post-response proxy-A reset after a complete status-200 HTTPS "
+                            "body and header, zero transport deficits, and matching binary hashes"
+                        ),
+                        "non_gating": True,
+                        "byte_deficits": [0, 0, 0, 0],
+                    }])
+                    observations_by_arm[arm] = observations
+            self.assertEqual(observations_by_arm["baseline"],
+                             observations_by_arm["candidate"])
+
+    def test_post_response_reset_requires_complete_lossless_matching_evidence(self):
+        reset = {"stage": "proxy_a",
+                 "error": "ConnectionResetError: [Errno 54] Connection reset by peer"}
+
+        def incomplete_body(event):
+            event["proxy_b_websocket"]["engine_to_client"]["wire_bytes_written"] = 6
+
+        def incomplete_header(event):
+            event["proxy_b_websocket"]["engine_to_client"]["http_header_bytes_written"] = 36
+
+        def byte_deficit(event):
+            event["tls_terminator"]["proxy_b_to_client_plaintext"] = {
+                "bytes_read": 1, "bytes_written": 0}
+
+        def unmatched_hash(event):
+            event["binary_payload_hashes_match_at_proxy_b"]["engine_to_client"] = False
+
+
+        def missing_body_counters(event):
+            event["websocket_handshake"].pop("local_login_key_fixture")
+
+        def missing_transport_counters(event):
+            event["tls_terminator"]["proxy_b_to_client_plaintext"] = {}
+
+        def missing_hash_match(event):
+            event["binary_payload_hashes_match_at_proxy_b"].pop("engine_to_client")
+
+        def incomplete_handshake(event):
+            event["tls_terminator"]["handshake"]["completed"] = 0
+
+        def proxy_b_not_closed(event):
+            event["stage_status"]["proxy_b"] = "failed"
+
+
+        invalid_evidence = (
+            ("incomplete body", incomplete_body),
+            ("incomplete header", incomplete_header),
+            ("byte deficit", byte_deficit),
+            ("unmatched hash", unmatched_hash),
+            ("missing body counters", missing_body_counters),
+            ("missing transport counters", missing_transport_counters),
+            ("missing hash match", missing_hash_match),
+            ("incomplete TLS handshake", incomplete_handshake),
+            ("proxy B not closed", proxy_b_not_closed),
+        )
+        for arm in ("baseline", "candidate"):
+            for name, invalidate in invalid_evidence:
+                with self.subTest(arm=arm, reason=name):
+                    event = self.http_event(reset)
+                    invalidate(event)
+                    observations = []
+                    errors = []
+                    summary.check_transport_teardown(
+                        Path(arm), arm, event, self.close_frames(), 30, errors, observations)
+                    self.assertTrue(errors)
+                    self.assertFalse(observations)
+
+        invalid_failures = (
+            {"stage": "proxy_a", "error": "BrokenPipeError: [Errno 32] Broken pipe"},
+            {"stage": "proxy_a",
+             "error": "wrapped ConnectionResetError: [Errno 54] Connection reset by peer"},
+            {"stage": "proxy_a",
+             "error": "ConnectionResetError: [Errno 54] Connection reset by peer",
+             "detail": "unrecognized"},
+            {"stage": "proxy_b",
+             "error": "ConnectionResetError: [Errno 54] Connection reset by peer"},
+        )
+        for arm in ("baseline", "candidate"):
+            for failure in invalid_failures:
+                with self.subTest(arm=arm, failure=failure):
+                    event = self.http_event(reset)
+                    event["failures"] = [failure]
+                    if failure["stage"] != "proxy_a":
+                        event["stage_status"]["proxy_a"] = "closed"
+                        event["stage_status"][failure["stage"]] = "failed"
+                    observations = []
+                    errors = []
+                    summary.check_transport_teardown(
+                        Path(arm), arm, event, self.close_frames(), 30, errors, observations)
+                    self.assertTrue(errors)
+                    self.assertFalse(observations)
+
+        for arm in ("baseline", "candidate"):
+            with self.subTest(arm=arm, failure="reset plus unrelated failure"):
+                event = self.http_event(reset)
+                event["failures"].append({
+                    "stage": "tls_terminator", "error": "UnexpectedError: unrelated"}
+                )
+                event["stage_status"]["tls_terminator"] = "failed"
+                observations = []
+                errors = []
+                summary.check_transport_teardown(
+                    Path(arm), arm, event, self.close_frames(), 30, errors, observations)
+                self.assertTrue(errors)
+                self.assertFalse(observations)
+
+
+    def test_http_reset_allowance_does_not_apply_to_completed_websocket(self):
+        failure = {"stage": "proxy_a",
+                   "error": "ConnectionResetError: [Errno 54] Connection reset by peer"}
+        # Only the upgrade status changes from the accepted HTTPS observation.
+        event = self.http_event(failure)
+        event["websocket_handshake"]["upgrade_status"] = 101
+        self.assertTrue(all(
+            event["proxy_b_websocket"][direction]["opcodes_read"].get("8") == 1
+            and event["proxy_b_websocket"][direction]["opcodes_written"].get("8") == 1
+            for direction in ("client_to_engine", "engine_to_client")
+        ))
+        self.assertEqual(self.check(event, arm="candidate")[-1],
+                         "run: connection c000060: unexpected TLS/segmentation error")
+
+    def test_post_response_reset_accepts_complete_http_fallback_body(self):
+        failure = {"stage": "proxy_a",
+                   "error": "ConnectionResetError: [Errno 104] Connection reset by peer"}
+        for arm in ("baseline", "candidate"):
+            with self.subTest(arm=arm):
+                event = self.http_event(failure)
+                event["websocket_handshake"].pop("local_login_key_fixture")
+                event["proxy_b_websocket"]["engine_to_client"].update({
+                    "proxy_b_http_fallback_bytes_read": 7,
+                    "proxy_b_http_fallback_bytes_written": 7,
+                })
+                observations = []
+                errors = []
+                summary.check_transport_teardown(
+                    Path(arm), arm, event, self.close_frames(), 30, errors, observations)
+                self.assertEqual(errors, [])
+                self.assertTrue(observations[0]["non_gating"])
+
+    def test_http_tls_terminator_broken_pipe_remains_allowed(self):
+        failure = {"stage": "tls_terminator",
+                   "error": "BrokenPipeError: [Errno 32] Broken pipe"}
+        for arm in ("baseline", "candidate"):
+            with self.subTest(arm=arm):
+                event = self.http_event(failure)
+                self.assertEqual(self.check(event, arm=arm), [])
+
+
+
+
 
 class LedgerTests(unittest.TestCase):
     def make_folder(self, root, *, connected, extra_connected=False):
@@ -547,6 +734,40 @@ class ArmReasonTests(unittest.TestCase):
                     self.assertEqual(result["reasons"], [])
                 else:
                     self.assertTrue(any(reason.startswith("candidate: ") for reason in result["reasons"]))
+
+
+    def test_http_reset_observation_is_reported_for_both_arms(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folders = self.folders(temporary)
+            failure = {"stage": "proxy_a",
+                       "error": "ConnectionResetError: [Errno 54] Connection reset by peer"}
+            events = {
+                arm: TeardownTests.http_event(failure)
+                for arm in ("baseline", "candidate")
+            }
+
+            def proxy_receipt(folder, arm, _full, errors, observations=None):
+                summary.check_transport_teardown(
+                    folder, arm, events[arm], TeardownTests.close_frames(), 30,
+                    errors, observations)
+                return {123: events[arm]}
+
+            with mock.patch.object(summary, "check_nav_identity"), \
+                    mock.patch.object(summary, "check_workload", return_value={}), \
+                    mock.patch.object(summary, "check_samples", return_value=[]), \
+                    mock.patch.object(summary, "check_census", return_value={}), \
+                    mock.patch.object(summary, "check_proxy", side_effect=proxy_receipt), \
+                    mock.patch.object(summary, "check_candidate", return_value={}):
+                result = summary.evaluate(*folders, smoke=True)
+
+            self.assertEqual(result["verdict"], "NONQUALIFYING_SMOKE_OK",
+                             result["reasons"])
+            self.assertEqual(result["baseline"]["teardown_observations"],
+                             result["candidate"]["teardown_observations"])
+            observation = result["baseline"]["teardown_observations"][0]
+            self.assertEqual(observation["connection_id"], "c000060")
+            self.assertTrue(observation["non_gating"])
+            self.assertIn("complete status-200 HTTPS body and header", observation["reason"])
 
     def test_baseline_tls_version_is_recorded_in_result(self):
         with tempfile.TemporaryDirectory() as temporary:

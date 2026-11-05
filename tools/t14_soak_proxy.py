@@ -14,7 +14,7 @@ import json
 import math
 import os
 import random
-import select
+import selectors
 import signal
 import socket
 import ssl
@@ -360,17 +360,33 @@ def _send_half_close(
         if not http_response_complete:
             # A WebSocket can still send a Close or close_notify; retain its decoder.
             return
-        # An HTTP response ended. Send close_notify before the TCP FIN;
-        # OpenSSL 3 treats a bare FIN as an unexpected EOF.
+        # A completed HTTP response needs close_notify, but a blocking
+        # SSL_shutdown waits for the peer and can deadlock with proxy A.
+        sock.setblocking(False)
         try:
-            sock.unwrap()
-        except ssl.SSLEOFError:
-            # The peer closed TCP without its own close_notify.
-            pass
-        try:
-            socket.socket.shutdown(sock, socket.SHUT_WR)
-        except OSError:
-            pass
+            with selectors.DefaultSelector() as ready:
+                ready.register(sock, selectors.EVENT_WRITE)
+                deadline = time.monotonic() + 0.5
+                while True:
+                    try:
+                        sock.unwrap()
+                        break
+                    except ssl.SSLWantReadError:
+                        # SSL_shutdown sent the alert. Do not wait for the peer.
+                        break
+                    except ssl.SSLWantWriteError:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not ready.select(remaining):
+                            raise TimeoutError("TLS close_notify write timed out")
+                    except ssl.SSLError:
+                        # A peer that closed while the complete response was
+                        # in flight cannot receive another TLS alert.
+                        break
+        finally:
+            try:
+                socket.socket.shutdown(sock, socket.SHUT_WR)
+            except OSError:
+                pass
         return
     try:
         sock.shutdown(socket.SHUT_WR)
@@ -387,26 +403,70 @@ def _recv_tls(
     sock: ssl.SSLSocket, context: "ConnectionState", runtime: "Runtime"
 ) -> bytes | None:
     """Poll for the upstream EOF without holding an SSL_read across SSL_write."""
-    while True:
-        if context.tls_upstream_eof.is_set() and _http_response_complete(context):
-            return None
-        if runtime.stop.is_set():
-            return b""
-        with context.tls_io_lock:
-            buffered = sock.pending()
-        if not buffered and not select.select([sock], [], [], 0.05)[0]:
-            continue
-        with context.tls_io_lock:
+    with selectors.DefaultSelector() as ready:
+        ready.register(sock, selectors.EVENT_READ)
+        while True:
             if context.tls_upstream_eof.is_set() and _http_response_complete(context):
                 return None
-            timeout = sock.gettimeout()
-            sock.settimeout(0.05)
-            try:
-                return sock.recv(TCP_READ_BYTES)
-            except socket.timeout:
-                pass
-            finally:
-                sock.settimeout(timeout)
+            if runtime.stop.is_set():
+                return b""
+            with context.tls_io_lock:
+                buffered = sock.pending()
+            if not buffered and not ready.select(0.05):
+                continue
+            with context.tls_io_lock:
+                if context.tls_upstream_eof.is_set() and _http_response_complete(context):
+                    return None
+                timeout = sock.gettimeout()
+                sock.settimeout(0.05)
+                try:
+                    return sock.recv(TCP_READ_BYTES)
+                except socket.timeout:
+                    pass
+                finally:
+                    sock.settimeout(timeout)
+
+
+def _send_tls_counted(
+    sock: ssl.SSLSocket,
+    data: bytes,
+    callback: Callable[[int, int], None],
+    context: "ConnectionState",
+    runtime: "Runtime",
+) -> None:
+    """Keep SSL_write bounded while the read worker shares the TLS lock."""
+    view = memoryview(data)
+    sent = 0
+    want = selectors.EVENT_WRITE
+    with selectors.DefaultSelector() as ready:
+        ready.register(sock, want)
+        while sent < len(view):
+            if runtime.stop.is_set():
+                raise ConnectionError("TLS relay stopped during write")
+            if not ready.select(0.05):
+                continue
+            next_want = selectors.EVENT_WRITE
+            with context.tls_io_lock:
+                timeout = sock.gettimeout()
+                sock.settimeout(0.05)
+                try:
+                    count = sock.send(view[sent:])
+                except ssl.SSLWantReadError:
+                    next_want = selectors.EVENT_READ
+                    count = None
+                except (ssl.SSLWantWriteError, socket.timeout):
+                    count = None
+                finally:
+                    sock.settimeout(timeout)
+            if next_want != want:
+                ready.modify(sock, next_want)
+                want = next_want
+            if count is None:
+                continue
+            if count <= 0:
+                raise ConnectionError("TLS socket send returned zero bytes")
+            sent += count
+            callback(count, 1)
 
 
 
@@ -1047,14 +1107,9 @@ def _tcp_copy(
                     return
                 if tls_reader:
                     _send_half_close(destination)
-                    if data is not None:
-                        while not context.tls_upstream_eof.wait(0.05):
-                            with context.lock:
-                                failed = bool(context.failures)
-                                upgraded = context.handshake.get("upgrade_status") == 101
-                            if runtime.stop.is_set() or failed or upgraded:
-                                return
-                    if not runtime.stop.is_set() and _http_response_complete(context):
+                    # A client EOF observed first means the client cannot
+                    # receive close_notify. Only half-close proxy B's read.
+                    if data is None and not runtime.stop.is_set() and _http_response_complete(context):
                         with context.tls_io_lock:
                             _send_half_close(source, http_response_complete=True)
                     return
@@ -1082,8 +1137,7 @@ def _tcp_copy(
                     context.inc(counter_stage, direction, "write_calls" if not use_faults else "tcp_write_calls", calls)
 
                 if tls_writer:
-                    with context.tls_io_lock:
-                        _send_counted(destination, data, on_sent)
+                    _send_tls_counted(destination, data, on_sent, context, runtime)
                 else:
                     _send_counted(destination, data, on_sent)
     except (OSError, ssl.SSLError, ConnectionError, ConfigError) as exc:
