@@ -32,6 +32,11 @@ fn the_289_config_jag_is_inside_the_cache_and_274_beside_it() {
         config_jag_for(274, Path::new("/274/engine/data/pack/client")).unwrap(),
         PathBuf::from("/274/engine/data/pack/config")
     );
+    assert!(matches!(
+        config_jag_for(274, Path::new("")),
+        Err(crate::GenerationError::CachePathMissingParent { cache_dir })
+            if cache_dir.as_os_str().is_empty()
+    ));
 }
 
 #[test]

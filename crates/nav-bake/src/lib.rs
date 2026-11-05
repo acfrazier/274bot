@@ -31,6 +31,9 @@ pub enum GenerationError {
     /// A selected release revision is not supported.
     #[error("unsupported revision {revision}; use 274 or 289")]
     UnsupportedRevision { revision: u16 },
+    /// A revision-bound cache path lacks the expected parent.
+    #[error("revision 274 cache path has no data/pack parent")]
+    CachePathMissingParent { cache_dir: std::path::PathBuf },
     /// A selected revision's local game data could not be decoded.
     #[error("game data revision {revision}: {detail}")]
     SelectedGameDataUnavailable { revision: u16, detail: String },
