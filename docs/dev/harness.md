@@ -726,6 +726,9 @@ Keep `TMPDIR` and the isolated home outside the operator's normal home.
 
 The fixture makes the mainland hop, then logs out and back in before preparing tools.
 Each fresh account receives one inventory tool and skill level 40 before Start.
+Fishing also receives Defence 60 and waits for combat level 18 in the live
+appearance. This exceeds the selected Draynor wizard zone's combat cap of 14.
+Danger-zone permission remains disabled.
 The fixture clears its inventory, equipment and bank, then positions the player.
 It never seeds resources, NPCs, booths, proof products or post-Start XP.
 The proof requires an observed empty bank page, at least 27 deposited products,

@@ -50,6 +50,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   qualification for Lumbridge normal trees and Draynor shrimp. The live cells
   use selected 377 sites, the Draynor bank and the production template.
   They require banked products and fresh gathering after the return.
+  The Draynor fishing fixture seeds Defence 60 before Start and waits for
+  combat level 18. It does not enable dangerous-zone access.
 
 - After a death, the Gatherer no longer stops on the first blocked step of its
   way back to the resource area. It plans that return again once, as on a
