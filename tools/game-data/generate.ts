@@ -1654,7 +1654,7 @@ export function extractTalkKeyFacts(content: string, items: ObjType[]): TalkKeyF
         }
     };
     const configOwners = new Map<string, string>();
-    for (const relative of npcConfigs.files) {
+    for (const relative of npcConfigs) {
         const text = fs.readFileSync(path.join(content, relative), 'utf8');
         configText.set(relative, text);
         for (const raw of text.split(/\r?\n/)) {
