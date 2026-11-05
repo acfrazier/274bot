@@ -67,6 +67,8 @@ neither alone proves the existing single-root contract.
 Frozen equipment and bank lists select queries, not numeric 377 facts: resolved
 rows must join the selected configs, packs and map placements. Missing matches
 remain absent or explicitly missing.
+Same-name eligible variants remain ambiguous with their selected candidate IDs;
+the frozen query does not establish a preferred 377 variant.
 The NPC attack-kind field is nullable for both proven melee and unclassified
 custom attack bodies. The 377 coverage record names this schema limit as
 UNKNOWN; a null value is not an independent melee-only proof.
