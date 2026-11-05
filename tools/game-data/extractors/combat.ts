@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parsePack, parseParamDefinitions, parseRows, requireGatherText, walkContentFiles } from './common.ts';
 import { stripComments } from './gathering-content.ts';
+import { parseBody } from './gathering-rs2.ts';
 
 export const STYLE = {
     MELEE: 0x01,
@@ -1604,6 +1605,10 @@ export function extractItemCombatBonus(
 }
 
 export type MeleeWeaponTierWire = { obj_id: number; tier: number; quest_gated: boolean; strength: number };
+export type MeleeWeaponTierFacts = {
+    rows: MeleeWeaponTierWire[];
+    unknown: { obj_id: number; alias: string; reason: string }[];
+};
 
 const MELEE_TIER_FILES = [
     'scripts/levelrequire/scripts/tier1.rs2',
@@ -1627,7 +1632,7 @@ const QUEST_ATTACK_HANDLERS = new Set([
     'levelrequire_regicide_quest_attack_strength',
 ]);
 
-function meleeTierGate(handler: string, args: string): { tier: number; quest_gated: boolean; strength: number } {
+function meleeTierGate(handler: string, args: string, revision: number): { tier: number; quest_gated: boolean; strength: number } {
     const parts = args.split(',').map((part) => Number(part.trim()));
     const level = parts[0];
     if (!Number.isInteger(level) || (level as number) < 0 || (level as number) > 255) {
@@ -1653,14 +1658,37 @@ function meleeTierGate(handler: string, args: string): { tier: number; quest_gat
     if (handler === 'levelrequire_attack_and_strength') {
         return { tier: level as number, quest_gated: false, strength: strengthArg(handler) };
     }
+    if (revision === 377 && handler === 'levelrequire_attack_and_strength2') {
+        return { tier: level as number, quest_gated: false, strength: level as number };
+    }
+    if (revision === 377 && handler === 'levelrequire_mm_quest_attack') {
+        return { tier: level as number, quest_gated: true, strength: 0 };
+    }
     throw new Error(`melee tier: unexpected attack handler @${handler}(${args})`);
+}
+
+function literalMeleeTierGate(body: string): { tier: number; quest_gated: boolean; strength: number } | undefined {
+    const nodes = parseBody(body.split('\n').map((text, line) => ({ text, line: line + 1 })));
+    if (nodes.length !== 2 || nodes[0].kind !== 'if' || nodes[1].kind !== 'stmt'
+        || nodes[1].text !== '~equip(last_slot)') return undefined;
+    const gate = nodes[0];
+    const levels = /^stat_base\(attack\)\s*<\s*(\d+)\s*\|\s*stat_base\(strength\)\s*<\s*(\d+)$/.exec(gate.cond);
+    const failure = gate.then.at(-1);
+    if (!levels || gate.els.length !== 0 || !failure
+        || failure.kind !== 'stmt' || failure.text !== 'return'
+        || !gate.then.slice(0, -1).every(node => node.kind === 'stmt' && /^mes\(.*\)$/.test(node.text))) return undefined;
+    const tier = Number(levels[1]);
+    const strength = Number(levels[2]);
+    if (tier > 255 || strength > 255) throw new Error('melee tier: literal attack/strength gate exceeds 255');
+    return { tier, quest_gated: false, strength };
 }
 
 export function extractMeleeWeaponTiers(
     content: string,
     weaponStyles: readonly WeaponStyleMetadata[],
     idToAlias: ReadonlyMap<number, string>,
-): MeleeWeaponTierWire[] {
+    revision = 289,
+): MeleeWeaponTierFacts {
     // `weapon_styles` category 0 is melee; bows, crossbows, thrown, javelins
     // and staves tier through the ranged, magic and defence gates instead.
     // Only aliases of melee weapons are gated here; every other wield row
@@ -1677,8 +1705,16 @@ export function extractMeleeWeaponTiers(
     // on the same line or opens a multi-line quest block (the viking rows of
     // `tier30.rs2:18-45`) whose final attack call is the tier and whose
     // `%varp < ^varp_complete` check is the quest gate.
-    type WieldBlock = { alias: string; file: string; calls: { handler: string; args: string }[]; questVarp: boolean };
+    type WieldBlock = { alias: string; file: string; calls: { handler: string; args: string }[]; questVarp: boolean; body?: string };
     const parseBlocks = (file: string, text: string): WieldBlock[] => {
+        if (revision === 377) return parseSections(stripComments(text))
+            .filter(section => section.kind === 'opheld2' && section.target !== null && /^[A-Za-z][A-Za-z0-9_]*$/.test(section.target))
+            .map(section => ({
+                alias: section.target!, file, body: section.body,
+                calls: [...section.body.matchAll(/@([A-Za-z][A-Za-z0-9_]*)\(([^)]*)\)\s*;/g)]
+                    .map(call => ({ handler: call[1]!, args: call[2]! })),
+                questVarp: /%\w+\s*<\s*\^\w+_complete/.test(section.body),
+            }));
         const blocks: WieldBlock[] = [];
         let current: WieldBlock | null = null;
         for (const raw of text.split(/\r?\n/)) {
@@ -1697,6 +1733,7 @@ export function extractMeleeWeaponTiers(
         return blocks;
     };
     const gates = new Map<string, { tier: number; quest_gated: boolean; strength: number }>();
+    const unknown = new Map<string, string>();
     for (const file of MELEE_TIER_FILES) {
         const text = requireGatherText(content, file);
         for (const block of parseBlocks(file, text)) {
@@ -1718,13 +1755,20 @@ export function extractMeleeWeaponTiers(
             }
             const attackCalls = block.calls.filter((call) =>
                 PLAIN_ATTACK_HANDLERS.has(call.handler) || QUEST_ATTACK_HANDLERS.has(call.handler) ||
-                call.handler === 'levelrequire_attack_and_strength',
+                call.handler === 'levelrequire_attack_and_strength'
+                || (revision === 377 && ['levelrequire_attack_and_strength2', 'levelrequire_mm_quest_attack'].includes(call.handler)),
             );
             if (attackCalls.length === 0) {
+                if (revision === 377) {
+                    const literal = literalMeleeTierGate(block.body!);
+                    if (literal) gates.set(block.alias, literal);
+                    else unknown.set(block.alias, `wield gate is outside the attack/strength/quest contract in ${block.file}`);
+                    continue;
+                }
                 throw new Error(`melee tier: melee weapon ${block.alias} (${block.file}) has no attack gate`);
             }
             const last = attackCalls[attackCalls.length - 1]!;
-            const gate = meleeTierGate(last.handler, last.args);
+            const gate = meleeTierGate(last.handler, last.args, revision);
             const questGated = gate.quest_gated || block.questVarp;
             const prior = gates.get(block.alias);
             if (prior && (prior.tier !== gate.tier || prior.quest_gated !== questGated || prior.strength !== gate.strength)) {
@@ -1734,12 +1778,21 @@ export function extractMeleeWeaponTiers(
         }
     }
     const rows: MeleeWeaponTierWire[] = [];
+    const unknownRows: MeleeWeaponTierFacts['unknown'] = [];
     for (const weapon of uniqueWeaponStyles) {
         if (weapon.category !== 0) continue;
         const alias = idToAlias.get(weapon.obj_id);
         const gate = alias === undefined ? undefined : gates.get(alias);
+        if (revision === 377 && (alias === undefined || unknown.has(alias) || !gate)) {
+            unknownRows.push({
+                obj_id: weapon.obj_id, alias: alias ?? '<unmapped>',
+                reason: alias === undefined ? 'selected obj alias is unavailable'
+                    : unknown.get(alias) ?? 'no selected wield gate proves a tier; the legacy tier-0 fallback is not inherited',
+            });
+            continue;
+        }
         // No tier script is tier 0 (`combat.param:81-83`), never excluded.
         rows.push({ obj_id: weapon.obj_id, tier: gate?.tier ?? 0, quest_gated: gate?.quest_gated ?? false, strength: gate?.strength ?? 0 });
     }
-    return rows.sort((a, b) => a.obj_id - b.obj_id);
+    return { rows: rows.sort((a, b) => a.obj_id - b.obj_id), unknown: unknownRows.sort((a, b) => a.obj_id - b.obj_id) };
 }

@@ -56,13 +56,24 @@ verified by file identity. Ordinary format and decode errors still apply.
 Revision 289's prerequisite projection remains part of the historical staged
 flow; it is not substituted for 377 content.
 The 377 core records named `UNKNOWN` gaps in `coverage`. In particular, it does
-not inherit the 289 autocast control contract, special-attack arm timing,
-Nurmof/essence and flour stand tactics, constrained-clue access annotation, or
-server-ordered/NPC-transform proof. Optional families stay absent when their
-contract is not derived; the API does not replace them with another revision.
+not inherit the 289 autocast control contract, special-attack arm timing, the
+frozen `SPECIAL_SPECS` effect table, Nurmof/essence and flour stand tactics,
+constrained-clue access annotation, the
+single-common-root dialogue document contract, or server-ordered/NPC-transform
+proof. Optional families stay absent when their contract is not derived; the
+API does not replace them with another revision. In 377, ordinary quest
+completion uses `questscroll_death`, while Seaslug/Watchtower use `questscroll`;
+neither alone proves the existing single-root contract.
 Frozen equipment and bank lists select queries, not numeric 377 facts: resolved
 rows must join the selected configs, packs and map placements. Missing matches
 remain absent or explicitly missing.
+The NPC attack-kind field is nullable for both proven melee and unclassified
+custom attack bodies. The 377 coverage record names this schema limit as
+UNKNOWN; a null value is not an independent melee-only proof.
+377 melee tiers omit unsupported or unproved wield gates instead of inheriting
+the legacy tier-0 fallback. Their alias/ID-specific reasons are in `coverage`.
+Duel rules retain their selected bit positions: an unproved button stays at
+the existing unavailable sentinel 0, which `rule_button` returns as `None`.
 
 A generated result proves consistency with the selected Fairy Ring scripts.
 It does not prove historical RuneScape accuracy.

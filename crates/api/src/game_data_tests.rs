@@ -88,6 +88,22 @@ fn caller_selected_revision_overrides_the_wire_revision() {
 }
 
 #[test]
+fn revision_377_refuses_unproved_effects_and_duel_buttons() {
+    let Some(data) = crate::game_data::test_data(ClientRevision::R377) else {
+        return;
+    };
+    assert!(data.special_weapons().is_empty());
+    assert!(data.dialogue_ui().is_none());
+    let duel = data.duel_controls().expect("selected 377 duel identities");
+    for bit in [2, 3, 11] {
+        assert_eq!(duel.rule_button(bit), None, "unproved rule bit {bit}");
+    }
+    for bit in [0, 1, 4, 5, 6, 7, 8, 9, 10, 12, 13] {
+        assert!(duel.rule_button(bit).is_some(), "source-proven rule bit {bit}");
+    }
+}
+
+#[test]
 fn streamed_game_data_accepts_trailing_whitespace_and_rejects_truncation() {
     let Some(raw) = raw_game_data(ClientRevision::R289) else {
         return;
