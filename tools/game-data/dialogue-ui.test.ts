@@ -52,6 +52,7 @@ for (const [mutate, reason] of [
     [(files: Map<string, string>) => files.set(dialogueUiContentFiles[2], '[label,scroll_pirate_message]\nif_openchat(scroll);\n'), /does not open the main scroll root/],
     [(files: Map<string, string>) => files.delete(dialogueUiContentFiles[3]), /required file missing/],
     [(files: Map<string, string>) => files.set(dialogueUiContentFiles[3], files.get(dialogueUiContentFiles[3])!.replaceAll('if_openmain(questscroll)', 'if_openmain(scroll)')), /quest completion does not open the authored quest scroll/],
+    [(files: Map<string, string>) => files.set(dialogueUiContentFiles[3], files.get(dialogueUiContentFiles[3])!.replace('case default :\nif_openmain(questscroll)', 'case default :\nif_openmain(questscroll_death)')), /quest completion does not open the authored quest scroll/],
 ] as const) {
     const source = fixture();
     try {

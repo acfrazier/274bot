@@ -73,6 +73,20 @@ fn revision_377_selects_and_pins_its_actual_core_asset() {
 }
 
 #[test]
+fn revision_377_refuses_unproved_effects_and_duel_buttons() {
+    let data = for_revision(ClientRevision::R377).expect("selected 377 game data");
+    assert!(data.special_weapons().is_empty());
+    assert!(data.dialogue_ui().is_none());
+    let duel = data.duel_controls().expect("selected 377 duel identities");
+    for bit in [2, 3, 11] {
+        assert_eq!(duel.rule_button(bit), None, "unproved rule bit {bit}");
+    }
+    for bit in [0, 1, 4, 5, 6, 7, 8, 9, 10, 12, 13] {
+        assert!(duel.rule_button(bit).is_some(), "source-proven rule bit {bit}");
+    }
+}
+
+#[test]
 fn selected_pin_refuses_changed_assets_and_mismatched_manifest_identity() {
     let data = for_revision(ClientRevision::R289).unwrap();
     let mut changed = RAW_289.to_vec();

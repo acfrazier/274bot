@@ -214,11 +214,13 @@ export function extractKaramjaFacts(
     npcNames: { rows: IdentityRow[] },
     locNames: { rows: IdentityRow[] },
     npcPlacements: { rows: PlacementRow[] },
+    revision = 289,
 ): { facts: KaramjaFacts; inputs: SourceInput[] } {
     const luthasScript = requireGatherText(content, SOURCES.luthas);
     const crateScript = requireGatherText(content, SOURCES.banana_crate);
     const treeScript = requireGatherText(content, SOURCES.banana_tree);
-    const plantation = requireGatherText(content, SOURCES.plantation);
+    const plantationSource = revision === 377 ? 'scripts/_unpack/377/all.loc' : SOURCES.plantation;
+    const plantation = requireGatherText(content, plantationSource);
     const luthasConfig = onlyHandlerConfig(luthasScript, /^\[opnpc1,([^\]]+)\]$/gm, 'Luthas NPC');
     const crateConfig = onlyHandlerConfig(crateScript, /^\[oploc1,([^\]]+)\]$/gm, 'banana crate loc');
     const treeConfigs = bananaTreeConfigs(plantation, treeScript);
@@ -266,7 +268,7 @@ export function extractKaramjaFacts(
     if (treeSpawns.length === 0) throw new Error("karamja: no fruiting banana tree placements on Luthas's plantation mapsquare");
     const inputs = [
         ...maps,
-        ...[SOURCES.loc_pack, SOURCES.npc_pack, SOURCES.plantation, SOURCES.banana_tree, SOURCES.banana_crate, SOURCES.luthas]
+        ...[SOURCES.loc_pack, SOURCES.npc_pack, plantationSource, SOURCES.banana_tree, SOURCES.banana_crate, SOURCES.luthas]
             .map((relative) => sourceFile(content, relative)),
     ].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
     return {
