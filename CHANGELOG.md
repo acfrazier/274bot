@@ -48,6 +48,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Gatherer Knife requests now refuse NPC references captured before a later
   `NPC_INFO` packet. Published snapshots carry the current packet generation,
   including updates that leave the NPC's index, type and tile unchanged.
+- Development checks now run the isolated script-value shape test under its
+  current module name. They still refuse a child process that runs no test.
 
 ### Not in this release
 

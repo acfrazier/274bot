@@ -716,7 +716,7 @@ mod tests {
     }
 
     const CAPACITY_TEST_NAME: &str =
-        "machine_v8::tests::shaped_values_equal_the_serde_values_and_the_cache_stays_bounded";
+        "materialize::machine_v8::tests::shaped_values_equal_the_serde_values_and_the_cache_stays_bounded";
     const CAPACITY_CHILD_ENV: &str = "SCRIPT_MACHINE_VALUE_SHAPE_TEST_CHILD";
 
     /// `value_to_v8` hands the script the same data `serde_v8::to_v8` would
