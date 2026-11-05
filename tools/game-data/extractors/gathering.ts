@@ -2,7 +2,7 @@
 // map placements, all joined from the local content tree. Unknown constructs become explicit gaps, never guesses.
 import fs from 'node:fs';
 import path from 'node:path';
-import { indexContent, parseDbRows, parseCoord, parseSections, scanMapSection, spanRef, stripComment, type ContentIndex, type DbRow, type Rs2Block, type Rs2Header, type Section, type Span } from './gathering-content.ts';
+import { indexContent, parseDbRows, parseCoord, parseSections, scanMapSection, spanRef, stripComment, walkContent, type ContentIndex, type DbRow, type Rs2Block, type Rs2Header, type Section, type Span } from './gathering-content.ts';
 import { parseBody, walkStatements, returns, type Node, type PathCond, type Stmt } from './gathering-rs2.ts';
 
 /** Extractor schema. Bump on any change to the wire shape below; the Rust decoder pins the same number. */
@@ -289,30 +289,34 @@ function wieldGate(ctx: Ctx, alias: string): { gate: GateWire | null } | { gap: 
     return { gap: gap('wield-handler-unrecognized', header.span) };
 }
 
-/** Best-first tool aliases from the checker proc's `if (... return(X))` chain. */
-function checkerTools(ctx: Ctx, procName: string, condition: RegExp): { aliases: string[]; span: Span; ok: boolean } {
+/** Best-first tool aliases and any strict skill-level gate proven by the checker proc's `if (... return(X))` chain. */
+type CheckerTool = { alias: string; minLevel: number | null };
+
+function checkerTools(ctx: Ctx, procName: string, condition: RegExp): { tools: CheckerTool[]; span: Span; ok: boolean } {
     const block = uniqueBlock(ctx, 'proc', procName);
-    if (!block) return { aliases: [], span: { file: '', first: 0, last: 0 }, ok: false };
+    if (!block) return { tools: [], span: { file: '', first: 0, last: 0 }, ok: false };
     const nodes = parseBody(block.body);
-    const aliases: string[] = [];
+    const tools: CheckerTool[] = [];
     let ok = true;
     for (const node of nodes) {
         if (node.kind === 'if') {
             const match = condition.exec(node.cond);
             const ret = node.then.length === 1 && node.then[0].kind === 'stmt' ? /^return\s*\((\w+)\)$/.exec(node.then[0].text) : null;
-            if (match && ret && ret[1] === match[1] && node.els.length === 0) aliases.push(match[1]);
-            else if (!node.cond.startsWith('$print_mes')) ok = false;
+            if (match && ret && ret[1] === match[1] && node.els.length === 0) {
+                const threshold = match[2] === undefined ? null : Number(match[2]) + 1;
+                tools.push({ alias: match[1], minLevel: threshold });
+            } else if (!node.cond.startsWith('$print_mes')) ok = false;
         }
     }
-    return { aliases, span: blockSpan(block), ok: ok && aliases.length > 0 };
+    return { tools, span: blockSpan(block), ok: ok && tools.length > 0 };
 }
 
-function toolRows(ctx: Ctx, aliases: string[], use: (alias: string) => GateWire | null, sourceGaps: Gap[]): Know<ToolWire[]> {
+function toolRows(ctx: Ctx, tools: CheckerTool[], use: (tool: CheckerTool) => GateWire | null, sourceGaps: Gap[]): Know<ToolWire[]> {
     const gaps = [...sourceGaps];
-    const rows = aliases.map((alias) => {
-        const wield = wieldGate(ctx, alias);
+    const rows = tools.map((tool) => {
+        const wield = wieldGate(ctx, tool.alias);
         if ('gap' in wield) gaps.push(wield.gap);
-        return { item: ctx.entities.id('obj', alias, `tool ${alias}`), use_gate: use(alias), wield_gate: 'gate' in wield ? wield.gate : null };
+        return { item: ctx.entities.id('obj', tool.alias, `tool ${tool.alias}`), use_gate: use(tool), wield_gate: 'gate' in wield ? wield.gate : null };
     });
     return partial(rows, gaps);
 }
@@ -320,18 +324,18 @@ function toolRows(ctx: Ctx, aliases: string[], use: (alias: string) => GateWire 
 function pickaxes(ctx: Ctx): Know<ToolWire[]> {
     const found = checkerTools(ctx, 'pickaxe_checker', /^\$lvl0 >= oc_param\((\w+), levelrequire\) & \(\$obj1 = \1 \| inv_total\(inv, \1\) > 0\)$/);
     if (!found.ok) return unknown('pickaxe-checker-unrecognized', found.span.file ? [spanRef(found.span)] : []);
-    return toolRows(ctx, found.aliases, (alias) => {
-        const level = ctx.idx.obj.get(alias)?.params.get('levelrequire')?.[0];
-        if (level === undefined) throw new Error(`pickaxe ${alias}: missing levelrequire param`);
+    return toolRows(ctx, found.tools, (tool) => {
+        const level = ctx.idx.obj.get(tool.alias)?.params.get('levelrequire')?.[0];
+        if (level === undefined) throw new Error(`pickaxe ${tool.alias}: missing levelrequire param`);
         return { skill: SKILL.mining, level: Number(level) };
     }, []);
 }
 
 function axes(ctx: Ctx): Know<ToolWire[]> {
-    const found = checkerTools(ctx, 'woodcutting_axe_checker', /^\(\$obj1 = (\w+) \| inv_total\(inv, \1\) > 0\)$/);
+    const found = checkerTools(ctx, 'woodcutting_axe_checker', /^\(\$obj1 = (\w+) \| inv_total\(inv, \1\) > 0\)(?: & \$level > (\d+))?$/);
     if (!found.ok) return unknown('axe-checker-unrecognized', found.span.file ? [spanRef(found.span)] : []);
-    // The checker has no level comparison: the Woodcutting use gate is absent, not unknown.
-    return toolRows(ctx, found.aliases, () => null, []);
+    // The strict `$level > N` form requires N+1; a bare item check keeps the legacy null gate.
+    return toolRows(ctx, found.tools, (tool) => tool.minLevel === null ? null : { skill: SKILL.woodcutting, level: tool.minLevel }, []);
 }
 
 // ---- mining (M-215 classification) ------------------------------------------------------------------
@@ -1250,6 +1254,42 @@ const HEMENSTER_FISHING_SCRIPT = 'scripts/quests/quest_fishingcompo/scripts/heme
 const HEMENSTER_COMP_CONSTANTS = 'scripts/quests/quest_fishingcompo/configs/quest_fishingcompo.constant';
 const HEMENSTER_NORTH_SPOT = '0_41_53_sinisterfishspot';
 const HEMENSTER_CARP_METHOD = `fishing.${HEMENSTER_NORTH_SPOT}.op1`;
+/**
+ * The published fishing config contains only fishing NPC types. Revision 377
+ * folds those rows into the unpacked all.npc file, so recover the same
+ * population from fishing data markers and the scripts that dispatch them.
+ */
+function fishingNpcSections(ctx: Ctx): Section[] {
+    const all = ctx.idx.npc.all();
+    const canonical = all.filter((section) => section.span.file === FISHING_NPC);
+    if (canonical.length > 0) return canonical;
+
+    const categories = new Set<string>();
+    const aliases = new Set<string>();
+    const questAliases = new Set<string>();
+    for (const [key, headers] of ctx.idx.headers) {
+        const match = /^opnpc[1-5],(.+)$/.exec(key);
+        if (!match) continue;
+        const dispatch = match[1]!;
+        if (headers.some((header) => header.span.file.startsWith(FISHING_SCRIPTS))) {
+            if (dispatch.startsWith('_')) categories.add(dispatch.slice(1));
+            else aliases.add(dispatch);
+        }
+        if (headers.some((header) => header.span.file === HEMENSTER_FISHING_SCRIPT)) questAliases.add(dispatch);
+    }
+    const isFishingSpot = (section: Section) => section.props.get('name')?.some((name) => name.toLowerCase() === 'fishing spot') ?? false;
+    const selected = all.filter((section) => {
+        const category = section.props.get('category')?.[0];
+        return section.params.has('fishing_movement_enum')
+            || section.params.has('whirlpool')
+            || section.params.has('is_whirlpool')
+            || (category !== undefined && categories.has(category))
+            || (isFishingSpot(section) && (aliases.has(section.name) || questAliases.has(section.name)));
+    });
+    if (selected.length === 0) throw new Error(`${FISHING_NPC}: no fishing npc types in content npc configs`);
+    return selected;
+}
+
 
 type FishingTickBlock = { kind: string; name: string };
 type FishingTickSpec = {
@@ -1553,7 +1593,7 @@ function hemensterNorthCarp(ctx: Ctx): MethodWire | null {
     const label = npc?.props.get('op1')?.[0];
     const headers = ctx.idx.headers.get(`opnpc1,${HEMENSTER_NORTH_SPOT}`) ?? [];
     const header = headers.length === 1 ? headers[0] : undefined;
-    if (!npc || npc.span.file !== FISHING_NPC || !label || label.toLowerCase() === 'hidden' || !header || header.span.file !== HEMENSTER_FISHING_SCRIPT) return null;
+    if (!npc || !label || label.toLowerCase() === 'hidden' || !header || header.span.file !== HEMENSTER_FISHING_SCRIPT) return null;
 
     const dispatch = ctx.idx.blocks(HEMENSTER_FISHING_SCRIPT).find((block) => block.kind === 'opnpc1' && block.name === HEMENSTER_NORTH_SPOT && block.span.first === header.span.first);
     const sourceBlock = (kind: string, name: string) => {
@@ -1663,8 +1703,7 @@ function hemensterNorthCarp(ctx: Ctx): MethodWire | null {
 
 
 function extractFishing(ctx: Ctx, zones: Zones): { methods: MethodWire[]; loose: LooseWire[]; movements: MovementWire[]; hazardNpcs: number[] } {
-    const npcs = ctx.idx.npc.all().filter((section) => section.span.file === FISHING_NPC);
-    if (npcs.length === 0) throw new Error(`${FISHING_NPC}: no fishing npc types`);
+    const npcs = fishingNpcSections(ctx);
     const subjects = new Map<string, FishSubject>();
     const loose: LooseWire[] = [];
     const hazardAliases = new Set<string>();
@@ -1915,7 +1954,7 @@ export function miningHazards(facts: GatheringFacts): MiningHazardWire[] {
  * `requirements` and `spots` must be `Known`; `products` may be `Known` or
  * `Partial` whose gap codes are all incidental gem rolls. Anything else
  * refuses the method with its gap code (e.g. `woodcutting.jungle`, karambwan,
- * memberfish on 289). There is no target-gap allowlist: excluded rows never
+ * member-only fishing method). There is no target-gap allowlist: excluded rows never
  * block, they simply do not admit.
  */
 export const ACCEPTED_PRODUCT_GAPS: readonly string[] = ['incidental-gem-roll'];
@@ -2170,6 +2209,14 @@ export type SiteOverride = { id: string; cite: string; optional?: true } & (
     | { action: 'drop'; place: string; reason: string }
 );
 
+/** Revision context for curated site overrides; 377 has no proved 274/289 route annotations. */
+export type GatherSitesOptions = { revision?: number; overrides?: readonly SiteOverride[] };
+
+function isSiteOverrideList(value: readonly SiteOverride[] | GatherSitesOptions): value is readonly SiteOverride[] {
+    return Array.isArray(value);
+}
+
+
 const ZANARIS_CITE = 'quests/quest_zanaris/scripts/quest_zanaris.rs2:89-106 (zanarisdoor: the entrance needs the Dramen staff worn and a members world)';
 const ZANARIS_REQUIRES: GatherSiteRequirement[] = [{ kind: 'worn', item: 772, name: 'Dramen staff' }];
 const TIRANNWN_CITE = 'quests/quest_regicide/scripts/regicide_arandar_gate_guard.rs2:1-33; quests/quest_upass/scripts/quest_upass.rs2:80-103,574-630; quests/quest_regicide/scripts/quest_regicide.rs2:25-29';
@@ -2349,18 +2396,21 @@ function readSitePlaces(content: string, banks: GatherSiteBank[]): { places: Sit
     return { places, spelling };
 }
 
-/** `alias -> fishing_movement_enum` plus every fishing NPC alias suffix, read with the shared section parser. */
-function readFishingEnums(content: string): { enumOf: Map<string, string>; suffixes: Set<string> } {
-    const sections = parseSections(FISHING_NPC, fs.readFileSync(path.join(content, FISHING_NPC), 'utf8'));
-    if (sections.length === 0) throw new Error(`gather_sites: ${FISHING_NPC} has no fishing npc types`);
+/** `alias -> fishing_movement_enum` plus fishing NPC alias suffixes from the selected NPC config rows. */
+function readFishingEnums(content: string, fishingAliases: ReadonlySet<string>): { enumOf: Map<string, string>; suffixes: Set<string> } {
+    const hasCanonical = fs.existsSync(path.join(content, FISHING_NPC));
+    const files = hasCanonical ? [FISHING_NPC] : walkContent(content, 'scripts', ['.npc']);
+    const sections = files.flatMap((file) => parseSections(file, fs.readFileSync(path.join(content, file), 'utf8')));
+    const selected = hasCanonical ? sections : sections.filter((section) => fishingAliases.has(section.name));
+    if (selected.length === 0) throw new Error(`gather_sites: ${hasCanonical ? FISHING_NPC : 'npc configs'} has no fishing npc types`);
     const enumOf = new Map<string, string>();
     const suffixes = new Set<string>();
-    for (const section of sections) {
+    for (const section of selected) {
         suffixes.add(section.name.replace(/^\d+_\d+_\d+_/, ''));
         const movement = section.params.get('fishing_movement_enum')?.[0];
         if (movement === undefined) continue;
         const prev = enumOf.get(section.name);
-        if (prev !== undefined && prev !== movement) throw new Error(`gather_sites: ${FISHING_NPC} names ${section.name} twice with different movement enums`);
+        if (prev !== undefined && prev !== movement) throw new Error(`gather_sites: ${section.span.file} names ${section.name} twice with different movement enums`);
         enumOf.set(section.name, movement);
     }
     return { enumOf, suffixes };
@@ -2461,7 +2511,8 @@ function siteBoxOf(tiles: SiteTile[]): SiteBox {
  * Compute named-site rows from family facts, picker resources, local content and the bank catalog.
  * Overrides name, require or drop published rows by id.
  */
-export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire[], content: string, banks: GatherSiteBank[], overrides: readonly SiteOverride[] = SITE_OVERRIDES): GatherSitesResult {
+export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire[], content: string, banks: GatherSiteBank[], options: readonly SiteOverride[] | GatherSitesOptions = SITE_OVERRIDES): GatherSitesResult {
+    const overrides = isSiteOverrideList(options) ? options : options.overrides ?? (options.revision === 377 ? [] : SITE_OVERRIDES);
     const keyMeta = new Map<string, { skill: SkillName; label: string }>();
     for (const row of resources) {
         if (keyMeta.has(row.key)) throw new Error(`gather_sites: duplicate resource key ${row.key}`);
@@ -2498,7 +2549,17 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
     }
     const { places, spelling } = readSitePlaces(content, banks);
     const labelPlaces = places.filter((place) => place.src.startsWith('label:'));
-    const { enumOf, suffixes } = readFishingEnums(content);
+    // Every direct name resolves: each method-target fishing NPC whose enum
+    // stem is geographic has a known, non-null movement box and a non-empty
+    // name, and distinct stems humanise to distinct names. This enumerates
+    // method targets, so an NPC with an entirely missing movement row throws.
+    const targetNpcs = new Set<number>();
+    for (const method of facts.methods) {
+        if (method.skill !== 'fishing' || method.targets.state === 'unknown') continue;
+        for (const target of method.targets.value) if (target.kind === 'npc' && target.class === 'resource') targetNpcs.add(target.id);
+    }
+    const fishingAliases = new Set([...targetNpcs].map((npc) => npcAlias.get(npc)).filter((alias): alias is string => alias !== undefined));
+    const { enumOf, suffixes } = readFishingEnums(content, fishingAliases);
     const directCache = new Map<number, DirectName | null>();
     const directNameOf = (npc: number): DirectName | null => {
         const cached = directCache.get(npc);
@@ -2512,15 +2573,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         directCache.set(npc, direct);
         return direct;
     };
-    // Every direct name resolves: each method-target fishing NPC whose enum
-    // stem is geographic has a known, non-null movement box and a non-empty
-    // name, and distinct stems humanise to distinct names. This enumerates
-    // method targets, so an NPC with an entirely missing movement row throws.
-    const targetNpcs = new Set<number>();
-    for (const method of facts.methods) {
-        if (method.skill !== 'fishing' || method.targets.state === 'unknown') continue;
-        for (const target of method.targets.value) if (target.kind === 'npc' && target.class === 'resource') targetNpcs.add(target.id);
-    }
     const resolvedStems = new Map<string, string>();
     for (const npc of [...targetNpcs].sort((a, b) => a - b)) {
         const direct = directNameOf(npc);
