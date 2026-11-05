@@ -3,6 +3,17 @@ use super::*;
 const RAW_289: &[u8] = include_bytes!("../data/game-data/289.json");
 
 #[test]
+fn revision_377_game_data_is_explicitly_unavailable() {
+    let error = match for_revision(ClientRevision::R377) {
+        Ok(_) => panic!("revision 377 must not load generated game data"),
+        Err(error) => error,
+    };
+    assert!(error.contains("revision 377"));
+    assert!(error.contains("unavailable"));
+    assert!(for_optional_profile(ClientRevision::R377, "any-cache").is_err());
+}
+
+#[test]
 fn generated_game_data_gzip_preserves_every_source_byte() {
     for (revision, compressed, source) in [
         (
