@@ -21,6 +21,7 @@ const HANS_ID: usize = 0;
 /// The existing mainland seed owns the teleport. Its landing is not counted as
 /// the walk, and an already-open dialogue cannot satisfy the fresh NPC step.
 pub(crate) fn client_377_scenario() -> Scenario {
+    let talked = std::sync::Mutex::new(false);
     Scenario {
         name: "client_377",
         seed: Seed {
@@ -79,8 +80,14 @@ pub(crate) fn client_377_scenario() -> Scenario {
             },
             Step {
                 name: "talk to the selected-cache Hans NPC by numeric type",
-                kind: StepKind::Perform {
-                    send: Box::new(|client, snapshot| {
+                kind: StepKind::Repeat {
+                    send: Box::new(move |client, snapshot| {
+                        let Ok(mut talked) = talked.lock() else {
+                            return false;
+                        };
+                        if *talked {
+                            return true;
+                        }
                         if !Proof::NoActiveContinue.check(snapshot, None) {
                             return false;
                         }
@@ -94,13 +101,25 @@ pub(crate) fn client_377_scenario() -> Scenario {
                             })
                             .min_by_key(|npc| npc.distance)
                         else {
-                            return false;
+                            return true;
                         };
-                        matches!(
-                            Interactions::new(snapshot, client)
-                                .interact(OpTarget::Npc(npc), ActionSpec::Label("Talk-to".into())),
-                            SendResult::Sent { .. }
-                        )
+                        match Interactions::new(snapshot, client).interact(
+                            OpTarget::Npc(npc),
+                            ActionSpec::Label("Talk-to".into()),
+                        ) {
+                            SendResult::Sent { .. } => {
+                                *talked = true;
+                                true
+                            }
+                            SendResult::Refused {
+                                reason:
+                                    SendReason::SceneUnavailable
+                                    | SendReason::OffScene
+                                    | SendReason::StaleTarget,
+                                ..
+                            } => true,
+                            SendResult::Refused { .. } => false,
+                        }
                     }),
                 },
                 wait: Wait {
@@ -134,10 +153,10 @@ pub(crate) fn client_377_scenario() -> Scenario {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::client::ClientConfig;
-    use client::config::{Cache, IfType, IfTypeMut};
+    use client::client::{ClientConfig, ClientNpc};
+    use client::config::{Cache, IfType, IfTypeMut, NpcType};
     use client::dash3d::ClientPlayer;
-    use client::io::ClientStream;
+    use client::io::{ClientStream, ServerProt};
     use std::sync::Arc;
 
     fn scene_client(revision: ClientRevision) -> Client {
@@ -172,10 +191,54 @@ mod tests {
     fn perform(scenario: &Scenario, index: usize, client: &mut Client) -> bool {
         let mut snapshot = GameSnapshot::new();
         snapshot.rebuild(client);
-        let StepKind::Perform { send } = &scenario.steps[index].kind else {
-            panic!("expected a direct client action");
+        let send = match &scenario.steps[index].kind {
+            StepKind::Perform { send } | StepKind::Repeat { send } => send,
+            _ => panic!("expected a direct client action"),
         };
         send(client, &snapshot)
+    }
+
+    fn talk_runner() -> ScenarioRunner {
+        let mut scenario = client_377_scenario();
+        let talk = scenario.steps.remove(4);
+        scenario.steps = vec![talk];
+        scenario.seed.mainland = false;
+        scenario.settings = ScenarioSettings::default();
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        runner.set_scene_settle(std::time::Duration::ZERO);
+        runner
+    }
+
+    fn prepare_hans(client: &mut Client) {
+        let cache = Arc::get_mut(&mut client.cache).expect("sole cache owner");
+        if cache.npcs.is_empty() {
+            cache.npcs.push(NpcType::default());
+        }
+        cache.npcs[0].name = "Hans".into();
+        cache.npcs[0].op = vec![Some("Talk-to".into()), None, None, None, None];
+    }
+
+    fn publish_hans(client: &mut Client, position: Option<(i32, i32)>) {
+        if let Some((local_x, local_z)) = position {
+            let mut npc = ClientNpc {
+                r#type: Some(HANS_ID),
+                ..Default::default()
+            };
+            npc.entity.x = local_x * 128;
+            npc.entity.z = local_z * 128;
+            client.npc[1] = Some(Box::new(npc));
+            client.npc_ids[0] = 1;
+            client.npc_count = 1;
+        } else {
+            client.npc_count = 0;
+            client.npc_ids[0] = 0;
+        }
+        client.bump_gens(ServerProt::NPC_INFO);
+    }
+
+    fn next_game_tick(runner: &mut ScenarioRunner, client: &mut Client) {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(client);
     }
 
     #[test]
@@ -199,6 +262,11 @@ mod tests {
         selected.gens.player = selected.gens.player.wrapping_add(1);
         selected.gens.iface = selected.gens.iface.wrapping_add(1);
         assert!(!perform(&scenario, 0, &mut selected));
+        assert_eq!(selected.out.pos, 0);
+        assert!(
+            !perform(&scenario, 4, &mut selected),
+            "an existing dialogue must block a new Hans Talk-to"
+        );
         assert_eq!(selected.out.pos, 0);
     }
 
@@ -229,5 +297,57 @@ mod tests {
         client.gens.player = client.gens.player.wrapping_add(1);
         snapshot.rebuild(&client);
         assert!(scenario.steps[2].wait.arm.check(&snapshot, None));
+    }
+
+    #[test]
+    fn hans_repeat_waits_for_a_visible_target_then_talks_once() {
+        let mut runner = talk_runner();
+        let mut client = scene_client(ClientRevision::R377);
+        client.local_player = Some(ClientPlayer::at(20, 16));
+        prepare_hans(&mut client);
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        client.stream = Some(ClientStream::connect("127.0.0.1", port).unwrap());
+        let _peer = listener.accept().unwrap();
+
+        runner.tick(&mut client);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "an absent Hans keeps the retry armed"
+        );
+        assert_eq!(client.out.pos, 0);
+
+        for position in [(40, 16), (38, 18)] {
+            publish_hans(&mut client, Some(position));
+            next_game_tick(&mut runner, &mut client);
+            assert_eq!(
+                runner.status(),
+                RunnerStatus::Running { step: 0, total: 1 },
+                "a distant or wandering Hans keeps the retry armed"
+            );
+            assert_eq!(client.out.pos, 0, "Hans outside 16 tiles must not be targeted");
+        }
+
+        publish_hans(&mut client, Some((36, 16)));
+        next_game_tick(&mut runner, &mut client);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "Talk-to must not satisfy the fresh-dialogue arm"
+        );
+        let after_talk = client.out.pos;
+        assert!(after_talk > 0, "visible Hans must receive Talk-to");
+
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+        assert!(
+            !Proof::ActiveContinue.check(&snapshot, None),
+            "the interaction alone must not fabricate a conversation"
+        );
+
+        next_game_tick(&mut runner, &mut client);
+        assert_eq!(client.out.pos, after_talk, "wait for chat instead of re-talking");
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
     }
 }
