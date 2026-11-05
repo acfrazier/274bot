@@ -1,0 +1,150 @@
+//! Explicit real-content qualification. Ordinary suites retain their revision-289 pack.
+//! Local packs are decoded as supplied; this test checks planner behavior, not input identity.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use api::snapshot::WorldTile;
+use nav_planner::router::{find_with, FindOptions, Leg};
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
+use nav_planner::world_state::WorldState;
+use serde_json::{json, Value};
+
+fn required_path(name: &str) -> PathBuf {
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("set {name}"))
+}
+
+fn tile(x: i32, z: i32, level: i32) -> WorldTile {
+    WorldTile { x, z, level }
+}
+
+fn pack_counts(path: &Path, world: &NavWorld) -> Value {
+    let mut kinds = BTreeMap::new();
+    for edge in &world.graph.edges {
+        *kinds.entry(format!("{:?}", edge.kind)).or_insert(0_usize) += 1;
+    }
+    json!({
+        "bytes": std::fs::metadata(path).unwrap().len(),
+        "width": world.collision.width,
+        "height": world.collision.height,
+        "edges": world.graph.edges.len(),
+        "teleports": world.graph.teleports.len(),
+        "edge_kinds": kinds,
+        "banks": world.banks().len(),
+        "zones": world.graph.zones.as_ref().map(|table| table.zones().len()),
+    })
+}
+
+#[test]
+#[ignore = "requires NAV_377_PACK, NAV_289_PACK and NAV_377_REPORT"]
+fn real_revision_377_routes_and_transports() {
+    let path = required_path("NAV_377_PACK");
+    let world = NavWorld::load_pack(&path).unwrap();
+    let state = WorldState {
+        map_members: true,
+        inv: [(995, 30)].into_iter().collect(),
+        ..WorldState::empty()
+    };
+    // This smoke isolates collision/transport connectivity, not account safety.
+    let options = FindOptions {
+        zones: nav_planner::zones::ZoneExempt::all(),
+        ..Default::default()
+    };
+    let cities = [
+        ("Lumbridge", tile(3222, 3218, 0)),
+        ("Varrock", tile(3210, 3424, 0)),
+        ("Falador", tile(2964, 3378, 0)),
+    ];
+    let mut routes = Vec::new();
+    for (from_name, from) in cities {
+        for (to_name, to) in cities {
+            if from == to {
+                continue;
+            }
+            let route = find_with(&world.collision, &world.graph, from, to, options, &state)
+                .unwrap_or_else(|error| panic!("{from_name} to {to_name}: {error:?}"));
+            assert_eq!(route.dest, to);
+            routes.push(json!({"from": from_name, "to": to_name, "ticks": route.ticks, "legs": route.legs.len()}));
+        }
+    }
+    let stairs = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 1738 && edge.at == tile(3204, 3207, 0))
+        .expect("377 Lumbridge staircase from stairs.rs2");
+    assert_eq!(stairs.to, tile(3205, 3209, 1));
+    assert_eq!(stairs.kind, TransportKind::Stairs);
+    let climb = find_with(
+        &world.collision,
+        &world.graph,
+        tile(3215, 3212, 0),
+        stairs.to,
+        options,
+        &state,
+    )
+    .unwrap();
+    assert!(climb
+        .legs
+        .iter()
+        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.loc_id == 1738)));
+    let doors = world
+        .graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == TransportKind::Door
+                && edge.at.level == 0
+                && (3200..3264).contains(&edge.at.x)
+                && (3200..3264).contains(&edge.at.z)
+                && state.allows(edge)
+        })
+        .count();
+    assert!(doors > 0, "real Lumbridge door crossings");
+    let ship = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == TransportKind::Boat && edge.loc_id == 378 && edge.at == tile(3026, 3217, 0)
+        })
+        .expect("Port Sarim sailor");
+    assert_eq!(ship.to, tile(2956, 3143, 1));
+    assert_eq!(ship.consumed_req, [(995, 30)]);
+    assert_eq!(ship.ticks, 7);
+    let voyage = find_with(
+        &world.collision,
+        &world.graph,
+        ship.at,
+        tile(2956, 3147, 0),
+        options,
+        &state,
+    )
+    .unwrap();
+    assert!(voyage.legs.iter().any(|leg| matches!(leg, Leg::Transport { edge } if edge.kind == TransportKind::Boat && edge.loc_id == 378)));
+    assert!(voyage
+        .legs
+        .iter()
+        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.loc_id == 2082)));
+    let reference_path = required_path("NAV_289_PACK");
+    let reference = NavWorld::load_pack(&reference_path).unwrap();
+    let report = json!({
+        "verdict": "PASS",
+        "revision": 377,
+        "pack": pack_counts(&path, &world),
+        "reference_289": pack_counts(&reference_path, &reference),
+        "city_routes": routes,
+        "lumbridge_doors": doors,
+        "stairs_ticks": climb.ticks,
+        "ship_ticks": voyage.ticks,
+        "limits": "Offline planner proof against Fairy Ring scripts. No live execution or historical accuracy claim. Other transport families are not qualified by this smoke."
+    });
+    std::fs::write(
+        required_path("NAV_377_REPORT"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
+}
