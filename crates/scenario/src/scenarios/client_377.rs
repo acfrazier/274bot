@@ -137,7 +137,7 @@ mod tests {
     use client::client::ClientConfig;
     use client::config::{Cache, IfType, IfTypeMut};
     use client::dash3d::ClientPlayer;
-    use client::io::{ClientStream, ServerProt};
+    use client::io::ClientStream;
     use std::sync::Arc;
 
     fn scene_client(revision: ClientRevision) -> Client {
@@ -162,8 +162,10 @@ mod tests {
         for column in &mut client.collision[0].flags {
             column.fill(0);
         }
-        client.bump_gens(ServerProt::PLAYER_INFO);
-        client.bump_gens(ServerProt::REBUILD_NORMAL);
+        // Fixture publication is independent of the R274-only wire helper.
+        client.gens.player = 1;
+        client.gens.scene = 1;
+        client.gens.iface = 1;
         client
     }
 
@@ -190,12 +192,12 @@ mod tests {
         }
 
         selected.local_player = Some(ClientPlayer::at(20, 16));
-        selected.bump_gens(ServerProt::PLAYER_INFO);
+        selected.gens.player = selected.gens.player.wrapping_add(1);
         assert!(!perform(&scenario, 0, &mut selected));
         selected.local_player = Some(ClientPlayer::at(20, 20));
         selected.chat_modal_id = 100;
-        selected.bump_gens(ServerProt::PLAYER_INFO);
-        selected.bump_gens(ServerProt::IF_OPENCHAT);
+        selected.gens.player = selected.gens.player.wrapping_add(1);
+        selected.gens.iface = selected.gens.iface.wrapping_add(1);
         assert!(!perform(&scenario, 0, &mut selected));
         assert_eq!(selected.out.pos, 0);
     }
@@ -219,12 +221,12 @@ mod tests {
         assert!(!scenario.steps[2].wait.arm.check(&snapshot, None));
 
         client.local_player = Some(ClientPlayer::at(20, 17));
-        client.bump_gens(ServerProt::PLAYER_INFO);
+        client.gens.player = client.gens.player.wrapping_add(1);
         snapshot.rebuild(&client);
         assert!(!scenario.steps[2].wait.arm.check(&snapshot, None));
 
         client.local_player = Some(ClientPlayer::at(20, 16));
-        client.bump_gens(ServerProt::PLAYER_INFO);
+        client.gens.player = client.gens.player.wrapping_add(1);
         snapshot.rebuild(&client);
         assert!(scenario.steps[2].wait.arm.check(&snapshot, None));
     }
