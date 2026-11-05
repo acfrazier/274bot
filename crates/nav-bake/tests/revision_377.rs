@@ -27,8 +27,8 @@ fn pack_counts(path: &Path, world: &NavWorld) -> Value {
         *kinds.entry(format!("{:?}", edge.kind)).or_insert(0_usize) += 1;
     }
     json!({
-        "sha256": hash_file(path).unwrap(),
-        "bytes": std::fs::metadata(path).unwrap().len(),
+        "sha256": hash_file(path).expect("hash qualification navigation pack"),
+        "bytes": std::fs::metadata(path).expect("stat qualification navigation pack").len(),
         "width": world.collision.width,
         "height": world.collision.height,
         "edges": world.graph.edges.len(),
