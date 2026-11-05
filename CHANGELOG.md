@@ -5,6 +5,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## [0.2.9] — Unreleased
 
+### Game data
+
+- The API can select revision 377 data generated from local Fairy Ring
+  engine, content and cache inputs. Gathering, quest and debug assets stay
+  revision-selected. Unproved 289-only controls and tactics remain unavailable;
+  they are not copied into the 377 data.
+
 ### Breaking changes
 
 - Source builds require local game-data and navigation generation before the product build.
