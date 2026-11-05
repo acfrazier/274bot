@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """The live final Close barrier needs the proxy's monotonic receipt time."""
 
+import json
 from pathlib import Path
 import statistics
 import socket
 import ssl
+import tempfile
 import threading
 import time
 from types import SimpleNamespace
@@ -37,6 +39,24 @@ class CloseReceiptTests(unittest.TestCase):
         self.assertIs(type(receipt["closed_monotonic_ns"]), int)
         self.assertGreaterEqual(receipt["closed_monotonic_ns"], connection.started_monotonic_ns)
         self.assertNotIn("c1", runtime.contexts)
+
+    def test_terminator_config_ignores_unexpected_client_eof(self):
+        root = Path(__file__).resolve().parents[1]
+        config = json.loads((root / "T1.4" / "soak-config.json").read_text())
+        fixture = root / "vendor" / "fr-client-rust" / "crates" / "client" / "tests" / "fixtures" / "tls"
+        config["fault"]["seed"] = 1027
+        config["proxy"].update({
+            "cert_pem": str(fixture / "localhost.pem"),
+            "key_pem": str(fixture / "localhost.key"),
+            "local_login_modulus": "1" * 250,
+            "local_login_key_source_sha256": "a" * 64,
+        })
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "config.json"
+            path.write_text(json.dumps(config))
+            server_context = proxy.load_config(path).tls_context
+        self.assertTrue(server_context.options & ssl.OP_IGNORE_UNEXPECTED_EOF)
+
 
     def test_websocket_close_records_unmasked_payload_length(self):
         for direction, masked, payload in (
@@ -361,6 +381,7 @@ class CloseReceiptTests(unittest.TestCase):
         fixture = (Path(__file__).resolve().parents[1] / "vendor" / "fr-client-rust"
                    / "crates" / "client" / "tests" / "fixtures" / "tls")
         server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.options |= ssl.OP_IGNORE_UNEXPECTED_EOF
         server_context.load_cert_chain(str(fixture / "localhost.pem"),
                                        str(fixture / "localhost.key"))
         client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -451,9 +472,10 @@ class CloseReceiptTests(unittest.TestCase):
         self._check_https_response_half_close(partial_body=False, keep_client_open=True)
 
     def test_client_eof_before_upstream_eof_skips_tls_shutdown(self):
-        with patch.object(ssl.SSLSocket, "unwrap",
-                          side_effect=AssertionError("early client EOF must not unwrap")):
-            self._check_https_response_half_close(partial_body=False, early_client_close=True)
+        with patch.object(ssl.SSLSocket, "unwrap") as unwrap:
+            self._check_https_response_half_close(
+                partial_body=False, early_client_close=True, tcp_loopback=True)
+        unwrap.assert_not_called()
 
     def test_stalled_tls_write_does_not_block_client_read(self):
         original = ssl.SSLSocket.send
@@ -555,7 +577,7 @@ class CloseReceiptTests(unittest.TestCase):
 
     def _check_https_response_half_close(
         self, *, partial_body, before_response=None, tls_version=None,
-        early_client_close=False, keep_client_open=False
+        early_client_close=False, keep_client_open=False, tcp_loopback=False
     ):
         events = []
         def spawn(target, name, *args):
@@ -581,6 +603,7 @@ class CloseReceiptTests(unittest.TestCase):
         fixture = (Path(__file__).resolve().parents[1] / "vendor" / "fr-client-rust"
                    / "crates" / "client" / "tests" / "fixtures" / "tls")
         server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.options |= ssl.OP_IGNORE_UNEXPECTED_EOF
         server_context.load_cert_chain(str(fixture / "localhost.pem"),
                                        str(fixture / "localhost.key"))
         client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -589,7 +612,15 @@ class CloseReceiptTests(unittest.TestCase):
         if tls_version is not None:
             server_context.minimum_version = server_context.maximum_version = tls_version
             client_context.minimum_version = client_context.maximum_version = tls_version
-        server_raw, client_raw = socket.socketpair()
+        if tcp_loopback:
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            client_raw = socket.create_connection(listener.getsockname())
+            server_raw, _ = listener.accept()
+            listener.close()
+        else:
+            server_raw, client_raw = socket.socketpair()
         server_holder = []
         handshake = spawn(
             lambda: server_holder.append(server_context.wrap_socket(server_raw, server_side=True)),
@@ -634,10 +665,13 @@ class CloseReceiptTests(unittest.TestCase):
                 while len(received) < len(response):
                     received.extend(client.recv(len(response) - len(received)))
                 self.assertEqual(received, response)
-                client.close()
+                socket.socket.shutdown(client, socket.SHUT_WR)
                 proxy_b.settimeout(1)
                 self.assertEqual(proxy_b.recv(1), b"")
                 proxy_b.shutdown(socket.SHUT_WR)
+                # The client sent only a FIN. A fatal TLS alert would appear
+                # here as raw ciphertext before the server's FIN.
+                self.assertEqual(socket.socket.recv(client, 1), b"")
             else:
                 proxy_b.shutdown(socket.SHUT_WR)
                 while chunk := client.recv(4096):
@@ -647,6 +681,9 @@ class CloseReceiptTests(unittest.TestCase):
                     client.close()
             relay.join(1 if keep_client_open else 3)
             self.assertFalse(relay.is_alive())
+            if keep_client_open:
+                client.settimeout(0.5)
+                self.assertEqual(socket.socket.recv(client, 1), b"")
             self.assertTrue(all(not worker.is_alive() for worker in workers))
             self.assertEqual(connection.failures, [])
             self.assertFalse(any(event["type"] == "tcp_copy_error" for event in events))

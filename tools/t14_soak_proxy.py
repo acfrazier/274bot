@@ -236,6 +236,9 @@ def load_config(path: Path) -> ProxyConfig:
     if faults.diagnostic_disable_ws_faults and document.get("run", {}).get("qualification") is not False:
         raise ConfigError("WS fault isolation is only permitted for a nonqualifying smoke")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    # A client that closes after its complete HTTP response must not make
+    # SSL_read send a fatal decode_error alert instead of a plain TCP FIN.
+    context.options |= ssl.OP_IGNORE_UNEXPECTED_EOF
     try:
         context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
         # The capture can identify the encrypted Close only with per-run TLS keys.
@@ -700,6 +703,7 @@ class ConnectionState:
         # owns close_notify after the upstream HTTP response has ended.
         self.tls_io_lock = threading.Lock()
         self.tls_upstream_eof = threading.Event()
+        self.tls_client_eof = threading.Event()
         self.stage_status: dict[str, str] = {}
         self.failures: list[dict[str, str]] = []
         self.finalized = False
@@ -1101,14 +1105,21 @@ def _tcp_copy(
             data = _recv_tls(source, context, runtime) if tls_reader else source.recv(TCP_READ_BYTES)
             if data is None or not data:
                 if tls_writer:
-                    # The read owner sends the TLS alert. This worker must
-                    # never call unwrap while the other worker is in SSL_read.
-                    context.tls_upstream_eof.set()
+                    if context.tls_client_eof.is_set():
+                        # The peer EOF arrived first. The response is already
+                        # written; send only TCP FIN, never a TLS alert.
+                        try:
+                            socket.socket.shutdown(destination, socket.SHUT_WR)
+                        except OSError:
+                            pass
+                    else:
+                        # The read owner sends close_notify after this signal.
+                        context.tls_upstream_eof.set()
                     return
                 if tls_reader:
+                    if data == b"":
+                        context.tls_client_eof.set()
                     _send_half_close(destination)
-                    # A client EOF observed first means the client cannot
-                    # receive close_notify. Only half-close proxy B's read.
                     if data is None and not runtime.stop.is_set() and _http_response_complete(context):
                         with context.tls_io_lock:
                             _send_half_close(source, http_response_complete=True)

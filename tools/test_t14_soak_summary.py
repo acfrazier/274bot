@@ -148,6 +148,14 @@ class TeardownTests(unittest.TestCase):
             "wire_bytes_written": 7,
             "http_header_bytes_written": 37,
         })
+        event["tls_terminator"]["proxy_b_to_client_plaintext"] = {
+            "bytes_read": 44,
+            "bytes_written": 44,
+        }
+        event["proxy_a_ciphertext"]["terminator_to_client_ciphertext"] = {
+            "bytes_read": 44,
+            "bytes_written": 44,
+        }
         return event
 
 
@@ -323,6 +331,8 @@ class TeardownTests(unittest.TestCase):
         failure = {"stage": "tls_terminator", "error": "SSLError: certificate verify failed"}
         self.assertTrue(any("unexpected TLS/segmentation error" in reason
                             for reason in self.check(self.event(failure), arm="baseline")))
+        self.assertIs(summary.baseline_teardown_fault(
+            failure, {"tls_terminator": "failed"}), False)
 
     def test_ssl_eof_accepts_changed_source_line_not_changed_class_or_message(self):
         original = {"stage": "tls_terminator",
@@ -435,6 +445,34 @@ class TeardownTests(unittest.TestCase):
             self.assertEqual(observations_by_arm["baseline"],
                              observations_by_arm["candidate"])
 
+    def test_http_reset_requires_failed_proxy_a_stage_and_status_200(self):
+        reset = {"stage": "proxy_a",
+                 "error": "ConnectionResetError: [Errno 54] Connection reset by peer"}
+        for arm in ("baseline", "candidate"):
+            with self.subTest(arm=arm, reason="proxy A stage is not failed"):
+                event = self.http_event(reset)
+                event["stage_status"]["proxy_a"] = "closed"
+                observations = []
+                errors = []
+                summary.check_transport_teardown(
+                    Path(arm), arm, event, self.close_frames(), 30, errors, observations)
+                self.assertEqual(errors, [
+                    f"{arm}: connection {event['connection_id']}: "
+                    "HTTPS teardown error is not the witnessed terminal TLS write"])
+                self.assertFalse(observations)
+
+            with self.subTest(arm=arm, reason="non-200 non-101 status"):
+                event = self.http_event(reset)
+                event["websocket_handshake"]["upgrade_status"] = 204
+                observations = []
+                errors = []
+                summary.check_transport_teardown(
+                    Path(arm), arm, event, self.close_frames(), 30, errors, observations)
+                self.assertEqual(errors, [
+                    f"{arm}: connection {event['connection_id']}: "
+                    "incomplete non-200/non-101 HTTP transfer"])
+                self.assertFalse(observations)
+
     def test_post_response_reset_requires_complete_lossless_matching_evidence(self):
         reset = {"stage": "proxy_a",
                  "error": "ConnectionResetError: [Errno 54] Connection reset by peer"}
@@ -459,6 +497,39 @@ class TeardownTests(unittest.TestCase):
         def missing_transport_counters(event):
             event["tls_terminator"]["proxy_b_to_client_plaintext"] = {}
 
+        def missing_proxy_a_transport_counters(event):
+            event["proxy_a_ciphertext"]["terminator_to_client_ciphertext"] = {}
+
+        def short_terminator_receipt(event):
+            counters = event["tls_terminator"]["proxy_b_to_client_plaintext"]
+            counters["bytes_read"] = 43
+            counters["bytes_written"] = 43
+
+        def zero_terminator_receipt(event):
+            counters = event["tls_terminator"]["proxy_b_to_client_plaintext"]
+            counters["bytes_read"] = 0
+            counters["bytes_written"] = 0
+
+        def short_proxy_a_receipt(event):
+            counters = event["proxy_a_ciphertext"]["terminator_to_client_ciphertext"]
+            counters["bytes_read"] = 43
+            counters["bytes_written"] = 43
+
+        def zero_proxy_a_receipt(event):
+            counters = event["proxy_a_ciphertext"]["terminator_to_client_ciphertext"]
+            counters["bytes_read"] = 0
+            counters["bytes_written"] = 0
+
+        def noninteger_terminator_receipt(event):
+            counters = event["tls_terminator"]["proxy_b_to_client_plaintext"]
+            counters["bytes_read"] = True
+            counters["bytes_written"] = True
+
+        def negative_proxy_a_receipt(event):
+            counters = event["proxy_a_ciphertext"]["terminator_to_client_ciphertext"]
+            counters["bytes_read"] = -1
+            counters["bytes_written"] = -1
+
         def missing_hash_match(event):
             event["binary_payload_hashes_match_at_proxy_b"].pop("engine_to_client")
 
@@ -479,6 +550,13 @@ class TeardownTests(unittest.TestCase):
             ("missing hash match", missing_hash_match),
             ("incomplete TLS handshake", incomplete_handshake),
             ("proxy B not closed", proxy_b_not_closed),
+            ("missing proxy-A transport counters", missing_proxy_a_transport_counters),
+            ("short terminator receipt", short_terminator_receipt),
+            ("zero terminator receipt", zero_terminator_receipt),
+            ("short proxy-A receipt", short_proxy_a_receipt),
+            ("zero proxy-A receipt", zero_proxy_a_receipt),
+            ("noninteger terminator receipt", noninteger_terminator_receipt),
+            ("negative proxy-A receipt", negative_proxy_a_receipt),
         )
         for arm in ("baseline", "candidate"):
             for name, invalidate in invalid_evidence:

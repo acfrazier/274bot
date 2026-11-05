@@ -416,6 +416,7 @@ def baseline_teardown_fault(failure: dict, stage: dict) -> bool:
                 or re.fullmatch(
                     r"SSLEOFError: EOF occurred in violation of protocol(?: \(_ssl\.c:\d+\))?",
                     error) is not None)
+    return False
 
 
 def accepted_https_proxy_a_reset(failure: dict, stage: dict) -> bool:
@@ -455,14 +456,14 @@ def has_observed_zero_transport_deficits(a: dict, tls: dict,
 
 
 def has_complete_http_response(handshake: dict, output: dict,
-                               fixture: dict | None) -> bool:
-    """Require explicit complete body and header counters for the HTTP reset rule."""
+                               fixture: dict | None, a: dict, tls: dict) -> bool:
+    """Require explicit complete body, header and cross-stage HTTP counters."""
     if fixture is not None:
         expected_body = fixture.get("body_bytes")
-        written_body = output.get("wire_bytes_written")
+        body_written = output.get("wire_bytes_written")
         body_complete = (
             type(expected_body) is int and expected_body >= 0
-            and type(written_body) is int and written_body == expected_body
+            and type(body_written) is int and body_written == expected_body
         )
     else:
         body_read = output.get("proxy_b_http_fallback_bytes_read")
@@ -478,7 +479,28 @@ def has_complete_http_response(handshake: dict, output: dict,
         type(response_bytes) is int and response_bytes > 0
         and type(header_written) is int and header_written == response_bytes
     )
-    return body_complete and header_complete
+    terminator_counters = tls.get("proxy_b_to_client_plaintext")
+    proxy_a_counters = a.get("terminator_to_client_ciphertext")
+    cross_stage_counters_complete = (
+        isinstance(terminator_counters, dict)
+        and type(terminator_counters.get("bytes_read")) is int
+        and terminator_counters["bytes_read"] >= 0
+        and type(terminator_counters.get("bytes_written")) is int
+        and terminator_counters["bytes_written"] >= 0
+        and isinstance(proxy_a_counters, dict)
+        and type(proxy_a_counters.get("bytes_read")) is int
+        and proxy_a_counters["bytes_read"] >= 0
+        and type(proxy_a_counters.get("bytes_written")) is int
+        and proxy_a_counters["bytes_written"] >= 0
+    )
+    return (
+        body_complete and header_complete
+        and type(body_written) is int and body_written >= 0
+        and type(header_written) is int and header_written >= 0
+        and cross_stage_counters_complete
+        and terminator_counters["bytes_read"] == header_written + body_written
+        and proxy_a_counters["bytes_read"] >= terminator_counters["bytes_written"]
+    )
 
 
 def matching_binary_payload_hashes(event: dict) -> bool:
@@ -535,7 +557,7 @@ def check_transport_teardown(folder: Path, arm: str, event: dict,
             proxy_reset
             and stage.get("proxy_b") == "closed"
             and tls["handshake"].get("completed") == 1
-            and has_complete_http_response(handshake, out, fixture)
+            and has_complete_http_response(handshake, out, fixture, a, tls)
             and has_observed_zero_transport_deficits(a, tls, deficits)
             and matching_binary_payload_hashes(event)
         )
