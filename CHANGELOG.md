@@ -5,6 +5,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Navigation
+
+- Revision 377 cache manifests now pass the navigation identity checks.
+  Revision mismatches and changed archive bytes still fail.
+
 ### Gatherer
 
 - After a death, the Gatherer no longer stops on the first blocked step of its
