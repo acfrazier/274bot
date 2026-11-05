@@ -52,7 +52,10 @@ fn explicit_377_tables_keep_selected_food_prayer_dose_and_condition_identity() {
         .combat
         .food(food.item.id)
         .expect("selected food table contains cooked chompy");
-    assert_eq!(food_fact.heal, food.fixed_hp_heal().expect("fixed food heal"));
+    assert_eq!(
+        food_fact.heal,
+        food.fixed_hp_heal().expect("fixed food heal")
+    );
     assert!(
         script::combat::guard::shared_tables()
             .expect("legacy tables")
@@ -84,7 +87,10 @@ fn explicit_377_tables_keep_selected_food_prayer_dose_and_condition_identity() {
         .expect("selected next-dose item")
         .id;
     assert_eq!(selected_dose.id, dose_fact.item.id);
-    assert_eq!(selected_dose.doses, dose_fact.dose_count.expect("dose count"));
+    assert_eq!(
+        selected_dose.doses,
+        dose_fact.dose_count.expect("dose count")
+    );
     assert_eq!(selected_dose.next_id, next_id);
 
     let (condition_combat, poison_unknown_v) =
