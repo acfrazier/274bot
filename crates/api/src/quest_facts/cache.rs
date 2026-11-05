@@ -15,10 +15,12 @@ use std::sync::Arc;
 const QUESTS_274: &[u8] = include_bytes!("../../data/game-data/274/quests.json");
 const QUESTS_289: &[u8] = include_bytes!("../../data/game-data/289/quests.json");
 
-fn embedded(revision: ClientRevision) -> &'static [u8] {
+fn embedded(revision: ClientRevision) -> Result<&'static [u8], FactError> {
     match revision {
-        ClientRevision::R274 => QUESTS_274,
-        ClientRevision::R289 => QUESTS_289,
+        ClientRevision::R274 => Ok(QUESTS_274),
+        ClientRevision::R289 => Ok(QUESTS_289),
+        ClientRevision::R377 => Err(FactError::FamilyUnavailable(QUESTS_FAMILY.clone())),
+
     }
 }
 
@@ -115,10 +117,10 @@ pub(crate) fn prepare(
 ) -> Result<Arc<QuestCatalog>, FactError> {
     let pin = data.selected_pin()?;
     CACHE.prepare(Key::of(&pin), || {
-        load(&pin, MANIFEST, embedded(pin.revision))
+        load(&pin, MANIFEST, embedded(pin.revision)?)
     })
-}
 
+}
 /// Return a prepared catalog without decoding or waiting for a preparation.
 pub(crate) fn cached(data: &SelectedGameData) -> Option<Arc<QuestCatalog>> {
     let pin = data.selected_pin().ok()?;
@@ -148,7 +150,7 @@ pub(crate) fn for_bake(
     data: &SelectedGameData,
 ) -> Result<(crate::game_data::QuestIdentityFacts, QuestFamilyIdentity), FactError> {
     let pin = data.selected_pin()?;
-    verified_identity(&pin, MANIFEST, embedded(pin.revision))
+    verified_identity(&pin, MANIFEST, embedded(pin.revision)?)
 }
 
 fn verified_identity(
@@ -216,6 +218,14 @@ mod tests {
     }
 
     #[test]
+    fn revision_377_quest_asset_is_unavailable() {
+        assert_eq!(
+            embedded(ClientRevision::R377),
+            Err(FactError::FamilyUnavailable(QUESTS_FAMILY.clone()))
+        );
+    }
+
+    #[test]
     fn selected_quests_prepare_identity_only_catalogs_for_both_revisions() {
         FamilyPreparation::run(|worker| {
             for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -236,7 +246,7 @@ mod tests {
                 let identity = data
                     .quest_family_identity()
                     .expect("verified artifact identity is cached");
-                let bytes = embedded(revision);
+                let bytes = embedded(revision).unwrap();
                 let actual_sha256: [u8; 32] = Sha256::digest(bytes).into();
                 assert_eq!(identity.sha256, actual_sha256);
                 assert_eq!(identity.schema, NonZeroU16::new(wire::SCHEMA).unwrap());
@@ -255,6 +265,7 @@ mod tests {
                         assert!(catalog.quest("routequest").is_ok());
                         assert!(catalog.identity_coverage().is_empty());
                     }
+                    ClientRevision::R377 => panic!("revision 377 is not in this test"),
                 }
             }
         })
