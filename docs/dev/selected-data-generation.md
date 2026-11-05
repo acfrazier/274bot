@@ -50,11 +50,17 @@ Use existing packed server and client data with a members-world decode
 (`NODE_MEMBERS=true`). The generator reads the engine checkout; it does not
 build, repack, start or stop an engine.
 
+Weapon attack rates must be integers in `0..=255` for every revision, including
+explicit per-object parameters. Invalid rates refuse generation with the
+object ID; they are not clamped or replaced. Missing rates use the selected
+`combat.param` default on 274, 289 and 377.
+
 The API embeds local `377.json` and its `377/{gathering,quests,debug}.json`
 families. Like the historical revisions, these inputs are not committed or
 verified by file identity. Ordinary format and decode errors still apply.
 Revision 289's prerequisite projection remains part of the historical staged
 flow; it is not substituted for 377 content.
+
 The 377 core records named `UNKNOWN` gaps in `coverage`. In particular, it does
 not inherit the 289 autocast control contract, special-attack arm timing, the
 frozen `SPECIAL_SPECS` effect table, Nurmof/essence and flour stand tactics,

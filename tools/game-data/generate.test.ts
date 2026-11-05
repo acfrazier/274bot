@@ -954,6 +954,37 @@ try {
 } finally {
     fs.writeFileSync(combatParamFile, combatParams);
 }
+
+// Every revision retains the declared default and validates explicit wire rates.
+fs.writeFileSync(combatParamFile, combatParams
+    .replace(declaredRate, '[attackrate]\ntype=int\ndefault=6')
+    + '[attackrange]\ntype=int\ndefault=0\n[levelrequire]\ntype=int\ndefault=0\n');
+try {
+    for (const revision of [274, 289, 377]) {
+        const weapon = (rate: number | string | undefined) => ({
+            id: 52,
+            category: 12,
+            params: new Map<number, number | string>(rate === undefined ? [] : [[9, rate]]),
+        });
+        const extractRate = (rate: number | string | undefined) =>
+            extractCombatStyleFacts(content, [weapon(rate)], [], combatScripts, true, revision).weapon_styles[0]!.attackrate;
+        assert.equal(extractRate(undefined), 6, `${revision}: selected attackrate fallback`);
+        for (const rate of [0, 4, 255]) {
+            assert.equal(extractRate(rate), rate, `${revision}: valid explicit attackrate ${rate}`);
+        }
+        assert.throws(() => extractRate('4'), /obj 52: attackrate is not numeric/, `${revision}: reject a string rate`);
+        for (const rate of [-1, 256, 1.5, NaN, Infinity, -Infinity]) {
+            assert.throws(
+                () => extractRate(rate),
+                new RegExp(`obj 52: attackrate ${String(rate).replace('.', '\\.')} is out of range`),
+                `${revision}: reject invalid explicit attackrate ${rate}`,
+            );
+        }
+    }
+} finally {
+    fs.writeFileSync(combatParamFile, combatParams);
+}
+
 const combatParamIds = parsePack(fs.readFileSync(path.join(pack, 'param.pack'), 'utf8'));
 const itemCombatBonuses = extractItemCombatBonus(content, [
     {
