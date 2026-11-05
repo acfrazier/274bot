@@ -430,6 +430,7 @@ function assertBankerProofFailureKeepsIndependentEntries(sample: ServerOrderedTe
 const success = fixture();
 try {
     const catalog = extract(success);
+    assert.equal('revision' in catalog, false, 'the containing core selects the revision');
     assert.ok(catalog.banker_page);
     assert.equal(catalog.banker_page.page_count, 1);
     assert.equal(catalog.banker_page.page_root_alias, 'chat1');

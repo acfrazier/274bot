@@ -182,7 +182,6 @@ export type ServerOrderedBankerPage = {
 
 export type ServerOrderedCatalog = {
     schema: 1;
-    revision: number;
     components: ServerOrderedComponent[];
     entries: ServerOrderedEntry[];
     banker_page: ServerOrderedBankerPage | null;
@@ -1729,7 +1728,6 @@ export function extractServerOrderedFacts(input: ServerOrderedExtractInput): Ser
 
     return {
         schema: SERVER_ORDERED_SCHEMA,
-        revision,
         components: aliases.map(alias => {
             const component = componentRecords.get(alias);
             if (!component) throw new Error(`server_ordered: component extraction omitted ${alias}`);
