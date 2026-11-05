@@ -24,3 +24,7 @@ __pycache__/
 /tools/game-data/_review_check.mjs
 /.nav-verification/
 /tools/game-data/evidence/289-npc-transforms.json
+
+# Derived game data is generated locally from your own engine checkout and never committed (ADR 0019).
+/crates/api/data/game-data/
+/crates/api/data/shops/
