@@ -51,20 +51,23 @@ function parseParamInt(raw: string | undefined, label: string): number | null {
 }
 
 /**
- * Engine default for every NPC combat stat, including strength and ranged.
- * 289 `NpcType.ts:106` (`stats = [1, 1, 1, 1, 1, 1]`); 274 `NpcType.ts:107`.
- * A present `strength=` / `ranged=` line overrides it, including 0
- * (289 opcodes 76 and 78 at `NpcType.ts:184` and `:188`; 274 at `:173` and `:177`).
- * A pack row with no `.npc` block stays absent (`missing_main_stat`).
+ * Engine default for the NPC combat stats emitted here.
+ * The 377 engine confirms `stats = [1, 1, 1, 1, 1, 1]` (`NpcType.ts:110`);
+ * strength and ranged are slots 2 and 4, written by opcodes 76 and 78
+ * (`NpcType.ts:189-194`). The same value was already used for 274/289.
+ * A present `.npc` value, including zero, overrides it. A pack row with no
+ * `.npc` block stays absent (`missing_main_stat`).
  */
 const ENGINE_NPC_STAT_DEFAULT = 1;
 
-export function parseNpcFiles(content: string, revision: 274 | 289) {
+export function parseNpcFiles(content: string, revision: 274 | 289 | 377) {
     const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
+    // 274 uses maxrange=7. 289 and 377 use the NpcType -1 sentinel, replaced
+    // after decode by wander+2 and clamped to at least wander.
     const defaultMaxrange = revision === 274 ? 7 : -1;
     const defaultParam = (name: string) => {
         const definition = definitions.get(name);
-        if (definition?.type !== undefined && definition.type !== 'int') {
+        if (revision === 377 ? definition?.type !== 'int' : definition?.type !== undefined && definition.type !== 'int') {
             throw new Error(`npc_names: ${name} is not an integer parameter`);
         }
         const value = parseParamInt(definition?.default, `${name} default`);
@@ -77,7 +80,12 @@ export function parseNpcFiles(content: string, revision: 274 | 289) {
     const rangebonus = defaultParam('rangebonus');
     const attackrate = defaultParam('attackrate');
     const poisonSeverity = defaultParam('poison_severity');
-    const forcemulti = (defaultParam('npc_forcemulti') ?? 0) !== 0;
+    // 377 combat.param defines this boolean source default as 0; require it instead of guessing.
+    const npcForcemultiDefault = defaultParam('npc_forcemulti');
+    if (revision === 377 && npcForcemultiDefault === null) {
+        throw new Error('npc_names: missing integer npc_forcemulti default in 377 combat.param');
+    }
+    const forcemulti = (npcForcemultiDefault ?? 0) !== 0;
     const blocks = new Map<string, NpcBlock>();
     const files: string[] = [];
     for (const file of walkContentFiles(path.join(content, 'scripts'), '.npc')) {
@@ -147,6 +155,9 @@ export function parseNpcFiles(content: string, revision: 274 | 289) {
                 else if (param === 'poison_severity') current.poison_severity = parseParamInt(rawValue, `${current.name}.poison_severity`);
                 else if (param === 'npc_forcemulti') {
                     const value = parseParamInt(rawValue, `${current.name}.npc_forcemulti`);
+                    if (value === null && revision === 377) {
+                        throw new Error(`npc_names: ${current.name}.npc_forcemulti is not an integer: ${rawValue}`);
+                    }
                     if (value !== null) current.forcemulti = value !== 0;
                 } else if (param === 'attackrate') {
                     const rate = parseCombatInt(rawValue, `${current.name}.attackrate`);
@@ -160,7 +171,7 @@ export function parseNpcFiles(content: string, revision: 274 | 289) {
 }
 
 export function extractNpcNamesFacts(content: string, revision: number, scripts: CombatScripts = parseCombatScripts(content), maxHits = buildSpellMaxHits(content)) {
-    if (revision !== 274 && revision !== 289) throw new Error(`npc_names: unsupported revision ${revision}`);
+    if (revision !== 274 && revision !== 289 && revision !== 377) throw new Error(`npc_names: unsupported revision ${revision}`);
     const pack = parsePack(requireGatherText(content, 'pack/npc.pack'));
     if (pack.size === 0) throw new Error('npc_names: empty pack/npc.pack');
     const { blocks, files, poisonSeverity, forcemulti: defaultForcemulti } = parseNpcFiles(content, revision);
@@ -169,14 +180,15 @@ export function extractNpcNamesFacts(content: string, revision: number, scripts:
         .sort((a, b) => a[1] - b[1])
         .map(([config, id]) => {
             const block = blocks.get(config);
-            // Pinned NpcType.ts: 274 defaults at 102-103; 289 defaults/postDecode at 101-102,118-125.
+            // 274's maxrange default is 7. 289/377 decode -1, then NpcType.postDecode
+            // substitutes wander+2 and clamps it to at least wander (377 NpcType.ts:106,122-129).
             const wanderrange = block?.wanderrange ?? 5;
             let maxrange = block?.maxrange ?? (revision === 274 ? 7 : -1);
-            if (revision === 289) {
+            if (revision !== 274) {
                 if (maxrange === -1) maxrange = wanderrange + 2;
                 maxrange = Math.max(maxrange, wanderrange);
             }
-            const combat = extractNpcCombatFacts(config, block?.category ?? null, scripts, maxHits);
+            const combat = extractNpcCombatFacts(config, block?.category ?? null, scripts, maxHits, revision);
             combatNpcs.push({
                 config,
                 category: block?.category ?? null,
