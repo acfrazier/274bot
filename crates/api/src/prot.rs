@@ -178,10 +178,22 @@ pub struct PacketMetadata {
 const R377_NAMED_CLIENT_PROTS: &[(ClientProt, ClientProt)] = &[
     (ClientProt::NO_TIMEOUT, ClientProt377::NO_TIMEOUT),
     (ClientProt::IDLE_TIMER, ClientProt377::IDLE_TIMER),
-    (ClientProt::EVENT_MOUSE_CLICK, ClientProt377::EVENT_MOUSE_CLICK),
-    (ClientProt::EVENT_MOUSE_MOVE, ClientProt377::EVENT_MOUSE_MOVE),
-    (ClientProt::EVENT_APPLET_FOCUS, ClientProt377::EVENT_HAS_WINDOW),
-    (ClientProt::EVENT_APPLET_FOCUS, ClientProt377::EVENT_APPLET_FOCUS),
+    (
+        ClientProt::EVENT_MOUSE_CLICK,
+        ClientProt377::EVENT_MOUSE_CLICK,
+    ),
+    (
+        ClientProt::EVENT_MOUSE_MOVE,
+        ClientProt377::EVENT_MOUSE_MOVE,
+    ),
+    (
+        ClientProt::EVENT_APPLET_FOCUS,
+        ClientProt377::EVENT_HAS_WINDOW,
+    ),
+    (
+        ClientProt::EVENT_APPLET_FOCUS,
+        ClientProt377::EVENT_APPLET_FOCUS,
+    ),
     (
         ClientProt::EVENT_CAMERA_POSITION,
         ClientProt377::EVENT_CAMERA_POSITION,
@@ -281,7 +293,10 @@ const R377_NAMED_CLIENT_PROTS: &[(ClientProt, ClientProt)] = &[
         ClientProt377::RESUME_P_COUNTDIALOG,
     ),
     (ClientProt::TUT_CLICKSIDE, ClientProt377::TUT_CLICKSIDE),
-    (ClientProt::MAP_BUILD_COMPLETE, ClientProt377::MAP_BUILD_COMPLETE),
+    (
+        ClientProt::MAP_BUILD_COMPLETE,
+        ClientProt377::MAP_BUILD_COMPLETE,
+    ),
     (ClientProt::MOVE_OPCLICK, ClientProt377::MOVE_OPCLICK),
     (
         ClientProt::MOVE_MINIMAPCLICK,
