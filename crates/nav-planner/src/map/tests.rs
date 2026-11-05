@@ -799,6 +799,60 @@ fn navpois_rejects_stale_source_corruption_and_oversized_declarations() {
     ));
 }
 
+#[test]
+fn navpois_admits_377_without_admitting_unsupported_client_map_jobs() {
+    let identity = ServiceIdentity {
+        revision: 377,
+        ..service_identity()
+    };
+    let services = ServicePois {
+        schema: NAVPOIS_VERSION,
+        identity,
+        coverage: coverage(),
+        records: Rows::new(vec![booth()]).unwrap(),
+    };
+    let bytes = services.encode_navpois().unwrap();
+    let digest = Digest::of(&bytes);
+    assert_eq!(
+        ServicePois::decode_navpois(&bytes, identity, digest).unwrap(),
+        services
+    );
+    assert_ne!(
+        identity.binding().unwrap(),
+        service_identity().binding().unwrap()
+    );
+    assert!(matches!(
+        ServicePois::decode_navpois(&bytes, service_identity(), digest),
+        Err(MapError::Identity)
+    ));
+    for revision in [0, 288, 378, u16::MAX] {
+        assert!(matches!(
+            ServiceIdentity {
+                revision,
+                ..identity
+            }
+            .binding(),
+            Err(MapError::Invalid("revision"))
+        ));
+    }
+    assert!(matches!(
+        ImageIdentity {
+            revision: 377,
+            ..image_identity()
+        }
+        .key(),
+        Err(MapError::Invalid("revision"))
+    ));
+    assert!(matches!(
+        CatalogueIdentity {
+            revision: 377,
+            ..catalogue_identity()
+        }
+        .key(),
+        Err(MapError::Invalid("revision"))
+    ));
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
