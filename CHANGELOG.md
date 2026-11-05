@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The existing navigation baker accepts explicit revision 377 inputs and
   reads their config through the revision-377 decoder. The pack format
   remains version 17.
+- Revision 377's named Lumbridge stair handlers retain their script-derived
+  landings and one-tick cost. An explicit real-pack qualification covers
+  city routes, bidirectional doors, stairs and the Port Sarim ship journey.
 
 ### Gatherer
 

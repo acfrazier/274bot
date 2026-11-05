@@ -147,6 +147,24 @@ fn real_revision_377_pack_identity_routes_and_transports() {
         })
         .count();
     assert!(doors > 0, "real Lumbridge door crossings");
+    // m50_50.jm2 places loc_1530 at 34,7 with angle 0; doors.loc
+    // and the generic door_closed handler prove the 1530 -> 1531 swap.
+    let mut door_routes = Vec::new();
+    for (from, to) in [
+        (tile(3233, 3207, 0), tile(3234, 3207, 0)),
+        (tile(3234, 3207, 0), tile(3233, 3207, 0)),
+    ] {
+        let crossing =
+            find_with(&world.collision, &world.graph, from, to, options, &state).unwrap();
+        assert!(crossing.legs.iter().any(|leg| matches!(leg,
+            Leg::Transport { edge } if edge.kind == TransportKind::Door
+                && edge.at == tile(3234, 3207, 0)
+                && edge.loc_id == 1530
+                && edge.open_loc_id == Some(1531)
+        )));
+        door_routes
+            .push(json!({"from": [from.x, from.z], "to": [to.x, to.z], "ticks": crossing.ticks}));
+    }
     let ship = world
         .graph
         .edges
@@ -183,6 +201,7 @@ fn real_revision_377_pack_identity_routes_and_transports() {
         "manifest": manifest,
         "city_routes": routes,
         "lumbridge_doors": doors,
+        "door_routes": door_routes,
         "stairs_ticks": climb.ticks,
         "ship_ticks": voyage.ticks,
         "limits": "Offline planner proof against Fairy Ring scripts. No live execution or historical accuracy claim. Other transport families are not qualified by this smoke."
