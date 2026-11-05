@@ -364,16 +364,7 @@ pub(crate) fn dispatch_native_server_ordered(
                     ServerOrderedError::ContractUnavailable,
                 );
             };
-            let Ok(pin) = selected.selected_pin() else {
-                return ServerOrderedDispatch::refused(
-                    request_id,
-                    dispatch_tick,
-                    row_count,
-                    0,
-                    ServerOrderedError::ContractUnavailable,
-                );
-            };
-            let Ok(catalog) = selected.server_ordered_catalog(&pin) else {
+            let Ok(catalog) = selected.server_ordered_catalog() else {
                 return ServerOrderedDispatch::refused(
                     request_id,
                     dispatch_tick,
@@ -398,7 +389,7 @@ pub(crate) fn dispatch_native_server_ordered(
             {
                 ServerOrderedInputs::dispatch_builtin_gatherer_knife(
                     catalog,
-                    &pin,
+                    driver.revision(),
                     context.snapshot,
                     driver,
                     request,
@@ -407,7 +398,7 @@ pub(crate) fn dispatch_native_server_ordered(
             } else {
                 ServerOrderedInputs::dispatch(
                     catalog,
-                    &pin,
+                    driver.revision(),
                     context.snapshot,
                     driver,
                     request,

@@ -9,7 +9,21 @@ use std::sync::Arc;
 
 #[test]
 fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
+    if api::test_support::local_asset_path(
+        "",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api/data/game-data/289/gathering.json"
+        ),
+        "revision 289 gathering catalog for the real Gatherer relog",
+    )
+    .is_none()
+    {
+        return;
+    }
     const BEFORE_RELOG_TICK: u64 = 50_000;
     const BEFORE_RELOG_PACKET_TICK: u64 = 50_000;
     const RESET_NATIVE_TICK: u64 = 50_001;
@@ -26,7 +40,7 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
     rig.client.gens.player += 1;
     rig.snapshot.rebuild(&rig.client);
 
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let selected = Arc::clone(&rig.selected);
     let mut settings = script::native::SettingsBag::new();
     settings.insert("skill".into(), serde_json::json!("Mining"));
     settings.insert("miningResources".into(), serde_json::json!(["iron"]));
@@ -102,8 +116,8 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
         .for_tool(tool_id)
         .expect("selected tool timing facts")
         .skill_anim;
-    let pin = selected.selected_pin().unwrap();
-    let ordered = selected.server_ordered_catalog(&pin).unwrap();
+
+    let ordered = selected.server_ordered_catalog().unwrap();
     let knife_id = ordered.knife().knife().id();
     let logs_id = ordered.knife().logs()[0].id();
 

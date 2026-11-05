@@ -1,6 +1,8 @@
 /// Host-owned policy plus optional selected-revision generated facts, posted
 /// once onto `__rs2b0t_host.content` before catalog modules evaluate.
-pub fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> String {
+pub fn content_json(
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> Result<String, api::selected::FactError> {
     use api::cake_stall::{BAKER_STALL, CAKE_ITEM_NAMES};
     use script::content::{FIRE_PLOTS, LOG_LEVELS};
     let food_heals = game_data
@@ -12,6 +14,10 @@ pub fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> Str
         .unwrap_or_default();
     let rock_type_names = game_data
         .map(api::gather_methods::rock_type_names)
+        .unwrap_or_default();
+    let shops = game_data
+        .map(api::shop_facts::content_json_value)
+        .transpose()?
         .unwrap_or_default();
     let spell_db = game_data
         .map(|data| {
@@ -51,7 +57,7 @@ pub fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> Str
                 .collect::<serde_json::Map<_, _>>()
         })
         .unwrap_or_default();
-    serde_json::json!({
+    Ok(serde_json::json!({
         "selected_facts": game_data.is_some(),
         "food_heals": food_heals,
         "common_bank_loot": api::content::COMMON_BANK_LOOT,
@@ -104,9 +110,7 @@ pub fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> Str
                     .collect::<serde_json::Map<_, _>>()
             })
             .unwrap_or_default(),
-        "shops": game_data
-            .map(api::shop_facts::content_json_value)
-            .unwrap_or_default(),
+        "shops": shops,
         "autocast": game_data.and_then(|data| {
             data.autocast_controls().map(|controls| {
                 serde_json::json!({
@@ -154,5 +158,5 @@ pub fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> Str
             })
         }),
     })
-    .to_string()
+    .to_string())
 }

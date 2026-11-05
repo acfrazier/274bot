@@ -11,7 +11,6 @@ use host_play::walk_map::{ActionError, MapContext, MapModel};
 use host_play::{InstancePermit, SlotArm, SlotStatus, WalkArms};
 use nav_planner::bank_fetch::BankRows;
 use nav_planner::collision::WorldCollision;
-use nav_planner::map::identity::Digest;
 use nav_planner::router::{AvoidRect, FindOptions};
 use nav_planner::tile::Tile;
 use nav_planner::transport::{TransportGraph, WildernessRules};
@@ -146,15 +145,7 @@ fn fixture_with_world_and_snapshots(
     }
     let dest_context = MapContext {
         focus: play.map_focus("alice"),
-        nav: Digest::from_hex(
-            &play
-                .server_profile()
-                .unwrap()
-                .nav_identity()
-                .unwrap()
-                .nav_sha256,
-        )
-        .unwrap(),
+        nav: play.server_profile().unwrap().nav_pack_id().unwrap(),
         overlay: None,
         generation: 1,
     };

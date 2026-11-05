@@ -1,4 +1,4 @@
-//! Lazy per-activation Path compiler and the `(pin, digest, ABI)` weak cache.
+//! Lazy per-activation Path compiler and the `(revision, digest, ABI)` weak cache.
 use super::families::{self, CompiledAcquireStep};
 #[cfg(test)]
 use super::path::SequenceOrder;
@@ -17,8 +17,8 @@ use api::named_banks::NamedBank;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, QuestProgress};
 use api::selected::{
-    ClientRevision, FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind,
-    SkillMinimum, SourceSpan, Truth,
+    FactKey, FamilyPreparation, ItemAmount, QuestGate, RequirementKind, SkillMinimum, SourceSpan,
+    Truth,
 };
 use nav_planner::contract::{PackId, ZoneTableView};
 use sha2::{Digest, Sha256};
@@ -492,8 +492,6 @@ pub struct PredicateHandler {
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
     revision: u16,
-    engine: Arc<str>,
-    content: Arc<str>,
     digest: [u8; 32],
     abi: u64,
     gang: Option<super::pair::Gang>,
@@ -561,24 +559,13 @@ pub fn compile_path_for_gang(
     zones: Option<ZoneTableView<'_>>,
 ) -> Result<Arc<CompiledPath>, CompileError> {
     let digest = digest_bytes(bytes);
-    let (revision, engine, content) = match selected.selected_pin() {
-        Ok(pin) => {
-            let revision = match pin.revision {
-                ClientRevision::R274 => 274,
-                ClientRevision::R289 => 289,
-            };
-            (
-                revision,
-                Arc::clone(&pin.engine_commit),
-                Arc::clone(&pin.content_commit),
-            )
-        }
-        Err(_) => return Err(CompileError::code("missing-pin")),
+    let revision = match selected.revision() {
+        274 => 274,
+        289 => 289,
+        _ => return Err(CompileError::code("unsupported-revision")),
     };
     let key = CacheKey {
         revision,
-        engine,
-        content,
         digest,
         abi: abi_set(),
         gang,
@@ -2444,23 +2431,20 @@ pub fn decode_cook() -> Result<PathDocument, CompileError> {
 }
 
 #[cfg(test)]
-pub(crate) fn real_nav_lease() -> &'static nav_planner::contract::NavLease {
-    static NAV: std::sync::LazyLock<nav_planner::contract::NavLease> =
+pub(crate) fn real_nav_lease() -> Option<&'static nav_planner::contract::NavLease> {
+    static NAV: std::sync::LazyLock<Option<nav_planner::contract::NavLease>> =
         std::sync::LazyLock::new(|| {
-            let pack = std::path::PathBuf::from(
-                std::env::var_os("NAV_PACK").expect("set NAV_PACK to the real 289 nav pack"),
-            );
+            let pack = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")?;
             let bytes = std::fs::read(&pack)
                 .unwrap_or_else(|error| panic!("read real 289 pack {}: {error}", pack.display()));
             let world = nav_planner::world::NavWorld::from_bytes(&bytes)
                 .unwrap_or_else(|error| panic!("load real 289 pack {}: {error}", pack.display()));
-            nav_planner::contract::NavLease::wrap(
-                Arc::new(world),
-                nav_planner::contract::PackDigest::of(&bytes),
+            Some(
+                nav_planner::contract::NavLease::wrap(Arc::new(world))
+                    .expect("create a lease for the real 289 zone catalog"),
             )
-            .expect("create a lease for the real 289 zone catalog")
         });
-    &NAV
+    NAV.as_ref()
 }
 
 #[cfg(test)]
@@ -2484,10 +2468,13 @@ mod tests {
     #[test]
     fn quester_compile_policy_timing() {
         let _home = crate::IsolatedEnv::enter("quester-compile-policy-timing");
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
+        let Some(nav) = real_nav_lease() else {
+            return;
+        };
         FamilyPreparation::run(move |worker| {
             let data = selected();
             let quests = quests(&data);
-            let nav = real_nav_lease();
             let zones = nav.zones().expect("real 289 zone catalog");
             let largest = crate::quester::registry::PathRegistry::Bundled
                 .ids()
@@ -2536,6 +2523,7 @@ mod tests {
     #[test]
     fn compile_cache_reuses_identical_bytes_and_separates_changed_paths() {
         let _home = crate::IsolatedEnv::enter("quester-compile-cache");
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         FamilyPreparation::run(move |worker| {
             let data = selected();
             let quests = quests(&data);
@@ -2583,6 +2571,7 @@ mod tests {
     #[test]
     fn gather_progress_reader_prepares_catalog_through_production_compiler() {
         let _home = crate::IsolatedEnv::enter("quester-gather-progress-reader");
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         prepare_for_test(move |worker| {
             let data = selected();
             let quests = quests(&data);
@@ -2651,6 +2640,7 @@ mod tests {
 
     #[test]
     fn protected_items_union_path_gather_tools_and_every_loadout_field() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let data = selected();
         let gather_ids: std::collections::BTreeSet<_> = api::gather_tools::AXES
             .iter()
@@ -2700,6 +2690,7 @@ mod tests {
 
     #[test]
     fn path_bank_required_is_preserved_in_compiled_provisioning() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let data = selected();
         let quests = quests(&data);
@@ -2718,6 +2709,7 @@ mod tests {
 
     #[test]
     fn always_skipped_all_empty_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::All(vec![]);
         let data = selected();
@@ -2731,6 +2723,7 @@ mod tests {
 
     #[test]
     fn unknown_from_stage_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let err = compile_err(|document| {
             document.quest.as_mut().unwrap().items[0].from_stage = Some(FactKey::new("cook:99"));
         });
@@ -2739,6 +2732,7 @@ mod tests {
 
     #[test]
     fn from_stage_resolves_to_the_compiled_sequence_index() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         document.quest.as_mut().unwrap().items[0].from_stage = Some(FactKey::new("cook:1"));
         let data = selected();
@@ -2811,6 +2805,7 @@ mod tests {
 
     #[test]
     fn stage_cross_compiles_exact_catalog_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let id = "stage-zone-0";
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
@@ -2826,6 +2821,7 @@ mod tests {
 
     #[test]
     fn stage_cross_rejects_unknown_catalog_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
             "missing-zone",
@@ -2841,6 +2837,7 @@ mod tests {
 
     #[test]
     fn stage_cross_requires_a_catalog_when_declarations_exist() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
             "stage-zone",
@@ -2856,6 +2853,7 @@ mod tests {
 
     #[test]
     fn stage_cross_rejects_duplicate_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let declaration =
             stage_cross_declaration("stage-zone", "Stage zone", "Cross to the next room.");
@@ -2869,6 +2867,7 @@ mod tests {
 
     #[test]
     fn stage_cross_rejects_blank_ids_and_guide_text() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].cross =
             vec![stage_cross_declaration("  ", "Stage zone", "Cross safely.")];
@@ -2894,6 +2893,7 @@ mod tests {
 
     #[test]
     fn stage_cross_accepts_eight_ids_and_rejects_nine() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let ids: Vec<_> = (0..=nav_planner::contract::MAX_ZONE_KEYS)
             .map(|index| format!("stage-zone-{index}"))
             .collect();
@@ -2928,6 +2928,7 @@ mod tests {
     }
     #[test]
     fn stage_cross_defaults_to_empty_without_a_catalog() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let document = decode_cook().unwrap();
         assert!(document.roles[0]
             .sequences
@@ -2944,6 +2945,7 @@ mod tests {
 
     #[test]
     fn walk_rejects_step_danger_override_with_stage_level_guidance() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let error = compile_err(|document| {
             let mut walk = cook_cross_walk(document);
             walk.args["allow_danger_zones"] = serde_json::json!(true);
@@ -2961,6 +2963,7 @@ mod tests {
 
     #[test]
     fn step_cross_rejects_unknown_catalog_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let mut walk = cook_cross_walk(&document);
         walk.args["cross"] = serde_json::json!(["missing-zone"]);
@@ -2975,6 +2978,7 @@ mod tests {
 
     #[test]
     fn step_cross_requires_a_catalog_when_declarations_exist() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let mut walk = cook_cross_walk(&document);
         walk.args["cross"] = serde_json::json!(["known-zone"]);
@@ -3006,6 +3010,7 @@ mod tests {
 
     #[test]
     fn nested_step_cross_is_checked_in_every_authored_step_list() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         for location in ["acquire", "prelude", "progress_reader", "sequence"] {
             let mut document = decode_cook().unwrap();
             let mut walk = cook_cross_walk(&document);
@@ -3045,6 +3050,7 @@ mod tests {
 
     #[test]
     fn step_and_stage_cross_union_is_limited_to_eight_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let ids: Vec<_> = (0..=nav_planner::contract::MAX_ZONE_KEYS)
             .map(|index| format!("route-zone-{index}"))
             .collect();
@@ -3072,6 +3078,7 @@ mod tests {
 
     #[test]
     fn step_and_stage_cross_union_deduplicates_shared_ids() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let ids: Vec<_> = (0..nav_planner::contract::MAX_ZONE_KEYS)
             .map(|index| format!("route-zone-{index}"))
             .collect();
@@ -3091,6 +3098,7 @@ mod tests {
 
     #[test]
     fn compile_cache_separates_navigation_catalog_identities() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].cross = vec![stage_cross_declaration(
             "stage-zone",
@@ -3145,6 +3153,7 @@ mod tests {
 
     #[test]
     fn recipe_peak_retains_use_on_source_without_explicit_absence() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let document = decode_cook().unwrap();
         let data = selected();
         let quests = quests(&data);
@@ -3182,6 +3191,7 @@ mod tests {
 
     #[test]
     fn acquire_recipe_forward_and_shared_dependencies_resolve() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-recipe-forward");
         let mut document = decode_cook().unwrap();
         let header = document.quest.as_mut().unwrap();
@@ -3219,6 +3229,7 @@ mod tests {
     #[test]
     fn acquire_recipe_cycle_names_the_cycle() {
         let _home = crate::IsolatedEnv::enter("quester-recipe-cycle");
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let error = compile_err(|document| {
             let recipes = &mut document.quest.as_mut().unwrap().acquire;
             recipes.insert(
@@ -3241,6 +3252,7 @@ mod tests {
     #[test]
     fn acquire_recipe_missing_dependency_stays_unresolved_recipe() {
         let _home = crate::IsolatedEnv::enter("quester-recipe-missing");
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let error = compile_err(|document| {
             document.quest.as_mut().unwrap().acquire.insert(
                 "acquire:root".into(),
@@ -3252,6 +3264,7 @@ mod tests {
 
     #[test]
     fn acquire_recipe_depth_limit_is_order_independent() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-recipe-depth");
         let data = selected();
         let quests = quests(&data);
@@ -3467,6 +3480,7 @@ mod tests {
 
     #[test]
     fn schema_three_accepts_schema_reference_and_rejects_schema_two() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-schema-three");
         let document = decode_cook().unwrap();
         assert_eq!(document.schema, super::super::path::PATH_SCHEMA);
@@ -3478,6 +3492,7 @@ mod tests {
 
     #[test]
     fn explicit_steps_require_advances_and_progress_settles_require_true() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-schema-explicit-advances");
         let missing = compile_err(|document| {
             let step = document
@@ -3512,6 +3527,7 @@ mod tests {
     }
     #[test]
     fn step_attempt_budget_requires_positive_bounded_limit_and_nonblank_stop() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-step-attempt-budget");
         for (max_attempts, stop, expected) in [
             (Some(0u32), Some("retry-stop"), "step-max-attempts-zero"),
@@ -3541,6 +3557,7 @@ mod tests {
 
     #[test]
     fn attempt_budgets_are_rejected_for_recipes_and_progress_readers() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let recipe = compile_err(|document| {
             let step = &mut document
                 .quest
@@ -3566,6 +3583,7 @@ mod tests {
 
     #[test]
     fn default_steps_allow_omitted_advances_and_dynamic_quantity_settles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-schema-default-advances");
         let mut document = decode_cook().unwrap();
         let walk = StepDocument {
@@ -3608,6 +3626,7 @@ mod tests {
 
     #[test]
     fn path_walk_crossing_and_protection_compile_independently() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         for args in [
             serde_json::json!({
                 "tile": [3224, 3200, 0],
@@ -3643,6 +3662,7 @@ mod tests {
 
     #[test]
     fn path_walk_cross_with_protect_guard_compiles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let step = &mut document.roles[0].sequences[0].steps[0];
         step.kind = "walk".into();
@@ -3669,6 +3689,7 @@ mod tests {
 
     #[test]
     fn unknown_handler_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let err = compile_err(|document| {
             document.roles[0].sequences[0].steps[0].kind = "no_such_family".into();
         });
@@ -3677,6 +3698,7 @@ mod tests {
 
     #[test]
     fn unresolved_npc_obj_loc_and_area_are_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-unresolved-alias-details");
         let npc = compile_err(|document| {
             document.roles[0].sequences[0].steps[0].args["npc"] = serde_json::json!("no_such_npc");
@@ -3725,6 +3747,7 @@ mod tests {
 
     #[test]
     fn empty_nonterminal_and_duplicate_step_are_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         assert_eq!(
             compile_err(|document| {
                 document.roles[0].sequences[0].steps.clear();
@@ -3746,6 +3769,7 @@ mod tests {
 
     #[test]
     fn prelude_over_four_steps_warns() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let step = document.roles[0].sequences[0].steps[0].clone();
         document.roles[0].prelude = (0..5)
@@ -3767,6 +3791,7 @@ mod tests {
 
     #[test]
     fn invalid_header_references_and_ignored_step_args_are_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         for edit in [
             |d: &mut PathDocument| d.quest.as_mut().unwrap().items[0].obj = "bucket_milkk".into(),
             |d: &mut PathDocument| {
@@ -3810,6 +3835,7 @@ mod tests {
 
     #[test]
     fn predicate_argument_typos_do_not_silently_compile() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         for (kind, mut args) in [
             ("npc_present", serde_json::json!({"npc":"cook"})),
             ("loc_present", serde_json::json!({"loc":"wheat"})),
@@ -3839,6 +3865,7 @@ mod tests {
 
     #[test]
     fn progress_program_compiles_and_validates_authored_rules() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         let progress = document.roles[0].progress.as_mut().unwrap();
         progress
@@ -3880,6 +3907,7 @@ mod tests {
 
     #[test]
     fn progress_program_rejects_bad_needles_counts_and_bindings() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         assert_eq!(
             compile_err(|document| {
                 document.roles[0].progress.as_mut().unwrap().rules.push(
@@ -3969,6 +3997,7 @@ mod tests {
     }
     #[test]
     fn progress_predicate_errors_keep_path_context() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let error = compile_err(|document| {
             document.roles[0].sequences[0].steps[0].skip_if = PredicateDocument::Fact {
                 kind: "stage_in".into(),
@@ -3983,6 +4012,7 @@ mod tests {
 
     #[test]
     fn compiled_loadout_carry_preserves_authored_alias_identity() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-carry-alias-identity");
         let data = selected();
         let quests = quests(&data);
@@ -4078,6 +4108,7 @@ mod tests {
 
     #[test]
     fn alias_loadout_compiles_and_begins_application() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-alias-loadout");
         let data = selected();
         let quests = quests(&data);
@@ -4118,6 +4149,7 @@ mod tests {
 
     #[test]
     fn certificate_worn_header_loadout_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-cert-worn-header");
         let data = selected();
         let certificate = data.item_by_alias("cert_rune_scimitar").unwrap();
@@ -4141,6 +4173,7 @@ mod tests {
 
     #[test]
     fn certificate_carry_header_loadout_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let _home = crate::IsolatedEnv::enter("quester-cert-carry-header");
         let data = selected();
         let certificate = data.item_by_alias("cert_lobster").unwrap();
@@ -4164,6 +4197,7 @@ mod tests {
 
     #[test]
     fn all_released_s2_paths_compile() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let data = selected();
         let quests = quests(&data);
         for (id, json) in [
@@ -4206,6 +4240,7 @@ mod tests {
 
     #[test]
     fn uncovered_authored_tile_is_rejected() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         let mut document = decode_cook().unwrap();
         document.roles[0].sequences[0].steps[0].args["anchor"]["tile"] =
             serde_json::json!([0, 0, 0]);

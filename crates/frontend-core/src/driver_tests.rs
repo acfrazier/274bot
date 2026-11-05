@@ -49,7 +49,8 @@ fn scratch(test: &str) -> Scratch {
 /// let the guard drop first.
 fn open_driver(dir: &Scratch) -> HeadlessDriver {
     let _source = crate::quester_paths::registry_source_test_lock();
-    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip())
+        .expect("test script settings are readable");
     driver.session.preferences().unwrap().reload().unwrap();
     driver.poll();
     driver

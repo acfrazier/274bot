@@ -282,7 +282,7 @@ impl ActionContext<'_> {
     /// of its compact request prefix.
     pub fn emit_batch(&mut self, mut rows: [Option<InteractReq>; 5]) -> Result<u64, ActionError> {
         let owner = self.owner()?;
-        let len = validate_batch(&rows, self.pin.revision)?;
+        let len = validate_batch(&rows, self.revision)?;
         let ledger = self.ledger.as_ref().expect("owner checked");
         if self.budget.events != 0
             || ledger.outbox.capacity().saturating_sub(ledger.outbox.len()) < len
@@ -1184,8 +1184,6 @@ mod tests {
 
     /// One live machine owner and its action context at tick 1.
     fn with_live_owner(f: impl FnOnce(&mut ActionContext<'_>, &Arc<Owner>)) {
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let pin = selected.selected_pin().unwrap();
         let evidence = EvidenceStamp {
             run: RunKey {
                 slot: 1,
@@ -1208,7 +1206,7 @@ mod tests {
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
-            pin: &pin,
+            revision: api::selected::ClientRevision::R289,
             snapshot: SnapshotView::new(None, evidence),
             retained: &mut retained,
             action_id: owner.id.get(),
@@ -1703,8 +1701,6 @@ mod tests {
         snapshot: Option<&api::snapshot::GameSnapshot>,
         f: impl FnOnce(&mut ActionContext<'_>) -> R,
     ) -> R {
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let pin = selected.selected_pin().unwrap();
         let evidence = EvidenceStamp {
             run: RunKey {
                 slot: 1,
@@ -1724,7 +1720,7 @@ mod tests {
             poison_unknown_pulse: u8::MAX,
             evidence,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
-            pin: &pin,
+            revision: api::selected::ClientRevision::R289,
             snapshot: SnapshotView::new(snapshot, evidence),
             retained: &mut retained,
             action_id: 0,

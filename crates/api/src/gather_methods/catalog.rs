@@ -1,6 +1,7 @@
-//! Typed gathering family: the shared, lazily prepared catalog of resource methods, their targets, products,
-//! tools, consumed supplies, requirements and world placements. Built once per selected pin from the checked
-//! `gathering.json` family (see `wire` and `cache`), shared by `Arc` and retained for the process.
+//! Typed gathering family: the shared, lazily prepared catalog of resource methods,
+//! their targets, products, tools, consumed supplies, requirements and world
+//! placements. Built once for each selected revision from its decoded
+//! `gathering.json` facts, shared by `Arc` and retained for the process.
 //!
 //! Facts are three-valued. `Known` is an examined complete set, `Partial` keeps useful rows next to explicit
 //! gaps and `Unknown` is an honest extraction gap: no query turns Unknown into an empty answer.
@@ -9,8 +10,7 @@ use super::SceneRegionInput;
 use crate::game_data::GatherForbiddenState;
 use crate::selected::FactError;
 use crate::selected::{
-    EntityId, FactKey, Gap, ItemAmount, Knowledge, Requirement, SelectedPin, SkillMinimum,
-    SourceSpan, Truth,
+    EntityId, FactKey, Gap, ItemAmount, Knowledge, Requirement, SkillMinimum, SourceSpan, Truth,
 };
 use crate::WorldTile;
 use serde::{Deserialize, Serialize};
@@ -297,9 +297,8 @@ pub(super) struct RockEntry {
     pub gap: Option<Gap>,
 }
 
-/// Shared, immutable gathering catalog for one selected pin.
+/// Shared, immutable gathering catalog for a selected client revision.
 pub struct GatherCatalog {
-    pub(super) pin: Arc<SelectedPin>,
     pub(super) methods: Box<[GatherMethod]>,
     pub(super) by_id: HashMap<Arc<str>, usize>,
     pub(super) extras: Box<[MethodExtra]>,
@@ -313,10 +312,7 @@ pub struct GatherCatalog {
 
 impl std::fmt::Debug for GatherCatalog {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GatherCatalog")
-            .field("revision", &self.pin.revision)
-            .field("methods", &self.methods.len())
-            .finish()
+        f.debug_struct("GatherCatalog").finish()
     }
 }
 
@@ -350,11 +346,6 @@ pub fn known_rows<T>(knowledge: &Knowledge<Arc<[T]>>) -> &[T] {
 }
 
 impl GatherCatalog {
-    /// The selected pin this catalog was verified against.
-    pub fn pin(&self) -> &SelectedPin {
-        &self.pin
-    }
-
     /// Every method: woodcutting, then mining, then fishing, each in content order.
     pub fn methods(&self) -> &[GatherMethod] {
         &self.methods

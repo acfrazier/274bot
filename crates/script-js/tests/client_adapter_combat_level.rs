@@ -137,6 +137,9 @@ fn probe(iso: &LoadIsolate, snap: &SnapshotInput<'_>) -> serde_json::Value {
 
 #[test]
 fn reader_combat_level_follows_posted_local_level_and_defaults_out_of_game() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(
         r#"
 import { reader } from '../../adapter/ClientAdapter.js';
@@ -161,6 +164,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn player_combat_level_reads_peer_rows_and_delta_updates_without_stale_identity() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(
         r#"
 import { reader } from '../../adapter/ClientAdapter.js';
@@ -201,6 +207,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn omitted_combat_level_delta_keeps_last_posted_local_level() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     use script_js::wire::encode_snapshot_delta;
     let iso = spawn(
         r#"

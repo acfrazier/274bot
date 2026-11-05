@@ -751,7 +751,7 @@ fn logout_retry_the_drawn_side_panel_button_reaches_a_retrying_login() {
     );
 }
 
-fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
+fn profile_fixture(revision: u16) -> (TestDir, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
     let root = TestDir::new(&format!("profile-{revision}"));
@@ -769,8 +769,7 @@ fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
     ] {
         std::fs::copy(fixture.join(jag), cache.join(jag)).unwrap();
     }
-    let manifest = fixture.join(format!("manifest-{revision}.json"));
-    (root, cache, manifest)
+    (root, cache)
 }
 
 const JAG_SLOTS: [&str; 8] = [
@@ -951,29 +950,22 @@ fn ephemeral_port() -> u16 {
         .port()
 }
 
-fn runtime_checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf, u16) {
-    let (root, cache, _) = checked_fixture(revision);
+fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, u16) {
+    let (root, cache) = profile_fixture(revision);
     let packs = identity_packs();
     for (name, bytes) in &packs {
         std::fs::write(cache.join(name), bytes).unwrap();
     }
-    let manifest_path = root.join("cache-manifest.json");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec(&host_play::profile::CacheManifest::capture(revision, &cache).unwrap())
-            .unwrap(),
-    )
-    .unwrap();
     let unpack = root.join("unpack");
     plant_snapshot(&unpack, revision, &packs);
     let port = serve_fixture_crc(packs);
-    (root, cache, manifest_path, unpack, port)
+    (root, cache, unpack, port)
 }
 
 #[test]
-fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
+fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
     for revision in [274_u16, 289] {
-        let (root, cache, manifest) = checked_fixture(revision);
+        let (root, cache) = profile_fixture(revision);
         // OnDemand hubs are keyed by (game_host, game_port); parallel panel
         // tests must not share the default local ports with different caches.
         let game_port = ephemeral_port();
@@ -985,8 +977,6 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
                 format!("local-{revision}"),
                 "--cache".to_string(),
                 cache.display().to_string(),
-                "--cache-manifest".to_string(),
-                manifest.display().to_string(),
                 "--port".to_string(),
                 game_port.to_string(),
                 "--http-port".to_string(),
@@ -1081,11 +1071,10 @@ fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
 }
 
 fn startup_profile_inputs() -> (TestDir, host_play::ProfileOptions, ProfileEnvironment) {
-    let (root, cache, manifest, unpack, port) = runtime_checked_fixture(274);
+    let (root, cache, unpack, port) = runtime_profile_fixture(274);
     let options = host_play::ProfileOptions {
         profile: Some("local-274".into()),
         cache_dir: Some(cache),
-        cache_manifest: Some(manifest),
         unpack_dir: Some(unpack),
         port: Some(ephemeral_port()),
         http_port: Some(port),
@@ -1297,7 +1286,7 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     use frontend_core::launch::{PreparationJob, ProgressStage, ProgressView};
     let _work_service_guard = crate::work_service_test_lock();
 
-    let (root, cache, manifest) = checked_fixture(274);
+    let (root, cache) = profile_fixture(274);
     let mut state = PanelState::default();
     state
         .session
@@ -1305,7 +1294,6 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
             frontend_core::launch::ProfileArgs::from_host(host_play::ProfileOptions {
                 profile: Some("local-274".into()),
                 cache_dir: Some(cache),
-                cache_manifest: Some(manifest),
                 ..host_play::ProfileOptions::default()
             }),
             frontend_core::launch::ProfileEnv::from_host(ProfileEnvironment {
@@ -1408,7 +1396,7 @@ fn legacy_log_detached_is_ignored_without_losing_other_preferences() {
     .unwrap();
     preferences.reload().unwrap();
 
-    let loaded = crate::ui_state::load_from(&preferences);
+    let loaded = crate::ui_state::load_from(&preferences).unwrap();
     assert_eq!(loaded.last_focus.as_deref(), Some("alice"));
     assert!(!loaded.collapsed["alice"]["status"]);
     assert!(!loaded.capture);
@@ -1447,7 +1435,8 @@ fn loadout_combo_lists_store_names() {
         &serde_json::Map::new(),
         &loadouts,
         None,
-    );
+    )
+    .unwrap();
     assert_eq!(
         options.values(),
         vec!["guard".to_string(), "stall".to_string()]
@@ -4572,7 +4561,8 @@ fn panel_parameter_rows_show_the_real_draft_priority_refusal() {
     bag.insert("order_override".into(), serde_json::json!([draft]));
     let loadouts = frontend_core::scripts::Loadouts::default();
     let def = schema.schema_ref().get("order_override").unwrap();
-    let priorities = frontend_core::scripts::resolve_parameter_options(def, &bag, &loadouts, None);
+    let priorities =
+        frontend_core::scripts::resolve_parameter_options(def, &bag, &loadouts, None).unwrap();
     assert!(priorities
         .selectable()
         .iter()
@@ -4618,6 +4608,56 @@ fn panel_parameter_rows_show_the_real_draft_priority_refusal() {
         compact(&text).contains(&compact(&refused_label)),
         "the panel's Order override row displays the stored draft refusal: {text}"
     );
+}
+
+#[test]
+fn panel_parameter_rows_show_fact_errors_and_keep_saved_values() {
+    let _guard = crate::test_support::imgui_context_guard();
+    if api::game_data::local_game_data_available() {
+        return;
+    }
+
+    let mut session = crate::session::Session::new();
+    let mut schema = frontend_core::test_support::scripts::TestSchema::setting(
+        "bank",
+        "string",
+        Some(""),
+        Some("Bank"),
+        &[],
+    );
+    schema.set_options_from("named-banks");
+    let selection = ScriptChoice::compiled(frontend_core::scripts::CompiledCardId::QUESTER);
+    let mut bag = serde_json::Map::new();
+    bag.insert("bank".into(), serde_json::json!("saved-bank"));
+
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([800.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("Unavailable fact-backed parameter")
+            .size([360.0, 500.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                super::script_parameter_rows(
+                    ui,
+                    &mut session,
+                    &selection,
+                    None,
+                    schema.schema_ref(),
+                    bag.clone(),
+                );
+            });
+        ui.log_finish();
+    }
+    ctx.render();
+    let text = drawn.0.take();
+    assert!(text.contains("FamilyUnavailable"), "{text}");
+    assert!(text.contains("saved-bank"), "{text}");
+    assert_eq!(bag.get("bank"), Some(&serde_json::json!("saved-bank")));
 }
 
 #[test]
@@ -7361,7 +7401,9 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
         "the durable acknowledgement does what OK does"
     );
     assert!(
-        crate::ui_state::load(&session.preferences).render_all_warning_ack,
+        crate::ui_state::load(&session.preferences)
+            .unwrap()
+            .render_all_warning_ack,
         "the choice is written to the preferences"
     );
 
@@ -7822,7 +7864,11 @@ fn settings_feedback_render_all_dont_show_again_failure_shows_in_the_dialog_unti
     );
     assert!(session.wall.render_all_warn_open, "the dialog stays open");
     assert!(!session.ui.render_all_warning_ack, "nothing was saved");
-    assert!(!crate::ui_state::load(&session.preferences).render_all_warning_ack);
+    assert!(
+        !crate::ui_state::load(&session.preferences)
+            .unwrap()
+            .render_all_warning_ack
+    );
     assert!(session
         .core
         .setting_failure(notice)
@@ -7843,7 +7889,11 @@ fn settings_feedback_render_all_dont_show_again_failure_shows_in_the_dialog_unti
     }
     assert_eq!(session.core.setting_failure(notice), None);
     assert!(session.ui.render_all_warning_ack);
-    assert!(crate::ui_state::load(&session.preferences).render_all_warning_ack);
+    assert!(
+        crate::ui_state::load(&session.preferences)
+            .unwrap()
+            .render_all_warning_ack
+    );
 }
 
 /// One panel frame: the session pumps and polls its preference writes, then
@@ -8101,7 +8151,11 @@ fn render_all_ok_applies_for_this_launch_only() {
     assert!(!session.wall.render_all_warn_open);
     assert!(!session.focus.lock().unwrap().only_render_selected);
     assert!(!session.ui.render_all_warning_ack);
-    assert!(!crate::ui_state::load(&session.preferences).render_all_warning_ack);
+    assert!(
+        !crate::ui_state::load(&session.preferences)
+            .unwrap()
+            .render_all_warning_ack
+    );
 
     let mut next = crate::session::Session::new();
     assert!(next.focus.lock().unwrap().only_render_selected);

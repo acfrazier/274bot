@@ -225,7 +225,7 @@ pub fn resolve_parameter_options(
     bag: &serde_json::Map<String, Value>,
     loadouts: &super::Loadouts,
     game_data: Option<&api::game_data::SelectedGameData>,
-) -> ParameterOptions {
+) -> Result<ParameterOptions, api::selected::FactError> {
     let def = def.def();
     resolve_parameter_options_with_registry(def, bag, loadouts.store(), game_data, None)
 }
@@ -236,17 +236,17 @@ fn resolve_parameter_options_with_registry(
     loadouts: &script::LoadoutsStore,
     game_data: Option<&api::game_data::SelectedGameData>,
     path_registry: Option<&script::quester::registry::PathRegistry>,
-) -> ParameterOptions {
+) -> Result<ParameterOptions, api::selected::FactError> {
     let source = def.options_from.as_deref().unwrap_or_default();
     if source == "released-paths" || source == "released-path-order" {
         if let Some(registry) = path_registry {
-            return resolve_released_path_options(def, bag, registry);
+            return Ok(resolve_released_path_options(def, bag, registry));
         }
         let registry = script::quester::registry::snapshot();
-        return resolve_released_path_options(def, bag, &registry);
+        return Ok(resolve_released_path_options(def, bag, &registry));
     }
 
-    let base = script::resolve_setting_options_with_labels(def, loadouts, game_data);
+    let base = script::resolve_setting_options_with_labels(def, loadouts, game_data)?;
     let mut options = ParameterOptions {
         values: base.values,
         labels: base.labels,
@@ -262,7 +262,7 @@ fn resolve_parameter_options_with_registry(
         } else {
             preserve_unknown_values(def, bag, &mut options);
         }
-        return options;
+        return Ok(options);
     }
 
     if let (Some(skill), Some(data)) = (source.strip_prefix("gather:"), game_data) {
@@ -282,7 +282,7 @@ fn resolve_parameter_options_with_registry(
     if source.starts_with("gather:") || source == "gatherer-food" {
         preserve_unknown_values(def, bag, &mut options);
     }
-    options
+    Ok(options)
 }
 
 fn qualified_path_row(row: &script::quester::registry::PathRow) -> bool {
@@ -1371,8 +1371,40 @@ mod tests {
         def
     }
 
+    fn local_game_data_asset(revision: &str) -> Option<std::path::PathBuf> {
+        let default_path = format!(
+            "{}/../api/data/game-data/{revision}.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let description = format!("revision {revision} game data");
+        api::test_support::local_asset_path("", &default_path, &description)
+    }
+
+    #[test]
+    fn fact_backed_option_errors_are_propagated() {
+        let def = source_setting("bank", "string", "named-banks");
+        let options = resolve_parameter_options(
+            SettingView::new(&def),
+            &serde_json::Map::new(),
+            &Loadouts::default(),
+            None,
+        );
+        if api::game_data::local_game_data_available() {
+            assert!(options.is_ok());
+        } else {
+            assert!(matches!(
+                options,
+                Err(api::selected::FactError::FamilyUnavailable(_))
+            ));
+        }
+    }
+
     #[test]
     fn gathers_preserve_unknowns_and_resolve_aliases_food_and_quest_order() {
+        if local_game_data_asset("274").is_none() {
+            return;
+        }
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R274).unwrap();
         let loadouts = Loadouts::default();
 
@@ -1387,7 +1419,8 @@ mod tests {
             &bag,
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
         assert_eq!(
             options.preserved, 2,
             "Jungle is refused and the saved resource is unknown"
@@ -1432,7 +1465,8 @@ mod tests {
             &bag,
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
         let group = data
             .gather_option("fishing", "fishing.saltfish.op1")
             .expect("legacy fishing id resolves");
@@ -1453,7 +1487,8 @@ mod tests {
             &bag,
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
         assert_eq!(food_options.values.first().map(String::as_str), Some(""));
         assert_eq!(
             food_options.labels.first().map(String::as_str),
@@ -1471,7 +1506,7 @@ mod tests {
             serde_json::json!(["cook", "sheep"]),
         );
         let order_options =
-            resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None);
+            resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None).unwrap();
         assert_eq!(order_options.values, ["sheep", "cook"]);
         assert_eq!(order_options.labels.len(), 2);
         assert!(order_options.labels[0].starts_with("2. Sheep display"));
@@ -1496,7 +1531,7 @@ mod tests {
         paths.option_labels = vec!["Cook display".into(), "Sheep display".into()];
         bag.insert("quests".into(), serde_json::json!(["removed-path"]));
         let quest_options =
-            resolve_parameter_options(SettingView::new(&paths), &bag, &loadouts, None);
+            resolve_parameter_options(SettingView::new(&paths), &bag, &loadouts, None).unwrap();
         assert!(quest_options.values.contains(&"removed-path".to_string()));
         assert_eq!(
             quest_options.label_for("removed-path"),
@@ -1511,7 +1546,7 @@ mod tests {
         let skip = source_setting("skip", "string[]", "released-paths");
         bag.insert("skip".into(), serde_json::json!(["removed-path"]));
         let skip_options =
-            resolve_parameter_options(SettingView::new(&skip), &bag, &loadouts, None);
+            resolve_parameter_options(SettingView::new(&skip), &bag, &loadouts, None).unwrap();
         assert_eq!(
             skip_options.label_for("removed-path"),
             "Unknown: removed-path"
@@ -1523,7 +1558,7 @@ mod tests {
         bag.insert("quests".into(), serde_json::json!(["sheep", "cook"]));
         bag.insert("order_override".into(), serde_json::json!(["removed-path"]));
         let order_options =
-            resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None);
+            resolve_parameter_options(SettingView::new(&order), &bag, &loadouts, None).unwrap();
         assert_eq!(
             order_options.label_for("removed-path"),
             "Unknown: removed-path"
@@ -1534,7 +1569,8 @@ mod tests {
             &serde_json::Map::new(),
             &loadouts,
             None,
-        );
+        )
+        .unwrap();
         assert!(
             unavailable.is_empty(),
             "unresolved list sources do not become text fields"
@@ -1568,7 +1604,8 @@ mod tests {
             &bag,
             &loadouts,
             None,
-        );
+        )
+        .unwrap();
         assert_eq!(order.selectable(), ["priest"]);
         assert_eq!(
             order.label_for("hauntedmine"),
@@ -1586,7 +1623,8 @@ mod tests {
             &bag,
             &loadouts,
             None,
-        );
+        )
+        .unwrap();
         let index_of = |id: &str| options.values.iter().position(|value| value == id).unwrap();
         let haunted = index_of("hauntedmine");
         assert!(!options.is_selectable_index(haunted));
@@ -1622,7 +1660,8 @@ mod tests {
             &bag,
             &loadouts,
             None,
-        );
+        )
+        .unwrap();
 
         assert!(
             options.is_empty(),
@@ -1670,7 +1709,8 @@ mod tests {
             }
             let mut empty = bag.clone();
             empty.insert("quests".into(), serde_json::json!([]));
-            let offered = resolve_parameter_options(SettingView::new(def), &empty, &loadouts, None);
+            let offered =
+                resolve_parameter_options(SettingView::new(def), &empty, &loadouts, None).unwrap();
             assert!(offered.selectable().iter().any(|value| value == "priest"));
             assert!(
                 offered
@@ -1684,7 +1724,8 @@ mod tests {
                 .iter()
                 .any(|value| value == "hauntedmine"));
 
-            let stored = resolve_parameter_options(SettingView::new(def), &bag, &loadouts, None);
+            let stored =
+                resolve_parameter_options(SettingView::new(def), &bag, &loadouts, None).unwrap();
             assert!(stored
                 .selectable()
                 .iter()
@@ -1701,6 +1742,10 @@ mod tests {
 
     #[test]
     fn gather_sites_use_selected_resources_defaults_and_fishing_aliases() {
+        if local_game_data_asset("289").is_none() {
+            return;
+        }
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = Loadouts::default();
         let site = script::gatherer::settings::schema()
@@ -1708,14 +1753,16 @@ mod tests {
             .find(|field| field.id == "site")
             .expect("the Gatherer Site field uses shared options");
         let mut bag = serde_json::Map::new();
-        let bagless = resolve_parameter_options(SettingView::new(site), &bag, &loadouts, None);
+        let bagless =
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, None).unwrap();
         assert!(
             bagless.is_empty(),
             "script options remain empty without facts"
         );
 
         let woodcutting =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(
             woodcutting
                 .selectable()
@@ -1726,7 +1773,8 @@ mod tests {
 
         bag.insert("skill".into(), serde_json::json!("Mining"));
         let mining =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(
             mining
                 .selectable()
@@ -1753,7 +1801,8 @@ mod tests {
             .map(|site| site.id.clone())
             .collect::<Vec<_>>();
         let fishing =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert_eq!(fishing.selectable(), expected.as_slice());
         assert!(
             bag.get("fishingMethod")
@@ -1764,6 +1813,10 @@ mod tests {
 
     #[test]
     fn gather_site_invalid_current_is_display_only_and_has_a_reason() {
+        if local_game_data_asset("289").is_none() {
+            return;
+        }
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = Loadouts::default();
         let site = script::gatherer::settings::schema()
@@ -1776,7 +1829,8 @@ mod tests {
         bag.insert("site".into(), serde_json::json!("mining.varrock_east.se"));
 
         let options =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(options.is_empty(), "no surface site offers rune stones");
         assert_eq!(options.preserved, 1);
         assert_eq!(
@@ -1795,7 +1849,8 @@ mod tests {
             serde_json::json!("mining.barbarian_village.e"),
         );
         let choices =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(!choices.is_empty());
         assert!(choices
             .selectable()
@@ -1811,20 +1866,26 @@ mod tests {
         bag.insert("miningResources".into(), serde_json::json!(["rune stones"]));
         bag.insert("site".into(), serde_json::json!("fishing.catherby"));
         let wrong_skill =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(wrong_skill
             .label_for("fishing.catherby")
             .ends_with("not a Mining site"));
 
         bag.insert("site".into(), serde_json::json!("removed-site"));
         let unknown =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert_eq!(unknown.label_for("removed-site"), "Unknown: removed-site");
         assert!(unknown.is_empty());
     }
 
     #[test]
     fn gather_sites_exclude_unselectable_resource_keys() {
+        if local_game_data_asset("289").is_none() {
+            return;
+        }
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let refused = data
             .gather_resources_for("fishing")
@@ -1854,7 +1915,8 @@ mod tests {
         bag.insert("fishingMethod".into(), serde_json::json!(refused.key));
 
         let options =
-            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()));
+            resolve_parameter_options(SettingView::new(site), &bag, &loadouts, Some(data.as_ref()))
+                .unwrap();
         assert!(
             refused_site_ids
                 .iter()
@@ -1891,6 +1953,10 @@ mod tests {
 
     #[test]
     fn fishing_scalar_cycle_visits_every_selectable_group_and_wraps() {
+        if local_game_data_asset("289").is_none() {
+            return;
+        }
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = Loadouts::default();
         let fishing = source_setting("fishingMethod", "string", "gather:fishing");
@@ -1899,7 +1965,8 @@ mod tests {
             &serde_json::Map::new(),
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
         let selectable = data
             .gather_resources_for("fishing")
             .filter(|row| row.selectable)
@@ -1947,6 +2014,18 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
+        if local_game_data_asset("289").is_none() {
+            return;
+        }
+        let Some(cook_path) = api::test_support::local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../script/paths/289/cook.json"),
+            "real 289 cook Path template",
+        ) else {
+            return;
+        };
+        let cook_template = std::fs::read(cook_path).unwrap();
+
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let folder = std::env::temp_dir().join(format!(
             "parameter-path-rows-{}-{}",
@@ -1976,10 +2055,7 @@ mod tests {
             let template = if id == qualified_id {
                 script::quester::registry::bundled_path(id).expect("qualified Path bytes")
             } else {
-                include_bytes!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../script/paths/289/cook.json"
-                ))
+                cook_template.as_slice()
             };
             let mut document: serde_json::Value = serde_json::from_slice(template).unwrap();
             document["id"] = serde_json::json!(id);
@@ -2047,7 +2123,8 @@ mod tests {
             loadouts.store(),
             None,
             Some(&registry),
-        );
+        )
+        .unwrap();
         assert!(!options
             .values
             .iter()
@@ -2103,7 +2180,8 @@ mod tests {
             loadouts.store(),
             None,
             Some(&registry),
-        );
+        )
+        .unwrap();
         assert!(!ordered
             .values
             .iter()
@@ -2163,7 +2241,8 @@ mod tests {
                 loadouts.store(),
                 None,
                 Some(&registry),
-            );
+            )
+            .unwrap();
             assert!(quests.selectable().contains(&qualified));
             assert!(!quests.selectable().contains(&draft));
             assert!(
@@ -2194,7 +2273,8 @@ mod tests {
                 loadouts.store(),
                 None,
                 Some(&registry),
-            );
+            )
+            .unwrap();
             assert!(priorities.selectable().contains(&qualified));
             assert!(!priorities.selectable().contains(&draft));
             assert!(
@@ -2242,7 +2322,8 @@ export const SETTINGS: SettingsSchema = {
         let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
         assert_eq!(bag.get("loadout"), Some(&serde_json::json!("")));
         let options =
-            resolve_parameter_options(SettingView::new(loadout_def), &bag, &loadouts, None);
+            resolve_parameter_options(SettingView::new(loadout_def), &bag, &loadouts, None)
+                .unwrap();
         assert_eq!(
             options.selectable(),
             &[
@@ -2385,7 +2466,8 @@ export const SETTINGS: SettingsSchema = {
                 refusal.to_string().contains("no loadouts exist"),
                 "{name}: {refusal}"
             );
-            let options = resolve_parameter_options(SettingView::new(def), &bag, &loadouts, None);
+            let options =
+                resolve_parameter_options(SettingView::new(def), &bag, &loadouts, None).unwrap();
             assert_eq!(
                 options.selectable(),
                 ["First choice", "Second choice"],

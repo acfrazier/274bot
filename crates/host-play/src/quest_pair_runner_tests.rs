@@ -332,12 +332,10 @@ fn prime_runner(runner: &Runner, observe_arrav_gang: bool) {
         digest: &runner.path.digest,
         role,
     };
-    let pin = pin();
     for tick in [1, 3] {
         runner.port.observe(
             PairRegistration {
                 run: runner.run,
-                pin: Arc::clone(&pin),
                 settings: Some(runner.settings.clone()),
                 ready: true,
                 evidence: stamp(runner.run, tick),
@@ -978,7 +976,6 @@ fn observe_runner_ready(runner: &Runner, ready: bool, tick: u64) {
     runner.port.observe(
         PairRegistration {
             run: runner.run,
-            pin: pin(),
             settings: Some(runner.settings.clone()),
             ready,
             evidence: stamp(runner.run, tick),

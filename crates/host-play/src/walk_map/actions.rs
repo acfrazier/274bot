@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav_planner::bank_fetch::{plan_bank_fetch, BankFetchError, BankRows};
+use nav_planner::contract::PackId;
 use nav_planner::map::identity::Digest;
 use nav_planner::map::spatial::{snap_walkable, GameTile};
 use nav_planner::router::{FindOptions, Leg, Route};
@@ -43,7 +44,7 @@ impl FocusToken {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MapContext {
     pub focus: Option<FocusToken>,
-    pub nav: Digest,
+    pub nav: PackId,
     pub overlay: Option<Digest>,
     /// Profile binding epoch. Slot login/session replacement is the focus
     /// token, not destination identity.
@@ -838,7 +839,7 @@ impl MapModel {
     pub fn select_poi(&mut self, catalogue: &Catalogue, index: usize) -> Result<(), ActionError> {
         if self
             .context
-            .is_none_or(|c| c.nav != catalogue.nav_identity() || c.overlay != Some(catalogue.key()))
+            .is_none_or(|c| c.nav != catalogue.nav_pack_id() || c.overlay != Some(catalogue.key()))
         {
             self.clear_selection();
             return Err(ActionError::Stale);
@@ -1338,8 +1339,12 @@ impl Play {
         {
             return Err(ActionError::NoOrigin);
         }
-        if let Some(identity) = self.server_profile().and_then(|p| p.nav_identity()) {
-            if Digest::from_hex(&identity.nav_sha256).ok() != Some(current.nav) {
+        if let Some(world) = self.world.as_ref() {
+            if nav_planner::producer::identity(world)
+                .map(|identity| identity.pack())
+                .ok()
+                != Some(current.nav)
+            {
                 return Err(ActionError::Stale);
             }
         }
@@ -1419,7 +1424,7 @@ impl Play {
         }
         let start = self.script_start_handle();
         let manual_route =
-            snapshot.and_then(|snapshot| start.manual_route_state(&name, snapshot, state, world));
+            snapshot.and_then(|snapshot| start.manual_route_state(&name, snapshot, state));
         let route_state = manual_route
             .as_ref()
             .map_or(state, |(_, _, route_state)| route_state);

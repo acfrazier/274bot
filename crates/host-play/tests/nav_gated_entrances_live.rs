@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use api::game_data::{self, GameItem, QuestFamilyIdentity};
+use api::game_data::{self, GameItem};
 use api::gather_methods::{AccessPolicy, GatherCatalog, GatherSkill, GatherSpot};
 use api::identity::Deadline;
 use api::interact::{self, Interactions, SendResult};
@@ -20,7 +20,7 @@ use client::io::ClientRevision;
 use host::Pump;
 use host_play::{mint_live_entries, mint_live_names, ProfileOptions, SharedClientTemplate};
 use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{
     find_many_with, find_with, FindOptions, Leg, Route, RouteError, TargetError,
 };
@@ -490,19 +490,14 @@ fn evidence_stamp(snapshot: &GameSnapshot) -> EvidenceStamp {
 
 fn quest_evidence(
     quests: &api::quest_facts::QuestCatalog,
-    catalog_identity: QuestFamilyIdentity,
-    selected_identity: QuestFamilyIdentity,
-    family: QuestFamilyId,
     snapshot: &GameSnapshot,
 ) -> QuestEvidence {
     let stamp = evidence_stamp(snapshot);
     let provider = Arc::new(QuestListEvidenceProvider::from_snapshot(
         quests,
-        Some(catalog_identity),
-        Some(selected_identity),
         SnapshotView::new(Some(snapshot), stamp),
     ));
-    QuestEvidence::new(provider, family, stamp)
+    QuestEvidence::new(provider, stamp)
 }
 
 fn quest_status(
@@ -726,7 +721,6 @@ fn matching_edges(world: &NavWorld, case: EntranceCase) -> Vec<(usize, &Transpor
 fn edge_value(edge: &TransportEdge) -> Value {
     let quest_gates = edge.quest_gates.as_ref().map(|gates| {
         json!({
-            "family": gates.family().to_string(),
             "gates": gates.gates().iter().map(|gate| format!("{gate:?}")).collect::<Vec<_>>(),
         })
     });
@@ -1089,14 +1083,9 @@ fn run_case(case: EntranceCase) {
     let world = template.world().expect("explicit WORLD_NAV_PACK");
     assert_eq!(
         nav_planner::pack::FORMAT_ID,
-        "274V18",
-        "acceptance requires pack v18"
+        "274V19",
+        "acceptance requires pack v19"
     );
-    let identity = profile.nav_identity().expect("navigation identity");
-    receipt["nav_identity"] = json!({
-        "pack_format": nav_planner::pack::FORMAT_ID,
-        "nav_sha256": identity.nav_sha256,
-    });
 
     let selected = game_data::for_revision(ClientRevision::R289).expect("selected R289 game data");
     let clock = SystemClock;
@@ -1113,16 +1102,8 @@ fn run_case(case: EntranceCase) {
                 selected.prepare_gathering(worker),
             )
         });
-    let quests = quests.expect("verified R289 quest identity catalog");
+    let quests = quests.expect("prepared R289 quest catalog");
     let gathering = gathering.expect("verified R289 gathering catalog");
-    let family_identity = selected
-        .quest_family_identity()
-        .expect("verified quest manifest family identity");
-    let family = QuestFamilyId::new(family_identity.sha256, family_identity.schema);
-    world
-        .graph
-        .admit_quest_family(&family)
-        .expect("nav pack quest gates match verified manifest family");
     let edges = matching_edges(&world, case);
     assert!(
         !edges.is_empty(),
@@ -1138,12 +1119,8 @@ fn run_case(case: EntranceCase) {
             edge.varp_req.is_empty(),
             "new entrance must not use raw varps: {edge:?}"
         );
-        if let Some(gates) = &edge.quest_gates {
-            assert_eq!(gates.family(), &family, "entrance gate family mismatch");
-        }
     }
     receipt["engine_loaded"] = json!(true);
-    receipt["nav_identity"]["quest_family"] = json!(family.to_string());
     receipt["entrance_edges"] = json!(edges
         .iter()
         .map(|(_, edge)| edge_value(edge))
@@ -1271,15 +1248,7 @@ fn run_case(case: EntranceCase) {
         write_receipt(&receipt_path, &receipt);
     }
 
-    let pre_quest_evidence = quest_evidence(
-        &quests,
-        family_identity,
-        selected
-            .quest_family_identity()
-            .expect("selected quest family"),
-        family,
-        &snapshot,
-    );
+    let pre_quest_evidence = quest_evidence(&quests, &snapshot);
     if case == EntranceCase::GrandTreeMine {
         let grand_tree = quests
             .by_display("The Grand Tree")
@@ -1362,15 +1331,7 @@ fn run_case(case: EntranceCase) {
     });
     write_receipt(&receipt_path, &receipt);
 
-    let positive_evidence = quest_evidence(
-        &quests,
-        family_identity,
-        selected
-            .quest_family_identity()
-            .expect("selected quest family"),
-        family,
-        &snapshot,
-    );
+    let positive_evidence = quest_evidence(&quests, &snapshot);
     for (_, edge) in &edges {
         if let Some(gates) = &edge.quest_gates {
             for gate in gates.gates() {
@@ -1378,7 +1339,7 @@ fn run_case(case: EntranceCase) {
                     assert_eq!(
                         positive_evidence.test(gate),
                         Truth::Unknown,
-                        "the identity-only quest-list provider must not prove stage windows"
+                        "the quest-list observation must not prove stage windows"
                     );
                 }
             }
@@ -1435,15 +1396,7 @@ fn run_case(case: EntranceCase) {
         "could not place account at the selected approach tile {:?}",
         planned.start
     );
-    let final_evidence = quest_evidence(
-        &quests,
-        family_identity,
-        selected
-            .quest_family_identity()
-            .expect("selected quest family"),
-        family,
-        &snapshot,
-    );
+    let final_evidence = quest_evidence(&quests, &snapshot);
     let final_state = state_from_snapshot(&snapshot, profile.map_members(), final_evidence.clone());
     let route = find_route(&world, planned.start, target.stand, options, &final_state)
         .unwrap_or_else(|error| {
@@ -1482,11 +1435,6 @@ fn run_case(case: EntranceCase) {
         "planned entrance contains raw varp requirement"
     );
     if let Some(gates) = &edge.quest_gates {
-        assert_eq!(
-            gates.family(),
-            &family,
-            "planned entrance uses another quest family"
-        );
         for gate in gates.gates() {
             if matches!(gate, QuestGate::Window(_)) {
                 assert_eq!(final_evidence.test(gate), Truth::Unknown);

@@ -6,7 +6,7 @@ use api::selected::{QuestGate, RunKey, Truth};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use nav_planner::collision::{pack_walk, WorldCollision};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{Leg, RouteError};
 use nav_planner::transport::TransportGraph;
 #[cfg(feature = "test-support")]
@@ -16,7 +16,6 @@ use nav_planner::WorldState;
 use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
 use script::combat::request::{ActorKind, ActorRef};
 use script::combat::risk::{KindRisk, LiveRow, UnknownKind};
-use std::num::NonZeroU16;
 use std::sync::{Arc, LazyLock};
 
 fn tile(x: i32, z: i32) -> WorldTile {
@@ -1521,7 +1520,6 @@ fn u11_live_escape_states_refuse_before_any_kernel_but_advisory_assess_is_allowe
 #[test]
 fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
     let provider: Arc<dyn EvidenceProvider> = Arc::new(UnknownEvidence);
-    let family = QuestFamilyId::new([0x27; 32], NonZeroU16::new(1).unwrap());
     let stamp = EvidenceStamp {
         run: RunKey {
             slot: 3,
@@ -1531,7 +1529,7 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
         tick: 40,
         sequence: 41,
     };
-    let evidence = QuestEvidence::new(provider, family, stamp);
+    let evidence = QuestEvidence::new(provider, stamp);
     let avoid = Arc::<[AvoidRect]>::from([AvoidRect {
         min_x: 3,
         max_x: 5,
@@ -1591,16 +1589,6 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
 
     assert_eq!(arm.basis.as_ref().unwrap().options, frozen_options);
     assert_eq!(arm.basis.as_ref().unwrap().avoid.as_ref(), avoid.as_ref());
-    assert_eq!(
-        arm.basis
-            .as_ref()
-            .unwrap()
-            .quest_evidence
-            .as_ref()
-            .unwrap()
-            .family(),
-        &family
-    );
     assert_eq!(retained._route.destination(), tile(1, 1));
     assert_eq!(retained.options, frozen_options);
     assert_eq!(retained.avoid.as_ref(), avoid.as_ref());
@@ -1616,7 +1604,6 @@ fn c5_route_basis_keeps_hard_authority_through_replacement_and_revocation() {
     assert!(!retained.options.allow_wilderness);
     assert!(!retained.options.allow_bank_fetch);
     assert_eq!(retained.avoid.as_ref(), avoid.as_ref());
-    assert_eq!(retained.quest_evidence.as_ref().unwrap().family(), &family);
 }
 
 #[cfg(feature = "test-support")]
@@ -2431,10 +2418,27 @@ fn real_squire_walk(
 #[test]
 #[ignore = "requires WORLD_NAV_PACK pointing to the real 289 nav pack"]
 fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison() {
-    let pack = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK is required");
-    let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&pack)).unwrap());
+    let Some(pack) = api::test_support::local_asset_path(
+        "WORLD_NAV_PACK",
+        "",
+        "real 289 navigation pack for the squire ice-chain admission test",
+    ) else {
+        return;
+    };
+    let world = Arc::new(NavWorld::load_pack(&pack).unwrap());
+    let Some(squire_path) = api::test_support::local_asset_path(
+        "",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../script/paths/289/squire.json"
+        ),
+        "real 289 Squire route",
+    ) else {
+        return;
+    };
+    let squire_source = std::fs::read_to_string(squire_path).expect("read real Squire route");
     let squire: serde_json::Value =
-        serde_json::from_str(include_str!("../../script/paths/289/squire.json")).unwrap();
+        serde_json::from_str(&squire_source).expect("parse real Squire route");
     let mut from = WorldTile {
         x: 3009,
         z: 9550,

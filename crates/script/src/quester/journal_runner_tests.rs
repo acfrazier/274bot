@@ -1434,7 +1434,11 @@ fn blocked_slot_read_journal_is_terminal_and_retains_its_diagnostic() {
     script.run.session = 0;
     let mut slot = crate::SlotScript::new();
     slot.bind_incarnation(1);
-    slot.start_test_script(Box::new(script), None).unwrap();
+    slot.start_test_script(
+        Box::new(script),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     let run = slot.native_run().unwrap();
     slot.on_game_tick(&mut crate::ScriptCtx {
         driver: &mut crate::ctx::test_support::NullDriver::default(),
@@ -2329,7 +2333,11 @@ fn sheep_complete_colour_publishes_complete_and_slot_keeps_completed_receipt() {
     let (script, snapshot) = sheep_complete_snapshot();
     let mut slot = crate::SlotScript::new();
     slot.bind_incarnation(1);
-    slot.start_test_script(Box::new(script), None).unwrap();
+    slot.start_test_script(
+        Box::new(script),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     for tick in 1..=8 {
         slot.on_game_tick(&mut crate::ScriptCtx {
             driver: &mut crate::ctx::test_support::NullDriver::default(),
@@ -2861,12 +2869,7 @@ fn step_progress_fixture(stamp: ProgressOutcomeStamp) -> (Quester, GameSnapshot,
     let (mut script, snapshot) = fixture(false);
     let mut ledger = None;
     let progress = with_tick(&snapshot, &mut ledger, 0, |tick| {
-        resolve_colour(
-            &script.path,
-            QuestListStatus::Complete,
-            tick.cx.evidence(),
-            Arc::new(tick.cx.pin().clone()),
-        )
+        resolve_colour(&script.path, QuestListStatus::Complete, tick.cx.evidence())
     });
     Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan =
         Arc::new(ProgressOutcomePlan { progress, stamp });
@@ -2963,7 +2966,6 @@ fn custom_progress_requires_fresh_correlated_declared_owned_evidence() {
             &script.path,
             QuestListStatus::NotStarted,
             tick.cx.evidence(),
-            Arc::new(tick.cx.pin().clone()),
         );
         assert!(script.valid_progress(tick, &progress, after));
         let mut bad = progress.clone();

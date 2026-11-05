@@ -14,8 +14,8 @@
 //! Prerequisites (root owns the actual LIVE run): the selected revision's game
 //! server and its update (asset) server are up on loopback, the profile
 //! resolves (the engine `private.pem` or LOGIN_RSAN/E), and the two actors can
-//! log in. `BOT_CACHE_LIVE_ENGINE_DIR` and `BOT_CACHE_MANIFEST` override the
-//! engine root and the selected cache manifest for a non-default layout.
+//! log in. `BOT_CACHE_LIVE_ENGINE_DIR` overrides the engine root for a
+//! non-default layout.
 //! Bounded: two actors, one selected profile, no catalog or script work.
 
 mod common;
@@ -30,8 +30,8 @@ use host_play::{ProfileOptions, ProfilePlayOptions};
 
 use common::{fail, live, profiles, wait_ingame};
 
-/// Packs the selected cache directory must hold before preparation can read a
-/// version (`CacheManifest::ARCHIVES` order).
+/// Packs the selected cache directory must hold before preparation can read
+/// a version (the update protocol's archive order).
 const JAGS: [&str; 8] = [
     "title",
     "config",
@@ -108,7 +108,6 @@ fn cache_live() {
         cache_dir: Some(cache.clone()),
         unpack_dir: Some(unpack.clone()),
         engine_dir: std::env::var_os("BOT_CACHE_LIVE_ENGINE_DIR").map(PathBuf::from),
-        cache_manifest: std::env::var_os("BOT_CACHE_MANIFEST").map(PathBuf::from),
         ..ProfileOptions::default()
     };
     let profile = options
@@ -116,9 +115,8 @@ fn cache_live() {
         .and_then(|selection| selection.bind_with_progress(&ProfileProgressObserver::default()))
         .unwrap_or_else(|e| fail(&format!("profile bind: {e}")));
     println!(
-        "cache_live: revision={revision} profile={} cache_id={} root={} warm={warm} empty_cache={empty_cache} bind_status={:?}",
+        "cache_live: revision={revision} profile={} root={} warm={warm} empty_cache={empty_cache} bind_status={:?}",
         profile.label(),
-        profile.cache_id(),
         root.display(),
         profile.cache_availability()
     );
@@ -183,7 +181,7 @@ fn cache_live() {
     }
     if delta.snapshots_published > 1 {
         fail(&format!(
-            "one cache identity published {} snapshots (one preparation expected)",
+            "one selected-cache preparation published {} snapshots (one preparation expected)",
             delta.snapshots_published
         ));
     }
@@ -213,7 +211,7 @@ fn cache_live() {
         }
         if delta.network_fills != 1 {
             fail(&format!(
-                "one cold fill for the cache identity expected, saw {}",
+                "one cold fill for the selected cache expected, saw {}",
                 delta.network_fills
             ));
         }

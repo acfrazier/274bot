@@ -5,7 +5,7 @@ use api::game_data::NpcAttackKind;
 use api::game_data::SelectedGameData;
 use api::obj_names::ItemDefView;
 use api::quest_progress::EvidenceStamp;
-use api::selected::{ClientRevision, RunKey, SelectedPin};
+use api::selected::{ClientRevision, RunKey};
 use api::snapshot::{
     ActorTargetView, ActorView, GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily,
     ItemContainer, LocalPlayerView, NpcView, PlayerView, SideTabView, SnapshotView, StatView,
@@ -74,7 +74,6 @@ impl NativeMachine for Lease {
 }
 
 struct Runtime {
-    pin: Arc<SelectedPin>,
     retained: RetainedMemory,
     ledger: Option<Box<ledger::Ledger>>,
     budget: ledger::TickBudget,
@@ -118,7 +117,7 @@ impl Runtime {
             poison_unknown_pulse: self.poison_unknown_pulse,
             cure_poison: self.cure_poison,
             evidence,
-            pin: &self.pin,
+            revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(self.reach.as_ref()),
             wilderness: self
                 .wilderness
@@ -215,7 +214,6 @@ impl Harness {
         reach: Option<api::query::ReachQueryView>,
     ) -> Result<Self, ActionError> {
         let mut runtime = Runtime {
-            pin: scene.data.selected_pin().unwrap(),
             retained: RetainedMemory::default(),
             ledger: None,
             budget: ledger::TickBudget::default(),

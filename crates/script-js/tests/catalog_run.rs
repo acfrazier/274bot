@@ -7,6 +7,9 @@ mod common;
 
 #[test]
 fn bank_picker_import_links_and_awaits_host_selection() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
     use api::named_banks::{NamedBank, NamedBankFacts};
     use api::quest_progress::EvidenceStamp;
     use api::snapshot::WorldTile;
@@ -113,6 +116,9 @@ export default class Probe extends LoopingBot {
 
 #[test]
 fn bank_v2_selection_publishes_the_typed_seat_result() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
     use api::named_banks::{NamedBank, NamedBankFacts};
     use api::quest_progress::EvidenceStamp;
     use api::snapshot::WorldTile;
@@ -231,6 +237,9 @@ export function tick(api) {
 
 #[test]
 fn bank_v2_replacement_supersedes_the_waiter_and_rejects_its_late_publication() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
     use api::named_banks::{NamedBank, NamedBankFacts};
     use api::quest_progress::EvidenceStamp;
     use api::snapshot::WorldTile;

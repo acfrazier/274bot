@@ -1847,13 +1847,15 @@ mod tests {
 
     #[test]
     fn dragonfire_and_magic_projectiles_agree_on_the_same_protection_varp() {
-        let mut scene = Scene::new(43);
-        // R289 classifies dragonfire at the attacker, not on a projectile.
-        // Extend only this test's classification fixture to exercise the
-        // representable incoming Dragonfire + Magic agreement; prayer and
-        // NPC facts still come from the selected revision.
-        let mut facts: serde_json::Value =
-            serde_json::from_str(include_str!("../../../api/data/game-data/289.json")).unwrap();
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../api/data/game-data/289.json");
+        let path = path.to_string_lossy();
+        let Some(path) = api::test_support::local_asset_path("", &path, "R289 game data") else {
+            return;
+        };
+        let bytes = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read R289 game data at {}: {error}", path.display()));
+        let mut facts: serde_json::Value = serde_json::from_str(&bytes).unwrap();
         let dragonfire = facts["style_spotanims"]
             .as_array_mut()
             .unwrap()

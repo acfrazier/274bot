@@ -1,5 +1,4 @@
 use api::run_policy::RunEnergyMin;
-use api::selected::ClientRevision;
 use api::snapshot::stat_used;
 use script::interact::{InteractReq, QueuedInteract};
 use script::native::seat_rows::QueuedSeatBatch;
@@ -28,9 +27,7 @@ fn paint_slot(source: &str, incarnation: u64) -> SlotScript {
             family,
         }),
         settings_bag: None,
-        game_data: Some(
-            api::game_data::for_revision(ClientRevision::R289).expect("selected game data"),
-        ),
+        game_data: None,
         named_banks: Arc::default(),
         loadouts: Arc::default(),
     })

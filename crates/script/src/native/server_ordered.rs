@@ -35,7 +35,7 @@ impl ActionContext<'_> {
         &mut self,
         request: ServerOrderedRequest,
     ) -> Result<u64, ActionError> {
-        request.validate_shape(self.pin.revision)?;
+        request.validate_shape(self.revision)?;
         self.emit_server_ordered_envelope(ServerOrderedEnvelope::content(request))
     }
 
@@ -103,7 +103,7 @@ mod tests {
     use super::super::{RetainedMemory, SnapshotView, WalkCancelReason};
     use super::*;
     use api::interact::server_ordered::{CloseModalReason, ExpectedModalRoot, ServerOrderedError};
-    use api::selected::{RunKey, SelectedPin};
+    use api::selected::{ClientRevision, RunKey};
     use std::num::NonZeroU64;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -119,15 +119,13 @@ mod tests {
         ledger: Option<Box<Ledger>>,
         budget: TickBudget,
         retained: RetainedMemory,
-        pin: Arc<SelectedPin>,
+        revision: ClientRevision,
         evidence: EvidenceStamp,
         owner: Arc<Owner>,
     }
 
     impl Frame {
         fn new() -> Self {
-            let selected =
-                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
             let evidence = EvidenceStamp {
                 run: RunKey {
                     slot: 1,
@@ -146,7 +144,7 @@ mod tests {
                 ledger: Some(ledger),
                 budget,
                 retained: RetainedMemory::default(),
-                pin: selected.selected_pin().unwrap(),
+                revision: ClientRevision::R289,
                 evidence,
                 owner,
             }
@@ -160,7 +158,7 @@ mod tests {
                 poison_unknown_pulse: u8::MAX,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
                 evidence: self.evidence,
-                pin: &self.pin,
+                revision: self.revision,
                 snapshot: SnapshotView::new(None, self.evidence),
                 retained: &mut self.retained,
                 action_id: self.owner.id.get(),

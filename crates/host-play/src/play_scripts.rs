@@ -221,7 +221,6 @@ impl ScriptStartHandle {
         name: &str,
         snapshot: &api::snapshot::GameSnapshot,
         base: &nav_planner::WorldState,
-        world: &nav_planner::world::NavWorld,
     ) -> Option<(
         api::selected::RunKey,
         Option<Arc<api::prereq_steps::PrereqCatalog>>,
@@ -229,13 +228,7 @@ impl ScriptStartHandle {
     )> {
         let slot = script_slot(&self.scripts, name)?;
         let mut slot = slot.lock().ok()?;
-        script_runtime::manual_route_state(
-            &mut slot,
-            snapshot,
-            base,
-            world,
-            self.game_data.as_ref(),
-        )
+        script_runtime::manual_route_state(&mut slot, snapshot, base, self.game_data.as_ref())
     }
 
     pub(crate) fn record_gate_refusal(

@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav_planner::map::formats::{ClientPois, ServiceIdentity};
+use nav_planner::contract::PackId;
+use nav_planner::map::formats::{ClientPois, ServicePois};
 use nav_planner::map::identity::{CatalogueIdentity, Digest};
 use nav_planner::map::poi::{Eligibility, PoiKind, PoiRecord};
 use nav_planner::map::{MapError, Text};
@@ -24,7 +25,7 @@ use crate::launch::BoundProfile;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WalkMapContext {
     focus: Option<host_play::walk_map::FocusToken>,
-    nav: Digest,
+    nav: PackId,
     overlay: Option<Digest>,
     generation: u64,
 }
@@ -49,7 +50,7 @@ impl WalkMapContext {
     }
 
     /// Bind a map view without a slot focus, for catalogue-only browsing.
-    pub fn browsing(nav: Digest, overlay: Option<Digest>, generation: u64) -> Self {
+    pub fn browsing(nav: PackId, overlay: Option<Digest>, generation: u64) -> Self {
         Self {
             focus: None,
             nav,
@@ -58,8 +59,8 @@ impl WalkMapContext {
         }
     }
 
-    /// Navigation identity bound to this map.
-    pub fn nav_identity(self) -> Digest {
+    /// Ownership key for the navigation world bound to this map.
+    pub fn nav_pack_id(self) -> PackId {
         self.nav
     }
 
@@ -462,22 +463,16 @@ impl WalkMap {
     }
 }
 
-/// Authenticated navpois input. Bytes are decoded and identity checked before
-/// a catalogue can retain the document.
-pub struct WalkServices(host_play::walk_map::AuthenticatedServices);
+/// Decoded navpois records retained by a map catalogue.
+pub struct WalkServices(Arc<ServicePois>);
 
 impl WalkServices {
-    pub fn decode(
-        bytes: &[u8],
-        expected: ServiceIdentity,
-        digest: Digest,
-    ) -> Result<Self, MapError> {
-        host_play::walk_map::AuthenticatedServices::decode(bytes, expected, digest).map(Self)
+    pub fn decode(bytes: &[u8]) -> Result<Self, MapError> {
+        ServicePois::decode_navpois(bytes).map(Arc::new).map(Self)
     }
 }
 
-/// A shared indexed map catalogue. The host-owned world and authenticated
-/// source documents remain shared rather than being copied into the UI.
+/// A shared indexed map catalogue. The world and source documents remain shared.
 pub struct WalkCatalogue(host_play::walk_map::Catalogue);
 
 impl WalkCatalogue {
@@ -485,14 +480,12 @@ impl WalkCatalogue {
     pub fn new(
         world: Arc<NavWorld>,
         identity: CatalogueIdentity,
-        nav: Digest,
         client: Option<Arc<ClientPois>>,
         services: Option<WalkServices>,
     ) -> Result<Self, MapError> {
         host_play::walk_map::Catalogue::new(
             world,
             identity,
-            nav,
             client,
             services.map(|services| services.0),
         )
@@ -505,16 +498,10 @@ impl WalkCatalogue {
         ready: Arc<WalkReadyCatalogue>,
     ) -> Result<(Self, bool), WalkMapCacheError> {
         let identity = ready.identity();
-        let nav = profile
-            .host()
-            .nav_identity()
-            .and_then(|identity| Digest::from_hex(&identity.nav_sha256).ok())
-            .ok_or_else(|| WalkMapCacheError::message("map catalogue has no nav identity"))?;
-        let services = host_play::load_navpois(profile.host(), identity.content, nav);
+        let services = host_play::load_navpois(profile.host());
         let catalogue = host_play::walk_map::Catalogue::from_ready(
             world,
             identity,
-            nav,
             Some(Arc::clone(&ready.0)),
             services,
         )
@@ -544,8 +531,8 @@ impl WalkCatalogue {
     pub fn identity(&self) -> CatalogueIdentity {
         self.0.identity()
     }
-    pub fn nav_identity(&self) -> Digest {
-        self.0.nav_identity()
+    pub fn nav_pack_id(&self) -> PackId {
+        self.0.nav_pack_id()
     }
     pub fn key(&self) -> Digest {
         self.0.key()

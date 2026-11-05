@@ -8,7 +8,6 @@ use nav_planner::pack::{
     validate_takeoff_admission, BankAccess, BankStand, PackError, DOOR_BYTES, MAGIC, MAGIC_GRID,
     MAX_GRID, PLAYER_RELATIVE, VERSION, VERSION_GRID,
 };
-use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
 use nav_planner::reachability::ReachabilityAtlas;
 use nav_planner::transport::{DoorDir, TransportGraph, TransportKind, WildernessRules};
 
@@ -47,16 +46,14 @@ pub fn encode_grid(g: &StepGrid) -> Vec<u8> {
     out
 }
 
-/// Serialize the whole-world collision + transport graph + bank stand and
-/// zone tables to the v18 pack byte format. The graph's `at` index is not
-/// stored; [`nav_planner::pack::decode`] rebuilds it from the edges and collision. Teleports
-/// (kind-4 edges) are written after ordinary edges and always carry absent
-/// approach geometry. The raw flags are not on the wire (see the flags
-/// sidecar); the zone bucket index is rebuilt at decode.
+/// Serialize the whole-world collision, transport graph, bank stands, and
+/// zone tables to the v19 pack byte format. The graph's `at` index is not
+/// stored; [`nav_planner::pack::decode`] rebuilds it from the edges and
+/// collision. Teleports (kind-4 edges) are written after ordinary edges and
+/// always carry absent approach geometry. Raw flags are stored in a separate
+/// sidecar; the zone bucket index is rebuilt at decode.
 ///
-/// Returns an error if an edge's quest gates name a family other than
-/// [`TransportGraph::quest_family`], rather than silently rebinding the keys.
-/// Invalid model data and unrepresentable sizes are also reported as errors.
+/// Invalid model data and unrepresentable sizes are reported as errors.
 pub fn encode(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -66,7 +63,7 @@ pub fn encode(
     encode_with_atlas(collision, graph, banks, &atlas)
 }
 
-/// Serialize a v18 pack with a caller-built reachability atlas.
+/// Serialize a v19 pack with a caller-built reachability atlas.
 pub fn encode_with_atlas(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -82,7 +79,6 @@ pub fn encode_with_atlas(
     })?;
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
-    write_quest_family(&mut out, graph.quest_family.as_ref());
     for v in [
         collision.origin.x,
         collision.origin.z,
@@ -204,7 +200,7 @@ fn encoded_size(
         .checked_add(graph.teleports.len())
         .ok_or_else(|| PackError::BadLength("transport edge count overflows".into()))?;
     checked_count(edge_count, "transport edge")?;
-    let mut size = 4 + 1 + if graph.quest_family.is_some() { 35 } else { 1 };
+    let mut size = 4 + 1;
     size = add_encoded_size(size, 12 + 8, "collision header")?;
     size = add_encoded_size(size, collision.walk.len(), "walk grid")?;
     size = add_encoded_size(
@@ -270,14 +266,6 @@ fn encoded_size(
         }
         if approach.is_some() {
             edge_size = add_encoded_size(edge_size, 3, "approach geometry")?;
-        }
-        if let Some(gates) = &edge.quest_gates {
-            if graph.quest_family.as_ref() != Some(gates.family()) {
-                return Err(PackError::BadLength(format!(
-                    "{:?} loc {} carries quest gates of another quest family than the pack's",
-                    edge.kind, edge.loc_id
-                )));
-            }
         }
         size = add_encoded_size(size, edge_size, "transport edge")?;
     }
@@ -486,18 +474,6 @@ fn write_req_ids(out: &mut Vec<u8>, reqs: &[i32]) {
     out.extend_from_slice(&(reqs.len() as u32).to_le_bytes());
     for id in reqs {
         out.extend_from_slice(&id.to_le_bytes());
-    }
-}
-
-/// The v11 header's quest-family binding: `0`, or `1` + digest + schema.
-fn write_quest_family(out: &mut Vec<u8>, family: Option<&QuestFamilyId>) {
-    match family {
-        None => out.push(0),
-        Some(family) => {
-            out.push(1);
-            out.extend_from_slice(family.quest_facts_sha256());
-            out.extend_from_slice(&family.quest_extractor_schema().get().to_le_bytes());
-        }
     }
 }
 

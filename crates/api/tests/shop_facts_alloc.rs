@@ -2,9 +2,19 @@
 use api::game_data::for_revision;
 use api::selected::ClientRevision;
 use api::shop_facts::vendors_for;
+use api::test_support::local_asset_path;
 
 #[test]
 fn warmed_vendors_for_pass_allocates_nothing() {
+    if local_asset_path(
+        "",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
+        "revision 289 game data for shop facts allocation test",
+    )
+    .is_none()
+    {
+        return;
+    }
     let data = for_revision(ClientRevision::R289).expect("selected game data");
     let harpoon_id = data.item_by_alias("harpoon").expect("harpoon").id;
 

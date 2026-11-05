@@ -407,7 +407,11 @@ mod tests {
         let mut slot = SlotScript::new();
         slot.sync_compiled_clue(false);
         install_cards(&COUNTING_CARD).unwrap();
-        slot.start_test_script(Box::new(IdleScript), None).unwrap();
+        slot.start_test_script(
+            Box::new(IdleScript),
+            Some(crate::native::minimal_selected_data_for_test()),
+        )
+        .unwrap();
         slot.sync_compiled_clue(false);
         assert_calls(&[Call::Resume, Call::Hold(false)]);
 

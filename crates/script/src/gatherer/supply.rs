@@ -1648,7 +1648,7 @@ mod tests {
     #[test]
     fn bank_unbankable_set_covers_engine_content_refusals() {
         let Some(engine) =
-            crate::ctx::test_support::local_asset_path("ENGINE_DIR", "", "289 engine content")
+            api::test_support::local_asset_path("ENGINE_DIR", "", "289 engine content")
         else {
             return;
         };

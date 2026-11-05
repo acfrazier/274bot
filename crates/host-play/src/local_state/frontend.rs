@@ -21,9 +21,9 @@ use std::time::Instant;
 use api::identity::{RequestId, Settlement};
 use api::local_state::{
     AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, DurableReceipt, ErrorCode,
-    LoadoutEdit, LoadoutOp, LocalStateDomain, LocalStatePort, StoreVersion, SubmitReceipt,
-    ValidationReason, MAX_PREF_EDIT_BYTES, MAX_PREF_EDIT_CHANGES, MAX_PREF_KEY_CHARS,
-    MAX_PREF_VALUE_BYTES,
+    FailureReason, LoadoutEdit, LoadoutOp, LocalStateDomain, LocalStatePort, StoreVersion,
+    SubmitReceipt, ValidationReason, MAX_PREF_EDIT_BYTES, MAX_PREF_EDIT_CHANGES,
+    MAX_PREF_KEY_CHARS, MAX_PREF_VALUE_BYTES,
 };
 #[cfg(any(test, feature = "test-support"))]
 use api::local_state::{PreferenceChange, PreferencesEdit};
@@ -177,6 +177,17 @@ impl PreferenceError {
             Self::Store { code, .. } => Some(*code),
             Self::Cancelled { .. } | Self::ResultNotRetained { .. } | Self::Other { .. } => None,
         }
+    }
+
+    /// Whether this store was refused for a pre-0.2.8 saved-data shape.
+    pub fn is_unsupported_saved_format(&self) -> bool {
+        matches!(
+            self.code(),
+            Some(ErrorCode::Failed {
+                domain: LocalStateDomain::Preferences,
+                reason: FailureReason::UnsupportedSavedFormat,
+            })
+        )
     }
 
     /// Whether the preference document is still hydrating.

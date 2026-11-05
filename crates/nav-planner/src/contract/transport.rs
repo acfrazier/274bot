@@ -113,13 +113,6 @@ impl<'a> TransportView<'a> {
             .map(|gates| gates.gates())
     }
 
-    /// The content family of this edge's quest gates.
-    pub fn quest_family(self) -> Option<&'a crate::quest_gates::QuestFamilyId> {
-        self.edge()
-            .and_then(|edge| edge.quest_gates.as_ref())
-            .map(|gates| gates.family())
-    }
-
     /// Optional exact takeoff; `None` keeps radius/footprint admission.
     pub fn takeoff(self) -> Option<WorldTile> {
         self.edge().and_then(|edge| edge.takeoff)

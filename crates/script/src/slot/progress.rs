@@ -10,7 +10,7 @@ use crate::quester::{
 };
 use api::identity::{Cancellation, Scope, SlotKey};
 use api::quest_facts::QuestCatalog;
-use api::selected::{Knowledge, SelectedPin};
+use api::selected::Knowledge;
 use api::snapshot::QuestListStatus;
 use std::{task::Poll, time::Duration};
 
@@ -18,7 +18,7 @@ pub(super) type ProgressJob = PreparedTask<Result<PreparedProgress, Arc<str>>>;
 
 pub(super) struct PreparedProgress {
     selected: Arc<api::game_data::SelectedGameData>,
-    pin: Arc<SelectedPin>,
+    revision: api::selected::ClientRevision,
     path: Arc<CompiledPath>,
     quests: Arc<QuestCatalog>,
 }
@@ -174,8 +174,7 @@ fn submit_progress(
         Scope::Slot(slot),
         input,
         move |cap| {
-            let pin = selected
-                .selected_pin()
+            let revision = compiled::selected_revision(&selected)
                 .map_err(|error| Arc::from(format!("failed:{error:?}")))?;
             let quests = Arc::new(
                 QuestCatalog::from_identity(selected.quest_identity())
@@ -193,7 +192,7 @@ fn submit_progress(
             .map_err(compile_error_reason)?;
             Ok(PreparedProgress {
                 selected,
-                pin,
+                revision,
                 path,
                 quests,
             })
@@ -451,7 +450,7 @@ impl SlotScript {
         let mut cx = compiled::frame_context(
             ctx,
             *run,
-            &prepared.pin,
+            prepared.revision,
             &mut retained,
             &mut self.native_runtime,
         );
@@ -544,12 +543,7 @@ impl SlotScript {
                     token: *token,
                     row: row(
                         prepared,
-                        resolve_colour(
-                            &prepared.path,
-                            colour,
-                            cx.evidence(),
-                            Arc::clone(&prepared.pin),
-                        ),
+                        resolve_colour(&prepared.path, colour, cx.evidence()),
                         colour,
                         false,
                     ),

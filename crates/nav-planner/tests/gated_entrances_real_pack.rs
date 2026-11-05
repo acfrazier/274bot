@@ -18,7 +18,7 @@ use api::selected::ClientRevision;
 use api::selected::{FamilyPreparation, QuestGate, RunKey, StageWindow, Truth};
 use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, WorldTile};
 use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{
     find_actionable_quest_gates, find_first_with, find_missing_item_reqs,
     find_unresolved_quest_gates, find_with, FindOptions, Leg, MissingReq, RouteError,
@@ -62,15 +62,8 @@ fn stamp() -> EvidenceStamp {
 
 fn completed_state() -> WorldState {
     let selected = game_data::for_revision(ClientRevision::R289).expect("selected revision");
-    let (facts, identity) = selected
-        .quest_identity_for_bake()
-        .expect("verified quest family");
-    let catalog = QuestCatalog::from_identity(Some(&facts)).expect("quest catalog");
-    let family = QuestFamilyId::new(identity.sha256, identity.schema);
-    world()
-        .graph
-        .admit_quest_family(&family)
-        .expect("exact selected quest family");
+    let facts = selected.quest_identity().expect("selected quest facts");
+    let catalog = QuestCatalog::from_identity(Some(facts)).expect("quest catalog");
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_quest_statuses(
@@ -87,8 +80,6 @@ fn completed_state() -> WorldState {
     );
     let provider = QuestListEvidenceProvider::from_snapshot(
         &catalog,
-        Some(identity),
-        Some(identity),
         SnapshotView::new(Some(&snapshot), stamp()),
     );
     WorldState {
@@ -102,7 +93,7 @@ fn completed_state() -> WorldState {
             .collect(),
         ..WorldState::empty().with_map_members(true)
     }
-    .with_quest_evidence(QuestEvidence::new(Arc::new(provider), family, stamp()))
+    .with_quest_evidence(QuestEvidence::new(Arc::new(provider), stamp()))
 }
 
 fn ingress(id: i32, gate: impl Fn(&TransportEdge) -> bool) -> &'static TransportEdge {
@@ -205,7 +196,7 @@ fn grand_tree_completion_opens_both_mine_resource_regions() {
         &missing,
         &[],
     )
-    .expect("matching family diagnosis")
+    .expect("quest gate diagnosis")
     .expect("typed completion requirement");
     assert_eq!(&*unresolved, gates.gates());
 }
@@ -385,14 +376,12 @@ fn prerequisite_catalog() -> Arc<api::prereq_steps::PrereqCatalog> {
 
 fn morytania_state(
     base: &WorldState,
-    family: QuestFamilyId,
     truth: Truth,
     establishable: &Arc<[StageWindow]>,
 ) -> WorldState {
     base.clone()
         .with_quest_evidence(QuestEvidence::new(
             Arc::new(MorytaniaGateEvidence(truth)),
-            family,
             stamp(),
         ))
         .with_establishable(Arc::clone(establishable))
@@ -551,11 +540,6 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
 
     let from = a1.takeoff.unwrap_or(a1.at);
     let base = completed_state();
-    let selected = game_data::for_revision(ClientRevision::R289).expect("selected revision");
-    let (_, identity) = selected
-        .quest_identity_for_bake()
-        .expect("verified quest family");
-    let family = QuestFamilyId::new(identity.sha256, identity.schema);
     let catalog = prerequisite_catalog();
     let establishable = catalog.establishable_windows();
     for edge in a1_directions
@@ -576,9 +560,9 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
             );
         }
     }
-    let proof = morytania_state(&base, family, Truth::True, &establishable);
-    let unknown = morytania_state(&base, family, Truth::Unknown, &establishable);
-    let false_state = morytania_state(&base, family, Truth::False, &establishable);
+    let proof = morytania_state(&base, Truth::True, &establishable);
+    let unknown = morytania_state(&base, Truth::Unknown, &establishable);
+    let false_state = morytania_state(&base, Truth::False, &establishable);
     let world = world();
     let east = tile(3422, 3485);
     let underground = tile(3440, 9887);
@@ -673,7 +657,7 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
                     state,
                     &[],
                 )
-                .expect("matching quest family")
+                .expect("quest gate diagnosis")
                 .expect("strict NoPath has an actionable A1/A2 diagnosis");
                 assert!(
                     actionable

@@ -1,7 +1,7 @@
 //! The router's world, loaded from the baked nav pack: the whole-world
 //! [`WorldCollision`] walk surface plus the transport [`TransportGraph`]
 //! and the content-derived bank stand table ([`crate::pack::BankStand`]).
-//! The v16 pack file stores the compact packed walk surface and the
+//! The v19 pack file stores the compact packed walk surface and the
 //! transport edges, so the Dijkstra router ([`crate::router::find`])
 //! consumes one artifact — live harnesses load this and route on the
 //! packed collision. The legacy 274N grid pack (boolean walk bytes +
@@ -20,7 +20,7 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
-use crate::contract::{NavIdentity, PackDigest, SearchGraphEnvelope};
+use crate::contract::{NavIdentity, SearchGraphEnvelope};
 use crate::grid::StepGrid;
 use crate::pack::{decode_any_reader, decode_full, decode_grid, BankStand, PackError};
 use crate::reachability::ReachabilityAtlas;
@@ -41,13 +41,8 @@ pub struct NavWorld {
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
     transport_item_names: OnceLock<TransportItemNames>,
     risk_facts: OnceLock<Box<dyn Any + Send + Sync>>,
-    /// The pack bytes' digest: set by [`Self::from_bytes`], or by the host's
-    /// loader from the verified manifest (`crate::producer::bind`). Unset on
-    /// a synthetic world until a view is first served.
-    pub(crate) content: OnceLock<PackDigest>,
     /// The one facade identity of this loaded world, minted on first use
-    /// (`crate::producer`). [`crate::contract::NavLease::wrap`] mints its
-    /// own and never reads this.
+    /// (`crate::producer`) and shared by every lease and view over it.
     pub(crate) lease_identity: OnceLock<NavIdentity>,
     pub(crate) search_envelope: OnceLock<SearchGraphEnvelope>,
 }
@@ -68,9 +63,9 @@ impl NavWorld {
             .expect("one admission fact type per navigation world")
     }
 
-    /// Cached once per immutable world. `producer::bind` pins production
-    /// worlds before publication; a synthetic fixture initializes on its
-    /// first producer lease. Search preflight copies only these scalars.
+    /// Cached once per immutable world. The producer prepares this before
+    /// publication; synthetic fixtures initialize it on first identity query.
+    /// Search preflight copies only these scalars.
     pub(crate) fn search_graph_envelope(&self) -> SearchGraphEnvelope {
         *self
             .search_envelope
@@ -165,8 +160,6 @@ impl NavWorld {
     /// legacy 274N grid packs fall back to [`Self::from_grid`] on the same
     /// buffer. The fallback triggers on bad magic only — a `274V` pack with
     /// a stale version stays [`PackError::BadVersion`] so the operator
-    /// rebakes. This never rereads a pathname. The bytes' SHA-256 becomes
-    /// the world's facade content identity (`crate::producer`).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PackError> {
         let world = match decode_full(bytes) {
             Ok((collision, graph, banks, atlas)) => {
@@ -175,7 +168,6 @@ impl NavWorld {
             Err(PackError::BadMagic) => Self::from_grid(&decode_grid(bytes)?),
             Err(e) => return Err(e),
         };
-        let _ = world.content.set(PackDigest::of(bytes));
         Ok(world)
     }
 

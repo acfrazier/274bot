@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use api::identity::{RequestId, Settlement};
+use nav_planner::contract::PackId;
 use nav_planner::map::identity::Digest;
 use nav_planner::router::FindOptions;
 use nav_planner::tile::Tile;
@@ -21,13 +22,12 @@ use crate::walk_map::{
 use crate::OperatorSession;
 
 impl<Io> OperatorSession<Io> {
-    /// Bind the map to a navigation identity, catalogue overlay and current
-    /// focused slot. The frontend supplies only stable display identities;
-    /// host focus tokens are captured here.
+    /// Bind the map to a loaded world, catalogue overlay and focused slot.
+    /// The frontend supplies ownership keys. The host captures focus tokens.
     pub fn walk_map_context(
         &self,
         name: Option<&str>,
-        nav: Digest,
+        nav: PackId,
         overlay: Option<Digest>,
         generation: u64,
     ) -> WalkMapContext {

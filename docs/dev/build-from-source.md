@@ -118,51 +118,54 @@ or start another card. Omit `--no-default-features`, or add `--features js`,
 to build with JavaScript again. `host-play`'s `memory-profile` feature also
 enables `js`, because that benchmark starts JS bots.
 
-## Nav
+## Game data and navigation
 
-Application builds bake, stage and bundle the navigation world themselves: a
-default build targets revision **289**, bakes (or reuses) the pack with the
-shared baker, and stages pack + flags next to the built binary
-(`target/<profile>/nav/289/`) — exactly where the running app looks. WalkTo /
-`Traveller::follow` (`nav-executor` over the `nav` world) work with no manual step:
+Product builds do not generate game data or navigation. Generate both from
+your own engine and content checkouts before you build a product. Set each
+variable to its matching local source root:
 
 ```bash
-cargo build --release -p panel --bin panel-play   # stages nav/289, reusing it when unchanged
+export GAME_DATA_274_ENGINE=/absolute/path/to/274-engine
+export GAME_DATA_274_CONTENT=/absolute/path/to/274-content
+export GAME_DATA_289_ENGINE=/absolute/path/to/289-engine
+export GAME_DATA_289_CONTENT=/absolute/path/to/289-content
+export RS2B0T=/absolute/path/to/rs2b0t
+python tools/local-data/build.py
 ```
 
-Missing canonical inputs fail the build with a clear message instead of
-producing an app without navigation (`BOT_NAV_BUILD=skip` opts out explicitly;
-`BOT_NAV_REVISION=274` selects revision 274). A macOS bundle ships
-`Contents/Resources/nav/<revision>/`; `BOT_NAV_RESOURCE_DIR` stages into a
-packager's own layout. Warm builds reuse unchanged artifacts; a change to the
-content, the cache identity, the pack format or the baker rebakes. Full knob
-table and the build-time identity rules: [docs/api/nav.md](../api/nav.md).
-
-`nav-pack` stays for deliberate developer/custom-input bakes over a Server tree:
+The canonical builder generates game data and navigation for revisions 274
+and 289. It exports real revision-289 crossings before it writes the
+prerequisite facts. Build the product only after it succeeds:
 
 ```bash
-NAV_PACK=/absolute/output/274bot.navpack NAV_FLAGS=/absolute/output/274bot.navflags cargo run -p nav-bake --bin nav-pack
+cargo build --release -p panel --bin panel-play
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **18**).
-Rebake existing v17 and older packs after you update 274bot.
+The host build stages the five existing local payloads from
+`target/local-data/nav/<revision>/` into the product resources. It does not
+bake them. `BOT_NAV_BUILD=skip` stages nothing. `BOT_NAV_REVISION` selects the
+revision, and `BOT_NAV_RESOURCE_DIR` selects another staging root.
+`NAV_PACK` is a runtime override. It does not select build inputs.
 
-Version 17 adds count-prefixed `forbidden_held` and `forbidden_worn` vectors after `worn_all_req`.
-These content-derived absence gates block an edge when listed items are held or worn.
-Version 16 added the conjunctive `worn_all_req` list and an optional exact takeoff per edge.
-Version 15 added count-prefixed per-edge `consumed_req` and `item_returns` vectors after reusable `item_req`.
+The current pack format is `274V19`. The runtime decoder keeps format, geometry,
+length, and structural checks. Older incompatible packs fail with `BadVersion`.
+The local payloads are the pack, flags, reachability, canlight, and POI data.
+They have no generated manifest or source-identity sidecar.
 
-Spell runes and script-deleted fares and passes are consumed.
-Charged jewellery returns its content-declared `next_obj_stage` after a successful rub.
-Resource counts must be positive, and returned items require consumption.
-The v14 kind-byte flag marks content-derived player-relative ladder and stair landings without added wire bytes.
-Version 18 retains the zone table, selected quest-family binding, typed quest-stage gates, and per-edge approach geometry.
-`decode` rejects v17 and older as `BadVersion`.
-See [the navigation API guide](../api/nav.md) for the full wire format and bake options.
+To rebake only navigation after a content change, use the generated game data:
 
-**External v17 and older packs are refused with `BadVersion`.** The app rebuilds the bundled pack automatically.
-It does not derive a pack that you baked yourself from the current content tree.
-Rebake it with `cargo run -p nav-bake --bin nav-pack`, with explicit output paths, after content or format changes.
+```bash
+cargo run --locked -p nav-bake --bin nav-pack -- \
+  --revision 289 \
+  --content "$GAME_DATA_289_CONTENT" \
+  --cache "$GAME_DATA_289_ENGINE/data/pack/client" \
+  --game-data-dir crates/api/data/game-data \
+  --out target/local-data/nav/289/274bot.navpack
+```
+
+The nav-bake CLI writes all default sidecars beside the pack. Regenerate game
+data and navigation with the canonical builder when the engine checkout
+changes.
 
 ## Live tests and suite runner
 

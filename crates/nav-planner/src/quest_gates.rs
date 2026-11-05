@@ -1,110 +1,20 @@
 //! Quest-stage gates on transport edges: typed [`QuestGate`]s (a completed
 //! quest or a closed [`StageWindow`](api::selected::StageWindow) over a
-//! selected progress signal) bound to the selected quest family a pack was
-//! baked against, and the resolved progress evidence a search tests them with.
+//! selected progress signal) and the resolved progress evidence a search tests them with.
 //!
 //! Nav never decides a gate from snapshot varps, a hidden stage number or a
 //! journal it reads itself: only an [`EvidenceProvider`] prepared from the
-//! same quest family answers it, under the caller's causal freshness floor.
+//! caller's selected content answers it, under the caller's causal freshness floor.
 //! `True` alone authorizes an edge. `False` (every possible value lies
-//! outside the window) and `Unknown` (no evidence, stale evidence, evidence
-//! from another family, values that straddle a bound) never do.
+//! outside the window) and `Unknown` (no evidence, stale evidence, values
+//! that straddle a bound) never do.
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{QuestGate, Truth};
-
-use crate::transport::TransportGraph;
-
-/// The selected quest family a pack's gates were baked against: the family
-/// artifact digest (`manifest.families.quests.sha256`) and its extractor
-/// schema. Never the final manifest hash, which is computed after the bake.
-/// No extractor schema is 0, so the pack's family binding never is either:
-/// every family a caller can build encodes into a pack that decodes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct QuestFamilyId {
-    quest_facts_sha256: [u8; 32],
-    quest_extractor_schema: NonZeroU16,
-}
-
-impl QuestFamilyId {
-    /// The family artifact digest and its (nonzero) extractor schema.
-    pub fn new(quest_facts_sha256: [u8; 32], quest_extractor_schema: NonZeroU16) -> Self {
-        Self {
-            quest_facts_sha256,
-            quest_extractor_schema,
-        }
-    }
-
-    /// The quest family artifact's SHA-256 digest.
-    pub fn quest_facts_sha256(&self) -> &[u8; 32] {
-        &self.quest_facts_sha256
-    }
-
-    /// The family's extractor schema.
-    pub fn quest_extractor_schema(&self) -> NonZeroU16 {
-        self.quest_extractor_schema
-    }
-}
-
-impl fmt::Display for QuestFamilyId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} (extractor schema {})",
-            crate::pack::sha256_hex(&self.quest_facts_sha256),
-            self.quest_extractor_schema
-        )
-    }
-}
-
-/// A quest family other than the one a pack's gates were baked against.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct QuestFamilyMismatch {
-    /// The family the pack records; `None` when its bake consumed none.
-    pub pack: Option<QuestFamilyId>,
-    /// The family the caller's manifest or evidence names.
-    pub expected: QuestFamilyId,
-}
-
-impl fmt::Display for QuestFamilyMismatch {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.pack {
-            Some(pack) => write!(
-                f,
-                "navigation pack quest gates were baked against quest family {pack}, not {}; rebake the pack",
-                self.expected
-            ),
-            None => write!(
-                f,
-                "navigation pack was baked without a quest family, not against {}; rebake the pack",
-                self.expected
-            ),
-        }
-    }
-}
-
-impl std::error::Error for QuestFamilyMismatch {}
-
-impl TransportGraph {
-    /// Runtime admission: the pack must have been baked against exactly this
-    /// quest family digest and extractor schema. A pack that consumed no
-    /// family is refused too; nothing is assumed about gates it never saw.
-    pub fn admit_quest_family(&self, expected: &QuestFamilyId) -> Result<(), QuestFamilyMismatch> {
-        if self.quest_family.as_ref() == Some(expected) {
-            Ok(())
-        } else {
-            Err(QuestFamilyMismatch {
-                pack: self.quest_family,
-                expected: *expected,
-            })
-        }
-    }
-}
 
 /// Why a gate list cannot gate an edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,22 +44,17 @@ impl std::error::Error for QuestGateError {}
 
 #[derive(Debug, PartialEq, Eq)]
 struct GateSet {
-    family: QuestFamilyId,
     gates: Arc<[QuestGate]>,
 }
 
-/// An edge's quest-stage gates: a non-empty, canonical (sorted, duplicate
-/// free) list bound to the quest family its keys come from. The edge is
-/// usable only while every gate is `True`. Cloning shares the canonical gates.
+/// An edge's non-empty, canonical (sorted, duplicate-free) quest-stage gates.
+/// The edge is usable only while every gate is `True`; clones share the gates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuestGates(Arc<GateSet>);
 
 impl QuestGates {
-    /// Validate and canonicalize `gates` for `family`.
-    pub fn new(
-        family: QuestFamilyId,
-        gates: impl IntoIterator<Item = QuestGate>,
-    ) -> Result<Self, QuestGateError> {
+    /// Validate and canonicalize the gates.
+    pub fn new(gates: impl IntoIterator<Item = QuestGate>) -> Result<Self, QuestGateError> {
         let mut gates: Vec<QuestGate> = gates.into_iter().collect();
         for gate in &gates {
             validate(gate)?;
@@ -160,14 +65,8 @@ impl QuestGates {
             return Err(QuestGateError::Empty);
         }
         Ok(Self(Arc::new(GateSet {
-            family,
             gates: Arc::from(gates),
         })))
-    }
-
-    /// The quest family whose keys the gates name.
-    pub fn family(&self) -> &QuestFamilyId {
-        &self.0.family
     }
 
     /// The gates, in canonical order.
@@ -180,15 +79,12 @@ impl QuestGates {
         Arc::clone(&self.0.gates)
     }
 
-    /// `True` only when evidence prepared from the same quest family proves
-    /// every gate; `False` when it disproves one; otherwise `Unknown`. No
-    /// evidence, or evidence from another family, is `Unknown`.
+    /// `True` only when evidence proves every gate; `False` when it disproves
+    /// one; otherwise `Unknown`.
     pub fn test(&self, evidence: Option<&QuestEvidence>) -> Truth {
         match evidence {
-            Some(evidence) if evidence.family == self.0.family => {
-                Truth::all(self.0.gates.iter().map(|gate| evidence.test(gate)))
-            }
-            _ => Truth::Unknown,
+            Some(evidence) => Truth::all(self.0.gates.iter().map(|gate| evidence.test(gate))),
+            None => Truth::Unknown,
         }
     }
 }
@@ -199,16 +95,14 @@ impl PartialOrd for QuestGates {
     }
 }
 
-/// Canonical pack order: family, then the gates key by key.
+/// Canonical pack order: gates key by key.
 impl Ord for QuestGates {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.0.family.cmp(&other.0.family).then_with(|| {
-            self.0
-                .gates
-                .iter()
-                .map(gate_key)
-                .cmp(other.0.gates.iter().map(gate_key))
-        })
+        self.0
+            .gates
+            .iter()
+            .map(gate_key)
+            .cmp(other.0.gates.iter().map(gate_key))
     }
 }
 
@@ -244,26 +138,19 @@ fn validate(gate: &QuestGate) -> Result<(), QuestGateError> {
 }
 
 /// Resolved quest progress a search tests gates with: the caller's immutable
-/// provider snapshot, the quest family it was prepared from and the causal
-/// freshness floor every answer must meet. Nav only asks the provider; it
-/// never reads a journal or a varp to answer a gate itself.
+/// provider snapshot and the causal freshness floor every answer must meet.
+/// Nav only asks the provider; it never reads a journal or varp itself.
 #[derive(Clone)]
 pub struct QuestEvidence {
     provider: Arc<dyn EvidenceProvider>,
-    family: QuestFamilyId,
     required_after: EvidenceStamp,
     owned_provider_bytes: usize,
 }
 
 impl QuestEvidence {
-    pub fn new(
-        provider: Arc<dyn EvidenceProvider>,
-        family: QuestFamilyId,
-        required_after: EvidenceStamp,
-    ) -> Self {
+    pub fn new(provider: Arc<dyn EvidenceProvider>, required_after: EvidenceStamp) -> Self {
         Self {
             provider,
-            family,
             required_after,
             owned_provider_bytes: 0,
         }
@@ -280,11 +167,6 @@ impl QuestEvidence {
         self.owned_provider_bytes
     }
 
-    /// The quest family the provider was prepared from.
-    pub fn family(&self) -> &QuestFamilyId {
-        &self.family
-    }
-
     /// The causal floor every answer must meet.
     pub fn required_after(&self) -> EvidenceStamp {
         self.required_after
@@ -296,13 +178,11 @@ impl QuestEvidence {
     }
 }
 
-/// Same provider snapshot, family and floor: a refreshed provider is new
-/// evidence even when it would answer alike.
+/// The same provider snapshot and floor; refreshed evidence is new evidence
+/// even when it would answer alike.
 impl PartialEq for QuestEvidence {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.provider, &other.provider)
-            && self.family == other.family
-            && self.required_after == other.required_after
+        Arc::ptr_eq(&self.provider, &other.provider) && self.required_after == other.required_after
     }
 }
 
@@ -311,7 +191,6 @@ impl Eq for QuestEvidence {}
 impl fmt::Debug for QuestEvidence {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("QuestEvidence")
-            .field("family", &self.family)
             .field("required_after", &self.required_after)
             .finish_non_exhaustive()
     }

@@ -20,9 +20,9 @@ use serde_json::json;
 use vault::{Profile, ProfileSettings};
 
 use two_slot_isolation::{
-    alcher_row, catalog_ledger, hash_file, near, prepare_alcher, slot_settings,
-    verify_registry_identity, IsolationWitness, Observation, PreparedCard, RecordedState, SlotKind,
-    SlotRecord, FODDER_COUNT, MAGIC_LEVEL, NATURE_COUNT, VARROCK_WEST,
+    alcher_row, catalog_ledger, near, prepare_alcher, slot_settings, verify_registry_identity,
+    IsolationWitness, Observation, PreparedCard, RecordedState, SlotKind, SlotRecord, FODDER_COUNT,
+    MAGIC_LEVEL, NATURE_COUNT, VARROCK_WEST,
 };
 
 const PREP_DEADLINE: Duration = Duration::from_secs(180);
@@ -529,8 +529,20 @@ fn run_cell() -> Result<(), String> {
     if !matches!(revision, 274 | 289) {
         return Err("TWO_SLOT_REVISION must be 274 or 289".into());
     }
-    let nav_pack = PathBuf::from(required("TWO_SLOT_NAV_PACK")?);
-    let root = PathBuf::from(required("TWO_SLOT_CATALOG_ROOT")?);
+    let Some(nav_pack) = api::test_support::local_asset_path(
+        "TWO_SLOT_NAV_PACK",
+        "",
+        "real navigation pack for two-slot isolation live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(root) = api::test_support::local_asset_path(
+        "TWO_SLOT_CATALOG_ROOT",
+        "",
+        "real frozen script catalog for two-slot isolation live proof",
+    ) else {
+        return Ok(());
+    };
     if !root.is_dir() {
         return Err(format!(
             "TWO_SLOT_CATALOG_ROOT is not a directory: {}",
@@ -578,7 +590,6 @@ fn run_cell() -> Result<(), String> {
         pair.0.start_handle = Some(handle.clone());
         pair.1.start_handle = Some(handle);
     }
-    let nav_sha256 = hash_file(profile.nav_pack())?;
     let (settings_a, settings_b) = {
         let pair = state.lock().unwrap();
         (pair.0.settings.clone(), pair.1.settings.clone())
@@ -589,9 +600,7 @@ fn run_cell() -> Result<(), String> {
             "phase": "identity",
             "revision": profile.revision().as_i32(),
             "profile": profile.label(),
-            "cache_id": profile.cache_id(),
             "nav_pack": profile.nav_pack(),
-            "nav_sha256": nav_sha256,
             "catalog_commit": commit,
             "catalog_identity": catalog.identity,
             "catalog_read_only_path": catalog.read_only_path,

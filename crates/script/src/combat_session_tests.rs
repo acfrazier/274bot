@@ -321,7 +321,6 @@ fn with_tick<R>(
     tick: u64,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    let pin = world.data.selected_pin().unwrap();
     let evidence = EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -352,7 +351,7 @@ fn with_tick<R>(
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             wilderness: None,
-            pin: &pin,
+            revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(&world.snapshot), evidence),
             retained: &mut retained,
             action_id: 0,

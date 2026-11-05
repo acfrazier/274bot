@@ -2598,8 +2598,7 @@ fn escape_stand_inside_the_chase_envelope_is_not_the_first_preference() {
 
 #[test]
 fn escape_goals_on_the_reference_pack_exclude_the_dead_tree_thicket() {
-    let Some(_pack) =
-        crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+    let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
     else {
         return;
     };

@@ -114,11 +114,8 @@ fn throwers_crossing_path_compiles_with_current_schema() {
         let bytes = std::fs::read(&pack).expect("read the throwers navigation catalog");
         let world = nav_planner::world::NavWorld::from_bytes(&bytes)
             .expect("load the throwers navigation catalog");
-        let nav = nav_planner::contract::NavLease::wrap(
-            Arc::new(world),
-            nav_planner::contract::PackDigest::of(&bytes),
-        )
-        .expect("bind the throwers navigation catalog");
+        let nav = nav_planner::contract::NavLease::wrap(Arc::new(world))
+            .expect("bind the throwers navigation catalog");
         compile_path(
             path_json(WorldTile {
                 x: 2880,

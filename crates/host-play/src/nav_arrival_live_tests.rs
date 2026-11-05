@@ -829,35 +829,6 @@ fn route_json(sample: Option<&RouteSample>) -> Value {
     })
 }
 
-fn nav_cache_identity(play: &Play) -> Value {
-    let Some(profile) = play.server_profile() else {
-        return json!({"exposed": false, "reason": "Play has no bound server profile"});
-    };
-    let origin = match profile.nav_origin() {
-        NavOrigin::Bundled { identity, path } => json!({
-            "kind": "bundled",
-            "path": path.display().to_string(),
-            "identity": identity,
-        }),
-        NavOrigin::External { path } => json!({
-            "kind": "external",
-            "path": path.display().to_string(),
-        }),
-    };
-    json!({
-        "profile": profile.name(),
-        "revision": format!("{:?}", profile.revision()),
-        "cache_id": profile.cache_id(),
-        "selected_game_data_status": profile.game_data_status().reason(),
-        "nav_pack": profile.nav_pack().display().to_string(),
-        "nav_origin": origin,
-        "nav_manifest": profile.nav_identity(),
-        "nav_availability": format!("{:?}", profile.nav_availability()),
-        "nav_load_counters": format!("{:?}", profile.nav_load_counters()),
-        "nav_world_loaded": play.world().is_some(),
-    })
-}
-
 fn target_json(walk: Option<&WalkSpec>) -> Value {
     let Some(walk) = walk else {
         return Value::Null;
@@ -916,8 +887,8 @@ struct EvidenceContext<'a> {
     scenario: Scenario,
     account: &'a str,
     stamp: &'a str,
+    nav_pack: &'a Path,
     play: &'a Play,
-    nav_identity: &'a Value,
 }
 
 impl EvidenceContext<'_> {
@@ -955,7 +926,8 @@ impl EvidenceContext<'_> {
             })),
             "route": route_json(route),
             "native_walk_receipt": receipt_json(result),
-            "nav_cache_identity": self.nav_identity,
+            "nav_pack": self.nav_pack.display().to_string(),
+            "nav_format": nav_planner::pack::FORMAT_ID,
             "harness_error": extra_error,
         })
     }
@@ -1167,7 +1139,7 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         cache_dir: Some(copied_cache.clone()),
         unpack_dir: Some(copied_cache),
         vault_path: Some(home.join("vault-nav-arrival")),
-        nav_pack: Some(nav_pack),
+        nav_pack: Some(nav_pack.clone()),
         ..ProfileOptions::default()
     };
     let template = options
@@ -1240,13 +1212,12 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         let state = state.lock();
         (state.target.clone(), state.scene, state.setup_error.clone())
     };
-    let nav_identity = nav_cache_identity(&play);
     let evidence = EvidenceContext {
         scenario,
         account: &account,
         stamp: &timestamp,
+        nav_pack: &nav_pack,
         play: &play,
-        nav_identity: &nav_identity,
     };
     let setup_ok = setup_result.is_ok()
         && setup_error.is_none()

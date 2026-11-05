@@ -200,7 +200,10 @@ if (%heroquest >= ^hero_complete) {
     let fx = plain_opener_fixture(OPENER);
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
-    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let mut facts = selected
+        .quest_identity()
+        .expect("selected quest facts")
+        .clone();
     let row = facts
         .rows
         .iter_mut()
@@ -212,10 +215,7 @@ if (%heroquest >= ^hero_complete) {
         max: Some(20),
     });
     row.transmission = api::quest_facts::Transmission::NotTransmitted;
-    let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    };
+    let quests = QuestSource { facts: &facts };
 
     let (graph, _) = derive_stage_with_quests(&fx, &[900], &quests);
     let edges: Vec<_> = graph
@@ -228,7 +228,6 @@ if (%heroquest >= ^hero_complete) {
         assert!(edge.quest_req.is_empty(), "{edge:?}");
         assert!(edge.varp_req.is_empty(), "{edge:?}");
         let gates = edge.quest_gates.as_ref().expect("typed quest gate");
-        assert_eq!(gates.family(), &quests.family);
         let [api::selected::QuestGate::Window(window)] = gates.gates() else {
             panic!("stage comparison must retain its exact window: {gates:?}");
         };
@@ -253,7 +252,6 @@ if (%heroquest >= ^hero_complete) {
     assert_eq!(exact_edges.len(), 2);
     for edge in exact_edges {
         let gates = edge.quest_gates.as_ref().expect("typed quest gate");
-        assert_eq!(gates.family(), &quests.family);
         assert!(
             matches!(
                 gates.gates(),
@@ -271,7 +269,10 @@ if (%heroquest >= ^hero_complete) {
 fn with_authoritative_hero(check: impl FnOnce(&QuestSource<'_>)) {
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
-    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let mut facts = selected
+        .quest_identity()
+        .expect("selected quest facts")
+        .clone();
     let row = facts
         .rows
         .iter_mut()
@@ -283,16 +284,16 @@ fn with_authoritative_hero(check: impl FnOnce(&QuestSource<'_>)) {
         max: Some(20),
     });
     row.transmission = api::quest_facts::Transmission::NotTransmitted;
-    check(&QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    });
+    check(&QuestSource { facts: &facts });
 }
 
 fn with_journal_only_hero(check: impl FnOnce(&QuestSource<'_>)) {
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
-    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let mut facts = selected
+        .quest_identity()
+        .expect("selected quest facts")
+        .clone();
     let row = facts
         .rows
         .iter_mut()
@@ -301,10 +302,7 @@ fn with_journal_only_hero(check: impl FnOnce(&QuestSource<'_>)) {
     row.colour_authoritative = false;
     row.stage_domain = None;
     row.transmission = api::quest_facts::Transmission::NotTransmitted;
-    check(&QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    });
+    check(&QuestSource { facts: &facts });
 }
 
 /// A no-domain entrance retains its content threshold whether the journal
@@ -343,7 +341,6 @@ p_teleport(0_44_53_5_46);
                 assert!(edge.quest_req.is_empty(), "{edge:?}");
                 assert!(edge.varp_req.is_empty(), "{edge:?}");
                 let gates = edge.quest_gates.as_ref().expect("typed raw-progress gate");
-                assert_eq!(gates.family(), &quests.family);
                 let [api::selected::QuestGate::Window(window)] = gates.gates() else {
                     panic!("journal colour cannot replace raw progress: {gates:?}");
                 };
@@ -440,7 +437,6 @@ fn post_completion_pass_through_keeps_exact_stage_and_current_player() {
             assert_eq!(edge.kind, TransportKind::Door);
             assert_eq!(edge.to, tile(2826, 3439));
             let gates = edge.quest_gates.as_ref().expect("typed quest window");
-            assert_eq!(gates.family(), &quests.family);
             let [api::selected::QuestGate::Window(window)] = gates.gates() else {
                 panic!("exact post-completion stage must remain a window: {gates:?}");
             };
@@ -1980,11 +1976,8 @@ fn derive_entrance_fixture_with_quests(
 fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
-    let (facts, identity) = selected.quest_identity_for_bake().expect("verified family");
-    let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    };
+    let facts = selected.quest_identity().expect("selected quest facts");
+    let quests = QuestSource { facts };
     derive_entrance_fixture_with_quests(fx, &quests)
 }
 
@@ -2004,7 +1997,10 @@ p_teleport(0_44_53_5_46);
     );
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
-    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let mut facts = selected
+        .quest_identity()
+        .expect("selected quest facts")
+        .clone();
     let hero = facts.rows.iter().position(|row| row.id == "hero").unwrap();
     // Actual writers and entry guards: BATCH-029-INT/w3-hero-grandtree-colour-guards.md.
     assert!(!facts.rows[hero].colour_authoritative);
@@ -2020,10 +2016,7 @@ p_teleport(0_44_53_5_46);
         // The true branch is a controlled complete-only positive fixture,
         // not a change to the selected Hero metadata.
         facts.rows[hero].colour_authoritative = authoritative;
-        let quests = QuestSource {
-            family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-            facts: &facts,
-        };
+        let quests = QuestSource { facts: &facts };
         let (graph, _) = derive_entrance_fixture_with_quests(&fx, &quests);
         let expected = if authoritative {
             QuestGate::Complete(FactKey::new("hero"))
@@ -2382,7 +2375,10 @@ loc_anim(roots_close);
     );
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
-    let (mut facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let mut facts = selected
+        .quest_identity()
+        .expect("selected quest facts")
+        .clone();
     let hero = facts.rows.iter().position(|row| row.id == "hero").unwrap();
     // Same guarded-writer classification as the teleport fixture above.
     assert!(!facts.rows[hero].colour_authoritative);
@@ -2397,10 +2393,7 @@ loc_anim(roots_close);
     for authoritative in [false, true] {
         // Preserve the canonical-positive extractor path with controlled facts.
         facts.rows[hero].colour_authoritative = authoritative;
-        let quests = QuestSource {
-            family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-            facts: &facts,
-        };
+        let quests = QuestSource { facts: &facts };
         let (graph, _) = derive_entrance_fixture_with_quests(&fx, &quests);
         let expected = if authoritative {
             QuestGate::Complete(FactKey::new("hero"))
@@ -2538,7 +2531,7 @@ fn shared_journal_kitchen_door_requires_the_phoenix_signal_in_both_directions() 
     fx.write("pack/varp.pack", "188=heroquest\n146=phoenixgang\n");
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
-    let (facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let facts = selected.quest_identity().expect("selected quest facts");
     let phoenix = facts
         .rows
         .iter()
@@ -2546,10 +2539,7 @@ fn shared_journal_kitchen_door_requires_the_phoenix_signal_in_both_directions() 
         .unwrap();
     assert!(!phoenix.colour_authoritative);
     assert_eq!(phoenix.varp_id, 146);
-    let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    };
+    let quests = QuestSource { facts };
     let (graph, _) = derive_stage_with_quests(&fx, &[900], &quests);
     let edges: Vec<_> = graph
         .edges

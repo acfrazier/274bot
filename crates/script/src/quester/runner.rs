@@ -1558,20 +1558,9 @@ impl Quester {
             value: StatusValue::Text(Arc::clone(&self.tested_stats_warning)),
         });
         fields.push(StatusField {
-            key: "pin",
-            label: "Selected pin",
-            value: StatusValue::Text(self.selected.selected_pin().map_or_else(
-                |_| Arc::from("unavailable"),
-                |pin| {
-                    Arc::from(format!(
-                        "r{} engine:{} content:{} nav:{:02x?}",
-                        pin.revision.as_i32(),
-                        pin.engine_commit,
-                        pin.content_commit,
-                        pin.nav_sha256
-                    ))
-                },
-            )),
+            key: "selected_revision",
+            label: "Selected revision",
+            value: StatusValue::Integer(i64::from(self.selected.revision())),
         });
         fields.push(StatusField {
             key: "tactic",
@@ -2496,12 +2485,7 @@ impl Quester {
                 }
                 return false;
             }
-            resolve_colour(
-                &self.path,
-                colour,
-                tick.cx.evidence(),
-                Arc::new(tick.cx.pin().clone()),
-            )
+            resolve_colour(&self.path, colour, tick.cx.evidence())
         };
         self.adopt_progress(tick, Arc::new(progress), retarget)
     }
@@ -2598,7 +2582,6 @@ impl Quester {
         progress.quest == self.path.id
             && progress.binding == self.path.progress.binding
             && progress.role == self.path.role
-            && progress.pin.as_ref() == tick.cx.pin()
             && progress.evidence.meets(after)
             && progress.evidence != after
             && tick.cx.evidence().meets(progress.evidence)

@@ -4,6 +4,8 @@
 use client::io::ClientRevision;
 use script_js::{LoadIsolate, LoadShape};
 use std::alloc::{GlobalAlloc, Layout, System};
+
+mod common;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Counting;
@@ -57,6 +59,9 @@ fn tick_events(iso: &LoadIsolate, tick: u64, checks: u32) -> (usize, serde_json:
 
 #[test]
 fn repeated_membership_checks_allocate_nothing_after_the_first_touch() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let iso = LoadIsolate::spawn_with_game_data(SRC.into(), LoadShape::CompatClass, vec![], data)
         .unwrap();

@@ -23,7 +23,7 @@ use frontend_core::walk_map::{
     WalkSlotStatus,
 };
 use nav_planner::map::formats::{
-    ClientPois, Coverage, CoverageLevel, ServiceIdentity, ServicePois, NAVPOIS_VERSION,
+    ClientPois, Coverage, CoverageLevel, ServicePois, NAVPOIS_VERSION,
 };
 use nav_planner::map::identity::{CatalogueIdentity, Digest};
 use nav_planner::map::poi::{
@@ -153,7 +153,6 @@ fn map_poi_catalogue() -> (std::sync::Arc<WalkCatalogue>, Tile, Tile) {
         content: digest(1),
         policy: digest(2),
     };
-    let nav = digest(8);
     let booth = poi_record(
         EntityKind::Loc,
         1,
@@ -182,20 +181,12 @@ fn map_poi_catalogue() -> (std::sync::Arc<WalkCatalogue>, Tile, Tile) {
     labels.sort_by_key(|r| r.key);
     let doc = ServicePois {
         schema: NAVPOIS_VERSION,
-        identity: ServiceIdentity {
-            revision: 289,
-            content: digest(1),
-            nav_sha256: nav,
-            source_sha256: digest(3),
-            generator_sha256: digest(4),
-            policy: digest(5),
-        },
         coverage: coverage(),
         records: Rows::new(labels).unwrap(),
     };
     let bytes = doc.encode_navpois().unwrap();
-    let services = WalkServices::decode(&bytes, doc.identity, Digest::of(&bytes)).unwrap();
-    let catalogue = WalkCatalogue::new(world, identity, nav, Some(client), Some(services)).unwrap();
+    let services = WalkServices::decode(&bytes).unwrap();
+    let catalogue = WalkCatalogue::new(world, identity, Some(client), Some(services)).unwrap();
     let booth = catalogue
         .entries()
         .find(|e| e.name() == "Bank booth")
@@ -225,7 +216,7 @@ fn bind_catalogue_map(app: &mut TuiApp, catalogue: std::sync::Arc<WalkCatalogue>
         level: 0,
     });
     app.map_model.bind(WalkMapContext::browsing(
-        catalogue.nav_identity(),
+        catalogue.nav_pack_id(),
         Some(catalogue.key()),
         1,
     ));
@@ -1231,7 +1222,7 @@ fn map_keyboard_walkthrough_80x24() {
 #[test]
 fn map_poi_selection_keeps_catalogue_stand_and_blocks_view_only_labels() {
     let (catalogue, stand, label_anchor) = map_poi_catalogue();
-    let ctx = WalkMapContext::browsing(catalogue.nav_identity(), Some(catalogue.key()), 1);
+    let ctx = WalkMapContext::browsing(catalogue.nav_pack_id(), Some(catalogue.key()), 1);
     let mut app = TuiApp::new("274bot headless");
     bind_catalogue_map(&mut app, Arc::clone(&catalogue));
 

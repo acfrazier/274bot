@@ -266,12 +266,18 @@ export default class T extends LoopingBot {
 
     #[test]
     fn a_full_pack_withdraws_nothing() {
+        if !common::local_game_data_available(289) {
+            return;
+        }
         let mut harness = Harness::new(22, &LADDER, false);
         harness.finish(2, 27, 0);
     }
 
     #[test]
     fn a_withdraw_that_never_lands_ends_at_the_land_bound() {
+        if !common::local_game_data_available(289) {
+            return;
+        }
         let mut harness = Harness::new(4, &LADDER, false);
         assert_eq!(
             harness.next_click(0),
@@ -290,6 +296,9 @@ export default class T extends LoopingBot {
 
     #[test]
     fn a_fixed_only_row_serves_the_withdraw_x_chunk_by_the_ladder() {
+        if !common::local_game_data_available(289) {
+            return;
+        }
         let mut harness = Harness::new(22, &LADDER[..3], false);
         let first = harness.next_click(2);
         let InteractReq::WithdrawX {
@@ -318,6 +327,9 @@ export default class T extends LoopingBot {
 
     #[test]
     fn a_need_of_seven_clicks_five_then_one_then_one() {
+        if !common::local_game_data_available(289) {
+            return;
+        }
         let mut harness = Harness::new(7, &LADDER, false);
         for (held, action) in [(0, "Withdraw-5"), (5, "Withdraw-1"), (6, "Withdraw-1")] {
             assert_eq!(
@@ -333,6 +345,9 @@ export default class T extends LoopingBot {
 
     #[test]
     fn a_second_deposit_settles_null_while_the_first_is_live() {
+        if !common::local_game_data_available(289) {
+            return;
+        }
         let mut harness = Harness::new_deposit_pair(&LADDER);
         let clicks = harness.step(0, 1);
         assert_eq!(clicks.len(), 1, "only the first deposit should click");
@@ -367,6 +382,9 @@ export default class T extends LoopingBot {
 
     #[test]
     fn withdraw_to_settles_zero_while_a_deposit_is_live() {
+        if !common::local_game_data_available(289) {
+            return;
+        }
         let mut harness = Harness::new(7, &LADDER, true);
         let clicks = harness.step(0, 1);
         assert_eq!(clicks.len(), 1, "only the live deposit should click");

@@ -80,6 +80,8 @@ use api::hostlog::{Level, Source};
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
 
+pub use script::ScriptSettingsError;
+
 use crate::command::{CommandFailure, Completion, FailureKind, Subject};
 use crate::operations::OperationId;
 use crate::profiles::ProfileAuditBefore;
@@ -1517,22 +1519,20 @@ impl Scripts {
     }
 
     /// Initialize shared script coordination. With JS, restore the card
-    /// library and open the legacy per-card store. A missing library is a
-    /// first run; a refused or corrupt library is returned for the front
-    /// end to report. Nothing is saved over a refused store.
-    pub fn open_default() -> (Self, Option<String>) {
+    /// library and open the current per-card settings document. A missing
+    /// store is a first run; an existing unreadable or malformed store is
+    /// returned as a typed error and is never replaced with an empty map.
+    pub fn open_default() -> Result<(Self, Option<String>), script::ScriptSettingsError> {
         #[cfg(feature = "js")]
         {
             let mut js = script_js::JsLibrary::new(script_js::default_js_store());
             let restore_error = js.restore().err();
-            (
-                Self::new(js, script::ScriptSettingsStore::with_default_path()),
-                restore_error,
-            )
+            let settings = script::ScriptSettingsStore::with_default_path()?;
+            Ok((Self::new(js, settings), restore_error))
         }
         #[cfg(not(feature = "js"))]
         {
-            (Self::new(), None)
+            Ok((Self::new(), None))
         }
     }
 

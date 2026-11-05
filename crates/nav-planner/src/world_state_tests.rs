@@ -211,7 +211,6 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         approaches: vec![None; 2],
         teleports: vec![],
         wilderness: crate::transport::WildernessRules::default(),
-        quest_family: None,
         zones: None,
         multiway: Box::from([]),
     };
@@ -357,8 +356,7 @@ fn stage_gates_open_on_evidence_never_on_snapshot_facts() {
     use crate::test_support::{family, range, tbwt_evidence, window};
 
     let mut e = gated_edge();
-    e.quest_gates =
-        Some(QuestGates::new(family(1), [window("tbwt", "tbwt_main", Some(3), Some(3))]).unwrap());
+    e.quest_gates = Some(QuestGates::new([window("tbwt", "tbwt_main", Some(3), Some(3))]).unwrap());
     let snapshot_only = WorldState {
         inv: HashMap::from([(995, 10)]),
         worn: HashSet::from([1712]),

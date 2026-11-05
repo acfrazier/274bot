@@ -1,10 +1,6 @@
 // Shared content parsing only; no runtime crawling or artifact finalization.
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
-export function sha256(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
-export function sourceFile(dir: string, relative: string) { return { path: relative, ...sha256(path.join(dir, relative)) }; }
 export function parseRows(text: string) {
     const rows: { name: string; values: Record<string, string[][]> }[] = []; let current: { name: string; values: Record<string, string[][]> } | null = null;
     for (const raw of text.split(/\r?\n/)) { const line = raw.trim(); if (!line || line.startsWith('//')) continue; if (line.startsWith('[') && line.endsWith(']')) { current = { name: line.slice(1, -1), values: {} }; rows.push(current); continue; } if (!current || !line.startsWith('data=')) continue; const [, rest] = line.split('=', 2); const [key, ...values] = rest.split(','); (current.values[key] ??= []).push(values); }
@@ -175,25 +171,15 @@ export function requireGatherText(content: string, relative: string) {
 }
 export const PLACEMENT_MAPS_DIRECTORY = 'maps';
 
-/**
- * Required maps inventory (O-NAVINPUT). The directory must exist and hold at least
- * one map; every on-disk `m*.jm2` must be a readable mapsquare name; and every map
- * the content tree tracks must be on disk, so a truncated tree fails closed instead
- * of silently under-extracting. Filename order.
- */
-export function placementMapInputs(content: string) {
+/** Required maps inventory for placement extraction, sorted by filename. */
+export function placementMapFiles(content: string): string[] {
     const directory = path.join(content, PLACEMENT_MAPS_DIRECTORY);
     if (!fs.existsSync(directory)) throw new Error(`${PLACEMENT_MAPS_DIRECTORY}: required directory missing`);
     const names = fs.readdirSync(directory).filter((name) => name.endsWith('.jm2')).sort();
     if (names.length === 0) throw new Error(`${PLACEMENT_MAPS_DIRECTORY}: required directory has no maps`);
-    const inputs = names.map((name) => {
+    return names.map((name) => {
         const relative = `${PLACEMENT_MAPS_DIRECTORY}/${name}`;
         parseMapsquarePath(relative);
-        return { path: relative, ...sha256(path.join(content, relative)) };
+        return relative;
     });
-    const onDisk = new Set(inputs.map((input) => input.path));
-    const tracked = execFileSync('git', ['-C', content, 'ls-files', '--', `${PLACEMENT_MAPS_DIRECTORY}/m*.jm2`], { encoding: 'utf8' }).split('\n').map((line) => line.trim()).filter(Boolean);
-    if (tracked.length === 0) throw new Error(`${PLACEMENT_MAPS_DIRECTORY}: no tracked maps in the content tree`);
-    for (const relative of tracked) if (!onDisk.has(relative)) throw new Error(`${relative}: tracked map missing from the content tree`);
-    return inputs;
 }

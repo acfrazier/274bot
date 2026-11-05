@@ -431,16 +431,7 @@ fn prepare_from(
     bag: Arc<SettingsBag>,
     source: impl FnOnce(&mut PrepareContext<'_>) -> Result<QuesterRegistryReady, StartError>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
-    if cx
-        .selected
-        .selected_pin()
-        .map_err(StartError::Facts)?
-        .as_ref()
-        != cx.pin.as_ref()
-    {
-        return Err(StartError::Facts(api::selected::FactError::PinMismatch));
-    }
-    if cx.pin.revision != api::selected::ClientRevision::R289 {
+    if cx.revision != api::selected::ClientRevision::R289 {
         return Err(StartError::Unavailable(
             "Quester S1 supports revision 289 only".into(),
         ));
@@ -546,11 +537,10 @@ mod tests {
     fn prepare_on_274_reports_289_only_without_creating_a_run() {
         let selected = api::game_data::for_revision(ClientRevision::R274).unwrap();
         FamilyPreparation::run(move |families| {
-            let pin = selected.selected_pin().unwrap();
             let mut cx = PrepareContext {
                 zones: None,
                 selected,
-                pin,
+                revision: ClientRevision::R274,
                 banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
                 families,
             };
@@ -794,11 +784,10 @@ mod tests {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let expected = format!("Haunted Mine: {reason}");
         FamilyPreparation::run(move |families| {
-            let pin = selected.selected_pin().unwrap();
             let mut cx = PrepareContext {
                 zones: None,
                 selected,
-                pin,
+                revision: ClientRevision::R289,
                 banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
                 families,
             };

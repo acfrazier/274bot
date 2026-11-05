@@ -99,6 +99,70 @@ fn hydrate_panel_preferences(session: &mut Session) {
 }
 
 #[test]
+fn old_vault_no_is_terminal_and_yes_returns_to_empty_vault_setup() {
+    use frontend_core::saved_data::{SavedDataChoice, SavedDataRefusal, SavedDataResolveError};
+
+    const PASS: &str = "test-passphrase-01";
+    for rename in [false, true] {
+        let root = TestDir::new(if rename {
+            "vault-format-yes"
+        } else {
+            "vault-format-no"
+        });
+        let path = root.join("vault");
+        let mut vault = VaultFixture::create(&path, PASS);
+        vault.put(frontend_core::test_support::session::with_settings_bag(
+            profile("alice", "pw", 274),
+            "compiled:old-card",
+            serde_json::Map::new(),
+        ));
+        drop(vault);
+        let original = std::fs::read(&path).unwrap();
+        let error = match host_play::open_vault(&path, PASS) {
+            Err(error) => error,
+            Ok(_) => panic!("a pre-envelope compiled setting must be refused"),
+        };
+        let refusal = SavedDataRefusal::from_vault_error(&error).unwrap();
+        let mut session = Session::new();
+        session.pass_scratch.push_str(PASS);
+        session.vault_saved_data = Some(super::VaultSavedData::Pending(refusal));
+
+        session.resolve_vault_refusal(if rename {
+            SavedDataChoice::Rename
+        } else {
+            SavedDataChoice::Keep
+        });
+
+        assert!(session.vault_refusal().is_none());
+        assert!(
+            !session.core.vault_open(),
+            "a move does not create a new vault"
+        );
+        if rename {
+            assert!(session.take_vault_failure().is_none());
+            assert!(
+                session.pass_scratch.is_empty(),
+                "new-vault setup starts empty"
+            );
+            assert!(!path.exists());
+            assert_eq!(
+                std::fs::read(root.join("vault.pre-0.2.8")).unwrap(),
+                original
+            );
+        } else {
+            let failure = session.take_vault_failure().unwrap();
+            assert!(matches!(failure, SavedDataResolveError::Declined(_)));
+            assert!(
+                session.take_vault_failure().is_none(),
+                "the exit settles once"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            assert!(!root.join("vault.pre-0.2.8").exists());
+        }
+    }
+}
+
+#[test]
 fn session_cache_is_unset_until_a_profile_is_bound() {
     let session = Session::new();
     let cache_dir = session.play_options().cache_dir();
@@ -208,7 +272,7 @@ fn memory_override_changes_spawn_profile_without_persisting_it() {
 
 use crate::nav_settings::{effective, NavSettings};
 
-fn checked_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
+fn profile_fixture(revision: u16) -> (TestDir, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
     let root = TestDir::new(&format!("session-profile-{revision}"));
@@ -226,8 +290,7 @@ fn checked_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
     ] {
         std::fs::copy(fixture.join(jag), cache.join(jag)).unwrap();
     }
-    let manifest = fixture.join(format!("manifest-{revision}.json"));
-    (root, cache, manifest)
+    (root, cache)
 }
 
 const JAG_SLOTS: [&str; 8] = [
@@ -426,25 +489,16 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> FixtureCrcServer {
     }
 }
 
-fn runtime_profile_fixture(
-    revision: u16,
-) -> (TestDir, PathBuf, PathBuf, PathBuf, FixtureCrcServer) {
-    let (root, cache, _) = checked_profile_fixture(revision);
+fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, FixtureCrcServer) {
+    let (root, cache) = profile_fixture(revision);
     let packs = identity_packs();
     for (name, bytes) in &packs {
         std::fs::write(cache.join(name), bytes).unwrap();
     }
-    let manifest_path = root.join("cache-manifest.json");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec(&host_play::profile::CacheManifest::capture(revision, &cache).unwrap())
-            .unwrap(),
-    )
-    .unwrap();
     let unpack = root.join("unpack");
     plant_snapshot(&unpack, revision, &packs);
     let server = serve_fixture_crc(packs);
-    (root, cache, manifest_path, unpack, server)
+    (root, cache, unpack, server)
 }
 
 fn preparation_only_session() -> Session {
@@ -496,7 +550,7 @@ fn join_validation(session: &mut Session, generation: u64) -> ValidatedProfile {
 
 #[test]
 fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     session.ui.server_revision = 289;
     configure_isolated_profile(
@@ -504,7 +558,6 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
         ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(server.port()),
             ..ProfileOptions::default()
@@ -523,14 +576,13 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
 #[test]
 fn stale_profile_preparation_is_dropped_without_partial_session_state() {
     let _work_service_guard = crate::work_service_test_lock();
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
         ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(server.port()),
             ..ProfileOptions::default()
@@ -591,14 +643,13 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
 #[test]
 fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     let _work_service_guard = crate::work_service_test_lock();
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
         ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache.clone()),
-            cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(server.port()),
             vault_path: Some(root.join("prepared.vault")),
@@ -635,14 +686,13 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
 fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let _iso = IsolatedStores::enter("start-handle-loadouts");
     let _work_service_guard = crate::work_service_test_lock();
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
         ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(server.port()),
             vault_path: Some(root.join("prepared.vault")),
@@ -829,15 +879,18 @@ fn unlock_upgrade_home(template: &Arc<map_host::SharedClientTemplate>) -> Sessio
     session
 }
 
-/// A 0.1.9.x home keeps its v10 pack at the default path. The panel's play
-/// routes on the packaged v11 bundle's one shared world and leaves the old file
-/// alone; an explicit override to the old file still unlocks, with no world.
+/// A 0.1.9.x home keeps its v10 pack at the default path. The panel uses
+/// the packaged format-19 world. An explicit old-pack override fails decoding.
 #[test]
-fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
+fn panel_upgraded_from_v10_home_plays_on_the_packaged_v19_world() {
     let home = UpgradeHome::new();
     let _work_service_guard = crate::work_service_test_lock();
     let profile = home.bind(None);
-    assert!(profile.nav_origin().is_bundled());
+    assert_eq!(
+        profile.nav_pack(),
+        home.resources
+            .join(map_host::nav_assets::artifact_layout(289).relative_pack)
+    );
     let template = map_host::SharedClientTemplate::load(profile).unwrap();
     let session = unlock_upgrade_home(&template);
     let world = session
@@ -848,16 +901,28 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     assert!(Arc::ptr_eq(&world, &template.world().unwrap()));
     assert!(home.old_pack_untouched());
 
-    let overridden = home.bind(Some(home.old_pack.clone()));
-    assert!(matches!(
-        overridden.nav_availability(),
-        map_host::profile::NavAvailability::Unavailable(message)
-            if message.contains("rebuild it with nav-pack")
-    ));
-    let template = map_host::SharedClientTemplate::load(overridden).unwrap();
-    let session = unlock_upgrade_home(&template);
-    assert!(session.error.is_none(), "{:?}", session.error);
-    assert!(session.core.play_for_test().unwrap().world().is_none());
+    let overridden = ProfileOptions {
+        profile: Some("local-289".into()),
+        cache_dir: Some(home.root.join("cache")),
+        nav_pack: Some(home.old_pack.clone()),
+        ..Default::default()
+    }
+    .resolve_with_env(
+        None,
+        &ProfileEnvironment {
+            home: Some(home.root.join("home")),
+            engine_dir: Some(home.root.join("engine")),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let error = overridden
+        .bind()
+        .err()
+        .expect("v10 is not a supported pack");
+    assert!(error.contains("unsupported pack version 10"), "{error}");
     assert!(home.old_pack_untouched());
 }
 
@@ -871,13 +936,12 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     session.install_prepared_template(ProfileTemplate::from_host(template));
     let world = profile.world().unwrap();
     assert_eq!(profile.nav_load_counters().reach_reads, 1);
-    assert_eq!(profile.nav_load_counters().reach_hashes, 1);
     nav_planner::paint::reset_bake_reach_calls();
-    // An eager install would keep the old verified payload and paint it even
-    // after the file changes. First layer demand must instead fail closed.
+    // Installation retains only the header. A later truncated payload must
+    // fail when the first layer demand decodes the words.
     let path = profile.nav_pack().with_extension("navreach");
     let mut bytes = std::fs::read(&path).unwrap();
-    *bytes.last_mut().unwrap() ^= 1;
+    bytes.truncate(bytes.len() - 1);
     std::fs::write(path, bytes).unwrap();
     assert!(
         crate::picker::map_reach_bitset(&world).is_none(),
@@ -885,7 +949,6 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     );
     assert!(profile.reach().is_none());
     assert_eq!(profile.nav_load_counters().reach_reads, 2);
-    assert_eq!(profile.nav_load_counters().reach_hashes, 2);
     assert_eq!(nav_planner::paint::bake_reach_calls(), 0);
 }
 
@@ -899,7 +962,6 @@ fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
     session.install_prepared_template(ProfileTemplate::from_host(template));
     let world = profile.world().unwrap();
     assert_eq!(profile.nav_load_counters().reach_reads, 1);
-    assert_eq!(profile.nav_load_counters().reach_hashes, 1);
     nav_planner::paint::reset_bake_reach_calls();
     let map_bits = crate::picker::map_reach_bitset(&world).unwrap();
     assert_eq!(&*map_bits, &[0u64]);
@@ -1162,7 +1224,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     let _work_service_guard = crate::work_service_test_lock();
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
     let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
     let env = ProfileEnvironment {
@@ -1180,7 +1242,6 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
             ProfileArgs::from_host(ProfileOptions {
                 revision: None,
                 cache_dir: Some(cache),
-                cache_manifest: Some(manifest),
                 unpack_dir: Some(unpack),
                 http_port: Some(server.port()),
                 catalog_root: Some(catalog),
@@ -2123,11 +2184,10 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
     let flags = vec![0u32, 0, 0, 0];
     let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     crate::picker::drop_flags_sidecar();
     crate::picker::reset_flags_load_count();
-    crate::picker::set_navflags_binding(path, Some(digest), true);
+    crate::picker::set_navflags_binding(path);
 
     let mut c = paint_client();
     let world = walled_world();
@@ -2198,10 +2258,9 @@ fn remove_only_focused_drawing_slot_releases_flags() {
     let flags = vec![0u32, 0, 0, 0];
     let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     crate::picker::drop_flags_sidecar();
-    crate::picker::set_navflags_binding(path, Some(digest), true);
+    crate::picker::set_navflags_binding(path);
     crate::picker::ensure_flags_sidecar();
     assert_eq!(
         crate::picker::flags_sidecar_state(),
@@ -4688,7 +4747,7 @@ fn fifty_fps_choices_are_saved_and_restored() {
     s.set_focused_50(false);
     await_preference(&mut s, "sidecar_50", serde_json::json!(true));
     await_preference(&mut s, "focused_50", serde_json::json!(false));
-    let saved = crate::ui_state::load(&s.preferences);
+    let saved = crate::ui_state::load(&s.preferences).unwrap();
     assert!(
         saved.sidecar_50 && !saved.focused_50,
         "written to the preferences"
@@ -5651,7 +5710,10 @@ fn focus_first_prefers_last_focus() {
     s.focus_first_profile();
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
     assert_eq!(
-        crate::ui_state::load(&s.preferences).last_focus.as_deref(),
+        crate::ui_state::load(&s.preferences)
+            .unwrap()
+            .last_focus
+            .as_deref(),
         Some("bob")
     );
 }
@@ -6638,7 +6700,10 @@ fn live_prepare_script_does_not_write_last_focus() {
     let fleet = frontend_core::live::Scenario::get("nav_door").expect("nav_door");
     s.live_prepare_script(fleet).expect("prepare");
     assert_eq!(
-        crate::ui_state::load(&s.preferences).last_focus.as_deref(),
+        crate::ui_state::load(&s.preferences)
+            .unwrap()
+            .last_focus
+            .as_deref(),
         Some("alice"),
         "live boot must not clobber the operator last profile"
     );
@@ -6754,7 +6819,10 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
         );
         assert_eq!(runner.terminal_shot(), terminal_shot.as_deref());
         assert_eq!(session.nav_overlay.as_ref(), Some(&baseline));
-        assert_eq!(crate::ui_state::load(&session.preferences).nav, saved.nav);
+        assert_eq!(
+            crate::ui_state::load(&session.preferences).unwrap().nav,
+            saved.nav
+        );
     }
 }
 
@@ -6776,7 +6844,7 @@ fn live_force_layers_does_not_write_panel_ui() {
     );
     // A save/load roundtrip of the panel prefs must not persist the
     // overlay bools: `nav_overlay` is session-only.
-    let ui = crate::ui_state::load(&s.preferences);
+    let ui = crate::ui_state::load(&s.preferences).unwrap();
     assert!(
         !ui.nav.show_nav_path,
         "forced layers must never reach panel-ui.json"
@@ -6790,7 +6858,7 @@ fn live_force_layers_does_not_write_panel_ui() {
             .is_some_and(|n| n.show_nav_path && n.collision_fill && n.camera_follow),
         "nav scenario arms the live overlay"
     );
-    let ui = crate::ui_state::load(&s.preferences);
+    let ui = crate::ui_state::load(&s.preferences).unwrap();
     assert!(
         !ui.nav.show_nav_path,
         "live boot of a nav scenario never writes the prefs"
@@ -6921,10 +6989,10 @@ fn set_capture_persists_to_panel_ui() {
     let mut s = Session::new();
     s.set_capture(false);
     await_preference(&mut s, "capture", serde_json::json!(false));
-    assert!(!crate::ui_state::load(&s.preferences).capture);
+    assert!(!crate::ui_state::load(&s.preferences).unwrap().capture);
     s.set_capture(true);
     await_preference(&mut s, "capture", serde_json::json!(true));
-    assert!(crate::ui_state::load(&s.preferences).capture);
+    assert!(crate::ui_state::load(&s.preferences).unwrap().capture);
 }
 
 #[test]
@@ -10080,7 +10148,8 @@ fn background_ack_closes_when_the_last_other_bot_retires() {
 #[test]
 fn skip_lock_session_does_not_create_instance_lock() {
     let iso = IsolatedStores::enter("session-skip-lock");
-    let _s = Session::with_instance(InstancePermit::skip());
+    let _s = Session::with_instance(InstancePermit::skip())
+        .expect("isolated script settings are readable");
     assert!(!host_play::instance_lock_path().exists());
     let _iso = iso;
 }
@@ -10093,7 +10162,7 @@ fn locked_session_releases_the_instance_lock_on_drop() {
         Ok(Err(_)) => panic!("expected acquire"),
         Err(error) => panic!("expected acquire: {error}"),
     };
-    let session = Session::with_instance(permit);
+    let session = Session::with_instance(permit).expect("isolated script settings are readable");
     drop(session);
     match host_play::try_acquire_instance_lock(host_play::InstanceKind::Tui).unwrap() {
         host_play::InstanceLockResult::Acquired(_) => {}
@@ -11769,14 +11838,13 @@ fn settings_feedback_launch_choices_take_effect_only_from_the_durable_value() {
 /// at the setting.
 #[test]
 fn settings_feedback_a_held_server_revision_binds_the_durable_revision_and_shows_the_choice() {
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let mut s = Session::new();
     configure_isolated_profile(
         &mut s,
         ProfileOptions {
             revision: None,
             cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(server.port()),
             ..ProfileOptions::default()

@@ -749,26 +749,6 @@ fn none_held_is_a_refusal_and_never_a_live_token_or_a_done() {
     assert_eq!(after["reason"], "stale", "{after}");
 }
 
-#[test]
-fn a_missing_selected_pin_is_not_none_held() {
-    on_reset();
-    let refused = dispatch(
-        None,
-        &payload("begin", None, json!([[CASKET, 1]]), json!({})),
-    );
-    assert_eq!(refused["kind"], "aborted", "{refused}");
-    assert_eq!(refused["reason"], "missing-selected-data", "{refused}");
-    // The live token's view of a vanished pin is the same refusal.
-    let data = selected();
-    let token = token_of(&begin(&data, json!([[CASKET, 1]])));
-    let gone = dispatch(
-        None,
-        &payload("next", Some(token), json!([[CASKET, 1]]), json!({})),
-    );
-    assert_eq!(gone["kind"], "aborted", "{gone}");
-    assert_eq!(gone["reason"], "missing-selected-data", "{gone}");
-}
-
 /// The solved mark is eleven characters, lowercase, one space — the exact
 /// string — and it is the machine's own `callback.setStatus`, posted once a
 /// collect is over and by no other path on this machine.

@@ -344,7 +344,7 @@ fn mainland_production_gate_queues_once_without_rearming_host_or_reconnect() {
     );
 }
 
-fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
+fn profile_fixture(revision: u16) -> (PathBuf, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
     let root = std::env::temp_dir().join(format!(
@@ -366,8 +366,7 @@ fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
     ] {
         std::fs::copy(fixture.join(jag), cache.join(jag)).unwrap();
     }
-    let manifest = fixture.join(format!("manifest-{revision}.json"));
-    (root, cache, manifest)
+    (root, cache)
 }
 
 /// The map pane reads `TuiApp::world`, projected from the core after `Play`
@@ -805,9 +804,9 @@ ScriptRegistry.register({ name: 'NatureCrafter', create: () => new NatureCrafter
 }
 
 #[test]
-fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
+fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
     for revision in [274_u16, 289] {
-        let (root, cache, manifest) = checked_fixture(revision);
+        let (root, cache) = profile_fixture(revision);
         let args = parse_args_from([
             "--live".to_string(),
             "script_bone_burier".to_string(),
@@ -815,8 +814,6 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
             format!("local-{revision}"),
             "--cache".to_string(),
             cache.display().to_string(),
-            "--cache-manifest".to_string(),
-            manifest.display().to_string(),
         ])
         .expect("frontend and shared flags parse in either order");
         let env = ProfileEnvironment {
@@ -1964,12 +1961,11 @@ fn deleting_pending_startup_profile_cancels_load_and_focus() {
     );
 }
 
-/// A 0.1.9.x home keeps its v10 pack at the default path. The TUI's play and
-/// its WalkTo/scenario world are the packaged v11 bundle's one shared world,
-/// and the old file is left alone; an explicit override to the old file still
-/// starts, with no world.
+/// A 0.1.9.x home keeps its v10 pack at the default path. The TUI and its
+/// WalkTo/scenario routes use the packaged format-19 world. An explicit
+/// old-pack override fails decoding.
 #[test]
-fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
+fn tui_upgraded_from_v10_home_plays_on_the_packaged_v19_world() {
     let home = upgrade_home::UpgradeHome::new();
     let start = |profile: Arc<host_play::ServerProfile>, vault: &str| {
         let template = SharedClientTemplate::load(profile).unwrap();
@@ -1980,7 +1976,11 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     };
 
     let profile = home.bind(None);
-    assert!(profile.nav_origin().is_bundled());
+    assert_eq!(
+        profile.nav_pack(),
+        home.resources
+            .join(host_play::nav_assets::artifact_layout(289).relative_pack)
+    );
     let (session, template) = start(profile, "bundled.vault");
     let world = template.world().expect("the packaged world decodes");
     let played = session
@@ -1993,15 +1993,28 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     assert!(Arc::ptr_eq(&routed.expect("WalkTo world"), &world));
     assert!(home.old_pack_untouched());
 
-    let overridden = home.bind(Some(home.old_pack.clone()));
-    assert!(matches!(
-        overridden.nav_availability(),
-        host_play::profile::NavAvailability::Unavailable(message)
-            if message.contains("rebuild it with nav-pack")
-    ));
-    let (session, _) = start(overridden, "override.vault");
-    assert!(session.core.play_for_test().unwrap().world().is_none());
-    assert!(session.core.nav_world().is_none());
+    let overridden = host_play::ProfileOptions {
+        profile: Some("local-289".into()),
+        cache_dir: Some(home.root.join("cache")),
+        nav_pack: Some(home.old_pack.clone()),
+        ..Default::default()
+    }
+    .resolve_with_env(
+        None,
+        &ProfileEnvironment {
+            home: Some(home.root.join("home")),
+            engine_dir: Some(home.root.join("engine")),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let error = overridden
+        .bind()
+        .err()
+        .expect("v10 is not a supported pack");
+    assert!(error.contains("unsupported pack version 10"), "{error}");
     assert!(home.old_pack_untouched());
 }
 

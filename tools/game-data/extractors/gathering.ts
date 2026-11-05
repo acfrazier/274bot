@@ -1,5 +1,5 @@
 // M-306 / M-215 gathering family: typed resource methods, rock classes, respawn facts, tools, bait, products and
-// map placements, all joined from the pinned content tree. Unknown constructs become explicit gaps, never guesses.
+// map placements, all joined from the local content tree. Unknown constructs become explicit gaps, never guesses.
 import fs from 'node:fs';
 import path from 'node:path';
 import { indexContent, parseDbRows, parseCoord, parseSections, scanMapSection, spanRef, stripComment, type ContentIndex, type DbRow, type Rs2Block, type Rs2Header, type Section, type Span } from './gathering-content.ts';
@@ -1867,7 +1867,7 @@ function summarize(methods: MethodWire[], mining: MiningModel, placements: Place
 /** The pipeline `FamilyDraft` (`{ schema, payload }`) plus a summary for the generator's report. */
 export type GatheringFamily = { schema: number; payload: GatheringFacts; summary: GatheringSummary };
 
-/** Extract the complete gathering family from one pinned content tree. Deterministic: no clocks, no host paths. */
+/** Extract the complete gathering family from one local content tree. Deterministic: no clocks, no host paths. */
 export function extractGatheringFamily(content: string): GatheringFamily {
     const idx = indexContent(content);
     const ctx: Ctx = { idx, entities: new Entities(idx) };
@@ -1921,7 +1921,7 @@ export function miningHazards(facts: GatheringFacts): MiningHazardWire[] {
 export const ACCEPTED_PRODUCT_GAPS: readonly string[] = ['incidental-gem-roll'];
 
 /**
- * One pinned row of the selected core's `gather_resources` slice. Woodcutting
+ * One row of the selected core's `gather_resources` slice. Woodcutting
  * and mining publish one row per resource; fishing publishes one row per
  * `(operation, tools, bait, products)` group. `methods` is the complete set of
  * catalog methods admitted by this option. `aliases` retains pre-group
@@ -2049,7 +2049,7 @@ export function compareCodepoint(a: string, b: string): number {
 }
 
 /**
- * The pinned per-skill option rows the selected core carries so the UI never
+ * The per-skill option rows carried by the selected core so the UI never
  * decodes the family: every method in content order, selectable or refused
  * with its gap code. Fishing groups are keyed from stable item ids and labels
  * must be unique (including refused rows).
@@ -2146,11 +2146,8 @@ export type GatherSiteWire = {
     banking_unavailable?: string;
 };
 
-/** Per-skill generator report, recorded on the manifest and pinned by verify. `sites` counts published rows. */
-export type GatherSiteSkillReport = { sites: number; direct: number; dropped: number; outside_box: number; extra: number; renamed: number; required: number; override_dropped: number };
-export type GatherSiteReport = Record<SkillName, GatherSiteSkillReport>;
-/** `rows` are published; `hidden` are the rows a `drop` override removed (the reachability guard keeps each one unreachable). */
-export type GatherSitesResult = { rows: GatherSiteWire[]; hidden: GatherSiteWire[]; report: GatherSiteReport };
+/** Rows are published; hidden rows are `drop` overrides retained for reachability checks. */
+export type GatherSitesResult = { rows: GatherSiteWire[]; hidden: GatherSiteWire[] };
 
 /** The bank-catalog place rows a site may be named by; `CatalogBank` narrows to this. */
 export type GatherSiteBank = { name: string; tile: { x: number; z: number; level: number } };
@@ -2461,11 +2458,8 @@ function siteBoxOf(tiles: SiteTile[]): SiteBox {
 }
 
 /**
- * The pinned per-skill named-site rows plus the per-skill report, computed
- * from the family, the `gather_resources` rows (a site's keys are exactly the
- * picker values), the content label and fishing-NPC inputs, and the bank
- * catalog. The family wire is untouched: movement boxes are reused, never
- * re-derived. Overrides then name, require or drop published rows by id.
+ * Compute named-site rows from family facts, picker resources, local content and the bank catalog.
+ * Overrides name, require or drop published rows by id.
  */
 export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire[], content: string, banks: GatherSiteBank[], overrides: readonly SiteOverride[] = SITE_OVERRIDES): GatherSitesResult {
     const keyMeta = new Map<string, { skill: SkillName; label: string }>();
@@ -2585,10 +2579,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         }
     }
     let rows: GatherSiteWire[] = [];
-    const zeroSkill = (): GatherSiteSkillReport => ({ sites: 0, direct: 0, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
-    const report: GatherSiteReport = { woodcutting: zeroSkill(), mining: zeroSkill(), fishing: zeroSkill() };
-    // Fragment sites (`extra`) by id, so the published count follows the rows that survive overrides.
-    const extraIds = new Set<string>();
     for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
         const members = new Map<string, SiteTile>();
         for (const [key, tiles] of perKey) {
@@ -2607,9 +2597,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
         const drafts: Draft[] = [];
         // Far, underground and sprawl-fragment sites need `minTiles` tiles: a fishing spot is one tile, a tree or rock fragment three.
         const minTiles = skill === 'fishing' ? 1 : 3;
-        let dropped = 0;
-        let direct = 0;
-        let outsideBox = 0;
         const nearestBox = (box: SiteBox, level: number): { place: SitePlace; d: number } | null => {
             let best: { place: SitePlace; d: number } | null = null;
             for (const place of places) {
@@ -2648,11 +2635,10 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             }
             return best;
         };
-        // The direct name of one site: the one geographic movement-enum name
-        // its NPC spawns carry, each spawn inside its own box on the same
-        // level. Loc placements carry no enum and never borrow a nearby NPC's
-        // name; a spawn outside its own box is counted, not named; two names
-        // in one site throw.
+        // A direct name is the geographic movement-enum name carried by an NPC
+        // spawn inside its own box on the same level. Loc placements have no
+        // enum and never borrow a nearby NPC's name; outside spawns are not
+        // named. Two names in one site throw.
         const directOf = (comp: SiteTile[]): DirectName | null => {
             if (skill !== 'fishing') return null;
             const names = new Map<string, DirectName>();
@@ -2663,7 +2649,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                     if (named === null) continue;
                     const box = movementBox.get(named.npc);
                     if (box?.state !== 'known' || box.value === null || !siteInBox(tile, box.value)) {
-                        outsideBox += 1;
                         continue;
                     }
                     names.set(named.name, named);
@@ -2702,11 +2687,10 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 keys: ordered.map(([key, count]) => ({ key, count })),
             };
         };
-        // Far surface clusters take the nearest bank within SITE_CAP (named `<bank> area`), else the nearest label at any distance. Clusters reaching the 4160-6400 special-area band are counted, not offered.
+        // Far surface clusters take the nearest bank within SITE_CAP (named `<bank> area`), else the nearest label at any distance. Clusters reaching the special-area band are not offered.
         const farSite = (comp: SiteTile[]) => {
             const box = siteBoxOf(comp);
             if (box.maxZ >= SITE_SPECIAL_Z || comp.length < minTiles) {
-                dropped += comp.length;
                 return;
             }
             const bank = nearestBank(box);
@@ -2715,14 +2699,12 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 return;
             }
             const near = nearestLabel(box);
-            if (near === null) dropped += comp.length;
-            else drafts.push(draftOf(comp, near.place, null, true));
+            if (near !== null) drafts.push(draftOf(comp, near.place, null, true));
         };
         // Underground clusters take the nearest label to their surface projection, at any distance.
         const undergroundSite = (comp: SiteTile[]) => {
             const near = nearestLabel(siteNamingBox(siteBoxOf(comp)));
-            if (comp.length < minTiles || near === null) dropped += comp.length;
-            else drafts.push(draftOf(comp, near.place, null, true));
+            if (comp.length >= minTiles && near !== null) drafts.push(draftOf(comp, near.place, null, true));
         };
         const surface: SiteTile[] = [];
         const underground: SiteTile[] = [];
@@ -2739,7 +2721,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                     continue;
                 }
                 const named = directOf(comp);
-                if (named !== null) direct += 1;
                 drafts.push(draftOf(comp, near.place, named, false));
                 continue;
             }
@@ -2757,16 +2738,12 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             }
             for (const { place, pts } of cells.values()) {
                 for (const part of clusterTiles(pts, SITE_GAP)) {
-                    if (part.length < minTiles) {
-                        dropped += part.length;
-                        continue;
-                    }
+                    if (part.length < minTiles) continue;
                     // Only fishing admits a fragment under 3 tiles (rule 3): it is new, so it sorts after every 0.2.0 id.
                     drafts.push(draftOf(part, place, null, part.length < 3));
                 }
             }
             const reachable = far.filter((tile) => tile.z < SITE_SPECIAL_Z);
-            dropped += far.length - reachable.length;
             for (const part of clusterTiles(reachable, SITE_GAP)) farSite(part);
         }
         for (const comp of clusterTiles(underground, SITE_GAP)) undergroundSite(comp);
@@ -2781,7 +2758,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             group.forEach((draft, index) => {
                 const id = index === 0 ? draft.idbase : `${draft.idbase}.${index + 1}`;
                 const label = index === 0 ? draft.label : draft.label.replace(' · ', ` (${index + 1}) · `);
-                if (draft.extra) extraIds.add(id);
                 rows.push({
                     id, skill, label,
                     region: { min_x: draft.minX, min_z: draft.minZ, max_x: draft.maxX, max_z: draft.maxZ, level: draft.level },
@@ -2790,7 +2766,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
                 });
             });
         }
-        Object.assign(report[skill], { direct, dropped, outside_box: outsideBox });
     }
     // Overrides name, require or drop published rows by id. Ids are fixed by now, so a drop never renumbers a neighbour.
     const overridden = new Set<string>();
@@ -2835,16 +2810,6 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
     }
     const droppedRows = rows.filter((row) => droppedIds.has(row.id));
     rows = rows.filter((row) => !droppedIds.has(row.id));
-    for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
-        const published = rows.filter((row) => row.skill === skill);
-        Object.assign(report[skill], {
-            sites: published.length,
-            extra: published.filter((row) => extraIds.has(row.id)).length,
-            renamed: renames.filter((entry) => entry.row.skill === skill).length,
-            required: published.filter((row) => row.requires.length > 0).length,
-            override_dropped: droppedRows.filter((row) => row.skill === skill).length,
-        });
-    }
     // Sort by place names so plain names precede their bearing siblings.
     rows.sort((a, b) => {
         const aSeparator = a.label.indexOf(' · ');
@@ -2872,7 +2837,7 @@ export function gatherSites(facts: GatheringFacts, resources: GatherResourceWire
             if (keyMeta.get(entry.key)?.skill !== row.skill) throw new Error(`gather_sites: ${row.id} offers ${entry.key}, not a ${row.skill} key`);
         }
     }
-    return { rows, hidden: droppedRows.sort((a, b) => compareCodepoint(a.id, b.id)), report };
+    return { rows, hidden: droppedRows.sort((a, b) => compareCodepoint(a.id, b.id)) };
 }
 
 /**

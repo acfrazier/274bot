@@ -130,15 +130,6 @@ fn prepare(
     revision: u64,
     bag: Arc<SettingsBag>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
-    if cx
-        .selected
-        .selected_pin()
-        .map_err(StartError::Facts)?
-        .as_ref()
-        != cx.pin.as_ref()
-    {
-        return Err(StartError::Facts(api::selected::FactError::PinMismatch));
-    }
     let mut ids = Vec::with_capacity(ITEMS.len());
     match bag.get("items") {
         None => ids.extend(ITEMS.iter().map(|(id, _)| *id)),

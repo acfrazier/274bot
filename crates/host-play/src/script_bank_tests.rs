@@ -43,7 +43,7 @@ fn bank(name: &'static str, x: i32, z: i32) -> NamedBank {
 #[cfg(feature = "js")]
 #[test]
 fn bank_pick_v2_explicit_opt_ins_control_the_returned_bank_over_settings_defaults() {
-    let catalog = api::named_banks::BANK_CATALOG;
+    let catalog = api::named_banks::bank_catalog().expect("named bank catalog");
     let mage = NamedBank {
         definition: catalog.iter().find(|b| b.name == "Mage Arena"),
         ..bank("Mage Arena", 3091, 3958)
@@ -572,8 +572,6 @@ fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_im
     .join()
     .expect("quest preparation worker")
     .expect("prepare selected quests");
-    let identity = selected.quest_family_identity().expect("quest family");
-    let family = nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
     let quests = selected.try_quests().expect("prepared quests");
     let quest = quests.iter().next().expect("selected quest row");
     let gate = api::selected::QuestGate::Complete(quest.id.clone());
@@ -606,10 +604,7 @@ fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_im
             blocked,
             flags: None,
         },
-        TransportGraph {
-            quest_family: Some(family),
-            ..TransportGraph::default()
-        },
+        TransportGraph::default(),
         vec![nav_planner::pack::BankStand {
             name: "Bank booth".into(),
             tile: tile(12, 12),
@@ -718,7 +713,8 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
             teller,
         ],
     );
-    let definition = api::named_banks::BANK_CATALOG
+    let catalog = api::named_banks::bank_catalog().expect("named bank catalog");
+    let definition = catalog
         .iter()
         .find(|definition| definition.name == "Mage Arena")
         .unwrap();
@@ -740,7 +736,7 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
         Some("I'd like to access my bank account")
     );
 
-    let shantay = api::named_banks::BANK_CATALOG
+    let shantay = catalog
         .iter()
         .find(|definition| definition.name == "Shantay Pass")
         .unwrap();
@@ -774,7 +770,8 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
 
 #[test]
 fn native_bank_access_declared_teller_does_not_require_packed_geometry() {
-    let definition = api::named_banks::BANK_CATALOG
+    let catalog = api::named_banks::bank_catalog().expect("named bank catalog");
+    let definition = catalog
         .iter()
         .find(|definition| definition.name == "Mage Arena")
         .unwrap();
@@ -1404,10 +1401,13 @@ mod bank_pick_capture {
     #[test]
     #[ignore = "requires NAV_PACK for the immutable real 289 navpack and BOT_BANK_PICK_CAPTURE_OUT"]
     fn captures_real_content_bank_pick_outcomes() {
-        let pack = std::env::var_os("NAV_PACK")
-            .filter(|path| !path.is_empty())
-            .map(std::path::PathBuf::from)
-            .expect("set NAV_PACK to the reviewed real 289 navpack");
+        let Some(pack) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "reviewed real 289 navpack for bank-pick capture",
+        ) else {
+            return;
+        };
         let loaded = NavWorld::load_pack(&pack).unwrap();
         loaded
             .bind_named_bank_facts(
@@ -1545,10 +1545,13 @@ mod bank_pick_capture {
         use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
         use std::num::NonZeroU32;
 
-        let pack = std::env::var_os("NAV_PACK")
-            .filter(|path| !path.is_empty())
-            .map(std::path::PathBuf::from)
-            .expect("set NAV_PACK to the reviewed real 289 navpack");
+        let Some(pack) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "reviewed real 289 navpack for bank-pick memory qualification",
+        ) else {
+            return;
+        };
         let loaded = NavWorld::load_pack(&pack).unwrap();
         loaded
             .bind_named_bank_facts(
@@ -3017,7 +3020,7 @@ mod journal_diagnosis {
     use api::quest_progress::EvidenceProvider;
     use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow, Truth};
     use api::work::{MonotonicClock, SharedCancellation, SliceBudget};
-    use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId, QuestGates};
+    use nav_planner::quest_gates::{QuestEvidence, QuestGates};
     use nav_planner::transport::{TransportEdge, TransportKind};
     use std::cell::Cell;
     use std::num::NonZeroU32;
@@ -3060,7 +3063,6 @@ mod journal_diagnosis {
         public: bool,
         timeout_stage: Option<BankPickStage>,
     ) -> BankPickOutcome {
-        let family = QuestFamilyId::new([7; 32], std::num::NonZeroU16::MIN);
         let windows = ["first", "second"].map(|signal| StageWindow {
             quest: FactKey::new("bank-journal"),
             signal: FactKey::new(signal),
@@ -3080,10 +3082,7 @@ mod journal_diagnosis {
             flags[8 * 16 + x] =
                 CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
         }
-        let mut graph = TransportGraph {
-            quest_family: Some(family),
-            ..TransportGraph::default()
-        };
+        let mut graph = TransportGraph::default();
         for (index, z) in [2, 12].into_iter().enumerate() {
             let at = tile(5, z);
             graph.at.entry(at).or_default().push(index);
@@ -3111,8 +3110,7 @@ mod journal_diagnosis {
                 members_req: false,
                 wildy_cap: None,
                 quest_gates: Some(
-                    QuestGates::new(family, vec![QuestGate::Window(windows[index].clone())])
-                        .unwrap(),
+                    QuestGates::new(vec![QuestGate::Window(windows[index].clone())]).unwrap(),
                 ),
             });
         }
@@ -3161,7 +3159,6 @@ mod journal_diagnosis {
                     stamp,
                     false_gate: false_first.then(|| QuestGate::Window(windows[0].clone())),
                 }),
-                family,
                 stamp,
             ));
         let mut request = super::super::harness::request(

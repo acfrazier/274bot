@@ -5,6 +5,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## [0.2.9] — Unreleased
 
+### Breaking changes
+
+- Source builds require local game-data and navigation generation before the product build.
+- Saved data in formats from before 0.2.8 no longer upgrades. Interactive users
+  can move refused files aside and start fresh. Noninteractive runs stop without
+  changing files. Supported 0.2.8 formats still load.
+
 ### Gatherer
 
 - Knife arm stays off by default. The built-in Gatherer arms only an ordinary

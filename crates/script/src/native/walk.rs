@@ -362,13 +362,13 @@ impl NativeMachine for Walk {
             let quest_rows = snapshot.quest_statuses().map(|statuses| statuses.value);
             // The catalog is prepared off-pump. This access only borrows its
             // cached rows and uses the provider's canonical ID-to-display match.
-            let quests = api::game_data::for_revision(cx.pin().revision)
-                .ok()
-                .filter(|data| {
-                    data.selected_pin()
-                        .is_ok_and(|pin| pin.as_ref() == cx.pin())
-                })
-                .and_then(|data| data.try_quests());
+            let data = match api::game_data::for_revision(cx.revision()) {
+                Ok(data) => data,
+                Err(error) => {
+                    return Poll::Ready(Err(ActionError::Unavailable(Arc::from(error))));
+                }
+            };
+            let quests = data.try_quests();
             let gate_status_observed =
                 quest_list_status_observed(gates, quests.as_deref(), snapshot);
             if first_observation || tick != *started {

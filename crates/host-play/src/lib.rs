@@ -19,28 +19,28 @@ pub mod login_readiness;
 pub mod map_bind;
 pub mod map_cache;
 mod map_producer;
-pub mod nav_identity;
+pub mod nav_assets;
 pub mod paired_core;
 pub mod passphrase;
 pub mod profile;
 pub mod progress;
 pub mod public_worlds;
 pub mod quest_pair;
+pub mod saved_data;
 pub mod servers;
 #[cfg(feature = "test-support")]
 pub mod tick_engine_test_support;
 pub mod walk_map;
 pub use client::Transport;
-pub use nav_identity::{
-    bundled_nav_identities, install_resource_root, BundledNavIdentity, NavFlagsOrigin,
-    NavLoadCounters, NavOrigin,
-};
+pub use nav_assets::install_resource_root;
 pub use profile::{
-    parse_profile_args, parse_revision, GameDataStatus, ProfileClass, ProfileOptions,
-    ProfileSelection, ServerProfile, TemplatePreparation, TemplateStep, WorldMembersFact,
-    WorldMembersSource, TEMPLATE_STEP_WAIT,
+    parse_profile_args, parse_revision, GameDataStatus, NavLoadCounters, ProfileClass,
+    ProfileOptions, ProfileSelection, ServerProfile, TemplatePreparation, TemplateStep,
+    WorldMembersFact, WorldMembersSource, TEMPLATE_STEP_WAIT,
 };
-pub use servers::{proposed_vault, LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Servers};
+pub use servers::{
+    proposed_vault, LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Servers, ServersError,
+};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]

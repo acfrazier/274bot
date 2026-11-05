@@ -2183,14 +2183,11 @@ fn queue_bank(
         let state = state
             .cloned()
             .unwrap_or_else(|| Arc::new(WorldState::empty()));
-        let evidence = world.graph.quest_family.and_then(|family| {
-            super::script_nav::captured_service_quests(
-                family,
-                bot.quest_context.as_ref(),
-                snapshot,
-                native.as_ref().map(|native| native.evidence),
-            )
-        });
+        let evidence = super::script_nav::captured_service_quests(
+            bot.quest_context.as_ref(),
+            snapshot,
+            native.as_ref().map(|native| native.evidence),
+        );
         let patched = if native.is_some() {
             super::script_nav::patch_bank_quest_evidence(
                 state,

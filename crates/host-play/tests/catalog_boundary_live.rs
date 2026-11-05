@@ -159,6 +159,18 @@ fn safe_catalog_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     Ok(root.join(relative))
 }
 
+fn frozen_catalog_roots(repo: &Path) -> Option<[PathBuf; 2]> {
+    let root_for = |commit: &str| {
+        let root = repo.join(format!(".superpowers/inputs/rs2b0t-{commit}"));
+        api::test_support::local_asset_path(
+            "",
+            &root.to_string_lossy(),
+            "frozen rs2b0t catalog checkout",
+        )
+    };
+    Some([root_for(CATALOG_COMMIT_A)?, root_for(CATALOG_COMMIT_B)?])
+}
+
 fn hash_file(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     Ok(script_js::JsCache::origin_sha(&bytes))
@@ -719,7 +731,13 @@ fn run_cell() -> Result<(), String> {
     if !matches!(revision, 274 | 289) {
         return Err("CATALOG_REVISION must be 274 or 289".into());
     }
-    let root = PathBuf::from(required("CATALOG_ROOT")?);
+    let Some(root) = api::test_support::local_asset_path(
+        "CATALOG_ROOT",
+        "",
+        "real frozen script catalog for the catalog boundary live proof",
+    ) else {
+        return Ok(());
+    };
     if !root.is_dir() {
         return Err(format!(
             "CATALOG_ROOT is not a directory: {}",
@@ -733,7 +751,13 @@ fn run_cell() -> Result<(), String> {
     if reference_catalog && (revision != 289 || case != CoreCase::CookBot) {
         return Err("the 964 reference live path is limited to R289 CookBot".into());
     }
-    let nav_pack = PathBuf::from(required("CATALOG_NAV_PACK")?);
+    let Some(nav_pack) = api::test_support::local_asset_path(
+        "CATALOG_NAV_PACK",
+        "",
+        "real navigation pack for the catalog boundary live proof",
+    ) else {
+        return Ok(());
+    };
     let matrix = support_matrix()?;
     let ledger_commit = if reference_catalog {
         CATALOG_COMMIT_B
@@ -840,7 +864,6 @@ fn run_cell() -> Result<(), String> {
         state.runner.set_obj_names(obj_names);
         state.start_handle = Some(play.script_start_handle());
     }
-    let nav_sha256 = hash_file(profile.nav_pack())?;
 
     println!(
         "{}",
@@ -848,9 +871,7 @@ fn run_cell() -> Result<(), String> {
             "phase": "identity",
             "revision": profile.revision().as_i32(),
             "profile": profile.label(),
-            "cache_id": profile.cache_id(),
             "nav_pack": profile.nav_pack(),
-            "nav_sha256": nav_sha256,
             "catalog_commit": commit,
             "catalog_identity": if reference_catalog {
                 "current frozen 96410ec5 reference (CookBot-only)"
@@ -1106,6 +1127,9 @@ mod tests {
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn checked_in_frozen_core_sources_match_both_catalog_ledgers() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let Some(_roots) = frozen_catalog_roots(&repo) else {
+            return;
+        };
         let matrix = support_matrix().unwrap();
         for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
             let root = repo.join(format!(".superpowers/inputs/rs2b0t-{commit}"));
@@ -11554,6 +11578,9 @@ export default class NativeStop extends LoopingBot {{
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn camp_and_fight_option_injects_match_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let Some(_roots) = frozen_catalog_roots(&repo) else {
+            return;
+        };
         for (name, card, path_tail) in [
             (
                 "chaos_druid_tower",
@@ -11616,6 +11643,9 @@ export default class NativeStop extends LoopingBot {{
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn option_branch_injects_match_both_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let Some(_roots) = frozen_catalog_roots(&repo) else {
+            return;
+        };
         let matrix = support_matrix().unwrap();
         for (name, card) in [
             ("auto_fighter_range", "AutoFighter"),
@@ -12831,6 +12861,9 @@ export default class NativeStop extends LoopingBot {{
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn bank_cell_injects_match_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let Some(_roots) = frozen_catalog_roots(&repo) else {
+            return;
+        };
         for (name, card, path_tail) in [
             (
                 "auto_fighter_bank",
@@ -14342,6 +14375,9 @@ export default class NativeStop extends LoopingBot {{
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn noncombat_core_injects_match_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let Some(_roots) = frozen_catalog_roots(&repo) else {
+            return;
+        };
         for (name, card, path_tail) in [
             (
                 "aio_teleport",
@@ -14457,6 +14493,17 @@ export default class NativeStop extends LoopingBot {{
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn climbing_boots_injects_match_the_frozen_reference_card_schema() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        if api::test_support::local_asset_path(
+            "",
+            &repo
+                .join(format!(".superpowers/inputs/rs2b0t-{REFERENCE_COMMIT_964}"))
+                .to_string_lossy(),
+            "frozen 964 rs2b0t catalog checkout",
+        )
+        .is_none()
+        {
+            return;
+        }
         for (name, use_teleport) in [("climbing_boots", false), ("climbing_boots_teleport", true)] {
             let case = CoreCase::parse(name).expect("noncombat case registered");
             assert_eq!(case.card_name(), "ClimbingBoots");

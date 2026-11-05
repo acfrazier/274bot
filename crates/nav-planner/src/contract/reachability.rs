@@ -216,7 +216,6 @@ impl NavLease {
 mod tests {
     use super::*;
     use crate::collision::{pack_walk, WorldCollision};
-    use crate::contract::PackDigest;
     use crate::reachability::ReachabilityAtlas;
     use crate::world::NavWorld;
     use std::sync::Arc;
@@ -247,7 +246,7 @@ mod tests {
     #[test]
     fn unlabeled_component_lookup_is_missing_not_empty() {
         let world = tiny_world();
-        let lease = NavLease::wrap(world, PackDigest::of(b"test")).unwrap();
+        let lease = NavLease::wrap(world).unwrap();
         let view = lease.reachability();
         let err = view
             .component_at(WorldTile {
@@ -334,7 +333,7 @@ mod tests {
     #[test]
     fn labelled_component_lookup_hits_and_misses_by_label() {
         let (world, _, tile, uncovered) = labelled_world();
-        let lease = NavLease::wrap(world, PackDigest::of(b"labelled")).unwrap();
+        let lease = NavLease::wrap(world).unwrap();
         let view = lease.reachability();
         assert!(view.component_at(tile).is_ok());
         assert_eq!(
@@ -346,11 +345,10 @@ mod tests {
     /// The lease holds the shared world handle and nothing of the atlas: a
     /// hundred leases add a hundred handles, not a hundred payloads.
     #[test]
-    fn hundred_bound_leases_share_one_atlas_payload() {
+    fn hundred_leases_share_one_atlas_payload() {
         let (world, _, _, _) = labelled_world();
-        let digest = PackDigest::of(b"share-atlas");
         let leases: Vec<_> = (0..100)
-            .map(|_| NavLease::wrap(Arc::clone(&world), digest).unwrap())
+            .map(|_| NavLease::wrap(Arc::clone(&world)).unwrap())
             .collect();
         assert_eq!(Arc::strong_count(&world), 101);
         let first = leases[0].reachability();
@@ -379,7 +377,7 @@ mod tests {
     #[test]
     fn borrowed_component_and_stand_lookups_do_not_allocate() {
         let (world, key, tile, uncovered) = labelled_world();
-        let lease = NavLease::wrap(world, PackDigest::of(b"zero-alloc")).unwrap();
+        let lease = NavLease::wrap(world).unwrap();
         let view = lease.reachability();
         let measured = allocation_counter::measure(|| {
             let component = view.component_at(tile);
@@ -428,7 +426,7 @@ mod tests {
         assert!(leases
             .iter()
             .all(|lease| std::ptr::eq(lease.reachability().atlas, world.reachability())));
-        let lease = NavLease::wrap(Arc::clone(&world), PackDigest::of(b"real-atlas")).unwrap();
+        let lease = NavLease::wrap(Arc::clone(&world)).unwrap();
         let view = lease.reachability();
         let lumbridge = WorldTile {
             x: 3222,

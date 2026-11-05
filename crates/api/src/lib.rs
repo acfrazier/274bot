@@ -17,7 +17,6 @@ pub mod content;
 pub mod cook_locations;
 pub mod debug_commands;
 pub mod ent;
-mod family_asset;
 pub mod game_data;
 pub mod gather_methods;
 pub mod gather_tools;
@@ -48,4 +47,6 @@ pub mod settle;
 pub mod shop_facts;
 pub mod snapshot;
 pub mod stock;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod work;

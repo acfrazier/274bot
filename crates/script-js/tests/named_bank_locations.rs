@@ -5,7 +5,7 @@ use std::sync::Arc;
 mod bank_slot;
 use bank_slot::BankSlot;
 
-use api::named_banks::{NamedBank, NamedBankFacts, BANK_CATALOG};
+use api::named_banks::{bank_catalog, NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::WorldTile;
 use nav_planner::named_banks::resolve;
@@ -17,6 +17,7 @@ use script::native::snapshot_source::{
 use script::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
 use script_js::LoadShape;
 
+mod common;
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
     SnapshotInput {
         tick: 1,
@@ -111,9 +112,11 @@ export default class T extends LoopingBot { loop() {} }
 
 fn catalog() -> NamedBankFacts {
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    resolve(BANK_CATALOG, &data.bank_placements().unwrap().rows, |_| {
-        true
-    })
+    resolve(
+        bank_catalog().expect("local bank catalog"),
+        &data.bank_placements().unwrap().rows,
+        |_| true,
+    )
 }
 
 fn post(iso: &mut BankSlot, fishing_base: i32, quests: &[QuestStatusInput<'_>]) {
@@ -138,6 +141,9 @@ fn post(iso: &mut BankSlot, fishing_base: i32, quests: &[QuestStatusInput<'_>]) 
 
 #[test]
 fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
+    if !common::local_bank_catalog_available() || !common::local_game_data_available(289) {
+        return;
+    }
     let mut iso = spawn(PROBE, catalog());
     post(&mut iso, 67, &[]);
     assert_eq!(
@@ -180,6 +186,9 @@ fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
 
 #[test]
 fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
+    if !common::local_bank_catalog_available() || !common::local_game_data_available(289) {
+        return;
+    }
     let mut iso = spawn(PROBE, catalog());
     post(&mut iso, 1, &[]);
     assert_ne!(iso.probe("pick(3091,3958)").unwrap(), "Mage Arena");
@@ -195,6 +204,10 @@ fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
 
 #[test]
 fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
+
     let mut a = spawn(
         PROBE,
         NamedBankFacts::from_banks(vec![
@@ -239,9 +252,12 @@ fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
     b.stop();
 }
 
-/// A selected identity controls opening until native facts prove loaded stock.
+/// A selected bank controls opening until native facts prove loaded stock.
 #[test]
 fn reachable_bank_continuations_open_npc_access_and_wait_for_loaded_stock() {
+    if !common::local_bank_catalog_available() || !common::local_game_data_available(289) {
+        return;
+    }
     use script::native::snapshot_source::{ChatOptionInput, ItemRowInput, SceneEntityInput};
 
     for (call, after) in [

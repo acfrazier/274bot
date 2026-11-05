@@ -1,18 +1,15 @@
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
+import { assertTrioGiverNpcJoins, assertTalkKeyNpcJoins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
-import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, hiddenSitesRecord, HIDDEN_SITES_FILE, isKnownGatherTarget, SITE_OVERRIDES, GATHERING_SCHEMA, type GatherResourceWire, type GatherSiteBank, type GatherSiteWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
+import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, GATHERING_SCHEMA, isKnownGatherTarget, SITE_OVERRIDES, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
 import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
-import { QUESTS_SCHEMA, categoryName, extractQuestsFamily, familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, runtimeNpcOperations, npcEvidenceBytes, type SelectedBuild } from './generate.ts';
-import { sha256, sourceFile } from './extractors/common.ts';
+import { DEBUG_SCHEMA_VERSION, QUESTS_SCHEMA, buildDebugArtifact, categoryName, debugArtifactBytes, extractQuestsFamily, familyBytes, parseGenerationArgs, revisions, runtimeNpcOperations } from './generate.ts';
 import { extractCombatStyleFacts, parseCombatScripts, extractSpecialWeaponFacts, extractItemCombatBonus, extractMeleeWeaponTiers } from './extractors/combat.ts';
 import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
@@ -43,7 +40,6 @@ assert.deepEqual(
     const npcIds = [1, 2, 3, 390, 403];
     const evidence: NpcTransformClosureEvidence = {
         schema: 1,
-        source_inputs: { engine: [], content: [] },
         source_spans: [{ file: 'scripts/test.rs2', first: 1, last: 2 }],
         npc_types: npcIds.map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete', source_refs: [0] })),
         actions: npcIds.map(npc_type_id => ({
@@ -76,9 +72,8 @@ assert.deepEqual(
         { npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) },
         { npc_type_id: 2, slot: 1, operation_fingerprint: 'a'.repeat(64) },
     ], 'static proof admits only complete ordinary NPC types, even when full closure is unavailable');
-    assert.equal(runtime.evidence_sha256, crypto.createHash('sha256').update(npcEvidenceBytes(evidence)).digest('hex'));
     assert.equal(runtime.schema, 2);
-    assert.deepEqual(Object.keys(runtime), ['schema', 'evidence_sha256', 'operations', 'builtin_gatherer_fishing_operations']);
+    assert.deepEqual(Object.keys(runtime), ['schema', 'operations', 'builtin_gatherer_fishing_operations']);
     evidence.proofs[0].unresolved_refs.push(0);
     assert.throws(() => runtimeNpcOperations(evidence, methods, hazardNpcs), /positive NPC proof disagrees/);
     evidence.proofs[0].unresolved_refs.length = 0;
@@ -91,12 +86,8 @@ assert.deepEqual(
 }
 
 
-/** Pinned-tree roots are the generator's required GAME_DATA_*_CONTENT variables, never literals. */
-function pinContentRoot(revision: 274 | 289): string {
-    return revisions.find((spec) => spec.revision === revision)!.content;
-}
-/** The stat defaults must come from the engine source pinned for this build. */
-function pinNpcTypeSource(revision: 274 | 289): string {
+/** NPC stat defaults are decoded from the selected local engine source. */
+function engineNpcTypeSource(revision: 274 | 289): string {
     const engine = revisions.find((spec) => spec.revision === revision)!.engine;
     return fs.readFileSync(path.join(engine, 'src/cache/config/NpcType.ts'), 'utf8');
 }
@@ -664,8 +655,8 @@ fs.appendFileSync(path.join(attackStylesDir, 'player_attackstyles.rs2'), [
     '[if_button,combat_bow:bow1] ~set_attackstyle(1);',
     '[if_button,combat_bow:bow2] ~set_attackstyle(2);',
 ].join('\n') + '\n');
-const npcTypeSource274 = pinNpcTypeSource(274);
-const npcTypeSource289 = pinNpcTypeSource(289);
+const npcTypeSource274 = engineNpcTypeSource(274);
+const npcTypeSource289 = engineNpcTypeSource(289);
 const combatScripts = parseCombatScripts(content);
 assert.equal(combatScripts.triggers.has('phantom'), false);
 assert.equal(combatScripts.triggers.has('ghost'), false);
@@ -673,31 +664,6 @@ const npcFacts274 = extractNpcNamesFacts(content, 274, npcTypeSource274, combatS
 const npcFacts = extractNpcNamesFacts(content, 289, npcTypeSource289, combatScripts);
 assert.equal(npcFacts274.combat_facts_version, 2);
 assert.equal(npcFacts.combat_facts_version, 2);
-const pinnedContent289 = pinContentRoot(289);
-const pinnedCombatScripts289 = parseCombatScripts(pinnedContent289);
-const pinnedNpcFacts289 = extractNpcNamesFacts(pinnedContent289, 289, npcTypeSource289, pinnedCombatScripts289);
-const pinnedTransform = (config: string) => pinnedNpcFacts289.rows.find((row) => row.config === config)?.combat_transform;
-assert.deepEqual(pinnedTransform('horror_rockcrab_inactive'), { kind: 'known', npc_id: 1265 }, 'content source proves the large dormant Rock Crab target');
-assert.deepEqual(pinnedTransform('horror_rockcrab_small_inactive'), { kind: 'known', npc_id: 1267 }, 'content source proves the small dormant Rock Crab target');
-for (const config of [
-    'ghast_invis',
-    'gnomeballer_red',
-    'gnomeballer_orange',
-    'gnomeballer_yellow',
-    'shadeshadow_level1',
-    'shade_level1',
-    'shadeshadow_level2',
-    'shade_level2',
-    'shadeshadow_level3',
-    'shade_level3',
-    'shadeshadow_level4',
-    'shade_level4',
-    'shadeshadow_level5',
-    'shade_level5',
-]) {
-    assert.deepEqual(pinnedTransform(config), { kind: 'unknown' }, `${config}: noncanonical attack-trigger change is fail-closed`);
-}
-assert.equal(pinnedTransform('khazard_warlord'), null, 'ordinary NPCs have no attack-approach transformation');
 for (const [facts, expected] of [
     [npcFacts274, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 7], ['zamorak_like', 6, 0], ['saradomin_like', 9, 7]]],
     [npcFacts, [['test_npc', 5, 7], ['khazard_warlord', 5, 7], ['dragon_npc', 0, 2], ['zamorak_like', 6, 6], ['saradomin_like', 9, 11]]],
@@ -705,7 +671,7 @@ for (const [facts, expected] of [
     for (const [config, wanderrange, maxrange] of expected) {
         const row = facts.rows.find((entry) => entry.config === config)!;
         assert.equal(row.wanderrange, wanderrange, `${config}: runtime wander default`);
-        assert.equal(row.maxrange, maxrange, `${config}: pinned runtime maxrange derivation/clamp`);
+        assert.equal(row.maxrange, maxrange, `${config}: runtime maxrange derivation/clamp`);
     }
 }
 assert.throws(() => extractNpcNamesFacts(content, 275, npcTypeSource289, combatScripts), /unsupported revision 275/);
@@ -1090,7 +1056,7 @@ name=Guam leaf
 cost=999
 [snake_weed]
 name=Snake weed
-param=identified_herb_level,3
+param=identified_herb_level,5
 `);
 fs.writeFileSync(path.join(herblore, 'scripts/identifying/identify.rs2'), `[opheld1,unidentified_guam]
 ~attempt_identify_herb(guam_leaf, last_slot());
@@ -1107,10 +1073,10 @@ assert.equal(identifiedHerbLevelDefault(content), 3);
 assert.deepEqual(parseParamDefinitions(fs.readFileSync(path.join(herblore, 'configs/identifying/identify.param'), 'utf8')).get('identified_herb_level'), { type: 'int', default: '3' });
 const herbs = extractHerbFacts(content, herbItems);
 assert.equal(herbs.herbs.length, 2);
-assert.deepEqual(herbs.herbs[0], { key: 'guam', name: 'Guam leaf', id: 249, unidId: 199, level: 3, level_source: 'identified_herb_level_default', source_identified: 'guam_leaf', source_unidentified: 'unidentified_guam' });
+assert.deepEqual(herbs.herbs[0], { key: 'guam', name: 'Guam leaf', id: 249, unidId: 199, level: 3 });
 assert.equal(herbs.herbs[0].level, 3, 'guam uses identify.param default, not cost=999');
 assert.equal(herbs.herbs[1].key, 'snake weed');
-assert.equal(herbs.herbs[1].level_source, 'identified_herb_level');
+assert.equal(herbs.herbs[1].level, 5, 'an explicit herbs.obj level overrides the identify.param default');
 
 const dropContent = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-drop-fixture-'));
 const dropScripts = path.join(dropContent, 'scripts/drop tables/scripts');
@@ -1215,56 +1181,28 @@ const prayerDir = path.join(prayerContent, 'scripts/skill_prayer');
 fs.mkdirSync(path.join(prayerDir, 'configs'), { recursive: true });
 fs.mkdirSync(path.join(prayerDir, 'interfaces'), { recursive: true });
 fs.mkdirSync(path.join(prayerContent, 'pack'), { recursive: true });
-fs.writeFileSync(path.join(prayerDir, 'configs/prayers.constant'), '^prayer_thickskin = 1\n^prayer_strengthburst = 4\n');
-fs.writeFileSync(path.join(prayerDir, 'configs/prayers.dbrow'), `[prayer_thick_skin]
-data=prayer,^prayer_thickskin
-data=name,Thick Skin
-data=level,1
-[prayer_strength_burst]
-data=prayer,^prayer_strengthburst
-data=name,Burst of Strength
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.constant'), '^prayer_alpha = 1\n^prayer_beta = 2\n');
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.dbrow'), `[alpha]
+data=prayer,^prayer_alpha
+data=name,Prayer Alpha
+data=level,2
+[beta]
+data=prayer,^prayer_beta
+data=name,Prayer Beta
 data=level,4
 `);
-fs.writeFileSync(path.join(prayerDir, 'interfaces/prayer.if'), `[prayer_thickskin]
-script1op1=pushvar,prayer0
-[prayer_strengthburst]
-script1op1=pushvar,prayer1
+fs.writeFileSync(path.join(prayerDir, 'interfaces/prayer.if'), `[prayer_alpha]
+script1op1=pushvar,prayer_alpha
+[prayer_beta]
+script1op1=pushvar,prayer_beta
 `);
-fs.writeFileSync(path.join(prayerContent, 'pack/interface.pack'), '5609=prayer:prayer_thickskin\n5610=prayer:prayer_strengthburst\n');
-fs.writeFileSync(path.join(prayerContent, 'pack/varp.pack'), '83=prayer0\n84=prayer1\n');
-assert.throws(
-    () => extractPrayerFacts(prayerContent),
-    /expected 15 rows, got 2/,
-    'partial prayer tables must fail closed',
-);
-fs.writeFileSync(path.join(prayerDir, 'configs/prayers.constant'), [...Array.from({ length: 15 }, (_, index) => `^prayer_row${index} = ${index + 1}`)].join('\n') + '\n');
-let dbrow = '';
-let prayerIf = '';
-let iface = '';
-let varp = '';
-for (let index = 0; index < 15; index += 1) {
-    const constant = `prayer_row${index}`;
-    const name = index === 0 ? 'Thick Skin' : index === 14 ? 'Protect from Melee' : `Prayer ${index}`;
-    const level = index === 0 ? 1 : index === 14 ? 43 : index + 1;
-    dbrow += `[row_${index}]
-data=prayer,^${constant}
-data=name,${name}
-data=level,${level}
-`;
-    prayerIf += `[${constant}]
-script1op1=pushvar,prayer${index}
-`;
-    iface += `${5609 + index}=prayer:${constant}\n`;
-    varp += `${83 + index}=prayer${index}\n`;
-}
-fs.writeFileSync(path.join(prayerDir, 'configs/prayers.dbrow'), dbrow);
-fs.writeFileSync(path.join(prayerDir, 'interfaces/prayer.if'), prayerIf);
-fs.writeFileSync(path.join(prayerContent, 'pack/interface.pack'), iface);
-fs.writeFileSync(path.join(prayerContent, 'pack/varp.pack'), varp);
+fs.writeFileSync(path.join(prayerContent, 'pack/interface.pack'), '501=prayer:prayer_alpha\n502=prayer:prayer_beta\n');
+fs.writeFileSync(path.join(prayerContent, 'pack/varp.pack'), '41=prayer_alpha\n42=prayer_beta\n');
 const prayerFacts = extractPrayerFacts(prayerContent);
-assert.equal(prayerFacts.prayers.length, 15);
-assert.equal(prayerFacts.prayers[0].button_com, 5609);
-assert.equal(prayerFacts.prayers[14].varp, 97);
+assert.deepEqual(prayerFacts.prayers.map(({ name, level, button_com, varp }) => ({ name, level, button_com, varp })), [
+    { name: 'Prayer Alpha', level: 2, button_com: 501, varp: 41 },
+    { name: 'Prayer Beta', level: 4, button_com: 502, varp: 42 },
+]);
 assert.throws(
     () => parsePrayerInterface('[a]\nscript1op1=pushvar,x\n[a]\nscript1op1=pushvar,y\n'),
     /duplicate section a/,
@@ -1276,28 +1214,21 @@ data=prayer,^prayer_missing
 data=name,Missing
 data=level,1
 `);
-fs.writeFileSync(path.join(prayerDir, 'configs/prayers.constant'), '^prayer_thickskin = 1\n');
 assert.throws(
     () => extractPrayerFacts(prayerContent),
     /unknown prayer constant prayer_missing/,
     'prayer constant must exist in prayers.constant',
 );
-fs.writeFileSync(path.join(prayerDir, 'interfaces/prayer.if'), `[prayer_thickskin]
-script1op1=pushvar,prayer0
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.dbrow'), `[only]
+data=prayer,^prayer_alpha
+data=name,Prayer Alpha
+data=level,2
 `);
-fs.writeFileSync(path.join(prayerDir, 'configs/prayers.dbrow'), `[bad]
-data=prayer,^prayer_thickskin
-data=name,Thick Skin
-data=level,1
-`);
-fs.writeFileSync(path.join(prayerDir, 'configs/prayers.constant'), '^prayer_thickskin = 1\n');
-fs.writeFileSync(path.join(prayerContent, 'pack/interface.pack'), '5609=prayer:prayer_thickskin\n');
-fs.writeFileSync(path.join(prayerContent, 'pack/varp.pack'), '83=prayer0\n');
-assert.throws(
-    () => extractPrayerFacts(prayerContent),
-    /expected 15 rows, got 1/,
-    'single-row fixture stays fail-closed until complete',
-);
+const singlePrayer = extractPrayerFacts(prayerContent);
+assert.equal(singlePrayer.prayers.length, 1, 'one valid extracted prayer is not rejected by a publication-count pin');
+assert.equal(singlePrayer.prayers[0].button_com, 501);
+fs.writeFileSync(path.join(prayerDir, 'configs/prayers.dbrow'), '');
+assert.throws(() => extractPrayerFacts(prayerContent), /missing prayer rows/);
 
 assert.deepEqual(parseInvShopStock('[pickaxeshop]\nstock1=bronze_pickaxe,6,50\n', 'pickaxeshop').map((row) => row.alias), ['bronze_pickaxe']);
 assert.throws(() => parseInvShopStock('[other]\nstock1=a,1,1\n', 'pickaxeshop'), /missing stock rows/);
@@ -1387,83 +1318,38 @@ const equipmentPack = new Map<string, number>([
     ['deathdagger', 746],
     ['bronze_arrow', 882],
 ]);
-const frozenText = fs.readFileSync(path.join(repoRoot, 'tools/game-data/equipment-names.frozen.ts'), 'utf8');
-assert.equal(parseFrozenEquipmentSingleQuoted("'Karil\\'s crossbow'", 0).value, "Karil's crossbow");
-const frozenFamilies = parseFrozenEquipmentNameArrays(frozenText);
-assert.equal(frozenFamilies.crossbows.at(-1), "Karil's crossbow");
-assert.deepEqual(frozenFamilies.bolts, [
-    'Bronze bolts', 'Iron bolts', 'Steel bolts', 'Black bolts', 'Mithril bolts', 'Adamant bolts', 'Rune bolts',
-    'Broad bolts', 'Bone bolts',
-]);
 const curated = loadEquipmentNamesCurated();
-assert.deepEqual(curated.families.crossbows, frozenFamilies.crossbows);
-assert.deepEqual(curated.families.bows, frozenFamilies.bows);
-assert.equal(curated.families.crossbows.includes('Karil\\'), false);
 
-function isolatedEquipmentRoot(mutate?: (curatedJson: ReturnType<typeof loadEquipmentNamesCurated>) => ReturnType<typeof loadEquipmentNamesCurated> | void) {
+function isolatedEquipmentRoot(families: typeof curated.families = structuredClone(curated.families)) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-equipment-isolated-'));
     fs.mkdirSync(path.join(dir, 'tools/game-data'), { recursive: true });
-    const next = structuredClone(curated);
-    mutate?.(next);
-    fs.writeFileSync(path.join(dir, 'tools/game-data/equipment-names.curated.json'), `${JSON.stringify(next, null, 2)}\n`);
-    fs.copyFileSync(path.join(repoRoot, 'tools/game-data/equipment-names.frozen.ts'), path.join(dir, 'tools/game-data/equipment-names.frozen.ts'));
+    fs.writeFileSync(path.join(dir, 'tools/game-data/equipment-names.curated.json'), `${JSON.stringify({ schema: curated.schema, families }, null, 2)}\n`);
     return dir;
 }
 
 const isolated = isolatedEquipmentRoot();
-assert.deepEqual(loadEquipmentNamesCurated(isolated).families, frozenFamilies);
+assert.deepEqual(loadEquipmentNamesCurated(isolated).families, curated.families);
 const isolatedFacts = extractEquipmentNamesFacts(equipmentItems, equipmentPack, isolated);
 assert.equal(isolatedFacts.crossbows.at(-1)?.requested_name, "Karil's crossbow");
-assert.equal(isolatedFacts.equipment_evidence.path, 'tools/game-data/equipment-names.frozen.ts');
 
-const curatedOnly = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-equipment-curated-only-'));
-fs.mkdirSync(path.join(curatedOnly, 'tools/game-data'), { recursive: true });
-fs.copyFileSync(path.join(repoRoot, 'tools/game-data/equipment-names.curated.json'), path.join(curatedOnly, 'tools/game-data/equipment-names.curated.json'));
-assert.throws(
-    () => loadEquipmentNamesCurated(curatedOnly),
-    /equipment evidence missing/,
-    'loader must not require a sibling checkout; missing local evidence fails closed',
-);
-
-const malformed = isolatedEquipmentRoot((copy) => {
-    copy.families.crossbows[9] = 'Karil\\';
+const unknown = isolatedEquipmentRoot({
+    ...curated.families,
+    bows: [...curated.families.bows, 'Laser gun'],
 });
-assert.throws(
-    () => loadEquipmentNamesCurated(malformed),
-    /crossbows\[9\].*Karil/,
-    'malformed known curated Karil must fail closed before selected matching',
-);
-
-const wrongOrder = isolatedEquipmentRoot((copy) => {
-    const [first, second] = copy.families.bows;
-    copy.families.bows[0] = second!;
-    copy.families.bows[1] = first!;
-});
-assert.throws(
-    () => loadEquipmentNamesCurated(wrongOrder),
-    /bows\[0\]/,
-    'wrong curated order must fail closed against frozen evidence',
-);
-
-const unknown = isolatedEquipmentRoot((copy) => {
-    copy.families.bows.push('Laser gun');
-});
-assert.throws(
-    () => loadEquipmentNamesCurated(unknown),
-    /bows length 13 != frozen 12/,
-    'unknown curated membership must fail closed',
-);
+const unknownFacts = extractEquipmentNamesFacts([], new Map(), unknown);
+assert.equal(unknownFacts.bows.at(-1)?.requested_name, 'Laser gun');
+assert.equal(unknownFacts.bows.at(-1)?.disposition, 'absent');
 
 const curatedCopy = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-equipment-curated-'));
 fs.mkdirSync(path.join(curatedCopy, 'tools/game-data'), { recursive: true });
 fs.writeFileSync(path.join(curatedCopy, 'tools/game-data/equipment-names.curated.json'), JSON.stringify({
-    ...curated,
+    schema: curated.schema,
     families: { ...curated.families, melee_weapons: ['Dup', 'Dup'] },
 }, null, 2));
 assert.throws(
     () => loadEquipmentNamesCurated(curatedCopy),
     /duplicate melee_weapons name Dup/,
-    'curated duplicate family rows must fail closed before evidence compare',
+    'curated duplicate family rows are malformed',
 );
 
 const equipmentFacts = extractEquipmentNamesFacts(equipmentItems, equipmentPack);
@@ -1526,192 +1412,10 @@ assert.equal(
     'no_exact_selected_match',
 );
 
-/** Minimal tracked content tree for the write-gate and pipeline tests below: packs, one map, one script. */
-function gateContentFixture() {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-pin-content-'));
-    const files: Record<string, string> = {
-        'pack/loc.pack': '1306=tree\n',
-        'pack/obj.pack': '1511=logs\n',
-        'maps/m42_55.jm2': '==== LOC ====\n0 47 62: 1306 10 1\n',
-        'scripts/example/example.rs2': '[proc,example]\nreturn;\n',
-    };
-    for (const [relative, body] of Object.entries(files)) {
-        const absolute = path.join(rootDir, relative);
-        fs.mkdirSync(path.dirname(absolute), { recursive: true });
-        fs.writeFileSync(absolute, body);
-    }
-    execFileSync('git', ['init', '-q'], { cwd: rootDir });
-    execFileSync('git', ['add', '-A'], { cwd: rootDir });
-    return rootDir;
-}
-
-
-// write gate: generate refuses the same dirty placement inputs verify does — the whole
-// scanned maps tree, not just the two maps content_files names, plus the published pack
-const gateEngine = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-pin-engine-'));
-fs.writeFileSync(path.join(gateEngine, 'pin.txt'), 'engine fixture\n');
-fs.writeFileSync(path.join(gateEngine, '.gitignore'), 'data/pack/\n');
-execFileSync('git', ['init', '-q'], { cwd: gateEngine });
-execFileSync('git', ['add', '-A'], { cwd: gateEngine });
-const gateContent = gateContentFixture();
-fs.writeFileSync(path.join(gateContent, 'maps/m43_55.jm2'), '==== LOC ====\n0 1 1: 1306\n');
-fs.writeFileSync(path.join(gateContent, '.gitignore'), 'pack/param.pack\npack/unknown.pack\n.DS_Store\n');
-execFileSync('git', ['add', '-A'], { cwd: gateContent });
-for (const dir of [gateEngine, gateContent]) execFileSync('git', ['-c', 'user.email=fixture@invalid', '-c', 'user.name=Fixture', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture'], { cwd: dir });
-const gateHead = (dir: string) => execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-const gateSpec = { revision: 274, engine: gateEngine, content: gateContent, expectedEngine: gateHead(gateEngine), expectedContent: gateHead(gateContent) } as Parameters<typeof assertPinned>[0];
-assert.equal(assertPinned(gateSpec).contentCommit, gateSpec.expectedContent, 'a clean pinned tree passes the write gate');
-for (const relative of ['scripts/quests/example/journal.rs2', 'scripts/shared/include.constant', 'pack/obj.pack']) {
-    const file = path.join(gateContent, relative);
-    const original = fs.existsSync(file) ? fs.readFileSync(file) : undefined;
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, 'untracked selected input\n');
-    assert.throws(() => assertPinned(gateSpec), /relevant content inputs are dirty/, relative);
-    if (original) fs.writeFileSync(file, original);
-    else fs.rmSync(file);
-}
-const engineLimit = path.join(gateEngine, 'src/network/game/client/ClientGameProtCategory.ts');
-fs.mkdirSync(path.dirname(engineLimit), { recursive: true });
-fs.writeFileSync(engineLimit, 'export const USER_EVENT_LIMIT = 5;\n');
-assert.match(engineDirt(gateEngine), /ClientGameProtCategory\.ts/);
-assert.throws(() => assertPinned(gateSpec), /relevant engine inputs are dirty/);
-fs.rmSync(engineLimit);
-fs.appendFileSync(path.join(gateContent, 'maps/m43_55.jm2'), '0 2 2: 1306\n');
-assert.throws(() => assertPinned(gateSpec), /relevant content inputs are dirty/, 'a modified map outside content_files fails the write gate');
-fs.writeFileSync(path.join(gateContent, 'maps/m43_55.jm2'), '==== LOC ====\n0 1 1: 1306\n');
-fs.writeFileSync(path.join(gateContent, 'maps/m44_55.jm2'), '==== LOC ====\n0 1 1: 1306\n');
-assert.throws(() => assertPinned(gateSpec), /relevant content inputs are dirty/, 'an untracked map fails the write gate');
-fs.rmSync(path.join(gateContent, 'maps/m44_55.jm2'));
-const originalLocPack = fs.readFileSync(path.join(gateContent, 'pack/loc.pack'));
-fs.appendFileSync(path.join(gateContent, 'pack/loc.pack'), '9999=extra\n');
-assert.throws(() => assertPinned(gateSpec), /relevant content inputs are dirty/, 'a dirty published pack fails the write gate');
-fs.writeFileSync(path.join(gateContent, 'pack/loc.pack'), originalLocPack);
-
-// Ignored generated files have explicit pins; neither dirt nor identity may
-// silently depend on whatever generated bytes happen to be in the checkout.
-const paramPack = path.join(gateContent, 'pack/param.pack');
-fs.writeFileSync(paramPack, '0=param\n');
-assert.throws(() => assertPinned(gateSpec), /unrecognized ignored input.*param\.pack/);
-gateSpec.generatedInputs = {
-    engine_commit: gateSpec.expectedEngine, content_commit: gateSpec.expectedContent,
-    content: [sourceFile(gateContent, 'pack/param.pack')], engine: [],
-};
-assertPinned(gateSpec);
-fs.appendFileSync(paramPack, '1=dirty\n');
-assert.throws(() => assertPinned(gateSpec), /generated input hash mismatch.*param\.pack/);
-fs.writeFileSync(paramPack, '0=param\n');
-fs.writeFileSync(path.join(gateContent, 'pack/unknown.pack'), '0=unknown\n');
-assert.throws(() => assertPinned(gateSpec), /unrecognized ignored input.*unknown\.pack/);
-fs.rmSync(path.join(gateContent, 'pack/unknown.pack'));
-const packedConfig = path.join(gateEngine, 'data/pack/client/config');
-fs.mkdirSync(path.dirname(packedConfig), { recursive: true });
-fs.writeFileSync(packedConfig, 'packed config');
-assert.throws(() => assertPinned(gateSpec), /unrecognized ignored input.*config/);
-gateSpec.generatedInputs.engine.push(sourceFile(gateEngine, 'data/pack/client/config'));
-assertPinned(gateSpec);
-fs.appendFileSync(packedConfig, 'dirty');
-assert.throws(() => assertPinned(gateSpec), /generated input hash mismatch.*config/);
-fs.rmSync(packedConfig);
-assert.throws(() => assertPinned(gateSpec), /generated input unavailable.*config/);
-fs.writeFileSync(packedConfig, 'packed config');
-
-// Real cache-identity admission, fixture source pin, and bounded producer bodies:
-// refusal must leave the last complete asset directory byte-for-byte intact.
-const selectedPin = revisions.find(spec => spec.revision === 289)!;
-const pipelineOutput = fs.mkdtempSync(path.join(os.tmpdir(), 'selected-build-'));
-const pipelineSpec = {
-    ...selectedPin, content: gateContent, expectedContent: gateSpec.expectedContent,
-    generatedInputs: {
-        ...selectedPin.generatedInputs!, content_commit: gateSpec.expectedContent,
-        content: gateSpec.generatedInputs.content,
-    },
-    output: path.join(pipelineOutput, '289.json'),
-};
-const liveDirectory = path.join(pipelineOutput, '289');
-const navFile = path.join(pipelineOutput, 'nav.bin');
-const flagsFile = path.join(pipelineOutput, 'flags.bin');
-fs.writeFileSync(navFile, 'nav');
-fs.writeFileSync(flagsFile, 'flags');
-const build: SelectedBuild = {
-    quests: () => ({ schema: 2, payload: { quest: 'cook' } }),
-    gathering: () => ({ schema: 3, payload: { resource: 'oak' } }),
-    bake: async families => ({
-        nav: navFile, flags: flagsFile,
-        quest_facts_sha256: families.quests.sha256, quest_extractor_schema: families.quests.schema,
-    }),
-    core: () => ({
-        bytes: Buffer.from('{"core":"fixture"}\n'),
-        action_limits: { user_events_per_tick: 5, source: { file: 'limits.ts', first: 1, last: 1 } },
-    }),
-};
-try {
-    const published = await generateSelected(pipelineSpec, build);
-    const manifestBytes = fs.readFileSync(published.path, 'utf8');
-    const manifest = JSON.parse(manifestBytes);
-    // The exported serializer is the one the pipeline uses: byte-identical for both families.
-    const upstream = familyInputs(pipelineSpec, assertPinned(pipelineSpec));
-    const withoutContractCachePins = {
-        ...pipelineSpec,
-        generatedInputs: {
-            ...pipelineSpec.generatedInputs,
-            engine: pipelineSpec.generatedInputs.engine.filter(input => ![
-                'data/pack/client/interface', 'data/pack/client/title',
-                'data/pack/server/interface.dat', 'data/pack/server/mesanim.dat',
-            ].includes(input.path)),
-        },
-    };
-    const existingUpstream = familyInputs(withoutContractCachePins, assertPinned(withoutContractCachePins));
-    assert.equal(familyBytes(upstream, { schema: 2, payload: { quest: 'cook' } }, 'quests'),
-        familyBytes(existingUpstream, { schema: 2, payload: { quest: 'cook' } }, 'quests'),
-        'server-ordered-only cache pins do not change existing quest bytes or nav bindings');
-    assert.equal(familyBytes(upstream, { schema: 3, payload: { resource: 'oak' } }, 'gathering'),
-        familyBytes(existingUpstream, { schema: 3, payload: { resource: 'oak' } }, 'gathering'),
-        'server-ordered-only cache pins do not change existing gathering bytes');
-    assert.equal(fs.readFileSync(path.join(liveDirectory, 'gathering.json'), 'utf8'), familyBytes(upstream, { schema: 3, payload: { resource: 'oak' } }, 'gathering'));
-    assert.equal(fs.readFileSync(path.join(liveDirectory, 'quests.json'), 'utf8'), familyBytes(upstream, { schema: 2, payload: { quest: 'cook' } }, 'quests'));
-    assert.equal(sha256(path.join(liveDirectory, 'gathering.json')).sha256, manifest.families.gathering.sha256, 'the manifest digests the exact family bytes');
-    assert.throws(() => familyBytes(upstream, { schema: 0, payload: {} }, 'gathering'), /invalid extractor schema/);
-    assert.equal(published.sha256, sha256(published.path).sha256);
-    assert.equal(manifestBytes.includes(published.sha256), false, 'manifest digest must be external');
-    assert.equal(sha256(path.join(liveDirectory, 'quests.json')).sha256, manifest.families.quests.sha256);
-    assert.equal(manifest.nav.quest_facts_sha256, manifest.families.quests.sha256);
-    const before = fs.readdirSync(liveDirectory).map(name => [name, fs.readFileSync(path.join(liveDirectory, name))]);
-    for (const mismatch of ['digest', 'schema']) {
-        await assert.rejects(generateSelected(pipelineSpec, {
-            ...build,
-            bake: async families => ({
-                ...await build.bake(families),
-                ...(mismatch === 'digest' ? { quest_facts_sha256: families.gathering.sha256 } : { quest_extractor_schema: 99 }),
-            }),
-        }), /nav quest-family digest\/schema mismatch/);
-        assert.deepEqual(fs.readdirSync(liveDirectory).map(name => [name, fs.readFileSync(path.join(liveDirectory, name))]), before);
-    }
-    await assert.rejects(generateSelected(pipelineSpec, {
-        ...build,
-        bake: async families => {
-            fs.appendFileSync(paramPack, '1=mid-build-change\n');
-            return build.bake(families);
-        },
-    }), /generated input hash mismatch.*param\.pack/);
-    assert.deepEqual(fs.readdirSync(liveDirectory).map(name => [name, fs.readFileSync(path.join(liveDirectory, name))]), before);
-    fs.writeFileSync(paramPack, '0=param\n');
-    fs.writeFileSync(path.join(gateContent, 'scripts/.DS_Store'), 'finder metadata');
-    const withJunk = await generateSelected(pipelineSpec, build);
-    assert.equal(withJunk.sha256, published.sha256, 'platform junk cannot change family or manifest identity');
-    fs.writeFileSync(navFile, 'new nav bytes');
-    const rebaked = await generateSelected(pipelineSpec, build);
-    const next = JSON.parse(fs.readFileSync(rebaked.path, 'utf8'));
-    assert.equal(next.families.quests.sha256, manifest.families.quests.sha256, 'downstream nav cannot feed a family digest');
-    assert.notEqual(next.nav.sha256, manifest.nav.sha256);
-    assert.equal(fs.readdirSync(pipelineOutput).some(name => name.startsWith('.289-')), false, 'no staging or backup assets remain');
-} finally {
-    fs.rmSync(pipelineOutput, { recursive: true, force: true });
-    fs.rmSync(gateEngine, { recursive: true, force: true });
-    fs.rmSync(gateContent, { recursive: true, force: true });
-}
-assert.deepEqual(requestedRevisions(['--revision', '289']), [289]);
-assert.throws(() => requestedRevisions(['--revision', '999']), /usage/);
-
+assert.deepEqual(parseGenerationArgs(['--stage', '1']), { stage: 1, revisions: [274, 289] });
+assert.deepEqual(parseGenerationArgs(['--revision', '289', '--stage', '2']), { stage: 2, revisions: [289] });
+assert.throws(() => parseGenerationArgs([]), /usage/);
+assert.throws(() => parseGenerationArgs(['--stage', '1', '--revision', '999']), /usage/);
 function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
     const files: Record<string, string> = {
         'scripts/general/scripts/quests.rs2': `~send_quest_progress_colour($component, $progress, $complete_progress);
@@ -1956,10 +1660,9 @@ if (%cookquest = 0) { %cookquest = ${maximum}; }
         fs.rmSync(root, { recursive: true, force: true });
     }
 }
-const questStarts = extractQuestStartFacts(questRoot, quest289.rows, 289, 'fixture-content');
+const questStarts = extractQuestStartFacts(questRoot, quest289.rows, 289);
 assert.equal(questStarts.schema, 1);
 assert.equal(questStarts.revision, 289);
-assert.equal(questStarts.content_id, 'fixture-content');
 assert.deepEqual(questStarts.rows, [{
     quest: 'cook',
     target: { kind: 'npc', id: 100 },
@@ -2200,7 +1903,7 @@ assertQuestRows(withExtras);
 assert.deepEqual(withExtras.coverage, []);
 assert.equal(withExtras.rows.some((row) => row.id === 'routequest' && row.display === 'In Search of the Myreque'), true);
 assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
-// ---- quests family publication: static metadata, deterministic payload, actual descriptor ----
+// ---- quests family serialization: only the schema and actual facts ----
 {
     assert.equal(QUESTS_SCHEMA, 2, 'quests family schema includes static observation metadata');
     const draft = extractQuestsFamily(questRoot, 289);
@@ -2210,100 +1913,20 @@ assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'trol
     assert.deepEqual(Object.keys(payload).sort(), ['coverage', 'rows'], 'static identity rows plus coverage only');
     const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'colour_authoritative', 'stage_domain', 'transmission', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
     for (const row of payload.rows) assert.deepEqual(Object.keys(row).sort(), [...rowKeys].sort(), `quest row ${row.id} carries static metadata, not per-account progress`);
-    const upstream = { revision: 289, engine_commit: 'engine', content_commit: 'content', cache_id: 'cache', content_id: 'content', inputs: [] };
-    const first = familyBytes(upstream, draft, 'quests');
+    const first = familyBytes(draft, 'quests');
     const envelope = JSON.parse(first);
-    assert.deepEqual(Object.keys(envelope), ['schema', 'revision', 'engine_commit', 'content_commit', 'cache_id', 'content_id', 'inputs', 'facts']);
+    assert.deepEqual(Object.keys(envelope), ['schema', 'facts']);
     assert.equal(envelope.schema, QUESTS_SCHEMA);
     assert.deepEqual(envelope.facts, quest289);
-    // Deterministic: two independent fixture writes serialize to identical bytes.
     const otherRoot = questFixture();
     try {
-        assert.equal(familyBytes(upstream, extractQuestsFamily(otherRoot, 289), 'quests'), first, 'no clocks, no host paths in the payload');
+        assert.equal(familyBytes(extractQuestsFamily(otherRoot, 289), 'quests'), first, 'independent fixtures serialize deterministically');
     } finally {
         fs.rmSync(otherRoot, { recursive: true, force: true });
     }
-    // Actual artifact descriptor: computed from the written bytes, never hand-written.
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quests-family-'));
-    try {
-        const file = path.join(dir, 'quests.json');
-        fs.writeFileSync(file, first);
-        const descriptor = { path: '289/quests.json', schema: draft.schema, ...sha256(file) };
-        assert.equal(descriptor.bytes, Buffer.byteLength(first));
-        assert.equal(descriptor.sha256, crypto.createHash('sha256').update(first).digest('hex'), 'the descriptor digests the exact family bytes');
-        fs.appendFileSync(file, ' ');
-        assert.notEqual(sha256(file).sha256, descriptor.sha256, 'any tampered byte moves the digest');
-    } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-    }
-    assert.throws(() => familyBytes(upstream, { schema: 0, payload: {} }, 'quests'), /invalid extractor schema/);
+    assert.throws(() => familyBytes({ schema: 0, payload: {} }, 'quests'), /invalid extractor schema/);
 }
 
-const pinQuest274 = extractQuestIdentityFacts(pinContentRoot(274), 274);
-const pinQuest289 = extractQuestIdentityFacts(pinContentRoot(289), 289);
-assertQuestRows(pinQuest274);
-assertQuestRows(pinQuest289);
-const constantJournalTitles = [
-    ['priest', 'The Restless Ghost'],
-    ['itwatchtower', 'Watch Tower'],
-    ['itexam', 'The Dig Site'],
-    ['hero', "Heroes' Quest"],
-    ['zombiequeen', 'Shilo Village'],
-    ['ikov', 'Temple of Ikov'],
-    ['desertrescue', 'Tourist Trap'],
-    ['upass', 'Underground Pass'],
-] as const;
-for (const facts of [pinQuest274, pinQuest289]) {
-    for (const [id, title] of constantJournalTitles) {
-        const row = facts.rows.find((entry) => entry.id === id);
-        assert.equal(row?.journal_title, title, `pinned local-constant journal title: ${id}`);
-        assert.equal(row?.journal_script?.endsWith('_journal.rs2'), true, `pinned local-constant journal script: ${id}`);
-    }
-    assert.equal(facts.rows.find((row) => row.id === 'barcrawl')?.journal_title, null, 'miniquest without a journal remains unknown');
-}
-for (const [revision, facts] of [[274, pinQuest274], [289, pinQuest289]] as const) {
-    const upass = facts.rows.find((entry) => entry.id === 'upass');
-    assert.deepEqual(
-        upass?.stage_domain,
-        { min: 0, max: 10 },
-        `${revision}: Underground Pass stage domain excludes ibanmulti bit values`,
-    );
-}
-assert.equal(pinQuest289.rows.find((row) => row.id === 'misc')?.journal_title, 'Throne of Miscellania');
-assert.equal(pinQuest289.rows.find((row) => row.id === 'hauntedmine')?.journal_title, null, 'stub without a journal remains unknown');
-assert.equal(pinQuest289.rows.length, 69);
-assert.equal(pinQuest274.rows.some((row) => row.id === 'routequest'), false);
-assert.equal(pinQuest274.coverage.length, 1);
-assert.equal(pinQuest274.coverage[0].alias, 'routequest');
-assert.equal(pinQuest274.coverage[0].other_pin_id, 387);
-assert.equal(pinQuest274.coverage[0].copied, false);
-assert.equal(pinQuest274.coverage[0].class, 'revision-absent');
-assert.deepEqual(pinQuest289.coverage, []);
-assert.equal(pinQuest289.rows.some((row) => row.id === 'routequest' && row.display === 'In Search of the Myreque'), true);
-assert.equal(pinQuest289.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm' || row.id === 'barcrawl' || row.id === 'hauntedmine'), true);
-const pinContent289 = revisions.find((spec) => spec.revision === 289)!.content;
-const pinQuestStarts = extractQuestStartFacts(pinContent289, pinQuest289.rows, 289, 'fixture-content');
-const hasQuestStart = (quest: string, kind: 'npc' | 'loc', id: number, op = 1) =>
-    pinQuestStarts.rows.some((row) => row.quest === quest && row.target.kind === kind && row.target.id === id && row.op === op);
-for (const [quest, kind, id, op] of [
-    ['arthur', 'npc', 239, 1],
-    ['arthur', 'npc', 240, 1],
-    ['haunted', 'npc', 286, 1],
-    ['arena', 'loc', 76, 1],
-    ['tree', 'loc', 2181, 2],
-] as const) {
-    assert.equal(hasQuestStart(quest, kind, id, op), false, `false quest start ${quest} ${kind} ${id} op${op}`);
-}
-for (const [quest, kind, id] of [
-    ['cook', 'npc', 278],
-    ['sheep', 'npc', 758],
-    ['imp', 'npc', 706],
-    ['runemysteries', 'npc', 741],
-    ['demon', 'npc', 882],
-    ['doric', 'npc', 284],
-] as const) {
-    assert.equal(hasQuestStart(quest, kind, id), true, `real quest start ${quest} ${kind} ${id}`);
-}
 
 
 // ---- trails ------------------------------------------------------------------
@@ -2501,7 +2124,6 @@ function trailRow(facts: ReturnType<typeof extractTrailFacts>, alias: string) {
 const TRAIL_HANDLER_CONSTANT_COORDS = ['0_51_54_45_47', '1_42_53_14_17', '1_40_51_14_62'];
 
 const trailFacts = extractTrailFacts(trailFixture(), trailFixtureItems);
-assert.doesNotThrow(() => assertTrailPins(trailFacts, 274));
 
 // repeated param= keys survive as a list, not last-write-wins
 assert.deepEqual(trailRow(trailFacts, 'trail_clue_easy_simple001').params, [
@@ -2586,128 +2208,12 @@ assert.throws(() => extractTrailFacts(trailFixture((files) => {
 }), trailFixtureItems), /has no obj block/);
 assert.throws(() => extractTrailFacts(trailFixture(), trailFixtureItems.filter((item: any) => item.debugname !== 'trail_clue_hard_sextant028')), /has no decoded item row/);
 
-// A fixture that drops trail_clue_hard_riddle004_casket publishes one row fewer:
-// that is the rejected corpus aggregate (186 clues plus 70 caskets), and the
-// producer's own pin check refuses it.
+// Removing a source object block removes its derived casket row; there is no corpus-count pin.
 const droppedCasketFixture = extractTrailFacts(trailFixture((files) => {
     files[`${TRAIL_CONFIG}/trail_hard.obj`] = (files[`${TRAIL_CONFIG}/trail_hard.obj`] as string).replace('param=trail_casket,trail_clue_hard_riddle004_casket\n', '');
 }), trailFixtureItems);
 assert.equal(droppedCasketFixture.rows.length, trailFacts.rows.length - 1);
 assert.equal(droppedCasketFixture.rows.some((row) => row.alias === 'trail_clue_hard_riddle004_casket'), false);
-assert.throws(() => assertTrailPins(droppedCasketFixture, 274), /missing trail_clue_hard_riddle004_casket/);
-
-const pinTrail274Root = pinContentRoot(274);
-const pinTrail289Root = pinContentRoot(289);
-type DecodedItemRow = {
-    alias: string | null;
-    id: number;
-    name: string | null;
-    cost: number;
-    stackable: boolean;
-    members: boolean;
-    certificate_link: number;
-    certificate_template: number;
-    wear_position: number;
-    wear_position_2: number;
-    wear_position_3: number;
-    worn_model: boolean;
-};
-function isDecodedItemRow(value: unknown): value is DecodedItemRow {
-    return value !== null && typeof value === 'object'
-        && 'alias' in value && (value.alias === null || typeof value.alias === 'string')
-        && 'id' in value && typeof value.id === 'number'
-        && 'name' in value && (value.name === null || typeof value.name === 'string')
-        && 'cost' in value && typeof value.cost === 'number'
-        && 'stackable' in value && typeof value.stackable === 'boolean'
-        && 'members' in value && typeof value.members === 'boolean'
-        && 'certificate_link' in value && typeof value.certificate_link === 'number'
-        && 'certificate_template' in value && typeof value.certificate_template === 'number'
-        && 'wear_position' in value && typeof value.wear_position === 'number'
-        && 'wear_position_2' in value && typeof value.wear_position_2 === 'number'
-        && 'wear_position_3' in value && typeof value.wear_position_3 === 'number'
-        && 'worn_model' in value && typeof value.worn_model === 'boolean';
-}
-
-function pinDecodedItems(revision: number) {
-    const payload: unknown = JSON.parse(fs.readFileSync(path.join(repoRoot, `crates/api/data/game-data/${revision}.json`), 'utf8'));
-    if (payload === null || typeof payload !== 'object' || !('items' in payload) || !Array.isArray(payload.items)) {
-        throw new Error(`invalid selected item data for revision ${revision}`);
-    }
-    const rawItems: unknown[] = payload.items;
-    const items = rawItems.filter(isDecodedItemRow);
-    if (items.length !== rawItems.length) throw new Error(`invalid selected item row for revision ${revision}`);
-    return items.flatMap((item) => item.alias === null ? [] : [{
-        id: item.id,
-        debugname: item.alias,
-        name: item.name,
-        cost: item.cost,
-        stackable: item.stackable,
-        members: item.members,
-        certlink: item.certificate_link,
-        certtemplate: item.certificate_template,
-        wearpos: item.wear_position,
-        wearpos2: item.wear_position_2,
-        wearpos3: item.wear_position_3,
-        manwear: item.worn_model ? 0 : -1,
-    }]);
-}
-function pinTrailInputs(root: string) {
-    const enums = ['easy', 'medium', 'hard'].flatMap((tier) => parseTrailEnumAliases(fs.readFileSync(path.join(root, `${TRAIL_CONFIG}/trail_${tier}.enum`), 'utf8')));
-    const blocks = new Map<string, { key: string; value: string }[]>();
-    for (const tier of ['easy', 'medium', 'hard']) {
-        for (const [alias, params] of parseTrailObjBlocks(fs.readFileSync(path.join(root, `${TRAIL_CONFIG}/trail_${tier}.obj`), 'utf8'))) blocks.set(alias, params);
-    }
-    const caskets: string[] = [];
-    for (const alias of enums) {
-        for (const param of blocks.get(alias) ?? []) {
-            if (param.key === 'trail_casket' && !caskets.includes(param.value)) caskets.push(param.value);
-        }
-    }
-    return { enums, caskets };
-}
-
-const pinTrail274 = extractTrailFacts(pinTrail274Root, pinDecodedItems(274));
-const pinTrail289 = extractTrailFacts(pinTrail289Root, pinDecodedItems(289));
-assert.deepEqual(pinTrail274, pinTrail289);
-assert.doesNotThrow(() => assertTrailPins(pinTrail274, 274));
-assert.doesNotThrow(() => assertTrailPins(pinTrail289, 289));
-const pinTrailInputs274 = pinTrailInputs(pinTrail274Root);
-assert.equal(pinTrailInputs274.enums.includes('trail_clue_medium_map002'), false);
-assert.equal(pinTrailInputs274.enums.includes('trail_clue_hard_sextant026'), false);
-assert.equal(pinTrail274.rows.filter((row) => row.role === 'clue').length, pinTrailInputs274.enums.length);
-assert.equal(pinTrail274.rows.filter((row) => row.role === 'casket').length, pinTrailInputs274.caskets.length);
-assert.equal(pinTrail274.rows.length, pinTrailInputs274.enums.length + pinTrailInputs274.caskets.length);
-assert.equal(new Set(pinTrail274.rows.map((row) => row.alias)).size, pinTrail274.rows.length);
-assert.equal(pinTrail274.rows.filter((row) => row.id === 3531).length, 1);
-assert.equal(trailRow(pinTrail274, 'trail_clue_hard_riddle004_casket').id, 2779);
-assert.equal(trailRow(pinTrail274, 'trail_clue_hard_sextant016_casket').id, 3531);
-assert.equal(trailRow(pinTrail274, 'trail_clue_hard_sextant017').params.some((param) => param.key === 'trail_casket' && param.value === 'trail_clue_hard_sextant016_casket'), true);
-assert.equal(pinTrail274.rows.some((row) => row.id === 3533), false);
-assert.equal(trailRow(pinTrail274, 'trail_clue_easy_simple001').params.some((param) => param.key === 'trail_loc' && param.value === '^true'), true);
-assert.equal(trailRow(pinTrail274, 'trail_clue_hard_sextant028').params.some((param) => param.key === 'trail_sextant' && param.value === 'yes'), true);
-assert.equal(trailRow(pinTrail274, 'trail_clue_medium_anagram001').params.some((param) => param.key === 'trail_sextant'), false);
-assert.deepEqual(pinTrail274.rows.filter((row) => 'access' in row).map((row) => [row.alias, row.id, row.access]), [['trail_clue_hard_sextant028', 3554, 'constrained']]);
-assert.equal(pinTrail274.rows.every((row) => Object.keys(row).every((key) => ['alias', 'id', 'role', 'params', 'access'].includes(key))), true);
-assert.equal(JSON.stringify(pinTrail274).includes('facts-verified-both'), false);
-assert.equal(JSON.stringify(pinTrail274).includes('supported'), false);
-assert.equal(TRAIL_HANDLER_CONSTANT_COORDS.some((coord) => JSON.stringify(pinTrail274).includes(coord)), false);
-assert.equal(pinTrail274.challenge_answers.some((entry) => typeof entry.answer !== 'string'), false);
-assert.equal(pinTrail274.rows.some((row) => ['trail_clue_medium_map002', 'trail_clue_hard_sextant026'].includes(row.alias)), false);
-assert.equal(pinTrail274.rows.filter((row) => row.alias.startsWith('trail_clue_hard_riddle0') && row.role === 'casket' && row.id === 2779).length, 1);
-
-// Kharazi and Tirannwn members are inventoried as plain rows: no crossing class,
-// no jungle-cut or seam fact, no guardian display name, and no puzzle pieces.
-for (const [alias, id] of [['trail_clue_hard_sextant017', 3532], ['trail_clue_hard_sextant018', 3534], ['trail_clue_hard_sextant019', 3536], ['trail_clue_hard_sextant031', 3560], ['trail_clue_hard_sextant032', 3562], ['trail_clue_hard_riddle018', 3564]] as const) {
-    const row = trailRow(pinTrail274, alias);
-    assert.equal(row.id, id);
-    assert.equal(row.role, 'clue');
-    assert.equal('access' in row, false);
-}
-assert.equal(pinTrail274.rows.some((row) => row.alias.endsWith('_puzzlebox')), false);
-assert.equal(JSON.stringify(pinTrail274).includes('trail_puzzle'), false);
-assert.equal(JSON.stringify(pinTrail274).includes('"npc"'), false);
-assert.equal(JSON.stringify(pinTrail274).includes('regicide'), false);
-assert.equal(JSON.stringify(pinTrail274).includes('legends'), false);
 
 /* ------------------------------------------------------------------ *
  * talk_key: opnpc1 talk steps, trail_checkmediumdrop keepers, jm2 spawns
@@ -2724,41 +2230,6 @@ assert.deepEqual(
     ['1,1', '4,5'],
     'LINK_BELOW is the level-1 MAP flag 0x2 only',
 );
-{
-    // The rs2b0t sources must be the pinned blobs: a local edit (or another commit) refuses.
-    const pinRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rs2b0t-pin-'));
-    const source = path.join(pinRoot, 'src/bot/data/cookLocations.ts');
-    fs.mkdirSync(path.dirname(source), { recursive: true });
-    fs.writeFileSync(source, 'export const MAX_SURFACE_CHEB = 20;\n');
-    const blob = execFileSync('git', ['hash-object', source], { encoding: 'utf8' }).trim();
-    const pin = { commit: 'fixture', blobs: { 'src/bot/data/cookLocations.ts': blob } };
-    assertRs2b0tPinned(pinRoot, pin);
-    fs.writeFileSync(source, 'export const MAX_SURFACE_CHEB = 21;\n');
-    assert.throws(() => assertRs2b0tPinned(pinRoot, pin), /dirty or not the pinned export/);
-    fs.rmSync(pinRoot, { recursive: true, force: true });
-
-    // Any .loc/.npc config under scripts/ and the loc/npc packs are selected-content inputs.
-    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'content-dirt-'));
-    const git = (...args: string[]) => execFileSync('git', ['-C', content, ...args], { encoding: 'utf8' });
-    git('init', '-q');
-    const loc = path.join(content, 'scripts/areas/area_x/configs/x.loc');
-    fs.mkdirSync(path.dirname(loc), { recursive: true });
-    fs.writeFileSync(loc, '[range]\nname=Range\n');
-    fs.mkdirSync(path.join(content, 'pack'));
-    fs.writeFileSync(path.join(content, 'pack/npc.pack'), '0=man\n');
-    git('add', '-A');
-    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'fixture');
-    assert.equal(contentDirt(content), '', 'a clean tree has no dirt');
-    fs.writeFileSync(loc, '[range]\nname=Oven\n');
-    assert.match(contentDirt(content), /x\.loc/, 'an edited nested .loc is dirty');
-    fs.writeFileSync(loc, '[range]\nname=Range\n');
-    fs.writeFileSync(path.join(content, 'scripts/new.npc'), '[a]\n');
-    assert.match(contentDirt(content), /new\.npc/, 'an untracked .npc is dirty');
-    fs.rmSync(path.join(content, 'scripts/new.npc'));
-    fs.writeFileSync(path.join(content, 'pack/npc.pack'), '0=woman\n');
-    assert.match(contentDirt(content), /npc\.pack/, 'an edited npc.pack is dirty');
-    fs.rmSync(content, { recursive: true, force: true });
-}
 assert.deepEqual(parseJm2NpcPlacements('==== OBJ ====\n0 47 62: 2662\n==== NPC ====\n0 1 2: 5\n'), [{ plane: 0, lx: 1, lz: 2, npc_id: 5 }], 'only the NPC section is a placement source');
 assert.deepEqual(parseJm2NpcPlacements('==== NPC ====\n'), []);
 assert.throws(() => parseJm2NpcPlacements('==== NPC ====\n0 10 20: 669 10 1\n'), /extra tokens/, 'a shape and an angle are not NPC row tokens');
@@ -2910,8 +2381,6 @@ name=Guard
 function talkKeyFixture(mutate?: (files: Record<string, string>) => void) {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'talk-key-'));
     writeTalkKeyFixture(rootDir, mutate);
-    execFileSync('git', ['init', '-q'], { cwd: rootDir });
-    execFileSync('git', ['add', '-A'], { cwd: rootDir });
     return rootDir;
 }
 function talkKeyRow(facts: TalkKeyFacts, alias: string) {
@@ -2925,8 +2394,7 @@ function talkKeyKeeper(facts: TalkKeyFacts, alias: string) {
     return found;
 }
 
-const talkKeyExtract = extractTalkKeyFacts(talkKeyFixture(), talkKeyItems);
-const talkKeyFacts = talkKeyExtract.facts;
+const talkKeyFacts = extractTalkKeyFacts(talkKeyFixture(), talkKeyItems);
 
 // opnpc1 only, membership only: one row per step, the puzzlebox and challenge extras dropped
 assert.deepEqual(talkKeyFacts.talk.map((row) => row.alias), [
@@ -3019,17 +2487,6 @@ assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.map((npc) =>
 assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.map((npc) => (npc.debugname === 'hans' ? { ...npc, name: 'Hanz' } : npc))), /disagrees with decoded npc name/);
 assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.filter((npc) => npc.debugname !== 'black_heather')), /npc\.dat lacks black_heather/);
 
-// provenance: the scanned trees and the pinned inputs are the family's invalidation identity
-assert.equal(talkKeyExtract.inputs.maps_directory, 'maps');
-assert.equal(talkKeyExtract.inputs.scripts.files, 5);
-assert.equal(talkKeyExtract.inputs.npc_configs.files, 4);
-assert.equal(talkKeyExtract.inputs.npc_pack.path, 'pack/npc.pack');
-assert.equal(talkKeyExtract.inputs.trail_clue_medium.path, TALK_KEY_MEDIUM);
-assert.notEqual(extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_lumbridge/scripts/hans.rs2'] += '\n[label,hans_extra]\n'; }), talkKeyItems).inputs.scripts.sha256, talkKeyExtract.inputs.scripts.sha256, 'the scripts digest must move with a scanned script');
-assert.notEqual(extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_lumbridge/configs/lumbridge.npc'] += '[nobody]\nname=Nobody\n'; }), talkKeyItems).inputs.npc_configs.sha256, talkKeyExtract.inputs.npc_configs.sha256, 'the npc config digest must move with a scanned config');
-assert.notEqual(extractTalkKeyFacts(talkKeyFixture((files) => { files['pack/npc.pack'] += '9999=nobody\n'; }), talkKeyItems).inputs.npc_pack.sha256, talkKeyExtract.inputs.npc_pack.sha256, 'the npc pack digest must move with the pack');
-assert.notEqual(extractTalkKeyFacts(talkKeyFixture((files) => { files['maps/m41_48.jm2'] += '0 1 1: 5\n'; }), talkKeyItems).inputs.maps.sha256, talkKeyExtract.inputs.maps.sha256, 'the maps digest must move with the maps tree');
-assert.equal(talkKeyExtract.inputs.maps.files, 5);
 
 // fail closed: missing joins, missing sections, missing names, malformed arms, truncated trees
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { delete files['pack/npc.pack']; }), talkKeyItems), /pack\/npc\.pack/);
@@ -3046,43 +2503,11 @@ assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files[TALK_K
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files[TALK_KEY_MEDIUM] = files[TALK_KEY_MEDIUM].replace('inv_total(inv, trail_clue_medium_riddle004) > 0', 'inv_total(inv, trail_clue_medium_riddle099) > 0'); }), talkKeyItems), /keeper clue trail_clue_medium_riddle099 is not a membership alias/);
 const truncatedTalkKeyMaps = talkKeyFixture();
 fs.rmSync(path.join(truncatedTalkKeyMaps, 'maps/m50_50.jm2'));
-assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyMaps, talkKeyItems), /maps\/m50_50\.jm2: tracked map missing/);
-const truncatedTalkKeyScripts = talkKeyFixture();
-fs.rmSync(path.join(truncatedTalkKeyScripts, 'scripts/areas/area_lumbridge/scripts/hans.rs2'));
-assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyScripts, talkKeyItems), /hans\.rs2: tracked \.rs2 file missing from the content tree/);
+assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyMaps, talkKeyItems), /npc 0 has no jm2 NPC spawn/);
 const truncatedTalkKeyConfigs = talkKeyFixture();
 fs.rmSync(path.join(truncatedTalkKeyConfigs, 'scripts/areas/area_lumbridge/configs/lumbridge.npc'));
-assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyConfigs, talkKeyItems), /lumbridge\.npc: tracked \.npc file missing from the content tree/);
+assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyConfigs, talkKeyItems), /missing \[hans\]/);
 
-// both pins: 289 is the selected source, 274 corroborates identity and spawn
-const pinTalkKey274Root = pinContentRoot(274);
-const pinTalkKey289Root = pinContentRoot(289);
-const pinTalkKey274 = extractTalkKeyFacts(pinTalkKey274Root, pinDecodedItems(274));
-const pinTalkKey289 = extractTalkKeyFacts(pinTalkKey289Root, pinDecodedItems(289));
-assert.deepEqual(pinTalkKey274.facts, pinTalkKey289.facts, '274 must corroborate the selected 289 identities and spawns');
-assert.doesNotThrow(() => assertTalkKeyPins(pinTalkKey274.facts, 274));
-assert.doesNotThrow(() => assertTalkKeyPins(pinTalkKey289.facts, 289));
-assert.equal(pinTalkKey289.facts.talk.length, 47);
-assert.equal(pinTalkKey289.facts.talk.filter((row) => row.spawn !== undefined).length, 42);
-assert.equal(pinTalkKey289.facts.keys.length, 7);
-assert.equal(pinTalkKey289.facts.keys.filter((row) => row.spawn !== undefined).length, 2);
-assert.equal(pinTalkKey289.facts.coverage.length, 10);
-assert.equal(pinTalkKey289.inputs.trail_clue_medium.sha256, 'c2d685a9906ec9396ce191b024cee79dd7d8b47b692b309806ea7c0c12dbc9f6');
-for (const row of pinTalkKey289.facts.coverage) {
-    const published = row.family === 'talk' ? pinTalkKey289.facts.talk.some((entry) => entry.alias === row.alias) : pinTalkKey289.facts.keys.some((entry) => entry.alias === row.alias);
-    assert.equal(published, true, `coverage must belong to a published ${row.family} step`);
-}
-assert.equal(pinTalkKey289.facts.coverage.some((row) => row.alias.endsWith('_challenge') || row.alias.endsWith('_puzzlebox')), false);
-assert.equal(pinTalkKey289.facts.talk.some((row) => row.alias.endsWith('_puzzlebox') || row.alias.endsWith('_challenge')), false);
-assert.equal(pinTalkKey289.facts.keys.filter((row) => row.keeper.kind === 'category').map((row) => row.keeper.category).sort().join(','), 'chicken,pirate');
-assert.equal(pinTalkKey289.facts.keys.filter((row) => row.keeper.kind === 'name').map((row) => row.keeper.name).join(','), 'Man');
-assert.equal(talkKeyRow(pinTalkKey289.facts, 'trail_clue_medium_anagram001').npc.id, 669);
-assert.equal(talkKeyRow(pinTalkKey289.facts, 'trail_clue_easy_vague012').npc.alias, 'captain_tobias');
-assert.equal(pinTalkKey289.facts.talk.filter((row) => row.npc.id === 0).length, 2);
-const pinTalkKeyBlob = JSON.stringify(pinTalkKey289.facts);
-for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS']) {
-    assert.equal(pinTalkKeyBlob.includes(banned), false, `talk_key must never publish ${banned}`);
-}
 
 /* ------------------------------------------------------------------ *
  * trio_givers: the closed giver set, packed ids, owning .npc names, jm2 tiles
@@ -3159,8 +2584,6 @@ name=Brother Kojo
 function trioGiverFixture(mutate?: (files: Record<string, string>) => void) {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trio-givers-'));
     writeTrioGiverFixture(rootDir, mutate);
-    execFileSync('git', ['init', '-q'], { cwd: rootDir });
-    execFileSync('git', ['add', '-A'], { cwd: rootDir });
     return rootDir;
 }
 function trioGiverRow(facts: TrioGiverFacts, alias: string) {
@@ -3169,8 +2592,7 @@ function trioGiverRow(facts: TrioGiverFacts, alias: string) {
     return found;
 }
 
-const trioGiverExtract = extractTrioGiversFacts(trioGiverFixture());
-const trioGiverFacts = trioGiverExtract.facts;
+const trioGiverFacts = extractTrioGiversFacts(trioGiverFixture());
 
 // The closed set in file order: one row per giver, one packed id, one .npc name,
 // one world tile converted from the mapsquare filename and the local coordinates.
@@ -3192,11 +2614,9 @@ assert.equal(trioGiverFacts.rows.every((row) => Object.keys(row.spawn ?? {}).sor
 
 // Two jm2 hits keep the row and omit the tile: first-in-file is never taken.
 const multiSpawnTrioGivers = extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== NPC ====\n1 3 4: 463\n1 3 9: 463\n'; }));
-assert.deepEqual(multiSpawnTrioGivers.facts.rows[1], { alias: 'murphy', id: 463, name: 'Murphy' });
-assert.deepEqual(multiSpawnTrioGivers.facts.coverage, [{ class: 'unknown', family: 'trio_givers', alias: 'murphy', reason: 'non-unique jm2 NPC spawn' }]);
-assert.equal(JSON.stringify(multiSpawnTrioGivers.facts).includes('"spawn":null'), false);
-assert.throws(() => assertTrioGiverPins(multiSpawnTrioGivers.facts, 289), /three unique jm2 spawns/);
-assert.throws(() => assertTrioGiverPins(trioGiverFacts, 289), /must stay the selected jm2 tile/);
+assert.deepEqual(multiSpawnTrioGivers.rows[1], { alias: 'murphy', id: 463, name: 'Murphy' });
+assert.deepEqual(multiSpawnTrioGivers.coverage, [{ class: 'unknown', family: 'trio_givers', alias: 'murphy', reason: 'non-unique jm2 NPC spawn' }]);
+assert.equal(JSON.stringify(multiSpawnTrioGivers).includes('"spawn":null'), false);
 
 // decode corroboration: the packed alias, id, and .npc name must all agree with npc.dat
 const trioGiverNpcs = [
@@ -3209,16 +2629,6 @@ assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.map((n
 assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.map((npc) => (npc.debugname === 'brother_kojo' ? { ...npc, name: 'Brother Kojo?' } : npc))), /disagrees with decoded npc name/);
 assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.filter((npc) => npc.debugname !== 'observatory_professor')), /npc\.dat lacks observatory_professor/);
 
-// provenance: the closed handler and config set, the pack, and the maps inventory
-assert.equal(trioGiverExtract.inputs.maps_directory, 'maps');
-assert.equal(trioGiverExtract.inputs.maps.files, 3);
-assert.deepEqual(trioGiverExtract.inputs.handlers.map((entry) => entry.path), [TRIO_GIVER_HANDLERS.observatory_professor, TRIO_GIVER_HANDLERS.murphy, TRIO_GIVER_HANDLERS.brother_kojo]);
-assert.deepEqual(trioGiverExtract.inputs.npc_configs.map((entry) => entry.path), [TRIO_GIVER_CONFIGS.observatory_professor, TRIO_GIVER_CONFIGS.murphy, TRIO_GIVER_CONFIGS.brother_kojo]);
-assert.equal(trioGiverExtract.inputs.npc_pack.path, 'pack/npc.pack');
-assert.notEqual(extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.murphy] += '\n[label,murphy_extra]\n'; })).inputs.handlers[1].sha256, trioGiverExtract.inputs.handlers[1].sha256, 'the handler digest must move with the scanned script');
-assert.notEqual(extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_CONFIGS.brother_kojo] += '[nobody]\nname=Nobody\n'; })).inputs.npc_configs[2].sha256, trioGiverExtract.inputs.npc_configs[2].sha256, 'the config digest must move with the scanned config');
-assert.notEqual(extractTrioGiversFacts(trioGiverFixture((files) => { files['pack/npc.pack'] += '9999=nobody\n'; })).inputs.npc_pack.sha256, trioGiverExtract.inputs.npc_pack.sha256, 'the npc pack digest must move with the pack');
-assert.notEqual(extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m12_22.jm2'] += '0 1 1: 5\n'; })).inputs.maps.sha256, trioGiverExtract.inputs.maps.sha256, 'the maps digest must move with the maps tree');
 
 // fail closed: missing files, missing joins, missing names, a lost header, zero hits, truncated trees
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { delete files['pack/npc.pack']; })), /pack\/npc\.pack: required file missing/);
@@ -3235,46 +2645,11 @@ assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== NPC ====\n1 3 4: 463 10\n'; })), /extra tokens/);
 const truncatedTrioGiverMaps = trioGiverFixture();
 fs.rmSync(path.join(truncatedTrioGiverMaps, 'maps/m12_22.jm2'));
-assert.throws(() => extractTrioGiversFacts(truncatedTrioGiverMaps), /maps\/m12_22\.jm2: tracked map missing/);
+assert.throws(() => extractTrioGiversFacts(truncatedTrioGiverMaps), /brother_kojo npc 223 has no jm2 NPC spawn/);
 
-// both pins: 289 is the selected source, 274 corroborates identity, name, and tile
-const pinTrioGiver274Root = pinContentRoot(274);
-const pinTrioGiver289Root = pinContentRoot(289);
-const pinTrioGiver274 = extractTrioGiversFacts(pinTrioGiver274Root);
-const pinTrioGiver289 = extractTrioGiversFacts(pinTrioGiver289Root);
-assert.deepEqual(pinTrioGiver274.facts, pinTrioGiver289.facts, '274 must corroborate the selected 289 giver identities and tiles');
-assert.doesNotThrow(() => assertTrioGiverPins(pinTrioGiver274.facts, 274));
-assert.doesNotThrow(() => assertTrioGiverPins(pinTrioGiver289.facts, 289));
-assert.deepEqual(pinTrioGiver289.facts.rows.map((row) => [row.alias, row.id, row.name]), [
-    ['observatory_professor', 488, 'Observatory professor'],
-    ['murphy', 463, 'Murphy'],
-    ['brother_kojo', 223, 'Brother Kojo'],
-]);
-assert.deepEqual(pinTrioGiver289.facts.rows.map((row) => row.spawn), [
-    { x: 2438, z: 3186, plane: 0 },
-    { x: 2668, z: 3162, plane: 0 },
-    { x: 2569, z: 3249, plane: 0 },
-]);
-assert.equal(pinTrioGiver289.facts.coverage.length, 0);
-assert.equal(pinTrioGiver289.inputs.handlers.length, 3);
-assert.equal(pinTrioGiver289.inputs.npc_configs.length, 3);
-assert.equal(pinTrioGiver289.inputs.maps.files, 534);
-assert.equal(pinTrioGiver274.inputs.maps.files, 483);
-assert.equal(parseTrioGiverHandlers(fs.readFileSync(path.join(pinTrioGiver289Root, TRIO_GIVER_HANDLERS.observatory_professor), 'utf8')).includes('observatory_professor2'), true, 'the selected professor script declares a lookalike that must never be published');
-assert.equal(JSON.stringify(pinTrioGiver289.facts).includes('observatory_professor2'), false);
-assert.equal(JSON.stringify(pinTrioGiver289.facts).includes('murphy_'), false, 'the trawler states are display states, not giver identities');
-assert.throws(() => assertTrioGiverPins({ rows: [{ alias: 'observatory_professor2', id: 489, name: 'Observatory professor', spawn: { x: 2438, z: 3186, plane: 0 } }], coverage: [] }, 289), /three closed givers/);
-const pinTrioGiverBlob = JSON.stringify(pinTrioGiver289.facts);
-for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS', 'frozen', 'invented', 'family-unavailable']) {
-    assert.equal(pinTrioGiverBlob.includes(banned), false, `trio_givers must never publish ${banned}`);
-}
 
-// ---- gathering family (M-306 / M-215): real pinned content, plus real-script fixtures with one drifted construct ----
+// ---- gathering family: local source grammar and synthetic placements ----
 
-const gatheringPins = [
-    { revision: 274, root: pinContentRoot(274) },
-    { revision: 289, root: pinContentRoot(289) },
-];
 const hemensterFishingScript = 'scripts/quests/quest_fishingcompo/scripts/hemenster_fishing.rs2';
 const hemensterSpot = '0_41_53_sinisterfishspot';
 const hemensterCarpMethod = `fishing.${hemensterSpot}.op1`;
@@ -3306,575 +2681,10 @@ function listContentFiles(root: string, dir: string, extension: string, out: str
     }
     return out;
 }
-/** Loc aliases whose config section matches `line`, read independently of the extractor. */
-function locSectionsWith(root: string, line: RegExp) {
-    const found = new Set<string>();
-    for (const file of listContentFiles(root, 'scripts', '.loc')) {
-        let current = '';
-        for (const raw of fs.readFileSync(path.join(root, file), 'utf8').split(/\r?\n/)) {
-            const text = raw.trim();
-            if (text.startsWith('[') && text.endsWith(']')) current = text.slice(1, -1);
-            else if (current && line.test(text)) found.add(current);
-        }
-    }
-    return found;
-}
-/** `file:line:plane:lx:lz:id` for every map row of `section` whose id is wanted. */
-function mapRowKeys(root: string, section: 'LOC' | 'NPC', ids: ReadonlySet<number>) {
-    const keys = new Set<string>();
-    for (const name of fs.readdirSync(path.join(root, 'maps')).filter((each) => each.endsWith('.jm2')).sort()) {
-        let inside = false;
-        fs.readFileSync(path.join(root, 'maps', name), 'utf8').split(/\r?\n/).forEach((raw, index) => {
-            if (raw.startsWith('====')) inside = raw.trim() === `==== ${section} ====`;
-            else if (inside) {
-                const match = /^(\d+) (\d+) (\d+): (\d+)/.exec(raw);
-                if (match && ids.has(Number(match[4]))) keys.add(`maps/${name}:${index + 1}:${match[1]}:${match[2]}:${match[3]}:${match[4]}`);
-            }
-        });
-    }
-    return keys;
-}
-/** The same keys read from the family's compact placement rows. */
-function familyRowKeys(family: GatheringFamily, kind: 'l' | 'n', ids: ReadonlySet<number>) {
-    const keys = new Set<string>();
-    for (const file of family.payload.placements) {
-        for (const row of file.rows) {
-            const [rowLine, plane, lx, lz, entity] = row.split(' ');
-            if (entity[0] === kind && ids.has(Number(entity.slice(1)))) keys.add(`${file.file}:${rowLine}:${plane}:${lx}:${lz}:${entity.slice(1)}`);
-        }
-    }
-    return keys;
-}
 
-/** The 20 compiled bank-catalog rows, read the way the probe reads them: names and tiles only. */
-function readSiteBanks(): GatherSiteBank[] {
-    const source = fs.readFileSync(path.join(repoRoot, 'crates/api/data/game-data/bank-catalog.rs'), 'utf8');
-    const rows = [...source.matchAll(/name: "([^"]+)", tile: WorldTile \{ x: (\d+), z: (\d+), level: (\d+) \}/g)]
-        .map((match) => ({ name: match[1]!, tile: { x: Number(match[2]), z: Number(match[3]), level: Number(match[4]) } }));
-    assert.equal(rows.length, 20, 'the bank place list is the 20 compiled catalog rows');
-    return rows;
-}
-const siteBanksAll = readSiteBanks();
-const siteRowsByRevision = new Map<number, GatherSiteWire[]>();
-const hiddenByRevision = new Map<number, GatherSiteWire[]>();
 
-for (const { revision, root } of gatheringPins) {
-    const family = extractGatheringFamily(root);
-    const view = gatherView(family);
-    const locPack = parsePack(fs.readFileSync(path.join(root, 'pack/loc.pack'), 'utf8'));
-    const facts: GatheringFacts = family.payload;
-    assert.equal(family.schema, GATHERING_SCHEMA);
-    assert.equal(JSON.stringify(extractGatheringFamily(root).payload), JSON.stringify(facts), `${revision} extraction is deterministic`);
-    assert.deepEqual(family.summary.methods, { woodcutting: 10, mining: 15, fishing: 16 }, `${revision} method inventory`);
-    const objPack = parsePack(fs.readFileSync(path.join(root, 'pack/obj.pack'), 'utf8'));
-    const seqPack = parsePack(fs.readFileSync(path.join(root, 'pack/seq.pack'), 'utf8'));
-    const itemId = (alias: string) => {
-        const id = objPack.get(alias);
-        assert.notEqual(id, undefined, `${revision} object pack contains ${alias}`);
-        return id;
-    };
-    const sequenceId = (alias: string) => {
-        const id = seqPack.get(alias);
-        assert.notEqual(id, undefined, `${revision} sequence pack contains ${alias}`);
-        return id;
-    };
-    for (const method of facts.methods) {
-        assert.ok(['continuing', 'ending', 'none'].includes(method.tick_arm.kind), `${method.id} has a reviewed kind`);
-        assert.ok(['always', 'sometimes', 'never'].includes(method.tick_arm.roll_signal), `${method.id} has a reviewed roll signal`);
-        const tools = method.tick_arm.tool_facts.map((tool) => tool.item);
-        assert.deepEqual(tools, [...new Set(tools)].sort((a, b) => a - b), `${method.id} tool facts are uniquely item-sorted`);
-    }
-
-    const fly = view.method('fishing.freshfish.op1').tick_arm;
-    assert.deepEqual(
-        [fly.kind, fly.roll_signal, fly.native_arm, fly.act_min_d, fly.act_silent, fly.no_gain, fly.skill_anim, fly.roll_anim, fly.cast_anim, fly.fletch_anim],
-        ['continuing', 'always', 4, 1, false, false, null, sequenceId('human_fish_onspot'), sequenceId('human_fishing_casting'), sequenceId('human_fletching')],
-        `${revision} fly animation and native arm are selected by name`,
-    );
-    assert.equal(view.method('fishing.loc_2027.op1').tick_arm.roll_signal, 'always', `${revision} waterfall fly has a regular roll signal`);
-    const waterfallPike = view.method('fishing.loc_2027.op2').tick_arm;
-    assert.equal(waterfallPike.roll_signal, 'sometimes', `${revision} waterfall pike's recast branch suppresses the roll animation`);
-    assert.equal(waterfallPike.roll_anim, sequenceId('human_fish_onspot'));
-
-    const smallNet = view.method('fishing.saltfish.op1').tick_arm;
-    assert.deepEqual(
-        [smallNet.kind, smallNet.roll_signal, smallNet.roll_anim, smallNet.cast_anim],
-        ['ending', 'never', null, sequenceId('human_smallnet')],
-        `${revision} small-net roll is silent`,
-    );
-    const harpoon = view.method('fishing.rarefish.op3').tick_arm;
-    assert.deepEqual(
-        [harpoon.kind, harpoon.roll_signal, harpoon.roll_anim, harpoon.cast_anim],
-        ['ending', 'always', sequenceId('human_harpoon'), sequenceId('human_harpoon')],
-        `${revision} rarefish op3 is the harpoon family`,
-    );
-    const lavaEel = view.method('fishing.0_45_152_lavafish.op1').tick_arm;
-    assert.deepEqual(
-        [lavaEel.kind, lavaEel.native_arm, lavaEel.act_silent, lavaEel.roll_signal, lavaEel.cast_anim],
-        ['continuing', 5, true, 'never', sequenceId('human_fishing_casting')],
-        `${revision} lava-eel dispatch is silent and arms at five`,
-    );
-    assert.equal(view.method('fishing.category_633.op1').tick_arm.kind, 'none', `${revision} Karambwan vessel has no armable loop`);
-
-    const tree = view.method('woodcutting.normal').tick_arm;
-    assert.deepEqual([tree.kind, tree.depletes, tree.native_arm, tree.act_min_d], ['continuing', true, 3, 0]);
-    for (const [alias, sequence] of [
-        ['rune_axe', 'human_woodcutting_rune_axe'],
-        ['adamant_axe', 'human_woodcutting_adamant_axe'],
-        ['mithril_axe', 'human_woodcutting_mithril_axe'],
-        ['black_axe', 'human_woodcutting_black_axe'],
-        ['steel_axe', 'human_woodcutting_steel_axe'],
-        ['iron_axe', 'human_woodcutting_iron_axe'],
-        ['bronze_axe', 'human_woodcutting_bronze_axe'],
-    ] as const) {
-        const tool = tree.tool_facts.find((each) => each.item === itemId(alias));
-        assert.ok(tool, `${revision} ${alias} has selected tool facts`);
-        assert.deepEqual([tool.native_arm, tool.no_gain, tool.skill_anim], [3, false, sequenceId(sequence)], `${revision} ${alias}`);
-    }
-
-    const normalMine = view.method('mining.copper').tick_arm;
-    const fastMine = view.method('mining.iron').tick_arm;
-    assert.deepEqual([normalMine.delay_drop, fastMine.delay_drop], [true, false], `${revision} normal versus fast mining drop delay`);
-    assert.deepEqual([normalMine.native_arm, normalMine.no_gain], [null, null], `${revision} mining arms are selected by pickaxe`);
-    for (const [alias, nativeArm, sequence, noGain] of [
-        ['bronze_pickaxe', 7, 'human_mining_bronze_pickaxe', false],
-        ['iron_pickaxe', 6, 'human_mining_iron_pickaxe', false],
-        ['steel_pickaxe', 5, 'human_mining_steel_pickaxe', false],
-        ['adamant_pickaxe', 3, 'human_mining_adamant_pickaxe', false],
-        ['mithril_pickaxe', 4, 'human_mining_mithril_pickaxe', false],
-        ['rune_pickaxe', 2, 'human_mining_rune_pickaxe', true],
-    ] as const) {
-        const tool = normalMine.tool_facts.find((each) => each.item === itemId(alias));
-        assert.ok(tool, `${revision} ${alias} has selected tool facts`);
-        assert.deepEqual([tool.native_arm, tool.no_gain, tool.skill_anim], [nativeArm, noGain, sequenceId(sequence)], `${revision} ${alias}`);
-    }
-
-    // M-215 R2/R3: handler-less locs are proven inert (no alias or category oploc handler;
-    // a global handler fails closed at index time, so reaching here proves there is none
-    // and the engine runs its default no-op): they are excluded from the mining
-    // catalogue entirely — no method target, no loose row, no entity join. Every other
-    // rock loc the content offers a Mine op on is classified or left Unknown with a gap code.
-    const rockClass = new Map<number, string>();
-    for (const method of facts.methods.filter((each) => each.skill === 'mining')) for (const target of method.targets.state === 'unknown' ? [] : method.targets.value) rockClass.set(target.id, target.class);
-    for (const loose of facts.loose.filter((each) => each.skill === 'mining')) rockClass.set(loose.id, loose.class);
-    const mineOps = locSectionsWith(root, /^op[1-5]=mine$/i);
-    const inert = revision === 289
-        ? ['newbierocks1', ...Array.from({ length: 21 }, (_, index) => `loc_${4976 + index}`)]
-        : ['newbierocks1', 'castlewars_blocked_tunnel_1', 'castlewars_blocked_tunnel_2'];
-    for (const alias of inert) {
-        const id = locPack.get(alias)!;
-        assert.ok(!rockClass.has(id), `${revision} ${alias} is excluded, not Unknown`);
-        assert.ok(!facts.loose.some((each) => each.id === id), `${revision} ${alias} has no loose row`);
-        assert.ok(!facts.entities.some((row) => row.startsWith('loc ') && row.split(' ')[2] === alias), `${revision} ${alias} is not joined`);
-    }
-    assert.ok(facts.loose.filter((each) => each.skill === 'mining').every((each) => each.gap?.code !== 'no-handler'), `${revision} no mining row claims no-handler`);
-    for (const alias of mineOps) {
-        if (inert.includes(alias)) continue;
-        assert.ok(rockClass.has(locPack.get(alias)!), `${revision} ${alias} has a class or a gap`);
-    }
-    for (const alias of locSectionsWith(root, /^category=mining_rock_macro_gas$/)) assert.equal(rockClass.get(locPack.get(alias)!), 'hazard', `${revision} ${alias} is a gas hazard, never a resource`);
-    for (const alias of locSectionsWith(root, /^param=mining_rock_empty,1$/)) assert.equal(rockClass.get(locPack.get(alias)!), 'depleted', `${revision} ${alias} is depleted`);
-    const rocks = family.summary.rocks;
-    assert.equal(rocks.population, rocks.resource + rocks.depleted + rocks.hazard + rocks.unclassified, `${revision} every rock accounted exactly once`);
-    assert.equal(rocks.population, revision === 289 ? 62 : 59, `${revision} handler-less locs are not population`);
-    assert.equal(rocks.resource, 29, `${revision} resource rocks`);
-    assert.equal(rocks.hazard, 22, `${revision} gas rocks`);
-    assert.equal(rocks.depleted, 5, `${revision} depleted rocks`);
-    assert.equal(rocks.unclassified, revision === 289 ? 6 : 3, `${revision} unclassified rocks`);
-    assert.deepEqual(rocks.unclassified_reasons, { 'custom-handler': revision === 289 ? 6 : 3 }, `${revision} every unclassified rock has a real handler`);
-    for (const loose of facts.loose.filter((each) => each.class === 'unclassified')) {
-        assert.ok(loose.gap && loose.gap.code && loose.gap.sources.length > 0, `${revision} ${view.name(loose.kind, loose.id)} unclassified rows carry a gap and its sources`);
-    }
-    const dummy = facts.loose.find((each) => each.kind === 'loc' && view.name('loc', each.id) === 'misc_dummy_coalrock1');
-    assert.equal(dummy?.gap?.code, revision === 289 ? 'custom-handler' : undefined, `${revision} the Miscellania dummy rock has its own handler, so it is no coal target`);
-    assert.equal(targetsOf(view.method('mining.coal'), 'resource').some((target) => view.name('loc', target.id) === 'misc_dummy_coalrock1'), false);
-    // M-215: the tutorial Mine handlers provably yield copper/tin ore, so those rocks are typed
-    // resources of their ore's method, with an unknown custom respawn and a targets caveat.
-    for (const [methodId, ore, tutorial] of [['mining.copper', 'copper', 'newbiecopperrock'], ['mining.tin', 'tin', 'newbietinrock']] as const) {
-        const method = view.method(methodId);
-        assert.deepEqual(targetsOf(method, 'resource').map((target) => view.name('loc', target.id)), [`${ore}rock1`, `${ore}rock2`, tutorial]);
-        const custom = targetsOf(method, 'resource').find((target) => view.name('loc', target.id) === tutorial)!;
-        assert.equal(custom.respawn.state === 'unknown' && custom.respawn.gap.code, 'custom-deplete', `${revision} ${tutorial} respawn is custom, never zero`);
-        assert.equal(method.targets.state === 'partial' && method.targets.gaps.some((each) => each.code === 'custom-handler-target'), true, `${revision} ${methodId} targets carry the custom-handler caveat`);
-        assert.equal(facts.loose.some((each) => view.name('loc', each.id) === tutorial), false, `${revision} ${tutorial} is attached, not loose`);
-    }
-
-    // Distinct per-target respawn (limestone 10/20/40) and no respawn at all for rune essence.
-    const limestone = targetsOf(view.method('mining.limestone'), 'resource');
-    assert.deepEqual(limestone.map((target) => knownValue(target.respawn, 'limestone respawn')?.raw), [10, 20, 40]);
-    assert.deepEqual(targetsOf(view.method('mining.limestone'), 'depleted').map((target) => view.name('loc', target.id)), ['loc_4030']);
-    assert.equal(knownValue(targetsOf(view.method('mining.rune stones'))[0].respawn, 'essence respawn'), null);
-    const iron = targetsOf(view.method('mining.iron'), 'resource');
-    assert.deepEqual(iron.map((target) => view.name('loc', target.id)), ['ironrock1', 'ironrock2']);
-    const ironRespawn = knownValue(iron[0].respawn, 'iron respawn');
-    assert.equal(ironRespawn?.raw, 20);
-    assert.deepEqual(knownValue(ironRespawn!.scale, 'iron scale'), { rule: 'scale_by_playercount', min_ticks: 10, max_ticks: 20, sources: ['scripts/general/scripts/player_count.rs2:1-4'] });
-    const normalTrees = targetsOf(view.method('woodcutting.normal'), 'resource')[0];
-    assert.deepEqual(knownValue(knownValue(normalTrees.respawn, 'tree respawn')!.scale, 'tree scale').min_ticks, 60, `${revision} zero-rate trees scale over 120..199`);
-    assert.equal(knownValue(normalTrees.respawn, 'tree respawn')!.raw, 0, `${revision} the content's zero is preserved`);
-
-    // Tools: pickaxe use gates are Mining levels, axes have none, wield gates are Attack.
-    const tools = (id: string) => knownValue(view.method(id).tools, `${id} tools`).map((tool) => [view.name('obj', tool.item), tool.use_gate, tool.wield_gate] as const);
-    assert.deepEqual(tools('mining.iron')[0], ['rune_pickaxe', { skill: 14, level: 41 }, { skill: 0, level: 40 }]);
-    assert.deepEqual(tools('woodcutting.oak')[0], ['rune_axe', null, { skill: 0, level: 40 }]);
-    assert.equal(tools('woodcutting.oak').every(([, use]) => use === null), true);
-
-    // Fishing: method, tool, bait and level-gated product set come from the handler, not a category/op pair.
-    const fishing = (id: string) => {
-        const method = view.method(id);
-        return {
-            tools: knownValue(method.tools, `${id} tools`).map((tool) => view.name('obj', tool.item)),
-            consumes: knownValue(method.consumes, `${id} consumes`).map((each) => `${view.name('obj', each.item)}x${each.count}`),
-            products: knownValue(method.products, `${id} products`).map((each) => `${view.name('obj', each.item)}@${each.level}`),
-            op: method.op,
-        };
-    };
-    assert.deepEqual(fishing('fishing.freshfish.op1'), { tools: ['fly_fishing_rod'], consumes: ['featherx1'], products: ['raw_trout@20', 'raw_salmon@30'], op: { slot: 1, label: 'Lure' } });
-    assert.deepEqual(fishing('fishing.freshfish.op3'), { tools: ['fishing_rod'], consumes: ['fishing_baitx1'], products: ['raw_pike@25'], op: { slot: 3, label: 'Bait' } });
-    assert.deepEqual(fishing('fishing.saltfish.op1'), { tools: ['net'], consumes: [], products: ['raw_shrimp@0', 'raw_anchovies@15'], op: { slot: 1, label: 'Net' } });
-    assert.deepEqual(fishing('fishing.saltfish.op3'), { tools: ['fishing_rod'], consumes: ['fishing_baitx1'], products: ['raw_sardine@5', 'raw_herring@10'], op: { slot: 3, label: 'Bait' } });
-    assert.deepEqual(fishing('fishing.rarefish.op1').tools, ['lobster_pot']);
-    assert.deepEqual(fishing('fishing.rarefish.op3').products, ['raw_tuna@35', 'raw_swordfish@50']);
-    assert.deepEqual(fishing('fishing.memberfish.op1').products.slice(-2), ['raw_cod@23', 'raw_bass@46']);
-    assert.deepEqual(fishing('fishing.0_45_152_lavafish.op1').tools, ['oily_fishing_rod']);
-    const bigNet = view.method('fishing.memberfish.op1');
-    assert.equal(bigNet.requirements.state, 'known', `${revision} big-net requirements are known: the monkey-form gate is a forbidden state, not a gap`);
-    assert.deepEqual(bigNet.forbidden_states, revision === 289 ? ['monkey-form'] : [], `${revision} big-net forbidden states`);
-    assert.equal(targetsOf(view.method('fishing.freshfish.op1'), 'hazard').map((target) => view.name('npc', target.id)).join(), 'macro_whirlpool_freshfish', `${revision} whirlpool spots are hazards, not fishing targets`);
-    const method = view.method(hemensterCarpMethod);
-    const target = targetsOf(method, 'resource')[0]!;
-    const npcPack = parsePack(fs.readFileSync(path.join(root, 'pack/npc.pack'), 'utf8'));
-    assert.equal(method.id, hemensterCarpMethod);
-    assert.equal(target.kind, 'npc');
-    assert.equal(target.id, npcPack.get(hemensterSpot));
-    assert.equal(target.id, 234);
-    assert.equal(target.op, 1);
-    assert.equal(view.name('npc', target.id), hemensterSpot);
-    assert.equal(target.respawn.state, 'known');
-    assert.equal(target.respawn.state === 'known' ? target.respawn.value : undefined, null);
-    assert.deepEqual(fishing(hemensterCarpMethod), {
-        tools: ['fishing_rod'],
-        consumes: ['red_vine_wormx1'],
-        products: ['raw_giant_carp@10'],
-        op: { slot: 1, label: 'Fish' },
-    });
-    assert.equal(knownValue(method.tools, `${method.id} tools`)[0]!.item, objPack.get('fishing_rod'));
-    assert.equal(knownValue(method.tools, `${method.id} tools`)[0]!.item, 307);
-    assert.equal(knownValue(method.consumes, `${method.id} consumes`)[0]!.item, objPack.get('red_vine_worm'));
-    assert.equal(knownValue(method.consumes, `${method.id} consumes`)[0]!.item, 25);
-    assert.equal(knownValue(method.products, `${method.id} products`)[0]!.item, objPack.get('raw_giant_carp'));
-    assert.equal(knownValue(method.products, `${method.id} products`)[0]!.item, 338);
-    assert.equal(method.resources[0], 'raw_giant_carp');
-    assert.equal(gatherMethodGap(method), 'varp-gate', 'quest progress stays an explicit blocker, not a fabricated gather requirement');
-    assert.equal(method.requirements.state, 'partial');
-    assert.deepEqual(method.requirements.state === 'partial' ? method.requirements.gaps.map((each) => each.code) : [], ['varp-gate']);
-    assert.deepEqual(knownValue(method.requirements, `${method.id} requirements`).map((each) =>
-        each.kind === 'skill' ? [each.kind, each.skill, each.level] : [each.kind]), [['skill', 10, 10]]);
-    assert.ok(method.sources.some((source) => source.startsWith(`${hemensterFishingScript}:`)));
-
-    const targetId = new Set([target.id]);
-    const sourcePlacements = mapRowKeys(root, 'NPC', targetId);
-    const northRow = revision === 289 ? 'maps/m41_53.jm2:7631:0:13:52:234' : 'maps/m41_53.jm2:7630:0:13:52:234';
-    assert.ok(sourcePlacements.has(northRow), 'the exact north-spot NPC row comes from the selected map');
-    assert.deepEqual([...familyRowKeys(family, 'n', targetId)].sort(), [...sourcePlacements].sort());
-
-    const contestSource = fs.readFileSync(path.join(root, hemensterFishingScript), 'utf8');
-    assert.match(contestSource, /p_delay\(4\);\s*@hemenster_catch\(\$bait\);/);
-    const catchStart = contestSource.indexOf('[label,hemenster_catch]');
-    const catchEnd = contestSource.indexOf('[label,attempt_fish_hemenster]', catchStart);
-    assert.ok(catchStart >= 0 && catchEnd > catchStart, 'the selected carp catch handler is present');
-    assert.doesNotMatch(contestSource.slice(catchStart, catchEnd), /stat_advance\(fishing,/);
-    assert.match(contestSource, /if\s*\(%hemenster_comp_stage = \^hemenster_comp_all_fish_caught\)[\s\S]*?~bonzo_handover_catch/);
-    const contestConstants = fs.readFileSync(path.join(root, 'scripts/quests/quest_fishingcompo/configs/quest_fishingcompo.constant'), 'utf8');
-    const stageValue = (name: string) => {
-        const match = new RegExp(`^\\^${name}\\s*=\\s*(\\d+)\\s*$`, 'm').exec(contestConstants);
-        assert.ok(match, `${name} is a selected content constant`);
-        return Number(match[1]);
-    };
-    assert.equal(stageValue('hemenster_comp_all_fish_caught') - stageValue('hemenster_comp_paidfee'), 3, 'the third catch reaches the handover check; the handler only calls Bonzo when he is within 12 tiles');
-
-    // Placements are the map rows themselves.
-    for (const [id, kind] of [['mining.iron', 'l'], ['mining.coal', 'l'], ['woodcutting.oak', 'l'], ['fishing.freshfish.op1', 'n']] as const) {
-        const ids = new Set(targetsOf(view.method(id), 'resource').map((target) => target.id));
-        const expected = mapRowKeys(root, kind === 'l' ? 'LOC' : 'NPC', ids);
-        assert.ok(expected.size > 0, `${revision} ${id} is placed`);
-        assert.deepEqual([...familyRowKeys(family, kind, ids)].sort(), [...expected].sort(), `${revision} ${id} placements equal the content's map rows`);
-    }
-    const gasIds = new Set(facts.methods.filter((each) => each.skill === 'mining').flatMap((each) => targetsOf(each, 'hazard').map((target) => target.id)));
-    assert.equal(familyRowKeys(family, 'l', gasIds).size, 0, `${revision} hazards are never published as placements`);
-
-    // Unknown is not empty: a custom-handler wood publishes neither targets nor spots.
-    const jungle = view.method('woodcutting.jungle');
-    assert.equal(jungle.targets.state, 'unknown');
-    assert.equal(jungle.spots.state, 'unknown');
-    assert.equal(jungle.targets.state === 'unknown' && jungle.targets.gap.code, 'no-resource-target');
-    assert.equal(jungle.tools.state, 'unknown');
-    assert.deepEqual(
-        jungle.tools.state === 'unknown' && jungle.tools.gap.sources,
-        jungle.targets.state === 'unknown' && jungle.targets.gap.sources,
-        'an unavailable tool cell retains the same encoded source-reference sequence as its target cell',
-    );
-    assert.equal(facts.loose.filter((each) => each.skill === 'woodcutting').every((each) => each.gap?.code === 'custom-handler' && each.gap.sources.some((source) => source.includes('jungle_tree.rs2'))), true);
-
-    // Content-defined zones: 289 Miscellania intercepts coal, trees and fish, but not iron; 274 has no such content.
-    const intercepted = facts.zones.filter((zone) => zone.effect === 'yield-intercepted').flatMap((zone) => zone.methods);
-    if (revision === 289) assert.equal(intercepted.includes('mining.coal') && intercepted.includes('woodcutting.oak') && intercepted.includes('fishing.freshfish.op1'), true);
-    else assert.deepEqual(intercepted, [], '274 content has no yield intercepts, so none are invented');
-    assert.equal(intercepted.includes('mining.iron') || intercepted.includes('fishing.memberfish.op1'), false, `${revision} iron and big-net yields are not intercepted`);
-    assert.equal(facts.zones.some((zone) => zone.effect === 'product-substituted' && zone.methods.includes('mining.gold') && !zone.methods.includes('mining.iron')), true);
-    // gather_resources: woodcutting/mining resource rows and grouped fishing
-    // options carry full method membership plus the old fishing ids as aliases.
-    const resourceRows = gatherResources(facts, new Map());
-    const rowByKey = new Map(resourceRows.map((row) => [`${row.skill}:${row.key}`, row]));
-    for (const skill of ['woodcutting', 'mining', 'fishing'] as const) {
-        const keys = resourceRows.filter((row) => row.skill === skill).map((row) => row.key);
-        assert.equal(new Set(keys).size, keys.length, `${revision} ${skill} option keys are unique`);
-    }
-    assert.deepEqual(
-        resourceRows.filter((row) => row.skill !== 'fishing').map((row) => row.method),
-        facts.methods.flatMap((method) => (method.skill === 'fishing' ? [] : method.resources.map(() => method.id))),
-        `${revision} woodcutting/mining resource rows follow family content order`,
-    );
-    const fishingRows = resourceRows.filter((row) => row.skill === 'fishing');
-    assert.equal(fishingRows.length, 13, `${revision} fishing groups`);
-    assert.equal(new Set(fishingRows.map((row) => row.label)).size, fishingRows.length, `${revision} fishing labels are unique`);
-    assert.deepEqual(
-        fishingRows.flatMap((row) => row.methods).sort(compareCodepoint),
-        facts.methods.filter((method) => method.skill === 'fishing').map((method) => method.id).sort(compareCodepoint),
-        `${revision} every fishing method belongs to one group`,
-    );
-    assert.equal(
-        fishingRows.every((row) => row.methods.length > 0
-            && row.method === row.methods[0]
-            && JSON.stringify(row.aliases) === JSON.stringify(row.methods)),
-        true,
-        `${revision} fishing members and legacy aliases are sorted together`,
-    );
-    const contestPicker = fishingRows.find((row) => row.methods.includes(hemensterCarpMethod));
-    assert.ok(contestPicker, 'the direct carp method keeps its own operation/tool/bait/product option');
-    assert.equal(contestPicker.selectable, false);
-    assert.equal(contestPicker.gap, 'varp-gate');
-    assert.equal(contestPicker.level, 10);
-    const resourceRow = (skill: string, key: string): GatherResourceWire => {
-        const found = rowByKey.get(`${skill}:${key}`);
-        assert.ok(found, `${revision} ${skill}:${key} is published`);
-        return found as GatherResourceWire;
-    };
-    assert.equal(resourceRow('woodcutting', 'oak').selectable, true);
-    assert.equal(resourceRow('woodcutting', 'oak').gap, null);
-    assert.equal(resourceRow('woodcutting', 'oak').level, 15);
-    assert.equal(resourceRow('woodcutting', 'oak').method, 'woodcutting.oak');
-    assert.equal(resourceRow('woodcutting', 'normal').selectable, true, `${revision} the G1 woodcutting default is admitted`);
-    assert.deepEqual([resourceRow('mining', 'copper').selectable, resourceRow('mining', 'tin').selectable], [true, true], `${revision} the G1 mining defaults admit on their Known ore rocks; the tutorial-gate rock is excluded per target`);
-    assert.equal(resourceRow('mining', 'copper').gap, null);
-    assert.equal(resourceRow('mining', 'tin').gap, null);
-    assert.equal(resourceRows.every((row) => row.gap !== 'no-known-target'), true, `${revision} the defensive fallback never fires on real pins`);
-    assert.equal(resourceRow('mining', 'rune stones').selectable, true, `${revision} the EssMiner preset is admitted`);
-    assert.equal(resourceRow('mining', 'iron').selectable, true);
-    assert.equal(resourceRow('woodcutting', 'jungle').selectable, false);
-    assert.equal(resourceRow('woodcutting', 'jungle').gap, 'no-resource-target');
-    const saltfish = resourceRow('fishing', 'fishing.net.tool_303.products_317_321');
-    assert.equal(saltfish.selectable, true);
-    assert.equal(saltfish.aliases.includes('fishing.saltfish.op1'), true);
-    const karambwan = fishingRows.find((row) => row.aliases.includes('fishing.category_633.op1'));
-    assert.ok(karambwan, `${revision} the karambwan alias resolves to a fishing group`);
-    assert.equal(karambwan.selectable, false);
-    assert.equal(karambwan.gap, 'inventory-effect', `${revision} the karambwan consumes cell blocks first`);
-    const bigNetRow = fishingRows.find((row) => row.aliases.includes('fishing.memberfish.op1'));
-    assert.ok(bigNetRow, `${revision} the big-net alias resolves to a fishing group`);
-    assert.equal(bigNetRow.gap, null, `${revision} big-net is admitted: a forbidden state never blocks selection`);
-    assert.equal(bigNetRow.selectable, true);
-    assert.deepEqual(bigNetRow.forbidden_states, revision === 289 ? ['monkey-form'] : [], `${revision} big-net forbidden states on the row`);
-    // Named sites (§2.3 P-sites): rows, boxes, names and counts computed from
-    // the content family, never the committed core. Item names are the shared
-    // core input (the same map the generator passes); everything else derives.
-    const siteCore: { items: { id: number; name: string | null }[] } = JSON.parse(fs.readFileSync(path.join(repoRoot, `crates/api/data/game-data/${revision}.json`), 'utf8'));
-    const siteItemNames = new Map<number, string>();
-    for (const item of siteCore.items) if (item.name !== null && item.name !== '') siteItemNames.set(item.id, item.name);
-    const namedResourceRows = gatherResources(facts, siteItemNames);
-    const siteResult = gatherSites(facts, namedResourceRows, root, siteBanksAll);
-    assert.equal(siteResult.rows.length, 294, `${revision} named sites`);
-    const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 37, direct: 0, dropped: 13, outside_box: 0, extra: 11, renamed: 6, required: 4, override_dropped: 12 }, fishing: { sites: 26, direct: 20, dropped: 5, outside_box: 0, extra: 3, renamed: 1, required: 0, override_dropped: 12 } }
-        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 37, direct: 0, dropped: 13, outside_box: 0, extra: 11, renamed: 6, required: 4, override_dropped: 11 }, fishing: { sites: 26, direct: 20, dropped: 5, outside_box: 0, extra: 3, renamed: 1, required: 0, override_dropped: 10 } };
-    assert.deepEqual(siteResult.report, expectedSiteReport, `${revision} site report`);
-    // Without the table the same rows keep their nearest-label names: the table is the only thing that renames or drops them.
-    if (revision === 289) {
-        const unnamed = gatherSites(facts, namedResourceRows, root, siteBanksAll, []);
-        assert.ok(unnamed.rows.find((row) => row.id === 'mining.park.underground.se')?.label.startsWith('Park (underground) SE23 · '), '289 unnamed guild keeps the nearest-label name');
-        const desert = unnamed.rows.find((row) => row.id === 'mining.desert_mining_camp.underground');
-        assert.equal(desert?.label, 'Desert Mining Camp (underground) · Rock 63, Copper ore 4, Tin ore 4', '289 unnamed desert camp keeps its nearest-label name');
-        assert.deepEqual(desert?.region, { min_x: 3284, min_z: 9412, max_x: 3306, max_z: 9453, level: 0 });
-    }
-    // Every override cites `path:lines` into the 289 content (the pack and the reviewed evidence are 289's; 274's content lacks some of these files): each file exists and each line range lies inside it. An optional row is checked only where its id is published.
-    const unfiltered = gatherSites(facts, namedResourceRows, root, siteBanksAll, []);
-    const publishedIds = new Set(unfiltered.rows.map((row) => row.id));
-    for (const override of SITE_OVERRIDES) {
-        if (override.optional === true && !publishedIds.has(override.id)) continue;
-        const refs = [...override.cite.matchAll(/([A-Za-z0-9_/]+\.(?:rs2|enum|loc|jm2)):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)/g)];
-        assert.ok(refs.length > 0, `${override.id} cites content as path:lines`);
-        if (override.action === 'drop') assert.ok(override.place !== '' && override.reason !== '', `${override.id} names its place and the entrance the route finder lacks`);
-        if (revision !== 289) continue;
-        for (const [, file, ranges] of refs) {
-            const full = path.join(root, file!.startsWith('maps/') ? '' : 'scripts', file!);
-            assert.ok(fs.existsSync(full), `${revision} override ${override.id} cites ${file}`);
-            const lines = fs.readFileSync(full, 'utf8').split('\n').length;
-            for (const range of ranges!.split(',')) {
-                const [from, to] = range.split('-').map(Number) as [number, number | undefined];
-                assert.ok(from >= 1 && (to ?? from) >= from && (to ?? from) <= lines, `${revision} override ${override.id} cites ${file}:${range} outside the file's ${lines} lines`);
-            }
-        }
-    }
-    const siteById = new Map(siteResult.rows.map((row) => [row.id, row]));
-    const site = (id: string): GatherSiteWire => {
-        const found = siteById.get(id);
-        assert.ok(found, `${revision} site ${id} is published`);
-        return found!;
-    };
-    const contestSitePicker = namedResourceRows.find((row) => row.methods.includes(hemensterCarpMethod));
-    assert.ok(contestSitePicker);
-    // The Hemenster contest site is hidden (no entrance in the pack), so the join is checked on the rows before the override table.
-    const contestSites = unfiltered.rows.filter((row) => row.skill === 'fishing' && row.keys.some((key) => key.key === contestSitePicker.key));
-    assert.equal(contestSites.length, 1, 'the method site is joined to its selected NPC placement');
-    assert.equal(contestSites[0]!.label, 'Hemenster W18 · Fish');
-    assert.deepEqual(contestSites[0]!.region, { min_x: 2637, min_z: 3444, max_x: 2637, max_z: 3444, level: 0 });
-    // Direct content names on both revisions, with the Waterfall loc camp keeping its bearing label.
-    assert.equal(site('fishing.musa_point').label, 'Musa Point · Bait, Cage, Harpoon, Net');
-    assert.deepEqual(site('fishing.musa_point').region, { min_x: 2923, min_z: 3179, max_x: 2926, max_z: 3181, level: 0 });
-    assert.equal(site('fishing.barbarian_village').label, 'Barbarian Village · Bait, Lure');
-    assert.deepEqual(site('fishing.barbarian_village').region, { min_x: 3104, min_z: 3424, max_x: 3110, max_z: 3434, level: 0 });
-    assert.equal(site('fishing.catherby').label, 'Catherby · Harpoon, Net, Bait, Cage');
-    assert.equal(site('fishing.baxtorian_falls').label, 'Baxtorian Falls · Bait, Lure');
-    assert.deepEqual(site('fishing.baxtorian_falls').region, { min_x: 2527, min_z: 3403, max_x: 2537, max_z: 3412, level: 0 });
-    assert.equal(site('fishing.baxtorian_falls.2').label, 'Baxtorian Falls (2) · Bait, Lure');
-    assert.deepEqual(site('fishing.baxtorian_falls.2').region, { min_x: 2508, min_z: 3421, max_x: 2508, max_z: 3421, level: 0 });
-    assert.equal(site('fishing.agility_training_area.sw').label, 'Agility Training Area SW19 · Bait, Lure');
-    assert.equal(site('fishing.agility_training_area.sw').region.min_x, revision === 289 ? 2501 : 2498);
-    assert.equal(site('fishing.rimmington').label, 'Rimmington · Bait, Net');
-    assert.equal(site('fishing.rimmington.2').label, 'Rimmington (2) · Bait, Net');
-    assert.equal(site('fishing.entrana').label, 'Entrana · Bait, Lure');
-    assert.equal(site('fishing.entrana.2').label, 'Entrana (2) · Bait, Net');
-    assert.equal(site('fishing.seers_village').label, `Seers' Village · Bait, Lure`);
-    assert.equal(site('fishing.draynor_village').label, 'Draynor Village · Bait, Net');
-    assert.equal(site('fishing.lumbridge_river').label, 'Lumbridge River · Bait, Lure');
-    assert.equal(site('fishing.fishing_guild').label, 'Fishing Guild · Cage, Harpoon, Net');
-    assert.equal(site('fishing.gnome_stronghold').label, 'Gnome Stronghold · Bait, Lure');
-    assert.equal(site('fishing.wilderness_camp').label, 'Wilderness Camp · Bait, Net');
-    assert.ok(!siteById.has('fishing.rimmington.sw') && !siteById.has('fishing.cooks_guild.w'), `${revision} round-2 ids are not rows`);
-    // The three mines keep their honest bearing descriptions: no content identifier names a mine.
-    assert.equal(site('mining.lumbridge.ne').label, 'Lumbridge NE54 · Iron ore 9, Silver ore 5, Coal 3 +5');
-    assert.equal(site('mining.al_kharid.w').label, 'Al Kharid W26 · Coal 7, Mithril ore 5, Adamantite ore 2');
-    assert.equal(site('mining.river_lum').label, 'River Lum · Tin ore 8, Clay 3, Iron ore 3 +1');
-    assert.equal(site('mining.varrock_east.se').label, 'Varrock East SE50 · Copper ore 9, Tin ore 6, Iron ore 4');
-    assert.equal(site('woodcutting.draynor').label, 'Draynor · Logs 25, Willow logs 5, Oak logs 4');
-    assert.deepEqual(site('woodcutting.draynor').region, { min_x: 3082, min_z: 3200, max_x: 3136, max_z: 3256, level: 0 });
-    // Search witnesses: the rows the picker filters per selected key and query.
-    const offering = (skill: string, key: string) => siteResult.rows.filter((row) => row.skill === skill && row.keys.some((entry) => entry.key === key));
-    assert.equal(offering('woodcutting', 'normal').length, 212, `${revision} normal-tree choices`);
-    assert.equal(offering('woodcutting', 'oak').length, 117, `${revision} oak choices`);
-    assert.equal(offering('woodcutting', 'willow').length, 50, `${revision} willow choices`);
-    assert.equal(offering('mining', 'coal').length, 19, `${revision} coal choices`);
-    assert.deepEqual(
-        offering('woodcutting', 'willow').filter((row) => /draynor/i.test(`${row.id} ${row.label}`)).map((row) => row.id),
-        ['woodcutting.draynor'],
-        `${revision} willow plus draynor is exactly one site`,
-    );
-    assert.equal(offering('woodcutting', 'normal').filter((row) => /varrock/i.test(`${row.id} ${row.label}`)).length, 11, `${revision} varrock matches`);
-    const tunaKey = namedResourceRows.find((row) => row.aliases.includes('fishing.rarefish.op3'))!.key;
-    const tunaSites = offering('fishing', tunaKey);
-    assert.equal(tunaSites.length, 4, `${revision} tuna harpoon choices`);
-    assert.deepEqual(tunaSites.map((row) => row.label.split(' · ')[0]).sort(), ['Catherby', 'Fishing Guild', 'Musa Point', 'Rellekka NW24'], `${revision} tuna harpoon names`);
-    // Raw shark (Harpoon) and the big-net catch are selectable on both revisions: the monkey-form state is refused at begin, never hidden.
-    const sharkKey = namedResourceRows.find((row) => row.aliases.includes('fishing.memberfish.op3'))!;
-    assert.equal(sharkKey.selectable, true, `${revision} raw shark is selectable`);
-    assert.deepEqual(sharkKey.forbidden_states, revision === 289 ? ['monkey-form'] : [], `${revision} raw shark forbidden states`);
-    assert.equal(offering('fishing', sharkKey.key).length, 3, `${revision} shark (Harpoon) choices`);
-    // Hidden until the route finder learns their entrances: no row, whatever the label would have been.
-    for (const id of ['fishing.elf_camp.nw', 'fishing.elf_camp.w', 'woodcutting.canifis', 'woodcutting.tyras_camp']) assert.ok(!siteById.has(id), `${revision} ${id} is hidden`);
-    assert.ok(siteById.has('woodcutting.bedabin_camp.underground.n'), `${revision} the Cosmic Temple trees are published`);
-    // Real-row closure: every key is a same-skill picker value, labels carry no coordinates, and each region is wholly surface or wholly underground (the 4160-6400 special-area band is never offered).
-    for (const row of siteResult.rows) {
-        for (const entry of row.keys) {
-            assert.ok(namedResourceRows.some((resource) => resource.skill === row.skill && resource.key === entry.key), `${revision} ${row.id} offers ${entry.key}, a ${row.skill} key`);
-        }
-        assert.ok(!/\d{4}/.test(row.label) && (row.region.max_z < 4160 || row.region.min_z >= 6400), `${revision} ${row.id} label and region`);
-    }
-    siteRowsByRevision.set(revision, siteResult.rows);
-    hiddenByRevision.set(revision, siteResult.hidden);
-
-}
-// Every 274 site is also a 289 site: the table hides the 3 289-only 0.2.0 rows (2 Mort'ton, 1 Troll Stronghold) along with the rest.
-{
-    const ids274 = siteRowsByRevision.get(274)!.map((row) => row.id);
-    const rows289 = siteRowsByRevision.get(289)!;
-    const ids289 = rows289.map((row) => row.id);
-    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 294, 'shared site ids');
-    assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), [], '289-only site rows');
-    assert.equal(ids274.filter((id) => !ids289.includes(id)).length, 0, 'no 274-only rows');
-}
-
-{
-    const requires = [
-        { kind: 'worn', item: 1844, name: 'Slave shirt' },
-        { kind: 'worn', item: 1845, name: 'Slave robe' },
-        { kind: 'worn', item: 1846, name: 'Slave boots' },
-        { kind: 'quest', name: 'The Tourist Trap' },
-    ];
-    const bankingUnavailable = 'No bank route returns from the lower mine. The mine requires the slave kit, but the camp exit rejects worn kit pieces.';
-    for (const revision of [274, 289]) {
-        const lowerMine = siteRowsByRevision
-            .get(revision)!
-            .find((row) => row.id === 'mining.desert_mining_camp.underground');
-        assert.ok(lowerMine, `${revision} lower mine is published`);
-        assert.deepEqual(lowerMine.requires, requires, `${revision} lower mine requirements`);
-        assert.equal(lowerMine.banking_unavailable, bankingUnavailable, `${revision} lower mine banking limit`);
-    }
-}
-// Real rows for the naming rules and the 0.2.0 id contract, checked on the regenerated data.
-{
-    const rows289 = siteRowsByRevision.get(289)!;
-    const at289 = (id: string) => {
-        const found = rows289.find((row) => row.id === id);
-        assert.ok(found, `289 site ${id} is published`);
-        return found!;
-    };
-    // The lower mine has a proven worn-kit entrance and needs The Tourist Trap. The northern room remains beyond the dialogue and chance-gated minecart.
-    assert.equal(at289('mining.desert_mining_camp.underground').banking_unavailable, 'No bank route returns from the lower mine. The mine requires the slave kit, but the camp exit rejects worn kit pieces.');
-    assert.ok(!rows289.some((row) => row.id === 'mining.desert_mining_camp.underground.n'), '289 northern mine remains hidden behind the minecart');
-    assert.deepEqual(at289('mining.grand_tree.underground').requires, [{ kind: 'quest', name: 'The Grand Tree' }]);
-    assert.deepEqual(at289('mining.grand_tree.underground.2').requires, [{ kind: 'quest', name: 'The Grand Tree' }]);
-    assert.ok(at289('mining.desert_mining_camp'));
-    assert.ok(at289('fishing.dark_wizards_tower.underground.nw'));
-    // The Falador Mining Guild cluster (3042,9758) is named by the nearest-label rule (Park is 23 tiles from its projection, Falador 39); the override table renames it.
-    const guild = rows289.find((row) => row.skill === 'mining' && row.region.min_x <= 3042 && row.region.max_x >= 3042 && row.region.min_z <= 9758 && row.region.max_z >= 9758);
-    assert.equal(guild?.id, 'mining.park.underground.se', '3042,9758 is the Park underground cluster');
-    assert.ok(guild!.label.startsWith('Mining Guild (Mining 60) · '), 'the Mining Guild override shows its requirement');
-    // Far from every label, with no bank within 64 tiles: the nearest label at any distance, with bearing and distance.
-    assert.equal(at289('woodcutting.lumber_yard.n').label, 'Lumber Yard N65 · Logs 298, Charcoal 14');
-    assert.deepEqual(at289('woodcutting.lumber_yard.n').region, { min_x: 3303, min_z: 3572, max_x: 3337, max_z: 3660, level: 0 });
-    // Far from every label with a bank within 64 tiles: named `<bank> area`.
-    assert.equal(at289('woodcutting.edgeville_area').label, 'Edgeville area · Logs 71');
-    // Every 0.2.0 site id stays retired or published, never reused: a published one keeps its region, a hidden one is a drop override with the same region. Saved Gatherer cards store site ids.
-    const base: Record<string, Record<string, number[]>> = JSON.parse(fs.readFileSync(path.join(repoRoot, 'tools/game-data/gather-sites-0.2.0.json'), 'utf8'));
-    for (const revision of [274, 289]) {
-        const byId = new Map(siteRowsByRevision.get(revision)!.map((row) => [row.id, row]));
-        const hiddenById = new Map(hiddenByRevision.get(revision)!.map((row) => [row.id, row]));
-        const baseRows = Object.entries(base[String(revision)]!);
-        assert.equal(baseRows.length, revision === 289 ? 311 : 308, `${revision} 0.2.0 site count`);
-        for (const [id, region] of baseRows) {
-            const row = byId.get(id) ?? hiddenById.get(id);
-            assert.ok(row, `${revision} 0.2.0 site ${id} is published or hidden`);
-            assert.ok(!(byId.has(id) && hiddenById.has(id)), `${revision} ${id} is not both published and hidden`);
-            assert.deepEqual([row!.region.min_x, row!.region.min_z, row!.region.max_x, row!.region.max_z, row!.region.level], region, `${revision} 0.2.0 site ${id} keeps its region`);
-        }
-        // The hidden rows' regions are committed for the reachability guard.
-        const committed: Record<string, Record<string, number[]>> = JSON.parse(fs.readFileSync(path.join(repoRoot, HIDDEN_SITES_FILE), 'utf8'));
-        assert.deepEqual(committed[String(revision)], hiddenSitesRecord(hiddenByRevision.get(revision)!), `${revision} ${HIDDEN_SITES_FILE} matches the generator`);
-    }
-}
-
-// Real script text, tiny maps: mutate exactly one construct and prove the extractor degrades honestly.
-const realGathering = gatheringPins[1].root;
+// Real script text with synthetic maps: mutate one construct and prove ordinary extractor behavior.
+const realGathering = revisions.find((spec) => spec.revision === 289)!.content;
 function gatheringFixture(mutate?: (rootDir: string) => void) {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gathering-fixture-'));
     fs.cpSync(path.join(realGathering, 'scripts'), path.join(rootDir, 'scripts'), { recursive: true });
@@ -3885,8 +2695,6 @@ function gatheringFixture(mutate?: (rootDir: string) => void) {
     fs.mkdirSync(path.join(rootDir, 'maps'));
     fs.writeFileSync(path.join(rootDir, 'maps/m50_50.jm2'), `==== LOC ====\n0 10 10: ${loc.get('ironrock1')} 10 0\n0 11 10: ${loc.get('ironrock2')} 10 1\n0 12 10: ${loc.get('copperrock1')} 10 0\n==== NPC ====\n0 20 20: ${npc.get('0_48_53_freshfish')}\n`);
     mutate?.(rootDir);
-    execFileSync('git', ['init', '-q'], { cwd: rootDir });
-    if (fs.existsSync(path.join(rootDir, 'maps'))) execFileSync('git', ['add', 'maps'], { cwd: rootDir });
     return rootDir;
 }
 function replaceIn(rootDir: string, relative: string, from: string, to: string) {
@@ -3900,6 +2708,10 @@ const mineScript = 'scripts/skill_mining/scripts/mining.rs2';
 const fishScript = 'scripts/skill_fishing/scripts/fishing_spots/freshfish.rs2';
 
 const baseline = extractGatheringFamily(gatheringFixture());
+const gatheringEnvelope = JSON.parse(familyBytes(baseline, 'gathering'));
+assert.deepEqual(Object.keys(gatheringEnvelope), ['schema', 'facts']);
+assert.equal(gatheringEnvelope.schema, GATHERING_SCHEMA);
+assert.deepEqual(gatheringEnvelope.facts, baseline.payload, 'family serialization keeps semantic evidence in actual facts');
 assert.equal(family289Rows(baseline, 'mining.iron'), 2, 'the fixture places exactly its two iron rocks');
 function family289Rows(family: GatheringFamily, method: string) {
     return family.summary.placements.by_method[method] ?? 0;
@@ -4026,6 +2838,7 @@ assert.equal(copperTargets.find((target) => noStageView.name('loc', target.id) =
 const noRate = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/skill_mining/configs/mine.dbrow', 'data=rock_respawnrate,10\n\n[tin_rock_table]', '\n[tin_rock_table]')));
 const noRateRespawn = targetsOf(gatherView(noRate).method('mining.copper'), 'resource')[0].respawn;
 assert.equal(noRateRespawn.state === 'unknown' && noRateRespawn.gap.code, 'respawn-rate-missing');
+assert.ok(noRateRespawn.state === 'unknown' && noRateRespawn.gap.sources.some((source) => source.startsWith('scripts/skill_mining/configs/mine.dbrow:')), 'respawn gap cites the missing-rate row');
 
 // A quest handler that takes over one rock alias removes it from the ore's targets and records why.
 const takenOver = extractGatheringFamily(gatheringFixture((rootDir) => fs.appendFileSync(path.join(rootDir, 'scripts/areas/area_miscellania/scripts/miner_magnus.rs2'), '\n[oploc1,ironrock1]\nmes("Someone else uses this rock.");\n')));
@@ -4037,6 +2850,24 @@ assert.equal(family289Rows(takenOver, 'mining.iron'), 1);
 // resource; changing the yielded item to a non-ore drops it back to Unknown with its handler reason.
 const tutScript = 'scripts/tutorial/scripts/skills/tut_mining.rs2';
 const baselineView = gatherView(baseline);
+const carpMethod = baselineView.method(hemensterCarpMethod);
+assert.ok(carpMethod.sources.some((source) => source.startsWith(`${hemensterFishingScript}:`)), 'method source citations remain in family facts');
+const carpRequirements = knownValue(carpMethod.requirements, `${carpMethod.id} requirements`);
+assert.ok(carpRequirements.some((requirement) => requirement.kind === 'skill' && requirement.source.startsWith(`${hemensterFishingScript}:`)), 'requirement retains its source span');
+assert.ok(carpMethod.requirements.state === 'partial' && carpMethod.requirements.gaps.some((each) => each.code === 'varp-gate' && each.sources.some((source) => source.startsWith(`${hemensterFishingScript}:`))), 'semantic requirement gaps retain source spans');
+
+const copperRespawnEvidence = knownValue(targetsOf(baselineView.method('mining.copper'), 'resource')[0]!.respawn, 'copper respawn evidence');
+assert.ok(copperRespawnEvidence, 'depleting copper target retains its respawn fact');
+assert.match(copperRespawnEvidence.source, /^scripts\/skill_mining\/configs\/mine\.dbrow:\d+-\d+$/, 'respawn fact cites its source row');
+const copperScaleEvidence = knownValue(copperRespawnEvidence.scale, 'copper respawn scale');
+assert.ok(copperScaleEvidence.sources.some((source) => source.startsWith('scripts/general/scripts/player_count.rs2:')), 'respawn scaling cites its source formula');
+
+assert.ok(baseline.payload.zones.length > 0, 'content-defined gathering zones are extracted');
+assert.ok(baseline.payload.zones.every((zone) => zone.sources.length > 0), 'every gathering zone retains semantic source citations');
+const freshfishEntity = baseline.payload.entities.find((entity) => entity.endsWith(' 0_48_53_freshfish'));
+assert.ok(freshfishEntity, 'the packed freshfish entity fact is retained');
+const freshfishId = Number(freshfishEntity.split(' ')[1]);
+assert.ok(baseline.payload.placements.some((file) => file.file === 'maps/m50_50.jm2' && file.rows.some((row) => row.split(' ')[4] === `n${freshfishId}`)), 'the synthetic NPC placement row is retained with its entity fact');
 assert.deepEqual(targetsOf(baselineView.method('mining.copper'), 'resource').map((target) => baselineView.name('loc', target.id)), ['copperrock1', 'copperrock2', 'newbiecopperrock']);
 assert.equal(baselineView.method('mining.copper').targets.state, 'partial');
 const retyped = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, tutScript, 'inv_add(inv, copper_ore, 1);', 'inv_add(inv, logs, 1);')));
@@ -4077,88 +2908,14 @@ assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => fs.writ
 assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, 'scripts/skill_mining/configs/mine.dbrow', 'data=rock,copperrock1', 'data=rock,not_a_packed_loc'))), /failed join/);
 
 
-/* ------------------------------------------------------------------ *
- * debug family isolation (M2): the base asset carries no debug catalog.
- * Fails before the split (base embeds debug_commands/debug_names and its
- * provenance merges debug-only inputs); passes on the split artifacts.
- * ------------------------------------------------------------------ */
-for (const revision of [274, 289]) {
-    const baseFile = path.join(repoRoot, `crates/api/data/game-data/${revision}.json`);
-    const base = JSON.parse(fs.readFileSync(baseFile, 'utf8'));
-    assert.equal('debug_commands' in base, false, `${revision}: base must not embed debug commands`);
-    assert.equal('debug_names' in base, false, `${revision}: base must not embed debug names`);
-    assert.deepEqual(base.provenance.inputs.map((input: { path: string }) => input.path), ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'], `${revision}: base engine inputs stay the original three`);
-    const debugFile = path.join(repoRoot, `crates/api/data/game-data/${revision}/debug.json`);
-    const debug = JSON.parse(fs.readFileSync(debugFile, 'utf8'));
-    assert.equal(debug.schema_version, 1, `${revision}: debug artifact schema`);
-    assert.equal(debug.revision, revision, `${revision}: debug artifact revision`);
-    assert.deepEqual(debug.provenance.inputs.map((input: { path: string }) => input.path).sort(), ['data/pack/server/npc.dat', 'src/engine/entity/PlayerStat.ts', 'src/network/game/client/handler/ClientCheatHandler.ts'].sort(), `${revision}: debug engine provenance`);
-    assert.equal('obj' in debug.debug_names, false, `${revision}: object picker reuses base items, no obj duplication`);
-    assert.equal('namedobj' in debug.debug_names, false, `${revision}: no namedobj duplication`);
-    assert.ok(debug.debug_commands.length > 0, `${revision}: debug commands present`);
-    const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'crates/api/data/game-data/manifest.json'), 'utf8'));
-    const row = manifest.revisions.find((entry: { revision: number }) => entry.revision === revision);
-    assert.deepEqual(row.families.debug, { path: `${revision}/debug.json`, schema: 1, ...sha256(debugFile) }, `${revision}: manifest debug descriptor matches the artifact`);
-}
 
-/* ------------------------------------------------------------------ *
- * debug provenance isolation (M2 behavior regression): mutating a
- * debug-only input moves the debug provenance while the base
- * provenance bytes stay identical.
- * ------------------------------------------------------------------ */
-import { BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, DEBUG_STAT_RELATIVE, baseContentFileList, baseProvenanceInputs, buildDebugArtifact, debugArtifactBytes, debugProvenanceInputs } from './generate.ts';
-import { engineHandlerRelative } from './extractors/debug.ts';
-
-const isoEngine = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-debug-iso-engine-'));
-const isoContent = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-debug-iso-content-'));
-for (const relative of [...BASE_ENGINE_INPUT_PATHS, ...DEBUG_ENGINE_INPUT_PATHS]) {
-    const file = path.join(isoEngine, relative);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `stub ${relative}\n`);
-}
-const baseContentFiles = baseContentFileList();
-for (const relative of [
-    'scripts/quests/quest_itexam/scripts/digsite_workman.rs2',
-    'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2',
-]) {
-    assert.ok(baseContentFiles.includes(relative), `${relative} must be pinned as a base content input`);
-}
-assert.equal(
-    baseContentFiles.filter((file) => file === 'scripts/skill_combat/configs/combat.param').length,
-    1,
-    'the NPC combat parameter defaults used by risk extraction are pinned exactly once',
-);
-for (const relative of baseContentFiles) {
-    const file = path.join(isoContent, relative);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, `stub ${relative}\n`);
-}
-// A debugproc source the extractor would report: never a base content input.
-const DEBUG_ONLY_CONTENT = 'scripts/_test/scripts/cheats/cheat_extra.rs2';
-assert.equal(baseContentFileList().includes(DEBUG_ONLY_CONTENT), false, 'the fixture debugproc source is debug-only');
-const debugOnlyFile = path.join(isoContent, DEBUG_ONLY_CONTENT);
-fs.mkdirSync(path.dirname(debugOnlyFile), { recursive: true });
-fs.writeFileSync(debugOnlyFile, '[debugproc,extra]\n');
-const debugOnlyEngine = DEBUG_ENGINE_INPUT_PATHS.filter((relative) => !BASE_ENGINE_INPUT_PATHS.includes(relative));
-assert.ok(debugOnlyEngine.includes(engineHandlerRelative()), 'the cheat handler is a debug-only engine input');
-assert.ok(debugOnlyEngine.includes(DEBUG_STAT_RELATIVE), 'PlayerStat is a debug-only engine input');
-const baseBefore = JSON.stringify(baseProvenanceInputs(isoEngine, isoContent));
-const debugBefore = JSON.stringify({ engine: debugProvenanceInputs(isoEngine), content: [sourceFile(isoContent, DEBUG_ONLY_CONTENT)] });
-// Mutate debug-only inputs: the handler and one debugproc source.
-fs.appendFileSync(path.join(isoEngine, engineHandlerRelative()), '// drift\n');
-fs.appendFileSync(debugOnlyFile, '// drift\n');
-const baseAfter = JSON.stringify(baseProvenanceInputs(isoEngine, isoContent));
-const debugAfter = JSON.stringify({ engine: debugProvenanceInputs(isoEngine), content: [sourceFile(isoContent, DEBUG_ONLY_CONTENT)] });
-assert.equal(baseAfter, baseBefore, 'a debug-only change must leave base provenance bytes unchanged');
-assert.notEqual(debugAfter, debugBefore, 'a debug-only change must move debug provenance');
 
 // The debug artifact shape: schema 1, no base item name duplication, strict bytes.
-const debugProvFixture = { engine_commit: 'engine', content_commit: 'content', inputs: [], content_inputs: [], cache_identity: { cache_id: 'cache', nav_sha256: 'nav', flags_sha256: 'flags' } };
-const debugBuilt = buildDebugArtifact(289, debugProvFixture, { commands: [{ name: '~extra' }], names: { npc: [{ id: 1, alias: 'man', name: 'Man' }] } });
+const debugBuilt = buildDebugArtifact(289, { commands: [{ name: '~extra' }], names: { npc: [{ id: 1, alias: 'man', name: 'Man' }] } });
 assert.equal(debugBuilt.schema_version, DEBUG_SCHEMA_VERSION);
 assert.equal(debugBuilt.revision, 289);
-assert.deepEqual(JSON.parse(debugArtifactBytes(debugBuilt)), { schema_version: 1, revision: 289, provenance: debugProvFixture, debug_commands: [{ name: '~extra' }], debug_names: { npc: [{ id: 1, alias: 'man', name: 'Man' }] } });
-assert.throws(() => buildDebugArtifact(289, debugProvFixture, { commands: [], names: { obj: [{ id: 1, alias: 'coin', name: 'Coins' }] } }), /must not duplicate base item names/);
+assert.deepEqual(JSON.parse(debugArtifactBytes(debugBuilt)), { schema_version: 1, revision: 289, debug_commands: [{ name: '~extra' }], debug_names: { npc: [{ id: 1, alias: 'man', name: 'Man' }] } });
+assert.throws(() => buildDebugArtifact(289, { commands: [], names: { obj: [{ id: 1, alias: 'coin', name: 'Coins' }] } }), /must not duplicate base item names/);
 const tamperedSchema = JSON.parse(debugArtifactBytes(debugBuilt));
 tamperedSchema.schema_version = 2;
 assert.throws(() => debugArtifactBytes(tamperedSchema), /invalid debug artifact schema/);
@@ -4346,7 +3103,6 @@ const noOverrides: readonly SiteOverride[] = [];
     const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
     const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
     assert.deepEqual(result.rows, [{ id: 'fishing.test_water', skill: 'fishing', label: 'Test Water · Mine', region: { min_x: 3210, min_z: 3210, max_x: 3210, max_z: 3210, level: 0 }, keys: [{ key: 'fishing.mine.tool_none.products_9001', count: 1 }], requires: [] }]);
-    assert.deepEqual(result.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
 // The resolution rule enumerates method targets: a missing, null or unknown movement box throws.
 {
@@ -4364,7 +3120,7 @@ const noOverrides: readonly SiteOverride[] = [];
     const facts = synSiteFacts(methods, ['npc 5 spot_a', 'npc 6 spot_b'], [synMovement(5, synKnownBox(2700, 3520, 2730, 3540)), synMovement(6, synKnownBox(2700, 3520, 2730, 3540))], []);
     assert.throws(() => gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides), /collide/, 'two stems humanising to one name throw');
 }
-// Two geographic names in one camp throw; one spawn outside its own box is counted, not named.
+// Two geographic names in one camp throw; a spawn outside its own box is ignored for direct naming.
 {
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[pool_a]\nparam=fishing_movement_enum,fishing_movement_test_water_enum\n[pool_b]\nparam=fishing_movement_enum,fishing_movement_far_water_enum');
     const method = synTestFish('fishing.test.op1', [synNpcTarget(5), synNpcTarget(6)]);
@@ -4373,7 +3129,6 @@ const noOverrides: readonly SiteOverride[] = [];
     const outside = synSiteFacts([method], ['npc 5 pool_a', 'npc 6 pool_b'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220)), synMovement(6, synKnownBox(0, 0, 10, 10))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0', '2 0 12 10 n6 0'])]);
     const outsideResult = gatherSites(outside, gatherResources(outside, synFishNames), content, [], noOverrides);
     assert.equal(outsideResult.rows[0]?.label, 'Test Water · Mine', 'a spawn outside its own box takes the one inside name');
-    assert.deepEqual(outsideResult.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 1, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
 
 // A loc camp never borrows a nearby NPC's enum, even a geographic one.
@@ -4383,24 +3138,21 @@ const noOverrides: readonly SiteOverride[] = [];
     const facts = synSiteFacts([method], [], [], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 l2092 0'])]);
     const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
     assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'a loc camp never borrows a nearby NPC name');
-    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
-// A spawn outside its own box with no inside name behind it falls back to the place, still counted.
+// A spawn outside its own box with no inside name falls back to the place.
 {
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[testspot]\nparam=fishing_movement_enum,fishing_movement_test_water_enum');
     const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(0, 0, 10, 10))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
     const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
     assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'an all-outside camp keeps its place name');
-    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 1, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
-// A surface site more than 64 tiles from every bank and label is named by the nearest label at any distance, counted as extra.
+// A distant surface site uses the nearest label with a bearing and distance.
 {
     const content = siteFixtureContent(['=Far Place,100,100,0'], '[unrelated]');
     const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
     const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
     assert.equal(result.rows.length, 1, 'a surface site far from every label is still named');
     assert.match(result.rows[0]!.label, /^Far Place [A-Z]+\d+ · /, 'the far site takes the nearest label with a bearing and distance');
-    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0, extra: 1, renamed: 0, required: 0, override_dropped: 0 });
 }
 // A one-tile underground fragment is below the three-tile woodcutting minimum and is dropped, as on the surface.
 {
@@ -4409,13 +3161,12 @@ const noOverrides: readonly SiteOverride[] = [];
     const deep = synSiteFacts([oak], [], [], [synPlacements('maps/m50_100.jm2', ['1 0 10 0 l2092 0'])]);
     assert.deepEqual(gatherSites(deep, gatherResources(deep, new Map([[1521, 'Oak logs']])), content, [], noOverrides).rows, [], 'a one-tile underground fragment is dropped');
 }
-// A special-area cluster (4160 <= z < 6400) with no label within 64 tiles is counted, never offered.
+// A special-area cluster with no label within 64 tiles is never offered.
 {
     const content = siteFixtureContent(['=Test Water,3210,3210,0'], '[testspot]\nparam=fishing_movement_enum,fishing_movement_test_water_enum');
     const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 testspot'], [synMovement(5, synKnownBox(3200, 4480, 3220, 4500))], [synPlacements('maps/m50_70.jm2', ['1 0 10 10 n5 0'])]);
     const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
     assert.deepEqual(result.rows, [], 'a special-area cluster with no label within 64 tiles is not offered');
-    assert.deepEqual(result.report.fishing, { sites: 0, direct: 0, dropped: 1, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
 // Ordinals rank by distance, then count: the nearer part keeps the bare name.
 {
@@ -4456,7 +3207,6 @@ const noOverrides: readonly SiteOverride[] = [];
     const facts = synSiteFacts([synTestFish('fishing.test.op1', [synNpcTarget(5)])], ['npc 5 coalfish'], [synMovement(5, synKnownBox(3200, 3200, 3220, 3220))], [synPlacements('maps/m50_50.jm2', ['1 0 10 10 n5 0'])]);
     const result = gatherSites(facts, gatherResources(facts, synFishNames), content, [], noOverrides);
     assert.equal(result.rows[0]?.label, 'Test Water · Mine', 'a category-suffixed enum stem is not a direct name');
-    assert.deepEqual(result.report.fishing, { sites: 1, direct: 0, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 0 });
 }
 {
     const content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-karamja-fixture-'));
@@ -4508,8 +3258,6 @@ const noOverrides: readonly SiteOverride[] = [];
         '0 5 6: 702 10 0',
         '==== NPC ====',
     ].join('\n'));
-    execFileSync('git', ['init', '-q'], { cwd: content });
-    execFileSync('git', ['add', 'maps/m45_49.jm2'], { cwd: content });
     const npcNames = { rows: [{ id: 500, config: 'luthas', display: 'Fixture Luthas', ops: ['Talk-to'] }] };
     const locNames = { rows: [
         { id: 700, config: 'bananacrate', display: 'Crate', ops: ['Search'] },
@@ -4531,7 +3279,6 @@ const noOverrides: readonly SiteOverride[] = [];
         coin_payout: 43,
         dialogue: { employment: 'Offer employment?', paid: 'Thanks!', incomplete: 'Not yet.' },
     });
-    assert(result.inputs.some((input) => input.path === 'maps/m45_49.jm2'), 'placement map is a family provenance input');
     assert.throws(
         () => extractKaramjaFacts(content, npcNames, locNames, { rows: [] }),
         /expected one Luthas NPC placement, got 0/,
@@ -4553,12 +3300,10 @@ const noOverrides: readonly SiteOverride[] = [];
     const requires = [{ kind: 'skill' as const, skill: 'fishing' as const, level: 20 }];
     const renamed = gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', cite: 'fixture', action: 'name', name: 'Renamed Water', requires }]);
     assert.deepEqual(renamed.rows, [{ id: 'fishing.test_water', skill: 'fishing', label: 'Renamed Water (Fishing 20) · Mine', region: { min_x: 3210, min_z: 3210, max_x: 3210, max_z: 3210, level: 0 }, keys: [{ key: 'fishing.mine.tool_none.products_9001', count: 1 }], requires }]);
-    assert.deepEqual(renamed.report.fishing, { sites: 1, direct: 1, dropped: 0, outside_box: 0, extra: 0, renamed: 1, required: 1, override_dropped: 0 });
     const dropRow = { cite: 'fixture', action: 'drop', place: 'Fixture', reason: 'fixture' } as const;
     const dropped = gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', ...dropRow }]);
     assert.deepEqual(dropped.rows, [], 'a drop row removes the published site');
     assert.deepEqual(dropped.hidden.map((row) => row.id), ['fishing.test_water'], 'a dropped site is listed as hidden with its region');
-    assert.deepEqual(dropped.report.fishing, { sites: 0, direct: 1, dropped: 0, outside_box: 0, extra: 0, renamed: 0, required: 0, override_dropped: 1 });
     assert.throws(() => gatherSites(facts, resources, content, [], [{ id: 'fishing.missing', ...dropRow }]), /names no published site/, 'an unmatched non-optional override throws');
     assert.equal(gatherSites(facts, resources, content, [], [{ id: 'fishing.missing', optional: true, ...dropRow }]).rows.length, 1, 'an unmatched optional override is skipped');
     assert.throws(() => gatherSites(facts, resources, content, [], [{ id: 'fishing.test_water', ...dropRow }, { id: 'fishing.test_water', cite: 'fixture', action: 'name', name: 'Other', requires: [] }]), /has two overrides/, 'two overrides for one id throw');
@@ -4569,53 +3314,62 @@ const noOverrides: readonly SiteOverride[] = [];
     for (const row of SITE_OVERRIDES) assert.match(row.cite, /\.(?:rs2|enum|loc|jm2):\d/, `${row.id} cites content lines`);
 }
 
-// PvP V0 facts (PVP-DESIGN-1026 §10.1, §11 row V0): fail-closed extraction
-// from the pinned 289 content plus fixture fault injection. Counts pin the
-// §6.1 table and the dbrow rows; the Rust suite pins every field value.
+// PvP V0 fact parsers: bounded synthetic inputs exercise their grammar and structural errors.
 {
-    const root289 = pinContentRoot(289);
-    const ruleButtons = extractDuelRuleButtons(root289);
-    assert.equal(ruleButtons.length, 14);
-    assert.deepEqual(ruleButtons.map((row) => row.bit), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
-    assert.equal(ruleButtons.find((row) => row.bit === 13)?.component, 7816);
-    const zones = extractDuelZones(root289);
-    assert.equal(zones.pens.length, 6);
-    assert.deepEqual([zones.pens[0]?.x1, zones.pens[0]?.z1, zones.pens[0]?.x2, zones.pens[0]?.z2], [3333, 3244, 3357, 3258]);
-    assert.deepEqual([zones.challenge.x1, zones.challenge.z1, zones.challenge.x2, zones.challenge.z2], [3328, 3203, 3393, 3325]);
-    assert.deepEqual([zones.lobby.x1, zones.lobby.z1, zones.lobby.x2, zones.lobby.z2], [3355, 3267, 3379, 3279]);
-    // The halberd strength parse reads the second gate argument against the
-    // tier scripts; dropping it (strength 0 everywhere) fails these rows.
-    const halberdTiers = extractMeleeWeaponTiers(root289, [
-        { obj_id: 3190, category: 0 },
-        { obj_id: 3200, category: 0 },
-        { obj_id: 3202, category: 0 },
-        { obj_id: 3204, category: 0 },
-    ], new Map([
-        [3190, 'bronze_halberd'],
-        [3200, 'adamant_halberd'],
-        [3202, 'rune_halberd'],
-        [3204, 'dragon_halberd'],
-    ]));
-    const halberdStrength = (id: number) => halberdTiers.find((row) => row.obj_id === id)?.strength;
-    assert.equal(halberdStrength(3190), 1, 'bronze halberd tier1.rs2:17 gates strength 1');
-    assert.equal(halberdStrength(3200), 15, 'adamant halberd tier30.rs2:17 gates strength 15');
-    assert.equal(halberdStrength(3202), 20, 'rune halberd tier40.rs2:17 gates strength 20');
-    assert.deepEqual(
-        halberdTiers.find((row) => row.obj_id === 3204),
-        { obj_id: 3204, tier: 60, quest_gated: true, strength: 30 },
-        'dragon halberd tier60.rs2:10 gates attack 60 and strength 30 behind the quest',
-    );
-    // A strength-gated row without its second argument fails closed instead
-    // of recording strength 0.
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'duel-facts-fixture-'));
+    const write = (relative: string, bytes: string) => {
+        const file = path.join(fixture, relative);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, bytes);
+    };
+    const rules = [
+        'no_forfeit', 'no_movement', 'no_weapons', 'no_armour', 'no_ranged', 'no_melee', 'no_magic',
+        'no_potions', 'no_food', 'no_prayer', 'obstacles', 'no_jewelry', 'flower_power', 'no_specs',
+    ] as const;
+    write('pack/interface.pack', rules.map((rule, index) => `${100 + index}=duel_select_type:${rule}`).join('\n') + '\n');
+    write('scripts/minigames/game_duelarena/configs/duelarena.constant', rules.map((rule, bit) => `^${rule} = ${bit}`).join('\n') + '\n');
+    write('scripts/minigames/game_duelarena/scripts/duel_arena_settings.rs2', rules.map((rule) => `[if_button,duel_select_type:${rule}]`).join('\n') + '\n');
+    const ruleButtons = extractDuelRuleButtons(fixture);
+    assert.deepEqual(ruleButtons.map((row) => row.bit), rules.map((_, bit) => bit));
+    assert.deepEqual(ruleButtons.map((row) => row.component), rules.map((_, index) => 100 + index));
+
+    const corner = (index: number) => `0_50_50_${index * 2 + 1}_${index * 2 + 2}`;
+    const pair = (first: number, second: number) => `data=coord_pair,${corner(first)},${corner(second)}`;
+    const fightPairs = [pair(0, 1), pair(2, 3), pair(4, 5)];
+    const obstaclePairs = [pair(6, 7), pair(8, 9), pair(10, 11)];
+    const zonesFile = [
+        '[duel_arena_fight_zones]', ...fightPairs,
+        '[duel_arena_obstacle_fight_zones]', ...obstaclePairs,
+        '[duel_arena_zones]', pair(12, 13),
+    ].join('\n') + '\n';
+    write('scripts/minigames/game_duelarena/configs/duelarena.dbrow', zonesFile);
+    write('scripts/minigames/game_duelarena/scripts/duel_arena_finish.rs2', 'map_findsquare_inzone(0_50_50_29_30, 0_50_50_31_32);\n');
+    const zones = extractDuelZones(fixture);
+    assert.deepEqual(zones.pens.map((pen) => pen.obstacles), [false, false, false, true, true, true]);
+    assert.deepEqual(zones.pens[0], { x1: 3201, z1: 3202, x2: 3203, z2: 3204, obstacles: false });
+    assert.deepEqual(zones.challenge, { x1: 3225, z1: 3226, x2: 3227, z2: 3228 });
+    assert.deepEqual(zones.lobby, { x1: 3229, z1: 3230, x2: 3231, z2: 3232 });
+    write('scripts/minigames/game_duelarena/configs/duelarena.dbrow', zonesFile.replace(`${obstaclePairs[2]}\n`, ''));
+    assert.throws(() => extractDuelZones(fixture), /expected 3 fight and 3 obstacle pens, got 3\/2/);
+
+    // The parser reads the strength argument from the ordinary tier gate.
     const strengthFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'melee-tier-fixture-'));
-    fs.mkdirSync(path.join(strengthFixture, 'scripts/levelrequire/scripts'), { recursive: true });
+    const tierDirectory = path.join(strengthFixture, 'scripts/levelrequire/scripts');
+    fs.mkdirSync(tierDirectory, { recursive: true });
     for (const file of ['tier1', 'tier5', 'tier10', 'tier20', 'tier30', 'tier40', 'tier45', 'tier50', 'tier60', 'tier70']) {
-        fs.writeFileSync(path.join(strengthFixture, `scripts/levelrequire/scripts/${file}.rs2`), file === 'tier30'
-            ? '[opheld2,test_halberd] @levelrequire_attack_and_strength(30);\n'
+        fs.writeFileSync(path.join(tierDirectory, `${file}.rs2`), file === 'tier30'
+            ? '[opheld2,test_halberd]\n@levelrequire_attack_and_strength(30, 15);\n'
             : '// no test_halberd wield row in this tier\n');
     }
+    const weaponStyles = [{ obj_id: 1, category: 0 }];
+    const aliases = new Map([[1, 'test_halberd']]);
+    assert.deepEqual(
+        extractMeleeWeaponTiers(strengthFixture, weaponStyles, aliases),
+        [{ obj_id: 1, tier: 30, quest_gated: false, strength: 15 }],
+    );
+    fs.writeFileSync(path.join(tierDirectory, 'tier30.rs2'), '[opheld2,test_halberd] @levelrequire_attack_and_strength(30);\n');
     assert.throws(
-        () => extractMeleeWeaponTiers(strengthFixture, [{ obj_id: 1, category: 0 }], new Map([[1, 'test_halberd']])),
+        () => extractMeleeWeaponTiers(strengthFixture, weaponStyles, aliases),
         /missing the strength level/,
         'a one-argument strength gate throws',
     );

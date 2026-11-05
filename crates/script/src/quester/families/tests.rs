@@ -325,8 +325,6 @@ fn with_tick_output_reach<R>(
     collision: Option<nav_planner::contract::CollisionView<'_>>,
     f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
 ) -> R {
-    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    let pin = data.selected_pin().unwrap();
     let evidence = api::quest_progress::EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -357,7 +355,7 @@ fn with_tick_output_reach<R>(
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             wilderness: None,
-            pin: &pin,
+            revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(snapshot), evidence)
                 .with_reach(reach)
                 .with_world_members(world_members)
@@ -425,8 +423,6 @@ pub(crate) fn with_tick_budget_output<R>(
     output: &mut dyn NativeOutput,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    let pin = data.selected_pin().unwrap();
     let evidence = api::quest_progress::EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -456,7 +452,7 @@ pub(crate) fn with_tick_budget_output<R>(
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             wilderness: None,
-            pin: &pin,
+            revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(snapshot), evidence),
             retained: &mut retained,
             action_id: 0,
@@ -5498,11 +5494,7 @@ fn make_selects_the_input_menu_row_and_settles_on_the_output() {
     ));
 }
 
-fn counted_sheep_progress(
-    selected: &api::game_data::SelectedGameData,
-    evidence: EvidenceStamp,
-    count: u32,
-) -> QuestProgress {
+fn counted_sheep_progress(evidence: EvidenceStamp, count: u32) -> QuestProgress {
     QuestProgress {
         quest: FactKey::new("sheep"),
         stage: Knowledge::Known(FactKey::new("sheep:1")),
@@ -5517,7 +5509,6 @@ fn counted_sheep_progress(
         binding: FactKey::new("journal:sheep"),
         role: None,
         rule: Knowledge::Known(FactKey::new("sheep:1")),
-        pin: selected.selected_pin().unwrap(),
     }
 }
 
@@ -5529,7 +5520,7 @@ fn with_sheep_step<R>(
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     let evidence = tick.cx.evidence();
-    let progress = [counted_sheep_progress(&selected, evidence, remaining)];
+    let progress = [counted_sheep_progress(evidence, remaining)];
     let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
     f(&mut StepContext {
         tick,
@@ -6021,7 +6012,6 @@ fn progress_predicates_require_known_same_run_evidence() {
             assert_eq!(flag.evaluate(&unknown), Truth::Unknown);
 
             let evidence = t.cx.evidence();
-            let pin = cx.selected.selected_pin().unwrap();
             let progress = [QuestProgress {
                 quest: FactKey::new("cook"),
                 stage: Knowledge::Known(FactKey::new("cook:1")),
@@ -6036,7 +6026,6 @@ fn progress_predicates_require_known_same_run_evidence() {
                 binding: FactKey::new("journal:cook"),
                 role: None,
                 rule: Knowledge::Known(FactKey::new("cook:1")),
-                pin,
             }];
             let known = PredicateContext {
                 cx: &t.cx,
@@ -6186,7 +6175,6 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 1, |t| {
             let evidence = t.cx.evidence();
-            let pin = cx.selected.selected_pin().unwrap();
             let progress = [QuestProgress {
                 quest: FactKey::new("cook"),
                 stage: Knowledge::Known(FactKey::new("cook:1")),
@@ -6208,7 +6196,6 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
                 binding: FactKey::new("journal:cook"),
                 role: None,
                 rule: Knowledge::Known(FactKey::new("cook:1")),
-                pin: Arc::clone(&pin),
             }];
             let known = PredicateContext {
                 cx: &t.cx,

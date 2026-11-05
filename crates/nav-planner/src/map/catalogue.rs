@@ -63,9 +63,9 @@ const RARE_TREES_SYMBOL: u16 = 34;
 const QUEST_STARTS_SYMBOL: u16 = 6;
 const MAX_QUEST_START_MATCH_DIST2: f64 = 8.0 * 8.0;
 
-// Source facts from api/data/game-data/{274,289}.json plus manifest.json:
-// uncompressed file bytes, JSON object/array-element counts, decoded UTF-8
-// string bytes, item-index extent, and the catalogue rows copied by this job.
+// Source facts from api/data/game-data/{274,289}.json: uncompressed file
+// bytes, JSON object/array-element counts, decoded UTF-8 string bytes,
+// item-index extent, and the catalogue rows copied by this job.
 #[derive(Clone, Copy)]
 struct GameDataSourceBounds {
     json_bytes: usize,
@@ -100,7 +100,6 @@ const GAME_DATA_289_BOUNDS: GameDataSourceBounds = GameDataSourceBounds {
     npc_placement_rows: 8_141,
 };
 
-const GAME_DATA_MANIFEST_BYTES: usize = 708_799;
 const GAME_DATA_READ_BUFFER_BYTES: usize = 64 * 1024;
 // flate2 reads through a private BufReader with a 32 KiB input buffer in both
 // 1.1.9 (bufreader.rs:40) and 1.1.10 (bufreader.rs:42), so the earlier 8 KiB
@@ -214,12 +213,6 @@ fn game_data_retained_owner_bound(source: GameDataSourceBounds) -> Result<usize,
     )?;
     let food_hash_values =
         charge_product(2 * source.consumption_rows, std::mem::size_of::<usize>())?;
-    let selected_pin = charge_sum([
-        std::mem::size_of::<api::selected::SelectedPin>(),
-        2 * std::mem::size_of::<usize>(),
-        4 * 2 * std::mem::size_of::<usize>(),
-        GAME_DATA_MANIFEST_BYTES,
-    ])?;
     charge_sum([
         object_rows,
         root_object,
@@ -230,7 +223,6 @@ fn game_data_retained_owner_bound(source: GameDataSourceBounds) -> Result<usize,
         food_rows,
         food_hash_entries,
         food_hash_values,
-        selected_pin,
         2 * std::mem::size_of::<usize>(),
     ])
 }
@@ -241,7 +233,6 @@ fn game_data_initializer_peak_bound(source: GameDataSourceBounds) -> Result<usiz
         GAME_DATA_READ_BUFFER_BYTES,
         GZIP_READ_BUFFER_BYTES,
         GZIP_INFLATE_STATE_BOUND_BYTES,
-        GAME_DATA_MANIFEST_BYTES,
         source.json_bytes,
     ])
 }
@@ -293,10 +284,6 @@ fn quest_start_catalog(input: ClientMapInput<'_>) -> Option<QuestStartCatalog> {
     };
     // Main approved game_data static owner classification 10-15; this OnceLock remains process-global.
     let data = api::game_data::for_revision(revision).ok()?;
-    let content_id = input.content.to_string();
-    if data.content_id() != Some(content_id.as_str()) {
-        return None;
-    }
     let starts = data.quest_starts()?;
     let identities = data.quest_identity()?;
     let entries = starts

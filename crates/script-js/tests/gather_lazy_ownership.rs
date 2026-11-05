@@ -4,6 +4,8 @@
 use client::io::ClientRevision;
 use script_js::{LoadIsolate, LoadShape};
 
+mod common;
+
 const IDLE: &str = "export const apiVersion = 2;\nexport function tick(api) {}\n";
 
 const GAS_CONSUMER: &str = r#"
@@ -28,6 +30,9 @@ fn start(
 
 #[test]
 fn idle_isolates_never_acquire_the_family_and_consumers_release_it() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     assert!(data.try_gathering().is_none());
 

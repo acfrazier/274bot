@@ -405,7 +405,7 @@ impl ScriptPacketOpsContext<'_, '_> {
         if self.context.run() != self.permit.run {
             return Err(ActionError::Stale);
         }
-        ServerOrderedRequest::validate_advanced_shape(self.context.pin.revision, &operations)
+        ServerOrderedRequest::validate_advanced_shape(self.context.revision, &operations)
             .map_err(ActionError::ServerOrdered)?;
         self.context
             .emit_server_ordered_envelope(ServerOrderedEnvelope {

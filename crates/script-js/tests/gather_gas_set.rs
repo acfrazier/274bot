@@ -6,6 +6,8 @@ use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+mod common;
+
 type Data = Arc<api::game_data::SelectedGameData>;
 
 const REVISIONS: [ClientRevision; 2] = [ClientRevision::R274, ClientRevision::R289];
@@ -50,6 +52,9 @@ fn gas_ids() -> Vec<i32> {
 /// ordered set, and the exports of the relative shim module and of `@rs2b0t/api` are that one object.
 #[test]
 fn every_first_operation_sees_the_full_ordered_set() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let firsts = [
         ("GAS_ROCK_IDS.size", json!(21)),
         ("GAS_ROCK_IDS.has(2125)", json!(true)),
@@ -107,6 +112,9 @@ export default class T extends LoopingBot {{
 /// concerns object properties, never the set's entries.
 #[test]
 fn freezing_or_sealing_first_leaves_the_full_set_readable() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     for revision in REVISIONS {
         let data = api::game_data::for_revision(revision).unwrap();
         for lock in ["freeze", "seal", "preventExtensions"] {
@@ -128,6 +136,9 @@ fn freezing_or_sealing_first_leaves_the_full_set_readable() {
 /// Clearing the set and then defining, redefining or deleting same-named own members never brings ids back.
 #[test]
 fn a_cleared_set_stays_cleared_whatever_members_are_redefined() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { GAS_ROCK_IDS } from '../../data/miningRocks.js';
 let step = 0;
@@ -171,6 +182,9 @@ export default class T extends LoopingBot {
 /// a second isolate.
 #[test]
 fn mutations_persist_within_the_isolate_and_stay_local_to_it() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { GAS_ROCK_IDS } from '../../data/miningRocks.js';
 let step = 0;

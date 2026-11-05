@@ -124,7 +124,6 @@ fn journal_fixture(slot: &mut SlotScript, token: u64) {
     }];
     let path =
         crate::quester::compile::compile_uncached_for_test(&doc, &selected, &quests).unwrap();
-    let pin = selected.selected_pin().unwrap();
     let run = RunKey {
         slot: 400,
         run: token,
@@ -136,7 +135,7 @@ fn journal_fixture(slot: &mut SlotScript, token: u64) {
         run,
         prepared: PreparedProgress {
             selected,
-            pin,
+            revision: api::selected::ClientRevision::R289,
             path,
             quests,
         },

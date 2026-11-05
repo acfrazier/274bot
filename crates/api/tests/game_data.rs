@@ -1,16 +1,30 @@
+#![cfg(feature = "embedded-game-data")]
 use std::sync::Arc;
 
-use api::game_data::{for_optional_profile, for_profile, for_revision};
+use api::game_data::for_revision;
+use api::test_support::local_asset_path;
 use client::io::ClientRevision;
 
-/// Local 289 known-cache identity (versionlist 37214163…).
-const LOCAL_289_CACHE_ID: &str = "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09";
-/// Public 289 known-cache identity (versionlist 6dcb7c4a…; config identical).
-const PUBLIC_289_CACHE_ID: &str =
-    "37cdafd200703150d0f66339b7609944e1ea19d64ad729a72d94e3bcdfa89d92";
+fn assets_available() -> bool {
+    local_asset_path(
+        "",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/274.json"),
+        "revision 274 game data for API integration tests",
+    )
+    .is_some()
+        && local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
+            "revision 289 game data for API integration tests",
+        )
+        .is_some()
+}
 
 #[test]
-fn generated_revision_data_is_static_distinct_and_fail_closed() {
+fn generated_revision_data_is_static_distinct_and_selected_by_revision() {
+    if !assets_available() {
+        return;
+    }
     let first_274 = for_revision(ClientRevision::R274).expect("revision 274 data");
     let second_274 = for_revision(ClientRevision::R274).expect("revision 274 data again");
     let data_289 = for_revision(ClientRevision::R289).expect("revision 289 data");
@@ -21,24 +35,13 @@ fn generated_revision_data_is_static_distinct_and_fail_closed() {
     assert_eq!(data_289.revision(), 289);
     assert!(first_274.item_by_alias("castlewars_armour_body").is_none());
     assert!(data_289.item_by_alias("castlewars_armour_body").is_some());
-
-    let err = for_profile(ClientRevision::R274, "not-the-selected-cache")
-        .expect_err("foreign cache identity must fail");
-    assert!(err.contains("cache identity"), "unexpected error: {err}");
-    assert!(
-        for_optional_profile(ClientRevision::R274, "not-the-selected-cache")
-            .expect("generated data still decodes")
-            .is_none()
-    );
-    assert!(
-        for_optional_profile(ClientRevision::R274, first_274.cache_id())
-            .expect("matching profile")
-            .is_some()
-    );
 }
 
 #[test]
 fn generated_upass_stage_domain_excludes_ibanmulti_bits_for_each_revision() {
+    if !assets_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected quest data");
         let upass = data
@@ -66,6 +69,9 @@ fn generated_upass_stage_domain_excludes_ibanmulti_bits_for_each_revision() {
 /// `NpcType.ts:106`.
 #[test]
 fn strength_null_attackable_row_resolves_with_engine_default_strength() {
+    if !assets_available() {
+        return;
+    }
     let data = for_revision(ClientRevision::R289).expect("revision 289 data");
     let crab = data
         .npc_by_config("horror_rockcrab")
@@ -84,6 +90,9 @@ fn strength_null_attackable_row_resolves_with_engine_default_strength() {
 
 #[test]
 fn bespoke_row_stays_bespoke_when_strength_takes_the_engine_default() {
+    if !assets_available() {
+        return;
+    }
     let data = for_revision(ClientRevision::R289).expect("revision 289 data");
     let dormant = data
         .npc_by_config("horror_rockcrab_inactive")
@@ -103,6 +112,9 @@ fn bespoke_row_stays_bespoke_when_strength_takes_the_engine_default() {
 
 #[test]
 fn generated_npc_headicons_come_from_selected_content() {
+    if !assets_available() {
+        return;
+    }
     let data = for_revision(ClientRevision::R289).expect("revision 289 data");
 
     assert_eq!(
@@ -122,74 +134,10 @@ fn generated_npc_headicons_come_from_selected_content() {
 }
 
 #[test]
-fn runtime_decoded_content_id_binds_while_deleted_packed_alias_stays_closed() {
-    let data_289 = for_revision(ClientRevision::R289).expect("revision 289 data");
-    assert!(
-        for_profile(
-            ClientRevision::R289,
-            "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044"
-        )
-        .is_ok(),
-        "the pinned decoded 289 content id must bind generated facts"
-    );
-    assert_eq!(
-        data_289.content_id(),
-        Some("cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044")
-    );
-    // The deleted packed equivalence id must stay closed: decoded identity,
-    // not a public packed hash allowlist, is the compatibility criterion.
-    assert!(
-        for_optional_profile(ClientRevision::R289, PUBLIC_289_CACHE_ID)
-            .expect("decode")
-            .is_none(),
-        "the packed public alias no longer unlocks facts on its own"
-    );
-}
-
-#[test]
-fn public_289_audited_identity_binds_and_unknown_same_revision_stays_closed() {
-    let data_289 = for_revision(ClientRevision::R289).expect("revision 289 data");
-    assert_eq!(data_289.cache_id(), LOCAL_289_CACHE_ID);
-    assert_ne!(PUBLIC_289_CACHE_ID, LOCAL_289_CACHE_ID);
-
-    // Decoded identity replaced the packed equivalence list: the runtime
-    // binds generated facts by the pinned decoded content id, and a packed
-    // transfer id alone (local or public) no longer unlocks anything.
-    assert!(
-        for_optional_profile(ClientRevision::R289, PUBLIC_289_CACHE_ID)
-            .expect("decode")
-            .is_none(),
-        "the packed public alias must stay closed after decoded identity replaced it"
-    );
-    assert!(
-        for_optional_profile(ClientRevision::R289, LOCAL_289_CACHE_ID)
-            .expect("decode")
-            .is_some(),
-        "local primary identity still binds"
-    );
-
-    // Unknown same-revision identity stays closed (not an arbitrary bypass).
-    assert!(
-        for_optional_profile(ClientRevision::R289, "not-an-audited-289-cache")
-            .expect("decode")
-            .is_none()
-    );
-    assert!(
-        for_profile(ClientRevision::R289, "not-an-audited-289-cache")
-            .unwrap_err()
-            .contains("cache identity")
-    );
-
-    // Public 289 id must not unlock revision 274 facts.
-    assert!(
-        for_optional_profile(ClientRevision::R274, PUBLIC_289_CACHE_ID)
-            .expect("decode")
-            .is_none()
-    );
-}
-
-#[test]
 fn generated_items_food_and_pickpocket_facts_preserve_selected_content() {
+    if !assets_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         let plate = data
@@ -251,6 +199,9 @@ fn generated_items_food_and_pickpocket_facts_preserve_selected_content() {
 
 #[test]
 fn generated_item_categories_preserve_content_assignments() {
+    if !assets_available() {
+        return;
+    }
     let data = for_revision(ClientRevision::R289).expect("revision 289 data");
     // `Silver sickle` is `weapon_slash` (content/scripts/skill_crafting/configs/jewellery/silver.obj:29-44);
     // unstrung `Longbow` is `unstrung_bow` (content/scripts/skill_fletching/configs/stringing/bows.obj:1-15).
@@ -272,6 +223,9 @@ fn generated_item_categories_preserve_content_assignments() {
 
 #[test]
 fn thieving_requirements_are_selected_by_exact_npc_id() {
+    if !assets_available() {
+        return;
+    }
     let data = for_revision(ClientRevision::R289).expect("revision 289 data");
 
     let man = data.npc_by_config("man").expect("selected Man NPC");
@@ -294,6 +248,9 @@ fn thieving_requirements_are_selected_by_exact_npc_id() {
 
 #[test]
 fn thieving_respawn_ticks_come_from_the_selected_npc_config() {
+    if !assets_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         // 613 `digworkman1` declares no `respawnrate`
@@ -313,6 +270,9 @@ fn thieving_respawn_ticks_come_from_the_selected_npc_config() {
 
 #[test]
 fn generated_spell_and_staff_facts_match_selected_content() {
+    if !assets_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         let wind = data.spell("Wind Strike").expect("wind strike");
@@ -391,6 +351,9 @@ fn generated_spell_and_staff_facts_match_selected_content() {
 
 #[test]
 fn generated_wearpos_maps_to_loadout_slots_without_guessing_names() {
+    if !assets_available() {
+        return;
+    }
     use api::game_data::{loadout_slot_for_wearpos, WEARPOS_QUIVER, WEARPOS_RIGHTHAND};
 
     for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -457,6 +420,9 @@ const GREEN_DISPLAY: &[&str] = &[
 
 #[test]
 fn generated_drop_tables_publish_five_combat_rows_with_alias_evidence() {
+    if !assets_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         assert_eq!(
@@ -537,6 +503,9 @@ fn generated_drop_tables_publish_five_combat_rows_with_alias_evidence() {
 
 #[test]
 fn generated_prayer_facts_join_fifteen_rows_on_both_revisions() {
+    if !assets_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         let prayers = data.prayers();
@@ -567,6 +536,9 @@ fn generated_prayer_facts_join_fifteen_rows_on_both_revisions() {
 
 #[test]
 fn generated_nurmof_and_flour_facts_join_on_both_revisions() {
+    if !assets_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         let nurmof = data.nurmof_essence().expect("nurmof essence facts");
@@ -581,7 +553,6 @@ fn generated_nurmof_and_flour_facts_join_on_both_revisions() {
             .expect("iron pickaxe");
         assert_eq!(iron.id, 1267);
         assert_eq!(iron.base_cost, 140);
-        assert_eq!(iron.cost_source, "obj.cost");
         assert_eq!(nurmof.essence_region.mapsquare_mx, 45);
         assert_eq!(nurmof.essence_region.mapsquare_mz, 75);
         assert_eq!(data.in_essence_mine(2880, 4800), Some(true));
@@ -596,12 +567,9 @@ fn generated_nurmof_and_flour_facts_join_on_both_revisions() {
         assert_eq!(flour.pot.id, 1931);
         assert_eq!(flour.pot_flour.id, 1933);
         assert_eq!(flour.flour_barrel.id, 2662);
-        assert_eq!(flour.flour_barrel_object_tile.provenance, "derived");
         assert_eq!(flour.flour_barrel_object_tile.x, 2735);
         assert_eq!(flour.flour_barrel_object_tile.z, 3582);
-        assert_eq!(flour.flour_barrel_approach_tile.provenance, "curated");
         assert_eq!(flour.flour_barrel_approach_tile.z, 3581);
-        assert_eq!(flour.bank_tile.provenance, "curated");
         assert_eq!(
             data.item_by_alias("pot_empty").expect("pot").id,
             flour.pot.id
@@ -611,6 +579,9 @@ fn generated_nurmof_and_flour_facts_join_on_both_revisions() {
 
 #[test]
 fn generated_talk_key_facts_pin_selected_steps_and_spawns() {
+    if !assets_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         let facts = data.talk_key().expect("talk_key facts");
@@ -750,6 +721,9 @@ fn generated_talk_key_facts_pin_selected_steps_and_spawns() {
 
 #[test]
 fn generated_equipment_name_facts_join_curated_families_on_both_revisions() {
+    if !assets_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         let equipment = data.equipment_names().expect("equipment names facts");
@@ -760,10 +734,6 @@ fn generated_equipment_name_facts_join_curated_families_on_both_revisions() {
         assert_eq!(equipment.bolts.len(), 9);
         assert_eq!(equipment.melee_weapons.len(), 33);
         assert_eq!(equipment.staffs.len(), 15);
-        assert_eq!(
-            equipment.equipment_source.sha256,
-            "ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3"
-        );
         let resolved = equipment
             .bows
             .iter()
@@ -850,6 +820,9 @@ fn generated_equipment_name_facts_join_curated_families_on_both_revisions() {
 
 #[test]
 fn generated_trio_giver_facts_pin_the_closed_giver_set() {
+    if !assets_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         let facts = data.trio_givers().expect("trio givers facts");

@@ -62,7 +62,7 @@ fn quest_options() -> frontend_core::scripts::ParameterOptions {
         .expect("Quester schema has a quest roster");
     let bag = serde_json::Map::from_iter([("quests".into(), serde_json::json!(["priest"]))]);
     let loadouts = Loadouts::default();
-    resolve_parameter_options(SettingView::from_script(quests), &bag, &loadouts, None)
+    resolve_parameter_options(SettingView::from_script(quests), &bag, &loadouts, None).unwrap()
 }
 
 fn repeated_lookup_allocations(
@@ -117,7 +117,8 @@ fn new_scripts(directory: &std::path::Path) -> Scripts {
                 directory.join("js-scripts.json"),
                 directory.join("js-cache"),
             ),
-            script::ScriptSettingsStore::at(directory.join("script-settings.json")),
+            script::ScriptSettingsStore::at(directory.join("script-settings.json"))
+                .expect("script settings"),
         )
     }
     #[cfg(not(feature = "js"))]
@@ -129,6 +130,19 @@ fn new_scripts(directory: &std::path::Path) -> Scripts {
 
 #[test]
 fn warm_quester_script_section_shares_its_zone_text_without_allocating() {
+    if api::test_support::local_asset_path(
+        "",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api/data/game-data/289.json"
+        ),
+        "revision 289 game data",
+    )
+    .is_none()
+    {
+        return;
+    }
+
     let stores = IsolatedStores::enter("quester-zone-frame-allocations");
     let directory = stores.dir();
     let id = script::CompiledId("Quester");

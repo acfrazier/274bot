@@ -775,11 +775,15 @@ impl SlotScript {
             .surface_start
             .as_ref()
             .expect("bank start belongs to Load");
-        let pin = identity
+        let revision = identity
             .game_data
             .as_ref()
-            .and_then(|data| data.selected_pin().ok());
-        let Some(pin) = pin else {
+            .and_then(|data| match data.revision() {
+                274 => Some(api::selected::ClientRevision::R274),
+                289 => Some(api::selected::ClientRevision::R289),
+                _ => None,
+            });
+        let Some(revision) = revision else {
             let mut rows = std::mem::take(&mut bank.rows);
             for row in rows.drain(..) {
                 self.finish_bank(
@@ -836,8 +840,13 @@ impl SlotScript {
             }
             let result = {
                 let mut memory = retained.lock().unwrap_or_else(|error| error.into_inner());
-                let mut cx =
-                    compiled::frame_context(ctx, run, &pin, &mut memory, &mut self.native_runtime);
+                let mut cx = compiled::frame_context(
+                    ctx,
+                    run,
+                    revision,
+                    &mut memory,
+                    &mut self.native_runtime,
+                );
                 row.poll(
                     &mut actions,
                     &mut cx,

@@ -936,18 +936,13 @@ fn resolve_loadout_item(
 }
 
 fn build_tables(cx: &CompileContext<'_>) -> Result<Arc<CombatTables>, CompileError> {
-    let pin = cx
-        .selected
-        .selected_pin()
-        .map_err(|_| CompileError::code("missing-pin"))?;
-    let selected = api::game_data::for_revision(pin.revision)
+    let revision = match cx.selected.revision() {
+        274 => api::selected::ClientRevision::R274,
+        289 => api::selected::ClientRevision::R289,
+        _ => return Err(CompileError::code("unsupported-revision")),
+    };
+    let selected = api::game_data::for_revision(revision)
         .map_err(|_| CompileError::code("combat-tables-unavailable"))?;
-    let selected_pin = selected
-        .selected_pin()
-        .map_err(|_| CompileError::code("missing-pin"))?;
-    if selected_pin.as_ref() != pin.as_ref() {
-        return Err(CompileError::code("combat-pin-mismatch"));
-    }
     CombatTables::build(selected).map_err(|_| CompileError::code("combat-tables-unavailable"))
 }
 

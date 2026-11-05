@@ -99,7 +99,7 @@ pub use registry::{compiled_card, compiled_cards, compiled_id, is_whale, Compile
 
 pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
-    parameter_rows, setting_visible, ScriptSettingsStore, CLUE_DUEL_PARTNER,
+    parameter_rows, setting_visible, ScriptSettingsError, ScriptSettingsStore, CLUE_DUEL_PARTNER,
 };
 pub use slot::StartLoadError;
 pub use slot::{

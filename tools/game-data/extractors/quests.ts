@@ -4,14 +4,6 @@ import { integer, parsePack, requireGatherText, walkContentFiles } from './commo
 import { parseRs2Blocks, stripComment, walkContent, type Rs2Block } from './gathering-content.ts';
 import { parseBody, walkStatements, type Node, type Stmt } from './gathering-rs2.ts';
 import { postCompletionProgressWriters } from './prereq-preservation.ts';
-export const questIdentityContentFiles = [
-    'scripts/general/scripts/quests.rs2',
-    'scripts/general/configs/quest.constant',
-    'scripts/player/interfaces/questlist.if',
-    'scripts/quests/quest_cook/scripts/quest_cook.rs2',
-    'scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2',
-    'scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2',
-];
 const QUEST_IDENTITY_SEEDS = [
     { id: 'cook', component: 'cook' },
     { id: 'runemysteries', component: 'runemysteries' },

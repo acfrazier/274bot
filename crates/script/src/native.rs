@@ -13,9 +13,43 @@ use crate::quester::pair::QuestPairPort;
 use crate::{CompiledId, SettingDef};
 use api::game_data::SelectedGameData;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestProgress};
-use api::selected::{FactError, FamilyPreparation, QuestGate, RunKey, SelectedPin, Truth};
+use api::selected::{ClientRevision, FactError, FamilyPreparation, QuestGate, RunKey, Truth};
 use api::snapshot::SnapshotView;
 use api::{DetectedRandom, RandomClaim, WorldTile};
+
+/// Minimal revision-289 data for synthetic slot tests that do not read game facts.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn minimal_selected_data_for_test() -> Arc<SelectedGameData> {
+    static SELECTED: LazyLock<Arc<SelectedGameData>> = LazyLock::new(|| {
+        let selected = serde_json::from_str(
+            r#"{"schema_version":5,"revision":289,"items":[],"consumption":[],"pickpocket":[]}"#,
+        )
+        .expect("minimal selected game data fixture");
+        Arc::new(selected)
+    });
+    Arc::clone(&SELECTED)
+}
+
+/// Check the generated source for a real revision-data test before loading it.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn has_local_game_data_for_test(revision: ClientRevision) -> bool {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../api/data/game-data")
+        .join(format!("{}.json", revision.as_i32()));
+    let path = path.to_string_lossy();
+    api::test_support::local_asset_path("", &path, &format!("R{} game data", revision.as_i32()))
+        .is_some()
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+#[macro_export]
+macro_rules! require_local_game_data_for_test {
+    ($revision:expr) => {
+        if !$crate::native::has_local_game_data_for_test($revision) {
+            return;
+        }
+    };
+}
 
 pub mod abi;
 mod actions;
@@ -372,7 +406,7 @@ impl std::fmt::Debug for PreparedConfig {
 
 pub struct PrepareContext<'a> {
     pub selected: Arc<SelectedGameData>,
-    pub pin: Arc<SelectedPin>,
+    pub revision: ClientRevision,
     pub banks: Arc<api::named_banks::NamedBankFacts>,
     pub families: &'a mut FamilyPreparation,
     pub zones: Option<nav_planner::contract::ZoneTableView<'a>>,
@@ -765,7 +799,7 @@ impl<'a> HostFrame<'a> {
 pub fn with_test_tick<R>(
     frame: HostFrame<'_>,
     evidence: EvidenceStamp,
-    pin: &SelectedPin,
+    revision: ClientRevision,
     clock: (Duration, Instant),
     ledger: &mut Option<Box<ledger::Ledger>>,
     output: &mut dyn NativeOutput,
@@ -793,10 +827,8 @@ pub fn with_test_tick<R>(
             evidence,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: WalkCancelReason::None,
-            pin,
             snapshot,
-            retained: &mut retained,
-            action_id: 0,
+            revision,
             active_now: clock.0,
             wall_now: clock.1,
             ledger,
@@ -876,7 +908,7 @@ pub struct NativeActions {
 pub struct ActionContext<'a> {
     pub(crate) evidence: EvidenceStamp,
     pub(crate) walk_prereq: PrereqOptions,
-    pub(crate) pin: &'a SelectedPin,
+    pub(crate) revision: ClientRevision,
     pub(crate) snapshot: SnapshotView<'a>,
     /// Frame-local stage consent. Every route keeps the existing named `cross` path.
     pub(crate) stage_cross: Option<Arc<[Arc<str>]>>,
@@ -1676,8 +1708,8 @@ impl<'a> ActionContext<'a> {
     pub fn evidence(&self) -> EvidenceStamp {
         self.evidence
     }
-    pub fn pin(&self) -> &SelectedPin {
-        self.pin
+    pub fn revision(&self) -> ClientRevision {
+        self.revision
     }
     pub fn snapshot(&self) -> SnapshotView<'a> {
         self.snapshot

@@ -2072,11 +2072,7 @@ impl MainObs<'_> {
 }
 
 fn selected_dialogue_ui(cx: &ActionContext<'_>) -> Option<api::game_data::DialogueUiIds> {
-    let data = api::game_data::for_revision(cx.pin().revision).ok()?;
-    let selected_pin = data.selected_pin().ok()?;
-    if selected_pin.as_ref() != cx.pin() {
-        return None;
-    }
+    let data = api::game_data::for_revision(cx.revision()).ok()?;
     data.dialogue_ui().copied()
 }
 
@@ -2239,7 +2235,7 @@ fn talk_reachable(cx: &ActionContext<'_>, tile: api::WorldTile) -> bool {
 }
 
 fn dialogue_approach_replan_budget(cx: &ActionContext<'_>, npc_id: i32) -> u16 {
-    let Ok(data) = api::game_data::for_revision(cx.pin().revision) else {
+    let Ok(data) = api::game_data::for_revision(cx.revision()) else {
         return 0;
     };
     let Some(npc) = data.npc_name(npc_id) else {

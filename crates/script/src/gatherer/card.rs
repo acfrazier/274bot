@@ -51,15 +51,6 @@ pub fn prepare(
     revision: u64,
     bag: Arc<SettingsBag>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
-    if cx
-        .selected
-        .selected_pin()
-        .map_err(StartError::Facts)?
-        .as_ref()
-        != cx.pin.as_ref()
-    {
-        return Err(StartError::Facts(api::selected::FactError::PinMismatch));
-    }
     let mut settings = GathererSettings::from_bag_for_prepare(&bag).map_err(StartError::Config)?;
     let catalog =
         api::gather_methods::prepare(&cx.selected, cx.families).map_err(StartError::Facts)?;

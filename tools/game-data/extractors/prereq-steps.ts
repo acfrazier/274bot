@@ -1,13 +1,11 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { integer, parseJm2LocPlacements, parseJm2NpcPlacements, parseMapsquarePath, parsePack, sourceFile, walkContentFiles, worldFromMapsquare } from './common.ts';
+import { integer, parseJm2LocPlacements, parseJm2NpcPlacements, parseMapsquarePath, parsePack, walkContentFiles, worldFromMapsquare } from './common.ts';
 import { assertPrereqPreservation } from './prereq-preservation.ts';
 import { parseRs2Blocks, stripComment, stripComments } from './gathering-content.ts';
 import { parseBody } from './gathering-rs2.ts';
 import { captureProgressWriterDomains, type ProgressWriterDomains } from './quests.ts';
 import { boundedJournalRange } from './prereq-journal-proof.ts';
-import type { InputHash } from '../generate.ts';
 
 export const PREREQ_STEPS_SCHEMA = 3;
 export type RangeWire = { min: number; max: number };
@@ -100,14 +98,6 @@ function loadAuthoredTemplates(): AuthoredPrereqTemplates {
         || Object.keys(parsed).join(',') !== 'rows,journals') {
         throw new Error('prereq_steps: authored templates must be exactly {rows,journals}');
     }
-    const ids = parsed.rows.map((row) => (isRecord(row) ? row.id : undefined));
-    if (ids.join('|') !== 'priestperil:drezel-advice|druidspirit:drezel-start') {
-        throw new Error('prereq_steps: expected the reviewed A1/A2 template rows in route order');
-    }
-    const journalIds = parsed.journals.map((journal) => (isRecord(journal) ? journal.id : undefined));
-    if (journalIds.join('|') !== 'blackarmgang:phoenixgang-stage|hero:phoenixgang-stage|priestperil:mausoleum-progress') {
-        throw new Error('prereq_steps: expected the reviewed Black Arm, Heroes and Priest journal rows');
-    }
     for (const row of parsed.rows) {
         if (!isRecord(row) || !Array.isArray(row.crossings)) throw new Error('prereq_steps: authored row is malformed');
         for (const template of row.crossings) {
@@ -188,7 +178,7 @@ function loadAuthoredTemplates(): AuthoredPrereqTemplates {
 // CLI shared pack projection (owned by PackCrossingProjection; consumed here).
 // ---------------------------------------------------------------------------
 
-/** CLI export envelope schema (tools/game-data projection, not the family schema). */
+/** CLI crossing projection schema; the family wire has its own schema. */
 export const PREREQ_CROSSING_PROJECTION_SCHEMA = 2;
 /** Lower-case CrossingKind serde representation, matching the Rust decoder. */
 const KNOWN_CROSSING_KINDS = new Set([
@@ -216,7 +206,7 @@ export type ProjectionEntry = {
      * unconditional alternative. Arrays are preserved exactly, never unioned. */
     quest_gate_alternatives: unknown[][];
 };
-export type ValidatedProjection = { navpack_sha256: string; entries: ProjectionEntry[]; identical_edge_groups: string[][] };
+export type ValidatedProjection = { entries: ProjectionEntry[] };
 
 function projectionTile(value: unknown, label: string): ProjectionTile {
     if (!isRecord(value) || Object.keys(value).sort().join(',') !== 'level,x,z') {
@@ -269,21 +259,6 @@ function projectionGateAlternatives(value: unknown, label: string): unknown[][] 
     });
 }
 
-const IDENTICAL_EDGE_SOURCE_PATTERN = /^graph\.(edges|teleports)\[\d+\]$/;
-
-function projectionIdenticalEdgeGroups(value: unknown): string[][] {
-    if (!Array.isArray(value)) throw new Error('prereq_steps: identical_edge_groups must be a list of source lists');
-    return value.map((group: unknown, groupIndex: number) => {
-        const label = `identical_edge_groups[${groupIndex}]`;
-        if (!Array.isArray(group) || group.length < 2) throw new Error(`prereq_steps: ${label} must list at least two edge sources`);
-        for (const source of group) {
-            if (typeof source !== 'string' || !IDENTICAL_EDGE_SOURCE_PATTERN.test(source)) {
-                throw new Error(`prereq_steps: ${label} has a malformed edge source ${JSON.stringify(source)}`);
-            }
-        }
-        return group as string[];
-    });
-}
 
 function projectionIdentityKey(crossing: ProjectionCrossing): string {
     return JSON.stringify([
@@ -315,31 +290,17 @@ function requireEnv(name: string, label: string): string {
     return value;
 }
 
-/** The nav-pack bytes the projection was exported from: a file path, or a 64-hex SHA. */
-function navPackSha256(selector: string): string {
-    if (/^[0-9a-fA-F]{64}$/.test(selector)) return selector.toLowerCase();
-    if (!fs.existsSync(selector)) throw new Error(`set GAME_DATA_289_NAV_PACK to the 289 nav pack path or its hex SHA (missing: ${selector})`);
-    return crypto.createHash('sha256').update(fs.readFileSync(selector)).digest('hex');
-}
-
 /**
- * Load and validate the CLI shared crossing projection for 289. Fails closed
- * on schema, SHA, duplicate physical identity, invalid option/kind/tile/gate,
- * malformed identical_edge_groups metadata, and any
- * blocked or inadmissible takeoff the generator would need as legal. No binary
- * pack decoder lives here: pack identity is verified by SHA only. Conditional
- * edge alternatives of one physical crossing share that crossing's identity in
- * `crossings` with every distinct gate array kept in `quest_gate_alternatives`;
- * fully identical TransportEdge duplicates are reported in
- * `identical_edge_groups` and never fail this load.
+ * Load and validate the CLI shared crossing projection for 289. Reject
+ * unsupported schema, duplicate crossings, invalid fields and any blocked or
+ * inadmissible takeoff the generator would need as legal.
  */
 export function loadPrereqCrossingProjection(
     revision: number,
-    overrides?: { projectionPath?: string; navPack?: string },
+    overrides?: { projectionPath?: string },
 ): ValidatedProjection | null {
     if (revision !== 289) return null;
     const projectionPath = overrides?.projectionPath ?? requireEnv('GAME_DATA_289_PREREQ_CROSSINGS', 'the CLI shared 289 crossing projection JSON');
-    const navPack = overrides?.navPack ?? requireEnv('GAME_DATA_289_NAV_PACK', 'the 289 nav pack path or its hex SHA');
     let parsed: unknown;
     try {
         parsed = JSON.parse(fs.readFileSync(projectionPath, 'utf8'));
@@ -347,18 +308,9 @@ export function loadPrereqCrossingProjection(
         throw new Error(`prereq_steps: cannot read GAME_DATA_289_PREREQ_CROSSINGS ${projectionPath}: ${error instanceof Error ? error.message : error}`);
     }
     if (!isRecord(parsed) || parsed.schema !== PREREQ_CROSSING_PROJECTION_SCHEMA
-        || typeof parsed.navpack_sha256 !== 'string' || !Array.isArray(parsed.crossings)
-        || !Array.isArray(parsed.identical_edge_groups)
-        || Object.keys(parsed).sort().join(',') !== 'crossings,identical_edge_groups,navpack_sha256,schema') {
-        throw new Error('prereq_steps: projection must be exactly {schema:2,navpack_sha256,crossings,identical_edge_groups}');
+        || !Array.isArray(parsed.crossings) || Object.keys(parsed).sort().join(',') !== 'crossings,schema') {
+        throw new Error('prereq_steps: projection must be exactly {schema:2,crossings}');
     }
-    const sha = (parsed.navpack_sha256 as string).toLowerCase();
-    if (!/^[0-9a-f]{64}$/.test(sha)) throw new Error('prereq_steps: projection navpack_sha256 is not hex');
-    const actual = navPackSha256(navPack);
-    if (actual !== sha) {
-        throw new Error('prereq_steps: projection navpack_sha256 does not match GAME_DATA_289_NAV_PACK (mismatched projection input)');
-    }
-    const identical_edge_groups = projectionIdenticalEdgeGroups(parsed.identical_edge_groups);
     const entries: ProjectionEntry[] = [];
     const seen = new Set<string>();
     parsed.crossings.forEach((raw: unknown, index: number) => {
@@ -400,7 +352,7 @@ export function loadPrereqCrossingProjection(
         seen.add(key);
         entries.push(entry);
     });
-    return { navpack_sha256: sha, entries, identical_edge_groups };
+    return { entries };
 }
 
 function toCrossingWire(template: CrossingTemplate, entry: ProjectionEntry): CrossingWire {
@@ -525,50 +477,6 @@ function citedText(content: string, source: string, onlyFiles?: ReadonlySet<stri
 
 function isProductionScript(file: string) {
     return !file.split(path.sep).some((segment) => segment === '_test' || segment === 'debug');
-}
-function sourcePaths(content: string, rows: PrereqRowWire[], journals: PrereqJournalWire[]) {
-    const found = new Set<string>();
-    const add = (source: string) => {
-        for (const citation of parseSource(source)) found.add(citation.file);
-    };
-    for (const extension of ['.rs2', '.constant', '.varp']) {
-        for (const file of walkContentFiles(path.join(content, 'scripts'), extension)) {
-            if (!isProductionScript(file)) continue;
-            found.add(path.relative(content, file).split(path.sep).join('/'));
-        }
-    }
-    for (const file of ['pack/loc.pack', 'pack/npc.pack', 'pack/varp.pack', 'scripts/general/configs/quest.enum', 'scripts/player/interfaces/questlist.if']) {
-        found.add(file);
-    }
-    for (const row of rows) {
-        for (const crossing of row.crossings) {
-            add(crossing.source);
-            add(crossing.pass.source);
-            if (crossing.delay.source) add(crossing.delay.source);
-        }
-        for (const refusal of row.probe.refuse) add(refusal.source);
-        add(row.target.source);
-        for (const precondition of row.preconditions) {
-            if (typeof precondition === 'object' && precondition !== null && 'source' in precondition && typeof precondition.source === 'string') add(precondition.source);
-        }
-        for (const write of row.reviewed_writes) {
-            add(write.write);
-            add(write.guard);
-            add(write.called_from);
-        }
-        for (const branch of row.talk.branches) add(branch.source);
-        for (const rule of row.talk.line_rules) add(rule.source);
-    }
-    for (const journal of journals) {
-        add(journal.source);
-        for (const rule of journal.rules) add(rule.source);
-        for (const write of journal.reviewed_writes) {
-            add(write.write);
-            add(write.guard);
-            add(write.called_from);
-        }
-    }
-    return [...found].sort();
 }
 
 function textPins(content: string, rows: PrereqRowWire[]) {
@@ -926,7 +834,7 @@ function verifyPlacements(content: string, rows: PrereqRowWire[]) {
 
 export function extractPrereqStepsFacts(
     revision: number,
-    overrides?: { projectionPath?: string; navPack?: string },
+    overrides?: { projectionPath?: string },
 ): PrereqStepFacts {
     if (revision !== 289) return { rows: [], journals: [] };
     const templates = loadAuthoredTemplates();
@@ -940,13 +848,6 @@ export function assertPrereqStepFacts(
     facts: PrereqStepFacts,
     questRows?: readonly { id: string; colour_authoritative: boolean; transmission: string; stage_domain: RangeWire | null }[],
 ) {
-    if (facts.rows.length !== 2 || facts.rows.map((row) => row.id).join('|') !== 'priestperil:drezel-advice|druidspirit:drezel-start') {
-        throw new Error('prereq_steps: expected the reviewed A1/A2 rows in route order');
-    }
-    const expectedJournals = 'blackarmgang:phoenixgang-stage|hero:phoenixgang-stage|priestperil:mausoleum-progress';
-    if (facts.journals.map((journal) => journal.id).join('|') !== expectedJournals) {
-        throw new Error('prereq_steps: expected the reviewed Black Arm, Heroes and Priest journal facts');
-    }
     textPins(content, facts.rows);
     const constants = scriptConstants(content);
     assertPrereqJournalPins(content, facts.journals, constants);
@@ -971,6 +872,3 @@ export function assertPrereqStepFacts(
     }
 }
 
-export function prereqStepInputs(content: string, facts: PrereqStepFacts): InputHash[] {
-    return sourcePaths(content, facts.rows, facts.journals).map((file) => ({ ...sourceFile(content, file), path: `content/${file}` }));
-}

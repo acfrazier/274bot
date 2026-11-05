@@ -210,7 +210,6 @@ mod tests {
     #[test]
     fn any_empty_selects_and_unknown_skip_waits_on_empty_snapshot() {
         let data = selected();
-        let pin = data.selected_pin().unwrap();
         let quests = quests(&data);
         let document = decode_cook().unwrap();
         let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
@@ -226,7 +225,7 @@ mod tests {
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence: stamp(),
-            pin: &pin,
+            revision: api::selected::ClientRevision::R289,
             snapshot: view,
             retained: &mut retained,
             action_id: 0,
@@ -334,7 +333,6 @@ mod tests {
         let compiled = path(RUNE_MYSTERIES_JSON, &data, &quests);
         let pending = progress_for_stage(
             &compiled,
-            &data,
             "runemysteries:1",
             &[
                 ("runemysteries:talisman_pending", Truth::True, None),
@@ -396,7 +394,6 @@ mod tests {
         let package = inventory_snapshot(&data, &[("research_package", 1)]);
         let package_pending = progress_for_stage(
             &compiled,
-            &data,
             "runemysteries:1",
             &[
                 ("runemysteries:talisman_pending", Truth::False, None),
@@ -417,7 +414,6 @@ mod tests {
 
         let package_delivered = progress_for_stage(
             &compiled,
-            &data,
             "runemysteries:1",
             &[
                 ("runemysteries:talisman_pending", Truth::False, None),
@@ -469,7 +465,6 @@ mod tests {
         let compiled = path(SHEEP_JSON, &data, &quests);
         let sequence_progress = progress_for_stage(
             &compiled,
-            &data,
             "sheep:1",
             &[("sheep:balls_to_go", Truth::True, Some(12))],
         );
@@ -940,7 +935,6 @@ mod tests {
         ] {
             let progress = [progress_for_stage(
                 &compiled,
-                &data,
                 "totem:4",
                 &[("combo", Truth::True, None)],
             )];
@@ -991,7 +985,6 @@ mod tests {
         ] {
             let progress = [progress_for_stage(
                 &compiled,
-                &data,
                 "totem:4",
                 &[("combo", combo, None)],
             )];

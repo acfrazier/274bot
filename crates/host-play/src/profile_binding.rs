@@ -1,36 +1,7 @@
 use super::*;
 use api::host_log;
 use api::hostlog::{Category, Level};
-use sha2::{Digest, Sha256};
-use std::io::{BufRead, BufReader, Read};
-
-// Hash the very bytes the decoder reads, without reopening the resource or
-// retaining a full-file staging allocation. Bundled identities need no hash.
-struct NavReader<'a> {
-    file: std::fs::File,
-    digest: Option<Sha256>,
-    completed: u64,
-    total: u64,
-    observer: &'a ProfileProgressObserver,
-}
-
-impl Read for NavReader<'_> {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        let count = self.file.read(buffer)?;
-        if let Some(digest) = &mut self.digest {
-            digest.update(&buffer[..count]);
-            self.completed += count as u64;
-            if self.completed < self.total {
-                self.observer.report(ProfileProgress::bytes(
-                    ProfileProgressStage::CheckingNavigationFiles,
-                    self.completed,
-                    self.total,
-                ));
-            }
-        }
-        Ok(count)
-    }
-}
+use std::io::{BufRead, BufReader};
 
 fn open_nav_file(path: &Path) -> std::io::Result<(std::fs::File, usize)> {
     let file = std::fs::File::open(path)?;
@@ -39,109 +10,29 @@ fn open_nav_file(path: &Path) -> std::io::Result<(std::fs::File, usize)> {
     Ok((file, length))
 }
 
-fn finish_nav_hash(mut reader: BufReader<NavReader<'_>>) -> std::io::Result<String> {
-    // Byte decoders historically accept trailing bytes. They still contribute
-    // to the external identity, including bytes already buffered by BufReader.
-    std::io::copy(&mut reader, &mut std::io::sink())?;
-    let mut reader = reader.into_inner();
-    let hash = format!(
-        "{:x}",
-        reader.digest.take().expect("external nav hash").finalize()
-    );
-    reader.observer.report(ProfileProgress::bytes(
-        ProfileProgressStage::CheckingNavigationFiles,
-        reader.completed,
-        reader.completed,
-    ));
-    Ok(hash)
-}
+// Login protocol CRC slots, in the client's archive order.
+const JAGS: [&str; 8] = [
+    "title",
+    "config",
+    "interface",
+    "media",
+    "versionlist",
+    "textures",
+    "wordenc",
+    "sounds",
+];
 
-const JAGS: [&str; 8] = CacheManifest::ARCHIVES;
 struct LoadedNav {
     availability: NavAvailability,
-    identity: Option<NavManifest>,
     world: Option<Arc<NavWorld>>,
     reach: Option<Arc<DeferredReach>>,
     canlight: Option<Arc<[u64]>>,
     counters: NavLoadCounters,
 }
-/// One pinned generator source file: length plus SHA-256 is the identity.
-/// Length alone is not: same-size different bytes must not verify.
-fn verify_game_data_source(
-    path: &Path,
-    expected: &api::game_data::SourceInput,
-) -> Result<(), GameDataSourceFault> {
-    let actual_len = std::fs::metadata(path)
-        .map_err(|error| GameDataSourceFault::Unreadable {
-            error: error.to_string(),
-        })?
-        .len();
-    if actual_len != expected.bytes {
-        return Err(GameDataSourceFault::Length {
-            expected: expected.bytes,
-            actual: actual_len,
-        });
-    }
-    let actual = nav_planner::manifest::hash_file(path)
-        .map_err(|error| GameDataSourceFault::Unreadable { error })?;
-    if actual != expected.sha256 {
-        return Err(GameDataSourceFault::Content {
-            expected: expected.sha256.clone(),
-            actual,
-        });
-    }
-    Ok(())
-}
-
-/// Every pinned generator source must verify: engine and decoder inputs
-/// under the engine dir, content inputs under the content dir. Any mismatch
-/// (missing file, length, or bytes) keeps generated facts closed. The whole
-/// list is always checked so a rejection reports how many inputs failed (a
-/// wrong source root fails all of them; one edited file fails one). Returns
-/// the number of verified inputs.
-fn verify_game_data_sources(
-    data: &api::game_data::SelectedGameData,
-    engine_dir: &Path,
-    content_dir: &Path,
-) -> Result<usize, GameDataSourceRejection> {
-    verify_source_inputs(data.source_inputs(), engine_dir, content_dir)
-}
-
-fn verify_source_inputs<'a>(
-    inputs: impl Iterator<Item = (bool, &'a api::game_data::SourceInput)>,
-    engine_dir: &Path,
-    content_dir: &Path,
-) -> Result<usize, GameDataSourceRejection> {
-    let mut total = 0;
-    let mut failures = Vec::new();
-    for (is_content, input) in inputs {
-        total += 1;
-        let (root, base) = if is_content {
-            (GameDataSourceRoot::Content, content_dir)
-        } else {
-            (GameDataSourceRoot::Engine, engine_dir)
-        };
-        let path = base.join(&input.path);
-        if let Err(fault) = verify_game_data_source(&path, input) {
-            failures.push(GameDataSourceFailure {
-                root,
-                input: input.path.clone(),
-                path,
-                fault,
-            });
-        }
-    }
-    if failures.is_empty() {
-        Ok(total)
-    } else {
-        Err(GameDataSourceRejection { total, failures })
-    }
-}
 
 #[cfg(feature = "debug-catalog")]
 impl ServerProfile {
-    /// Independently verify and decode on Debug-tab demand, never on bind.
-    /// The caller owns the catalog; closing the tab releases its heap.
+    /// Decode on Debug-tab demand. Closing the tab releases its heap.
     pub fn debug_catalog(&self) -> Result<Arc<api::debug_commands::DebugCatalog>, String> {
         if self.profile_class() != ProfileClass::Local {
             return Err("Debug commands require a Local profile".into());
@@ -153,11 +44,6 @@ impl ServerProfile {
             )
         })?;
         let catalog = api::debug_commands::DebugCatalog::load(self.revision(), data)?;
-        verify_source_inputs(catalog.source_inputs(), &self.debug_engine_dir, &self.content_dir)
-            .map_err(|rejection| format!(
-                "Debug catalog withheld: {} of {} debug inputs failed verification; other generated facts remain available",
-                rejection.failures.len(), rejection.total
-            ))?;
         Ok(Arc::new(catalog))
     }
 }
@@ -254,9 +140,8 @@ impl ProfileSelection {
         &self,
         observer: &ProfileProgressObserver,
     ) -> Result<Arc<ServerProfile>, String> {
-        self.bind_with_nav_identities(
+        self.bind_with_resource_root(
             observer,
-            bundled_nav_identities(),
             std::env::current_exe()
                 .ok()
                 .map(|exe| install_resource_root(&exe))
@@ -264,16 +149,13 @@ impl ProfileSelection {
         )
     }
 
-    /// Bind using an explicit identity table and install root. Production
-    /// uses the compile-time table (empty in git). Tests cover the nonempty
-    /// bundled path without claiming a released app.
-    pub fn bind_with_nav_identities(
+    /// Bind with an explicit install resource root.
+    pub fn bind_with_resource_root(
         &self,
         observer: &ProfileProgressObserver,
-        table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
     ) -> Result<Arc<ServerProfile>, String> {
-        self.bind_inner(observer, table, resource_root, false, &mut None)
+        self.bind_inner(observer, resource_root, false, &mut None)
     }
 
     /// Negotiate the selected endpoint before freezing a complete owned cache.
@@ -293,7 +175,6 @@ impl ProfileSelection {
             let mut fill_error = None;
             let error = match selected.bind_inner(
                 observer,
-                bundled_nav_identities(),
                 std::env::current_exe()
                     .ok()
                     .map(|exe| install_resource_root(&exe))
@@ -313,12 +194,10 @@ impl ProfileSelection {
     fn bind_inner(
         &self,
         observer: &ProfileProgressObserver,
-        table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
         runtime: bool,
         fill_error: &mut Option<client::unpack::RuntimeCacheError>,
     ) -> Result<Arc<ServerProfile>, String> {
-        let supplied = self.supplied_manifest(runtime)?;
         let runtime_cache = if runtime {
             observer.report(ProfileProgress::steps(
                 ProfileProgressStage::PreparingCache,
@@ -340,47 +219,7 @@ impl ProfileSelection {
         } else {
             None
         };
-        self.bind_with_cache(
-            observer,
-            table,
-            resource_root,
-            runtime,
-            supplied,
-            runtime_cache,
-        )
-    }
-
-    /// The declared cache manifest, read before any preparation: a manifest
-    /// for another revision must be rejected without touching the update
-    /// server for the selected cache directory.
-    fn supplied_manifest(&self, runtime: bool) -> Result<Option<CacheManifest>, String> {
-        let supplied = match &self.cache_manifest {
-            Some(path) => {
-                let bytes = std::fs::read(path)
-                    .map_err(|e| format!("cache manifest {}: {e}", path.display()))?;
-                let manifest = serde_json::from_slice::<CacheManifest>(&bytes)
-                    .map_err(|e| format!("cache manifest {}: {e}", path.display()))?;
-                let revision = self.revision().as_i32() as u16;
-                if manifest.revision != revision {
-                    return Err(format!(
-                        "cache/profile mismatch for revision {revision} at {}: \
-                         declared manifest revision {}",
-                        self.cache_dir.display(),
-                        manifest.revision
-                    ));
-                }
-                Some(manifest)
-            }
-            None => None,
-        };
-        // A runtime `--cache-manifest` authenticates the operator-selected
-        // source cache. Negotiation may replace the prepared copies.
-        if runtime {
-            if let Some(manifest) = &supplied {
-                manifest.verify(self.revision().as_i32() as u16, &self.cache_dir)?;
-            }
-        }
-        Ok(supplied)
+        self.bind_with_cache(observer, resource_root, runtime, runtime_cache)
     }
 
     fn runtime_cache_request(&self) -> client::unpack::RuntimeCacheRequest<'_> {
@@ -396,15 +235,12 @@ impl ProfileSelection {
         }
     }
 
-    /// Everything after the runtime cache: archives, identity, login key,
-    /// navigation, game data and the frozen client binding.
+    /// Read archives and configure login, navigation, facts and the frozen client binding.
     fn bind_with_cache(
         &self,
         observer: &ProfileProgressObserver,
-        table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
         runtime: bool,
-        supplied: Option<CacheManifest>,
         runtime_cache: Option<Arc<client::unpack::PreparedRuntimeCache>>,
     ) -> Result<Arc<ServerProfile>, String> {
         let cache_dir = runtime_cache
@@ -425,7 +261,7 @@ impl ProfileSelection {
         } else {
             None
         };
-        let mut archives = std::collections::BTreeMap::new();
+        let mut cache_version = None;
         let mut crcs = [0; 9];
         let archive_total = JAGS.len() as u64;
         observer.report(ProfileProgress::files(
@@ -448,7 +284,9 @@ impl ProfileSelection {
                     _ => archive_error,
                 }
             })?;
-            archives.insert((*name).into(), hash_bytes_with_progress(&bytes, |_, _| {}));
+            if runtime_cache.is_none() && *name == "versionlist" {
+                cache_version = Some(client::unpack::version_hash(&bytes));
+            }
             crcs[index + 1] = Packet::getcrc(&bytes, 0, bytes.len());
             let completed = index as u64 + 1;
             observer.report(ProfileProgress::files(
@@ -462,44 +300,12 @@ impl ProfileSelection {
                 archive_total,
             ));
         }
-        let actual = CacheManifest {
-            revision: self.revision().as_i32() as u16,
-            archives,
-        };
-        // Runtime manifests attest the selected source revision, not the
-        // endpoint's future packed representation. Negotiation may replace it.
-        if runtime && supplied.is_none() {
-            let data = api::game_data::for_revision(self.revision())?;
-            let decoded = runtime_cache
-                .as_ref()
-                .expect("runtime preparation")
-                .identity
-                .content_id_hex();
-            if data.content_id() != Some(decoded.as_str()) {
-                return Err("unknown decoded cache content; supply an explicit cache manifest for a custom server (generated metadata may be unavailable)".into());
-            }
-        }
-        let declared = match supplied {
-            _ if runtime => actual.clone(),
-            Some(manifest) => manifest,
-            None => {
-                let known: Vec<CacheManifest> =
-                    serde_json::from_str(include_str!("known-cache-identities.json"))
-                        .expect("bundled cache identities");
-                known.into_iter().find(|m| m.archives == actual.archives)
-                    .ok_or_else(|| "cache revision is unverified; supply --cache-manifest for the prepared server/cache pairing".to_string())?
-            }
-        };
-        if declared != actual {
-            return Err(format!(
-                "cache/profile mismatch for revision {} at {}",
-                self.revision().as_i32(),
-                self.cache_dir.display()
-            ));
-        }
-        let cache_id = runtime_cache
-            .as_ref()
-            .map_or_else(|| actual.identity(), |p| p.identity.content_id_hex());
+        // Runtime map capabilities use the client's prepared resource key.
+        // Offline bindings use its existing versionlist namespace instead.
+        let cache_id = runtime_cache.as_ref().map_or_else(
+            || cache_version.expect("versionlist is a required archive"),
+            |prepared| prepared.identity.content_id_hex(),
+        );
         let (rsa_modulus, rsa_exponent) = if let Some(modulus) = &self.rsa_modulus {
             (
                 modulus.clone(),
@@ -527,63 +333,24 @@ impl ProfileSelection {
                 }
             }
         };
-        let origin = select_nav_origin(
-            table,
-            resource_root,
-            self.revision().as_i32() as u16,
-            &cache_id,
-            self.nav_pack_overridden,
-            &self.nav_pack,
-        )?;
-        let nav_pack = origin.path().to_path_buf();
-        // Flags provenance is captured explicitly at bind time. A bundled
-        // pack does not imply bundled flags: --nav-flags / NAV_FLAGS keeps
-        // external validation even when the path equals the bundle sibling.
-        let (nav_flags, nav_flags_origin) = if origin.is_bundled() && !self.nav_flags_overridden {
-            (nav_pack.with_extension("navflags"), NavFlagsOrigin::Bundled)
+        let nav_pack = if self.nav_pack_overridden {
+            self.nav_pack.clone()
         } else {
-            (self.nav_flags.clone(), NavFlagsOrigin::External)
+            resource_root
+                .map(|root| {
+                    root.join(artifact_layout(self.revision().as_i32() as u16).relative_pack)
+                })
+                .filter(|path| path.is_file())
+                .unwrap_or_else(|| self.nav_pack.clone())
         };
-        let loaded = self.load_nav(
-            &origin,
-            &actual,
-            &nav_pack,
-            runtime_cache
-                .as_ref()
-                .map(|p| p.identity.content_id_hex())
-                .as_deref(),
-            observer,
-        )?;
+        let nav_flags = if self.nav_flags_overridden {
+            self.nav_flags.clone()
+        } else {
+            nav_pack.with_extension("navflags")
+        };
+        let loaded = self.load_nav(&nav_pack, observer)?;
         if runtime && loaded.world.is_some() {
-            if origin.is_bundled() {
-                eprintln!(
-                    "host-play: navigation source: packaged {} bundle: {}",
-                    nav_planner::pack::FORMAT_ID,
-                    nav_pack.display()
-                );
-            } else {
-                eprintln!(
-                    "host-play: navigation source: external pack: {}",
-                    nav_pack.display()
-                );
-            }
-        }
-        if runtime {
-            if let Some(identity) = &loaded.identity {
-                // Public installations need no server source checkout: only a
-                // compiled build/packager row can attest the supported world.
-                if self.transport() == Transport::Wss {
-                    let trusted = table.iter().any(|row| {
-                        row.revision == identity.revision
-                            && row.content_id == identity.content_id
-                            && row.source_sha256 == identity.source_sha256
-                            && row.nav_sha256 == identity.nav_sha256
-                    });
-                    if !trusted {
-                        return Err("navigation source provenance is not a trusted supported-public build; rebuild/package the resources".into());
-                    }
-                }
-            }
+            eprintln!("host-play: navigation source: {}", nav_pack.display());
         }
         let availability = if let Some(p) = &runtime_cache {
             CacheAvailability::Ready {
@@ -617,13 +384,13 @@ impl ProfileSelection {
             ondemand_persist_dir: runtime_cache.as_ref().map(|p| p.persist_dir.clone()),
             map_archive: runtime_cache.as_ref().map(|p| Arc::clone(&p.map_archive)),
         })?);
-        let (game_data, game_data_status) = self.attach_game_data(runtime, &cache_id)?;
+        let (game_data, game_data_status) = self.attach_game_data(runtime)?;
         if runtime && !game_data_status.is_attached() {
             host_log!(
                 stderr;
                 Category::Lifecycle,
                 Level::Warn,
-                "generated game data withheld ({}): {}",
+                "generated game data unavailable ({}): {}",
                 game_data_status.reason(),
                 game_data_status.detail()
             );
@@ -633,23 +400,17 @@ impl ProfileSelection {
             class: self.class,
             client: binding,
             cache: availability,
-            cache_manifest: actual,
             runtime_cache,
             game_data,
             game_data_status,
             nav_pack,
             nav_flags,
-            nav_origin: origin,
-            nav_flags_origin,
-            nav_identity: loaded.identity,
             nav_load: loaded.counters,
             world: SharedWorld(loaded.world),
             reach: loaded.reach,
             canlight: loaded.canlight,
             nav: loaded.availability,
             content_dir: self.content_dir.clone(),
-            #[cfg(feature = "debug-catalog")]
-            debug_engine_dir: self.engine_dir.clone(),
             vault_path: self.vault_path.clone(),
             state_root: self.state_root.clone(),
             catalog_root: self.catalog_root.clone(),
@@ -658,14 +419,10 @@ impl ProfileSelection {
         }))
     }
 
-    /// The fact-trust decision, with its cause. Facts attach only for a
-    /// supported server whose cache the generated asset describes and, for a
-    /// local world, whose pinned generator sources all verify. Recording the
-    /// cause never widens what attaches.
+    /// Attach the selected revision's facts for a supported server.
     fn attach_game_data(
         &self,
         runtime: bool,
-        cache_id: &str,
     ) -> Result<
         (
             Option<Arc<api::game_data::SelectedGameData>>,
@@ -682,30 +439,10 @@ impl ProfileSelection {
                 },
             ));
         }
-        let Some(data) = api::game_data::for_optional_profile(self.revision(), cache_id)? else {
-            let generated = api::game_data::for_revision(self.revision())?;
-            return Ok((
-                None,
-                GameDataStatus::CacheIdentity {
-                    profile_cache_id: cache_id.to_owned(),
-                    generated_cache_id: generated.cache_id().to_owned(),
-                    generated_content_id: generated.content_id().map(str::to_owned),
-                },
-            ));
-        };
-        if public {
-            return Ok((
-                Some(data),
-                GameDataStatus::Attached(GameDataAttestation::PublicBuild),
-            ));
-        }
-        match verify_game_data_sources(&data, &self.engine_dir, &self.content_dir) {
-            Ok(inputs) => Ok((
-                Some(data),
-                GameDataStatus::Attached(GameDataAttestation::SourcesVerified { inputs }),
-            )),
-            Err(rejection) => Ok((None, GameDataStatus::SourceRejected(rejection))),
-        }
+        Ok((
+            Some(api::game_data::for_revision(self.revision())?),
+            GameDataStatus::Attached,
+        ))
     }
 
     /// Which supported-server condition this selection failed. Only called
@@ -740,8 +477,7 @@ impl ProfileSelection {
         }
     }
 
-    /// Bind the immutable profile, check the captured cache identity once, and
-    /// decode the shared process resources.
+    /// Bind the immutable profile and decode the shared process resources.
     pub fn prepare_template(&self) -> Result<Arc<crate::SharedClientTemplate>, String> {
         self.prepare_template_with_progress(&ProfileProgressObserver::default())
     }
@@ -768,7 +504,6 @@ impl ProfileSelection {
     }
 
     /// Start at Load with this revision's embedded game data (tests).
-    /// The synthetic cache fixture does not attest the real game data.
     #[cfg(any(test, feature = "test-support"))]
     pub fn begin_template_load_for_test(&self) -> Result<TemplatePreparation, String> {
         let mut profile = self.bind()?;
@@ -782,27 +517,16 @@ impl ProfileSelection {
 
     fn load_nav(
         &self,
-        origin: &NavOrigin,
-        cache: &CacheManifest,
         pack_path: &Path,
-        content_id: Option<&str>,
         observer: &ProfileProgressObserver,
     ) -> Result<LoadedNav, String> {
-        let revision = self.revision().as_i32() as u16;
         let mut counters = NavLoadCounters::default();
         if !pack_path.exists() {
-            if origin.is_bundled() {
-                return Err(format!(
-                    "bundled navigation {} is missing",
-                    pack_path.display()
-                ));
-            }
             return Ok(LoadedNav {
                 availability: NavAvailability::Unavailable(format!(
                     "navigation unavailable: {} has not been prepared",
                     pack_path.display()
                 )),
-                identity: None,
                 world: None,
                 reach: None,
                 canlight: None,
@@ -810,169 +534,24 @@ impl ProfileSelection {
             });
         }
         let (file, length) = open_nav_file(pack_path)
-            .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
-        let mut reader = BufReader::with_capacity(
-            64 * 1024,
-            NavReader {
-                file,
-                digest: (!origin.is_bundled()).then(Sha256::new),
-                completed: 0,
-                total: length as u64,
-                observer,
-            },
-        );
+            .map_err(|error| format!("navigation {}: {error}", pack_path.display()))?;
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
         counters.pack_reads = 1;
-        let prefix = reader
-            .fill_buf()
-            .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
-        if !origin.is_bundled()
-            && prefix.starts_with(b"274V")
-            && prefix
-                .get(4)
-                .is_some_and(|version| *version < nav_planner::pack::VERSION)
-        {
-            let message = format!(
-                "navigation unavailable: navigation pack was built by an older 274bot; rebuild it with nav-pack: {}",
-                pack_path.display()
-            );
-            eprintln!("host-play: {message}");
-            return Ok(LoadedNav {
-                availability: NavAvailability::Unavailable(message),
-                identity: None,
-                world: None,
-                reach: None,
-                canlight: None,
-                counters,
-            });
-        }
-        let world_result =
-            decode_nav_world(&mut reader, length, pack_path, observer, &mut counters);
-        if let Ok(world) = &world_result {
-            if world.graph.quest_family.is_some() {
-                let data = api::game_data::for_revision(self.revision())?;
-                let identity = data
-                    .verify_quest_family_identity()
-                    .map_err(|error| format!("navigation quest family: {error:?}"))?;
-                let expected =
-                    nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
-                world.graph.admit_quest_family(&expected).map_err(|error| {
-                    format!(
-                        "navigation/profile mismatch: {error}; rebuild or replace the navigation pack: {}",
-                        pack_path.display(),
-                    )
-                })?;
-            }
-        }
-        let decoded_zone_counts = world_result
-            .as_ref()
-            .ok()
-            .map(|world| nav_zone_counts(world));
-        let identity = match origin {
-            NavOrigin::Bundled { identity, .. } => NavManifest {
-                revision: identity.revision,
-                cache_id: identity.cache_id.clone(),
-                nav_sha256: identity.nav_sha256.clone(),
-                flags_sha256: identity.flags_sha256.clone(),
-                reach_sha256: identity.reach_sha256.clone(),
-                canlight_sha256: identity.canlight_sha256.clone(),
-                pois_sha256: identity.pois_sha256.clone(),
-                content_id: identity.content_id.clone(),
-                source_sha256: identity.source_sha256.clone(),
-                zone_count: decoded_zone_counts.unwrap_or((0, 0)).0,
-                zone_npc_count: decoded_zone_counts.unwrap_or((0, 0)).1,
-            },
-            NavOrigin::External { .. } => {
-                let nav_hash = finish_nav_hash(reader)
-                    .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
-                counters.pack_hashes = 1;
-                let manifest_path = nav_manifest_path(pack_path);
-                if !manifest_path.exists() {
-                    if self.revision() == ClientRevision::R274 && content_id.is_none() {
-                        let world = world_result?;
-                        bind_nav_identity(&world, &nav_hash)?;
-                        let (zone_count, zone_npc_count) = nav_zone_counts(&world);
-                        let identity = NavManifest {
-                            revision,
-                            cache_id: cache.identity(),
-                            nav_sha256: nav_hash,
-                            flags_sha256: None,
-                            reach_sha256: None,
-                            canlight_sha256: None,
-                            pois_sha256: None,
-                            content_id: None,
-                            source_sha256: None,
-                            zone_count,
-                            zone_npc_count,
-                        };
-                        return Ok(LoadedNav {
-                            availability: NavAvailability::Legacy274,
-                            identity: Some(identity),
-                            world: Some(world),
-                            reach: None,
-                            canlight: None,
-                            counters,
-                        });
-                    }
-                    return Err(format!(
-                        "navigation/profile mismatch: revision 289 requires {} (prepare in step 5)",
-                        manifest_path.display()
-                    ));
-                }
-                let manifest_bytes = std::fs::read(&manifest_path)
-                    .map_err(|e| format!("nav manifest {}: {e}", manifest_path.display()))?;
-                let manifest: NavManifest = serde_json::from_slice(&manifest_bytes)
-                    .map_err(|e| format!("nav manifest: {e}"))?;
-                manifest.verify_pack(revision, cache, &nav_hash, content_id)?;
-                if let Some((zone_count, zone_npc_count)) = decoded_zone_counts {
-                    if manifest.zone_count != zone_count
-                        || manifest.zone_npc_count != zone_npc_count
-                    {
-                        return Err(
-                            "navigation/profile mismatch: zone counts differ from decoded zone table"
-                                .into(),
-                        );
-                    }
-                }
-                manifest
-            }
-        };
-        let world = world_result?;
-        bind_nav_identity(&world, &identity.nav_sha256)?;
-        if origin.is_bundled() && identity.reach_sha256.is_none() {
-            return Err("bundled navigation reach identity is missing".into());
-        }
-        let reach = identity
-            .reach_sha256
-            .as_deref()
-            .map(|hash| {
-                DeferredReach::prepare(pack_path, &world, &identity.nav_sha256, hash).map(Arc::new)
-            })
-            .transpose()?;
-        if reach.is_some() {
+        let world = decode_nav_world(&mut reader, length, pack_path, observer, &mut counters)?;
+        let reach = if pack_path.with_extension("navreach").is_file() {
             counters.reach_reads = 1;
-            counters.reach_hashes = 1;
-        }
-        if origin.is_bundled() && identity.canlight_sha256.is_none() {
-            return Err("bundled navigation canlight identity is missing".into());
-        }
-        let policy = origin
-            .bundled_identity()
-            .and_then(|row| row.canlight_identity.as_deref());
-        if origin.is_bundled() && policy.is_none() {
-            return Err("bundled navigation canlight identity is missing".into());
-        }
-        let canlight = identity
-            .canlight_sha256
-            .as_deref()
-            .map(|hash| load_canlight(pack_path, &world, &identity.nav_sha256, policy, hash))
-            .transpose()?;
-        if canlight.is_some() {
+            Some(Arc::new(DeferredReach::prepare(pack_path, &world)?))
+        } else {
+            None
+        };
+        let canlight = if pack_path.with_extension("navcanlight").is_file() {
             counters.canlight_reads = 1;
-            counters.canlight_hashes = 1;
-        }
+            Some(load_canlight(pack_path, &world)?)
+        } else {
+            None
+        };
         Ok(LoadedNav {
             availability: NavAvailability::Bound,
-            identity: Some(identity),
             world: Some(world),
             reach,
             canlight,
@@ -1102,12 +681,10 @@ pub struct TemplatePreparation {
 enum TemplateStage {
     Start,
     Fill {
-        supplied: Option<CacheManifest>,
         /// Boxed: the fill is far larger than the other stages.
         fill: Box<client::unpack::RuntimeCacheFill>,
     },
     Bind {
-        supplied: Option<CacheManifest>,
         prepared: Arc<client::unpack::PreparedRuntimeCache>,
     },
     Load(Arc<ServerProfile>),
@@ -1158,10 +735,6 @@ impl TemplatePreparation {
         };
         match std::mem::replace(&mut self.stage, TemplateStage::Done) {
             TemplateStage::Start => {
-                let supplied = match self.selected.supplied_manifest(true) {
-                    Ok(supplied) => supplied,
-                    Err(error) => return TemplateStep::Complete(Err(error)),
-                };
                 observer.report(ProfileProgress::steps(
                     ProfileProgressStage::PreparingCache,
                     0,
@@ -1171,10 +744,10 @@ impl TemplatePreparation {
                     &self.selected.runtime_cache_request(),
                 ));
                 fill.observe_slow_lookups(log_slow_lookup);
-                self.stage = TemplateStage::Fill { supplied, fill };
+                self.stage = TemplateStage::Fill { fill };
                 waiting
             }
-            TemplateStage::Fill { supplied, mut fill } => match fill.step(Some(until)) {
+            TemplateStage::Fill { mut fill } => match fill.step(Some(until)) {
                 Ok(client::unpack::RuntimeCacheStep::Continue { written, total }) => {
                     if let Some(total) = total {
                         self.last_total = Some(total);
@@ -1184,7 +757,7 @@ impl TemplatePreparation {
                             u64::from(total),
                         ));
                     }
-                    self.stage = TemplateStage::Fill { supplied, fill };
+                    self.stage = TemplateStage::Fill { fill };
                     TemplateStep::Continue {
                         completed: written,
                         total,
@@ -1197,7 +770,7 @@ impl TemplatePreparation {
                         total,
                         total,
                     ));
-                    self.stage = TemplateStage::Bind { supplied, prepared };
+                    self.stage = TemplateStage::Bind { prepared };
                     self.progress()
                 }
                 Err(error) if self.fallback.next(&mut self.selected, &error) => {
@@ -1207,16 +780,14 @@ impl TemplatePreparation {
                 }
                 Err(error) => TemplateStep::Complete(Err(error.to_string())),
             },
-            TemplateStage::Bind { supplied, prepared } => {
+            TemplateStage::Bind { prepared } => {
                 let bound = self.selected.bind_with_cache(
                     observer,
-                    bundled_nav_identities(),
                     std::env::current_exe()
                         .ok()
                         .map(|exe| install_resource_root(&exe))
                         .as_deref(),
                     true,
-                    supplied,
                     Some(prepared),
                 );
                 match bound {
@@ -1247,49 +818,24 @@ impl TemplatePreparation {
     }
 }
 
-fn nav_zone_counts(world: &NavWorld) -> (u32, u32) {
-    world.graph.zones.as_ref().map_or((0, 0), |table| {
-        (
-            table.zones().len() as u32,
-            table
-                .zones()
-                .iter()
-                .filter(|zone| table.kinds()[usize::from(zone.kind)].npc_id >= 0)
-                .count() as u32,
-        )
-    })
-}
-
-/// Paint-only data: verify at preparation without retaining words, then decode
-/// once when a panel or TUI paint consumer requests it. Routing never requests it.
+/// Paint-only data, decoded once when a panel or TUI consumer requests it.
+/// Routing never requests it.
 #[derive(Debug)]
 pub struct DeferredReach {
     path: PathBuf,
-    content_sha256: String,
     header: nav_planner::pack::ReachSidecarHeader,
     bits: std::sync::OnceLock<Result<Arc<[u64]>, String>>,
     reads: std::sync::atomic::AtomicU32,
-    hashes: std::sync::atomic::AtomicU32,
 }
 
 impl DeferredReach {
-    fn prepare(
-        pack_path: &Path,
-        world: &NavWorld,
-        nav_sha256: &str,
-        content_sha256: &str,
-    ) -> Result<Self, String> {
+    fn prepare(pack_path: &Path, world: &NavWorld) -> Result<Self, String> {
         let path = pack_path.with_extension("navreach");
-        let observer = ProfileProgressObserver::default();
-        let (mut reader, length) = hashed_sidecar_reader(&path, &observer)?;
+        let (file, length) = open_nav_file(&path)
+            .map_err(|error| format!("navigation {}: {error}", path.display()))?;
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
         let header = nav_planner::pack::read_reach_sidecar_header(&mut reader, length)
             .map_err(|e| format!("navigation {}: {e}", path.display()))?;
-        if sha256_hex(&header.binding) != nav_sha256 {
-            return Err(format!(
-                "navigation {} binding does not match pack identity",
-                path.display()
-            ));
-        }
         let c = &world.collision;
         if header.origin != c.origin
             || header.width != c.width
@@ -1301,23 +847,19 @@ impl DeferredReach {
                 path.display()
             ));
         }
-        verify_sidecar_hash(reader, &path, content_sha256)?;
         Ok(Self {
             path,
-            content_sha256: content_sha256.to_owned(),
             header,
             bits: std::sync::OnceLock::new(),
             reads: std::sync::atomic::AtomicU32::new(0),
-            hashes: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
     fn load(&self) -> Result<Arc<[u64]>, String> {
-        let observer = ProfileProgressObserver::default();
-        let (mut reader, length) = hashed_sidecar_reader(&self.path, &observer)?;
+        let (file, length) = open_nav_file(&self.path)
+            .map_err(|error| format!("navigation {}: {error}", self.path.display()))?;
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
         self.reads
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.hashes
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let side = nav_planner::pack::read_reach_sidecar(&mut reader, length)
             .map_err(|e| format!("navigation {}: {e}", self.path.display()))?;
@@ -1325,20 +867,16 @@ impl DeferredReach {
             || side.width != self.header.width
             || side.height != self.header.height
             || side.word_count != self.header.word_count
-            || side.binding != self.header.binding
         {
             return Err(format!(
-                "navigation {} header changed after preparation",
+                "navigation {} geometry does not match pack",
                 self.path.display()
             ));
         }
-        // Hash the bytes just decoded, not a separate reopen. A changed file
-        // cannot publish new bits under the prepared identity.
-        verify_sidecar_hash(reader, &self.path, &self.content_sha256)?;
         Ok(side.bits)
     }
 
-    /// Decode and verify once on paint demand, caching success or failure.
+    /// Decode once on paint demand, caching success or failure.
     pub fn get(&self) -> Option<Arc<[u64]>> {
         self.bits
             .get_or_init(|| {
@@ -1350,73 +888,18 @@ impl DeferredReach {
             .cloned()
     }
 
-    pub(super) fn load_counts(&self) -> (u32, u32) {
-        (
-            self.reads.load(std::sync::atomic::Ordering::Relaxed),
-            self.hashes.load(std::sync::atomic::Ordering::Relaxed),
-        )
+    pub(super) fn load_count(&self) -> u32 {
+        self.reads.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
-fn hashed_sidecar_reader<'a>(
-    path: &Path,
-    observer: &'a ProfileProgressObserver,
-) -> Result<(BufReader<NavReader<'a>>, usize), String> {
-    let (file, length) =
-        open_nav_file(path).map_err(|e| format!("navigation {}: {e}", path.display()))?;
-    Ok((
-        BufReader::with_capacity(
-            64 * 1024,
-            NavReader {
-                file,
-                digest: Some(Sha256::new()),
-                completed: 0,
-                total: length as u64,
-                observer,
-            },
-        ),
-        length,
-    ))
-}
-
-fn verify_sidecar_hash(
-    reader: BufReader<NavReader<'_>>,
-    path: &Path,
-    expected: &str,
-) -> Result<(), String> {
-    let actual =
-        finish_nav_hash(reader).map_err(|e| format!("navigation {}: {e}", path.display()))?;
-    if actual != expected {
-        return Err(format!(
-            "navigation {} content hash does not match identity",
-            path.display()
-        ));
-    }
-    Ok(())
-}
-
-fn load_canlight(
-    pack_path: &Path,
-    world: &NavWorld,
-    nav_sha256: &str,
-    policy: Option<&str>,
-    content_sha256: &str,
-) -> Result<Arc<[u64]>, String> {
+fn load_canlight(pack_path: &Path, world: &NavWorld) -> Result<Arc<[u64]>, String> {
     let path = pack_path.with_extension("navcanlight");
-    let observer = ProfileProgressObserver::default();
-    let (mut reader, length) = hashed_sidecar_reader(&path, &observer)?;
+    let (file, length) =
+        open_nav_file(&path).map_err(|error| format!("navigation {}: {error}", path.display()))?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
     let side = nav_planner::pack::read_canlight_sidecar(&mut reader, length)
         .map_err(|e| format!("navigation {}: {e}", path.display()))?;
-    if let Some(policy) = policy {
-        let expected = canlight::expected_header_binding(nav_sha256, policy)
-            .map_err(|e| format!("navigation {} binding {e}", path.display()))?;
-        if side.binding != expected {
-            return Err(format!(
-                "navigation {} binding does not match pack and policy identity",
-                path.display()
-            ));
-        }
-    }
     let c = &world.collision;
     if side.origin != c.origin
         || side.width != c.width
@@ -1428,9 +911,6 @@ fn load_canlight(
             path.display()
         ));
     }
-    // External manifests bind the entire sidecar (including its policy header)
-    // to the pack/cache; bundled rows additionally pin the policy separately.
-    verify_sidecar_hash(reader, &path, content_sha256)?;
     Ok(side.bits)
 }
 
@@ -1457,26 +937,9 @@ fn decode_nav_world(
     Ok(Arc::new(world))
 }
 
-/// Record the verified pack digest as the loaded world's one facade identity
-/// (`nav_planner::producer::bind`), before the world is published to `Play`: every
-/// collision, zone and route view the slots are served carries it.
-fn bind_nav_identity(world: &Arc<NavWorld>, nav_sha256: &str) -> Result<(), String> {
-    let digest = nav_planner::map::identity::Digest::from_hex(nav_sha256)
-        .map_err(|error| format!("navigation identity {nav_sha256}: {error}"))?;
-    nav_planner::producer::bind(
-        world,
-        nav_planner::contract::PackDigest::from_bytes(digest.0),
-    )
-    .map(drop)
-    .map_err(|error| format!("navigation lease identity: {error}"))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        verify_game_data_source, verify_source_inputs, GameDataSourceFault, GameDataSourceRoot,
-        GameDataStatus,
-    };
+    use super::*;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1494,6 +957,18 @@ mod tests {
 
     #[test]
     fn template_load_with_game_data_completes_on_the_preparation_worker() {
+        if api::test_support::local_asset_path(
+            "",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../api/data/game-data/289.json"
+            ),
+            "revision 289 game data",
+        )
+        .is_none()
+        {
+            return;
+        }
         use script::preparation::{
             submit_cooperative, CooperativePreparationStep as Step, PreparationInput,
             PreparationKind,
@@ -1505,7 +980,6 @@ mod tests {
         let selection = super::ProfileOptions {
             revision: Some("289".into()),
             cache_dir: Some(fixtures.clone()),
-            cache_manifest: Some(fixtures.join("manifest-289.json")),
             unpack_dir: Some(root.join("unpack")),
             nav_pack: Some(root.join("missing.navpack")),
             ..Default::default()
@@ -1561,26 +1035,18 @@ mod tests {
     }
 
     #[test]
-    fn paint_sidecar_is_lazy_shared_and_rejects_changed_payload() {
+    fn paint_sidecar_is_lazy_shared_and_rejects_malformed_payload() {
         let dir = scratch_dir("lazy-paint");
         let pack = dir.join("world.navpack");
         let world = nav_planner::world::NavWorld::from_grid(
             &nav_planner::grid::StepGrid::fixture_open_3x3(),
         );
-        let binding = [0xabu8; 32];
         let c = &world.collision;
         let bits = vec![0x1234u64; c.walk.len().div_ceil(64)];
-        let bytes =
-            nav_bake::pack::encode_reach_sidecar(c.origin, c.width, c.height, &bits, &binding);
+        let bytes = nav_bake::pack::encode_reach_sidecar(c.origin, c.width, c.height, &bits);
         let path = pack.with_extension("navreach");
         std::fs::write(&path, &bytes).unwrap();
-        let prepared = super::DeferredReach::prepare(
-            &pack,
-            &world,
-            &nav_planner::pack::sha256_hex(&binding),
-            &nav_planner::manifest::hash_bytes(&bytes),
-        )
-        .unwrap();
+        let prepared = super::DeferredReach::prepare(&pack, &world).unwrap();
         assert!(
             prepared.bits.get().is_none(),
             "binding must retain no paint payload"
@@ -1593,19 +1059,13 @@ mod tests {
             "frontends share the first decode"
         );
 
-        let changed = super::DeferredReach::prepare(
-            &pack,
-            &world,
-            &nav_planner::pack::sha256_hex(&binding),
-            &nav_planner::manifest::hash_bytes(&bytes),
-        )
-        .unwrap();
+        let changed = super::DeferredReach::prepare(&pack, &world).unwrap();
         let mut edited = bytes.clone();
-        *edited.last_mut().unwrap() ^= 1;
+        edited[0] ^= 1;
         std::fs::write(&path, &edited).unwrap();
         assert!(
             changed.get().is_none(),
-            "same-size payload replacement must fail closed"
+            "a malformed sidecar must not publish paint words"
         );
         std::fs::write(&path, &bytes).unwrap();
         assert!(
@@ -1617,153 +1077,6 @@ mod tests {
             &bits,
             "published words remain immutable"
         );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Pin `path` by its own current length and SHA-256, the same
-    /// `nav_planner::manifest::hash_file` the binding uses (the real pinned digests
-    /// have no synthetic preimage).
-    fn pin(path: &Path, relative: &str) -> api::game_data::SourceInput {
-        api::game_data::SourceInput {
-            path: relative.to_string(),
-            bytes: std::fs::metadata(path).unwrap().len(),
-            sha256: nav_planner::manifest::hash_file(path).unwrap(),
-        }
-    }
-
-    /// Length-plus-SHA-256 source binding, with no real engine or content.
-    ///
-    /// `bind` attaches generated facts only when every pinned generator source
-    /// verifies by exact bytes, through this predicate. The pinned SHA-256
-    /// values have no synthetic preimage, so the expected identity comes from
-    /// the probe's own bytes via the same `nav_planner::manifest::hash_file` the
-    /// binding uses; one flipped byte at the same length must be refused.
-    #[test]
-    fn equal_size_different_bytes_sources_do_not_attach_game_data() {
-        let dir = scratch_dir("verify-sources");
-
-        // Exact bytes verify through the predicate `bind` uses.
-        let probe = dir.join("probe.bin");
-        let bytes: Vec<u8> = (0..512).map(|i| (i % 251) as u8).collect();
-        std::fs::write(&probe, &bytes).unwrap();
-        let expected = pin(&probe, "probe.bin");
-        verify_game_data_source(&probe, &expected).expect("exact source bytes must verify");
-
-        // One flipped byte keeps the length: the size-only shortcut this guards
-        // against would accept this file, so it must be refused for content.
-        let mut mutated = bytes.clone();
-        mutated[0] ^= 0xff;
-        std::fs::write(&probe, &mutated).unwrap();
-        assert_eq!(
-            std::fs::metadata(&probe).unwrap().len(),
-            expected.bytes,
-            "the mutation must keep the length so only bytes differ"
-        );
-        let fault = verify_game_data_source(&probe, &expected)
-            .expect_err("equal-size different-bytes sources must keep facts closed");
-        assert!(
-            matches!(fault, GameDataSourceFault::Content { .. }),
-            "refusal must be a content mismatch, got {fault:?}"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A rejection keeps facts closed but names every failed input, its root
-    /// and how it failed, so a wrong source root, a missing generated file and
-    /// an edited file are told apart without a debugger.
-    #[test]
-    fn rejection_tells_missing_truncated_and_edited_inputs_apart() {
-        let dir = scratch_dir("reject-sources");
-        let engine = dir.join("engine");
-        let content = dir.join("content");
-        std::fs::create_dir_all(&engine).unwrap();
-        std::fs::create_dir_all(&content).unwrap();
-        for (root, name, bytes) in [
-            (&engine, "ok.bin", vec![1_u8; 64]),
-            (&engine, "short.bin", vec![2_u8; 64]),
-            (&content, "edited.bin", vec![3_u8; 64]),
-            (&content, "gone.bin", vec![4_u8; 64]),
-        ] {
-            std::fs::write(root.join(name), bytes).unwrap();
-        }
-        let inputs = [
-            (false, pin(&engine.join("ok.bin"), "ok.bin")),
-            (false, pin(&engine.join("short.bin"), "short.bin")),
-            (true, pin(&content.join("edited.bin"), "edited.bin")),
-            (true, pin(&content.join("gone.bin"), "gone.bin")),
-        ];
-        let refs = || inputs.iter().map(|(content, input)| (*content, input));
-        assert_eq!(
-            verify_source_inputs(refs(), &engine, &content),
-            Ok(4),
-            "pristine inputs verify and report how many"
-        );
-
-        std::fs::write(engine.join("short.bin"), vec![2_u8; 10]).unwrap();
-        let mut edited = vec![3_u8; 64];
-        edited[63] ^= 0xff;
-        std::fs::write(content.join("edited.bin"), edited).unwrap();
-        std::fs::remove_file(content.join("gone.bin")).unwrap();
-
-        let rejection = verify_source_inputs(refs(), &engine, &content)
-            .expect_err("three broken inputs must reject the whole set");
-        assert_eq!((rejection.total, rejection.verified()), (4, 1));
-        let failures = rejection
-            .failures
-            .iter()
-            .map(|failure| (failure.root, failure.input.as_str(), failure.fault.kind()))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            failures,
-            [
-                (GameDataSourceRoot::Engine, "short.bin", "length-mismatch"),
-                (
-                    GameDataSourceRoot::Content,
-                    "edited.bin",
-                    "content-mismatch"
-                ),
-                (GameDataSourceRoot::Content, "gone.bin", "unreadable"),
-            ],
-            "failures keep the generator's order and name their root"
-        );
-        assert_eq!(
-            rejection.failures[2].path,
-            content.join("gone.bin"),
-            "the failure names the resolved path that was read"
-        );
-
-        let json = GameDataStatus::SourceRejected(rejection).to_json();
-        assert_eq!(json["attached"], false);
-        assert_eq!(json["reason"], "source-rejected");
-        assert_eq!(json["sources"]["total"], 4);
-        assert_eq!(json["sources"]["verified"], 1);
-        assert_eq!(json["sources"]["failed"], 3);
-        assert_eq!(json["sources"]["failures"][2]["root"], "content");
-        assert_eq!(json["sources"]["failures"][2]["kind"], "unreadable");
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A wrong source root fails every pinned input; the record still counts
-    /// them all but stays small.
-    #[test]
-    fn wrong_source_root_record_counts_every_input_but_lists_a_bounded_few() {
-        let dir = scratch_dir("wrong-root");
-        let pinned = (0..12)
-            .map(|i| api::game_data::SourceInput {
-                path: format!("data/pack/input-{i}.bin"),
-                bytes: 8,
-                sha256: "00".repeat(32),
-            })
-            .collect::<Vec<_>>();
-        let rejection = verify_source_inputs(pinned.iter().map(|input| (true, input)), &dir, &dir)
-            .expect_err("nothing exists under the wrong root");
-        assert_eq!((rejection.total, rejection.verified()), (12, 0));
-        let json = GameDataStatus::SourceRejected(rejection).to_json();
-        assert_eq!(json["sources"]["failed"], 12);
-        assert_eq!(json["sources"]["failures"].as_array().unwrap().len(), 8);
-
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

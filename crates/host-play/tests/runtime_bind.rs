@@ -1,9 +1,8 @@
 //! Runtime profile binding: the normal application path negotiates `/crc`
 //! from the selected asset endpoint BEFORE freezing, materializes missing or
 //! CRC-mismatched jags into a runtime-owned directory (the operator's source
-//! cache stays read-only), freezes the negotiated transfer CRCs and the
-//! decoded content identity, and reports a complete snapshot as Ready — not
-//! the offline bind's degraded no-worker state.
+//! cache stays read-only), freezes the negotiated transfer CRCs, and reports
+//! a complete snapshot as Ready — not the offline bind's degraded no-worker state.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -11,7 +10,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
-use client::content_identity::compute_decoded_content_identity;
 use client::io::{JagFile, Packet};
 use host_play::profile::{ProfileEnvironment, ProfileSelection};
 use host_play::{ProfileOptions, SharedClientTemplate};
@@ -75,8 +73,8 @@ fn g3(out: &mut Vec<u8>, n: usize) {
     out.extend_from_slice(&(n as u32).to_be_bytes()[1..]);
 }
 
-/// One synthetic jag pack: two bzip2-packed members (`data`), the same
-/// construction the client's identity fixtures use.
+/// One synthetic jag pack: two bzip2-packed members (`data`), matching the
+/// archive shape used by the client fixtures.
 fn jag(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
     let mut raw = (files.len() as u16).to_be_bytes().to_vec();
     for (name, bytes) in files {
@@ -165,8 +163,9 @@ fn snapshot(root: &Path, revision: u16, packs: &[Vec<u8>]) -> PathBuf {
             Ok(())
         }
     }
-    let transfer = nav_planner::manifest::hash_bytes(&packs[4]);
-    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(packs)[..36]);
+    use sha2::Digest;
+    let transfer = format!("{:x}", sha2::Sha256::digest(&packs[4]));
+    let negotiated = format!("{:x}", sha2::Sha256::digest(&crc_body(packs)[..36]));
     let input = root.join("fixture-packs");
     write_packs(&input, packs);
     let out = root
@@ -246,7 +245,6 @@ fn selection(root: &TempRoot, revision: &str, asset_port: u16) -> ProfileSelecti
         cache_dir: Some(root.join("cache")),
         unpack_dir: Some(root.join("unpack")),
         nav_pack: Some(root.join("missing.navpack")),
-        cache_manifest: Some(root.join("cache-manifest.json")),
         asset_host: Some("127.0.0.1".into()),
         http_port: Some(asset_port),
         ..Default::default()
@@ -261,27 +259,18 @@ fn selection(root: &TempRoot, revision: &str, asset_port: u16) -> ProfileSelecti
     options.resolve_with_env(None, &environment).unwrap()
 }
 
-/// Local packed CRCs differ from the endpoint's; the negotiated packs are
+/// Local packed CRCs differ from the endpoint's; negotiated packs are
 /// refreshed into a runtime-owned directory, the operator cache is untouched,
-/// the frozen expected CRC is the server array, and the content id is the
-/// decoded identity of the negotiated assets.
+/// and the frozen expected CRC is the server's array.
 #[test]
-fn runtime_bind_negotiates_and_freezes_server_identity() {
+fn runtime_bind_negotiates_and_freezes_server_crcs() {
     let root = TempRoot::new("negotiate");
     let cache = root.join("cache");
     let local = packs(1);
     let public = packs(2);
     write_packs(&cache, &local);
-    // Earlier complete snapshot, independently keyed by negotiated transfer.
-    let retained = snapshot(&root.join("unpack"), 274, &public);
-    let expected_identity = compute_decoded_content_identity(274, &retained, &retained).unwrap();
-
-    std::fs::write(
-        root.join("cache-manifest.json"),
-        serde_json::to_vec(&host_play::profile::CacheManifest::capture(274, &cache).unwrap())
-            .unwrap(),
-    )
-    .unwrap();
+    // Retained complete server snapshot avoids live map requests in this bind.
+    snapshot(&root.join("unpack"), 274, &public);
     let (port, server) = serve_packs(public.clone(), 0);
     let selection = selection(&root, "274", port);
     let profile = selection.bind_runtime().unwrap();
@@ -313,7 +302,6 @@ fn runtime_bind_negotiates_and_freezes_server_identity() {
         negotiated[slot + 1] = Packet::getcrc(bytes, 0, bytes.len());
     }
     assert_eq!(profile.client().expected_crc(), Some(negotiated));
-    assert_eq!(profile.cache_id(), expected_identity.content_id_hex());
     assert!(
         profile.game_data().is_none(),
         "an endpoint override has no built-in server facts"
@@ -329,9 +317,8 @@ fn runtime_bind_negotiates_and_freezes_server_identity() {
         host_play::cache::CacheAvailability::Ready { .. }
     ));
 
-    // The bound profile is usable: resources validate against the frozen
-    // transfer identity and the shared template decodes from the owned cache.
-    profile.validate_resources().unwrap();
+    // The shared template consumes the owned runtime cache and remains valid
+    // after the selected profile has completed preparation.
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     template.validate_for_play().unwrap();
     drop(template);
@@ -339,158 +326,55 @@ fn runtime_bind_negotiates_and_freezes_server_identity() {
     assert!(!owned.exists(), "the owned runtime cache is cleaned up");
 }
 
-/// A same-revision `--cache-manifest` must still authenticate the operator's
-/// source cache. Negotiation may replace runtime copies; empty/wrong archives
-/// must not bind.
 #[test]
-fn runtime_bind_refuses_wrong_archive_same_revision_manifest() {
-    let root = TempRoot::new("wrong-manifest");
-    let cache = root.join("cache");
-    let local = packs(1);
-    write_packs(&cache, &local);
-    snapshot(&root.join("unpack"), 274, &local);
-
-    let wrong = host_play::profile::CacheManifest {
-        revision: 274,
-        archives: Default::default(),
-    };
-    std::fs::write(
-        root.join("cache-manifest.json"),
-        serde_json::to_vec(&wrong).unwrap(),
-    )
-    .unwrap();
-    let error = selection(&root, "274", 9).bind_runtime().unwrap_err();
-    assert!(
-        error.contains("cache manifest") || error.contains("cache bytes"),
-        "{error}"
-    );
-
-    std::fs::write(
-        root.join("cache-manifest.json"),
-        serde_json::to_vec(&host_play::profile::CacheManifest::capture(274, &cache).unwrap())
-            .unwrap(),
-    )
-    .unwrap();
-    let (port, server) = serve_packs(local, 0);
-    let profile = selection(&root, "274", port).bind_runtime().unwrap();
-    server.join().unwrap();
-    assert!(profile.client().cache_dir() != cache);
-}
-
-#[test]
-fn runtime_external_nav_binds_without_rehashing_selected_content() {
-    let root = TempRoot::new("nav-source");
+fn runtime_external_nav_reports_malformed_sidecars() {
     let p = packs(1);
-    write_packs(&root.join("cache"), &p);
-    let retained = snapshot(&root.join("unpack"), 289, &p);
-    let cache = host_play::profile::CacheManifest::capture(289, &root.join("cache")).unwrap();
-    std::fs::write(
-        root.join("cache-manifest.json"),
-        serde_json::to_vec(&cache).unwrap(),
-    )
-    .unwrap();
-    let content = root.join("content");
-    std::fs::create_dir(&content).unwrap();
-    std::fs::write(content.join("world"), b"world-a").unwrap();
-    let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 8]);
-    let bytes = nav_bake::pack::encode(
-        &nav_planner::collision::WorldCollision {
-            origin: api::snapshot::WorldTile {
-                x: 3200,
-                z: 3200,
-                level: 0,
+    for extension in ["navreach", "navcanlight"] {
+        let root = TempRoot::new(extension);
+        snapshot(&root.join("unpack"), 289, &p);
+        let pack = root.join("malformed.navpack");
+        let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 8]);
+        let bytes = nav_bake::pack::encode(
+            &nav_planner::collision::WorldCollision {
+                origin: api::snapshot::WorldTile {
+                    x: 3200,
+                    z: 3200,
+                    level: 0,
+                },
+                width: 2,
+                height: 1,
+                walk,
+                blocked,
+                flags: None,
             },
-            width: 2,
-            height: 1,
-            walk,
-            blocked,
-            flags: None,
-        },
-        &nav_planner::transport::TransportGraph::default(),
-        &[],
-    )
-    .unwrap();
-    let pack = root.join("world.navpack");
-    std::fs::write(&pack, &bytes).unwrap();
-    let mut manifest =
-        nav_bake::manifest::capture_nav_manifest(289, &cache, &bytes, None, None, None, None, 0, 0)
-            .unwrap();
-    manifest.content_id = Some(
-        compute_decoded_content_identity(289, &retained, &retained)
-            .unwrap()
-            .content_id_hex(),
-    );
-    manifest.source_sha256 =
-        Some(nav_bake::bundle::source_digest(&content, &[&root.join("cache/config")]).unwrap());
-    std::fs::write(
-        host_play::profile::nav_manifest_path(&pack),
-        serde_json::to_vec(&manifest).unwrap(),
-    )
-    .unwrap();
-    std::fs::write(content.join("world"), b"world-b").unwrap();
-    let (port, server) = serve_packs(p.clone(), 0);
-    let options = ProfileOptions {
-        revision: Some("289".into()),
-        cache_dir: Some(root.join("cache")),
-        cache_manifest: Some(root.join("cache-manifest.json")),
-        unpack_dir: Some(root.join("unpack")),
-        nav_pack: Some(pack.clone()),
-        content_dir: Some(content.clone()),
-        http_port: Some(port),
-        ..Default::default()
-    };
-    let env = ProfileEnvironment {
-        home: Some(root.0.clone()),
-        engine_dir: Some(root.0.join("engine")),
-        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-        ..Default::default()
-    };
-    let result = options.resolve_with_env(None, &env).unwrap().bind_runtime();
-    server.join().unwrap();
-    assert!(result.unwrap().world().is_some());
-    let sidecar = host_play::profile::nav_manifest_path(&pack);
-    manifest.zone_count = 1;
-    std::fs::write(&sidecar, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    let (port, server) = serve_packs(p.clone(), 0);
-    let mismatched = ProfileOptions {
-        http_port: Some(port),
-        ..options.clone()
-    };
-    let result = mismatched
-        .resolve_with_env(None, &env)
-        .unwrap()
-        .bind_runtime();
-    server.join().unwrap();
-    let error = match result {
-        Err(error) => error,
-        Ok(_) => panic!("a mismatched decoded zone count must refuse the sidecar"),
-    };
-    assert!(
-        error.contains("zone counts differ from decoded zone table"),
-        "{error}"
-    );
-    manifest.zone_count = 0;
-    manifest.zone_npc_count = 1;
-    std::fs::write(&sidecar, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    let (port, server) = serve_packs(p, 0);
-    let mismatched = ProfileOptions {
-        http_port: Some(port),
-        ..options
-    };
-    let result = mismatched
-        .resolve_with_env(None, &env)
-        .unwrap()
-        .bind_runtime();
-    server.join().unwrap();
-    let error = match result {
-        Err(error) => error,
-        Ok(_) => panic!("a mismatched decoded NPC zone count must refuse the sidecar"),
-    };
-    assert!(
-        error.contains("zone counts differ from decoded zone table"),
-        "{error}"
-    );
+            &nav_planner::transport::TransportGraph::default(),
+            &[],
+        )
+        .unwrap();
+        std::fs::write(&pack, bytes).unwrap();
+        std::fs::write(pack.with_extension(extension), b"not a sidecar").unwrap();
+        let (port, server) = serve_packs(p.clone(), 0);
+        let options = ProfileOptions {
+            revision: Some("289".into()),
+            cache_dir: Some(root.join("cache")),
+            unpack_dir: Some(root.join("unpack")),
+            nav_pack: Some(pack),
+            asset_host: Some("127.0.0.1".into()),
+            http_port: Some(port),
+            ..Default::default()
+        };
+        let env = ProfileEnvironment {
+            home: Some(root.0.clone()),
+            engine_dir: Some(root.0.join("engine")),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..Default::default()
+        };
+        let result = options.resolve_with_env(None, &env).unwrap().bind_runtime();
+        server.join().unwrap();
+        let error = result.unwrap_err();
+        assert!(error.contains(extension), "{error}");
+    }
 }
 
 /// The offline explicit bind keeps its semantics: no `/crc` when every pack is
@@ -502,12 +386,6 @@ fn offline_bind_freezes_local_files_without_network() {
     let cache = root.join("cache");
     let local = packs(1);
     write_packs(&cache, &local);
-    std::fs::write(
-        root.join("cache-manifest.json"),
-        serde_json::to_vec(&host_play::profile::CacheManifest::capture(274, &cache).unwrap())
-            .unwrap(),
-    )
-    .unwrap();
     let selection = selection(&root, "274", 9);
     let profile = selection.bind().unwrap();
     assert!(
@@ -520,21 +398,18 @@ fn offline_bind_freezes_local_files_without_network() {
     ));
 }
 
-/// A retained public snapshot behind a local cache whose manifest is
-/// captured; returns the public packs and the namespace's preparation lock.
+/// A retained public snapshot behind the local cache; returns the public packs
+/// and the namespace's preparation lock.
 fn stepped_fixture(name: &str) -> (TempRoot, Vec<Vec<u8>>, PathBuf) {
     let root = TempRoot::in_memory(name);
     let cache = root.join("cache");
     write_packs(&cache, &packs(1));
     let public = packs(2);
     snapshot(&root.join("unpack"), 274, &public);
-    std::fs::write(
-        root.join("cache-manifest.json"),
-        serde_json::to_vec(&host_play::profile::CacheManifest::capture(274, &cache).unwrap())
-            .unwrap(),
-    )
-    .unwrap();
-    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(&public)[..36]);
+    let negotiated = {
+        use sha2::Digest;
+        format!("{:x}", sha2::Sha256::digest(&crc_body(&public)[..36]))
+    };
     let lock = root
         .join("unpack")
         .join("revision-274")

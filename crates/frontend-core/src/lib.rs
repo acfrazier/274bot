@@ -79,6 +79,7 @@ pub use fleet::{
 };
 pub use fleet_plan::{FleetAction, FleetPlan, FleetResult, PlanScope, ResultCounts};
 pub use group_walk::{MarkedWalk, WalkInputs};
+pub use host_play::saved_data;
 pub use map_bake::{
     load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt, MAP_BAKE_TITLE,
     MAP_BAKE_WARNING,
@@ -118,7 +119,7 @@ pub use script::survival::{
     math::{NeedWhy as SurvivalNeedWhy, SurvivalNeed},
     Decision as SurvivalDecision, Owner as SurvivalOwner, SurvivalReport,
 };
-pub use scripts::{Notice, Scripts};
+pub use scripts::{Notice, ScriptSettingsError, Scripts};
 
 pub use selection::{
     marked_startable, profile_id_at, profile_id_for_name, stop_marked, BulkSkip, MarkedSelection,

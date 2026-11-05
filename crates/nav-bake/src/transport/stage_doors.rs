@@ -457,7 +457,6 @@ fn comparison_value(op: CmpOp, min: i32, max: i32, threshold: i32) -> Option<boo
 struct Sources {
     oplocs: [HashMap<String, Vec<Option<Block>>>; 5],
     oplocu: HashMap<String, Vec<Option<Block>>>,
-    quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
     quest_complete: HashMap<String, (api::selected::FactKey, i32)>,
     quest_stage: HashMap<String, QuestStageFacts>,
     /// Selected quest identity for each unambiguous named progress signal,
@@ -600,7 +599,6 @@ impl Sources {
         let worn_slots = worn_slot_facts(content_root, &objs, &constants);
         Self {
             oplocs,
-            quest_family: quests.map(|quests| quests.family),
             quest_complete,
             quest_stage,
             quest_signals,
@@ -877,7 +875,6 @@ struct Needs {
     items: Vec<(i32, i32)>,
     worn: Vec<(i32, i32)>,
     quests: Vec<api::selected::QuestGate>,
-    quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
     forbidden_held: Vec<i32>,
     forbidden_worn: Vec<i32>,
     members: bool,
@@ -890,7 +887,6 @@ impl Needs {
         self.items.extend(other.items);
         self.worn.extend(other.worn);
         self.quests.extend(other.quests);
-        self.quest_family = self.quest_family.or(other.quest_family);
         self.forbidden_held.extend(other.forbidden_held);
         self.forbidden_worn.extend(other.forbidden_worn);
         self.members |= other.members;
@@ -1383,8 +1379,7 @@ impl Eval<'_> {
                 let (Some(&id), Val::Int(c)) = (self.src.varps.get(&w[1..]), rhs_val) else {
                     return Cond::unknown();
                 };
-                if let (Some(family), Some((quest, complete)), Some(facts)) = (
-                    self.src.quest_family,
+                if let (Some((quest, complete)), Some(facts)) = (
                     self.src.quest_complete.get(&w[1..]),
                     self.src.quest_stage.get(&w[1..]),
                 ) {
@@ -1416,7 +1411,6 @@ impl Eval<'_> {
                             value: Some(value),
                             needs: Needs {
                                 quests: vec![gate],
-                                quest_family: Some(family),
                                 ..Needs::default()
                             },
                         };
@@ -1993,13 +1987,8 @@ fn gated_edge(
 ) -> TransportEdge {
     let worn = max_per_key(&needs.worn);
     let quest_gates = (!needs.quests.is_empty()).then(|| {
-        nav_planner::quest_gates::QuestGates::new(
-            needs
-                .quest_family
-                .expect("quest predicate carries its family"),
-            needs.quests,
-        )
-        .expect("content-derived complete gates")
+        nav_planner::quest_gates::QuestGates::new(needs.quests)
+            .expect("content-derived complete gates")
     });
     TransportEdge {
         kind,

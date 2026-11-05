@@ -7,127 +7,19 @@ use crate::pack::{parse_loc_fields, parse_map_line, section};
 use client::config::{LocType, NpcType};
 use nav_planner::collision::game_plane;
 use nav_planner::map::formats::{
-    Coverage, CoverageIssue, CoverageLevel, CoverageReason, ServiceIdentity, ServicePois,
-    NAVPOIS_VERSION,
+    Coverage, CoverageIssue, CoverageLevel, CoverageReason, ServicePois, NAVPOIS_VERSION,
 };
-use nav_planner::map::identity::Digest;
 use nav_planner::map::poi::{
     classify_definition, Capability, CapabilityEvidence, Definition, DisplayAnchor, Eligibility,
     EntityKind, Footprint, OperationSlot, PoiKey, PoiKind, PoiRecord, ServiceTrigger, SourceSpace,
 };
-use nav_planner::map::services::{pois_policy_digest, POIS_POLICY_ALGORITHM};
 use nav_planner::map::{Rows, Text};
-use sha2::{Digest as _, Sha256};
-
-/// Workspace-relative producer, parser and schema sources for navpois identity.
-/// This identity also binds service-only changes when pack bytes are unchanged.
-pub const POIS_GENERATOR_SOURCES: [&str; 10] = [
-    "crates/nav-bake/src/services.rs",
-    "crates/nav-bake/src/pack.rs",
-    "crates/nav-bake/src/pack/config_parse.rs",
-    "crates/nav-bake/src/pack/mapsquare.rs",
-    "crates/nav-planner/src/collision.rs",
-    "crates/nav-planner/src/map.rs",
-    "crates/nav-planner/src/map/formats.rs",
-    "crates/nav-planner/src/map/identity.rs",
-    "crates/nav-planner/src/map/poi.rs",
-    "crates/nav-planner/src/map/services.rs",
-];
-pub const POIS_GENERATOR_ID: &str = "navpois-1";
-
-/// Engine `CollisionType` of a walking NPC (`PathingEntity.getCollisionStrategy`),
-/// tested per tile by `CollisionStrategy.canMove`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StepStrategy {
-    /// `normal` and `passthru`, and the stand-in for `indoors`/`outdoors`:
-    /// those add a roof test to the same mask test, and the bake carries no
-    /// roof flag, so NORMAL reaches a superset of their tiles.
-    Normal,
-    /// `blocked`: only onto blocked ground (`FLOOR`), still stopped by walls,
-    /// scenery and ground decor.
-    Blocked,
-    /// `blocked+normal` (`CollisionType.LINE_OF_SIGHT`): only projectile-
-    /// blocking walls and scenery stop it; ground and ordinary scenery don't.
-    LineOfSight,
-}
-
-impl StepStrategy {
-    pub(crate) fn of(restrict: MoveRestrict) -> Option<Self> {
-        match restrict {
-            MoveRestrict::Normal
-            | MoveRestrict::Passthru
-            | MoveRestrict::Indoors
-            | MoveRestrict::Outdoors => Some(Self::Normal),
-            MoveRestrict::Blocked => Some(Self::Blocked),
-            MoveRestrict::BlockedNormal => Some(Self::LineOfSight),
-            MoveRestrict::Nomove => None,
-        }
-    }
-
-    /// `CollisionStrategy.canMove(collision, tileFlag, blockFlag)`.
-    pub(crate) fn can_move(self, tile: u32, block: u32) -> bool {
-        const FLOOR: u32 = 0x20_0000;
-        // Walls (`0xff`) and scenery (`0x100`); `<< 9` turns each into its
-        // projectile-blocker bit.
-        const LINE_OF_SIGHT_MOVEMENT: u32 = 0x1ff;
-        match self {
-            Self::Normal => tile & block == 0,
-            Self::Blocked => tile & block & !FLOOR == 0 && tile & FLOOR != 0,
-            Self::LineOfSight => tile & ((block & LINE_OF_SIGHT_MOVEMENT) << 9) == 0,
-        }
-    }
-}
-
-/// Compute the deterministic POI generator digest from workspace-relative sources.
-pub fn pois_generator_identity(sources: &[(&str, &str)]) -> String {
-    let mut digest = Sha256::new();
-    digest.update(POIS_GENERATOR_ID.as_bytes());
-    digest.update([0]);
-    digest.update(POIS_POLICY_ALGORITHM.as_bytes());
-    for (label, text) in sources {
-        digest.update([0]);
-        digest.update(label.as_bytes());
-        digest.update([0]);
-        digest.update(text.as_bytes());
-    }
-    format!("{:x}", digest.finalize())
-}
-
-/// Read the producer sources named by [`POIS_GENERATOR_SOURCES`] from the workspace.
-pub fn pois_generator_identity_from_crate() -> Result<String, crate::GenerationError> {
-    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = crate_root
-        .parent()
-        .and_then(Path::parent)
-        .ok_or(crate::GenerationError::PoisGeneratorWorkspaceUnavailable)?;
-    let mut sources = Vec::new();
-    for relative in POIS_GENERATOR_SOURCES {
-        let path = workspace_root.join(relative);
-        let text = std::fs::read_to_string(&path).map_err(|source| {
-            crate::GenerationError::SourceInput(crate::SourceInputError::Io {
-                context: crate::SourceInputContext::PoisGeneratorSource,
-                path: std::path::PathBuf::from(relative),
-                source,
-            })
-        })?;
-        sources.push((relative, text));
-    }
-    let refs: Vec<(&str, &str)> = sources
-        .iter()
-        .map(|(label, text)| (*label, text.as_str()))
-        .collect();
-    Ok(pois_generator_identity(&refs))
-}
 
 pub struct ProduceRequest<'a> {
     pub revision: u16,
     pub content_root: &'a Path,
     pub npcs: &'a [NpcType],
     pub locs: &'a [LocType],
-    pub content_id: Digest,
-    pub nav_sha256: Digest,
-    pub source_sha256: Digest,
-    pub generator_sha256: Digest,
 }
 
 pub struct ProducedPois {
@@ -138,16 +30,7 @@ pub struct ProducedPois {
 pub fn produce_navpois(
     request: &ProduceRequest<'_>,
 ) -> Result<ProducedPois, crate::GenerationError> {
-    let policy = pois_policy_digest();
-    let identity = ServiceIdentity {
-        revision: request.revision,
-        content: request.content_id,
-        nav_sha256: request.nav_sha256,
-        source_sha256: request.source_sha256,
-        generator_sha256: request.generator_sha256,
-        policy,
-    };
-    let document = build_document(request, identity)
+    let document = build_document(request)
         .map_err(|detail| crate::GenerationError::PoisSourceInvalid { detail })?;
     let bytes = document
         .encode_navpois()
@@ -158,10 +41,7 @@ pub fn produce_navpois(
     })
 }
 
-fn build_document(
-    request: &ProduceRequest<'_>,
-    identity: ServiceIdentity,
-) -> Result<ServicePois, String> {
+fn build_document(request: &ProduceRequest<'_>) -> Result<ServicePois, String> {
     let npc_ids = pack_ids(request.content_root, "npc.pack");
     let loc_ids = pack_ids(request.content_root, "loc.pack");
     let tree = load_script_tree(request.content_root)?;
@@ -259,12 +139,11 @@ fn build_document(
     };
     let document = ServicePois {
         schema: NAVPOIS_VERSION,
-        identity,
         coverage,
         records: Rows::new(records).map_err(|e| format!("navpois records: {e}"))?,
     };
     document
-        .validate(identity)
+        .validate()
         .map_err(|e| format!("navpois validate: {e}"))?;
     Ok(document)
 }
@@ -383,10 +262,7 @@ fn emit_npc_records(
             let mut evidence = classified.clone();
             if let Some(services) = analysis.npc_services.get(id) {
                 for service in services {
-                    evidence.push((
-                        PoiKind::Bank,
-                        source_service(service, analysis.file_digest.get(&service.file)),
-                    ));
+                    evidence.push((PoiKind::Bank, source_service(service)));
                 }
             }
             evidence.sort_by_key(|(kind, _)| kind_rank(*kind));
@@ -470,19 +346,12 @@ fn emit_loc_records(
             );
             if let Some(services) = analysis.loc_services.get(id) {
                 for service in services {
-                    evidence.push((
-                        PoiKind::Bank,
-                        source_service(service, analysis.file_digest.get(&service.file)),
-                    ));
+                    evidence.push((PoiKind::Bank, source_service(service)));
                 }
             }
             if let Some(targets) = analysis.transitions_from.get(id) {
                 for target in targets {
                     if analysis.loc_ids.contains(target) || loc_has_bank_op(request.locs, *target) {
-                        let digest = analysis
-                            .transition_files
-                            .get(&(*id, *target))
-                            .and_then(|file| analysis.file_digest.get(file));
                         let reference = analysis
                             .transition_files
                             .get(&(*id, *target))
@@ -497,7 +366,6 @@ fn emit_loc_records(
                                 },
                                 eligibility: Eligibility::Conditional,
                                 reference: text(&reference)?,
-                                source_sha256: digest.copied().unwrap_or(Digest([0; 32])),
                             },
                         ));
                     }
@@ -549,7 +417,6 @@ fn emit_label_records(
         );
         return Ok(CoverageLevel::Unavailable);
     };
-    let digest = Digest::of(&bytes);
     let text_body = String::from_utf8_lossy(&bytes);
     let mut count = 0u32;
     for (index, raw) in text_body.lines().enumerate() {
@@ -591,7 +458,6 @@ fn emit_label_records(
                 },
                 CapabilityEvidence::SourceLabel {
                     reference: text("maps/labels.txt")?,
-                    source_sha256: digest,
                 },
             )],
         )?);
@@ -665,14 +531,13 @@ fn poi_record(
     Ok(record)
 }
 
-fn source_service(service: &HandlerService, digest: Option<&Digest>) -> CapabilityEvidence {
+fn source_service(service: &HandlerService) -> CapabilityEvidence {
     CapabilityEvidence::SourceService {
         capability: Capability::Bank,
         trigger: service.trigger,
         eligibility: service.eligibility,
         reference: Text::new(&service.reference)
             .unwrap_or_else(|_| Text::new("rs2").expect("Static service reference is valid")),
-        source_sha256: digest.copied().unwrap_or(Digest([0; 32])),
     }
 }
 
@@ -861,7 +726,6 @@ fn named_header(line: &str) -> Option<&str> {
 
 struct ScriptFile {
     rel: String,
-    digest: Digest,
     restricted: bool,
     blocks: Vec<ScriptBlock>,
 }
@@ -913,7 +777,6 @@ fn load_script_tree(content_root: &Path) -> Result<ScriptTree, String> {
                 Some("rs2") => {
                     if let Ok(text) = std::fs::read_to_string(&path) {
                         files.push(ScriptFile {
-                            digest: Digest::of(text.as_bytes()),
                             restricted: rel.contains("/tutorial/"),
                             blocks: parse_rs2_blocks(&text),
                             rel,
@@ -1314,12 +1177,10 @@ struct BankAnalysis {
     transitions_from: BTreeMap<i32, BTreeSet<i32>>,
     transition_files: BTreeMap<(i32, i32), String>,
     unresolved: BTreeMap<String, Vec<String>>,
-    file_digest: HashMap<String, Digest>,
 }
 
 #[derive(Clone)]
 struct HandlerService {
-    file: String,
     reference: String,
     trigger: ServiceTrigger,
     eligibility: Eligibility,
@@ -1350,11 +1211,9 @@ fn analyse_bank_handlers(
         transitions_from: BTreeMap::new(),
         transition_files: BTreeMap::new(),
         unresolved: BTreeMap::new(),
-        file_digest: HashMap::new(),
     };
     let mut openbank_memo = HashMap::new();
     for file in scripts {
-        analysis.file_digest.insert(file.rel.clone(), file.digest);
         for block in &file.blocks {
             if let Some(slot) = op_slot(&block.kind) {
                 if reaches_openbank(block, &blocks, &mut openbank_memo) {
@@ -1375,7 +1234,6 @@ fn analyse_bank_handlers(
                         }
                     };
                     let service = HandlerService {
-                        file: file.rel.clone(),
                         reference: format!("{}:{},{}", file.rel, block.kind, block.name),
                         trigger,
                         eligibility,

@@ -3047,52 +3047,32 @@ fn native_observation_without_compat_harvests_completed_inspection() {
 
 fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>)> {
     const CACHE_VERSION_HASH: &str = "37214163f1e6ceca";
-    const CONFIG_SHA256: &str = "3eeb1085547fb3af66db55ec4368357dbbad5178b7747f8b7cb0339fdd04a4ce";
-    const FLAGS_SHA256: &str = "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a";
-    const PACK_CACHE_ID: &str = "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09";
-    use sha2::Digest as _;
-    let pack = script::ctx::test_support::local_asset_path(
-        "WORLD_NAV_PACK",
-        "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack",
-        "reviewed real 289 navpack",
-    )?;
-    let snapshot_root = script::ctx::test_support::local_asset_path(
-        "BOT_NAV_SNAPSHOT_ROOT",
-        "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/cache-snapshots/revision-289/90f072568dab9327ad49aaecb804f8335d3803504ed56f72626b4b83fab84f47/37214163f1e6ceca4c349c15c867331510b9ccbb7e11f7ecbf434dfb331c9afb",
-        "decoded 289 cache snapshot root",
-    )?;
-
-    let pack_manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(pack.with_extension("navpack.json")).expect("revision-289 pack manifest"),
-    )
-    .expect("valid pack manifest");
-    assert_eq!(pack_manifest["revision"], 289);
-    assert_eq!(pack_manifest["cache_id"], PACK_CACHE_ID);
-    for extension in ["navflags", "navreach", "navcanlight", "navpois"] {
-        assert!(
-            pack.with_extension(extension).is_file(),
-            "missing real-content sidecar .{extension}"
-        );
-    }
+    let pack = api::test_support::local_asset_path("WORLD_NAV_PACK",
+    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack",
+    "reviewed real 289 navpack",)?;
+    let snapshot_root = api::test_support::local_asset_path("BOT_NAV_SNAPSHOT_ROOT",
+    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/cache-snapshots/revision-289/90f072568dab9327ad49aaecb804f8335d3803504ed56f72626b4b83fab84f47/37214163f1e6ceca4c349c15c867331510b9ccbb7e11f7ecbf434dfb331c9afb",
+    "decoded 289 cache snapshot root",)?;
 
     let cache_dir = snapshot_root.join(CACHE_VERSION_HASH);
-    let versionlist =
-        std::fs::read(cache_dir.join("versionlist")).expect("matching decoded versionlist");
-    assert_eq!(
-        client::unpack::version_hash(&versionlist),
-        CACHE_VERSION_HASH
-    );
-    let config_bytes =
-        std::fs::read(cache_dir.join("config")).expect("matching decoded config archive");
-    let config_digest: [u8; 32] = sha2::Sha256::digest(&config_bytes).into();
-    assert_eq!(nav_planner::pack::sha256_hex(&config_digest), CONFIG_SHA256);
+    let config_path = cache_dir.join("config");
+    api::test_support::local_asset_path(
+        "",
+        &config_path.to_string_lossy(),
+        "decoded revision 289 config archive for route inspection",
+    )?;
+    let config_bytes = std::fs::read(config_path).expect("decoded config archive");
     let cache = Arc::new(Cache::unpack(&client::io::JagFile::new(config_bytes)));
     let obj_names = names(&cache);
 
     let mut loaded_world = NavWorld::load_pack(&pack).expect("real revision-289 navpack");
-    let flags = nav_planner::pack::read_flags_sidecar(&pack.with_extension("navflags"), true)
-        .expect("matching raw flags sidecar");
-    assert_eq!(flags.content_sha256.as_deref(), Some(FLAGS_SHA256));
+    let flags_path = pack.with_extension("navflags");
+    api::test_support::local_asset_path(
+        "",
+        &flags_path.to_string_lossy(),
+        "raw revision 289 flags for route inspection",
+    )?;
+    let flags = nav_planner::pack::read_flags_sidecar(&flags_path).expect("raw flags sidecar");
     assert_eq!(flags.origin, loaded_world.collision.origin);
     assert_eq!(
         (flags.width, flags.height),
@@ -3104,14 +3084,14 @@ fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<Obj
     Some((Arc::new(loaded_world), cache, obj_names))
 }
 
-/// Deterministic old/new inspection handoff over the pinned real revision-289
-/// content. Reads `T5W_INSPECT_CAPTURE_BASELINE`; optionally writes the exact
+/// Deterministic old/new inspection handoff over local revision-289 content.
+/// Reads `T5W_INSPECT_CAPTURE_BASELINE`; optionally writes the exact
 /// new snapshot when `T5W_INSPECT_CAPTURE_OUT=<path>` is set.
 #[cfg(feature = "js")]
 #[test]
 fn real_content_inspection_capture_bytes() {
     use crate::script_runtime::SettledStart as _;
-    let Some(old_capture) = script::ctx::test_support::local_asset_path(
+    let Some(old_capture) = api::test_support::local_asset_path(
         "T5W_INSPECT_CAPTURE_BASELINE",
         "/Volumes/dev-scratch/274bot-evidence/TRACK-T5/T5W/inspection-old-capture-r5/inspect.fb",
         "immutable old inspection capture",

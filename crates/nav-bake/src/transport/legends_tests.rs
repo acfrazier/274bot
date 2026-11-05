@@ -40,10 +40,7 @@ impl EvidenceProvider for LegendsStageEvidence {
     }
 }
 
-fn legends_progress_evidence(
-    family: nav_planner::quest_gates::QuestFamilyId,
-    value: i32,
-) -> nav_planner::quest_gates::QuestEvidence {
+fn legends_progress_evidence(value: i32) -> nav_planner::quest_gates::QuestEvidence {
     let stamp = EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -55,7 +52,6 @@ fn legends_progress_evidence(
     };
     nav_planner::quest_gates::QuestEvidence::new(
         Arc::new(LegendsStageEvidence { value, stamp }),
-        family,
         stamp,
     )
 }
@@ -99,12 +95,8 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
         "==== LOC ====\n0 40 21: 2391 0 1\n0 41 21: 2392 0 1\n",
     );
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
-    let family = nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
-    let quests = QuestSource {
-        family,
-        facts: &facts,
-    };
+    let facts = selected.quest_identity().expect("selected quest facts");
+    let quests = QuestSource { facts };
     let collision = open_collision(2724, 3345, 12, 12);
     let (graph, _, _) = super::super::derive_transports_with_audit(
         fx.path(),
@@ -172,10 +164,10 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
             );
 
             let mut started = nav_planner::world_state::WorldState::empty();
-            started.quest_evidence = Some(legends_progress_evidence(family, 1));
+            started.quest_evidence = Some(legends_progress_evidence(1));
             assert!(started.allows(edge));
             let mut not_started = nav_planner::world_state::WorldState::empty();
-            not_started.quest_evidence = Some(legends_progress_evidence(family, 0));
+            not_started.quest_evidence = Some(legends_progress_evidence(0));
             assert!(!not_started.allows(edge));
             let mut varp_only = nav_planner::world_state::WorldState::empty();
             varp_only.varps.insert(139, 1);
@@ -203,11 +195,8 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
     write_legends_content(&fx);
     write_jungle_map(&fx, &JUNGLE_LOC_IDS);
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
-    let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    };
+    let facts = selected.quest_identity().expect("selected quest facts");
+    let quests = QuestSource { facts };
     let defs = loc_defs(&[
         (2887, 2, 2),
         (2889, 1, 1),
@@ -410,11 +399,8 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
 #[test]
 fn jungle_crossing_accepts_blocked_jungle_landing_only() {
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
-    let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    };
+    let facts = selected.quest_identity().expect("selected quest facts");
+    let quests = QuestSource { facts };
     let defs = loc_defs(&[(2887, 2, 2), (2889, 1, 1)]);
     let blocked_tile = WorldTile {
         x: 101,
@@ -500,11 +486,8 @@ fn jungle_crossing_accepts_blocked_jungle_landing_only() {
 #[test]
 fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
-    let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    };
+    let facts = selected.quest_identity().expect("selected quest facts");
+    let quests = QuestSource { facts };
     let defs = loc_defs(&[(2887, 2, 2)]);
     let collision = open_collision(90, 90, 30, 30);
     let complete = Fixture::new();
@@ -588,11 +571,8 @@ fn legends_gate_engine_closure_follows_helpers_into_general_scripts() {
         "==== LOC ====\n0 40 21: 2391 0 1\n0 41 21: 2392 0 1\n",
     );
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
-    let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    };
+    let facts = selected.quest_identity().expect("selected quest facts");
+    let quests = QuestSource { facts };
     let (graph, _, _) = super::super::derive_transports_with_audit(
         fx.path(),
         &loc_defs(&[]),

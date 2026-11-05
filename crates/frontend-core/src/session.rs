@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use api::host_log;
 use api::hostlog::{Category, Level, Source};
-use api::identity::SessionKey;
+use api::identity::{RequestId, SessionKey};
 use api::lifecycle::Intent;
 use host::{CapacityEval, FrameBuf, SlotInput};
 use host_play::{InstancePermit, Play, SlotArm, SlotStatus, WalkArms};
@@ -607,6 +607,9 @@ pub use prefs::{DrawPolicy, Notice, SettingEvent, SettingEventState, RENDER_ALL_
 
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
+    /// Post-decrypt old-format refusals waiting for the matching frontend
+    /// to resolve the unlock result, keyed by its command request.
+    vault_refusals: HashMap<RequestId, host_play::saved_data::SavedDataRefusal>,
     play: Option<Play>,
     fleet: Fleet,
     selected: Option<String>,
@@ -775,6 +778,7 @@ impl<Io> OperatorSession<Io> {
         crate::log::global();
         Self {
             vault: None,
+            vault_refusals: HashMap::new(),
             play: None,
             fleet: Fleet::default(),
             selected: None,
@@ -959,7 +963,7 @@ impl<Io> OperatorSession<Io> {
     ) -> Result<(), crate::launch::UnlockError> {
         use crate::launch::{UnlockError, UnlockStage};
         let vault = crate::launch::open_vault_typed(path, typed)
-            .map_err(|error| UnlockError::new(UnlockStage::Vault, error.to_string()))?;
+            .map_err(crate::launch::UnlockError::from_vault)?;
         self.start_play(vault, launch, hook)
             .map_err(|error| UnlockError::new(UnlockStage::Launch, error))
     }
@@ -1057,6 +1061,14 @@ impl<Io> OperatorSession<Io> {
         self.preference_error.as_deref()
     }
 
+    /// Whether startup is continuing with in-memory defaults because the
+    /// saved preferences use an unsupported pre-0.2.8 format.
+    pub fn preference_refused(&self) -> bool {
+        self.initial_preference_failure
+            .as_ref()
+            .is_some_and(crate::prefs::PreferenceError::is_unsupported_saved_format)
+    }
+
     /// Read the latest durable preference snapshot and let the
     /// session-owned state follow it once per durable version: the walk
     /// grants, the manual-walk pause, the Load order and the session file.
@@ -1082,6 +1094,12 @@ impl<Io> OperatorSession<Io> {
             }
             Err(error) if error.is_not_ready() => None,
             Err(error) => {
+                if error.is_unsupported_saved_format() {
+                    // A refused saved shape is a typed startup failure, not
+                    // an empty store. The front end reports it and uses
+                    // defaults only in memory for this run.
+                    self.preferences_adopted = true;
+                }
                 if self.initial_preference_failure.as_ref() != Some(&error) {
                     self.preference_error = Some(error.to_string());
                     self.initial_preference_failure = Some(error);
@@ -3446,6 +3464,14 @@ impl<Io> OperatorSession<Io> {
         profile.settings.raster = raster.to_vault();
         self.save_profile(profile, ArmMirror::none(), "render prefs")
             .map(Some)
+    }
+
+    /// Remove the typed saved-format refusal produced by this unlock request.
+    pub fn take_vault_refusal(
+        &mut self,
+        request: RequestId,
+    ) -> Option<host_play::saved_data::SavedDataRefusal> {
+        self.vault_refusals.remove(&request)
     }
 
     /// Whether a vault is open.

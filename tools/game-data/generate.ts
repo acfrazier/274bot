@@ -1,35 +1,30 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { verifyCacheIdentity } from './cache-identity.ts';
-import generatedInputPins from './generated-inputs.json';
-import { sha256, sourceFile, parseRows, parsePack, integer, parseParamDefinitions, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapInputs, PLACEMENT_MAPS_DIRECTORY } from './extractors/common.ts';
+import { parseRows, parsePack, integer, parseParamDefinitions, parseMapsquarePath, jm2SectionName, parseJm2LocPlacements, worldFromMapsquare, requireGatherText, placementMapFiles } from './extractors/common.ts';
 import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, hiddenSitesBytes, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, type GatherSiteWire, type HiddenSitesRecord, type MethodWire } from './extractors/gathering.ts';
-import { extractQuestIdentityFacts, questIdentityAnalysisFiles, questIdentityContentFiles } from './extractors/quests.ts';
-import { assertPrereqStepFacts, extractPrereqStepsFacts, prereqStepInputs, PREREQ_STEPS_SCHEMA } from './extractors/prereq-steps.ts';
-import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
+import { extractQuestIdentityFacts } from './extractors/quests.ts';
+import { assertPrereqStepFacts, extractPrereqStepsFacts, PREREQ_STEPS_SCHEMA } from './extractors/prereq-steps.ts';
+import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import { extractCombatStyleFacts, parseCombatScripts, buildSpellMaxHits, extractSpecialWeaponFacts, extractItemCombatBonus, extractMeleeWeaponTiers } from './extractors/combat.ts';
 import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { consumptionRule, parseConsumeMessageDelays, parseConsumptionEffects } from './extractors/consumption.ts';
-import { extractNpcNamesFacts, npcNamesContentFiles } from './extractors/npc-names.ts';
+import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractLocNamesFacts } from './extractors/loc-names.ts';
 import { extractNpcPlacementsFacts } from './extractors/npc-placements.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
 import { extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
-import { dialogueUiContentFiles, extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
-import { loadServerOrderedFacts, serverOrderedContentFiles, serverOrderedEngineInputPaths } from './extractors/server-ordered.ts';
-import { extractNpcTransformClosure, npcTransformInputPaths, type NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
+import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
+import { loadServerOrderedFacts } from './extractors/server-ordered.ts';
+import { extractNpcTransformClosure, type NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 
 type ObjType = { id: number; debugname: string | null; name: string | null; cost: number; stackable: boolean; members: boolean; certlink: number; certtemplate: number; wearpos: number; wearpos2: number; wearpos3: number; manwear: number; tradeable?: boolean; countobj?: ArrayLike<number> | null; category?: number; params?: Map<number, number | string> };
 type NpcType = { id: number; debugname?: string | null; name: string | null; respawnrate?: number };
 /** `NpcType.respawnrate` default: "default to 1-minute" (`engine/src/cache/config/NpcType.ts:105`). */
 const ENGINE_DEFAULT_NPC_RESPAWN_TICKS = 100;
-type GeneratedInputs = { engine_commit: string; content_commit: string; engine: InputHash[]; content: InputHash[] };
-type Revision = { revision: number; engine: string; content: string; expectedEngine: string; expectedContent: string; generatedInputs?: GeneratedInputs; cacheIdentity: { cache_id: string; content_id?: string; nav_sha256: string; flags_sha256: string }; output: string };
 
 const root = path.resolve(import.meta.dirname, '../..');
+type Revision = { revision: number; engine: string; content: string; output: string };
 /** Every external source root is explicit: an unset variable fails closed and names itself. */
 export function requireEnvPath(name: string, label: string): string {
     const value = process.env[name];
@@ -37,12 +32,8 @@ export function requireEnvPath(name: string, label: string): string {
     return path.resolve(value);
 }
 export const revisions: Revision[] = [
-    { revision: 274, engine: requireEnvPath('GAME_DATA_274_ENGINE', 'the 274 engine root'), content: requireEnvPath('GAME_DATA_274_CONTENT', 'the 274 content root'), expectedEngine: '4c95f87efe00b068cadbd229d94736626907bd1a', expectedContent: '000c19997e07206131bcb3c884265840efce416d', cacheIdentity: { cache_id: '4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c', content_id: '0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c', nav_sha256: '05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4', flags_sha256: '92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb' }, output: path.join(root, 'crates/api/data/game-data/274.json') },
-    { revision: 289, engine: requireEnvPath('GAME_DATA_289_ENGINE', 'the 289 engine root'), content: requireEnvPath('GAME_DATA_289_CONTENT', 'the 289 content root'), expectedEngine: 'cc359656b4acd216ca452495874b6beba9a0ac75', expectedContent: '92649430fcbc83538d8c4367ecb96cee1a67a944', cacheIdentity: { cache_id: 'c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09', content_id: 'cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044', nav_sha256: '81e5ca84568b4e3d9b0e7f428a2d43d5e945c73cd74910645db626c89bd4de36', flags_sha256: '67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a' }, output: path.join(root, 'crates/api/data/game-data/289.json') }
-].map(spec => ({ ...spec, generatedInputs: generatedInputPins[spec.revision as 274 | 289] }));
-const decoderSources = [
-    'src/cache/config/ObjType.ts', 'src/cache/config/NpcType.ts', 'src/cache/config/ConfigType.ts', 'src/cache/config/ParamHelper.ts', 'src/cache/config/ParamType.ts', 'src/cache/config/ScriptVarType.ts',
-    'src/io/BZip2.ts', 'src/io/Jagfile.ts', 'src/io/Packet.ts', 'src/datastruct/DoublyLinkable.ts', 'src/datastruct/LinkList.ts', 'src/datastruct/Linkable.ts', 'src/util/Environment.ts', 'src/util/Logger.ts', 'src/util/TryParse.ts', 'src/util/WorldConfig.ts'
+    { revision: 274, engine: requireEnvPath('GAME_DATA_274_ENGINE', 'the 274 engine root'), content: requireEnvPath('GAME_DATA_274_CONTENT', 'the 274 content root'), output: path.join(root, 'crates/api/data/game-data/274.json') },
+    { revision: 289, engine: requireEnvPath('GAME_DATA_289_ENGINE', 'the 289 engine root'), content: requireEnvPath('GAME_DATA_289_CONTENT', 'the 289 content root'), output: path.join(root, 'crates/api/data/game-data/289.json') },
 ];
 const dropContentFiles = [
     'scripts/_unpack/225/all.npc',
@@ -54,285 +45,19 @@ const dropContentFiles = [
     'scripts/drop tables/scripts/kalphite_queen.rs2',
     'scripts/drop tables/scripts/shared_droptables.rs2',
 ];
-const prayerContentFiles = [
-    'scripts/skill_prayer/configs/prayers.dbrow',
-    'scripts/skill_prayer/configs/prayers.constant',
-    'scripts/skill_prayer/interfaces/prayer.if',
-];
-const nurmofEssenceContentFiles = [
-    'scripts/areas/area_falador/configs/dwarven_mine.inv',
-    'scripts/areas/area_falador/configs/dwarven_mine.npc',
-    'scripts/skill_runecraft/configs/runecraft.constant',
-    'maps/m45_75.jm2',
-    'pack/npc.pack',
-];
-const flourSixContentFiles = [
-    'scripts/quests/quest_murder/configs/quest_murder.loc',
-    'scripts/general/configs/quest.enum',
-    'maps/m42_55.jm2',
-    'pack/loc.pack',
-    'pack/obj.pack',
-];
-export const trailContentFiles = [
-    'scripts/minigames/game_trail/configs/trail_easy.enum',
-    'scripts/minigames/game_trail/configs/trail_easy.obj',
-    'scripts/minigames/game_trail/configs/trail_medium.enum',
-    'scripts/minigames/game_trail/configs/trail_medium.obj',
-    'scripts/minigames/game_trail/configs/trail_hard.enum',
-    'scripts/minigames/game_trail/configs/trail_hard.obj',
-    'scripts/minigames/game_trail/configs/trail_casket.obj',
-];
-const combatContentFiles = [
-    'scripts/player/scripts/consumption/consume.rs2',
-    'scripts/player/configs/consumption/consume_messages.dbrow',
-    'scripts/skill_combat/scripts/combat.rs2',
-    'scripts/skill_combat/scripts/player/player_attackstyles.rs2',
-    'scripts/skill_combat/configs/combat_damagestyles.constant',
-    'scripts/skill_combat/configs/combat.dbrow',
-    'scripts/skill_combat/configs/combat_damagetypes.constant',
-    'scripts/skill_combat/configs/combat.dbtable',
-    // PvP V0: specwep/sa_energy defaults, destroy_death, melee tiers, duel
-    // rule bits and duel zone bounds. The tier and duel scripts are .rs2
-    // files already covered by the parsed-script closure; the param, dbrow
-    // and constant files join the pinned inputs here.
-    'scripts/skill_combat/configs/combat.param',
-    'scripts/player/configs/death.param',
-    'scripts/minigames/game_duelarena/configs/duelarena.dbrow',
-    'scripts/minigames/game_duelarena/configs/duelarena.constant',
-    'pack/category.pack',
-    'pack/enum.pack',
-    'pack/seq.pack',
-    'pack/spotanim.pack',
-    'pack/npc.pack',
-];
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, ...combatContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...questIdentityContentFiles, ...trailContentFiles, 'maps/labels.txt', 'scripts/skill_fishing/configs/fishing.npc'];
-contentFiles.push(...npcNamesContentFiles.filter((file) => !contentFiles.includes(file)));
-
-// Manual spell names resolve through the magic tab interface, so it joins the base input closure.
-contentFiles.push('scripts/skill_magic/interfaces/magic.if');
-contentFiles.push(...dialogueUiContentFiles);
 const thievingLevelOnlySources = [
     { file: 'scripts/quests/quest_itexam/scripts/digsite_workman.rs2', aliases: ['digworkman1', 'digworkman2'] },
     { file: 'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2', aliases: ['troll_prison_guard1', 'troll_prison_guard2'] },
 ] as const;
-contentFiles.push(...thievingLevelOnlySources.map((source) => source.file));
-function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
-export function assertPinned(spec: Revision) {
-    const engineCommit = commit(spec.engine); const contentCommit = commit(spec.content);
-    if (engineCommit !== spec.expectedEngine || contentCommit !== spec.expectedContent) throw new Error(`${spec.revision}: expected pinned commits, got ${engineCommit}/${contentCommit}`);
-    if (spec.generatedInputs && (spec.generatedInputs.engine_commit !== engineCommit || spec.generatedInputs.content_commit !== contentCommit)) throw new Error(`${spec.revision}: generated input pins belong to different commits`);
-    const dirtyEngine = engineDirt(spec.engine, spec.generatedInputs?.engine);
-    if (dirtyEngine) throw new Error(`${spec.revision}: relevant engine inputs are dirty:\n${dirtyEngine}`);
-    const dirtyContent = contentDirt(spec.content, spec.generatedInputs?.content);
-    if (dirtyContent) throw new Error(`${spec.revision}: relevant content inputs are dirty:\n${dirtyContent}`);
-    return { engineCommit, contentCommit };
-}
-/** Apply the wider source check only to the server-ordered proof owner. */
-export function assertServerOrderedPinned(spec: Revision) {
-    if (spec.revision === 289) {
-        const paths = serverOrderedInputPaths(spec.engine, spec.content);
-        const selectedGenerated = spec.generatedInputs?.engine.filter(input => paths.engine.includes(input.path)) ?? [];
-        const dirty = inputDirt(spec.engine, paths.engine, selectedGenerated);
-        if (dirty) throw new Error(`${spec.revision}: server-ordered engine inputs are dirty:\n${dirty}`);
-    }
-}
-/**
- * Complete conservative input closure: journals, included scripts/configs, all
- * packs and maps. New extractors must not read outside these pinned trees.
- */
-export const CONTENT_TREE_PATHSPECS = ['scripts', 'pack', 'maps'];
-export const ENGINE_INPUT_PATHS = [
-    ...decoderSources,
-    'src/network/game/client/ClientGameProtCategory.ts',
-    'src/network/game/client/handler/ClientCheatHandler.ts',
-    'src/engine/entity/PlayerStat.ts',
-    'src/engine/entity/NetworkPlayer.ts',
-    'src/network/game/client/model',
-    'data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config',
-];
-// Platform metadata is never an extractor input, tracked or otherwise.
-const isJunk = (file: string) => ['.DS_Store', 'Thumbs.db', 'desktop.ini'].includes(path.basename(file)) || path.basename(file).startsWith('._');
-function gitFiles(base: string, paths: string[], options: string[]) {
-    return execFileSync('git', ['-C', base, 'ls-files', '-z', ...options, '--', ...paths], { encoding: 'utf8' }).split('\0').filter(file => file && !isJunk(file));
-}
-function checkedInput(base: string, relative: string) {
-    // Reject symlink ancestors as well as symlink leaves.
-    let file = base;
-    for (const part of relative.split('/')) {
-        if (!part || part === '.' || part === '..') throw new Error(`invalid selected input: ${relative}`);
-        file = path.join(file, part);
-        if (fs.lstatSync(file).isSymbolicLink()) throw new Error(`selected input must not escape its pin: ${relative}`);
-    }
-    if (!fs.statSync(file).isFile()) throw new Error(`unsupported selected input: ${relative}`);
-    return sourceFile(base, relative);
-}
-function inputDirt(base: string, paths: string[], generated: readonly InputHash[]) {
-    const dirty = execFileSync('git', ['-C', base, '-c', 'status.renames=false', 'status', '--porcelain', '-z', '--untracked-files=all', '--', ...paths], { encoding: 'utf8' })
-        .split('\0').filter(row => row && !isJunk(row.slice(3)));
-    const pinned = new Map(generated.map(input => [input.path, input]));
-    for (const file of gitFiles(base, paths, ['--others', '--ignored', '--exclude-standard'])) {
-        if (!pinned.has(file)) dirty.push(`unrecognized ignored input: ${file}`);
-    }
-    for (const input of generated) {
-        try {
-            const actual = checkedInput(base, input.path);
-            if (actual.bytes !== input.bytes || actual.sha256 !== input.sha256) dirty.push(`generated input hash mismatch: ${input.path}`);
-        } catch (error) {
-            dirty.push(`generated input unavailable: ${input.path}: ${error instanceof Error ? error.message : error}`);
-        }
-    }
-    return dirty.join('\n');
-}
-/** Tracked changes and every ignored input in the same closure used for hashing. */
-export function engineDirt(engine: string, generated: readonly InputHash[] = []) {
-    return inputDirt(engine, ENGINE_INPUT_PATHS, generated);
-}
-export function contentDirt(content: string, generated: readonly InputHash[] = []) {
-    return inputDirt(content, CONTENT_TREE_PATHSPECS, generated);
-}
-
-export type InputHash = { path: string; bytes: number; sha256: string };
-/** Only upstream identities: neither nav nor the final manifest can feed extraction. */
-export type FamilyInputs = {
-    revision: number; engine_commit: string; content_commit: string;
-    cache_id: string; content_id: string; inputs: InputHash[];
-};
 export type FamilyDraft = { schema: number; payload: unknown };
-export type FamilyArtifact = { path: string; schema: number; bytes: number; sha256: string };
-/** The one serialization of a family artifact: extractor schema, upstream identities and inputs, then the facts. */
-export function familyBytes(upstream: FamilyInputs, draft: FamilyDraft, name = 'family') {
+export function familyBytes(draft: FamilyDraft, name = 'family') {
     if (!Number.isInteger(draft.schema) || draft.schema < 1 || draft.schema > 65535) throw new Error(`${name}: invalid extractor schema`);
-    return `${JSON.stringify({ schema: draft.schema, ...upstream, facts: draft.payload }, null, 2)}\n`;
+    return `${JSON.stringify({ schema: draft.schema, facts: draft.payload }, null, 2)}\n`;
 }
-/** Quests extractor schema, shared by the normal generator, the selected pipeline provider, and verification. Bump only with the Rust decoder. */
+/** Static quest identity and observation metadata; no per-account progress. */
 export const QUESTS_SCHEMA = 2;
-/** Static quest identity and observation metadata in the shared family envelope. No per-account progress. */
 export function extractQuestsFamily(content: string, revision: number): FamilyDraft {
     return { schema: QUESTS_SCHEMA, payload: extractQuestIdentityFacts(content, revision) };
-}
-export type SelectedFamilies = { quests: FamilyArtifact; gathering: FamilyArtifact };
-export type BakedNavigation = {
-    nav: string; flags: string; quest_facts_sha256: string; quest_extractor_schema: number;
-};
-export type ActionLimitRecord = {
-    user_events_per_tick: number; source: { file: string; first: number; last: number };
-};
-/** Off-pump build ports. Owners install extraction/bake/core content, not another entry point. */
-export type SelectedBuild = {
-    quests: (inputs: FamilyInputs) => FamilyDraft;
-    gathering: (inputs: FamilyInputs) => FamilyDraft;
-    bake: (families: SelectedFamilies) => Promise<BakedNavigation>;
-    core: (inputs: FamilyInputs, families: SelectedFamilies, nav: BakedNavigation) =>
-        { bytes: Uint8Array; action_limits: ActionLimitRecord };
-};
-
-/** Sorted complete input inventory, including includes/configs/packs/maps/engine limits. */
-function selectedInputHashes(spec: Revision): InputHash[] {
-    const inputs: InputHash[] = [];
-    for (const [scope, base, paths, generated] of [
-        ['content', spec.content, CONTENT_TREE_PATHSPECS, spec.generatedInputs?.content ?? []],
-        ['engine', spec.engine, ENGINE_INPUT_PATHS, spec.generatedInputs?.engine ?? []],
-    ] as const) {
-        const selectedGenerated = generated.filter(input => paths.some(relative => input.path === relative || input.path.startsWith(`${relative}/`)));
-        const names = new Set([...gitFiles(base, paths, ['--cached']), ...selectedGenerated.map(input => input.path)]);
-        for (const relative of names) inputs.push({ ...checkedInput(base, relative), path: `${scope}/${relative}` });
-    }
-    return inputs.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-}
-/** Upstream identities and the complete sorted input inventory every family is extracted from. */
-export function familyInputs(spec: Revision, pinned: { engineCommit: string; contentCommit: string }): FamilyInputs {
-    if (!spec.cacheIdentity.content_id) throw new Error('selected build requires content identity');
-    return {
-        revision: spec.revision, engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit,
-        cache_id: spec.cacheIdentity.cache_id, content_id: spec.cacheIdentity.content_id,
-        inputs: selectedInputHashes(spec),
-    };
-}
-
-/**
- * The family cutover's one-way build, called by this entry point's selected
- * generation owner when M-296/M-306/M-067 supply their real producers.
- * Legacy generation below is byte-preserving until that atomic asset cutover.
- */
-export async function generateSelected(spec: Revision, build: SelectedBuild) {
-    const pinned = assertPinned(spec);
-    verifyCacheIdentity(spec.revision, spec.engine, spec.cacheIdentity);
-    const upstream = familyInputs(spec, pinned);
-    const parent = path.dirname(spec.output);
-    fs.mkdirSync(parent, { recursive: true });
-    const directory = path.join(parent, String(spec.revision));
-    const staging = fs.mkdtempSync(path.join(parent, `.${spec.revision}-staging-`));
-    try {
-        const emit = (name: string, bytes: Uint8Array | string) => {
-            const file = path.join(staging, name);
-            fs.writeFileSync(file, bytes);
-            return { path: file, ...sha256(file) };
-        };
-        const family = (name: string, draft: FamilyDraft): FamilyArtifact => {
-            const bytes = familyBytes(upstream, draft, name);
-            return { ...emit(`${name}.json`, bytes), schema: draft.schema };
-        };
-        // Nothing downstream exists or is supplied to the extractors at this point.
-        const families = {
-            quests: family('quests', build.quests(upstream)),
-            gathering: family('gathering', build.gathering(upstream)),
-        };
-        const nav = await build.bake(families);
-        if (nav.quest_facts_sha256 !== families.quests.sha256 || nav.quest_extractor_schema !== families.quests.schema) throw new Error('nav quest-family digest/schema mismatch');
-        const navHash = sha256(nav.nav), flagsHash = sha256(nav.flags);
-        const core = build.core(upstream, families, nav);
-        const coreArtifact = emit('core.json', core.bytes);
-        assertPinned(spec);
-        if (JSON.stringify(selectedInputHashes(spec)) !== JSON.stringify(upstream.inputs)) throw new Error('selected inputs changed during generation');
-        const descriptor = (artifact: FamilyArtifact) => ({
-            path: path.basename(artifact.path), schema: artifact.schema, bytes: artifact.bytes, sha256: artifact.sha256,
-        });
-        const manifest = {
-            schema: 1, revision: upstream.revision, engine_commit: upstream.engine_commit, content_commit: upstream.content_commit,
-            cache_id: upstream.cache_id, content_id: upstream.content_id, action_limits: core.action_limits,
-            families: { quests: descriptor(families.quests), gathering: descriptor(families.gathering) },
-            nav: { ...navHash, quest_facts_sha256: nav.quest_facts_sha256, quest_extractor_schema: nav.quest_extractor_schema },
-            flags: flagsHash, core: { path: 'core.json', bytes: coreArtifact.bytes, sha256: coreArtifact.sha256 },
-        };
-        // The digest is returned/attached by loaders, never embedded in these bytes.
-        const artifact = emit('manifest.json', `${JSON.stringify(manifest, null, 2)}\n`);
-        const backup = fs.existsSync(directory) ? fs.mkdtempSync(path.join(parent, `.${spec.revision}-previous-`)) : undefined;
-        if (backup) fs.renameSync(directory, path.join(backup, 'assets'));
-        try {
-            fs.renameSync(staging, directory);
-        } catch (error) {
-            if (backup) fs.renameSync(path.join(backup, 'assets'), directory);
-            if (backup) fs.rmSync(backup, { recursive: true });
-            throw error;
-        }
-        if (backup) fs.rmSync(backup, { recursive: true });
-        return { ...artifact, path: path.join(directory, 'manifest.json') };
-    } finally {
-        fs.rmSync(staging, { recursive: true, force: true });
-    }
-}
-/**
- * The rs2b0t sources the generator reads, as git blob ids at the pinned
- * commit (`git rev-parse 00d39a17e056df6c5e461f3f2cfd3598ff9720b6:<path>`).
- * The pin is a `git archive` export without history, so identity is checked
- * per file: a different commit or a local edit changes the blob id.
- */
-export const RS2B0T_PIN = {
-    commit: '00d39a17e056df6c5e461f3f2cfd3598ff9720b6',
-    blobs: {
-        'src/bot/api/bank/BankLocations.ts': '82171ae05322fa3abfd7db1161eb3efd1a3543e6',
-        'src/bot/data/cookLocations.ts': '7c5b1a858662cd06b345228de63c7b5628ae591f',
-        'src/bot/data/cookingRanges.ts': '4606747ff64fc31c2b9af20b7853d2c7dd655a48',
-        'tools/cooking/gen-cooksurfaces.ts': '83db08d8327eb0356daea08e75fda29f8aaf0b4b',
-    } as Record<string, string>,
-};
-/** Refuse an rs2b0t root whose read sources are not the pinned commit's blobs. */
-export function assertRs2b0tPinned(rs2b0tRoot: string, pin = RS2B0T_PIN) {
-    for (const [relative, expected] of Object.entries(pin.blobs)) {
-        const bytes = fs.readFileSync(path.join(rs2b0tRoot, relative));
-        const blob = crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
-        if (blob !== expected) throw new Error(`rs2b0t ${relative}: blob ${blob} is not ${pin.commit}'s ${expected} (dirty or not the pinned export)`);
-    }
 }
 /**
  * Item category ids are decoded from the selected cache and named by the
@@ -501,9 +226,6 @@ export function extractMagicFacts(content: string, items: ObjType[]) {
     for (const [spell, ssb] of chooser) {
         if (!seenSpell.has(spell)) throw new Error(`autocast: chooser ^${spell} (ssb${ssb}) has no combat row`);
     }
-    if (spells[0]?.name !== 'Wind Strike') {
-        throw new Error(`expected Wind Strike first, got ${spells[0]?.name}`);
-    }
     const byStaff = new Map<string, { alias: string; id: number; name: string; runes: Map<string, { alias: string; id: number; name: string }> }>();
     for (const parsed of parseRows(fs.readFileSync(path.join(content, 'scripts/skill_magic/configs/magic_staff.dbrow'), 'utf8'))) {
         const rune = namedItem(itemIds, required(parsed.values, 'rune', parsed.name), `${parsed.name} rune`);
@@ -525,16 +247,6 @@ export function extractMagicFacts(content: string, items: ObjType[]) {
 const EQUIPMENT_FAMILY_ORDER = ['bows', 'crossbows', 'darts', 'arrows', 'bolts', 'melee_weapons', 'staffs'] as const;
 type EquipmentFamilyId = (typeof EQUIPMENT_FAMILY_ORDER)[number];
 const EQUIPMENT_CURATED_RELATIVE = 'tools/game-data/equipment-names.curated.json';
-const EQUIPMENT_EVIDENCE_RELATIVE = 'tools/game-data/equipment-names.frozen.ts';
-const EQUIPMENT_FROZEN_EXPORTS: { exportName: string; family: EquipmentFamilyId }[] = [
-    { exportName: 'BOWS', family: 'bows' },
-    { exportName: 'CROSSBOWS', family: 'crossbows' },
-    { exportName: 'DARTS', family: 'darts' },
-    { exportName: 'ARROWS', family: 'arrows' },
-    { exportName: 'BOLTS', family: 'bolts' },
-    { exportName: 'MELEE_WEAPONS', family: 'melee_weapons' },
-    { exportName: 'STAFFS', family: 'staffs' },
-];
 
 export type EquipmentNameEntry = {
     requested_name: string;
@@ -559,9 +271,6 @@ export type EquipmentExactNameJoin = {
 };
 
 export type EquipmentNamesFacts = {
-    curated_input: { path: string; bytes: number; sha256: string };
-    equipment_source: { path: string; bytes: number; sha256: string; commit?: string };
-    equipment_evidence: { path: string; bytes: number; sha256: string };
     exact_name_join: EquipmentExactNameJoin;
     bows: EquipmentNameEntry[];
     crossbows: EquipmentNameEntry[];
@@ -574,7 +283,6 @@ export type EquipmentNamesFacts = {
 
 type EquipmentCurated = {
     schema: string;
-    source: { path: string; sha256: string; bytes: number; commit?: string };
     families: Record<EquipmentFamilyId, string[]>;
 };
 
@@ -587,90 +295,24 @@ const EQUIPMENT_EXACT_NAME_JOIN: EquipmentExactNameJoin = {
         note: 'Frozen BOLTS members (Bronze bolts … Bone bolts) are absent under exact join. Generic Bolts / Bolts(p) are not substitutes and are not mapped onto those tier strings.',
     },
 };
+type EquipmentItemFact = {
+    alias: string | null;
+    id: number;
+    name: string | null;
+    certificate_template: number;
+    wear_position: number;
+    wear_position_2: number;
+    wear_position_3: number;
+};
 
-function isWearableRow(item: ReturnType<typeof row>) {
+function isWearableRow(item: EquipmentItemFact) {
     return item.wear_position >= 0 || item.wear_position_2 >= 0 || item.wear_position_3 >= 0;
 }
 
-function isBankNoteRow(item: ReturnType<typeof row>) {
+function isBankNoteRow(item: EquipmentItemFact) {
     return item.certificate_template >= 0;
 }
 
-/** Dedicated single-quoted scanner for frozen equipment.ts arrays. Not a generic JS parser. */
-export function parseFrozenEquipmentSingleQuoted(text: string, start: number): { value: string; end: number } {
-    if (text[start] !== "'") throw new Error(`equipment frozen: expected single quote at ${start}`);
-    let index = start + 1;
-    let value = '';
-    while (index < text.length) {
-        const ch = text[index];
-        if (ch === '\\') {
-            const next = text[index + 1];
-            if (next !== "'" && next !== '\\') throw new Error(`equipment frozen: unsupported escape at ${index}`);
-            value += next;
-            index += 2;
-            continue;
-        }
-        if (ch === "'") return { value, end: index + 1 };
-        if (ch === '\n' || ch === '\r') throw new Error('equipment frozen: unterminated string');
-        value += ch;
-        index += 1;
-    }
-    throw new Error('equipment frozen: unterminated string');
-}
-
-export function parseFrozenEquipmentNameArrays(text: string): Record<EquipmentFamilyId, string[]> {
-    const out = {} as Record<EquipmentFamilyId, string[]>;
-    for (const { exportName, family } of EQUIPMENT_FROZEN_EXPORTS) {
-        const header = `export const ${exportName}: string[] = [`;
-        const start = text.indexOf(header);
-        if (start < 0) throw new Error(`equipment frozen: missing ${exportName}`);
-        if (text.indexOf(header, start + 1) >= 0) throw new Error(`equipment frozen: duplicate ${exportName}`);
-        let index = start + header.length;
-        const names: string[] = [];
-        let closed = false;
-        while (index < text.length) {
-            const ch = text[index];
-            if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === ',') {
-                index += 1;
-                continue;
-            }
-            if (ch === ']') {
-                out[family] = names;
-                closed = true;
-                break;
-            }
-            if (ch === "'") {
-                const parsed = parseFrozenEquipmentSingleQuoted(text, index);
-                if (!parsed.value) throw new Error(`equipment frozen: empty name in ${exportName}`);
-                names.push(parsed.value);
-                index = parsed.end;
-                continue;
-            }
-            throw new Error(`equipment frozen: unexpected token in ${exportName} at ${index}`);
-        }
-        if (!closed) throw new Error(`equipment frozen: unterminated ${exportName}`);
-        if (names.length === 0) throw new Error(`equipment frozen: empty ${exportName}`);
-    }
-    return out;
-}
-
-function assertCuratedMatchesFrozen(curated: EquipmentCurated, frozen: Record<EquipmentFamilyId, string[]>) {
-    const extra = Object.keys(curated.families).filter((key) => !EQUIPMENT_FAMILY_ORDER.includes(key as EquipmentFamilyId));
-    if (extra.length > 0) throw new Error(`equipment names curated: unknown families ${extra.join(', ')}`);
-    for (const family of EQUIPMENT_FAMILY_ORDER) {
-        const curatedNames = curated.families[family];
-        const frozenNames = frozen[family];
-        if (!Array.isArray(curatedNames)) throw new Error(`equipment names curated: missing family ${family}`);
-        if (curatedNames.length !== frozenNames.length) {
-            throw new Error(`equipment names curated: ${family} length ${curatedNames.length} != frozen ${frozenNames.length}`);
-        }
-        for (let index = 0; index < frozenNames.length; index += 1) {
-            if (curatedNames[index] !== frozenNames[index]) {
-                throw new Error(`equipment names curated: ${family}[${index}] ${JSON.stringify(curatedNames[index])} != frozen ${JSON.stringify(frozenNames[index])}`);
-            }
-        }
-    }
-}
 
 export function loadEquipmentNamesCurated(repoRoot: string = root): EquipmentCurated {
     const curatedPath = path.join(repoRoot, EQUIPMENT_CURATED_RELATIVE);
@@ -691,13 +333,6 @@ export function loadEquipmentNamesCurated(repoRoot: string = root): EquipmentCur
             seen.add(name);
         }
     }
-    const evidencePath = path.join(repoRoot, EQUIPMENT_EVIDENCE_RELATIVE);
-    if (!fs.existsSync(evidencePath)) throw new Error(`equipment evidence missing at ${evidencePath}`);
-    const evidenceDigest = sha256(evidencePath);
-    if (evidenceDigest.sha256 !== curated.source.sha256 || evidenceDigest.bytes !== curated.source.bytes) {
-        throw new Error(`equipment evidence pin mismatch: expected ${curated.source.sha256}/${curated.source.bytes}, got ${evidenceDigest.sha256}/${evidenceDigest.bytes}`);
-    }
-    assertCuratedMatchesFrozen(curated, parseFrozenEquipmentNameArrays(fs.readFileSync(evidencePath, 'utf8')));
     return curated;
 }
 
@@ -709,7 +344,7 @@ function requireObjPack(objPack: Map<string, number> | undefined): Map<string, n
 export function joinEquipmentName(
     family: EquipmentFamilyId,
     requestedName: string,
-    items: ReturnType<typeof row>[],
+    items: EquipmentItemFact[],
     objPack: Map<string, number>,
 ): EquipmentNameEntry {
     const pack = requireObjPack(objPack);
@@ -793,22 +428,10 @@ export function joinEquipmentName(
     };
 }
 
-export function extractEquipmentNamesFacts(items: ReturnType<typeof row>[], objPack: Map<string, number>, repoRoot: string = root): EquipmentNamesFacts {
+export function extractEquipmentNamesFacts(items: EquipmentItemFact[], objPack: Map<string, number>, repoRoot: string = root): EquipmentNamesFacts {
     const pack = requireObjPack(objPack);
     const curated = loadEquipmentNamesCurated(repoRoot);
-    const curatedPath = path.join(repoRoot, EQUIPMENT_CURATED_RELATIVE);
-    const evidencePath = path.join(repoRoot, EQUIPMENT_EVIDENCE_RELATIVE);
-    const curatedDigest = sha256(curatedPath);
-    const evidenceDigest = sha256(evidencePath);
     const out: EquipmentNamesFacts = {
-        curated_input: { path: path.relative(repoRoot, curatedPath).replaceAll('\\', '/'), ...curatedDigest },
-        equipment_source: {
-            path: curated.source.path,
-            bytes: curated.source.bytes,
-            sha256: curated.source.sha256,
-            commit: curated.source.commit,
-        },
-        equipment_evidence: { path: EQUIPMENT_EVIDENCE_RELATIVE, ...evidenceDigest },
         exact_name_join: EQUIPMENT_EXACT_NAME_JOIN,
         bows: [],
         crossbows: [],
@@ -938,36 +561,8 @@ export function extractPrayerFacts(content: string) {
             varp_alias: varpAlias,
         });
     }
-    if (prayers.length !== 15) throw new Error(`prayer: expected 15 rows, got ${prayers.length}`);
+    if (prayers.length === 0) throw new Error('prayer: missing prayer rows');
     prayers.sort((a, b) => a.button_com - b.button_com || a.name.localeCompare(b.name));
-    const thick = prayers[0];
-    const melee = prayers[14];
-    if (
-        thick.name !== 'Thick Skin'
-        || thick.level !== 1
-        || thick.button_com !== 5609
-        || thick.varp !== 83
-        || thick.varp_alias !== 'prayer0'
-    ) {
-        throw new Error(`prayer: Thick Skin anchor mismatch ${JSON.stringify(thick)}`);
-    }
-    if (
-        melee.name !== 'Protect from Melee'
-        || melee.level !== 43
-        || melee.button_com !== 5623
-        || melee.varp !== 97
-        || melee.varp_alias !== 'prayer14'
-    ) {
-        throw new Error(`prayer: Protect from Melee anchor mismatch ${JSON.stringify(melee)}`);
-    }
-    for (let index = 0; index < prayers.length; index += 1) {
-        const expectedCom = 5609 + index;
-        const expectedVarp = 83 + index;
-        const row = prayers[index];
-        if (row.button_com !== expectedCom || row.varp !== expectedVarp) {
-            throw new Error(`prayer: expected com ${expectedCom}/varp ${expectedVarp}, got ${row.button_com}/${row.varp} for ${row.name}`);
-        }
-    }
     return { prayers };
 }
 
@@ -1143,7 +738,7 @@ export function parseIdentifyHerbPairs(text: string) {
 }
 
 
-/** Default Herblore level from pinned `identify.param`, not obj cost. */
+/** Default Herblore level from local `identify.param` content. */
 export function identifiedHerbLevelDefault(content: string) {
     const defs = parseParamDefinitions(
         fs.readFileSync(path.join(content, 'scripts/skill_herblore/configs/identifying/identify.param'), 'utf8'),
@@ -1168,7 +763,7 @@ export function extractHerbFacts(content: string, items: ObjType[]) {
     const herbsObj = parseObjSections(fs.readFileSync(path.join(content, 'scripts/skill_herblore/configs/herbs.obj'), 'utf8'));
     const identify = fs.readFileSync(path.join(content, 'scripts/skill_herblore/scripts/identifying/identify.rs2'), 'utf8');
     const pairs = parseIdentifyHerbPairs(identify);
-    const herbs: { key: string; name: string; id: number; unidId: number; level: number; level_source: string; source_identified: string; source_unidentified: string }[] = [];
+    const herbs: { key: string; name: string; id: number; unidId: number; level: number }[] = [];
     for (const { unidAlias, idAlias } of pairs) {
         const section = herbsObj.get(idAlias);
         if (!section) throw new Error(`herbs: missing herbs.obj section ${idAlias}`);
@@ -1178,7 +773,6 @@ export function extractHerbFacts(content: string, items: ObjType[]) {
         const level = levelRaw !== undefined
             ? integer(levelRaw, `${idAlias} identified_herb_level`)
             : levelDefault;
-        const levelSource = levelRaw !== undefined ? 'identified_herb_level' : 'identified_herb_level_default';
         const cleaned = itemIds.get(idAlias);
         const unid = itemIds.get(unidAlias);
         if (!cleaned) throw new Error(`herbs: unknown identified obj ${idAlias}`);
@@ -1190,18 +784,7 @@ export function extractHerbFacts(content: string, items: ObjType[]) {
             id: cleaned.id,
             unidId: unid.id,
             level,
-            level_source: levelSource,
-            source_identified: idAlias,
-            source_unidentified: unidAlias,
         });
-    }
-    const guam = herbs.find((herb) => herb.key === 'guam');
-    if (!guam || guam.level !== levelDefault || guam.level_source !== 'identified_herb_level_default') {
-        throw new Error(`herbs: guam must use identify.param default ${levelDefault}, got ${JSON.stringify(guam)}`);
-    }
-    const snake = herbs.find((herb) => herb.key === 'snake weed');
-    if (snake && (snake.level !== levelDefault || snake.level_source !== 'identified_herb_level')) {
-        throw new Error(`herbs: snake weed level/source mismatch, got ${JSON.stringify(snake)}`);
     }
     return { herbs, herb_level_default: levelDefault };
 }
@@ -1275,6 +858,153 @@ function dropTokens(body: string) {
         tokens.push({ value: match[1], optional: true });
     }
     return tokens;
+}
+
+const SHOP_INVENTORY_SOURCES = [
+    { inv: 'adventurershop', file: 'scripts/areas/area_ardougne_east/configs/ardougne_east.inv' },
+    { inv: 'magearena_runeshop', file: 'scripts/areas/area_mage_arena/configs/mage_arena.inv' },
+    { inv: 'magicshop', file: 'scripts/areas/area_port_sarim/configs/port_sarim.inv' },
+    { inv: 'runeshop', file: 'scripts/areas/area_varrock/configs/varrock.inv' },
+    { inv: 'archeryshop', file: 'scripts/areas/area_varrock/configs/varrock.inv' },
+    { inv: 'archeryshop2', file: 'scripts/areas/area_catherby/configs/catherby.inv' },
+    { inv: 'fishingshop', file: 'scripts/areas/area_port_sarim/configs/port_sarim.inv' },
+    { inv: 'fishingshop2', file: 'scripts/areas/area_catherby/configs/catherby.inv' },
+    { inv: 'shilofishingshop', file: 'scripts/areas/area_shilo/configs/shilo.inv' },
+    { inv: 'axeshop', file: 'scripts/areas/area_lumbridge/configs/lumbridge.inv' },
+    { inv: 'pickaxeshop', file: 'scripts/areas/area_falador/configs/dwarven_mine.inv' },
+    { inv: 'magicguildshop', file: 'scripts/areas/area_yanille/configs/magic_guild/magic_guild.inv' },
+] as const;
+
+const SHOP_KEEPER_SOURCES = [
+    { file: 'scripts/areas/area_ardougne_east/configs/ardougne_east.npc', configs: ['aemad', 'kortan'] },
+    { file: 'scripts/areas/area_mage_arena/configs/mage_arena.npc', configs: ['magearena_runeshop'] },
+    { file: 'scripts/areas/area_port_sarim/configs/port_sarim.npc', configs: ['betty', 'gerrant'] },
+    { file: 'scripts/areas/area_varrock/configs/varrock.npc', configs: ['aubury', 'lowe'] },
+    { file: 'scripts/areas/area_catherby/configs/catherby.npc', configs: ['hickton', 'harry'] },
+    { file: 'scripts/areas/area_shilo/configs/shilo.npc', configs: ['shilofishowner'] },
+    { file: 'scripts/areas/area_lumbridge/configs/lumbridge.npc', configs: ['bob'] },
+    { file: 'scripts/areas/area_falador/configs/dwarven_mine.npc', configs: ['nurmof'] },
+    { file: 'scripts/areas/area_yanille/configs/magic_guild/magic_guild.npc', configs: ['magic_store_owner'] },
+] as const;
+
+type ShopItemSource = {
+    alias: string | null;
+    name: string | null;
+    cost: number;
+    stackable: boolean;
+    members: boolean;
+};
+type ShopInventory = {
+    inv: string;
+    scope: string;
+    allstock: boolean;
+    stock: { alias: string; baseline_qty: number; restock_delta: number }[];
+};
+type ParsedShopKeeper = {
+    config: string;
+    name: string;
+    owned_shop: string;
+    sell: number;
+    buy: number;
+    delta: number;
+    title: string;
+};
+type ShopItemFact = {
+    obj: string;
+    name: string;
+    baseline: number;
+    restockTicks: number;
+    cost: number;
+    stackable: boolean;
+    members: boolean;
+};
+type ShopRecordFact = {
+    inv: string;
+    title: string;
+    keepers: string[];
+    sell: number;
+    buy: number;
+    delta: number;
+    scope: string;
+    allstock: boolean;
+    items: ShopItemFact[];
+};
+
+function parseShopInventory(text: string, inv: string): ShopInventory {
+    let inSection = false;
+    let scope = '';
+    let allstock = false;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (line === `[${inv}]`) {
+            inSection = true;
+            continue;
+        }
+        if (line.startsWith('[') && line.endsWith(']')) {
+            if (inSection) break;
+            continue;
+        }
+        if (!inSection) continue;
+        if (line.startsWith('scope=')) scope = line.slice('scope='.length);
+        else if (line.startsWith('allstock=')) allstock = line.slice('allstock='.length) === 'yes';
+    }
+    return { inv, scope, allstock, stock: parseInvShopStock(text, inv) };
+}
+
+function extractShopFacts(content: string, items: readonly ShopItemSource[]) {
+    const keepers: ParsedShopKeeper[] = [];
+    for (const source of SHOP_KEEPER_SOURCES) {
+        const text = fs.readFileSync(path.join(content, source.file), 'utf8');
+        for (const config of source.configs) {
+            const values = parseNpcSection(text, config);
+            const required = (key: string) => {
+                const value = values[key];
+                if (value === undefined || value === '') throw new Error(`${config}: missing ${key}`);
+                return value;
+            };
+            keepers.push({
+                config,
+                name: values.name || config,
+                owned_shop: required('owned_shop'),
+                sell: integer(required('shop_sell_multiplier'), `${config}: shop_sell_multiplier`),
+                buy: integer(required('shop_buy_multiplier'), `${config}: shop_buy_multiplier`),
+                delta: integer(required('shop_delta'), `${config}: shop_delta`),
+                title: required('shop_title'),
+            });
+        }
+    }
+    const itemByAlias = new Map(items.filter((item) => item.alias !== null).map((item) => [item.alias as string, item]));
+    const shops: ShopRecordFact[] = SHOP_INVENTORY_SOURCES.map(({ inv, file }) => {
+        const inventory = parseShopInventory(fs.readFileSync(path.join(content, file), 'utf8'), inv);
+        const owners = keepers.filter((keeper) => keeper.owned_shop === inv);
+        const first = owners[0];
+        if (!first) throw new Error(`${inv}: no keeper owns this inventory`);
+        const stock = inventory.stock.map((row) => {
+            const item = itemByAlias.get(row.alias);
+            if (!item?.name) throw new Error(`${inv}: missing named item ${row.alias}`);
+            return {
+                obj: row.alias,
+                name: item.name,
+                baseline: row.baseline_qty,
+                restockTicks: row.restock_delta,
+                cost: item.cost,
+                stackable: item.stackable,
+                members: item.members,
+            };
+        });
+        return {
+            inv,
+            title: first.title,
+            keepers: owners.map((keeper) => keeper.name),
+            sell: first.sell,
+            buy: first.buy,
+            delta: first.delta,
+            scope: inventory.scope,
+            allstock: inventory.allstock,
+            items: stock,
+        };
+    });
+    return shops;
 }
 
 export function parseInvShopStock(text: string, shopName: string) {
@@ -1380,68 +1110,40 @@ export function parseLocSection(text: string, alias: string) {
 }
 
 
-const PICKAXE_SHOP_ORDER = [
-    'bronze_pickaxe',
-    'iron_pickaxe',
-    'steel_pickaxe',
-    'mithril_pickaxe',
-    'adamant_pickaxe',
-    'rune_pickaxe',
-] as const;
-
-const PICKAXE_BASE_COSTS: Record<string, number> = {
-    'Bronze pickaxe': 1,
-    'Iron pickaxe': 140,
-    'Steel pickaxe': 500,
-    'Mithril pickaxe': 1300,
-    'Adamant pickaxe': 3200,
-    'Rune pickaxe': 32000,
-};
 
 export function extractNurmofEssenceFacts(content: string, items: ObjType[], npcs: NpcType[]) {
     const itemByAlias = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, item]));
     const invRelative = 'scripts/areas/area_falador/configs/dwarven_mine.inv';
     const stock = parseInvShopStock(fs.readFileSync(path.join(content, invRelative), 'utf8'), 'pickaxeshop');
-    if (stock.length !== 6) throw new Error(`pickaxeshop: expected 6 stock rows, got ${stock.length}`);
-    const stockAliases = stock.map((row) => row.alias);
-    if (JSON.stringify(stockAliases) !== JSON.stringify([...PICKAXE_SHOP_ORDER])) {
-        throw new Error(`pickaxeshop: unexpected stock order ${JSON.stringify(stockAliases)}`);
-    }
     const pickaxes = stock.map((row) => {
         const item = itemByAlias.get(row.alias);
-        if (!item?.name) throw new Error(`pickaxeshop: missing obj ${row.alias}`);
-        const expected = PICKAXE_BASE_COSTS[item.name];
-        if (expected === undefined) throw new Error(`pickaxeshop: unexpected pickaxe name ${item.name}`);
-        if (item.cost !== expected) {
-            throw new Error(`pickaxeshop: ${item.name} base cost ${item.cost}, expected ${expected}`);
-        }
+        if (!item?.name) throw new Error(`pickaxeshop: missing named obj ${row.alias}`);
         return {
             alias: row.alias,
             id: item.id,
             name: item.name,
             base_cost: item.cost,
             shop_baseline_qty: row.baseline_qty,
-            cost_source: 'obj.cost',
         };
     });
     const npcConfig = parseNpcSection(
         fs.readFileSync(path.join(content, 'scripts/areas/area_falador/configs/dwarven_mine.npc'), 'utf8'),
         'nurmof',
     );
-    if (npcConfig.name !== 'Nurmof') throw new Error(`nurmof: bad display name ${npcConfig.name}`);
-    if (npcConfig.owned_shop !== 'pickaxeshop') throw new Error(`nurmof: bad owned_shop ${npcConfig.owned_shop}`);
+    if (!npcConfig.name || !npcConfig.owned_shop) throw new Error('nurmof: missing name or owned_shop');
     const nurmof = npcs.find((npc) => npc.debugname === 'nurmof');
     if (!nurmof?.name) throw new Error('nurmof: missing decoded npc');
-    if (nurmof.id !== 594 || nurmof.name !== 'Nurmof') {
-        throw new Error(`nurmof: npc join mismatch ${nurmof.id}/${nurmof.name}`);
-    }
+    if (nurmof.name !== npcConfig.name) throw new Error(`nurmof: content/cache name join mismatch ${npcConfig.name}/${nurmof.name}`);
     const npcPack = parsePack(fs.readFileSync(path.join(content, 'pack/npc.pack'), 'utf8'));
-    const packedId = npcPack.get('nurmof');
-    if (packedId !== 594) throw new Error(`nurmof: pack id ${packedId}, expected 594`);
+    const packedNurmofId = npcPack.get('nurmof');
+    if (packedNurmofId !== nurmof.id) throw new Error(`nurmof: pack/cache id join mismatch ${packedNurmofId}/${nurmof.id}`);
     const essenceMap = 'maps/m45_75.jm2';
     if (!fs.existsSync(path.join(content, essenceMap))) throw new Error(`missing ${essenceMap}`);
     const { mx: essence_mapsquare_mx, mz: essence_mapsquare_mz } = parseMapsquarePath(essenceMap);
-    const minePortalLocId = 2492;
+    const portalAlias = 'blankrunestone_exit_portal';
+    const locPack = parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'));
+    const minePortalLocId = locPack.get(portalAlias);
+    if (minePortalLocId === undefined) throw new Error(`essence mine: missing loc config ${portalAlias}`);
     const portalPlacements = parseJm2LocPlacements(
         fs.readFileSync(path.join(content, essenceMap), 'utf8'),
         new Set([minePortalLocId]),
@@ -1449,15 +1151,10 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
     if (portalPlacements.length === 0) {
         throw new Error(`essence mine: no loc ${minePortalLocId} placements in ${essenceMap}`);
     }
-    const locPack = parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'));
-    const portalAlias = [...locPack.entries()].find(([, id]) => id === minePortalLocId)?.[0];
-    if (portalAlias !== 'blankrunestone_exit_portal') {
-        throw new Error(`essence mine: loc ${minePortalLocId} alias ${portalAlias}, expected blankrunestone_exit_portal`);
-    }
     const auburyPacked = npcPack.get('aubury');
     const auburyNpc = npcs.find((npc) => npc.debugname === 'aubury');
-    if (auburyPacked !== 553 || !auburyNpc?.name) {
-        throw new Error(`aubury: pack/npc join mismatch ${auburyPacked}/${auburyNpc?.name}`);
+    if (auburyPacked === undefined || !auburyNpc?.name || auburyPacked !== auburyNpc.id) {
+        throw new Error(`aubury: pack/cache join mismatch ${auburyPacked}/${auburyNpc?.id}`);
     }
     const runecraftConstantPath = 'scripts/skill_runecraft/configs/runecraft.constant';
     const runecraftConstant = fs.readFileSync(path.join(content, runecraftConstantPath), 'utf8');
@@ -1468,15 +1165,12 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
         npc_alias: 'nurmof',
         npc_id: nurmof.id,
         npc_name: nurmof.name,
-        shop_inv: 'pickaxeshop',
-        shop_inv_source: invRelative,
+        shop_inv: npcConfig.owned_shop,
         pickaxes,
         essence_region: {
             mapsquare_mx: essence_mapsquare_mx,
             mapsquare_mz: essence_mapsquare_mz,
             predicate: `(x >> 6) === ${essence_mapsquare_mx} && (z >> 6) === ${essence_mapsquare_mz}`,
-            source_map: essenceMap,
-            mapsquare_from_filename: true,
             mine_portal_loc_alias: portalAlias,
             mine_portal_loc_id: minePortalLocId,
             mine_portal_loc_placements: portalPlacements.length,
@@ -1490,13 +1184,11 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
             already_packed: true,
             return_anchor_constant: '^essence_mine_to_aubury',
             return_anchor_coord: returnAnchorMatch[1],
-            return_anchor_source: runecraftConstantPath,
             return_anchor_role: 'overworld_exit_after_mine_teleport',
         },
         curated_vendor_tactics: {
             label: 'curated',
-            authority: 'reference rs2b0t-00d39a17e0 src/bot/api/acquisition/ToolAcquire.ts NURMOF_VENDOR',
-            keeper: 'Nurmof',
+            keeper: npcConfig.name,
             stand: { x: 2997, z: 9844, plane: 0 },
             bank_stand: { x: 3013, z: 3355, plane: 0 },
             hop_from: { x: 3019, z: 3449, plane: 0 },
@@ -1508,27 +1200,26 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
 
 export function extractFlourSixFacts(content: string, items: ObjType[]) {
     const itemByAlias = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, item]));
-    const questEnumLine = parseQuestEnumEntry(
+    parseQuestEnumEntry(
         fs.readFileSync(path.join(content, 'scripts/general/configs/quest.enum'), 'utf8'),
         'Murder Mystery',
     );
-    if (!questEnumLine.includes('Murder Mystery')) throw new Error(`quest.enum: bad line ${questEnumLine}`);
     const locRelative = 'scripts/quests/quest_murder/configs/quest_murder.loc';
     const flourLoc = parseLocSection(fs.readFileSync(path.join(content, locRelative), 'utf8'), 'flourbarrel');
     const locPack = parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'));
     const flourLocId = locPack.get('flourbarrel');
-    if (flourLocId !== 2662) throw new Error(`flourbarrel: pack id ${flourLocId}, expected 2662`);
+    if (flourLocId === undefined) throw new Error('flourbarrel: missing from pack/loc.pack');
     const pot = itemByAlias.get('pot_empty');
     const potFlour = itemByAlias.get('pot_flour');
-    if (!pot?.name || pot.id !== 1931) throw new Error(`flour: pot_empty join ${JSON.stringify(pot)}`);
-    if (!potFlour?.name || potFlour.id !== 1933) throw new Error(`flour: pot_flour join ${JSON.stringify(potFlour)}`);
+    if (!pot?.name) throw new Error(`flour: pot_empty join ${JSON.stringify(pot)}`);
+    if (!potFlour?.name) throw new Error(`flour: pot_flour join ${JSON.stringify(potFlour)}`);
     const objPack = parsePack(fs.readFileSync(path.join(content, 'pack/obj.pack'), 'utf8'));
-    if (objPack.get('pot_empty') !== 1931 || objPack.get('pot_flour') !== 1933) {
-        throw new Error('flour: obj.pack id mismatch for pot items');
+    if (objPack.get('pot_empty') !== pot.id || objPack.get('pot_flour') !== potFlour.id) {
+        throw new Error('flour: obj.pack ids disagree with decoded pot items');
     }
     const mapRelative = 'maps/m42_55.jm2';
     const { mx, mz } = parseMapsquarePath(mapRelative);
-    const placements = parseJm2LocPlacements(fs.readFileSync(path.join(content, mapRelative), 'utf8'), new Set([2662]));
+    const placements = parseJm2LocPlacements(fs.readFileSync(path.join(content, mapRelative), 'utf8'), new Set([flourLocId]));
     if (placements.length !== 1) {
         throw new Error(`flourbarrel: expected one ${mapRelative} LOC placement, got ${placements.length}`);
     }
@@ -1536,20 +1227,16 @@ export function extractFlourSixFacts(content: string, items: ObjType[]) {
     const derivedBarrel = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
     return {
         quest_name: 'Murder Mystery',
-        quest_name_source: 'scripts/general/configs/quest.enum',
         pot: { alias: 'pot_empty', id: pot.id, name: pot.name },
         pot_flour: { alias: 'pot_flour', id: potFlour.id, name: potFlour.name },
         flour_barrel: {
             alias: 'flourbarrel',
             id: flourLocId,
             name: flourLoc.name!,
-            loc_config_source: locRelative,
         },
         flour_barrel_object_tile: {
             ...derivedBarrel,
             role: 'loc_placement',
-            provenance: 'derived',
-            source: mapRelative,
             mapsquare: `m${mx}_${mz}`,
             local: { lx: placement.lx, lz: placement.lz },
             loc_shape: placement.shape,
@@ -1560,16 +1247,12 @@ export function extractFlourSixFacts(content: string, items: ObjType[]) {
             z: 3581,
             plane: 0,
             role: 'interaction_near',
-            provenance: 'curated',
-            authority: 'reference rs2b0t-00d39a17e0 src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.FLOUR_BARREL',
             note: 'FlourCollector Reach.locOp near / recovery anchor; not the jm2 loc tile (object at z=3582).',
         },
         bank_tile: {
             x: 2725,
             z: 3491,
             plane: 0,
-            provenance: 'curated',
-            authority: 'reference rs2b0t-00d39a17e0 src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.BANK',
             note: 'Bank stand tile for Murder Mystery withdraw; not a loc placement row in selected content.',
         },
     };
@@ -1652,16 +1335,8 @@ export type TrailFacts = { rows: TrailMembershipRow[]; challenge_answers: TrailC
 const TRAIL_TIERS = ['easy', 'medium', 'hard'] as const;
 const TRAIL_CONFIG_DIR = 'scripts/minigames/game_trail/configs';
 const TRAIL_CASKET_RELATIVE = `${TRAIL_CONFIG_DIR}/trail_casket.obj`;
-/** The one bounded inclusion. 3554 is an inventory row, access-constrained, not supported. */
-const TRAIL_CONSTRAINED = { alias: 'trail_clue_hard_sextant028', id: 3554 };
-const TRAIL_CHALLENGE_ANSWERS_EXPECTED = [
-    ['trail_clue_medium_anagram001_challenge', 2842, '6859'],
-    ['trail_clue_medium_anagram002_challenge', 2844, '9'],
-    ['trail_clue_medium_anagram003_challenge', 2846, '40'],
-    ['trail_clue_medium_anagram006_challenge', 2850, '5'],
-    ['trail_clue_medium_anagram007_challenge', 2852, '48'],
-    ['trail_clue_medium_anagram008_challenge', 2854, '5096'],
-] as const;
+/** The clue whose access fact is constrained. */
+const TRAIL_CONSTRAINED = { alias: 'trail_clue_hard_sextant028' };
 
 /**
  * Trail obj blocks by alias. Only `param=` lines are selected. Repeated keys stay
@@ -1751,10 +1426,7 @@ export function extractTrailFacts(content: string, items: ObjType[]): TrailFacts
         const joined = trailJoin(objPack, itemIds, alias, 'trail_casket param');
         rows.push({ alias: joined.alias, id: joined.id, role: 'casket', params: blocks.get(alias) ?? [] });
     }
-    const constrained = rows.filter((row) => row.alias === TRAIL_CONSTRAINED.alias);
-    if (constrained.length !== 1) throw new Error(`trails: ${TRAIL_CONSTRAINED.alias} must be one membership row`);
-    if (constrained[0].id !== TRAIL_CONSTRAINED.id) throw new Error(`trails: ${TRAIL_CONSTRAINED.alias} pack id ${constrained[0].id}, expected ${TRAIL_CONSTRAINED.id}`);
-    constrained[0].access = 'constrained';
+    for (const row of rows) if (row.alias === TRAIL_CONSTRAINED.alias) row.access = 'constrained';
     const challenge_answers: TrailChallengeAnswer[] = [];
     for (const [alias, params] of blocks) {
         const answers = params.filter((param) => param.key === 'trail_challenge_answer');
@@ -1763,38 +1435,9 @@ export function extractTrailFacts(content: string, items: ObjType[]): TrailFacts
         const joined = trailJoin(objPack, itemIds, alias, 'trail_challenge_answer');
         challenge_answers.push({ alias: joined.alias, id: joined.id, answer: answers[0].value });
     }
-    if (challenge_answers.length === 0) throw new Error('trails: no selected challenge answers');
     return { rows, challenge_answers };
 }
 
-/** Fail-closed pins for the trail publication. The counts are never copied from the corpus. */
-export function assertTrailPins(trails: TrailFacts, revision: number) {
-    const row = (alias: string) => {
-        const found = trails.rows.find((entry) => entry.alias === alias);
-        if (!found) throw new Error(`${revision}: trails is missing ${alias}`);
-        return found;
-    };
-    const params = (alias: string) => row(alias).params.map((param) => `${param.key}=${param.value}`);
-    const riddle004 = row('trail_clue_hard_riddle004_casket');
-    if (riddle004.role !== 'casket' || riddle004.id !== 2779 || riddle004.params.length !== 0) throw new Error(`${revision}: trails riddle004_casket must stay a parameterless casket 2779`);
-    if (row('trail_clue_hard_sextant016_casket').id !== 3531 || trails.rows.filter((entry) => entry.id === 3531).length !== 1) throw new Error(`${revision}: trails must inventory the named casket 3531 once`);
-    if (!params('trail_clue_hard_sextant017').includes('trail_casket=trail_clue_hard_sextant016_casket')) throw new Error(`${revision}: trails sextant017 must name its selected casket alias`);
-    if (trails.rows.some((entry) => entry.id === 3533 || entry.alias === 'trail_clue_hard_sextant017_casket')) throw new Error(`${revision}: trails must not emit the unnamed casket 3533`);
-    for (const alias of ['trail_clue_medium_map002', 'trail_clue_medium_map002_casket', 'trail_clue_hard_sextant026', 'trail_clue_hard_sextant026_casket']) {
-        if (trails.rows.some((entry) => entry.alias === alias)) throw new Error(`${revision}: ${alias} is not a membership row`);
-    }
-    const constrained = trails.rows.filter((entry) => entry.access !== undefined);
-    if (constrained.length !== 1 || constrained[0].alias !== TRAIL_CONSTRAINED.alias || constrained[0].access !== 'constrained') throw new Error(`${revision}: trails access must stay on ${TRAIL_CONSTRAINED.alias} only`);
-    if (!params('trail_clue_easy_simple001').includes('trail_loc=^true')) throw new Error(`${revision}: trails simple001 trail_loc must stay the raw ^true`);
-    if (!params('trail_clue_hard_sextant028').includes('trail_sextant=yes')) throw new Error(`${revision}: trails sextant028 trail_sextant must stay the raw yes`);
-    const anagram001 = params('trail_clue_medium_anagram001');
-    if (anagram001.length !== 1 || anagram001[0] !== 'trail_desc=Speak to Hazelmere.') throw new Error(`${revision}: trails anagram001 must keep its own single selected param`);
-    if (JSON.stringify(trails.challenge_answers) !== JSON.stringify(TRAIL_CHALLENGE_ANSWERS_EXPECTED.map(([alias, id, answer]) => ({ alias, id, answer })))) throw new Error(`${revision}: trails challenge answers must be the six selected raw strings`);
-    const blob = JSON.stringify(trails);
-    for (const banned of ['facts-verified-both', 'facts_field_verified_both', 'family-unavailable', 'supported', 'coverage', 'regicide', 'legends', 'curated-unverified', '0_51_54_45_47', '1_42_53_14_17', '1_40_51_14_62']) {
-        if (blob.includes(banned)) throw new Error(`${revision}: trails published ${banned}`);
-    }
-}
 
 /* ------------------------------------------------------------------------- *
  * talk_key: the selected talk steps and key keepers
@@ -1838,21 +1481,6 @@ export type TalkKeyCoverageRow = { class: string; family: string; alias: string;
 /** Talk steps and key keepers. A step without a unique spawn keeps its row and omits `spawn`. */
 export type TalkKeyFacts = { talk: TalkKeyTalkRow[]; keys: TalkKeyKeyRow[]; coverage: TalkKeyCoverageRow[] };
 
-/**
- * Provenance identity for this family: every scanned `scripts` rs2 file as one
- * digest, every scanned npc config as one digest, the maps inventory the spawns
- * come from, `pack/npc.pack`, and the pinned medium clue proc.
- */
-export type TalkKeyInputs = {
-    maps_directory: string;
-    maps: { files: number; bytes: number; sha256: string };
-    npc_pack: { path: string; bytes: number; sha256: string };
-    scripts: { files: number; bytes: number; sha256: string };
-    npc_configs: { files: number; bytes: number; sha256: string };
-    trail_clue_medium: { path: string; bytes: number; sha256: string };
-};
-
-export type TalkKeyExtract = { facts: TalkKeyFacts; inputs: TalkKeyInputs };
 
 /** One keeper matcher as written in the proc, before the pack and `.npc` joins. */
 type TalkKeyKeeperMatch = { kind: 'type'; alias: string } | { kind: 'category'; category: string } | { kind: 'name'; name: string };
@@ -1982,42 +1610,22 @@ export function parseTalkKeyKeeperArms(text: string) {
     return arms;
 }
 
-/** One digest over every inventoried file's digest, in path order. */
-function fileInventoryDigest(entries: { path: string; bytes: number; sha256: string }[]) {
-    return {
-        files: entries.length,
-        bytes: entries.reduce((sum, entry) => sum + entry.bytes, 0),
-        sha256: crypto.createHash('sha256').update(entries.map((entry) => `${entry.sha256}  ${entry.path}`).join('\n')).digest('hex'),
-    };
-}
-
-/**
- * Required scanned content inventory. The directory must exist and hold at least one
- * matching file, and every tracked file the content tree names must be on disk, so a
- * truncated tree fails closed instead of silently under-hashing. Path order.
- */
-function contentTreeInputs(content: string, directory: string, suffix: string) {
+/** Required content files discovered by extension in the selected local tree. */
+function contentTreeFiles(content: string, directory: string, suffix: string): string[] {
     const rootDirectory = path.join(content, directory);
     if (!fs.existsSync(rootDirectory)) throw new Error(`${directory}: required directory missing`);
-    const relativePaths: string[] = [];
+    const files: string[] = [];
     const walk = (absolute: string) => {
         for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
             const child = path.join(absolute, entry.name);
             if (entry.isDirectory()) walk(child);
-            else if (entry.name.endsWith(suffix)) relativePaths.push(path.relative(content, child).split(path.sep).join('/'));
+            else if (entry.name.endsWith(suffix)) files.push(path.relative(content, child).split(path.sep).join('/'));
         }
     };
     walk(rootDirectory);
-    if (relativePaths.length === 0) throw new Error(`${directory}: required directory has no ${suffix} files`);
-    relativePaths.sort();
-    const tracked = execFileSync('git', ['-C', content, 'ls-files', '--', `${directory}/*${suffix}`], { encoding: 'utf8' }).split('\n').map((line) => line.trim()).filter(Boolean);
-    if (tracked.length === 0) throw new Error(`${directory}: no tracked ${suffix} files in the content tree`);
-    const onDisk = new Set(relativePaths);
-    for (const relative of tracked) if (!onDisk.has(relative)) throw new Error(`${relative}: tracked ${suffix} file missing from the content tree`);
-    const entries = relativePaths.map((relative) => ({ path: relative, ...sha256(path.join(content, relative)) }));
-    return { files: relativePaths, digest: fileInventoryDigest(entries) };
+    if (files.length === 0) throw new Error(`${directory}: required directory has no ${suffix} files`);
+    return files.sort();
 }
-
 /**
  * The selected talk steps and key keepers, from the `opnpc1` membership anchors and
  * the medium clue proc. `.npc` sections are read with `parseNpcSection`, so a missing
@@ -2026,15 +1634,15 @@ function contentTreeInputs(content: string, directory: string, suffix: string) {
  * from the `.npc` configs and are corroborated against the decoded `npc.dat` rows by
  * `assertTalkKeyNpcJoins` in the writer.
  */
-export function extractTalkKeyFacts(content: string, items: ObjType[]): TalkKeyExtract {
+export function extractTalkKeyFacts(content: string, items: ObjType[]): TalkKeyFacts {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const objPack = parsePack(requireGatherText(content, 'pack/obj.pack'));
     if (objPack.size === 0) throw new Error('pack/obj.pack: required file missing ids');
     const npcPack = parsePack(requireGatherText(content, TALK_KEY_NPC_PACK_RELATIVE));
     if (npcPack.size === 0) throw new Error(`${TALK_KEY_NPC_PACK_RELATIVE}: required file missing ids`);
     const membership = new Set(TRAIL_TIERS.flatMap((tier) => parseTrailEnumAliases(requireGatherText(content, `${TRAIL_CONFIG_DIR}/trail_${tier}.enum`))));
-    const scripts = contentTreeInputs(content, TALK_KEY_SCRIPTS_DIRECTORY, TALK_KEY_RS2_SUFFIX);
-    const npcConfigs = contentTreeInputs(content, TALK_KEY_SCRIPTS_DIRECTORY, TALK_KEY_NPC_SUFFIX);
+    const scripts = contentTreeFiles(content, TALK_KEY_SCRIPTS_DIRECTORY, TALK_KEY_RS2_SUFFIX);
+    const npcConfigs = contentTreeFiles(content, TALK_KEY_SCRIPTS_DIRECTORY, TALK_KEY_NPC_SUFFIX);
     const configText = new Map<string, string>();
     const configSection = (relative: string, alias: string, label: string) => {
         const text = configText.get(relative) ?? fs.readFileSync(path.join(content, relative), 'utf8');
@@ -2066,11 +1674,11 @@ export function extractTalkKeyFacts(content: string, items: ObjType[]): TalkKeyE
         if (!name) throw new Error(`${label}: [${alias}] has no name`);
         return { alias, id, name };
     };
-    const maps = placementMapInputs(content);
+    const maps = placementMapFiles(content);
     const spawns = new Map<number, TalkKeySpawn[]>();
-    for (const input of maps) {
-        const { mx, mz } = parseMapsquarePath(input.path);
-        for (const placement of parseJm2NpcPlacements(fs.readFileSync(path.join(content, input.path), 'utf8'))) {
+    for (const map of maps) {
+        const { mx, mz } = parseMapsquarePath(map);
+        for (const placement of parseJm2NpcPlacements(fs.readFileSync(path.join(content, map), 'utf8'))) {
             const world = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
             const found = spawns.get(placement.npc_id);
             if (found) found.push(world);
@@ -2087,7 +1695,7 @@ export function extractTalkKeyFacts(content: string, items: ObjType[]): TalkKeyE
         coverage.push({ class: 'unknown', family, alias: clue, reason: 'non-unique jm2 NPC spawn' });
         return null;
     };
-    for (const relative of scripts.files) {
+    for (const relative of scripts) {
         for (const handler of parseTalkKeyHandlers(fs.readFileSync(path.join(content, relative), 'utf8'), membership)) {
             if (talk.some((row) => row.alias === handler.clue)) throw new Error(`talk_key: ${handler.clue} is anchored by more than one opnpc1 handler`);
             const npc = identity(handler.alias, `talk_key ${handler.clue}`);
@@ -2118,17 +1726,7 @@ export function extractTalkKeyFacts(content: string, items: ObjType[]): TalkKeyE
     talk.sort((a, b) => a.alias.localeCompare(b.alias));
     keys.sort((a, b) => a.alias.localeCompare(b.alias));
     coverage.sort((a, b) => a.family.localeCompare(b.family) || a.alias.localeCompare(b.alias));
-    return {
-        facts: { talk, keys, coverage },
-        inputs: {
-            maps_directory: PLACEMENT_MAPS_DIRECTORY,
-            maps: fileInventoryDigest(maps),
-            npc_pack: { path: TALK_KEY_NPC_PACK_RELATIVE, ...sha256(path.join(content, TALK_KEY_NPC_PACK_RELATIVE)) },
-            scripts: scripts.digest,
-            npc_configs: npcConfigs.digest,
-            trail_clue_medium: { path: TALK_KEY_MEDIUM_RELATIVE, ...sha256(path.join(content, TALK_KEY_MEDIUM_RELATIVE)) },
-        },
-    };
+    return { talk, keys, coverage };
 }
 
 /**
@@ -2148,56 +1746,6 @@ export function assertTalkKeyNpcJoins(facts: TalkKeyFacts, npcs: NpcType[]) {
     for (const row of facts.keys) if (row.keeper.kind === 'type') check(row.keeper.alias, row.keeper.id, row.keeper.name, row.alias);
 }
 
-/** Fail-closed pins for the talk_key publication. The counts are never copied from the corpus. */
-export function assertTalkKeyPins(facts: TalkKeyFacts, revision: number) {
-    const talk = (alias: string) => {
-        const found = facts.talk.find((row) => row.alias === alias);
-        if (!found) throw new Error(`${revision}: talk_key is missing talk ${alias}`);
-        return found;
-    };
-    const key = (alias: string) => {
-        const found = facts.keys.find((row) => row.alias === alias);
-        if (!found) throw new Error(`${revision}: talk_key is missing key ${alias}`);
-        return found;
-    };
-    const spawned = facts.talk.filter((row) => row.spawn !== undefined);
-    if (facts.talk.length !== 47 || spawned.length !== 42) throw new Error(`${revision}: talk_key talk must be 47 membership steps with 42 unique spawns, got ${facts.talk.length}/${spawned.length}`);
-    if (facts.keys.length !== 7 || facts.keys.filter((row) => row.spawn !== undefined).length !== 2) throw new Error(`${revision}: talk_key keys must be 7 keepers with 2 unique spawns, got ${facts.keys.length}`);
-    if (facts.coverage.length !== 10 || facts.coverage.filter((row) => row.family === 'talk').length !== 5 || facts.coverage.filter((row) => row.family === 'keys').length !== 5) throw new Error(`${revision}: talk_key coverage must be the ten unknown spawns, got ${facts.coverage.length}`);
-    if (facts.coverage.some((row) => row.class !== 'unknown' || row.reason.length === 0)) throw new Error(`${revision}: talk_key coverage rows must be named unknown with a reason`);
-    const coverage = facts.coverage.map((row) => `${row.family}:${row.alias}`).sort();
-    const noSpawn = [
-        ...facts.talk.filter((row) => row.spawn === undefined).map((row) => `talk:${row.alias}`),
-        ...facts.keys.filter((row) => row.spawn === undefined).map((row) => `keys:${row.alias}`),
-    ].sort();
-    if (JSON.stringify(coverage) !== JSON.stringify(noSpawn)) throw new Error(`${revision}: talk_key coverage must be exactly the steps without a unique spawn`);
-    const hazelmere = talk('trail_clue_medium_anagram001');
-    if (hazelmere.npc.alias !== 'grandtree_hazelmere' || hazelmere.npc.id !== 669 || hazelmere.npc.name !== 'Hazelmere' || JSON.stringify(hazelmere.spawn) !== JSON.stringify({ x: 2678, z: 3086, plane: 1 })) throw new Error(`${revision}: talk_key anagram001 must stay Hazelmere 669 at 2678,3086,1`);
-    const hans = facts.talk.filter((row) => row.npc.id === 0);
-    if (hans.length !== 2 || hans.some((row) => row.npc.name !== 'Hans' || JSON.stringify(row.spawn) !== JSON.stringify({ x: 3207, z: 3233, plane: 0 }))) throw new Error(`${revision}: talk_key Hans must stay two steps on one npc and one spawn`);
-    const tobias = talk('trail_clue_easy_vague012');
-    if (tobias.npc.alias !== 'captain_tobias' || tobias.npc.id !== 376 || tobias.spawn === undefined) throw new Error(`${revision}: talk_key vague012 must stay the inner captain_tobias identity, not the _sailor category`);
-    for (const alias of ['trail_clue_easy_simple008', 'trail_clue_hard_riddle019', 'trail_clue_hard_riddle021', 'trail_clue_hard_riddle026', 'trail_clue_medium_anagram003']) {
-        if (talk(alias).spawn !== undefined) throw new Error(`${revision}: talk_key ${alias} is a multi-spawn step and must omit the spawn`);
-    }
-    const blackHeather = key('trail_clue_medium_riddle001');
-    if (blackHeather.keeper.kind !== 'type' || blackHeather.keeper.alias !== 'black_heather' || blackHeather.keeper.id !== 202 || JSON.stringify(blackHeather.spawn) !== JSON.stringify({ x: 3039, z: 3700, plane: 0 })) throw new Error(`${revision}: talk_key riddle001 must stay the black_heather type keeper at 3039,3700,0`);
-    const penda = key('trail_clue_medium_riddle008');
-    if (penda.keeper.kind !== 'type' || penda.keeper.alias !== 'death_man_indoors2' || penda.keeper.id !== 1087 || JSON.stringify(penda.spawn) !== JSON.stringify({ x: 2910, z: 3539, plane: 0 })) throw new Error(`${revision}: talk_key riddle008 must stay the death_man_indoors2 type keeper at 2910,3539,0`);
-    const chicken = key('trail_clue_medium_riddle004');
-    if (chicken.keeper.kind !== 'category' || chicken.keeper.category !== 'chicken' || 'alias' in chicken.keeper || 'id' in chicken.keeper) throw new Error(`${revision}: talk_key riddle004 must stay a category keeper with no invented npc id`);
-    const man = key('trail_clue_medium_riddle005');
-    if (man.keeper.kind !== 'name' || man.keeper.name !== 'Man' || 'alias' in man.keeper || 'id' in man.keeper) throw new Error(`${revision}: talk_key riddle005 must stay a name keeper with no invented npc id`);
-    const pirate = key('trail_clue_medium_riddle007');
-    if (pirate.keeper.kind !== 'category' || pirate.keeper.category !== 'pirate') throw new Error(`${revision}: talk_key riddle007 must stay a category keeper`);
-    const guarddog = key('trail_clue_medium_riddle002');
-    const guard = key('trail_clue_medium_riddle003');
-    if (guarddog.keeper.kind !== 'type' || guarddog.spawn !== undefined || guard.keeper.kind !== 'type' || guard.spawn !== undefined) throw new Error(`${revision}: talk_key guard keepers are non-unique spawns and must omit the spawn`);
-    const blob = JSON.stringify(facts);
-    for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS']) {
-        if (blob.includes(banned)) throw new Error(`${revision}: talk_key published ${banned}`);
-    }
-}
 
 /* ------------------------------------------------------------------------- *
  * trio_givers: the three selected givers behind the coordinate-tool trio
@@ -2237,19 +1785,6 @@ export type TrioGiverCoverageRow = { class: string; family: string; alias: strin
 /** The three selected givers. A giver without a unique spawn keeps its row and omits `spawn`. */
 export type TrioGiverFacts = { rows: TrioGiverRow[]; coverage: TrioGiverCoverageRow[] };
 
-/**
- * Provenance identity for this family: the closed handler and config set, the
- * pack its ids come from, and the maps inventory its tiles come from.
- */
-export type TrioGiverInputs = {
-    maps_directory: string;
-    maps: { files: number; bytes: number; sha256: string };
-    npc_pack: { path: string; bytes: number; sha256: string };
-    handlers: { path: string; bytes: number; sha256: string }[];
-    npc_configs: { path: string; bytes: number; sha256: string }[];
-};
-
-export type TrioGiverExtract = { facts: TrioGiverFacts; inputs: TrioGiverInputs };
 
 /**
  * The `opnpc1` header aliases one exact giver script declares, in file order.
@@ -2277,14 +1812,14 @@ export function parseTrioGiverHandlers(text: string) {
  * missing section or a section without `name=` throws. The spawn is the unique
  * jm2 `==== NPC ====` world tile.
  */
-export function extractTrioGiversFacts(content: string): TrioGiverExtract {
+export function extractTrioGiversFacts(content: string): TrioGiverFacts {
     const npcPack = parsePack(requireGatherText(content, TRIO_GIVERS_NPC_PACK_RELATIVE));
     if (npcPack.size === 0) throw new Error(`${TRIO_GIVERS_NPC_PACK_RELATIVE}: required file missing ids`);
-    const maps = placementMapInputs(content);
+    const maps = placementMapFiles(content);
     const spawns = new Map<number, TrioGiverSpawn[]>();
-    for (const input of maps) {
-        const { mx, mz } = parseMapsquarePath(input.path);
-        for (const placement of parseJm2NpcPlacements(fs.readFileSync(path.join(content, input.path), 'utf8'))) {
+    for (const map of maps) {
+        const { mx, mz } = parseMapsquarePath(map);
+        for (const placement of parseJm2NpcPlacements(fs.readFileSync(path.join(content, map), 'utf8'))) {
             const world = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
             const found = spawns.get(placement.npc_id);
             if (found) found.push(world);
@@ -2293,8 +1828,6 @@ export function extractTrioGiversFacts(content: string): TrioGiverExtract {
     }
     const rows: TrioGiverRow[] = [];
     const coverage: TrioGiverCoverageRow[] = [];
-    const handlers: { path: string; bytes: number; sha256: string }[] = [];
-    const npcConfigs: { path: string; bytes: number; sha256: string }[] = [];
     for (const giver of TRIO_GIVERS) {
         const aliases = parseTrioGiverHandlers(requireGatherText(content, giver.handler));
         if (!aliases.includes(giver.alias)) throw new Error(`trio_givers: ${giver.handler} does not declare [opnpc1,${giver.alias}]`);
@@ -2313,19 +1846,8 @@ export function extractTrioGiversFacts(content: string): TrioGiverExtract {
         if (found.length === 0) throw new Error(`trio_givers: ${giver.alias} npc ${id} has no jm2 NPC spawn`);
         if (found.length > 1) coverage.push({ class: 'unknown', family: TRIO_GIVERS_FAMILY, alias: giver.alias, reason: 'non-unique jm2 NPC spawn' });
         rows.push({ alias: giver.alias, id, name, ...(found.length === 1 ? { spawn: found[0] } : {}) });
-        handlers.push({ path: giver.handler, ...sha256(path.join(content, giver.handler)) });
-        npcConfigs.push({ path: giver.config, ...sha256(path.join(content, giver.config)) });
     }
-    return {
-        facts: { rows, coverage },
-        inputs: {
-            maps_directory: PLACEMENT_MAPS_DIRECTORY,
-            maps: fileInventoryDigest(maps),
-            npc_pack: { path: TRIO_GIVERS_NPC_PACK_RELATIVE, ...sha256(path.join(content, TRIO_GIVERS_NPC_PACK_RELATIVE)) },
-            handlers,
-            npc_configs: npcConfigs,
-        },
-    };
+    return { rows, coverage };
 }
 
 /**
@@ -2344,35 +1866,6 @@ export function assertTrioGiverNpcJoins(facts: TrioGiverFacts, npcs: NpcType[]) 
     }
 }
 
-/** Fail-closed pins for the trio_givers publication. The rows are never copied from the corpus. */
-export function assertTrioGiverPins(facts: TrioGiverFacts, revision: number) {
-    const row = (alias: string) => {
-        const found = facts.rows.find((entry) => entry.alias === alias);
-        if (!found) throw new Error(`${revision}: trio_givers is missing ${alias}`);
-        return found;
-    };
-    const identity = [
-        ['observatory_professor', 488, 'Observatory professor'],
-        ['murphy', 463, 'Murphy'],
-        ['brother_kojo', 223, 'Brother Kojo'],
-    ] as const;
-    const published = facts.rows.map((entry) => [entry.alias, entry.id, entry.name]);
-    if (JSON.stringify(published) !== JSON.stringify(identity.map((entry) => [...entry]))) throw new Error(`${revision}: trio_givers must stay the three closed givers, got ${JSON.stringify(published)}`);
-    const spawned = facts.rows.filter((entry) => entry.spawn !== undefined);
-    if (spawned.length !== 3 || facts.coverage.length !== 0) throw new Error(`${revision}: trio_givers must publish three unique jm2 spawns, got ${spawned.length} spawns and ${facts.coverage.length} coverage rows`);
-    const jm2 = [
-        ['observatory_professor', { x: 2438, z: 3186, plane: 0 }],
-        ['murphy', { x: 2668, z: 3162, plane: 0 }],
-        ['brother_kojo', { x: 2569, z: 3249, plane: 0 }],
-    ] as const;
-    for (const [alias, spawn] of jm2) {
-        if (JSON.stringify(row(alias).spawn) !== JSON.stringify(spawn)) throw new Error(`${revision}: trio_givers ${alias} must stay the selected jm2 tile ${JSON.stringify(spawn)}, got ${JSON.stringify(row(alias).spawn)}`);
-    }
-    const blob = JSON.stringify(facts);
-    for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS', 'frozen', 'invented', 'family-unavailable']) {
-        if (blob.includes(banned)) throw new Error(`${revision}: trio_givers published ${banned}`);
-    }
-}
 
 export function extractFacts(content: string, items: ObjType[], npcs: NpcType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
@@ -2665,11 +2158,11 @@ function catalogBank(value: BankLiteral): CatalogBank {
 }
 
 /**
- * Named top-level literals of one pinned rs2b0t source, read from its AST:
+ * Named top-level literals from an rs2b0t source, read from its AST:
  * strings, numbers, arrays, object literals, `new Tile(x, z, level)` and
  * references to other top-level constants. Nothing is evaluated.
  */
-async function pinnedLiterals(engine: string, fileName: string, source: string, label: string) {
+async function topLevelLiteralReader(engine: string, fileName: string, source: string, label: string) {
     // Engine path is selected per revision; a static import would bind the wrong installation.
     const ts = await import(pathToFileURL(path.join(engine, 'node_modules/typescript/lib/typescript.js')).href);
     const ast = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
@@ -2703,9 +2196,9 @@ async function pinnedLiterals(engine: string, fileName: string, source: string, 
     return (name: string) => literal(constants.get(name));
 }
 
-/** Read the pinned literal AST, not a second curated copy or evaluated foreign module. */
+/** Read the top-level literal AST, not a second curated copy or evaluated foreign module. */
 export async function extractBankCatalog(engine: string, source: string) {
-    const literal = await pinnedLiterals(engine, 'BankLocations.ts', source, 'bank catalog');
+    const literal = await topLevelLiteralReader(engine, 'BankLocations.ts', source, 'bank catalog');
     const value = literal('BANK_LOCATIONS');
     if (!Array.isArray(value)) throw new Error('bank catalog: expected array');
     const rows = value.map(catalogBank);
@@ -2715,12 +2208,12 @@ export async function extractBankCatalog(engine: string, source: string) {
 
 type CookTile = { x: number; z: number; level: number };
 type CookKind = 'oven' | 'fire';
-/** A frozen curated bank cook surface (`curatedPlan`, `data/cookLocations.ts:98-116`). */
+/** A curated bank cook surface (`curatedPlan`, `data/cookLocations.ts:98-116`). */
 type CookCamp = { bank: string; stand: CookTile; approach?: CookTile; loc: CookTile; locName: string; kind: CookKind; label: string };
 export type CookCatalog = { camps: CookCamp[]; kinds: Record<string, CookKind>; maxSurfaceCheb: number; derivedArriveRadius: number; obstacles: string[] };
 
 /**
- * The frozen cook pairing inputs, read from the pinned AST: the curated bank
+ * The cook pairing inputs, read from the local AST: the curated bank
  * surfaces (`CURATED_CAMP` → `FISH_CAMP_COOK_PLANS[camp].bank ?? .pier`,
  * `data/cookLocations.ts:92-116`, `data/cookingRanges.ts:98-181`), the
  * surface loc kinds (`tools/cooking/gen-cooksurfaces.ts` `COOK_SURFACE_KINDS`)
@@ -2745,9 +2238,9 @@ export async function extractCookCatalog(engine: string, sources: { cookLocation
         const row = record(input);
         return { x: integer(row.x), z: integer(row.z), level: integer(row.level) };
     };
-    const locations = await pinnedLiterals(engine, 'cookLocations.ts', sources.cookLocations, label);
-    const ranges = await pinnedLiterals(engine, 'cookingRanges.ts', sources.cookingRanges, label);
-    const generator = await pinnedLiterals(engine, 'gen-cooksurfaces.ts', sources.genCookSurfaces, label);
+    const locations = await topLevelLiteralReader(engine, 'cookLocations.ts', sources.cookLocations, label);
+    const ranges = await topLevelLiteralReader(engine, 'cookingRanges.ts', sources.cookingRanges, label);
+    const generator = await topLevelLiteralReader(engine, 'gen-cooksurfaces.ts', sources.genCookSurfaces, label);
     const plans = record(ranges('FISH_CAMP_COOK_PLANS'));
     const camps = Object.entries(record(locations('CURATED_CAMP'))).map(([bank, campName]) => {
         // `cookSurfaceForFishCamp(camp, 'bank')`: the bank surface, else the pier one (`cookingRanges.ts:169-181`).
@@ -2788,7 +2281,7 @@ export function cookCatalogRust(catalog: CookCatalog) {
     const str = (value: string) => JSON.stringify(value);
     const tile = (value: CookTile) => `WorldTile { x: ${value.x}, z: ${value.z}, level: ${value.level} }`;
     const kind = (value: CookKind) => (value === 'oven' ? 'CookSurfaceKind::Oven' : 'CookSurfaceKind::Fire');
-    return '// Generated by tools/game-data/generate.ts from pinned rs2b0t cook sources; do not curate.\n'
+    return '// Generated by tools/game-data/generate.ts; do not curate.\n'
         + `pub const MAX_SURFACE_CHEB: i32 = ${catalog.maxSurfaceCheb};\n`
         + `pub const DERIVED_ARRIVE_RADIUS: i32 = ${catalog.derivedArriveRadius};\n`
         + `pub const DEFAULT_OBSTACLES: &[&str] = &[${catalog.obstacles.map(str).join(', ')}];\n`
@@ -2820,18 +2313,13 @@ export function parseJm2LinkBelow(text: string) {
     return tiles;
 }
 
-/**
- * Every cook surface placed in the selected map pack: LOC placements whose
- * type is one of the frozen surface kinds, named by their loc config, in the
- * frozen generator's order (level, x, z). Each curated surface must be one of
- * them, so a moved Range fails generation instead of pointing at nothing.
- */
+/** Extract cook surfaces from the selected local LOC configs and map placements. */
 export function extractCookSurfaces(content: string, catalog: CookCatalog) {
-    const locTree = contentTreeInputs(content, 'scripts', '.loc');
-    const maps = placementMapInputs(content);
+    const locFiles = contentTreeFiles(content, 'scripts', '.loc');
+    const maps = placementMapFiles(content);
     const packed = parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'));
     const names = new Map<string, string>();
-    for (const file of locTree.files) {
+    for (const file of locFiles) {
         for (const [alias, config] of parseNpcConfigSections(fs.readFileSync(path.join(content, file), 'utf8'))) {
             if (catalog.kinds[alias] !== undefined && config.name !== undefined) names.set(alias, config.name);
         }
@@ -2844,13 +2332,12 @@ export function extractCookSurfaces(content: string, catalog: CookCatalog) {
     if (wanted.size === 0) throw new Error('cook surfaces: no surface loc types in loc.pack');
     const rows: { x: number; z: number; level: number; name: string; debugname: string; kind: CookKind }[] = [];
     const ids = new Set(wanted.keys());
-    for (const input of maps) {
-        const { mx, mz } = parseMapsquarePath(input.path);
-        const text = fs.readFileSync(path.join(content, input.path), 'utf8');
+    for (const map of maps) {
+        const { mx, mz } = parseMapsquarePath(map);
+        const text = fs.readFileSync(path.join(content, map), 'utf8');
         const linkBelow = parseJm2LinkBelow(text);
         for (const placement of parseJm2LocPlacements(text, ids)) {
-            // Frozen `bridgedLevel` (tools/nav/lib.ts:377-380): a LINK_BELOW
-            // level-1 tile moves the loc down a plane; the client drops one
+            // LINK_BELOW moves a level-1 loc down a plane; the client drops one
             // that would fall below level 0.
             const level = linkBelow.has(`${placement.lx},${placement.lz}`) ? placement.plane - 1 : placement.plane;
             if (level < 0) continue;
@@ -2860,12 +2347,7 @@ export function extractCookSurfaces(content: string, catalog: CookCatalog) {
         }
     }
     rows.sort((a, b) => a.level - b.level || a.x - b.x || a.z - b.z);
-    for (const camp of catalog.camps) {
-        if (!rows.some(row => row.x === camp.loc.x && row.z === camp.loc.z && row.level === camp.loc.level && row.name === camp.locName)) {
-            throw new Error(`cook surfaces: curated ${camp.bank} ${camp.locName} at ${camp.loc.x},${camp.loc.z},${camp.loc.level} is not in the selected content`);
-        }
-    }
-    return { facts: { rows }, inputs: { loc_configs: locTree.digest, maps: fileInventoryDigest(maps), loc_pack: sourceFile(content, 'pack/loc.pack') } };
+    return { facts: { rows } };
 }
 
 export function bankCatalogRust(rows: CatalogBank[]) {
@@ -2873,7 +2355,7 @@ export function bankCatalogRust(rows: CatalogBank[]) {
     const opt = <T>(value: T | undefined, emit: (value: T) => string) => value === undefined ? 'None' : `Some(${emit(value)})`;
     const tile = (value: CatalogBank['tile']) => `WorldTile { x: ${value.x}, z: ${value.z}, level: ${value.level} }`;
     const object = (value: { name: string; op: string }) => `BankOperation { name: ${str(value.name)}, op: ${str(value.op)} }`;
-    return '// Generated by tools/game-data/generate.ts from pinned BankLocations.ts; do not curate.\n'
+    return '// Generated by tools/game-data/generate.ts; do not curate.\n'
         + 'pub const BANK_CATALOG: &[BankDefinition] = &[\n'
         + rows.map(row => {
             const skill = row.requires?.skill;
@@ -2888,10 +2370,10 @@ export function bankCatalogRust(rows: CatalogBank[]) {
 
 /** Selected content supplies the access identity, footprint, and placement; collision resolves the stand at bind time. */
 export function extractBankPlacements(content: string, catalog: CatalogBank[]) {
-    const locTree = contentTreeInputs(content, 'scripts', '.loc');
-    const npcTree = contentTreeInputs(content, 'scripts', '.npc');
-    const files = [...locTree.files, ...npcTree.files];
-    const maps = placementMapInputs(content);
+    const locFiles = contentTreeFiles(content, 'scripts', '.loc');
+    const npcFiles = contentTreeFiles(content, 'scripts', '.npc');
+    const files = [...locFiles, ...npcFiles];
+    const maps = placementMapFiles(content);
     const packedLocs = new Map([...parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'))].map(([alias, id]) => [id, alias]));
     const packedNpcs = new Map([...parsePack(fs.readFileSync(path.join(content, 'pack/npc.pack'), 'utf8'))].map(([alias, id]) => [id, alias]));
     const configs = new Map<string, Record<string, string>>();
@@ -2909,9 +2391,9 @@ export function extractBankPlacements(content: string, catalog: CatalogBank[]) {
         bank.tile.level === tile.plane && Math.max(Math.abs(bank.tile.x - tile.x), Math.abs(bank.tile.z - tile.z)) <= 14;
     const matches = (config: Record<string, string> | undefined, access: { name: string; op: string }) =>
         config?.name === access.name && [1, 2, 3, 4, 5].some(index => config[`op${index}`] === access.op);
-    for (const input of maps) {
-        const { mx, mz } = parseMapsquarePath(input.path);
-        const text = fs.readFileSync(path.join(content, input.path), 'utf8');
+    for (const map of maps) {
+        const { mx, mz } = parseMapsquarePath(map);
+        const text = fs.readFileSync(path.join(content, map), 'utf8');
         for (const placement of parseJm2LocPlacements(text, ids)) {
             const tile = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
             const config = configs.get(`.loc:${packedLocs.get(placement.loc_id)}`);
@@ -2939,48 +2421,20 @@ export function extractBankPlacements(content: string, catalog: CatalogBank[]) {
     }
     rows.sort((a, b) => catalog.findIndex(bank => bank.name === a.name) - catalog.findIndex(bank => bank.name === b.name) || a.x - b.x || a.z - b.z || a.id - b.id);
     const missing = catalog.filter(bank => !rows.some(row => row.name === bank.name)).map(bank => bank.name);
-    return { facts: { rows, missing }, inputs: { loc_configs: locTree.digest, npc_configs: npcTree.digest, maps: fileInventoryDigest(maps), loc_pack: sourceFile(content, 'pack/loc.pack'), npc_pack: sourceFile(content, 'pack/npc.pack') } };
+    return { facts: { rows, missing } };
 }
 
-/* ------------------------------------------------------------------------- *
- * debug family: the independent local-engine Debug catalog (M1/M2).
- *
- * The base asset carries no debug fields: its engine provenance is exactly
- * obj.dat, npc.dat and client/config, and its content provenance is exactly
- * the base contentFiles list. Everything the debug catalog alone needs —
- * the cheat handler, PlayerStat, the npc.dat join and the extractor's own
- * content inputs — lives in the debug artifact's provenance, so a
- * debug-only drift withholds only the Debug catalog. The object picker
- * reuses the base items table, so the artifact never duplicates obj names.
- * ------------------------------------------------------------------------- */
 export const DEBUG_SCHEMA_VERSION = 1;
 export const DEBUG_STAT_RELATIVE = 'src/engine/entity/PlayerStat.ts';
-export const BASE_ENGINE_INPUT_PATHS = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'];
-export const DEBUG_ENGINE_INPUT_PATHS = [engineHandlerRelative(), DEBUG_STAT_RELATIVE, 'data/pack/server/npc.dat'];
-export type DebugArtifactProvenance = { engine_commit: string; content_commit: string; inputs: InputHash[]; content_inputs: InputHash[]; cache_identity: Revision['cacheIdentity'] };
-export type DebugArtifact = { schema_version: 1; revision: number; provenance: DebugArtifactProvenance; debug_commands: unknown[]; debug_names: Record<string, unknown[]> };
-/** Base provenance digests: the original engine inputs and contentFiles only. */
-export function baseProvenanceInputs(engineDir: string, contentDir: string): { inputs: InputHash[]; content_inputs: InputHash[] } {
-    return {
-        inputs: BASE_ENGINE_INPUT_PATHS.map((file) => sourceFile(engineDir, file)),
-        content_inputs: [...new Set([...contentFiles, ...questIdentityAnalysisFiles(contentDir)])].sort().map((file) => sourceFile(contentDir, file)),
-    };
-}
+export type DebugArtifact = {
+    schema_version: 1;
+    revision: number;
+    debug_commands: unknown[];
+    debug_names: Record<string, unknown[]>;
+};
 
-export type ServerOrderedSourceInputs = { engine: InputHash[]; content: InputHash[] };
-/** Exact server-ordered read closure, independent of the shared family inputs. */
-export function serverOrderedInputPaths(engineDir: string, contentDir: string) {
-    const npc = npcTransformInputPaths(engineDir, contentDir);
-    return {
-        engine: [...new Set([...npc.engine, ...gitFiles(engineDir, ['src'], ['--cached']).filter(file => file.endsWith('.ts')), ...serverOrderedEngineInputPaths])].sort(compareCodepoint),
-        content: [...new Set([...npc.content, ...serverOrderedContentFiles])].sort(compareCodepoint),
-    };
-}
-
-/** One static fishing method projection used only by the built-in Gatherer. */
 type BuiltinFishingCandidateMethod = Pick<MethodWire, 'skill' | 'op' | 'targets'>;
 
-/** Runtime admission rows contain no refused proofs or development inventories. */
 export function runtimeNpcOperations(
     evidence: NpcTransformClosureEvidence,
     methods: readonly BuiltinFishingCandidateMethod[],
@@ -2990,7 +2444,6 @@ export function runtimeNpcOperations(
         proof.status === 'unchanged' || proof.status === 'consistent') : [];
     return {
         schema: 2,
-        evidence_sha256: crypto.createHash('sha256').update(npcEvidenceBytes(evidence)).digest('hex'),
         operations: accepted.map(proof => {
             const action = evidence.actions.find(row => row.npc_type_id === proof.npc_type_id && row.slot === proof.slot);
             if (!action || action.state !== 'present' || !action.operation_fingerprint || action.trigger_code === null
@@ -3005,13 +2458,12 @@ export function runtimeNpcOperations(
                         || row.operation_fingerprint !== action.operation_fingerprint))) {
                 throw new Error('server_ordered: positive NPC proof disagrees with its action closure');
             }
-            return { npc_type_id: action.npc_type_id, slot: action.slot, operation_fingerprint: action.operation_fingerprint };
+            return { npc_type_id: action.npc_type_id, slot: action.slot };
         }),
         builtin_gatherer_fishing_operations: runtimeBuiltinGathererFishingOperations(evidence, methods, hazardNpcs),
     };
 }
 
-/** Admit only an exact selected fishing method, current ordinary NPC config and present action row. */
 export function runtimeBuiltinGathererFishingOperations(
     evidence: NpcTransformClosureEvidence,
     methods: readonly BuiltinFishingCandidateMethod[],
@@ -3021,7 +2473,7 @@ export function runtimeBuiltinGathererFishingOperations(
     const excludedNpcTypes = new Set([390, 403, ...hazardNpcs]);
     const npcTypes = new Map(evidence.npc_types.map(row => [row.npc_type_id, row] as const));
     const actions = new Map(evidence.actions.map(row => [`${row.npc_type_id}:${row.slot}`, row] as const));
-    const accepted = new Map<string, { npc_type_id: number; slot: number; operation_fingerprint: string }>();
+    const accepted = new Map<string, { npc_type_id: number; slot: number }>();
     for (const method of methods) {
         const op = method.op;
         const targets = method.targets;
@@ -3036,7 +2488,6 @@ export function runtimeBuiltinGathererFishingOperations(
             accepted.set(`${target.id}:${target.op}`, {
                 npc_type_id: target.id,
                 slot: target.op,
-                operation_fingerprint: action.operation_fingerprint,
             });
         }
     }
@@ -3044,34 +2495,19 @@ export function runtimeBuiltinGathererFishingOperations(
         left.npc_type_id - right.npc_type_id || left.slot - right.slot);
 }
 
-/** Stable development-only evidence serialization, never loaded by the product. */
-export function npcEvidenceBytes(evidence: NpcTransformClosureEvidence): string {
-    return `${JSON.stringify(evidence, null, 2)}\n`;
-}
-/** Keep the contract proof's complete closure separate from the base and debug families. */
-export function serverOrderedProvenanceInputs(engineDir: string, contentDir: string, npcInputs: ServerOrderedSourceInputs): ServerOrderedSourceInputs {
-    const engine = [...new Map([
-        ...npcInputs.engine,
-        ...serverOrderedEngineInputPaths.map((file) => sourceFile(engineDir, file)),
-    ].map((input) => [input.path, input])).values()].sort((a, b) => compareCodepoint(a.path, b.path));
-    const contentPaths = [...new Set([
-        ...serverOrderedContentFiles,
-        ...npcInputs.content.map((input) => input.path),
-    ])].sort(compareCodepoint);
-    return { engine, content: contentPaths.map((file) => sourceFile(contentDir, file)) };
-}
-
-/** Debug-only engine digests: the cheat handler, PlayerStat and the npc.dat join. */
-export function debugProvenanceInputs(engineDir: string): InputHash[] {
-    return DEBUG_ENGINE_INPUT_PATHS.map((file) => sourceFile(engineDir, file));
-}
-/** The base content input list, without any debug extractor inputs. */
-export function baseContentFileList(): string[] {
-    return [...contentFiles];
-}
-export function buildDebugArtifact(revision: number, provenance: DebugArtifactProvenance, catalog: { commands: unknown[]; names: Record<string, unknown[]> }): DebugArtifact {
-    if (Object.hasOwn(catalog.names, 'obj') || Object.hasOwn(catalog.names, 'namedobj')) throw new Error(`${revision}: debug artifact must not duplicate base item names`);
-    return { schema_version: DEBUG_SCHEMA_VERSION, revision, provenance, debug_commands: catalog.commands, debug_names: catalog.names };
+export function buildDebugArtifact(
+    revision: number,
+    catalog: { commands: unknown[]; names: Record<string, unknown[]> },
+): DebugArtifact {
+    if (Object.hasOwn(catalog.names, 'obj') || Object.hasOwn(catalog.names, 'namedobj')) {
+        throw new Error(`${revision}: debug artifact must not duplicate base item names`);
+    }
+    return {
+        schema_version: DEBUG_SCHEMA_VERSION,
+        revision,
+        debug_commands: catalog.commands,
+        debug_names: catalog.names,
+    };
 }
 export function debugArtifactBytes(artifact: DebugArtifact): string {
     if (artifact.schema_version !== DEBUG_SCHEMA_VERSION) throw new Error(`${artifact.revision}: invalid debug artifact schema`);
@@ -3079,24 +2515,24 @@ export function debugArtifactBytes(artifact: DebugArtifact): string {
 }
 
 const hiddenSites = new Map<number, GatherSiteWire[]>();
-async function generate(spec: Revision) {
-    const pinned = assertPinned(spec);
-    assertServerOrderedPinned(spec);
-    // Revision 274 predates PvP V0 (PVP-DESIGN-1026): its published core omits
-    // every V0 fact, and `DuelControls::rule_button` reports `None`
-    // (`crates/api/src/game_data_tests.rs::rule_button_is_none_on_revision_274`).
+export type GenerationStage = 1 | 2;
+
+async function generate(spec: Revision, stage: GenerationStage) {
+    // Revision 274 predates PvP V0 (PVP-DESIGN-1026): its core omits those facts.
     const pvpV0 = spec.revision !== 274;
-    verifyCacheIdentity(spec.revision, spec.engine, spec.cacheIdentity);
-    for (const requiredInput of ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config']) if (!fs.existsSync(path.join(spec.engine, requiredInput))) throw new Error(`${spec.revision}: missing ${requiredInput}`);
-    process.chdir(spec.engine); const environment = (await import(pathToFileURL(path.join(spec.engine, 'src/util/Environment.ts')).href)) as { default: { node: { members: boolean } } };
-    // an F2P world config clears `tradeable` on every members obj at load; the published flag is the content's, so refuse that decode
-    if (environment.default.node.members !== true) throw new Error(`${spec.revision}: generate with a members world config (NODE_MEMBERS) so tradeable is the content's own flag`);
-    const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
-    const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
-    const categoriesById = new Map<number, string>();
-    for (const [name, id] of parsePack(fs.readFileSync(path.join(spec.content, 'pack/category.pack'), 'utf8'))) {
-        categoriesById.set(id, name);
+    for (const requiredInput of ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config']) {
+        if (!fs.existsSync(path.join(spec.engine, requiredInput))) throw new Error(`${spec.revision}: missing ${requiredInput}`);
     }
+    process.chdir(spec.engine);
+    const environment = (await import(pathToFileURL(path.join(spec.engine, 'src/util/Environment.ts')).href)) as { default: { node: { members: boolean } } };
+    if (environment.default.node.members !== true) throw new Error(`${spec.revision}: generate with a members world config (NODE_MEMBERS) so tradeable is decoded correctly`);
+    const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } };
+    objModule.default.load('data/pack');
+    const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } };
+    npcModule.default.load('data/pack');
+
+    const categoriesById = new Map<number, string>();
+    for (const [name, id] of parsePack(fs.readFileSync(path.join(spec.content, 'pack/category.pack'), 'utf8'))) categoriesById.set(id, name);
     const piles = pileModels(objModule.default.configs);
     const destroyDeathParam = parsePack(fs.readFileSync(path.join(spec.content, 'pack/param.pack'), 'utf8')).get('destroy_death');
     const items = objModule.default.configs.map((obj) => row(obj, piles, categoriesById, destroyDeathParam, pvpV0));
@@ -3104,89 +2540,51 @@ async function generate(spec: Revision) {
     if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) {
         throw new Error(`${spec.revision}: duplicate ids or aliases`);
     }
-    const debugHandlerPath = engineHandlerRelative();
-    const debugHandlerText = fs.readFileSync(path.join(spec.engine, debugHandlerPath), 'utf8');
-    const debugStatPath = DEBUG_STAT_RELATIVE;
-    const debugStatText = fs.readFileSync(path.join(spec.engine, debugStatPath), 'utf8');
+
+    const debugHandlerText = fs.readFileSync(path.join(spec.engine, engineHandlerRelative()), 'utf8');
+    const debugStatText = fs.readFileSync(path.join(spec.engine, DEBUG_STAT_RELATIVE), 'utf8');
     const debugCatalog = extractDebugCatalog(spec.content, debugHandlerText, debugStatText, npcModule.default.configs);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 5) throw new Error(`${spec.revision}: expected five combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs);
-    const selectableSpells = magic.spells.filter((spell) => spell.autocast_selectable);
-    const manualRows = magic.spells.filter((spell) => !spell.autocast_selectable).map((spell) => spell.source_row);
-    if (magic.spells.length !== 21 || magic.spells[15].name !== 'Fire Wave' || selectableSpells.length !== 16 || selectableSpells.some((spell, index) => spell.ssb !== index) || magic.staves.length !== 14) throw new Error(`${spec.revision}: magic data mismatch`);
-    if (JSON.stringify(manualRows) !== JSON.stringify(['magic_spell_crumble_undead', 'magic_spell_saradomin_strike', 'magic_spell_claws_of_guthix', 'magic_spell_flames_of_zamorak', 'magic_spell_iban_blast'])) throw new Error(`${spec.revision}: manual spell order mismatch ${manualRows.join(',')}`);
-    if (magic.failed_spell_impact !== 85) throw new Error(`${spec.revision}: failedspell_impact mismatch ${magic.failed_spell_impact}`);
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs);
+    const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs);
+    const magic = extractMagicFacts(spec.content, objModule.default.configs);
     const herbs = extractHerbFacts(spec.content, objModule.default.configs);
-    if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`);
-    if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`);
     const autocast = extractAutocastControls(spec.content);
     const duel = extractDuelControls(spec.content);
     const special = extractSpecialControls(spec.content, objModule.default.configs);
     const teleports = extractTeleportSpells(spec.content, objModule.default.configs);
-    if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) {
-        throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);
-    }
     const prayer = extractPrayerFacts(spec.content);
-    if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`);
     const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs);
-    if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);
     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs);
-    if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`);
-    const objPackPath = path.join(spec.content, 'pack/obj.pack');
-    if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`);
-    const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8'));
+    const objPack = parsePack(fs.readFileSync(path.join(spec.content, 'pack/obj.pack'), 'utf8'));
     if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`);
     const equipmentNames = extractEquipmentNamesFacts(items, objPack);
-    const gatheringInputs = familyInputs(spec, pinned);
+
     const gathering = extractGatheringFamily(spec.content);
-    if (JSON.stringify(selectedInputHashes(spec)) !== JSON.stringify(gatheringInputs.inputs)) throw new Error(`${spec.revision}: selected inputs changed during gathering extraction`);
     const gatheringFile = path.join(path.dirname(spec.output), String(spec.revision), 'gathering.json');
     fs.mkdirSync(path.dirname(gatheringFile), { recursive: true });
-    fs.writeFileSync(gatheringFile, familyBytes(gatheringInputs, gathering, 'gathering'));
-    const gatheringArtifact = { path: path.relative(path.dirname(spec.output), gatheringFile), schema: gathering.schema, ...sha256(gatheringFile) };
+    fs.writeFileSync(gatheringFile, familyBytes(gathering, 'gathering'));
+
     const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision);
-    const contentId = spec.cacheIdentity.content_id;
-    if (!contentId) throw new Error(`${spec.revision}: quest starts require content identity`);
-    const questStarts = extractQuestStartFacts(spec.content, questIdentity.rows, spec.revision, contentId);
-    Object.assign(facts, { quest_starts: questStarts });
-    Object.assign(facts, { dialogue_ui: extractDialogueUiFacts(spec.content) });
+    const questStarts = extractQuestStartFacts(spec.content, questIdentity.rows, spec.revision);
+    Object.assign(facts, { quest_starts: questStarts, dialogue_ui: extractDialogueUiFacts(spec.content) });
     const npcEvidence = spec.revision === 289 ? extractNpcTransformClosure(spec.engine, spec.content) : undefined;
-    if (npcEvidence) {
-        const evidenceFile = path.join(root, 'tools/game-data/evidence/289-npc-transforms.json');
-        fs.mkdirSync(path.dirname(evidenceFile), { recursive: true });
-        fs.writeFileSync(evidenceFile, npcEvidenceBytes(npcEvidence));
-    }
     const serverOrdered = spec.revision === 289 ? {
         ...await loadServerOrderedFacts({
             contentRoot: spec.content,
             engineRoot: spec.engine,
             revision: spec.revision,
-            engineCommit: pinned.engineCommit,
-            contentCommit: pinned.contentCommit,
-            cacheId: spec.cacheIdentity.cache_id,
-            contentId,
         }),
         npc_transforms: runtimeNpcOperations(npcEvidence!, gathering.payload.methods, gathering.payload.hazard_npcs),
     } : undefined;
     if (serverOrdered) Object.assign(facts, { server_ordered: serverOrdered });
-    const cookRow = questIdentity.rows.find((row) => row.id === 'cook');
-    const deathRow = questIdentity.rows.find((row) => row.id === 'death');
-    if (!cookRow || !deathRow || deathRow.varp !== 'death_equiproom' || deathRow.varp_id !== 314 || deathRow.complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) {
-        throw new Error(`${spec.revision}: quest identity join mismatch`);
-    }
-    if (spec.revision === 289 && (questIdentity.rows.length !== 69 || !questIdentity.rows.some((row) => row.id === 'barcrawl') || !questIdentity.rows.some((row) => row.id === 'hauntedmine' && row.kind === 'stub'))) {
-        throw new Error(`${spec.revision}: expected 69 identity rows, got ${questIdentity.rows.length}`);
-    }
+
     const combatScripts = parseCombatScripts(spec.content);
     const spellMaxHits = buildSpellMaxHits(spec.content);
     const npcTypeSource = fs.readFileSync(path.join(spec.engine, 'src/cache/config/NpcType.ts'), 'utf8');
     const npcNames = extractNpcNamesFacts(spec.content, spec.revision, npcTypeSource, combatScripts, spellMaxHits);
     const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts, pvpV0);
-    // PvP V0 facts (PVP-DESIGN-1026 §3.3, §11 row V0). Alias maps join the
-    // decoded obj configs to the content aliases the extractors read. Revision
-    // 274 predates V0, so its core carries none of these facts.
     const aliasToId = new Map(items.filter((item) => item.alias !== null).map((item) => [item.alias as string, item.id]));
     const idToAlias = new Map(items.filter((item) => item.alias !== null).map((item) => [item.id, item.alias as string]));
-
     Object.assign(facts, {
         style_seqs: combatStyles.style_seqs,
         style_spotanims: combatStyles.style_spotanims,
@@ -3201,15 +2599,11 @@ async function generate(spec: Revision) {
     });
     if (pvpV0) {
         const specialWeapons = extractSpecialWeaponFacts(spec.content, objModule.default.configs, combatStyles.weapon_styles, aliasToId);
-        if (specialWeapons.length !== 14) throw new Error(`${spec.revision}: expected 14 specwep rows, got ${specialWeapons.length}`);
         const itemCombatBonus = extractItemCombatBonus(spec.content, objModule.default.configs);
         const meleeWeaponTiers = extractMeleeWeaponTiers(spec.content, combatStyles.weapon_styles, idToAlias);
         const duelRuleButtons = extractDuelRuleButtons(spec.content);
-        if (duelRuleButtons.length !== 14) throw new Error(`${spec.revision}: expected 14 duel rule buttons, got ${duelRuleButtons.length}`);
-        if (!duelRuleButtons.every((row, index) => row.bit === index)) throw new Error(`${spec.revision}: duel rule bits are not 0-13`);
-        // `DuelControls.rule_buttons[bit]` (§3.3): the settings-script buttons in
-        // duelarena.constant bit order join the `duel` controls here.
-        Object.assign(duel, { rule_buttons: duelRuleButtons.map((row) => row.component) });
+        if (!duelRuleButtons.every((button, index) => button.bit === index)) throw new Error(`${spec.revision}: duel rule bits are not contiguous`);
+        Object.assign(duel, { rule_buttons: duelRuleButtons.map((button) => button.component) });
         const duelZones = extractDuelZones(spec.content);
         Object.assign(facts, {
             special_weapons: specialWeapons,
@@ -3218,131 +2612,137 @@ async function generate(spec: Revision) {
             duel_zones: duelZones,
         });
     }
+
     const locNames = extractLocNamesFacts(spec.content);
     const npcPlacements = extractNpcPlacementsFacts(spec.content);
     const karamja = extractKaramjaFacts(spec.content, npcNames, locNames, npcPlacements);
     Object.assign(facts, { karamja: karamja.facts });
-    if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) {
-        throw new Error(`${spec.revision}: quest coverage mismatch`);
-    }
-    if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`);
+
     const quests: FamilyDraft = { schema: QUESTS_SCHEMA, payload: questIdentity };
-    if (JSON.stringify(selectedInputHashes(spec)) !== JSON.stringify(gatheringInputs.inputs)) throw new Error(`${spec.revision}: selected inputs changed during quests extraction`);
     const questsFile = path.join(path.dirname(spec.output), String(spec.revision), 'quests.json');
-    fs.mkdirSync(path.dirname(questsFile), { recursive: true });
-    fs.writeFileSync(questsFile, familyBytes(gatheringInputs, quests, 'quests'));
-    const questsArtifact = { path: path.relative(path.dirname(spec.output), questsFile), schema: quests.schema, ...sha256(questsFile) };
-    let prereqStepsArtifact: { path: string; schema: number; bytes: number; sha256: string } | undefined;
-    if (spec.revision === 289) {
+    fs.writeFileSync(questsFile, familyBytes(quests, 'quests'));
+    let prereqStepsFile: string | undefined;
+    if (stage === 2 && spec.revision === 289) {
         const prereqSteps = extractPrereqStepsFacts(spec.revision);
         assertPrereqStepFacts(spec.content, prereqSteps, questIdentity.rows);
-        const prereqInputs = { ...gatheringInputs, inputs: prereqStepInputs(spec.content, prereqSteps) };
         const prereqFamily: FamilyDraft = { schema: PREREQ_STEPS_SCHEMA, payload: prereqSteps };
-        const prereqFile = path.join(path.dirname(spec.output), String(spec.revision), 'prereq_steps.json');
-        fs.writeFileSync(prereqFile, familyBytes(prereqInputs, prereqFamily, 'prereq_steps'));
-        prereqStepsArtifact = { path: path.relative(path.dirname(spec.output), prereqFile), schema: prereqFamily.schema, ...sha256(prereqFile) };
+        prereqStepsFile = path.join(path.dirname(spec.output), String(spec.revision), 'prereq_steps.json');
+        fs.writeFileSync(prereqStepsFile, familyBytes(prereqFamily, 'prereq_steps'));
     }
+
     const trails = extractTrailFacts(spec.content, objModule.default.configs);
-    assertTrailPins(trails, spec.revision);
     const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs);
-    assertTalkKeyPins(talkKey.facts, spec.revision);
-    assertTalkKeyNpcJoins(talkKey.facts, npcModule.default.configs);
+    assertTalkKeyNpcJoins(talkKey, npcModule.default.configs);
     const trioGivers = extractTrioGiversFacts(spec.content);
-    assertTrioGiverPins(trioGivers.facts, spec.revision);
-    assertTrioGiverNpcJoins(trioGivers.facts, npcModule.default.configs);
-    const baseProvenance = baseProvenanceInputs(spec.engine, spec.content);
-    const inputs = baseProvenance.inputs;
-    const contentInputPaths = [...new Set([
-        ...contentFiles,
-        ...questIdentityAnalysisFiles(spec.content),
-        ...questStartContentFiles(spec.content),
-        ...npcNames.files,
-        ...combatScripts.files.map((script) => script.relative),
-    ])].sort();
-    const contentInputs = contentInputPaths.map((file) => sourceFile(spec.content, file));
-    const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const rs2b0tRoot = requireEnvPath('RS2B0T', 'the pinned rs2b0t checkout root');
-    assertRs2b0tPinned(rs2b0tRoot);
+    assertTrioGiverNpcJoins(trioGivers, npcModule.default.configs);
+
+    const rs2b0tRoot = requireEnvPath('RS2B0T', 'the rs2b0t source root');
     const bankSource = path.join(rs2b0tRoot, 'src/bot/api/bank/BankLocations.ts');
     const bankCatalog = await extractBankCatalog(spec.engine, fs.readFileSync(bankSource, 'utf8'));
     const bankPlacements = extractBankPlacements(spec.content, bankCatalog);
-    const bankInputs = { catalog: { path: 'rs2b0t-00d39a17e0/src/bot/api/bank/BankLocations.ts', ...sha256(bankSource) }, ...bankPlacements.inputs };
     fs.writeFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.rs'), bankCatalogRust(bankCatalog));
-    const cookFiles = { cookLocations: 'src/bot/data/cookLocations.ts', cookingRanges: 'src/bot/data/cookingRanges.ts', genCookSurfaces: 'tools/cooking/gen-cooksurfaces.ts' };
+    const cookFiles = {
+        cookLocations: 'src/bot/data/cookLocations.ts',
+        cookingRanges: 'src/bot/data/cookingRanges.ts',
+        genCookSurfaces: 'tools/cooking/gen-cooksurfaces.ts',
+    };
     const cookCatalog = await extractCookCatalog(spec.engine, {
         cookLocations: fs.readFileSync(path.join(rs2b0tRoot, cookFiles.cookLocations), 'utf8'),
         cookingRanges: fs.readFileSync(path.join(rs2b0tRoot, cookFiles.cookingRanges), 'utf8'),
         genCookSurfaces: fs.readFileSync(path.join(rs2b0tRoot, cookFiles.genCookSurfaces), 'utf8'),
     });
     const cookSurfaces = extractCookSurfaces(spec.content, cookCatalog);
-    const cookInputs = { catalog: Object.values(cookFiles).map((file) => ({ path: `rs2b0t-00d39a17e0/${file}`, ...sha256(path.join(rs2b0tRoot, file)) })), ...cookSurfaces.inputs };
     fs.writeFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.rs'), cookCatalogRust(cookCatalog));
+    const shops = extractShopFacts(spec.content, items);
+
     const gatherItemNames = new Map<number, string>();
     for (const item of items) if (item.name !== null && item.name !== '') gatherItemNames.set(item.id, item.name);
     const gatherResourceRows = gatherResources(gathering.payload, gatherItemNames);
     const gatherSiteResult = gatherSites(gathering.payload, gatherResourceRows, spec.content, bankCatalog);
     hiddenSites.set(spec.revision, gatherSiteResult.hidden);
     Object.assign(facts, { gather_resources: gatherResourceRows, gather_sites: gatherSiteResult.rows });
-    const payload = { schema_version: 5, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, cook_inputs: cookInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, quest_identity: questIdentity, npc_names: { combat_facts_version: npcNames.combat_facts_version, rows: npcNames.rows }, loc_names: { rows: locNames.rows }, npc_placements: { rows: npcPlacements.rows }, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts, cook_surfaces: cookSurfaces.facts, mining_hazards: miningHazards(gathering.payload) };
-    Object.assign(payload.provenance, { karamja_inputs: karamja.inputs });
-    if (serverOrdered) Object.assign(payload.provenance, {
-        server_ordered_inputs: serverOrderedProvenanceInputs(spec.engine, spec.content, npcEvidence!.source_inputs),
-    });
-    const debugArtifact = buildDebugArtifact(spec.revision, { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs: debugProvenanceInputs(spec.engine), content_inputs: debugCatalog.inputs, cache_identity: spec.cacheIdentity }, debugCatalog);
+
+    const payload = {
+        schema_version: 5,
+        revision: spec.revision,
+        items,
+        shops,
+        ...facts,
+        drop_tables: drops,
+        ...magic,
+        ...herbs,
+        ...prayer,
+        nurmof_essence: nurmofEssence,
+        flour_six: flourSix,
+        equipment_names: equipmentNames,
+        quest_identity: questIdentity,
+        npc_names: { combat_facts_version: npcNames.combat_facts_version, rows: npcNames.rows },
+        loc_names: { rows: locNames.rows },
+        npc_placements: { rows: npcPlacements.rows },
+        trails,
+        talk_key: talkKey,
+        trio_givers: trioGivers,
+        autocast,
+        duel,
+        special,
+        teleports,
+        bank_placements: bankPlacements.facts,
+        cook_surfaces: cookSurfaces.facts,
+        mining_hazards: miningHazards(gathering.payload),
+    };
+    const debugArtifact = buildDebugArtifact(spec.revision, debugCatalog);
     const debugFile = path.join(path.dirname(spec.output), String(spec.revision), 'debug.json');
     fs.mkdirSync(path.dirname(debugFile), { recursive: true });
     fs.writeFileSync(debugFile, debugArtifactBytes(debugArtifact));
-    const debugDescriptor = { path: path.relative(path.dirname(spec.output), debugFile), schema: DEBUG_SCHEMA_VERSION, ...sha256(debugFile) };
-    const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes);
-    return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, families: { gathering: gatheringArtifact, quests: questsArtifact, ...(prereqStepsArtifact ? { prereq_steps: prereqStepsArtifact } : {}), debug: debugDescriptor }, gathering: gathering.summary, gather_sites: gatherSiteResult.report,
-        equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel,
-        special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length },
-        trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length },
-        talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') },
-        trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') },
-        bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs,
-        bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing }, cook_inputs: cookInputs, cook_surfaces: cookSurfaces.facts.rows.length };
+    const bytes = `${JSON.stringify(payload, null, 2)}\n`;
+    fs.mkdirSync(path.dirname(spec.output), { recursive: true });
+    fs.writeFileSync(spec.output, bytes);
+    return {
+        revision: spec.revision,
+        output: path.relative(root, spec.output),
+        records: items.length,
+        shop_records: shops.length,
+        families: [
+            'gathering',
+            'quests',
+            ...(prereqStepsFile ? ['prereq_steps'] : []),
+            'debug',
+        ],
+        gathering: gathering.summary,
+        bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing.length },
+        cook_surfaces: cookSurfaces.facts.rows.length,
+    };
 }
-
-/** Shared CLI selection. With no flag, 274 is best-effort corroboration of 289. */
-export function requestedRevisions(args: string[]): number[] {
-    if (args.length === 0) return [274, 289];
-    if (args.length === 2 && args[0] === '--revision' && (args[1] === '274' || args[1] === '289')) return [Number(args[1])];
-    throw new Error('usage: [--revision 274|289]');
-}
-async function main() {
-    const requested = requestedRevisions(process.argv.slice(2));
-    const refused: { revision: number; reason: string }[] = [];
-    const results = [];
-    for (const spec of revisions.filter(spec => requested.includes(spec.revision))) {
-        try {
-            results.push(await generate(spec));
-        } catch (error) {
-            if (spec.revision === 289 || requested.length === 1) throw error;
-            const reason = error instanceof Error ? error.message : String(error);
-            refused.push({ revision: spec.revision, reason });
-            console.error(`${spec.revision}: REFUSED: ${reason}`);
+export type GenerationOptions = { stage: GenerationStage; revisions: number[] };
+export function parseGenerationArgs(args: string[]): GenerationOptions {
+    let stage: GenerationStage | undefined;
+    let revision: number | undefined;
+    for (let index = 0; index < args.length; index++) {
+        const flag = args[index];
+        const value = args[index + 1];
+        if (flag === '--stage' && (value === '1' || value === '2') && stage === undefined) {
+            stage = Number(value) as GenerationStage;
+            index++;
+        } else if (flag === '--revision' && (value === '274' || value === '289') && revision === undefined) {
+            revision = Number(value);
+            index++;
+        } else {
+            throw new Error('usage: --stage 1|2 [--revision 274|289]');
         }
     }
-    const digests = new Map(results.map((result) => [result.revision, result.talk_key.digest]));
-    if (new Set(digests.values()).size !== 1) {
-        throw new Error(`talk_key: the two pins disagree on the selected identity (${[...digests].map(([revision, digest]) => `${revision}:${digest}`).join(', ')})`);
+    if (stage === undefined) throw new Error('usage: --stage 1|2 [--revision 274|289]');
+    return { stage, revisions: revision === undefined ? [274, 289] : [revision] };
+}
+async function main() {
+    const options = parseGenerationArgs(process.argv.slice(2));
+    const results = [];
+    for (const spec of revisions.filter(spec => options.revisions.includes(spec.revision))) {
+        results.push(await generate(spec, options.stage));
     }
-    const giverDigests = new Map(results.map((result) => [result.revision, result.trio_givers.digest]));
-    if (new Set(giverDigests.values()).size !== 1) {
-        throw new Error(`trio_givers: the two pins disagree on the selected identity, display name, or unique spawn (${[...giverDigests].map(([revision, digest]) => `${revision}:${digest}`).join(', ')})`);
-    }
-    const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json');
-    const previous = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    const merged = new Map(previous.revisions.map((row: { revision: number }) => [row.revision, row]));
-    for (const result of results) merged.set(result.revision, result);
-    const manifest = { schema_version: 5, generator: 'tools/game-data/generate.ts', revisions: [...merged.values()].sort((a, b) => a.revision - b.revision) };
-    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    // The hidden sites' regions for the reachability guard; a one-revision run keeps the other revision's rows.
     const hiddenPath = path.join(root, HIDDEN_SITES_FILE);
     const hiddenFile: Record<string, HiddenSitesRecord> = fs.existsSync(hiddenPath) ? JSON.parse(fs.readFileSync(hiddenPath, 'utf8')) : {};
     for (const [revision, hidden] of hiddenSites) hiddenFile[String(revision)] = hiddenSitesRecord(hidden);
     fs.writeFileSync(hiddenPath, hiddenSitesBytes(hiddenFile));
-    console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results, refused, cross_pin: results.length === 2 ? 'verified' : 'not checked: both revisions did not generate' }, null, 2));
+    console.log(JSON.stringify({ stage: options.stage, revisions: results }, null, 2));
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });

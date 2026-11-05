@@ -62,9 +62,6 @@ const MAX_PBKDF2_ROUNDS: u32 = 2_000_000;
 const _: () = assert!(PBKDF2_ROUNDS <= MAX_PBKDF2_ROUNDS);
 const HEADER_LEN: usize = MAGIC.len() + 1 + 4 + SALT_LEN + NONCE_LEN;
 
-/// Per-profile settings. Low-memory is the default for headless clients;
-/// auto-login defaults off so v1 blobs (which only carried `lowmem`)
-/// deserialize with the box unchecked.
 /// How this slot paints the scene. Off is `set_draw` only. Gpu↔Cpu on a
 /// live slot reattaches the `Renderer` without a logout. Memory mode is a
 /// separate setting applied at the next login.
@@ -77,6 +74,15 @@ pub enum RasterMode {
     Cpu,
 }
 
+// Require the key while retaining an explicit null as a valid value.
+fn required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 /// Last successfully started script for a profile. Identity is source kind
 /// plus canonical catalog/file/compiled id — never a display-name fallback.
 /// A missing source stays present with [`ScriptAssignment::unavailable`].
@@ -87,10 +93,9 @@ pub struct ScriptAssignment {
     /// Canonical identity: register name, stored file path, or compiled id.
     pub identity: String,
     /// Picker label only. Never used to look up or substitute a card.
-    #[serde(default)]
     pub display_name: String,
     /// Present when the stored identity cannot currently be resolved.
-    #[serde(default)]
+    #[serde(deserialize_with = "required_nullable")]
     pub unavailable: Option<String>,
 }
 
@@ -131,11 +136,9 @@ pub enum CurePoison {
     Never,
 }
 
-/// The profile's Survival and supplies group. Phase 1 stores one field;
-/// later phases extend the group without a migration (`#[serde(default)]`
-/// loads a row that predates each new field).
+/// The profile's Survival and supplies group.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub struct SurvivalSettings {
     /// When a script drinks a held antipoison.
     pub cure_poison: CurePoison,
@@ -154,59 +157,39 @@ pub const RANDOM_EVENT_POLICY_EVENTS: [(&str, &str); 8] = [
     ("strange plant", "Strange plant"),
 ];
 
+/// Settings persisted for one profile. Every key is required, even when a
+/// value is nullable.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProfileSettings {
     pub lowmem: bool,
-    #[serde(default)]
+    /// Whether the profile starts automatically.
     pub auto_login: bool,
-    /// Public world number, or automatic selection when absent.
-    #[serde(default)]
+    /// Public world number, or automatic selection when null.
+    #[serde(deserialize_with = "required_nullable")]
     pub world: Option<u16>,
     /// Cached TutSkip. `None` = never read (`getvar tutorial` pending).
     /// `Some(true)` = skipped (`>= 1000` or TutSkip pressed). `Some(false)`
     /// = engine reported the tutorial still open.
-    #[serde(default)]
+    #[serde(deserialize_with = "required_nullable")]
     pub tutorial_skipped: Option<bool>,
-    #[serde(default)]
     pub raster: RasterMode,
-    /// Incoming random events (sandwich lady, genie, …). On by default so
-    /// pre-0.1.2 vaults keep them flowing.
-    #[serde(default = "default_random_events")]
+    /// Incoming random events (sandwich lady, genie, …).
     pub random_events: bool,
     /// Per-hostile-random NPC response; absent entries default to Flee.
-    #[serde(default)]
     pub random_event_policies: BTreeMap<String, RandomEventPolicy>,
     /// Lamp skill set from the lamp dialogue.
-    #[serde(default = "default_lamp_skill")]
     pub lamp_skill: String,
     /// Lamp auto-use: claim the reward without a confirmation click.
-    #[serde(default = "default_lamp_auto")]
     pub lamp_auto: bool,
     /// Account-wide partner used by clue 3554's Duel Arena traversal.
-    #[serde(default)]
     pub clue_duel_partner: String,
-    /// Last successfully started assignment. Absence is a legacy unassigned profile.
-    #[serde(default)]
+    /// Last successfully started assignment, if any.
+    #[serde(deserialize_with = "required_nullable")]
     pub script_assignment: Option<ScriptAssignment>,
     /// Per-profile parameter overrides keyed by [`assignment_key`].
-    #[serde(default)]
     pub script_settings: BTreeMap<String, Map<String, Value>>,
-    /// The Survival and supplies group. Absent in pre-0.2.6 vault rows,
-    /// which load with the default (cure when needed).
-    #[serde(default)]
+    /// The Survival and supplies group.
     pub survival: SurvivalSettings,
-}
-
-fn default_random_events() -> bool {
-    true
-}
-
-fn default_lamp_skill() -> String {
-    "strength".into()
-}
-
-fn default_lamp_auto() -> bool {
-    true
 }
 
 impl Default for ProfileSettings {
@@ -282,6 +265,8 @@ pub enum VaultError {
     InvalidCompiledSettingsSchemaVersion,
     #[error("compiled settings values must be an object")]
     CompiledSettingsValuesNotObject,
+    #[error("{path}: saved data is in a format from before 0.2.8", path = .path.display())]
+    UnsupportedSavedFormat { path: PathBuf },
     #[error("corrupt vault file: {0}")]
     Corrupt(String),
     #[error("io: {0}")]
@@ -342,8 +327,21 @@ impl Vault {
         let key = derive_key(passphrase, &salt, rounds);
         let plaintext =
             Zeroizing::new(decrypt(&key, payload).map_err(|_| VaultError::WrongPassphrase)?);
-        let profiles: BTreeMap<String, Profile> = serde_json::from_slice(&plaintext)
-            .map_err(|error| serde_corruption("deserialize profiles", error))?;
+        let profiles: BTreeMap<String, Profile> =
+            serde_json::from_slice(&plaintext).map_err(|error| {
+                if is_unsupported_saved_shape(&error) {
+                    VaultError::UnsupportedSavedFormat {
+                        path: path.to_path_buf(),
+                    }
+                } else {
+                    serde_corruption("deserialize profiles", error)
+                }
+            })?;
+        if has_pre_envelope_compiled_settings(&profiles) {
+            return Err(VaultError::UnsupportedSavedFormat {
+                path: path.to_path_buf(),
+            });
+        }
         Ok(Self {
             path: path.to_path_buf(),
             salt,
@@ -564,6 +562,90 @@ fn serde_corruption(context: &'static str, error: serde_json::Error) -> VaultErr
     ))
 }
 
+const MISSING_OLDER_FIELDS: [&str; 15] = [
+    "missing field `auto_login`",
+    "missing field `world`",
+    "missing field `tutorial_skipped`",
+    "missing field `raster`",
+    "missing field `random_events`",
+    "missing field `random_event_policies`",
+    "missing field `lamp_skill`",
+    "missing field `lamp_auto`",
+    "missing field `clue_duel_partner`",
+    "missing field `script_assignment`",
+    "missing field `script_settings`",
+    "missing field `survival`",
+    "missing field `display_name`",
+    "missing field `unavailable`",
+    "missing field `cure_poison`",
+];
+
+struct MissingOlderFieldDetector {
+    candidates: u16,
+    offset: usize,
+    matched: bool,
+    mismatch: bool,
+}
+
+impl MissingOlderFieldDetector {
+    fn new() -> Self {
+        Self {
+            candidates: (1u16 << MISSING_OLDER_FIELDS.len()) - 1,
+            offset: 0,
+            matched: false,
+            mismatch: false,
+        }
+    }
+}
+
+impl std::fmt::Write for MissingOlderFieldDetector {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        if self.matched || self.mismatch {
+            return Ok(());
+        }
+        for byte in text.bytes() {
+            let mut candidates = 0u16;
+            for (index, pattern) in MISSING_OLDER_FIELDS.iter().enumerate() {
+                let bit = 1u16 << index;
+                if self.candidates & bit != 0 && pattern.as_bytes().get(self.offset) == Some(&byte)
+                {
+                    candidates |= bit;
+                    if self.offset + 1 == pattern.len() {
+                        self.matched = true;
+                        return Ok(());
+                    }
+                }
+            }
+            if candidates == 0 {
+                self.mismatch = true;
+                return Ok(());
+            }
+            self.candidates = candidates;
+            self.offset += 1;
+        }
+        Ok(())
+    }
+}
+
+fn is_unsupported_saved_shape(error: &serde_json::Error) -> bool {
+    if error.classify() != serde_json::error::Category::Data {
+        return false;
+    }
+    let mut detector = MissingOlderFieldDetector::new();
+    let _ = std::fmt::write(&mut detector, format_args!("{error}"));
+    detector.matched
+}
+
+fn has_pre_envelope_compiled_settings(profiles: &BTreeMap<String, Profile>) -> bool {
+    profiles.values().any(|profile| {
+        profile
+            .settings
+            .script_settings
+            .iter()
+            .any(|(identity, values)| identity.starts_with("compiled:") && values.is_empty())
+    })
+}
+
 /// A `Vec` writer that grows by hand: `Vec`'s own doubling would free the old
 /// allocation, plaintext and all, without zeroing it.
 struct SecretBuf(Zeroizing<Vec<u8>>);
@@ -670,11 +752,6 @@ mod tests {
     /// A passphrase used by the vaults these tests create.
     const PASS: &str = "test-passphrase-01";
 
-    /// A real vault written by the code that shipped before this policy (0.1.9:
-    /// passphrase `bot`, 100,000 rounds, two synthetic profiles). It is that
-    /// writer's own output, not something this build produced.
-    const LEGACY_VAULT: &[u8] = include_bytes!("../tests/fixtures/legacy-0.1.9.vault");
-
     fn tmp_path(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("274bot-vault-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -709,6 +786,30 @@ mod tests {
         u32::from_le_bytes(file[9..13].try_into().unwrap())
     }
 
+    fn assert_unsupported_saved_file(path: &std::path::Path) -> VaultError {
+        let original = std::fs::read(path).unwrap();
+        let error = match Vault::unlock(path, PASS) {
+            Err(error) => error,
+            Ok(_) => panic!("unsupported saved format unexpectedly opened"),
+        };
+        assert!(matches!(
+            &error,
+            VaultError::UnsupportedSavedFormat { path: error_path }
+                if error_path.as_path() == path
+        ));
+        let display = error.to_string();
+        assert!(
+            display.contains(path.to_string_lossy().as_ref()),
+            "{display}"
+        );
+        assert!(
+            display.contains("saved data is in a format from before 0.2.8"),
+            "{display}"
+        );
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        error
+    }
+
     #[test]
     fn profile_debug_never_prints_the_password() {
         let text = format!("{:?}", profile("alice", "hunter22"));
@@ -717,54 +818,12 @@ mod tests {
     }
 
     #[test]
-    fn auto_login_defaults_false_and_old_json_unlocks_off() {
-        assert!(!ProfileSettings::default().auto_login);
-        let path = tmp_path("old-settings.vault");
-        let mut v = Vault::create(&path, PASS).unwrap();
-        v.upsert(Profile {
-            username: "a".into(),
-            password: "a".into(),
-            uid: 1,
-            settings: ProfileSettings {
-                lowmem: true,
-                ..ProfileSettings::default()
-            },
-        })
-        .unwrap();
-        drop(v);
-        // Simulate a v1 blob that only had lowmem: rewrite profiles JSON via unlock+file is
-        // enough if Deserialize default works. Also assert missing field:
-        let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
-        assert!(missing.lowmem);
-        assert!(!missing.auto_login);
-        assert_eq!(missing.tutorial_skipped, None);
-        assert_eq!(missing.raster, super::RasterMode::Gpu);
-        assert_eq!(missing.world, None);
-    }
-
-    #[test]
-    fn pre_0_1_2_profile_defaults_random_events_and_lamp_on() {
-        // A pre-0.1.2 JSON profile carries none of the new keys; randoms and
-        // the lamp helper must stay on so old vaults behave as before.
-        let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
-        assert!(missing.random_events, "old vaults keep random events on");
-        assert_eq!(missing.lamp_skill, "strength");
-        assert!(missing.lamp_auto, "old vaults keep lamp auto on");
-        let d = ProfileSettings::default();
-        assert!(d.random_events);
-        assert_eq!(d.lamp_skill, "strength");
-        assert!(d.lamp_auto);
-    }
-
-    #[test]
-    fn hostile_random_event_policy_defaults_to_flee_and_roundtrips() {
-        let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
+    fn random_event_policy_defaults_to_flee_and_roundtrips() {
+        let mut settings = ProfileSettings::default();
         assert_eq!(
-            missing.random_event_policy("River Troll"),
+            settings.random_event_policy("River Troll"),
             super::RandomEventPolicy::Flee
         );
-
-        let mut settings = ProfileSettings::default();
         assert!(
             !super::RANDOM_EVENT_POLICY_EVENTS
                 .iter()
@@ -789,45 +848,74 @@ mod tests {
     }
 
     #[test]
-    fn profile_json_round_trip_keeps_survival_group() {
-        // A vault row written by a newer binary carries the survival
-        // group. Loading and saving it must keep the group in the JSON
-        // text: `ProfileSettings` has no `deny_unknown_fields`, so a
-        // build without the field silently drops the key on this round
-        // trip.
-        let row: ProfileSettings =
-            serde_json::from_str(r#"{"lowmem":true,"survival":{"cure_poison":"never"}}"#).unwrap();
-        let saved = serde_json::to_string(&row).unwrap();
-        assert!(
-            saved.contains(r#""survival":{"cure_poison":"never"}"#),
-            "the saved row keeps the survival group: {saved}"
-        );
-    }
+    fn supported_0_2_8_shape_roundtrips_through_encrypted_vault() {
+        const PROFILES: &str = r#"{"alice":{"username":"alice","password":"supported-password","uid":274000001,"settings":{"lowmem":false,"auto_login":true,"world":null,"tutorial_skipped":null,"raster":"cpu","random_events":false,"random_event_policies":{"river troll":"fight"},"lamp_skill":"magic","lamp_auto":false,"clue_duel_partner":"bob","script_assignment":{"source_kind":"catalog","identity":"ChickenKiller","display_name":"Chicken Killer","unavailable":null},"script_settings":{"catalog:ChickenKiller":{"eatAtPercent":47},"catalog:EmptyCard":{}},"survival":{"cure_poison":"never"}}}}"#;
+        let path = tmp_path("supported-0.2.8.vault");
+        let salt = [0x5au8; SALT_LEN];
+        let key = derive_key(PASS, &salt, super::PBKDF2_ROUNDS);
+        let blob = build_blob(&salt, &key, PROFILES.as_bytes(), super::PBKDF2_ROUNDS).unwrap();
+        std::fs::write(&path, blob).unwrap();
 
-    #[test]
-    fn profile_settings_survival_defaults_from_legacy_json() {
-        // A pre-0.2.6 row has no survival key. It loads with the default:
-        // cure when needed.
-        let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
+        let mut vault = Vault::unlock(&path, PASS).unwrap();
+        let alice = vault.get("alice").expect("supported profile loaded");
+        assert_eq!(alice.password, "supported-password");
+        assert_eq!(alice.uid, 274_000_001);
+        assert_eq!(alice.settings.world, None);
+        assert_eq!(alice.settings.tutorial_skipped, None);
+        assert_eq!(alice.settings.raster, super::RasterMode::Cpu);
+        assert!(!alice.settings.random_events);
         assert_eq!(
-            missing.survival.cure_poison,
-            super::CurePoison::WhenNeeded,
-            "old vault rows cure when needed"
+            alice.settings.random_event_policy("river troll"),
+            super::RandomEventPolicy::Fight
+        );
+        assert_eq!(alice.settings.lamp_skill, "magic");
+        assert!(!alice.settings.lamp_auto);
+        assert_eq!(alice.settings.clue_duel_partner, "bob");
+        assert_eq!(
+            alice
+                .settings
+                .script_assignment
+                .as_ref()
+                .unwrap()
+                .unavailable,
+            None
         );
         assert_eq!(
-            ProfileSettings::default().survival.cure_poison,
-            super::CurePoison::WhenNeeded
+            alice.settings.script_settings["catalog:ChickenKiller"]["eatAtPercent"],
+            47
         );
-        // A row with an empty survival object also takes the defaults.
-        let empty: ProfileSettings =
-            serde_json::from_str(r#"{"lowmem":true,"survival":{}}"#).unwrap();
-        assert_eq!(empty.survival, super::SurvivalSettings::default());
+        assert!(alice.settings.script_settings["catalog:EmptyCard"].is_empty());
+        assert_eq!(
+            alice.settings.survival.cure_poison,
+            super::CurePoison::Never
+        );
+
+        vault
+            .upsert(profile("bob", "new-profile-password"))
+            .unwrap();
+        drop(vault);
+        let reopened = Vault::unlock(&path, PASS).unwrap();
+        let alice = reopened
+            .get("alice")
+            .expect("supported profile survived save");
+        assert_eq!(alice.password, "supported-password");
+        assert_eq!(alice.settings.world, None);
+        assert_eq!(alice.settings.tutorial_skipped, None);
+        assert_eq!(
+            alice
+                .settings
+                .script_assignment
+                .as_ref()
+                .unwrap()
+                .unavailable,
+            None
+        );
+        let bob = reopened.get("bob").unwrap();
+        assert!(bob.settings.script_assignment.is_none());
     }
 
     #[test]
     fn profile_settings_round_trip_unchanged() {
-        // Regression pin: encoding and decoding a settings row returns
-        // the same row, field for field.
         let settings = ProfileSettings {
             lowmem: false,
             auto_login: true,
@@ -931,50 +1019,57 @@ mod tests {
     }
 
     #[test]
-    fn a_legacy_vault_opens_saves_and_keeps_its_data() {
-        let path = tmp_path("legacy.vault");
-        std::fs::write(&path, LEGACY_VAULT).unwrap();
+    fn nullable_fields_accept_null_but_still_require_the_key() {
+        let settings = ProfileSettings::default();
+        let value = serde_json::to_value(&settings).unwrap();
+        assert_eq!(
+            serde_json::from_value::<ProfileSettings>(value.clone()).unwrap(),
+            settings
+        );
+        for field in ["world", "tutorial_skipped", "script_assignment"] {
+            let mut missing = value.clone();
+            assert!(missing.as_object_mut().unwrap().remove(field).is_some());
+            let error = serde_json::from_value::<ProfileSettings>(missing).unwrap_err();
+            assert!(is_unsupported_saved_shape(&error), "{field}: {error}");
+        }
 
-        let mut v = Vault::unlock(&path, "bot").expect("the legacy passphrase still opens");
-        let alice = v.get("alice").unwrap().clone();
-        assert_eq!(alice.password, "alice-password-legacy");
-        assert_eq!(alice.uid, 274_000_001);
-        assert!(!alice.settings.lowmem && alice.settings.auto_login);
-        assert_eq!(alice.settings.world, Some(2));
-        assert_eq!(alice.settings.tutorial_skipped, Some(true));
-        assert_eq!(alice.settings.raster, super::RasterMode::Cpu);
-        assert!(!alice.settings.random_events && !alice.settings.lamp_auto);
-        assert_eq!(alice.settings.lamp_skill, "magic");
-        assert_eq!(alice.settings.clue_duel_partner, "bob");
-        let assignment = alice.settings.script_assignment.as_ref().unwrap();
+        let assignment = ScriptAssignment::default();
+        let mut value = serde_json::to_value(&assignment).unwrap();
         assert_eq!(
-            (
-                assignment.source_kind.as_str(),
-                assignment.identity.as_str()
-            ),
-            ("catalog", "ChickenKiller")
+            serde_json::from_value::<ScriptAssignment>(value.clone()).unwrap(),
+            assignment
         );
-        assert_eq!(
-            alice.settings.script_settings["catalog:ChickenKiller"]["eatAtPercent"],
-            47
-        );
-        assert_eq!(v.get("bob").unwrap().password, "bob-password-legacy");
+        assert!(value
+            .as_object_mut()
+            .unwrap()
+            .remove("unavailable")
+            .is_some());
+        let error = serde_json::from_value::<ScriptAssignment>(value).unwrap_err();
+        assert!(is_unsupported_saved_shape(&error), "{error}");
+    }
 
-        // Saving keeps working and keeps the header the file was written with.
-        v.upsert(profile("carol", "carol-password")).unwrap();
-        assert!(v.remove("bob").unwrap());
-        drop(v);
-        let v = Vault::unlock(&path, "bot").unwrap();
-        assert_eq!(v.get("alice"), Some(&alice), "existing data is intact");
-        assert!(v.get("bob").is_none());
-        assert_eq!(v.get("carol").unwrap().password, "carol-password");
-        let saved = std::fs::read(&path).unwrap();
-        assert_eq!(&saved[..9], &LEGACY_VAULT[..9], "magic and format version");
-        assert_eq!(
-            header_rounds(&saved),
-            100_000,
-            "the KDF is not silently changed"
-        );
+    #[test]
+    fn older_saved_shapes_are_refused_without_modifying_encrypted_file() {
+        const OLD_PROFILES: &str = r#"{"alice":{"username":"alice","password":"private-profile-password","uid":274000001,"settings":{"lowmem":false,"auto_login":true,"world":2,"tutorial_skipped":true,"raster":"cpu","random_events":false,"random_event_policies":{"river troll":"fight"},"lamp_skill":"magic","lamp_auto":false,"clue_duel_partner":"bob","script_assignment":{"source_kind":"catalog","identity":"ChickenKiller","display_name":"Chicken Killer","unavailable":null},"script_settings":{"catalog:ChickenKiller":{"eatAtPercent":47}}}}"#;
+        const OLD_COMPILED_PROFILES: &str = r#"{"alice":{"username":"alice","password":"compiled-profile-password","uid":274000001,"settings":{"lowmem":false,"auto_login":true,"world":2,"tutorial_skipped":true,"raster":"cpu","random_events":false,"random_event_policies":{"river troll":"fight"},"lamp_skill":"magic","lamp_auto":false,"clue_duel_partner":"bob","script_assignment":{"source_kind":"compiled","identity":"LegacyCard","display_name":"Legacy Card","unavailable":null},"script_settings":{"compiled:LegacyCard":{}},"survival":{"cure_poison":"when_needed"}}}}"#;
+        let path = tmp_path("before-0.2.8.vault");
+        let salt = [0x6bu8; SALT_LEN];
+        let key = derive_key(PASS, &salt, super::PBKDF2_ROUNDS);
+
+        for (profiles, password) in [
+            (OLD_PROFILES, "private-profile-password"),
+            (OLD_COMPILED_PROFILES, "compiled-profile-password"),
+        ] {
+            let blob = build_blob(&salt, &key, profiles.as_bytes(), super::PBKDF2_ROUNDS).unwrap();
+            std::fs::write(&path, blob).unwrap();
+            let error = assert_unsupported_saved_file(&path);
+            let display = error.to_string();
+            let debug = format!("{error:?}");
+            assert!(!display.contains("alice"), "{display}");
+            assert!(!display.contains(password), "{display}");
+            assert!(!debug.contains("alice"), "{debug}");
+            assert!(!debug.contains(password), "{debug}");
+        }
     }
 
     #[test]
@@ -998,19 +1093,11 @@ mod tests {
     #[test]
     fn deserialize_errors_do_not_echo_decrypted_values() {
         const SECRET: &str = "hunter2-secret-value";
+        const PLAINTEXT: &str = r#"{"alice":{"username":"alice","password":"safe-password","uid":"hunter2-secret-value","settings":{}}}"#;
         let path = tmp_path("deserialize-secret.vault");
         let salt = [0x5au8; SALT_LEN];
         let key = derive_key(PASS, &salt, super::PBKDF2_ROUNDS);
-        let plaintext = serde_json::json!({
-            "alice": {
-                "username": "alice",
-                "password": "safe-password",
-                "uid": SECRET,
-                "settings": {"lowmem": false}
-            }
-        })
-        .to_string();
-        let blob = build_blob(&salt, &key, plaintext.as_bytes(), super::PBKDF2_ROUNDS).unwrap();
+        let blob = build_blob(&salt, &key, PLAINTEXT.as_bytes(), super::PBKDF2_ROUNDS).unwrap();
         std::fs::write(&path, blob).unwrap();
 
         let error = match Vault::unlock(&path, PASS) {
@@ -1317,13 +1404,6 @@ mod tests {
         let v = Vault::unlock(&path, PASS).unwrap();
         assert!(v.get("alice").is_none(), "removal persists across unlock");
         assert!(v.get("bob").is_some());
-    }
-
-    #[test]
-    fn legacy_profile_json_has_no_assignment_or_settings() {
-        let missing: ProfileSettings = serde_json::from_str(r#"{"lowmem":true}"#).unwrap();
-        assert!(missing.script_assignment.is_none());
-        assert!(missing.script_settings.is_empty());
     }
 
     #[test]

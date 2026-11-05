@@ -66,7 +66,8 @@ export default class UpstreamTier1 extends LoopingBot {{
     )
 }
 fn catalog_bank_facts() -> Arc<api::named_banks::NamedBankFacts> {
-    let banks = api::named_banks::BANK_CATALOG
+    let banks = api::named_banks::bank_catalog()
+        .expect("local bank catalog")
         .iter()
         .map(|definition| api::named_banks::NamedBank {
             name: definition.name,
@@ -107,14 +108,14 @@ fn run_upstream_file(
             return serde_json::json!({ "file": file, "stage": "read", "error": error.to_string() })
         }
     };
-    run_upstream_source(&file, &source, harness, game_data, bank_facts)
+    run_upstream_source(&file, &source, harness, Some(game_data), bank_facts)
 }
 
 fn run_upstream_source(
     file: &str,
     source: &str,
     harness: &str,
-    game_data: Arc<api::game_data::SelectedGameData>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
     bank_facts: Arc<api::named_banks::NamedBankFacts>,
 ) -> serde_json::Value {
     let js = match transpile_ts(source) {
@@ -136,7 +137,7 @@ fn run_upstream_source(
         bot_source(&url),
         LoadShape::CompatClass,
         siblings,
-        Some(game_data),
+        game_data,
         bank_facts,
     ) {
         Ok(isolate) => isolate,
@@ -234,8 +235,6 @@ fn outcome_manifest_entry(result: &serde_json::Value) -> serde_json::Value {
 #[test]
 fn upstream_harness_fails_cases_when_nested_before_each_throws() {
     let harness = include_str!("upstream/harness/bun_test.js");
-    let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)
-        .expect("R289 selected game data");
     let source = r#"
 import { beforeEach, describe, test } from 'bun:test';
 describe('outer', () => {
@@ -247,8 +246,8 @@ describe('outer', () => {
         "harness/hook-probe.test.ts",
         source,
         harness,
-        game_data,
-        catalog_bank_facts(),
+        None,
+        Arc::new(api::named_banks::NamedBankFacts::empty()),
     );
     assert_eq!(result["stage"], "ran", "{result}");
     let cases = result["cases"].as_array().expect("registered test cases");
@@ -264,6 +263,9 @@ describe('outer', () => {
 
 #[test]
 fn upstream_tier1_runs_unmodified_sources_in_load() {
+    if !common::local_game_data_available(289) || !common::local_fact_catalogs_available() {
+        return;
+    }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join(FROZEN_TESTS);
@@ -377,6 +379,9 @@ fn upstream_tier1_runs_unmodified_sources_in_load() {
 
 #[test]
 fn refrozen_runtime_members_load_and_refuse_by_name() {
+    if !common::local_game_data_available(289) || !common::local_fact_catalogs_available() {
+        return;
+    }
     let ts = r#"
 import { InvItem as ModuleInvItem } from '#/bot/api/inventory/Inventory.js';
 import { isEdibleFood as foodIsEdible } from '#/bot/api/combat/food.js';

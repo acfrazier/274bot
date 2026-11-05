@@ -11,7 +11,7 @@
 //! One [`Script::tick`] is one wrapper `execute()` iteration:
 //!
 //! * No live session: the `begin` call. A refusal (no held membership, no
-//!   selected pin) leaves the card idle and it asks again next tick; a
+//!   clue facts) leaves the card idle and it asks again next tick; a
 //!   `token` answer starts the session and this tick keeps iterating.
 //! * Live: `next` calls until the machine waits, yields, ends the session or
 //!   enqueues one verb — the one verb per tick the wrapper's own
@@ -154,15 +154,6 @@ fn prepare(
     revision: u64,
     bag: Arc<SettingsBag>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
-    if cx
-        .selected
-        .selected_pin()
-        .map_err(StartError::Facts)?
-        .as_ref()
-        != cx.pin.as_ref()
-    {
-        return Err(StartError::Facts(api::selected::FactError::PinMismatch));
-    }
     if cx.selected.trails().is_none()
         || cx.selected.talk_key().is_none()
         || cx.selected.trio_givers().is_none()
@@ -186,6 +177,14 @@ fn prepare(
         bag,
         Prepared { tables },
     ))
+}
+#[cfg(test)]
+fn selected_revision(selected: &SelectedGameData) -> api::selected::ClientRevision {
+    match selected.revision() {
+        274 => api::selected::ClientRevision::R274,
+        289 => api::selected::ClientRevision::R289,
+        revision => panic!("unsupported selected game-data revision {revision}"),
+    }
 }
 
 struct Prepared {
@@ -1960,7 +1959,7 @@ mod tests {
         ledger: &mut Option<Box<ledger::Ledger>>,
         tick: u64,
     ) -> (ScriptFlow, Vec<InteractReq>) {
-        let pin = selected.selected_pin().expect("selected pin");
+        let revision = selected_revision(selected);
         let evidence = api::quest_progress::EvidenceStamp {
             run: RunKey {
                 slot: 1,
@@ -1975,8 +1974,7 @@ mod tests {
         let host = frame.ctx(&mut driver, Some(selected));
         script::native::with_test_tick(
             host,
-            evidence,
-            &pin,
+            revision,
             (
                 Duration::from_millis(tick.saturating_mul(600)),
                 Instant::now(),

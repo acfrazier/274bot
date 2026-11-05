@@ -13,8 +13,7 @@ use api::identity::RequestId;
 
 use super::commands::{Applied, Submitted};
 use crate::command::{FailureKind, OperatorCommand, Rejection};
-use crate::launch::{Passphrase, PlayLaunch, UnlockStage};
-use crate::surface::SlotSurface;
+use crate::launch::{Passphrase, PlayLaunch, UnlockError, UnlockStage};
 use crate::OperatorSession;
 
 /// One vault row.
@@ -92,7 +91,7 @@ impl<Io> OperatorSession<Io> {
         let command = row.command();
         let staged = self.commands.take_vault();
         let applied = if admitted {
-            self.dispatch_vault(row, staged, surface)
+            self.dispatch_vault(row, staged, request, surface)
         } else {
             Applied::NotAdmitted
         };
@@ -103,6 +102,7 @@ impl<Io> OperatorSession<Io> {
         &mut self,
         row: VaultRow,
         staged: Option<StagedVault>,
+        request: RequestId,
         surface: &mut S,
     ) -> Applied {
         match (row, staged) {
@@ -149,6 +149,7 @@ impl<Io> OperatorSession<Io> {
                     Ok(()) => Applied::Done,
                     Err(error) => match error.stage() {
                         UnlockStage::Vault => {
+                            remember_vault_refusal(self, request, &error);
                             Applied::Rejected(Rejection::VaultRefused, Some(error.to_string()))
                         }
                         UnlockStage::Launch => {
@@ -177,5 +178,55 @@ impl<Io> OperatorSession<Io> {
                 Some("vault: nothing staged for this row".into()),
             ),
         }
+    }
+}
+
+fn remember_vault_refusal<Io>(
+    session: &mut OperatorSession<Io>,
+    request: RequestId,
+    error: &UnlockError,
+) {
+    if let Some(refusal) = error
+        .vault_error()
+        .and_then(host_play::saved_data::SavedDataRefusal::from_vault_error)
+    {
+        session.vault_refusals.insert(request, refusal);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_old_vault_refusal_keeps_its_path_on_the_unlock_request() {
+        let path = PathBuf::from("old.vault");
+        let error = UnlockError::from_vault(vault::VaultError::UnsupportedSavedFormat {
+            path: path.clone(),
+        });
+        let request = RequestId::isolate(1).unwrap();
+        let mut session = OperatorSession::<()>::new(crate::launch::InstancePermit::skip());
+
+        remember_vault_refusal(&mut session, request, &error);
+
+        let refusal = session
+            .take_vault_refusal(request)
+            .expect("the typed refusal belongs to this unlock");
+        assert_eq!(refusal.paths(), &[path]);
+        assert!(
+            session.take_vault_refusal(request).is_none(),
+            "taking the refusal settles it once"
+        );
+    }
+
+    #[test]
+    fn unrelated_vault_errors_do_not_create_saved_format_refusals() {
+        let request = RequestId::isolate(2).unwrap();
+        let mut session = OperatorSession::<()>::new(crate::launch::InstancePermit::skip());
+        let error = UnlockError::from_vault(vault::VaultError::WrongPassphrase);
+
+        remember_vault_refusal(&mut session, request, &error);
+
+        assert!(session.take_vault_refusal(request).is_none());
     }
 }

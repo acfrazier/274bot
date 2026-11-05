@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use script::{ScriptKind, ScriptSource};
 use script_js::{JsLibrary, LoadIsolate, LoadShape};
 
+mod common;
+
 /// The brief's fake `index.ts`: a default import, a display name that
 /// differs from the folder (`AIO Teleport` vs `AIOTeleport`), a
 /// multi-line default import, and a named import (`ShopRunner`).
@@ -1248,6 +1250,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     for revision in [
         client::io::ClientRevision::R274,
         client::io::ClientRevision::R289,
@@ -1369,6 +1374,9 @@ export default class T extends LoopingBot {
     );
     offline.join();
 
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = LoadIsolate::spawn_with_game_data(
         src.to_string(),
         LoadShape::CompatClass,

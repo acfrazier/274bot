@@ -110,12 +110,10 @@ fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() 
         "title",
         "versionlist",
         "wordenc",
-        "manifest-289.json",
     );
     let options = host_play::ProfileOptions {
         revision: Some("289".into()),
         cache_dir: Some(cache.clone()),
-        cache_manifest: Some(cache.join("manifest-289.json")),
         unpack_dir: Some(stores.dir().join("unpack")),
         nav_pack: Some(stores.dir().join("missing.navpack")),
         ..Default::default()
@@ -136,8 +134,8 @@ fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() 
         )
         .unwrap();
     let mut preparation = launcher.preparation(289).unwrap();
-    // Cache fill and source attestation are separate concerns. Start at the
-    // real Load stage, but retain submit, admission, and PreparationSteps::step.
+    // Start at the real Load stage, but retain submit, admission, and
+    // PreparationSteps::step.
     // This must fail if that step calls off-worker TemplatePreparation::step.
     preparation.load_fixture = Some(selection);
     let job = preparation.submit().unwrap();

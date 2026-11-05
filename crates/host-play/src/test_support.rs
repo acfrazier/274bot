@@ -1,10 +1,9 @@
-use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{FactKey, InclusiveRange, QuestGate, RunKey, StageWindow, Truth};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 
 struct Resolved {
     stamp: EvidenceStamp,
@@ -38,13 +37,6 @@ impl EvidenceProvider for Resolved {
     }
 }
 
-pub(crate) fn family(byte: u8) -> QuestFamilyId {
-    QuestFamilyId::new(
-        [byte; 32],
-        NonZeroU16::new(1).expect("Quest fixture schemas must be nonzero"),
-    )
-}
-
 pub(crate) fn stamp(tick: u64) -> EvidenceStamp {
     EvidenceStamp {
         run: RunKey {
@@ -69,7 +61,7 @@ pub(crate) fn window(quest: &str, signal: &str, min: Option<i32>, max: Option<i3
     })
 }
 
-/// Evidence for family 1, observed at tick 10 against a floor of tick 5, with
+/// Evidence observed at tick 10 against a floor of tick 5, with
 /// `possible` for the `tbwt`/`tbwt_main` signal.
 pub(crate) fn tbwt_evidence(possible: InclusiveRange) -> QuestEvidence {
     QuestEvidence::new(
@@ -78,7 +70,6 @@ pub(crate) fn tbwt_evidence(possible: InclusiveRange) -> QuestEvidence {
             signals: vec![("tbwt", "tbwt_main", possible)],
             complete: vec![],
         }),
-        family(1),
         stamp(5),
     )
 }

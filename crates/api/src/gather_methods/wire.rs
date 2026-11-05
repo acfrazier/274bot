@@ -15,7 +15,7 @@ use super::SceneRegionInput;
 use crate::game_data::GatherForbiddenState;
 use crate::selected::{
     EntityId, FactError, FactKey, FactStrings, Gap, ItemAmount, Knowledge, Requirement,
-    RequirementAt, RequirementKind, SelectedPin, SkillMinimum, SourceSpan,
+    RequirementAt, RequirementKind, SkillMinimum, SourceSpan,
 };
 use crate::WorldTile;
 use serde::de::IgnoredAny;
@@ -23,39 +23,13 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// The extractor schema this decoder reads. The manifest descriptor and the family header must both carry it.
+/// The extractor schema this decoder reads from the local family file.
 pub(super) const SCHEMA: u16 = 4;
-
-/// Identity fields every family file leads with; read before any fact so a stale or foreign file is refused with
-/// its typed cause even if a newer schema changed the fact layout.
-#[derive(Deserialize)]
-struct Header<'a> {
-    schema: u16,
-    revision: i32,
-    engine_commit: &'a str,
-    content_commit: &'a str,
-    cache_id: &'a str,
-    content_id: &'a str,
-}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Family<'a> {
-    // Identity was checked against the pin by `Header`; the input inventory is audit data for the generator.
-    #[serde(rename = "schema")]
-    _schema: IgnoredAny,
-    #[serde(rename = "revision")]
-    _revision: IgnoredAny,
-    #[serde(rename = "engine_commit")]
-    _engine_commit: IgnoredAny,
-    #[serde(rename = "content_commit")]
-    _content_commit: IgnoredAny,
-    #[serde(rename = "cache_id")]
-    _cache_id: IgnoredAny,
-    #[serde(rename = "content_id")]
-    _content_id: IgnoredAny,
-    #[serde(rename = "inputs")]
-    _inputs: IgnoredAny,
+    schema: u16,
     #[serde(borrow)]
     facts: Facts<'a>,
 }
@@ -264,7 +238,7 @@ struct MethodWire {
     spots: Know<()>,
     /// Content states that refuse the method while they hold (`monkey-form`).
     forbidden_states: Vec<GatherForbiddenState>,
-    /// Provenance spans of the method as a whole; each fact carries its own sources.
+    /// Source spans for this method-level fact.
     #[serde(rename = "sources")]
     _sources: IgnoredAny,
 }
@@ -335,34 +309,17 @@ fn invalid(reason: impl Into<String>) -> FactError {
     }
 }
 
-/// The family's own identity against the selected pin: schema first (typed), then every pinned identity.
-fn check_header(pin: &SelectedPin, header: &Header) -> Result<(), FactError> {
-    if header.schema != SCHEMA {
+/// Decode one local family file into the typed catalog.
+pub(super) fn decode(bytes: &[u8]) -> Result<GatherCatalog, FactError> {
+    let family: Family<'_> = serde_json::from_slice(bytes)
+        .map_err(|error| invalid(format!("gathering family: {error}")))?;
+    if family.schema != SCHEMA {
         return Err(FactError::Schema {
             expected: SCHEMA,
-            actual: header.schema,
+            actual: family.schema,
         });
     }
-    if header.revision != pin.revision.as_i32()
-        || header.engine_commit != &*pin.engine_commit
-        || header.content_commit != &*pin.content_commit
-        || header.cache_id != &*pin.cache_id
-        || header.content_id != &*pin.content_id
-    {
-        return Err(FactError::PinMismatch);
-    }
-    Ok(())
-}
-
-/// Decode one verified family file into the shared catalog. `bytes` must already match the manifest descriptor
-/// (see `cache`); the header is still checked here so a decoder never trusts a caller's promise about identity.
-pub(super) fn decode(pin: &Arc<SelectedPin>, bytes: &[u8]) -> Result<GatherCatalog, FactError> {
-    let header: Header = serde_json::from_slice(bytes)
-        .map_err(|error| invalid(format!("gathering family header: {error}")))?;
-    check_header(pin, &header)?;
-    let family: Family = serde_json::from_slice(bytes)
-        .map_err(|error| invalid(format!("gathering family: {error}")))?;
-    Decoder::default().build(pin, family.facts)
+    Decoder::default().build(family.facts)
 }
 
 struct Entity {
@@ -471,7 +428,7 @@ impl Decoder {
         })
     }
 
-    fn build(mut self, pin: &Arc<SelectedPin>, facts: Facts) -> Result<GatherCatalog, FactError> {
+    fn build(mut self, facts: Facts) -> Result<GatherCatalog, FactError> {
         let table = parse_entities(&facts.entities)?;
         let hazard_npcs = checked_entity_ids(facts.hazard_npcs, &table, KIND_NPC, "hazard NPC")?;
         let incidental_gem_ids =
@@ -858,7 +815,6 @@ impl Decoder {
 
         let rocks = rock_classes(&methods, &loose)?;
         Ok(GatherCatalog {
-            pin: Arc::clone(pin),
             hazard_npcs,
             incidental_gem_ids,
             methods: methods.into_boxed_slice(),
@@ -1122,25 +1078,33 @@ fn rock_classes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game_data::for_revision;
     use crate::gather_methods::{known_rows, AccessPolicy};
-    use crate::selected::{ClientRevision, Truth};
+    use crate::selected::Truth;
     use serde_json::{json, Value};
 
-    const REAL: &[u8] = include_bytes!("../../data/game-data/289/gathering.json");
-
-    fn pin() -> Arc<SelectedPin> {
-        for_revision(ClientRevision::R289)
-            .unwrap()
-            .selected_pin()
-            .unwrap()
+    fn real() -> Option<Vec<u8>> {
+        let path = crate::test_support::local_asset_path(
+            "",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/data/game-data/289/gathering.json"
+            ),
+            "revision 289 gathering family for wire tests",
+        )?;
+        Some(
+            std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display())),
+        )
     }
 
-    /// The real 289 family with `edit` applied to its parsed JSON, decoded under the real pin.
-    fn decode_edited(edit: impl FnOnce(&mut Value)) -> Result<GatherCatalog, FactError> {
-        let mut family: Value = serde_json::from_slice(REAL).unwrap();
+    /// The real 289 family with `edit` applied to its parsed JSON.
+    fn decode_edited(
+        real: &[u8],
+        edit: impl FnOnce(&mut Value),
+    ) -> Result<GatherCatalog, FactError> {
+        let mut family: Value = serde_json::from_slice(real).unwrap();
         edit(&mut family);
-        decode(&pin(), &serde_json::to_vec(&family).unwrap())
+        decode(&serde_json::to_vec(&family).unwrap())
     }
 
     fn method_mut<'a>(family: &'a mut Value, id: &str) -> &'a mut Value {
@@ -1164,7 +1128,10 @@ mod tests {
 
     #[test]
     fn tick_arm_is_required_and_rejects_unknown_or_duplicate_tool_facts() {
-        let missing = decode_edited(|family| {
+        let Some(real) = real() else {
+            return;
+        };
+        let missing = decode_edited(&real, |family| {
             method_mut(family, "mining.copper")
                 .as_object_mut()
                 .unwrap()
@@ -1172,17 +1139,17 @@ mod tests {
         });
         assert!(missing.is_err(), "every method requires its tick arm");
 
-        let unknown_kind = decode_edited(|family| {
+        let unknown_kind = decode_edited(&real, |family| {
             method_mut(family, "mining.copper")["tick_arm"]["kind"] = json!("unknown");
         });
         assert!(unknown_kind.is_err(), "tick arm kinds are a closed set");
 
-        let unknown_field = decode_edited(|family| {
+        let unknown_field = decode_edited(&real, |family| {
             method_mut(family, "mining.copper")["tick_arm"]["unreviewed"] = json!(true);
         });
         assert!(unknown_field.is_err(), "tick arm wire objects are strict");
 
-        let duplicate_tool = decode_edited(|family| {
+        let duplicate_tool = decode_edited(&real, |family| {
             let tools = method_mut(family, "mining.copper")["tick_arm"]["tool_facts"]
                 .as_array_mut()
                 .unwrap();
@@ -1200,7 +1167,10 @@ mod tests {
 
     #[test]
     fn every_placement_id_resolves_to_its_own_method_and_spot() {
-        let catalog = decode(&pin(), REAL).unwrap();
+        let Some(real) = real() else {
+            return;
+        };
+        let catalog = decode(&real).unwrap();
         let mut last = None;
         for method in catalog.methods() {
             for spot in known_rows(&method.spots) {
@@ -1217,7 +1187,10 @@ mod tests {
 
     #[test]
     fn partial_placement_coverage_keeps_its_rows_but_no_query_answers_from_it() {
-        let catalog = decode_edited(|family| {
+        let Some(real) = real() else {
+            return;
+        };
+        let catalog = decode_edited(&real, |family| {
             method_mut(family, "mining.copper")["spots"] = json!({
                 "state": "partial",
                 "value": null,
@@ -1249,7 +1222,10 @@ mod tests {
 
     #[test]
     fn access_is_unknown_when_only_a_quest_state_guard_applies() {
-        let catalog = decode_edited(|family| {
+        let Some(real) = real() else {
+            return;
+        };
+        let catalog = decode_edited(&real, |family| {
             let zones = family["facts"]["zones"].as_array_mut().unwrap();
             zones.retain(|zone| zone["effect"] != "yield-intercepted");
         })
@@ -1280,7 +1256,10 @@ mod tests {
 
     #[test]
     fn a_placed_loc_is_as_wide_as_its_rotation_makes_it() {
-        let mut family: Value = serde_json::from_slice(REAL).unwrap();
+        let Some(real) = real() else {
+            return;
+        };
+        let mut family: Value = serde_json::from_slice(&real).unwrap();
         let entities = family["facts"]["entities"].as_array_mut().unwrap();
         let oak = entities
             .iter_mut()
@@ -1302,7 +1281,7 @@ mod tests {
                 })
             })
             .collect();
-        let catalog = decode(&pin(), &serde_json::to_vec(&family).unwrap()).unwrap();
+        let catalog = decode(&serde_json::to_vec(&family).unwrap()).unwrap();
         let oaks = known_rows(&catalog.method("woodcutting.oak").unwrap().spots);
         let (mut upright, mut turned) = (0, 0);
         for spot in oaks
@@ -1326,6 +1305,9 @@ mod tests {
 
     #[test]
     fn a_family_that_contradicts_itself_is_refused_not_repaired() {
+        let Some(real) = real() else {
+            return;
+        };
         type Edit = Box<dyn Fn(&mut Value)>;
         let cases: Vec<(&str, Edit)> = vec![
             (
@@ -1539,11 +1521,11 @@ mod tests {
             ),
         ];
         for (name, edit) in cases {
-            let mut family: Value = serde_json::from_slice(REAL).unwrap();
+            let mut family: Value = serde_json::from_slice(&real).unwrap();
             edit(&mut family);
             let bytes = serde_json::to_vec(&family).unwrap();
             assert!(
-                matches!(decode(&pin(), &bytes), Err(FactError::Invalid { .. })),
+                matches!(decode(&bytes), Err(FactError::Invalid { .. })),
                 "{name}: must be refused as Invalid"
             );
         }

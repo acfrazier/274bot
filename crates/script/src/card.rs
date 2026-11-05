@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::sync::LazyLock;
 /// How a script card is executed in the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScriptKind {
@@ -123,37 +125,14 @@ pub fn w1c_equipment_option_families(ident: &str) -> Option<&'static [&'static s
 }
 
 /// Host-owned finite option tables for imported / parent-dir identifiers
-/// whose bodies are not in the same-directory settings blob. Values are
-/// copied from the frozen rs2b0t pin; this is not a JS evaluator.
+/// whose bodies are not in the same-directory settings blob. Static choices
+/// remain frozen; bank and cook names come from typed fact accessors.
 ///
-/// `BANK_LOCATIONS` / `BANK_LOCATION_OPTIONS` are the exception: a bank name
-/// is drawn from the same frozen roster as runtime `BANK_LOCATIONS`, including
-/// gated entries (eligibility is evaluated when selecting a destination).
-pub fn catalog_option_table(ident: &str) -> Option<&'static [&'static str]> {
+/// Bank choices retain the API catalogue's stable order. `Nearest` remains the
+/// first `BANK_LOCATION_OPTIONS` entry; eligibility is evaluated when selecting
+/// a destination.
+fn static_catalog_option_table(ident: &str) -> Option<&'static [&'static str]> {
     Some(match ident {
-        "COOK_LOCATION_OPTIONS" => &[
-            "Auto",
-            "Varrock East",
-            "Varrock West",
-            "Al Kharid",
-            "Draynor",
-            "Falador East",
-            "Falador West",
-            "Edgeville",
-            "Seers",
-            "Catherby",
-            "Yanille",
-            "Ardougne West",
-            "Ardougne East",
-            "Canifis",
-            "Shilo Village",
-            "Fishing Guild",
-            "Shantay Pass",
-            "Mage Arena",
-            "Grand Tree",
-            "Duel Arena",
-            "Custom",
-        ],
         "LOG_LEVELS" => &[
             "Logs",
             "Oak logs",
@@ -197,7 +176,6 @@ pub fn catalog_option_table(ident: &str) -> Option<&'static [&'static str]> {
             "Law rune",
             "Death rune",
         ],
-        "BANK_LOCATIONS" | "BANK_LOCATION_OPTIONS" => bank_location_names(ident),
         "PRODUCT_OPTIONS" => &[
             "Gold ring",
             "Sapphire ring",
@@ -234,30 +212,71 @@ pub fn catalog_option_table(ident: &str) -> Option<&'static [&'static str]> {
         _ => return None,
     })
 }
+const STATIC_OPTION_TABLE_IDS: &[&str] = &[
+    "LOG_LEVELS",
+    "FIRE_SPOTS",
+    "HERB_OPTIONS",
+    "RUNE_OPTIONS",
+    "PRODUCT_OPTIONS",
+    "JEWEL_OPTIONS",
+];
 
-fn bank_location_names(ident: &str) -> &'static [&'static str] {
-    /// The complete frozen roster, in the runtime payload's stable order.
-    const BANKS: [&str; api::named_banks::BANK_CATALOG.len()] = {
-        let mut names = [""; api::named_banks::BANK_CATALOG.len()];
-        let mut i = 0;
-        while i < names.len() {
-            names[i] = api::named_banks::BANK_CATALOG[i].name;
-            i += 1;
+static STATIC_OPTION_TABLES: LazyLock<HashMap<&'static str, Vec<String>>> = LazyLock::new(|| {
+    STATIC_OPTION_TABLE_IDS
+        .iter()
+        .filter_map(|ident| {
+            static_catalog_option_table(ident).map(|options| {
+                (
+                    *ident,
+                    options.iter().map(|option| (*option).to_owned()).collect(),
+                )
+            })
+        })
+        .collect()
+});
+
+static BANK_OPTION_TABLES: LazyLock<Result<(Vec<String>, Vec<String>), api::selected::FactError>> =
+    LazyLock::new(|| {
+        let names = api::named_banks::bank_catalog()?
+            .iter()
+            .map(|bank| bank.name.to_owned())
+            .collect::<Vec<_>>();
+        let mut with_nearest = Vec::with_capacity(names.len() + 1);
+        with_nearest.push("Nearest".to_owned());
+        with_nearest.extend(names.iter().cloned());
+        Ok((names, with_nearest))
+    });
+
+static COOK_OPTION_TABLE: LazyLock<Result<Vec<String>, api::selected::FactError>> =
+    LazyLock::new(|| {
+        let camps = api::cook_locations::cook_camps()?;
+        let mut options = Vec::with_capacity(camps.len() + 2);
+        options.push("Auto".to_owned());
+        options.extend(camps.iter().map(|camp| camp.bank.to_owned()));
+        options.push("Custom".to_owned());
+        Ok(options)
+    });
+
+/// Resolve one parent-directory option table. Fact-backed catalogues are cached
+/// once so callers share the same owned names without repeated allocation.
+pub fn catalog_option_table(
+    ident: &str,
+) -> Result<Option<&'static [String]>, api::selected::FactError> {
+    match ident {
+        "BANK_LOCATIONS" | "BANK_LOCATION_OPTIONS" => {
+            let (names, with_nearest) = BANK_OPTION_TABLES.as_ref().map_err(Clone::clone)?;
+            Ok(Some(if ident == "BANK_LOCATION_OPTIONS" {
+                with_nearest.as_slice()
+            } else {
+                names.as_slice()
+            }))
         }
-        names
-    };
-    const WITH_NEAREST: [&str; api::named_banks::BANK_CATALOG.len() + 1] = {
-        let mut names = ["Nearest"; api::named_banks::BANK_CATALOG.len() + 1];
-        let mut i = 0;
-        while i < api::named_banks::BANK_CATALOG.len() {
-            names[i + 1] = api::named_banks::BANK_CATALOG[i].name;
-            i += 1;
+        "COOK_LOCATION_OPTIONS" => {
+            let options = COOK_OPTION_TABLE.as_ref().map_err(Clone::clone)?;
+            Ok(Some(options.as_slice()))
         }
-        names
-    };
-    if ident == "BANK_LOCATION_OPTIONS" {
-        &WITH_NEAREST
-    } else {
-        &BANKS
+        _ => Ok(STATIC_OPTION_TABLES
+            .get(ident)
+            .map(|options| options.as_slice())),
     }
 }

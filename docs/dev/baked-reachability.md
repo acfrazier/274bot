@@ -2,13 +2,13 @@
 
 Request: `BAKED-REACH-1023`, BR0. Status: accepted integration contract.
 
-This contract fixes the combined `274V18` format and the BR1 ownership cut.
-It does not enable a partial v18 reader or producer. BR2 changes the version,
-reader, encoder, sizing, fixtures, identities, sidecars, and release bake together.
-BR2 publishes `274V18`. The product reads and produces that combined pack.
-A `274V17` pack is a typed rebake failure.
-The nav integrator owns the format and release bake. No consumer track publishes
-another v18. Revision content is immutable. Users do not rebuild its connectivity.
+This document records the reachability format and runtime ownership rules.
+The current pack format is `274V19`; ADR 0019 removed file-identity fields and
+manifest bindings from the earlier `274V18` design. `nav-bake` is a local
+tooling producer. Product builds stage pre-generated payloads from
+`target/local-data/nav/<revision>/`; they do not run the baker or publish a
+reference pack. Generate game data and navigation from your own engine and
+content checkouts before a product build.
 
 Authority: `MAIN-ACCEPTANCE.md`, `design.md`, `design-r2.md`, `design-r3.md`, and
 `OPERATOR-DECISIONS.md` in the request evidence. The five carried corrections in
@@ -16,13 +16,13 @@ Main's acceptance are part of this contract.
 
 ## Wire rules
 
-All integers are little-endian unless the existing v17 body states otherwise.
+All integers are little-endian unless the pack format specifies otherwise.
 Every length counts bytes. Every count counts records. Offsets are relative to
 the start of the section payload, not to its length prefix or the file.
 No implicit padding is permitted. Reserved bytes must be zero.
 
 Keep the existing body through the zone section in its existing order.
-Set the whole-world version byte to 18 and `FORMAT_ID` to `274V18` only at BR2.
+The current whole-world version byte is 19 and `FORMAT_ID` is `274V19`.
 Append these fields in exactly this order:
 
 1. Multiway keys: `u32 count`, followed by `count` sorted unique `u32` keys.
@@ -31,14 +31,14 @@ Append these fields in exactly this order:
 4. Placements: `u32 byte_length`, followed by the placements payload.
 5. Stands: `u32 byte_length`, followed by the stands payload.
 
-All v18 coordinate keys use `level << 28 | x << 14 | z`, including the S3
+All v19 coordinate keys use `level << 28 | x << 14 | z`, including the S3
 multiway keys (`x = zx`, `z = zz`) and the packed game tiles below.
-BR2 must use this order for every v18 coordinate key.
+Use this order for every v19 coordinate key.
 Check `level < 4` and both coordinates below `1 << 14` before packing.
 Bits 30 and 31 are zero. Decode the multiway list into
 `TransportGraph.multiway: Box<[u32]>`. The approved 289 source has 4,697 keys.
 This is a source expectation, not permission to truncate.
-S3's older document calls this field v17. It belongs in this combined v18.
+S3's older document calls this field v17. The current combined format includes it.
 
 Each reach section starts with a `u32` subtable count and a directory.
 A directory entry is `(kind: u32, offset: u32, count: u32, stride: u32)`.
@@ -71,7 +71,7 @@ Reason 5 is complete only when its transition records cover every legal outgoing
 transition. Other reasons prevent a complete negative for the affected query.
 
 Packed game tiles use z in bits 0..13, x in 14..27, and plane in 28..29,
-with the same v18 coordinate key order stated above.
+with the same v19 coordinate key order stated above.
 Reject coordinates outside those fields. Bits 30 and 31 must be zero.
 A collision cell is plane-major, then z, then x. Check the full four-plane
 cell count fits `u32` before encoding runs. Never clamp a coordinate.
@@ -197,12 +197,12 @@ The test `validate_and_the_reader_refuse_the_same_tables` in
 at a time, and requires `validate` and the reader to refuse each with the same
 message. It is a sample, not every invariant: the parity itself comes from the
 shared `check_*` functions that both sides call.
-A v17 pack receives the typed version failure after the BR2 cut. There is no
-v17-to-v18 runtime migration, partial reach-only pack, or straight-line fallback.
-The release bake publishes the combined pack and rebound manifest/sidecars once.
-Qualify 274 and 289. Print section sizes, coverage, exceptional joins, and the
-delta from the retained 78,365,101-byte projection. That projection is no ceiling.
-Resolve all 18 unmatched prototype joins before claiming complete coverage.
+A pack older than `274V19` fails with `BadVersion`. There is no runtime
+migration, partial reach-only pack, or straight-line fallback.
+The local bake writes the pack and feature sidecars under
+`target/local-data/nav/<revision>/`. The canonical wrapper exports the real
+schema-3 crossings before generator stage 2. It produces local files only; no
+reference release is published.
 
 ## Borrowed atlas views
 
@@ -223,10 +223,10 @@ The closed facade exposes these meanings, not raw atlas or transport storage:
 
 `ReachabilityError` is a thiserror enum: `MissingComponent`, `MissingPlacement`,
 `UnsupportedGeometry`, and `IdentityMismatch`. Missing coverage cannot mean zero
-stands or impossible geography. Component keys from another pack are rejected.
-If exact routing succeeds from missing membership, its witness wins. Otherwise
-preserve a coverage-specific `Undecided` result. A failed sidecar identity is not
-bypassed by another calculation. A missing atlas displays unknown coverage.
+stands or impossible geography. Component keys from another loaded world are
+rejected by its `PackId`. Missing or malformed sidecar data cannot become a full
+atlas or be bypassed by another calculation. A missing atlas displays unknown
+coverage.
 
 ## Account proof and budgets
 
@@ -258,14 +258,10 @@ admission, avoids, cumulative supplies, and dynamic collision still require
 exact routing. Budget, deadline, and storage stops remain `Undecided`, never
 exhaustive negatives.
 
-Status at `274V18` (round 2 of BR2-S3): the planner does not yet mint an atlas
-negative from the closures. Until it does, every query, pack-bound or not, keeps
-the bounded `ReverseClosure` proof that v17 ran. An unreachable goal set is
-refused by that proof in the same bounded work as before, and zone diagnosis
-keeps its own `ReverseClosure`. No code skips the proof because an atlas is
-present. The atlas proof that replaces `ReverseClosure` is a later slice. It
-removes the reverse proof only together with a test that refuses the same
-unreachable goals in bounded work from the atlas.
+The reachability atlas is not a negative route proof. Unreachable goal sets
+retain the bounded `ReverseClosure` proof, and zone diagnosis keeps its own
+`ReverseClosure`. Atlas presence does not skip either proof or imply that a
+goal is unreachable.
 
 ## Picker and pass-end results
 
@@ -277,7 +273,7 @@ The result vocabulary is:
   optional owned existing host `BankSession`, not part of a compact route lease.
   A bank-assisted result executes that session before its post-session route.
 - `NoCandidate`: the semantic eligible set is empty.
-- `NoReachableTarget { proof }`: a complete identity-bound negative.
+- `NoReachableTarget { proof }`: a complete proof bound to its loaded world.
 - `Blocked { failure }` and `Refused { failure }`: typed final diagnosis, with
   the original walk end/refusal and cold detail retained.
 - `NeedsEvidence { requirements: Arc<[QuestGate]> }`.
@@ -323,66 +319,25 @@ negative records. A respawn alone does not search a known-negative input again
 or restore attempts. Scene generations, partial autonomous progress, ticks, and
 stand changes cannot create an unbounded loop.
 
-## BR1 ownership and checker delta
+## Local production and runtime ownership
 
-Create `nav-bake` as a workspace producer/tool crate. It owns bake orchestration,
-bundle staging and input inventories, manifest assembly, 26 transport derivers
-and parser support, collision construction, config/mapsquare parsing, bank stand
-generation, pack/sidecar encoding, canlight generation, POI generation, and the
-three bins `nav-pack`, `cache-content-id`, and `nav-input-audit`.
+`nav-bake` is a workspace tooling crate. It owns local bake orchestration,
+transport derivation, collision construction, bank stands, pack and sidecar
+encoding, canlight data, POI data, and schema-3 crossings export. It reads local
+engine content and client-cache data. It reads generated `<revision>.json` and
+`<revision>/quests.json` through API pure decoders with embedded game data off.
 
-Split runtime schemas before moving their producers. Planner keeps manifest
-schemas, hashes, verification, and `manifest::NavIdentityRow`. Remove the old
-bundle identity export. Keep runtime collision/transport/zone/map types,
-decoders, policy identities, `collision::pack_walk`, cart fare calculation, web
-action policy, Wilderness rules, router, and facade in planner. Extract `step_ok`
-into planner's movement module and share it unchanged. Keep `paint::bake_reach`
-and flood helpers in planner through BR1. BR2 migrates their runtime callers to
-the atlas, then removes obsolete flood APIs and caches.
+`nav-planner` owns runtime schemas, decoders, routing, and world handles. Its
+decoders keep format, geometry, length, and structural checks. They do not bind
+the payloads to source hashes, cache identities, or manifests. `PackId` still
+keeps component and placement keys within the loaded world. Ownership, session,
+generation, causal-evidence, and cancellation fences remain runtime rules.
 
-Planner owns the Shilo cart identity and minimum-fare rows, and `WEB_USE_OPTION`.
-The baker reads these shared facts through its existing planner dependency.
-Only the baker owns the cart directions' Zombie Queen completion gates.
+`required-content-{274,289}.tsv` remains a semantic coverage input for Quester
+and nav-coverage. It is not a bake identity manifest.
 
-The fixed `required-content-274.tsv` and `required-content-289.tsv` tables stay
-in planner. Quester coverage and nightly staging also read these shared input
-facts. The baker includes and hashes the same tables; runtime callers do not
-include producer-owned files or add a baker dependency.
-
-The paired operator-owned architecture patch admits exactly these additions:
-
-| From | To | Kind |
-|---|---|---|
-| nav-bake | nav-planner, api, client cache decoder | normal |
-| host-play | nav-bake | build and dev |
-| host-play | nav-planner | existing normal and retained build |
-| e2e | nav-bake | normal tool edge |
-| panel, frontend-core, tui | nav-bake | dev only, for producer fixtures |
-
-Planner, executor, script, script-js, frontend-core, TUI, panel, and runtime
-host-play have no normal edge to the baker. Checker tests reject those edges,
-including otherwise identical normal-edge versions of admitted dev/build fixtures.
-Update crate membership, member ownership, moved bins, source inventories,
-deny-list paths, and old exceptions together.
-Scripts cannot import raw atlas storage.
-
-Use generator id `nav-bake-3` and workspace-relative source labels. Hash actual
-producers, schemas, encoder, shared reach rules, source inputs, and movement.
-Do not hash all router search code merely to include `step_ok`. Generator-only
-changes do not alter the revision cache id. BR1 has one planned identity cut,
-zero changed routes, and byte-identical bake outputs except identity fields.
-No intermediate release rebake is published.
-
-`host-play` retains planner as a build dependency for CacheManifest, hash_file,
-and FORMAT_ID. It adds the baker build edge and named producer dev edge.
-`BOT_NAV_BUILD=skip` performs no bake/content scan, but Cargo still compiles its
-nonoptional build dependencies. This cut claims no source-build compilation
-saving from an environment flag. Release binaries load shipped packs without
-compiling or baking. Cargo-tree evidence distinguishes normal, build, and dev
-paths and must not claim that nonoptional build dependencies disappear.
-
-BR2 and BR3 require pre-FLOOR before consumers. Remedy-only goals and
-atlas-positive policy-negative wilderness/zone cases belong in that case set.
-BR1 requires zero route-corpus differences, artifact byte comparison with
-identity fields identified, full CI parity against the prepared checker, and
-normal/build/dev cargo-tree evidence. The operator publishes the paired policy.
+The product host has no build dependency on `nav-bake`. It stages the five
+existing local files from `target/local-data/nav/<revision>/`. It does not bake
+or authenticate them. `BOT_NAV_BUILD=skip` stages nothing. The local source
+builder and release tooling use the same Python wrapper to generate game data
+and navigation before a product build.

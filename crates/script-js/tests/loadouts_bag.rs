@@ -55,13 +55,16 @@ fn loadout_combo_resolves_from_store_names_in_script_crate() {
         item_option_spec: None,
     };
     assert_eq!(
-        resolve_setting_options(&def, &store, None),
+        resolve_setting_options(&def, &store, None).unwrap(),
         vec!["a".to_string(), "b".to_string()]
     );
 }
 
 #[test]
 fn isolate_accessors_read_slots_quantities_and_food() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     use api::loadout::Loadout;
 
     let src = r#"
@@ -162,6 +165,13 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_provision_composes_fresh_bank_withdraw_and_wear() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
+    if !common::local_game_data_available(289) {
+        return;
+    }
+
     use api::loadout::Loadout;
 
     let src = r#"

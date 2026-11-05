@@ -150,7 +150,7 @@ workspace member; it is listed as an architecture external.
 | `nav-executor` | Pollable `Traveller` follow run, walk and transport hops | Planner search, script isolate, or operator UI |
  | `script` | Native card machines (Quester, Gatherer, Combat), slot lifecycle and typed native facades over the packed world | A production dependant of `client`; a JS runtime owner |
  | `script-js` | JS runtime: V8 isolate, compat machines (including Sherlock and the clue machine), catalog and library, isolate wire schema and JS assets | A native card owner; a production dependant of `client` except through dev fixtures |
-| `host-play` | Shared `Play` lifecycle over host/script/nav/vault | A second panel or client renderer |
+| `host-play` | Shared `Play` lifecycle over host/script/nav/vault; stages locally generated navigation payloads during product builds | A second panel or client renderer |
 | `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results, the structured operator log; script coordination (catalog, per-profile assignment and parameters, Start all/Stop all, reload, Apply to all); fleet marks and the commands on marked bots (Assign, log in/out, group walk); the fleet/detail projections (phase, queue place, retained errors, newest operation) and the one process resource sampler both front ends render | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries; a per-row or per-bot sampler |
 | `scenario` | Shared headed/headless live scenario runner and Quester fixtures | Panel/TUI chrome |
 | `panel` | Native ImGui UI, winit/wgpu window, game blit | The client 3D renderer or isolate runtime |
@@ -168,7 +168,7 @@ graph, derived from the manifests:
 - `nav-executor` → `api`, `nav`, `client`; `nav` also **dev** for planner test-support fixtures
  - `script` → `api`, `nav`, `vault` (runtime); `client` **dev-only**
  - `script-js` → `script`, `api`, `vault` (runtime); `client` **dev-only**; `nav-planner` **dev-only** (test fixtures only; production JS code uses the Core `script` nav facade)
- - `host-play` → `api`, `client`, `host`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `nav` runtime and **build**; `nav-bake` **build and dev**; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
+ - `host-play` → `api`, `client`, `host`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `nav` runtime; `nav-bake` **dev-only** for fixtures; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
  - `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
  - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
  - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
@@ -297,11 +297,10 @@ reasons to change.
 | `clue_puzzle.rs` | sliding-puzzle plan | frozen grouped search over caller rows |
 | `cake_stall.rs` | Baker-stall pins | posted facts, selection in `script` |
 | `cook_locations.rs` | cook-location inputs | curated bank cook surfaces and pairing constants |
-| `family_asset.rs` | checked selected family assets | one manifest/digest/schema admission, run once when a family is prepared |
 | `gather_methods.rs` | gather JSON query adapters | rows and coverage over the typed catalog; absence is a token |
 | `gather_methods/catalog.rs` | typed gathering catalog and queries | spot regions, pages, nearest, zones, rocks; unknown never empty |
 | `gather_methods/wire.rs` | `gathering.json` decode | fail-closed schema-1 decode into the catalog |
-| `gather_methods/cache.rs` | prepared-catalog lifecycle | embedded family, weak shared cache, off-pump preparation |
+| `gather_methods/cache.rs` | prepared-catalog lifecycle | revision-keyed shared cache, off-pump preparation |
 | `gather_tools.rs` | gather-tool identity, use, wield | posted facts |
 | `named_banks.rs` | frozen bank catalog, eligibility and selected-content access rows | stand resolution lives in `nav` |
 | `bank_memory.rs` | last-seen whole bank of one account | the type alone; the host fills it from the open bank |
@@ -347,11 +346,10 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `arrival.rs` | arrival detection | on tile or adjacent to solid |
 | `bank_fetch.rs` | BankBudget fetch-and-wear plan | plan only, router stays fail-closed |
 | `camera.rs` | path-facing orbit yaw | pure, host writes yaw per observe |
-| `canlight.rs` | canlight lookup and identity binding | static policy and checked sidecar identity |
+| `canlight.rs` | canlight lookup and decoding | static policy and sidecar data |
 | `collision.rs` | runtime collision models | four planes, walk words, and shared packing primitives |
 | `essence.rs` | essence-mine return latch | session-gated return hop |
 | `grid.rs` | walkability grids | step-grid surface |
-| `manifest.rs` | runtime manifest and identity schemas | hashes, verification, and `NavIdentityRow` |
 | `map.rs` | bounded map-data boundary | errors, capped records/text and header-first checks; no UI or game actions |
 | `map/identity.rs` | map identity byte layouts | independent image/catalogue keys; exact encoder/dependency policy |
 | `map/poi.rs` | source-tagged discovery evidence | classifier, physical placements and separate nav-bound stands; not account eligibility |
@@ -363,16 +361,16 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `map/catalogue.rs` | client-only POI derivation | isolated from terrain policy so classifier changes do not invalidate baked imagery |
 | `map/raster.rs` | terrain raster and PNG pyramid | deterministic, sparse, bounded mapsquare neighbourhoods |
 | `map/producer.rs` | pure producer entry points | host owns leases, locking, cancellation and publication |
-| `map/services.rs` | navpois policy identity | one shared digest formula |
+| `map/services.rs` | navpois derivation | shared POI rules |
 | `named_banks.rs` | selected-world bank stand resolution | captured account eligibility stays with the caller, no `script` dep |
-| `pack.rs` | runtime pack decoding | version, geometry, length and identity checks |
+| `pack.rs` | runtime pack decoding | format version, geometry, length and structural checks |
 | `pack/banks.rs` | bank schema and decoding | booth/NPC access data |
-| `pack/sidecars.rs` | sidecar decoding and binding | flags, paint-reach, canlight |
+| `pack/sidecars.rs` | sidecar decoding | flags, paint-reach, canlight |
 | `pack/zones.rs` | zone table decoding | validated exclusion geometry |
 | `paint.rs` | nav-paint buffers | no imgui, no client draw |
 | `quest_gates.rs` | quest-stage gates on transport edges | typed gates over selected progress signals |
 | `router.rs` | world-space Dijkstra | exact-coordinate compact storage, shared synchronous/cooperative kernel, total-ticks cost and gated edges |
-| `movement.rs` | shared directional step rule | router and release producer use the same `step_ok` |
+| `movement.rs` | shared directional step rule | router and local producer use the same `step_ok` |
 | `router/grid.rs` | compatibility step-grid A-star | retained for fixture tests; production travel uses the collision+transport router |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
 | `tile.rs` | tile coords and distance | x, z, level |
@@ -381,37 +379,31 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `executor_adapter.rs` | raw forwarding surface for `nav-executor` only | plan-count/leg helpers, web/door predicates, shared constants; not part of `contract` |
 | `test_support.rs`, `test_support/source_scan.rs` | planner fixture builders and source scanner | test scope plus `test-support` feature gates |
 | `walk_destinations.rs` | shared walk-destination pins | town tiles for WalkTo confirm |
-| `required-content-{274,289}.tsv` | shared canonical content inputs | Quester coverage, nightly staging, and the baker use the same data |
+| `required-content-{274,289}.tsv` | semantic navigation coverage inputs | Quester coverage and nav-coverage facts |
 | `world.rs` | bound world handle | packed collision plus transport graph |
 | `world_state.rs` | search gating facts | fail-closed edge requirements |
 | `zones.rs`, `zones/curated.rs` | exclusion data, spatial index and search exemptions | shared runtime hazard facts |
 
 ### nav-bake
 
-This producer depends on the planner. Runtime planning never depends on this crate.
-The v18 schema is in the [baked reachability contract](baked-reachability.md).
-BR2 produces and reads v18 only.
+`nav-bake` owns local navigation payload generation and schema-3 crossings
+export. It uses API game-data types and pure decoders with embedded game-data
+disabled. Runtime planning does not depend on this tool.
 
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
-| `bake.rs` | release bake orchestration and zone derivation | shared by the CLI and application build |
-| `bundle.rs` | staging, fingerprints, stamps and required inputs | runtime identity schemas remain in planner |
-| `manifest.rs` | generated navigation manifest assembly | no runtime schema copy |
-| `collision.rs` | collision construction and stamping | shared runtime models remain in planner |
-| `pack/` and `pack.rs` | source parsers, bank derivation and encoding | pack and sidecar output bytes |
-| `canlight.rs` | static canlight producer | reads shared runtime policy identity |
-| `services.rs` | navpois and hunter inputs | jm2 placements, handlers and labels |
-| `zones.rs` | curated group generation inputs | shared hazard facts remain in planner |
-| `transport/` and `transport.rs` | transport derivation and parser support | all 26 source families, nested helpers and embedded procedures |
-| `bin/nav-pack.rs` | custom-input bake CLI | explicit output paths |
-| `bin/nav-input-audit.rs` | offline input audit | developer tool, not runtime routing |
-| `bin/cache-content-id.rs` | offline identity export | reads the selected cache and snapshot |
+| `bake.rs` | local navigation derivation | reads local engine content and the revision's client cache |
+| `canlight.rs` | static canlight producer | writes feature data |
+| `services.rs` | POI derivation | writes feature data |
+| `transport/` and `transport.rs` | transport derivation and parser support | reads content and engine procedures |
+| `pack/` and `pack.rs` | pack and sidecar encoding | writes the current navigation payload formats |
+| `bin/nav-pack.rs` | local bake and crossings export CLI | explicit inputs and outputs |
 
-`host-play` admits build and dev dependencies on the baker. Panel, frontend-core,
-and TUI admit only producer-fixture dev edges. The latter two include host-play's
-shared map and upgrade fixtures. The e2e tool admits its input-audit edge.
-The host retains its planner build dependency for schemas, hashes and `FORMAT_ID`.
-An environment skip flag does not remove nonoptional Cargo build dependencies.
+`nav-bake` remains a workspace member and a tooling dependency. The product
+host has no build dependency on it and does not run it. The host stages the
+five existing files from `target/local-data/nav/<revision>/`. The
+`host-play` fixture edge remains dev-only, and `e2e` retains its normal
+tooling edge.
 
 
 The planner's and baker's `clippy.toml` files deny action types, functions, methods, and
@@ -564,11 +556,11 @@ Image/catalogue schema 1 identities use domain-separated SHA-256 binary preimage
 (documented in `map/identity.rs`), with decoded client identity rather than
 transfer CRCs. Image policy includes exact encoder/compression-library versions.
 Nav/service changes affect the merged catalogue key, not terrain identity.
-`274bot.navpois` uses a 77-byte `274P`/1 header (length, record count, identity
-binding, payload hash) followed by bounded typed JSON. Nav bake generates the
-sidecar from jm2 NPC rows, rs2 bank-service handlers and `maps/labels.txt`;
-its whole-file digest is stamped on `NavManifest` / `BakeStamp` / identity rows.
-Packaging copies the data-only file with nav resources. Frozen bank APIs stay.
+`274bot.navpois` carries bounded typed feature records generated from jm2 NPC
+rows, rs2 bank-service handlers and `maps/labels.txt`. Its producer and
+decoder enforce the sidecar format and record structure; it has no file digest
+or nav-manifest binding. Packaging copies it with nav resources. Frozen bank
+APIs stay.
 
 Disk consumers use `ClientPois::decode`, `ImageManifest::decode`,
 `ServicePois::decode_navpois`, `ReadyCatalogue::open` and `ReadyImages::open`,
@@ -749,11 +741,9 @@ libtest exception.
 | `evidence_writer.rs` | background live-evidence PNG and JSON writer | one thread per cell; the slot thread only hands over pixels and receipts |
 | `route_inspect.rs` | inspect cooperative-work adapter and owner | Captures one shared `WorldState` and `NavLease`. It runs strict search, borrowed `MissingRequirementsView`, bank-fetch planning, stand and post-bank routing, and zone diagnosis within the 192 MiB job charge. It transfers terminal custody to the shared 256 MiB owner ledger before WorkService consumes the result. It keeps one admitted job, one replaceable pending demand, two replay terminals and one held terminal. It uses acknowledgement, eviction and identity/revision-bound cancellation. |
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
-| `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
 | `walk_map.rs`, `walk_map/{actions,catalogue,observations,routes}.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
 | `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | one `WorkService` MapBake family with resumable bounded producer cursors; demand, bake/publication, installing release-shipped terrain that matches the bound image identity; no private bake worker |
 | `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake, bounded shared-worker terrain PNG decode (258×258 RGBA8; 512 KiB input plus inline job, Arc refcounts and refcount-alignment padding; `png::Limits` allowance of one additional raw RGBA row, 2 MiB scratch covering the overlapping ≤512 KiB eXIf buffer and metadata copy, ≤128 KiB raster buffer, row scratch and bounded inflater tables; 266,256-byte result; text/ICC metadata is skipped) |
-| `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
 | `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
 | `memory_diagnostics.rs` | memory-run diagnostics | bounded, never drains logs |
@@ -1074,13 +1064,13 @@ host API run through the same isolate as JS API v2 ([`api/js-api-v2.md`](../api/
 
 ## Navigation pack and server profiles
 
-The nav pack is format v18 (magic `274V`). Decoding rejects v17 and older as
-`BadVersion`: rebake custom packs with `nav-pack`. Three sidecars ride beside
-the pack: raw flags (`274F`/1), paint-reach (`274R`/1) and static canlight
-(`274L`/1); `274bot.navpois` (`274P`/1) is the fourth. Application builds bake
-and stage the selected revision's navigation automatically
-(`BOT_NAV_REVISION`, default 289; `BOT_NAV_BUILD=require|skip`); `nav-pack` is
-only for deliberate custom-input bakes, selected with `--nav-pack`.
+The current pack format is `274V19` (magic `274V`). Older incompatible
+versions fail with `BadVersion`; runtime decoding keeps geometry, length, and
+structural checks. Its four sidecars carry flags, reachability, canlight, and
+POI data. Product builds stage the five existing files from
+`target/local-data/nav/<revision>/`; they do not bake them.
+`BOT_NAV_BUILD=skip` stages nothing. `BOT_NAV_REVISION` selects the staged
+revision, and `NAV_PACK` is a runtime override only.
 
 `--profile NAME` picks a server profile from `~/.274bot/servers.json`,
 created on first use with `local-274`, `local-289` and `rs2b2t`. `--rs2b2t`

@@ -105,7 +105,6 @@ impl super::wire::DecodeFact for BuiltinGathererFishingOperation {
 #[derive(Debug)]
 pub struct NpcTransformEvidence {
     schema: u16,
-    evidence_sha256: String,
     operations: Vec<NpcTransformAction>,
     /// Static selected-content fishing slots for the built-in Gatherer only.
     builtin_gatherer_fishing_operations: Vec<BuiltinGathererFishingOperation>,
@@ -115,7 +114,6 @@ pub struct NpcTransformEvidence {
 #[serde(remote = "NpcTransformEvidence", deny_unknown_fields)]
 pub(super) struct EvidenceWire {
     schema: u16,
-    evidence_sha256: String,
     #[serde(deserialize_with = "super::wire::decode_list")]
     operations: Vec<NpcTransformAction>,
     #[serde(deserialize_with = "super::wire::decode_list")]
@@ -123,11 +121,6 @@ pub(super) struct EvidenceWire {
 }
 
 impl NpcTransformEvidence {
-    /// Borrow the digest of the development-only complete evidence artifact.
-    pub fn evidence_sha256(&self) -> &str {
-        &self.evidence_sha256
-    }
-
     /// Borrow only the operations with complete positive closure proofs.
     pub fn operations(&self) -> &[NpcTransformAction] {
         &self.operations
@@ -162,7 +155,6 @@ impl NpcTransformEvidence {
 
     pub(super) fn validate(&self) -> Result<(), ContractError> {
         if self.schema != 2
-            || !is_digest(&self.evidence_sha256)
             || self.operations.windows(2).any(|rows| {
                 (rows[0].npc_type_id, rows[0].slot) >= (rows[1].npc_type_id, rows[1].slot)
             })
@@ -214,8 +206,7 @@ mod tests {
     #[test]
     fn closure_and_builtin_fishing_rows_have_separate_admission_queries() {
         let facts = decode(&format!(
-            r#"{{"schema":2,"evidence_sha256":"{}","operations":[{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{}"}}],"builtin_gatherer_fishing_operations":[{{"npc_type_id":8,"slot":1,"operation_fingerprint":"{}"}}]}}"#,
-            "a".repeat(64),
+            r#"{{"schema":2,"operations":[{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{}"}}],"builtin_gatherer_fishing_operations":[{{"npc_type_id":8,"slot":1,"operation_fingerprint":"{}"}}]}}"#,
             "b".repeat(64),
             "c".repeat(64),
         ));
@@ -234,23 +225,16 @@ mod tests {
     }
 
     #[test]
-    fn invalid_runtime_digests_or_operation_rows_refuse_binding() {
-        for (digest, rows) in [
-            ("not-a-digest".to_owned(), "[]".to_owned()),
-            (
-                "a".repeat(64),
-                r#"[{"npc_type_id":-1,"slot":1,"operation_fingerprint":"bad"}]"#.to_owned(),
-            ),
-            (
-                "a".repeat(64),
-                format!(
-                    r#"[{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{0}"}},{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{0}"}}]"#,
-                    "b".repeat(64)
-                ),
+    fn invalid_runtime_operation_rows_refuse_binding() {
+        for rows in [
+            r#"[{"npc_type_id":-1,"slot":1,"operation_fingerprint":"bad"}]"#.to_owned(),
+            format!(
+                r#"[{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{0}"}},{{"npc_type_id":7,"slot":2,"operation_fingerprint":"{0}"}}]"#,
+                "b".repeat(64)
             ),
         ] {
             let facts = decode(&format!(
-                r#"{{"schema":2,"evidence_sha256":"{digest}","operations":{rows},"builtin_gatherer_fishing_operations":[]}}"#
+                r#"{{"schema":2,"operations":{rows},"builtin_gatherer_fishing_operations":[]}}"#
             ));
             assert_eq!(facts.validate(), Err(ContractError::InvalidContract));
         }
@@ -260,16 +244,14 @@ mod tests {
     fn static_fishing_rows_cannot_replace_full_closure_or_admit_event_npcs() {
         for npc_type_id in [390, 403, 404, 405, 406] {
             let facts = decode(&format!(
-                r#"{{"schema":2,"evidence_sha256":"{}","operations":[],"builtin_gatherer_fishing_operations":[{{"npc_type_id":{npc_type_id},"slot":1,"operation_fingerprint":"{}"}}]}}"#,
-                "a".repeat(64),
+                r#"{{"schema":2,"operations":[],"builtin_gatherer_fishing_operations":[{{"npc_type_id":{npc_type_id},"slot":1,"operation_fingerprint":"{}"}}]}}"#,
                 "b".repeat(64),
             ));
             assert_eq!(facts.validate(), Err(ContractError::InvalidContract));
         }
 
         let facts = decode(&format!(
-            r#"{{"schema":2,"evidence_sha256":"{}","operations":[],"builtin_gatherer_fishing_operations":[{{"npc_type_id":309,"slot":1,"operation_fingerprint":"{}"}}]}}"#,
-            "a".repeat(64),
+            r#"{{"schema":2,"operations":[],"builtin_gatherer_fishing_operations":[{{"npc_type_id":309,"slot":1,"operation_fingerprint":"{}"}}]}}"#,
             "b".repeat(64),
         ));
         assert_eq!(facts.validate(), Ok(()));
@@ -278,20 +260,14 @@ mod tests {
     }
 
     #[test]
-    fn old_schema_or_unknown_npc_evidence_fields_refuse_binding() {
-        let legacy = format!(
-            r#"{{"schema":1,"evidence_sha256":"{}","operations":[],"builtin_gatherer_fishing_operations":[]}}"#,
-            "a".repeat(64),
-        );
+    fn old_schema_or_unknown_fields_refuse_binding() {
+        let legacy = r#"{"schema":1,"operations":[],"builtin_gatherer_fishing_operations":[]}"#;
         assert_eq!(
-            decode(&legacy).validate(),
+            decode(legacy).validate(),
             Err(ContractError::InvalidContract)
         );
 
-        let unexpected = format!(
-            r#"{{"schema":2,"evidence_sha256":"{}","operations":[],"builtin_gatherer_fishing_operations":[],"knife_operations":[]}}"#,
-            "a".repeat(64),
-        );
-        assert!(serde_json::from_str::<Facts>(&unexpected).is_err());
+        let unexpected = r#"{"schema":2,"operations":[],"builtin_gatherer_fishing_operations":[],"unrelated":[]}"#;
+        assert!(serde_json::from_str::<Facts>(unexpected).is_err());
     }
 }

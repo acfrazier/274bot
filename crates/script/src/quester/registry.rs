@@ -477,7 +477,7 @@ impl PathRegistry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RegistryPreparationPhase {
     BuildQuestCatalog,
-    CheckPin,
+    CheckRevision,
     ScanFolder,
     ReadIndex,
     ParseIndex,
@@ -688,7 +688,7 @@ impl<'a> RegistryPreparation<'a> {
         } else if matches!(&quests, QuestOwner::Deferred) {
             RegistryPreparationPhase::BuildQuestCatalog
         } else {
-            RegistryPreparationPhase::CheckPin
+            RegistryPreparationPhase::CheckRevision
         };
         Self {
             source,
@@ -780,18 +780,10 @@ impl<'a> RegistryPreparation<'a> {
                         CompileError::code("quest-facts").with_detail(format!("{error:?}"))
                     })?;
                 self.quests = QuestOwner::Shared(Arc::new(quests));
-                self.phase = Phase::CheckPin;
+                self.phase = Phase::CheckRevision;
             }
-            Phase::CheckPin => {
-                let revision = self
-                    .selected
-                    .get()
-                    .selected_pin()
-                    .map_err(|error| {
-                        CompileError::code("missing-pin").with_detail(format!("{error:?}"))
-                    })?
-                    .revision;
-                if revision != ClientRevision::R289 {
+            Phase::CheckRevision => {
+                if self.selected.get().revision() != 289 {
                     return Err(CompileError::code("unsupported-revision")
                         .with_detail("Folder Paths support revision 289 only"));
                 }
@@ -1747,7 +1739,7 @@ mod tests {
             )
             .unwrap();
             let mut maximum = std::time::Duration::ZERO;
-            let mut phase = RegistryPreparationPhase::CheckPin;
+            let mut phase = RegistryPreparationPhase::CheckRevision;
             loop {
                 let current = preparation.phase();
                 let started = std::time::Instant::now();
@@ -1787,7 +1779,7 @@ mod tests {
                 None,
             )
             .unwrap();
-            assert_eq!(preparation.phase(), RegistryPreparationPhase::CheckPin);
+            assert_eq!(preparation.phase(), RegistryPreparationPhase::CheckRevision);
             assert!(preparation.step(worker).unwrap().is_none());
 
             // The source path is captured, while files are read by the staged

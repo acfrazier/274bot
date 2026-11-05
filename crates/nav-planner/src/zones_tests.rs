@@ -479,7 +479,6 @@ fn hunter_reach_overhanging_the_map_indexes_only_its_in_grid_cells() {
 
 struct PackMembershipUnitBound {
     revision: u16,
-    nav_sha256: &'static str,
     bucket_candidates: usize,
     carves_per_candidate: usize,
     carves_per_bucket: usize,
@@ -493,7 +492,6 @@ struct PackMembershipUnitBound {
 // assertion affected by host scheduling, fail if a supported pack grows.
 const PACK_274_MEMBERSHIP_UNIT: PackMembershipUnitBound = PackMembershipUnitBound {
     revision: 274,
-    nav_sha256: "4ba25e96dc9ae50049faf92f8efabae52bd2c7cc54b5e6560c31b0a3e855e461",
     bucket_candidates: 32,
     carves_per_candidate: 141,
     carves_per_bucket: 1_334,
@@ -503,7 +501,6 @@ const PACK_274_MEMBERSHIP_UNIT: PackMembershipUnitBound = PackMembershipUnitBoun
 };
 const PACK_289_MEMBERSHIP_UNIT: PackMembershipUnitBound = PackMembershipUnitBound {
     revision: 289,
-    nav_sha256: "81e5ca84568b4e3d9b0e7f428a2d43d5e945c73cd74910645db626c89bd4de36",
     bucket_candidates: 32,
     carves_per_candidate: 141,
     carves_per_bucket: 1_749,
@@ -572,18 +569,12 @@ fn membership_call_timings(table: &ZoneTable, cell: WorldTile) -> serde_json::Va
 /// Qualify the opaque membership units against both prepared content packs.
 /// Missing inputs fail rather than silently omitting either supported pack.
 #[test]
-#[ignore = "requires explicit matching T5W_MEMBERSHIP_NAVPACK_274 and _289 inputs"]
+#[ignore = "requires explicit revision-274 and revision-289 membership nav packs"]
 fn packed_membership_work_bound() {
     for bound in [PACK_274_MEMBERSHIP_UNIT, PACK_289_MEMBERSHIP_UNIT] {
         let revision = bound.revision;
         let variable = format!("T5W_MEMBERSHIP_NAVPACK_{revision}");
         let path = std::path::PathBuf::from(std::env::var_os(&variable).expect(&variable));
-        let manifest: crate::manifest::NavManifest = serde_json::from_slice(
-            &std::fs::read(crate::manifest::nav_manifest_path(&path)).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(manifest.revision, revision);
-        assert_eq!(manifest.nav_sha256, bound.nav_sha256);
         let world = crate::world::NavWorld::load_pack(&path).unwrap();
         let table = world.graph.zones.as_ref().expect("content zone table");
         let mut carves_per_zone = vec![0usize; table.zones.len()];
@@ -664,7 +655,6 @@ fn packed_membership_work_bound() {
             serde_json::json!({
                 "case": "packed_membership_work_bound",
                 "revision": revision,
-                "nav_sha256": manifest.nav_sha256,
                 "zone_count": table.zones.len(),
                 "carve_count": table.carves.len(),
                 "max_candidates_per_tile": max_candidates_per_tile,

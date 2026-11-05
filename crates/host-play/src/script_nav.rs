@@ -4824,7 +4824,6 @@ pub(crate) fn manual_route_state(
     slot: &mut script::SlotScript,
     snapshot: &GameSnapshot,
     base: &WorldState,
-    world: &NavWorld,
     profile_data: Option<&Arc<api::game_data::SelectedGameData>>,
 ) -> Option<(
     api::selected::RunKey,
@@ -4841,9 +4840,7 @@ pub(crate) fn manual_route_state(
         .prereq_catalog
         .as_ref()
         .map(|catalog| catalog.establishable_windows());
-    state.quest_evidence = world.graph.quest_family.and_then(|family| {
-        captured_route_quests(family, Some(&context), snapshot, None, context.stamp)
-    });
+    state.quest_evidence = captured_route_quests(Some(&context), snapshot, None, context.stamp);
     Some((context.stamp.run, context.prereq_catalog, state))
 }
 
@@ -4870,30 +4867,16 @@ impl api::quest_progress::EvidenceProvider for RouteQuestProvider {
 }
 
 fn captured_route_quests(
-    family: nav_planner::quest_gates::QuestFamilyId,
     context: Option<&RouteQuestContext>,
     snapshot: &GameSnapshot,
     explicit: Option<Arc<dyn api::quest_progress::EvidenceProvider>>,
     required_after: EvidenceStamp,
 ) -> Option<nav_planner::quest_gates::QuestEvidence> {
     let prepared = context.and_then(|context| {
-        let identity = context.selected.quest_family_identity()?;
-        let selected_family =
-            nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
-        if selected_family != family {
-            api::host_log!(
-                api::hostlog::Category::NavTrace,
-                api::hostlog::Level::Debug,
-                "navigation quest-list evidence unavailable: pack family {family:?} differs from selected family {selected_family:?}",
-            );
-            return None;
-        }
         let quests = context.selected.try_quests()?;
         Some(
             api::quest_progress::QuestListEvidenceProvider::from_snapshot(
                 &quests,
-                Some(identity),
-                Some(identity),
                 SnapshotView::new(Some(snapshot), context.stamp),
             ),
         )
@@ -4922,25 +4905,22 @@ fn captured_route_quests(
             ordinary,
         });
         Some(
-            nav_planner::quest_gates::QuestEvidence::new(provider, family, required_after)
+            nav_planner::quest_gates::QuestEvidence::new(provider, required_after)
                 .with_owned_provider_bytes(bytes),
         )
     } else {
-        explicit.map(|provider| {
-            nav_planner::quest_gates::QuestEvidence::new(provider, family, required_after)
-        })
+        explicit
+            .map(|provider| nav_planner::quest_gates::QuestEvidence::new(provider, required_after))
     }
 }
 /// Service selection uses the same request-time evidence view as a walk.
 pub(super) fn captured_service_quests(
-    family: nav_planner::quest_gates::QuestFamilyId,
     context: Option<&RouteQuestContext>,
     snapshot: &GameSnapshot,
     required_after: Option<EvidenceStamp>,
 ) -> Option<nav_planner::quest_gates::QuestEvidence> {
     let context = context?;
     captured_route_quests(
-        family,
         Some(context),
         snapshot,
         None,
@@ -5522,15 +5502,12 @@ impl ScriptWalkArm {
             .unwrap()
             .get(&self.name)
             .and_then(|bot| bot.quest_context.clone());
-        let quest_evidence = world.graph.quest_family.and_then(|family| {
-            captured_route_quests(
-                family,
-                context.as_ref(),
-                snapshot,
-                request.evidence,
-                request.required_after,
-            )
-        });
+        let quest_evidence = captured_route_quests(
+            context.as_ref(),
+            snapshot,
+            request.evidence,
+            request.required_after,
+        );
         self.state = match patch_route_quest_evidence(state, quest_evidence) {
             Ok(state) => Some(state),
             Err(_) => {
@@ -5783,19 +5760,14 @@ impl ScriptWalkArm {
             .unwrap()
             .get(&self.name)
             .and_then(|bot| bot.quest_context.clone());
-        let evidence = self
-            .world
-            .as_ref()
-            .and_then(|world| world.graph.quest_family)
-            .and_then(|family| {
-                captured_route_quests(
-                    family,
-                    context.as_ref(),
-                    snapshot,
-                    request.evidence,
-                    request.required_after,
-                )
-            });
+        let evidence = self.world.as_ref().and_then(|_| {
+            captured_route_quests(
+                context.as_ref(),
+                snapshot,
+                request.evidence,
+                request.required_after,
+            )
+        });
         let state = self.state.take().expect("request state was captured");
         self.state = match patch_route_quest_evidence(state, evidence) {
             Ok(state) => Some(state),
@@ -6310,7 +6282,7 @@ impl ScriptWalkArm {
             .as_ref()
             .is_none_or(|state| state.quest_evidence.is_none())
         {
-            if let (Some(snapshot), Some(family)) = (snapshot, world.graph.quest_family) {
+            if let Some(snapshot) = snapshot {
                 let context = self
                     .navs
                     .lock()
@@ -6322,7 +6294,7 @@ impl ScriptWalkArm {
                         .take()
                         .unwrap_or_else(|| Arc::new(WorldState::from_snapshot(snapshot)));
                     let evidence =
-                        captured_route_quests(family, Some(context), snapshot, None, context.stamp);
+                        captured_route_quests(Some(context), snapshot, None, context.stamp);
                     state = match patch_route_quest_evidence(base_state, evidence) {
                         Ok(state) => Some(state),
                         Err(_) => {
@@ -10997,7 +10969,32 @@ mod route_quest_provider_tests {
     use api::snapshot::{QuestStatusView, SnapshotView};
     use std::sync::LazyLock;
 
-    fn selected_r289() -> Arc<api::game_data::SelectedGameData> {
+    fn selected_r289() -> Option<Arc<api::game_data::SelectedGameData>> {
+        for (path, description) in [
+            (
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../api/data/game-data/289.json"
+                ),
+                "revision 289 game data",
+            ),
+            (
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../api/data/game-data/289/quests.json"
+                ),
+                "revision 289 quest facts",
+            ),
+            (
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../api/data/game-data/289/prereq_steps.json"
+                ),
+                "revision 289 prerequisite facts",
+            ),
+        ] {
+            api::test_support::local_asset_path("", path, description)?;
+        }
         static SELECTED: LazyLock<Arc<api::game_data::SelectedGameData>> = LazyLock::new(|| {
             let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
                 .expect("selected R289 game data");
@@ -11020,7 +11017,7 @@ mod route_quest_provider_tests {
             .expect("prepare selected quest family");
             selected
         });
-        Arc::clone(&SELECTED)
+        Some(Arc::clone(&SELECTED))
     }
 
     fn selected_quest(
@@ -11032,15 +11029,6 @@ mod route_quest_provider_tests {
             .next()
             .expect("selected quest catalog has rows");
         (facts.id.clone(), facts.display.to_string())
-    }
-
-    fn family(
-        selected: &api::game_data::SelectedGameData,
-    ) -> nav_planner::quest_gates::QuestFamilyId {
-        let identity = selected
-            .quest_family_identity()
-            .expect("selected quest family identity");
-        nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema)
     }
 
     fn run() -> RunKey {
@@ -11081,13 +11069,8 @@ mod route_quest_provider_tests {
         observed: EvidenceStamp,
     ) -> Arc<dyn EvidenceProvider> {
         let quests = selected.try_quests().expect("prepared quest catalog");
-        let identity = selected
-            .quest_family_identity()
-            .expect("selected quest family identity");
         Arc::new(QuestListEvidenceProvider::from_snapshot(
             &quests,
-            Some(identity),
-            Some(identity),
             SnapshotView::new(Some(&snapshot(name, colour, available)), observed),
         ))
     }
@@ -11154,7 +11137,9 @@ mod route_quest_provider_tests {
 
     #[test]
     fn compat_route_context_keeps_actual_session_after_scene_only_down_observation() {
-        let selected = selected_r289();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(44);
         let factory = Arc::new(script::surface::test_support::StubSurfaceFactory::new());
@@ -11202,7 +11187,9 @@ mod route_quest_provider_tests {
 
     #[test]
     fn idle_manual_route_uses_profile_data_and_same_run_memory() {
-        let selected = selected_r289();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(41);
         let run = RunKey {
@@ -11226,17 +11213,10 @@ mod route_quest_provider_tests {
         }));
         assert!(slot.compiled_game_data().is_none());
         assert!(route_quest_context(&slot, 0).is_none());
-        let mut world = tiny_world();
-        Arc::get_mut(&mut world).unwrap().graph.quest_family = Some(family(&selected));
         let snapshot = GameSnapshot::new();
-        let (captured_run, catalog, route_state) = manual_route_state(
-            &mut slot,
-            &snapshot,
-            &WorldState::empty(),
-            &world,
-            Some(&selected),
-        )
-        .expect("idle manual request uses the bound profile capability");
+        let (captured_run, catalog, route_state) =
+            manual_route_state(&mut slot, &snapshot, &WorldState::empty(), Some(&selected))
+                .expect("idle manual request uses the bound profile capability");
         assert_eq!(captured_run, run);
         assert!(catalog.is_some());
         assert!(route_state.establishable.is_some());
@@ -11256,14 +11236,10 @@ mod route_quest_provider_tests {
     fn idle_manual_route_without_profile_data_stays_unavailable() {
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(42);
-        assert!(manual_route_state(
-            &mut slot,
-            &GameSnapshot::new(),
-            &WorldState::empty(),
-            &tiny_world(),
-            None,
-        )
-        .is_none());
+        assert!(
+            manual_route_state(&mut slot, &GameSnapshot::new(), &WorldState::empty(), None,)
+                .is_none()
+        );
     }
 
     #[test]
@@ -11271,7 +11247,9 @@ mod route_quest_provider_tests {
         use api::prereq_knowledge::{CatalogRef, Fact, FactSource, RefusalObservation};
         use api::prereq_steps::ActionableGate;
 
-        let selected = selected_r289();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
         let catalog = selected.try_prereq_steps().expect("prepared prerequisites");
         let (row_index, row) = catalog
             .iter()
@@ -11282,8 +11260,6 @@ mod route_quest_provider_tests {
             })
             .expect("holy barrier prerequisite");
         let crossing = row.crossings[0].crossing;
-        let mut world = tiny_world();
-        Arc::get_mut(&mut world).unwrap().graph.quest_family = Some(family(&selected));
 
         for boundary in ["reset", "reconnect", "stop"] {
             let mut slot = script::SlotScript::new();
@@ -11304,14 +11280,9 @@ mod route_quest_provider_tests {
             });
             slot.bind_local_state(Arc::clone(&state));
             let snapshot = GameSnapshot::new();
-            let (captured_run, _, _) = manual_route_state(
-                &mut slot,
-                &snapshot,
-                &WorldState::empty(),
-                &world,
-                Some(&selected),
-            )
-            .expect("capture idle manual route");
+            let (captured_run, _, _) =
+                manual_route_state(&mut slot, &snapshot, &WorldState::empty(), Some(&selected))
+                    .expect("capture idle manual route");
             assert_eq!(captured_run, run);
 
             slot.on_is_up(false);
@@ -11351,14 +11322,9 @@ mod route_quest_provider_tests {
                 "a scene reload must not revoke the route's real refusal"
             );
             let before = state.prereq_snapshot();
-            let (later_run, _, later_state) = manual_route_state(
-                &mut slot,
-                &snapshot,
-                &WorldState::empty(),
-                &world,
-                Some(&selected),
-            )
-            .expect("same manual route session");
+            let (later_run, _, later_state) =
+                manual_route_state(&mut slot, &snapshot, &WorldState::empty(), Some(&selected))
+                    .expect("same manual route session");
             assert_eq!(later_run, captured_run);
             assert_eq!(
                 later_state
@@ -11389,8 +11355,10 @@ mod route_quest_provider_tests {
     fn observed_red_quest_rows_gate_windows_only_with_colour_authority() {
         use api::selected::{InclusiveRange, StageWindow};
 
-        let selected = selected_r289();
-        let family = family(&selected);
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+
         let observed = stamp(run(), 126, 126);
         let context = context(Arc::clone(&selected), observed);
         let quests = selected.try_quests().expect("prepared quest catalog");
@@ -11404,7 +11372,7 @@ mod route_quest_provider_tests {
             let facts = quests.quest(quest).expect("selected quest facts");
             assert_eq!(facts.colour_authoritative, authoritative, "{quest}");
             let snapshot = snapshot(&facts.display, 0xF80000, true);
-            let evidence = captured_route_quests(family, Some(&context), &snapshot, None, observed)
+            let evidence = captured_route_quests(Some(&context), &snapshot, None, observed)
                 .expect("route captures the observed quest-list row");
             assert_eq!(
                 (
@@ -11423,9 +11391,11 @@ mod route_quest_provider_tests {
 
     #[test]
     fn explicit_real_evidence_wins_when_known_and_unknown_falls_back() {
-        let selected = selected_r289();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
         let (quest, name) = selected_quest(&selected);
-        let family = family(&selected);
+
         let run = run();
         let floor = stamp(run, 9, 9);
         let complete = nav_planner::world_state::QUEST_COMPLETE_COLOUR;
@@ -11435,14 +11405,9 @@ mod route_quest_provider_tests {
 
         let explicit_false = real_list_provider(&selected, &name, not_started, true, floor);
         let ordinary_true = snapshot(&name, complete, true);
-        let evidence = captured_route_quests(
-            family,
-            Some(&context),
-            &ordinary_true,
-            Some(explicit_false),
-            floor,
-        )
-        .expect("ordinary evidence and explicit provider");
+        let evidence =
+            captured_route_quests(Some(&context), &ordinary_true, Some(explicit_false), floor)
+                .expect("ordinary evidence and explicit provider");
         assert_eq!(
             evidence.test(&gate),
             Truth::False,
@@ -11451,14 +11416,9 @@ mod route_quest_provider_tests {
 
         let explicit_true = real_list_provider(&selected, &name, complete, true, floor);
         let ordinary_false = snapshot(&name, not_started, true);
-        let evidence = captured_route_quests(
-            family,
-            Some(&context),
-            &ordinary_false,
-            Some(explicit_true),
-            floor,
-        )
-        .expect("ordinary evidence and explicit provider");
+        let evidence =
+            captured_route_quests(Some(&context), &ordinary_false, Some(explicit_true), floor)
+                .expect("ordinary evidence and explicit provider");
         assert_eq!(
             evidence.test(&gate),
             Truth::True,
@@ -11467,7 +11427,6 @@ mod route_quest_provider_tests {
 
         let explicit_unknown = real_list_provider(&selected, &name, complete, false, floor);
         let evidence = captured_route_quests(
-            family,
             Some(&context),
             &ordinary_true,
             Some(explicit_unknown),
@@ -11482,9 +11441,11 @@ mod route_quest_provider_tests {
     }
     #[test]
     fn current_refusal_memory_overrides_ordinary_quest_colour_and_is_charged() {
-        let selected = selected_r289();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
         let (_, name) = selected_quest(&selected);
-        let family = family(&selected);
+
         let observed = stamp(run(), 9, 9);
         let gate = QuestGate::Window(api::selected::StageWindow {
             quest: api::selected::FactKey::new("unlisted-quest"),
@@ -11496,14 +11457,9 @@ mod route_quest_provider_tests {
         });
         let snapshot = snapshot(&name, nav_planner::world_state::QUEST_COMPLETE_COLOUR, true);
         let without_memory_context = context(Arc::clone(&selected), observed);
-        let without_memory = captured_route_quests(
-            family,
-            Some(&without_memory_context),
-            &snapshot,
-            None,
-            observed,
-        )
-        .expect("ordinary route evidence");
+        let without_memory =
+            captured_route_quests(Some(&without_memory_context), &snapshot, None, observed)
+                .expect("ordinary route evidence");
         let without_memory_bytes = without_memory.owned_provider_bytes();
         let state = state_with_fact(api::prereq_knowledge::Fact {
             quest: api::selected::FactKey::new("unlisted-quest"),
@@ -11533,26 +11489,16 @@ mod route_quest_provider_tests {
             stamp: observed,
             local_state: Some(state),
         };
-        let evidence = captured_route_quests(
-            family,
-            Some(&with_memory_context),
-            &snapshot,
-            None,
-            observed,
-        )
-        .expect("memory and ordinary route evidence");
+        let evidence = captured_route_quests(Some(&with_memory_context), &snapshot, None, observed)
+            .expect("memory and ordinary route evidence");
         assert_eq!(evidence.test(&gate), Truth::False);
         assert_eq!(
             evidence.owned_provider_bytes() - without_memory_bytes,
             std::mem::size_of::<api::prereq_knowledge::Fact>()
         );
-        let service_evidence = captured_service_quests(
-            family,
-            Some(&with_memory_context),
-            &snapshot,
-            Some(observed),
-        )
-        .expect("service selection captures the same immutable memory");
+        let service_evidence =
+            captured_service_quests(Some(&with_memory_context), &snapshot, Some(observed))
+                .expect("service selection captures the same immutable memory");
         assert_eq!(service_evidence.test(&gate), Truth::False);
         assert_eq!(
             service_evidence.owned_provider_bytes(),
@@ -11562,24 +11508,25 @@ mod route_quest_provider_tests {
 
     #[test]
     fn captured_rows_fail_closed_after_the_run_or_causal_floor_changes() {
-        let selected = selected_r289();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
         let (quest, name) = selected_quest(&selected);
-        let family = family(&selected);
+
         let observed = stamp(run(), 5, 5);
         let complete = snapshot(&name, nav_planner::world_state::QUEST_COMPLETE_COLOUR, true);
         let gate = QuestGate::Complete(quest);
 
         let later_floor = stamp(run(), 6, 6);
         let context = context(Arc::clone(&selected), observed);
-        let evidence = captured_route_quests(family, Some(&context), &complete, None, later_floor)
-            .expect("matching-family ordinary provider");
+        let evidence = captured_route_quests(Some(&context), &complete, None, later_floor)
+            .expect("prepared ordinary provider");
         assert_eq!(evidence.test(&gate), Truth::Unknown);
 
         let changed_run = RunKey { run: 2, ..run() };
         let changed_run_floor = stamp(changed_run, 5, 5);
-        let evidence =
-            captured_route_quests(family, Some(&context), &complete, None, changed_run_floor)
-                .expect("matching-family ordinary provider");
+        let evidence = captured_route_quests(Some(&context), &complete, None, changed_run_floor)
+            .expect("prepared ordinary provider");
         assert_eq!(evidence.test(&gate), Truth::Unknown);
     }
 
@@ -11640,13 +11587,15 @@ mod route_quest_provider_tests {
 
     #[test]
     fn ordinary_provider_bytes_are_charged_to_route_input_and_output() {
-        let selected = selected_r289();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
         let (quest, name) = selected_quest(&selected);
-        let family = family(&selected);
+
         let stamp = stamp(run(), 12, 12);
         let context = context(Arc::clone(&selected), stamp);
         let snapshot = snapshot(&name, nav_planner::world_state::QUEST_COMPLETE_COLOUR, true);
-        let evidence = captured_route_quests(family, Some(&context), &snapshot, None, stamp)
+        let evidence = captured_route_quests(Some(&context), &snapshot, None, stamp)
             .expect("real ordinary quest-list evidence");
         assert_eq!(evidence.test(&QuestGate::Complete(quest)), Truth::True);
         let owned_bytes = evidence.owned_provider_bytes();

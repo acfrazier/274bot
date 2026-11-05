@@ -373,7 +373,7 @@ fn with_tick<R>(
     tick: u64,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
-    let pin = world.data.selected_pin().unwrap();
+    let revision = selected_revision(&world.data);
     let evidence = EvidenceStamp {
         run: world.run,
         tick,
@@ -406,7 +406,7 @@ fn with_tick<R>(
     script::native::with_test_tick(
         frame,
         evidence,
-        &pin,
+        revision,
         (Duration::from_millis(tick * 600), Instant::now()),
         ledger,
         &mut output,

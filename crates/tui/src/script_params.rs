@@ -75,7 +75,10 @@ impl<'a> ParamsPane<'a> {
         self.schema.iter().filter(|d| d.visible(self.bag)).collect()
     }
 
-    fn resolved_options(&self, def: SettingView<'_>) -> frontend_core::scripts::ParameterOptions {
+    fn resolved_options(
+        &self,
+        def: SettingView<'_>,
+    ) -> Result<frontend_core::scripts::ParameterOptions, api::selected::FactError> {
         frontend_core::scripts::resolve_parameter_options(
             def,
             self.bag,
@@ -206,7 +209,13 @@ impl<'a> ParamsPane<'a> {
         let Some(def) = rows.get(self.state.cursor).copied() else {
             return;
         };
-        let options = self.resolved_options(def);
+        let options = match self.resolved_options(def) {
+            Ok(options) => options,
+            Err(error) => {
+                self.state.error = Some(format!("Options unavailable: {error:?}"));
+                return;
+            }
+        };
         self.state.error = frontend_core::scripts::parse_parameter_text(
             def,
             &self.state.scratch,
@@ -223,17 +232,23 @@ impl<'a> ParamsPane<'a> {
         let Some(def) = rows.get(self.state.cursor).copied() else {
             return ParamsKey::None;
         };
-        let opts = self.resolved_options(def);
+        if code == crossterm::event::KeyCode::Esc {
+            self.cancel_edit();
+            return ParamsKey::Cancel;
+        }
+        let opts = match self.resolved_options(def) {
+            Ok(options) => options,
+            Err(error) => {
+                self.state.error = Some(format!("Options unavailable: {error:?}"));
+                return ParamsKey::None;
+            }
+        };
         if opts.is_empty() && !self.array_editor_enabled(def, &opts) {
             self.cancel_edit();
             return ParamsKey::Cancel;
         }
         let searchable = self.state.choice_searchable;
         match code {
-            crossterm::event::KeyCode::Esc => {
-                self.cancel_edit();
-                ParamsKey::Cancel
-            }
             crossterm::event::KeyCode::Enter if self.state.choice_single => {
                 self.commit_single_choice(def, &opts)
             }
@@ -325,7 +340,13 @@ impl<'a> ParamsPane<'a> {
                 ParamsKey::None
             };
         }
-        let opts = self.resolved_options(def);
+        let opts = match self.resolved_options(def) {
+            Ok(options) => options,
+            Err(error) => {
+                self.state.error = Some(format!("Options unavailable: {error:?}"));
+                return ParamsKey::None;
+            }
+        };
         let array_editable = self.array_editor_enabled(def, &opts);
         if def.options_from().is_some() && opts.is_empty() && !array_editable {
             return ParamsKey::None;
@@ -397,7 +418,13 @@ impl<'a> ParamsPane<'a> {
         let Some(def) = rows.get(self.state.cursor).copied() else {
             return ParamsKey::None;
         };
-        let options = self.resolved_options(def);
+        let options = match self.resolved_options(def) {
+            Ok(options) => options,
+            Err(error) => {
+                self.state.error = Some(format!("Options unavailable: {error:?}"));
+                return ParamsKey::None;
+            }
+        };
         match frontend_core::scripts::parse_parameter_text(
             def,
             &self.state.scratch,
@@ -627,82 +654,105 @@ impl Widget for ParamsPane<'_> {
         let mut quest_detail = None;
         if self.state.editing && (self.state.multi_select || self.state.choice_single) {
             if let Some(def) = rows.get(self.state.cursor).copied() {
-                let opts = self.resolved_options(def);
-                let mut stored_quest = None;
-                if def.options_from() == Some("gather:sites") && opts.preserved() > 0 {
-                    unavailable_current = Some(display_value(self.bag, def, &opts));
-                    site_reason_detail = true;
-                } else if let Some(stored) = stored_quest_reason(self.bag, def, &opts) {
-                    unavailable_current = None;
-                    site_reason_detail = false;
-                    stored_quest = Some(stored);
-                }
                 let label = def.display_label();
-                lines.push(format!("{label} choices"));
-                if self.state.choice_searchable {
-                    let query = if self.state.choice_search.is_empty() {
-                        "type to filter"
-                    } else {
-                        &self.state.choice_search
-                    };
-                    lines.push(format!("search: {query}"));
-                }
-                let indices = self.choice_indices(&opts);
-                let start = lines.len();
-                if indices.is_empty() {
-                    cursor_line = start;
-                    lines.push("no matching options".to_owned());
-                } else {
-                    cursor_line = start
-                        + self
-                            .state
-                            .choice_cursor
-                            .min(indices.len().saturating_sub(1));
-                    let values = if self.state.choice_single {
-                        opts.selectable()
-                    } else {
-                        opts.values()
-                    };
-                    let stored = self
-                        .bag
-                        .get(def.id())
-                        .and_then(serde_json::Value::as_str)
-                        .or(def.default())
-                        .unwrap_or("");
-                    for (row, index) in indices.into_iter().enumerate() {
-                        let Some(opt) = values.get(index) else {
-                            continue;
-                        };
-                        let mark = if row == self.state.choice_cursor {
-                            "> "
-                        } else {
-                            "  "
-                        };
-                        let status = if self.state.choice_single {
-                            if opts.matches_option(stored, opt) {
-                                "(•)"
+                match self.resolved_options(def) {
+                    Ok(opts) => {
+                        let mut stored_quest = None;
+                        if def.options_from() == Some("gather:sites") && opts.preserved() > 0 {
+                            unavailable_current = Some(display_value(self.bag, def, &opts));
+                            site_reason_detail = true;
+                        } else if let Some(stored) = stored_quest_reason(self.bag, def, &opts) {
+                            unavailable_current = None;
+                            site_reason_detail = false;
+                            stored_quest = Some(stored);
+                        }
+                        lines.push(format!("{label} choices"));
+                        if self.state.choice_searchable {
+                            let query = if self.state.choice_search.is_empty() {
+                                "type to filter"
                             } else {
-                                "( )"
-                            }
-                        } else if self
-                            .state
-                            .choice_selected
-                            .iter()
-                            .any(|selected| opts.matches_option(selected, opt))
-                        {
-                            "[x]"
-                        } else if opts.is_selectable_index(index) {
-                            "[ ]"
+                                &self.state.choice_search
+                            };
+                            lines.push(format!("search: {query}"));
+                        }
+                        let indices = self.choice_indices(&opts);
+                        let start = lines.len();
+                        if indices.is_empty() {
+                            cursor_line = start;
+                            lines.push("no matching options".to_owned());
                         } else {
-                            "[-]"
-                        };
-                        lines.push(format!("{mark}{status} {}", opts.label_for(opt)));
+                            cursor_line = start
+                                + self
+                                    .state
+                                    .choice_cursor
+                                    .min(indices.len().saturating_sub(1));
+                            let values = if self.state.choice_single {
+                                opts.selectable()
+                            } else {
+                                opts.values()
+                            };
+                            let stored = self
+                                .bag
+                                .get(def.id())
+                                .and_then(serde_json::Value::as_str)
+                                .or(def.default())
+                                .unwrap_or("");
+                            for (row, index) in indices.into_iter().enumerate() {
+                                let Some(opt) = values.get(index) else {
+                                    continue;
+                                };
+                                let mark = if row == self.state.choice_cursor {
+                                    "> "
+                                } else {
+                                    "  "
+                                };
+                                let status = if self.state.choice_single {
+                                    if opts.matches_option(stored, opt) {
+                                        "(•)"
+                                    } else {
+                                        "( )"
+                                    }
+                                } else if self
+                                    .state
+                                    .choice_selected
+                                    .iter()
+                                    .any(|selected| opts.matches_option(selected, opt))
+                                {
+                                    "[x]"
+                                } else if opts.is_selectable_index(index) {
+                                    "[ ]"
+                                } else {
+                                    "[-]"
+                                };
+                                lines.push(format!("{mark}{status} {}", opts.label_for(opt)));
+                            }
+                        }
+                        if let Some(stored) = stored_quest {
+                            quest_detail = Some((opts, stored));
+                        }
+                        cursor_end_line = cursor_line + 1;
+                    }
+                    Err(error) => {
+                        lines.push(format!("{label} choices"));
+                        if self.state.choice_searchable {
+                            let query = if self.state.choice_search.is_empty() {
+                                "type to filter"
+                            } else {
+                                &self.state.choice_search
+                            };
+                            lines.push(format!("search: {query}"));
+                        }
+                        let current = self
+                            .bag
+                            .get(def.id())
+                            .map(format_setting_value)
+                            .unwrap_or_else(|| def.default().unwrap_or("—").to_owned());
+                        lines.push(format!("{label}: {current}"));
+                        cursor_line = lines.len();
+                        lines.push(format!("{label}: options unavailable: {error:?}"));
+                        cursor_end_line = lines.len();
                     }
                 }
-                if let Some(stored) = stored_quest {
-                    quest_detail = Some((opts, stored));
-                }
-                cursor_end_line = cursor_line + 1;
             }
         } else {
             let mut last_group: Option<&str> = None;
@@ -734,6 +784,7 @@ impl Widget for ParamsPane<'_> {
                 }
                 let label = def.display_label();
                 let mark = if i == self.state.cursor { "> " } else { "  " };
+                let mut option_error = None;
                 let value = if self.state.editing && i == self.state.cursor {
                     format!("{}_", self.state.scratch)
                 } else if let Some(global) =
@@ -754,52 +805,67 @@ impl Widget for ParamsPane<'_> {
                         }
                     }
                 } else {
-                    let options = self.resolved_options(def);
-                    if def.options_from().is_some()
-                        && options.is_empty()
-                        && !self.array_editor_enabled(def, &options)
-                    {
-                        if def.options_from() == Some("loadouts") {
-                            "no loadouts available".to_string()
-                        } else if options.preserved() > 0 {
-                            let current = display_value(self.bag, def, &options);
-                            if i == self.state.cursor {
-                                unavailable_current = Some(current);
-                                site_reason_detail = def.options_from() == Some("gather:sites");
-                                quest_detail = None;
-                                "options unavailable".to_string()
+                    match self.resolved_options(def) {
+                        Ok(options) => {
+                            if def.options_from().is_some()
+                                && options.is_empty()
+                                && !self.array_editor_enabled(def, &options)
+                            {
+                                if def.options_from() == Some("loadouts") {
+                                    "no loadouts available".to_string()
+                                } else if options.preserved() > 0 {
+                                    let current = display_value(self.bag, def, &options);
+                                    if i == self.state.cursor {
+                                        unavailable_current = Some(current);
+                                        site_reason_detail =
+                                            def.options_from() == Some("gather:sites");
+                                        quest_detail = None;
+                                        "options unavailable".to_string()
+                                    } else {
+                                        if !self.state.editing
+                                            && def.options_from() == Some("gather:sites")
+                                        {
+                                            unavailable_current = Some(current.clone());
+                                            site_reason_detail = true;
+                                            quest_detail = None;
+                                        }
+                                        format!("options unavailable · {current}")
+                                    }
+                                } else {
+                                    "options unavailable".to_string()
+                                }
                             } else {
-                                if !self.state.editing && def.options_from() == Some("gather:sites")
+                                let current = display_value(self.bag, def, &options);
+                                if !self.state.editing
+                                    && def.options_from() == Some("gather:sites")
+                                    && options.preserved() > 0
                                 {
                                     unavailable_current = Some(current.clone());
                                     site_reason_detail = true;
                                     quest_detail = None;
+                                } else if !self.state.editing
+                                    && (i == self.state.cursor
+                                        || (unavailable_current.is_none()
+                                            && quest_detail.is_none()))
+                                {
+                                    if let Some(stored) =
+                                        stored_quest_reason(self.bag, def, &options)
+                                    {
+                                        unavailable_current = None;
+                                        site_reason_detail = false;
+                                        quest_detail = Some((options, stored));
+                                    }
                                 }
-                                format!("options unavailable · {current}")
-                            }
-                        } else {
-                            "options unavailable".to_string()
-                        }
-                    } else {
-                        let current = display_value(self.bag, def, &options);
-                        if !self.state.editing
-                            && def.options_from() == Some("gather:sites")
-                            && options.preserved() > 0
-                        {
-                            unavailable_current = Some(current.clone());
-                            site_reason_detail = true;
-                            quest_detail = None;
-                        } else if !self.state.editing
-                            && (i == self.state.cursor
-                                || (unavailable_current.is_none() && quest_detail.is_none()))
-                        {
-                            if let Some(stored) = stored_quest_reason(self.bag, def, &options) {
-                                unavailable_current = None;
-                                site_reason_detail = false;
-                                quest_detail = Some((options, stored));
+                                current
                             }
                         }
-                        current
+                        Err(error) => {
+                            option_error = Some(format!("Options unavailable: {error:?}"));
+                            self.bag
+                                .get(def.id())
+                                .map(format_setting_value)
+                                .unwrap_or_else(|| def.default().unwrap_or("—").to_owned())
+                        }
                     }
                 };
                 let range = if def.ty() == "number" {
@@ -813,6 +879,9 @@ impl Widget for ParamsPane<'_> {
                     String::new()
                 };
                 lines.push(format!("{mark}{label}{range}: {value}"));
+                if let Some(error) = option_error {
+                    lines.push(format!("  {label}: {error}"));
+                }
                 if let Some((_, error)) = self
                     .state
                     .save_errors
@@ -958,6 +1027,15 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn local_game_data_asset(revision: &str) -> Option<std::path::PathBuf> {
+        let default_path = format!(
+            "{}/../api/data/game-data/{revision}.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let description = format!("revision {revision} game data");
+        api::test_support::local_asset_path("", &default_path, &description)
     }
 
     fn bury_schema() -> TestSchema {
@@ -1517,6 +1595,10 @@ mod tests {
 
     #[test]
     fn item_choices_paint_identity_label_and_persist_key() {
+        if local_game_data_asset("274").is_none() {
+            return;
+        }
+
         let dir = temp_dir("item-labels");
         let mut store = TestStore::at(dir.join("script-settings.json"));
         let loadouts = Loadouts::default();
@@ -1600,6 +1682,10 @@ mod tests {
 
     #[test]
     fn gatherer_dynamic_lists_keep_unknowns_and_allow_radius_edits() {
+        if local_game_data_asset("274").is_none() {
+            return;
+        }
+
         let dir = temp_dir("gather-picker");
         let mut store = TestStore::at(dir.join("script-settings.json"));
         let loadouts = Loadouts::default();
@@ -1810,7 +1896,74 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_fact_error_is_visible_without_changing_saved_value() {
+        if api::game_data::local_game_data_available() {
+            return;
+        }
+
+        let loadouts = Loadouts::default();
+        let mut schema = TestSchema::setting("bank", "string", Some(""), Some("Bank"), &[]);
+        schema.set_options_from("named-banks");
+        let mut bag = serde_json::Map::new();
+        bag.insert("bank".into(), serde_json::json!("saved-bank"));
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            ..Default::default()
+        };
+        {
+            let mut commit = |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| Ok(());
+            let mut pane = ParamsPane {
+                schema: schema.schema_ref(),
+                bag: &mut bag,
+                commit: &mut commit,
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::None);
+            assert!(pane
+                .state
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("FamilyUnavailable")));
+            assert_eq!(pane.bag.get("bank"), Some(&serde_json::json!("saved-bank")));
+        }
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let mut commit =
+                    |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| Ok(());
+                let pane = ParamsPane {
+                    schema: schema.schema_ref(),
+                    bag: &mut bag,
+                    commit: &mut commit,
+                    loadouts: &loadouts,
+                    game_data: None,
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("FamilyUnavailable"), "{text:?}");
+        assert!(text.contains("saved-bank"), "{text:?}");
+        assert_eq!(bag.get("bank"), Some(&serde_json::json!("saved-bank")));
+    }
+
+    #[test]
     fn scalar_fishing_cycle_skips_refused_groups_and_wraps() {
+        if local_game_data_asset("289").is_none() {
+            return;
+        }
+
         let dir = temp_dir("fishing-cycle");
         let store = TestStore::at(dir.join("script-settings.json"));
         let loadouts = Loadouts::default();
@@ -1888,6 +2041,10 @@ mod tests {
 
     #[test]
     fn gather_site_picker_filters_and_accepts_explicit_selection() {
+        if local_game_data_asset("289").is_none() {
+            return;
+        }
+
         let dir = temp_dir("site-picker");
         let mut store = TestStore::at(dir.join("script-settings.json"));
         let loadouts = Loadouts::default();
@@ -1914,7 +2071,9 @@ mod tests {
             &bag,
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
+
         let varrock = options
             .selectable()
             .iter()
@@ -2025,6 +2184,10 @@ mod tests {
 
     #[test]
     fn invalid_gather_site_remains_disabled_and_explains_why() {
+        if local_game_data_asset("289").is_none() {
+            return;
+        }
+
         let dir = temp_dir("site-disabled");
         let mut store = TestStore::at(dir.join("script-settings.json"));
         let loadouts = Loadouts::default();
@@ -2098,6 +2261,10 @@ mod tests {
 
     #[test]
     fn incompatible_saved_site_reason_is_visible_with_choices_at_80_columns() {
+        if local_game_data_asset("289").is_none() {
+            return;
+        }
+
         let dir = temp_dir("site-reason-with-choices");
         let mut store = TestStore::at(dir.join("script-settings.json"));
         let loadouts = Loadouts::default();
@@ -2132,7 +2299,9 @@ mod tests {
             &bag,
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
+
         assert!(!options.is_empty(), "Willow has alternate named sites");
         assert_eq!(options.preserved(), 1);
         let expected = options.label_for(&saved_site_id).to_owned();
@@ -2279,7 +2448,10 @@ mod tests {
             game_data: None,
             state: &mut state,
         };
-        let options = pane.resolved_options(schema.schema_ref().field(0).unwrap());
+        let options = pane
+            .resolved_options(schema.schema_ref().field(0).unwrap())
+            .unwrap();
+
         pane.state.choice_cursor = options
             .values()
             .iter()
@@ -2318,7 +2490,10 @@ mod tests {
             state: &mut state,
         };
         assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
-        let options = pane.resolved_options(schema.schema_ref().field(quests_row).unwrap());
+        let options = pane
+            .resolved_options(schema.schema_ref().field(quests_row).unwrap())
+            .unwrap();
+
         pane.state.choice_cursor = options
             .values()
             .iter()
@@ -2362,7 +2537,9 @@ mod tests {
                 .unwrap();
             let def = schema.schema_ref().field(row).unwrap();
             let options =
-                frontend_core::scripts::resolve_parameter_options(def, &bag, &loadouts, None);
+                frontend_core::scripts::resolve_parameter_options(def, &bag, &loadouts, None)
+                    .unwrap();
+
             assert!(
                 options.selectable().contains(&qualified.to_owned()),
                 "{field}: the real bundled registry's qualified Path remains selectable"
@@ -2637,7 +2814,9 @@ mod tests {
                 assert!(pane.state.multi_select);
                 assert_eq!(pane.state.choice_selected, ["hauntedmine"]);
 
-                let options = pane.resolved_options(schema.schema_ref().field(row).unwrap());
+                let options = pane
+                    .resolved_options(schema.schema_ref().field(row).unwrap())
+                    .unwrap();
                 let visible = pane.choice_indices(&options);
                 pane.state.choice_cursor = visible
                     .iter()

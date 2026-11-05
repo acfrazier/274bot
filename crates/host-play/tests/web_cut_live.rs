@@ -1,7 +1,7 @@
 //! Live proof that knife-on-web and worn slash-weapon web crossings follow
-//! the pinned R289 content on a fresh, tutorial-unlocked account.
+//! the R289 content on a fresh, tutorial-unlocked account.
 //!
-//! The Mage Arena segment is planned with a local R289 v16 pack and ends just
+//! The Mage Arena segment is planned with a local R289 v19 pack and ends just
 //! beyond the second web at 3093/3957.
 //! Run with `LIVE=1`, `BOT_CPU=1`, `BOT_NAV_BUILD=skip`,
 //! `BOT_LIVE_NAME_PREFIX` (1-4 chars), `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`,
@@ -51,7 +51,7 @@ fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
         http_port: Some(2080),
         nav_pack: Some(PathBuf::from(
             std::env::var("WORLD_NAV_PACK")
-                .expect("WORLD_NAV_PACK must name the worktree v16 pack"),
+                .expect("WORLD_NAV_PACK must name the worktree v19 pack"),
         )),
         nav_flags: std::env::var_os("WORLD_NAV_FLAGS").map(PathBuf::from),
         engine_dir: Some(PathBuf::from(
@@ -70,10 +70,10 @@ fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
     assert_eq!(profile.client().game_port(), 45594);
     assert_eq!(profile.client().asset_port(), 2080);
     let template = SharedClientTemplate::load(Arc::clone(&profile))
-        .expect("load selected R289 profile and v16 pack");
+        .expect("load selected R289 profile and v19 pack");
     assert!(
         template.world().is_some(),
-        "the selected v16 pack must load"
+        "the selected v19 pack must load"
     );
     (profile, template)
 }
@@ -760,7 +760,6 @@ fn live_fresh_accounts_cross_both_mage_arena_webs_with_content_actions() {
 
     let (profile, template) = selected();
     let world = template.world().expect("selected nav world");
-    let identity = profile.nav_identity().expect("selected nav identity");
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -856,7 +855,6 @@ fn live_fresh_accounts_cross_both_mage_arena_webs_with_content_actions() {
             "account": &username,
             "revision": 289,
             "nav_format": nav_planner::pack::FORMAT_ID,
-            "nav_sha256": identity.nav_sha256.clone(),
             "nav_pack": std::env::var("WORLD_NAV_PACK").expect("WORLD_NAV_PACK"),
             "engine_dir": std::env::var("WORLD_ENGINE_DIR").expect("WORLD_ENGINE_DIR"),
             "map_members": profile.map_members(),

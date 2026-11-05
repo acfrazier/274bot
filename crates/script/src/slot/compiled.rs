@@ -8,8 +8,20 @@ use crate::native::{
 };
 use crate::preparation::{self, PreparationInput, PreparationKind, PreparedTask};
 use api::quest_progress::EvidenceStamp;
-use api::selected::{FamilyPreparation, RunKey, SelectedPin};
+use api::selected::{ClientRevision, FamilyPreparation, RunKey};
 use std::sync::Mutex;
+
+pub(super) fn selected_revision(
+    selected: &api::game_data::SelectedGameData,
+) -> Result<ClientRevision, StartError> {
+    match selected.revision() {
+        274 => Ok(ClientRevision::R274),
+        289 => Ok(ClientRevision::R289),
+        _ => Err(StartError::Unavailable(
+            "selected game-data revision is unsupported".into(),
+        )),
+    }
+}
 #[cfg(test)]
 thread_local! {
     static STATUS_LOGGING_SUPPRESSED_FOR_HEAP_TEST: std::cell::Cell<bool> =
@@ -27,7 +39,7 @@ pub(super) struct CompiledRun {
     pub pending: Option<PendingConfig>,
     pub run: RunKey,
     pub selected: Arc<api::game_data::SelectedGameData>,
-    pub pin: Arc<SelectedPin>,
+    pub revision: ClientRevision,
     pub output: Output,
     pub actions: NativeActions,
     pending_registry: Option<Box<crate::quester::registry::PreparedRegistry>>,
@@ -387,7 +399,7 @@ impl NativeOutput for Output {
 pub(super) fn frame_context<'a>(
     ctx: &'a ScriptCtx<'_>,
     run: RunKey,
-    pin: &'a SelectedPin,
+    revision: ClientRevision,
     retained: &'a mut RetainedMemory,
     runtime: &'a mut crate::native::ledger::Runtime,
 ) -> ActionContext<'a> {
@@ -401,7 +413,7 @@ pub(super) fn frame_context<'a>(
     ActionContext {
         walk_prereq: Default::default(),
         evidence,
-        pin,
+        revision,
         snapshot: api::snapshot::SnapshotView::new(ctx.snapshot, evidence)
             .with_reach(ctx.compiled.reach)
             .with_bank_memory(ctx.compiled.bank_memory)
@@ -448,7 +460,7 @@ impl CompiledRun {
         config: Arc<PreparedConfig>,
         script: Box<dyn Script>,
         selected: Arc<api::game_data::SelectedGameData>,
-        pin: Arc<SelectedPin>,
+        revision: ClientRevision,
     ) -> Self {
         Self {
             script: ScriptOwner(Some(script)),
@@ -457,7 +469,7 @@ impl CompiledRun {
             pending_registry: None,
             run,
             selected,
-            pin,
+            revision,
             output: Output {
                 account: Some(String::new().into_boxed_str()),
                 ..Default::default()
@@ -530,7 +542,6 @@ impl CompiledRun {
             port.observe(
                 crate::quester::pair::PairRegistration {
                     run: self.run,
-                    pin: Arc::clone(&self.pin),
                     settings: self.script.pair_settings(),
                     ready,
                     evidence,
@@ -542,7 +553,7 @@ impl CompiledRun {
         let result = {
             let mut tick = NativeTick {
                 actions: &mut self.actions,
-                cx: frame_context(ctx, self.run, &self.pin, retained, runtime),
+                cx: frame_context(ctx, self.run, self.revision, retained, runtime),
                 output: &mut self.output,
                 pairs,
                 state,
@@ -669,10 +680,10 @@ pub fn prepare_config(
 ) -> Result<Arc<PreparedConfig>, StartError> {
     let card = crate::compiled_card(id)
         .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
-    let pin = selected.selected_pin().map_err(StartError::Facts)?;
+    let revision = selected_revision(&selected)?;
     let mut cx = PrepareContext {
         selected,
-        pin,
+        revision,
         banks,
         families: worker,
         zones: None,
@@ -964,7 +975,7 @@ pub(super) fn prepare_run(
                         config,
                         mut quester,
                     } => {
-                        let pin = selected.selected_pin().map_err(StartError::Facts)?;
+                        let revision = selected_revision(&selected)?;
                         let mut retained = try_retained(&retained)?;
                         let script = catch_unwind(AssertUnwindSafe(|| {
                             (card.create)(run, Arc::clone(&config), &mut retained)
@@ -983,7 +994,7 @@ pub(super) fn prepare_run(
                                 .and_then(|state| state.pending.take()),
                             run,
                             selected: Arc::clone(&selected),
-                            pin,
+                            revision,
                             output: Output {
                                 account: account.take(),
                                 ..Default::default()
@@ -1053,7 +1064,7 @@ pub(super) fn prepare_native_run(
         input,
         move |_| {
             PreparationResult(Some((|| {
-                let pin = selected.selected_pin().map_err(StartError::Facts)?;
+                let revision = selected_revision(&selected)?;
                 let (script, config) = catch_unwind(AssertUnwindSafe(|| build(&selected)))
                     .map_err(|payload| {
                         StartError::Unavailable(
@@ -1067,7 +1078,7 @@ pub(super) fn prepare_native_run(
                     pending_registry: None,
                     run,
                     selected,
-                    pin,
+                    revision,
                     output: Output {
                         account: Some(account.into_boxed_str()),
                         ..Default::default()
@@ -1271,7 +1282,7 @@ impl SlotScript {
             boundary: pending.boundary,
         });
         let selected = Arc::clone(&current.selected);
-        let pin = Arc::clone(&current.pin);
+        let revision = current.revision;
         let account = current.output.account.clone();
         let retained = Arc::clone(self.retained.as_ref().ok_or("no retained memory")?);
         let input = PreparationInput::for_settings(generation, config.bag())
@@ -1309,7 +1320,7 @@ impl SlotScript {
                         pending_registry: None,
                         run,
                         selected,
-                        pin,
+                        revision,
                         output,
                         actions: NativeActions { _private: () },
                     })
@@ -1646,7 +1657,7 @@ impl SlotScript {
             Some(selected) => selected,
             None => api::game_data::for_revision(api::selected::ClientRevision::R289)?,
         };
-        let pin = selected.selected_pin().map_err(|e| format!("{e:?}"))?;
+        let revision = selected_revision(&selected).map_err(|error| error.to_string())?;
         self.control_generation = self
             .control_generation
             .max(self.runtime_generation)
@@ -1672,7 +1683,7 @@ impl SlotScript {
                 session: self.work_epoch,
             },
             selected,
-            pin,
+            revision,
             output: Output::default(),
             actions: NativeActions { _private: () },
         });

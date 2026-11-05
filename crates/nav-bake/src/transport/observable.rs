@@ -171,7 +171,6 @@ pub(super) struct ObservableGates {
     names_by_id: HashMap<i32, String>,
     journal: JournalLinks,
     stage_windows: HashMap<i32, api::selected::StageWindow>,
-    quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
 }
 
 impl ObservableGates {
@@ -210,7 +209,6 @@ impl ObservableGates {
                         })
                 })
                 .collect(),
-            quest_family: quests.map(|quests| quests.family),
         }
     }
     pub(super) fn completed_quest_name(
@@ -260,18 +258,13 @@ impl ObservableGates {
             proofs.push(name);
         }
         if !windows.is_empty() {
-            let family = self.quest_family.expect("prepared stage-window identity");
-            let mut gates = if let Some(existing) = edge.quest_gates.take() {
-                if *existing.family() != family {
-                    return false;
-                }
-                existing.gates().to_vec()
-            } else {
-                Vec::new()
-            };
+            let mut gates = edge
+                .quest_gates
+                .take()
+                .map_or_else(Vec::new, |existing| existing.gates().to_vec());
             gates.extend(windows);
             edge.quest_gates = Some(
-                nav_planner::quest_gates::QuestGates::new(family, gates)
+                nav_planner::quest_gates::QuestGates::new(gates)
                     .expect("prepared nonempty quest-window gates"),
             );
         }

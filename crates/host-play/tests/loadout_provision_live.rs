@@ -702,11 +702,6 @@ fn required(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is required"))
 }
 
-fn hash_file(path: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    Ok(script_js::JsCache::origin_sha(&bytes))
-}
-
 fn selected_profile(
     revision: u16,
     nav_pack: PathBuf,
@@ -755,7 +750,13 @@ fn run_cell() -> Result<(), String> {
     if !matches!(revision, 274 | 289) {
         return Err("LOADOUT_REVISION must be 274 or 289".into());
     }
-    let nav_pack = PathBuf::from(required("LOADOUT_NAV_PACK")?);
+    let Some(nav_pack) = api::test_support::local_asset_path(
+        "LOADOUT_NAV_PACK",
+        "",
+        "real navigation pack for loadout provision live proof",
+    ) else {
+        return Ok(());
+    };
     let temp = TempRoot::new()?;
     let (profile, template) = selected_profile(revision, nav_pack, temp.path())?;
     let names = host_play::mint_live_names(1);
@@ -804,16 +805,13 @@ fn run_cell() -> Result<(), String> {
         let mut state = state.lock().unwrap();
         state.start_handle = Some(play.script_start_handle());
     }
-    let nav_sha256 = hash_file(profile.nav_pack())?;
     println!(
         "{}",
         json!({
             "phase": "identity",
             "revision": profile.revision().as_i32(),
             "profile": profile.label(),
-            "cache_id": profile.cache_id(),
             "nav_pack": profile.nav_pack(),
-            "nav_sha256": nav_sha256,
             "account": account,
             "preset": PRESET_NAME,
             "weapon_id": RUNE_SCIMITAR_ID,

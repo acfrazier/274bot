@@ -966,6 +966,9 @@ export async function tick(api) {
   catch (e) { globalThis.__if = String(e); }
 }
 "#;
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
@@ -1010,6 +1013,9 @@ export function tick(api) {
   };
 }
 "#;
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
@@ -1263,6 +1269,9 @@ export function tick(api) {
   };
 }
 "#;
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let prepared = std::sync::Arc::clone(&data);
     api::selected::FamilyPreparation::run(move |worker| prepared.prepare_gathering(worker))
@@ -1326,6 +1335,9 @@ export function tick(api) {
   };
 }
 "#;
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
@@ -1384,6 +1396,9 @@ export async function tick(api) {
   };
 }
 "#;
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();

@@ -456,9 +456,6 @@ impl QuestPairCoordinator {
         if own.world != peer.world {
             return Err(PairError::DifferentWorld);
         }
-        if own.registration.pin != peer.registration.pin {
-            return Err(PairError::WrongPin);
-        }
         if request.phase != request.plan.phase {
             return Err(PairError::Stale);
         }
@@ -688,7 +685,6 @@ impl QuestPairPort for Seat {
                 return;
             }
             let changed = old.registration.run != registration.run
-                || old.registration.pin != registration.pin
                 || old.registration.settings != registration.settings
                 || old.world != world
                 || old.binding.as_ref().is_some_and(|prior| {
@@ -720,9 +716,7 @@ impl QuestPairPort for Seat {
             .and_then(ItemReceipt::capture);
         let mut ready_after = registration.evidence;
         let (lease, cancelled, gang) = old
-            .filter(|old| {
-                old.registration.run == registration.run && old.registration.pin == registration.pin
-            })
+            .filter(|old| old.registration.run == registration.run)
             .map_or((None, None, None), |old| {
                 // A reserved role's owned membership survives a transient hold.
                 // Re-reading it would compete with the retained phase action.
@@ -838,7 +832,6 @@ impl QuestPairPort for Seat {
         self.actor(&state, read.closed.run)?;
         let entry = state.entries.get_mut(&self.account).unwrap();
         if read.quest.0.as_ref() != PairQuest::Arrav.path()
-            || read.pin != entry.registration.pin
             || !read.acquired.meets(entry.ready_after)
             || !read.closed.meets(read.acquired)
             || read.closed == read.acquired
@@ -922,9 +915,6 @@ impl QuestPairPort for Seat {
         }
         if own.world != peer.world {
             return Err(PairError::DifferentWorld);
-        }
-        if own.registration.pin != peer.registration.pin {
-            return Err(PairError::WrongPin);
         }
         if !own
             .binding
@@ -1205,12 +1195,6 @@ mod tests {
             sequence: tick,
         }
     }
-    fn pin() -> Arc<api::selected::SelectedPin> {
-        api::game_data::for_revision(ClientRevision::R289)
-            .unwrap()
-            .selected_pin()
-            .unwrap()
-    }
     fn register(port: &dyn QuestPairPort, run: RunKey, partner: &str, gang: Gang, tick: u64) {
         register_ready(port, run, partner, gang, tick, true);
     }
@@ -1227,7 +1211,6 @@ mod tests {
         port.observe(
             PairRegistration {
                 run,
-                pin: pin(),
                 settings: Some(PairSettings {
                     partner: Some(AccountKey(Arc::from(partner))),
                     gang: Some(gang),
@@ -1250,7 +1233,7 @@ mod tests {
         JournalRead {
             quest: FactKey::new("blackarmgang"), root: 8134,
             lines: Arc::from([Arc::from("I can start this quest by speaking to Reldo in Varrock's Palace Library, or by speaking to the Tramp near the Blue Moon Inn.")]),
-            colour: Some(0), acquired: stamp(run, 1), closed: stamp(run, 2), pin: pin(),
+            colour: Some(0), acquired: stamp(run, 1), closed: stamp(run, 2),
         }
     }
     struct TestAction;
@@ -1354,7 +1337,6 @@ mod tests {
             run: 1,
             session: 1,
         };
-        let pin = pin();
         struct Solo(Arc<std::sync::atomic::AtomicUsize>);
         impl script::native::Script for Solo {
             fn tick(
@@ -1380,7 +1362,6 @@ mod tests {
             seat.observe(
                 PairRegistration {
                     run,
-                    pin,
                     settings: None,
                     ready: true,
                     evidence: stamp(run, 1),
@@ -1432,7 +1413,6 @@ mod tests {
         pair.seats[0].observe(
             PairRegistration {
                 run: next,
-                pin: pin(),
                 settings: None,
                 ready: true,
                 evidence: stamp(next, 1),
@@ -1457,7 +1437,6 @@ mod tests {
         pair.seats[0].observe(
             PairRegistration {
                 run: next,
-                pin: pin(),
                 settings: None,
                 ready: true,
                 evidence: stamp(next, 2),
@@ -1506,7 +1485,6 @@ mod tests {
         pair.seats[side].observe(
             PairRegistration {
                 run,
-                pin: pin(),
                 settings: Some(PairSettings {
                     partner: Some(AccountKey(Arc::from(partner))),
                     gang: Some(role.gang),
@@ -1617,7 +1595,6 @@ mod tests {
             pair.seats[0].observe(
                 PairRegistration {
                     run,
-                    pin: pin(),
                     ready: true,
                     evidence,
                     settings: Some(PairSettings {
@@ -1676,7 +1653,6 @@ mod tests {
                 _ => port.observe(
                     PairRegistration {
                         run,
-                        pin: pin(),
                         settings: Some(PairSettings {
                             partner: Some(AccountKey(Arc::from("bob"))),
                             gang: Some(Gang::Phoenix),
@@ -1882,7 +1858,6 @@ mod tests {
             pair.seats[1].observe(
                 PairRegistration {
                     run: pair.runs[1],
-                    pin: pin(),
                     ready,
                     settings: Some(PairSettings {
                         partner: Some(AccountKey(Arc::from("alice"))),
@@ -1960,7 +1935,6 @@ mod tests {
         pair.seats[1].observe(
             PairRegistration {
                 run: pair.runs[1],
-                pin: pin(),
                 ready: true,
                 settings: Some(PairSettings {
                     partner: Some(AccountKey(Arc::from("alice"))),
@@ -2039,7 +2013,6 @@ mod tests {
         pair.seats[1].observe(
             PairRegistration {
                 run: pair.runs[1],
-                pin: pin(),
                 ready: true,
                 settings: Some(PairSettings {
                     partner: Some(AccountKey(Arc::from("alice"))),
@@ -2090,7 +2063,6 @@ mod tests {
         pair.seats[1].observe(
             PairRegistration {
                 run: pair.runs[1],
-                pin: pin(),
                 ready: false,
                 settings: Some(PairSettings {
                     partner: Some(AccountKey(Arc::from("alice"))),
@@ -2245,6 +2217,18 @@ mod tests {
             predicate_handlers, CompileContext, CompiledProgress, PairCompileContext,
         };
         use script::quester::loadouts::LoadoutOverlay;
+        if api::test_support::local_asset_path(
+            "",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../api/data/game-data/289.json"
+            ),
+            "revision 289 game data",
+        )
+        .is_none()
+        {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests =
             api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
@@ -2559,7 +2543,6 @@ mod tests {
                         remote.observe(
                             PairRegistration {
                                 run: peer,
-                                pin: pin(),
                                 ready: false,
                                 settings: Some(PairSettings {
                                     partner: Some(AccountKey(Arc::from("alice"))),

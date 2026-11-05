@@ -1,571 +1,70 @@
-//! Ordinary application builds own the navigation artifact.
-//!
-//! A default build bakes (or reuses) the selected release revision's nav pack
-//! and flags with the shared baker ([`nav_bake::bake`]), stages them under the
-//! install resource root the running binary resolves — the cargo profile
-//! directory for a plain executable, `Contents/Resources` for a macOS bundle,
-//! `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere — and publishes
-//! their identities to the compile-time table `nav_identity` reads. No manual
-//! `nav-pack` step is needed for a normal WalkTo; the CLI stays for deliberate
-//! developer/custom-input bakes.
-//!
-//! The cache is a bake input, never a shipped resource. Expensive identities
-//! (cache identity, pack/flags digests, input fingerprints) are computed here,
-//! once per artifact set: a warm build with unchanged canonical inputs reuses
-//! the staged artifacts and only re-publishes their stamped identities.
-//!
-//! Canonical inputs are required, not optional. Besides the named dirs, the
-//! loc `config` jag and the cache archives, the build requires the inputs the
-//! bake consumes implicitly — the pack id tables, the files of each recursive
-//! script scan (one row per file, so a missing child fails even when its
-//! directory keeps siblings), the bank booth config and the revision's
-//! canonical mapsquares ([`nav_bake::bundle::required_content_inputs`]) — on every
-//! build, before a warm staged artifact set is accepted. A deliberate content
-//! edit or addition is not judged here; it flows through the ordinary input
-//! fingerprints and rebakes. The developer CLI keeps its tolerant behavior.
-//!
-//! Knobs (see docs/api/nav.md):
-//! - `BOT_NAV_BUILD=require|skip` (default `require`)
-//! - `BOT_NAV_REVISION=289|274` (default `289`)
-//! - `ENGINE_DIR`: the engine root, the `engine/` folder of an engine checkout
-//!   (required when nav bundling is enabled). `BOT_NAV_ENGINE_DIR` overrides it
-//!   for this build only. A leading `~/` is expanded, since shells leave a quoted
-//!   `~` unexpanded.
-//! - `BOT_NAV_CONTENT_DIR` (default the engine root's sibling `content/`; set it only
-//!   when content lives elsewhere)
-//! - `BOT_CACHE_MANIFEST` (verified cache manifest; otherwise the captured
-//!   cache identity must be one of the checked-in known cache identities)
-//! - `BOT_NAV_RESOURCE_DIR` (staging root; default the cargo profile dir)
+//! Stage previously generated local navigation payloads for the host binary.
 
-use std::path::{Path, PathBuf};
+#[allow(dead_code)]
+#[path = "src/nav_assets.rs"]
+mod nav_assets;
+use std::path::PathBuf;
 
-use nav_bake::bake::{
-    config_jag_for, content_inputs, decoded_identity_from_snapshot, generator_identity,
-    pois_generator_identity, verify_cache_manifest_from_fingerprints, BakeRequest,
-    GENERATOR_SOURCES, POIS_GENERATOR_SOURCES,
-};
-use nav_bake::bundle::{
-    artifact_layout, fingerprints, merge_identity_rows, resource_root_for_build, BakeStamp,
-    StampExpectation,
-};
-use nav_planner::manifest::{CacheManifest, NavIdentityRow};
-use nav_planner::pack::FORMAT_ID;
-/// Environment inputs, all re-checked by cargo before this script is skipped.
-const ENV_KEYS: [&str; 7] = [
-    "BOT_NAV_BUILD",
-    "BOT_NAV_REVISION",
-    "BOT_NAV_ENGINE_DIR",
-    "ENGINE_DIR",
-    "BOT_NAV_CONTENT_DIR",
-    "BOT_CACHE_MANIFEST",
-    "BOT_NAV_RESOURCE_DIR",
-];
+const ENV_KEYS: [&str; 3] = ["BOT_NAV_BUILD", "BOT_NAV_REVISION", "BOT_NAV_RESOURCE_DIR"];
 
 fn main() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR"));
     for key in ENV_KEYS {
         println!("cargo:rerun-if-env-changed={key}");
     }
-
-    // The bake generator identity is part of the artifact stamp: any change to
-    // the baker or the pack format invalidates staged artifacts.
-    // Generator labels are relative to the workspace, not one crate.
-    let nav_dir = manifest_dir.join("../..");
-    let mut sources = Vec::new();
-    for relative in GENERATOR_SOURCES {
-        let path = nav_dir.join(relative);
-        println!("cargo:rerun-if-changed={}", path.display());
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(e) => fail(&format!("nav bake source {}: {e}", path.display())),
-        };
-        sources.push((relative, text));
-    }
-    let source_refs: Vec<(&str, &str)> = sources
-        .iter()
-        .map(|(label, text)| (*label, text.as_str()))
-        .collect();
-    let generator = generator_identity(&source_refs);
-    let mut pois_sources = Vec::new();
-    for relative in POIS_GENERATOR_SOURCES {
-        let path = nav_dir.join(relative);
-        println!("cargo:rerun-if-changed={}", path.display());
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(e) => fail(&format!("navpois generator source {}: {e}", path.display())),
-        };
-        pois_sources.push((relative, text));
-    }
-    let pois_refs: Vec<(&str, &str)> = pois_sources
-        .iter()
-        .map(|(label, text)| (*label, text.as_str()))
-        .collect();
-    let pois_generator = pois_generator_identity(&pois_refs);
-
-    // Checked-in rows describe prebuilt resource bundles a packager shipped.
-    let checked_in_path = manifest_dir.join("src/bundled-nav-identities.json");
-    println!("cargo:rerun-if-changed={}", checked_in_path.display());
-    let checked_in = read_rows(&checked_in_path);
+    println!("cargo:rerun-if-changed=src/nav_assets.rs");
 
     if std::env::var("BOT_NAV_BUILD").as_deref() == Ok("skip") {
-        let rows = publish(&out_dir, checked_in, Vec::new());
-        println!("cargo:rustc-env=BOT_NAV_BUNDLED=none");
-        println!(
-            "cargo:warning=nav bundle: BOT_NAV_BUILD=skip; {} checked-in identity row(s) published, no artifact baked or staged",
-            rows
-        );
         return;
     }
 
     let revision = selected_revision();
-    let (engine_dir, engine_key) = engine_dir(revision);
-    let content_from_env = env_path("BOT_NAV_CONTENT_DIR");
-    let inputs_origin = format!(
-        "engine root {} from {engine_key}; content {}",
-        engine_dir.display(),
-        if content_from_env.is_some() {
-            "from BOT_NAV_CONTENT_DIR"
-        } else {
-            "beside the engine root"
-        }
-    );
-    let content_dir = content_from_env.unwrap_or_else(|| {
-        engine_dir
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("content")
-    });
-    let cache_dir = engine_dir.join("data/pack/client");
-    let inputs = content_inputs(&content_dir);
-    let config_jag = match config_jag_for(revision, &cache_dir) {
-        Ok(path) => path,
-        Err(e) => fail(&format!("{e} ({inputs_origin})")),
-    };
-
-    // Canonical inputs are required: a build that cannot produce the artifact
-    // fails here instead of shipping an apparently ready app without nav.
-    require_dir(&inputs.maps_dir, revision, &inputs_origin);
-    require_dir(&inputs.doors_dir, revision, &inputs_origin);
-    require_file(&inputs.gates, revision, &inputs_origin);
-    require_file(&config_jag, revision, &inputs_origin);
-    let archives: Vec<PathBuf> = CacheManifest::ARCHIVES
-        .iter()
-        .map(|name| cache_dir.join(name))
-        .collect();
-    for archive in &archives {
-        require_file(archive, revision, &inputs_origin);
-    }
-    // The bake also consumes inputs it does not take as named arguments: the
-    // jm2 placements and the pack id tables behind the transport graph and the
-    // bank stand table, every file of the recursive script scans behind the
-    // derived transports, and the canonical mapsquares themselves. The baker
-    // skips what is absent, so they are required here — before a warm staged
-    // stamp can be accepted, not only when this build has to bake.
-    match nav_bake::bundle::missing_content_inputs(revision, &content_dir) {
-        Ok(missing) if missing.is_empty() => {}
-        Ok(missing) => fail(&incomplete_content(revision, &content_dir, &missing)),
-        Err(e) => fail(&e),
-    }
-    println!("cargo:rerun-if-changed={}", content_dir.display());
-    println!("cargo:rerun-if-changed={}", config_jag.display());
-    for archive in &archives {
-        println!("cargo:rerun-if-changed={}", archive.display());
-    }
-
-    // Capture source and cache files once. Their hashes drive source/cache
-    // identities and the final whole-input stability check.
-    let supplied_manifest = std::env::var_os("BOT_CACHE_MANIFEST").map(PathBuf::from);
-    if let Some(path) = &supplied_manifest {
-        println!("cargo:rerun-if-changed={}", path.display());
-    }
-    let mut explicit: Vec<PathBuf> = vec![config_jag.clone()];
-    explicit.extend(archives.iter().cloned());
-    let explicit_refs: Vec<&Path> = explicit.iter().map(PathBuf::as_path).collect();
-    let input_fingerprints = match fingerprints(&content_dir, &explicit_refs) {
-        Ok(rows) => rows,
-        Err(e) => fail(&e),
-    };
-    let captured_manifest = match nav_bake::bundle::cache_manifest_from_fingerprints(
-        revision,
-        &cache_dir,
-        &input_fingerprints,
-    ) {
-        Ok(manifest) => manifest,
-        Err(e) => fail(&e),
-    };
-    let (manifest_source, manifest) = match &supplied_manifest {
-        Some(path) => {
-            let manifest = match verify_cache_manifest_from_fingerprints(
-                revision,
-                &cache_dir,
-                path,
-                &config_jag,
-                &input_fingerprints,
-            ) {
-                Ok(manifest) => manifest,
-                Err(e) => fail(&format!("navigation cache manifest: {e}")),
-            };
-            (Some(path.clone()), manifest)
-        }
-        None => {
-            let known =
-                read_known_identities(&manifest_dir.join("src/known-cache-identities.json"));
-            if !known.contains(&captured_manifest) {
-                fail(&format!(
-                    "cache revision is unverified at {}; supply BOT_CACHE_MANIFEST for the \
-                     prepared server/cache pairing (the runtime applies the same rule)",
-                    cache_dir.display()
-                ));
-            }
-            (None, captured_manifest)
-        }
-    };
-    let cache_id = manifest.identity();
-    println!("cargo:rerun-if-env-changed=BOT_NAV_SNAPSHOT_ROOT");
-    let snapshot_root = std::env::var_os("BOT_NAV_SNAPSHOT_ROOT")
+    let layout = nav_assets::artifact_layout(revision);
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.join("../..");
+    let source_root = nav_assets::local_asset_root(&workspace_root);
+    let out_dir = std::env::var_os("OUT_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                .join(".274bot")
-                .join(if revision == 289 {
-                    "unpack-289"
-                } else {
-                    "unpack"
-                })
-        });
-    let content_id = decoded_identity_from_snapshot(
-        revision,
-        &cache_dir,
-        &snapshot_root,
-        &input_fingerprints,
-        &manifest,
-    )
-    .unwrap_or_else(|e| {
-        fail(&format!(
-            "decoded navigation cache: {e}; supply BOT_NAV_SNAPSHOT_ROOT with a complete matching offline snapshot"
-        ))
-    });
-    let source_sha256 = nav_bake::bundle::source_digest_from_fingerprints(
-        &content_dir,
-        &[&config_jag],
-        &input_fingerprints,
-    )
-    .unwrap_or_else(|e| fail(&e));
-
+        .unwrap_or_else(|| fail("Cargo did not provide OUT_DIR"));
     let resource_override = std::env::var_os("BOT_NAV_RESOURCE_DIR").map(PathBuf::from);
-    let resource_root = match resource_root_for_build(&out_dir, resource_override.as_deref()) {
-        Ok(root) => root,
-        Err(e) => fail(&e),
-    };
-    let layout = artifact_layout(revision);
-    let pack_path = resource_root.join(&layout.relative_pack);
-    let flags_path = resource_root.join(&layout.relative_flags);
-    let reach_path = resource_root.join(&layout.relative_reach);
-    let canlight_path = resource_root.join(&layout.relative_canlight);
-    let pois_path = resource_root.join(&layout.relative_pois);
-    let manifest_path = resource_root.join(&layout.relative_manifest);
-    let stamp_path = resource_root.join(&layout.relative_stamp);
-    // Staged artifacts are watched so that a later build notices one that was
-    // deleted or replaced (cargo treats a missing watched path as changed),
-    // while a plain warm build stays a no-op.
-    for staged in [
-        &pack_path,
-        &flags_path,
-        &reach_path,
-        &canlight_path,
-        &pois_path,
-        &manifest_path,
-        &stamp_path,
-    ] {
-        println!("cargo:rerun-if-changed={}", staged.display());
+    let resource_root = nav_assets::resource_root_for_build(&out_dir, resource_override.as_deref())
+        .unwrap_or_else(|error| fail(&error));
+
+    let payloads = [
+        (&layout.relative_pack, "navpack"),
+        (&layout.relative_flags, "navflags"),
+        (&layout.relative_reach, "navreach"),
+        (&layout.relative_canlight, "navcanlight"),
+        (&layout.relative_pois, "navpois"),
+    ];
+    for (relative, kind) in payloads {
+        let source = source_root.join(relative);
+        println!("cargo:rerun-if-changed={}", source.display());
+        if !source.is_file() {
+            fail(&format!(
+                "local navigation {kind} {} is missing for revision {revision}; run `python tools/local-data/build.py` before building, or set BOT_NAV_BUILD=skip to omit navigation staging",
+                source.display()
+            ));
+        }
     }
 
-    let staged_pack_sha256 = nav_planner::manifest::hash_file(&pack_path).ok();
-    let staged_flags_sha256 = nav_planner::manifest::hash_file(&flags_path).ok();
-    let staged_reach_sha256 = nav_planner::manifest::hash_file(&reach_path).ok();
-    let staged_canlight_sha256 = nav_planner::manifest::hash_file(&canlight_path).ok();
-    let staged_manifest_sha256 = nav_planner::manifest::hash_file(&manifest_path).ok();
-    let staged_pois_sha256 = nav_planner::manifest::hash_file(&pois_path).ok();
-    let expectation = StampExpectation {
-        revision,
-        format: FORMAT_ID,
-        generator: &generator,
-        cache_id: &cache_id,
-        inputs: &input_fingerprints,
-        staged_pack_bytes: file_len(&pack_path),
-        staged_pack_sha256: staged_pack_sha256.as_deref(),
-        staged_flags_bytes: file_len(&flags_path),
-        staged_flags_sha256: staged_flags_sha256.as_deref(),
-        staged_reach_bytes: file_len(&reach_path),
-        staged_reach_sha256: staged_reach_sha256.as_deref(),
-        staged_canlight_bytes: file_len(&canlight_path),
-        staged_canlight_sha256: staged_canlight_sha256.as_deref(),
-        staged_manifest_bytes: file_len(&manifest_path),
-        staged_manifest_sha256: staged_manifest_sha256.as_deref(),
-        staged_pois_bytes: file_len(&pois_path),
-        staged_pois_sha256: staged_pois_sha256.as_deref(),
-        pois_generator: &pois_generator,
-    };
-    let staged = read_stamp(&stamp_path);
-    let (row, reused) = match staged
-        .as_ref()
-        .filter(|stamp| {
-            stamp.content_id.as_deref() == Some(content_id.as_str())
-                && stamp.source_sha256.as_deref() == Some(source_sha256.as_str())
-        })
-        .and_then(|stamp| stamp.covers(&expectation).ok())
-    {
-        Some(()) => (
-            NavIdentityRow {
-                revision,
-                cache_id: cache_id.clone(),
-                content_id: staged.as_ref().expect("stamp").content_id.clone(),
-                source_sha256: staged.as_ref().expect("stamp").source_sha256.clone(),
-                format: FORMAT_ID.into(),
-                nav_sha256: staged.as_ref().expect("stamp").nav_sha256.clone(),
-                flags_sha256: Some(staged.as_ref().expect("stamp").flags_sha256.clone()),
-                reach_sha256: Some(staged.as_ref().expect("stamp").reach_sha256.clone()),
-                canlight_sha256: Some(staged.as_ref().expect("stamp").canlight_sha256.clone()),
-                canlight_identity: Some(staged.as_ref().expect("stamp").canlight_identity.clone()),
-                pois_sha256: staged.as_ref().expect("stamp").pois_sha256.clone(),
-                relative_path: layout.relative_pack.clone(),
-            },
-            true,
-        ),
-        None => (
-            match bake_and_stage(
-                revision,
-                &inputs,
-                &config_jag,
-                &manifest,
-                manifest_source.as_deref(),
-                &generator,
-                &pois_generator,
-                &cache_id,
-                &content_id,
-                &input_fingerprints,
-                &resource_root,
-                &layout,
-                staged
-                    .as_ref()
-                    .and_then(|stamp| stamp.covers(&expectation).err())
-                    .as_ref(),
-            ) {
-                Ok(row) => row,
-                Err(e) => fail(&e),
-            },
-            false,
-        ),
-    };
-
-    let final_inputs = match fingerprints(&content_dir, &explicit_refs) {
-        Ok(rows) => rows,
-        Err(e) => fail(&e),
-    };
-    let final_manifest = match nav_bake::bundle::cache_manifest_from_fingerprints(
-        revision,
-        &cache_dir,
-        &final_inputs,
-    ) {
-        Ok(manifest) => manifest,
-        Err(e) => fail(&e),
-    };
-    if input_fingerprints != final_inputs || manifest != final_manifest {
-        fail("cache/content inputs changed during navigation preparation");
-    }
-    let final_content_id = decoded_identity_from_snapshot(
-        revision,
-        &cache_dir,
-        &snapshot_root,
-        &final_inputs,
-        &final_manifest,
-    )
-    .unwrap_or_else(|e| {
+    let staged_dir = resource_root.join(&layout.dir);
+    std::fs::create_dir_all(&staged_dir).unwrap_or_else(|error| {
         fail(&format!(
-            "decoded navigation cache changed during navigation preparation: {e}"
+            "resource directory {}: {error}",
+            staged_dir.display()
         ))
     });
-    if content_id != final_content_id {
-        fail("decoded navigation content changed during navigation preparation");
+    for (relative, kind) in payloads {
+        let source = source_root.join(relative);
+        let destination = resource_root.join(relative);
+        std::fs::copy(&source, &destination).unwrap_or_else(|error| {
+            fail(&format!(
+                "stage local navigation {kind} {} to {}: {error}",
+                source.display(),
+                destination.display()
+            ))
+        });
     }
-    let rows = publish(&out_dir, checked_in, vec![row]);
-    println!("cargo:rustc-env=BOT_NAV_BUNDLED={revision}");
-    println!(
-        "cargo:warning=nav bundle: {} revision {revision} cache {cache_id}, {rows} identity row(s)",
-        if reused { "reused" } else { "baked" }
-    );
-}
-
-/// Bake the selected revision and stage pack, flags, sidecar manifest and the
-/// stamp under the resource root. The stamp is written last: it is the commit
-/// point warm builds trust.
-#[allow(clippy::too_many_arguments)]
-fn bake_and_stage(
-    revision: u16,
-    inputs: &nav_bake::bake::ContentInputs,
-    config_jag: &Path,
-    cache: &CacheManifest,
-    manifest_source: Option<&Path>,
-    generator: &str,
-    pois_generator: &str,
-    cache_id: &str,
-    content_id: &str,
-    input_fingerprints: &[nav_bake::bundle::InputFingerprint],
-    resource_root: &Path,
-    layout: &nav_bake::bundle::ArtifactLayout,
-    stale_reason: Option<&nav_bake::GenerationError>,
-) -> Result<NavIdentityRow, String> {
-    if let Some(reason) = stale_reason {
-        println!("cargo:warning=nav bundle: rebaking ({reason})");
-    }
-    let baked = nav_bake::bake::bake_world(&BakeRequest {
-        revision: Some(revision),
-        maps_dir: &inputs.maps_dir,
-        doors_dir: &inputs.doors_dir,
-        gates: &inputs.gates,
-        config_jag,
-        cache: Some(cache),
-        require_all_door_configs: true,
-        input_fingerprints: Some(input_fingerprints),
-        content_id: Some(content_id),
-    })?;
-    for note in &baked.notes {
-        println!("cargo:warning=nav bundle: {note}");
-    }
-    let mut manifest = baked
-        .manifest
-        .ok_or_else(|| "a bound bake carries its manifest".to_string())?;
-    manifest.content_id = Some(content_id.into());
-    let pois = baked
-        .pois
-        .ok_or_else(|| "a bound bake stamps navpois".to_string())?;
-    let summary = baked.summary;
-
-    let pack_path = resource_root.join(&layout.relative_pack);
-    let flags_path = resource_root.join(&layout.relative_flags);
-    let reach_path = resource_root.join(&layout.relative_reach);
-    let canlight_path = resource_root.join(&layout.relative_canlight);
-    let pois_path = resource_root.join(&layout.relative_pois);
-    let dir = pack_path
-        .parent()
-        .ok_or_else(|| format!("resource path {} has no parent", pack_path.display()))?;
-    std::fs::create_dir_all(dir).map_err(|e| format!("resource dir {}: {e}", dir.display()))?;
-    write_atomic(&pack_path, &baked.pack)?;
-    write_atomic(&flags_path, &baked.flags)?;
-    write_atomic(&reach_path, &baked.reach)?;
-    write_atomic(&canlight_path, &baked.canlight)?;
-    write_atomic(&pois_path, &pois)?;
-    let nav_manifest_bytes =
-        serde_json::to_vec_pretty(&manifest).map_err(|e| format!("navigation manifest: {e}"))?;
-    write_atomic(
-        &resource_root.join(&layout.relative_manifest),
-        &nav_manifest_bytes,
-    )?;
-    let manifest_sha256 = nav_planner::manifest::hash_bytes(&nav_manifest_bytes);
-
-    let flags_sha256 = manifest
-        .flags_sha256
-        .clone()
-        .ok_or_else(|| "a bound bake stamps the flags digest".to_string())?;
-    let reach_sha256 = manifest
-        .reach_sha256
-        .clone()
-        .ok_or_else(|| "a bound bake stamps the reach digest".to_string())?;
-    let canlight_sha256 = manifest
-        .canlight_sha256
-        .clone()
-        .ok_or_else(|| "a bound bake stamps the canlight digest".to_string())?;
-    let pois_sha256 = manifest
-        .pois_sha256
-        .clone()
-        .ok_or_else(|| "a bound bake stamps the navpois digest".to_string())?;
-    let stamp = BakeStamp {
-        generator: generator.to_string(),
-        format: FORMAT_ID.to_string(),
-        revision,
-        cache_id: cache_id.to_string(),
-        content_id: manifest.content_id.clone(),
-        source_sha256: manifest.source_sha256.clone(),
-        cache_manifest: manifest_source.map(|path| path.to_string_lossy().into_owned()),
-        nav_sha256: manifest.nav_sha256.clone(),
-        flags_sha256: flags_sha256.clone(),
-        reach_sha256: reach_sha256.clone(),
-        canlight_sha256: canlight_sha256.clone(),
-        canlight_identity: baked.canlight_identity.clone(),
-        pack_bytes: baked.pack.len() as u64,
-        flags_bytes: baked.flags.len() as u64,
-        reach_bytes: baked.reach.len() as u64,
-        canlight_bytes: baked.canlight.len() as u64,
-        manifest_sha256: Some(manifest_sha256),
-        manifest_bytes: Some(nav_manifest_bytes.len() as u64),
-        relative_pack: layout.relative_pack.clone(),
-        relative_flags: layout.relative_flags.clone(),
-        relative_reach: layout.relative_reach.clone(),
-        relative_canlight: layout.relative_canlight.clone(),
-        relative_manifest: Some(layout.relative_manifest.clone()),
-        pois_sha256: Some(pois_sha256.clone()),
-        pois_bytes: Some(pois.len() as u64),
-        relative_pois: Some(layout.relative_pois.clone()),
-        pois_generator: Some(pois_generator.to_string()),
-        inputs: input_fingerprints.to_vec(),
-    };
-    let stamp_bytes =
-        serde_json::to_vec(&stamp).map_err(|e| format!("navigation build stamp: {e}"))?;
-    write_atomic(&resource_root.join(&layout.relative_stamp), &stamp_bytes)?;
-
-    println!(
-        "cargo:warning=nav bundle: baked {} mapsquares into a {}x{} grid, {} walkable tiles, {} edges, {} banks; pack {} bytes, flags {} bytes, reach {} bytes, pois {} bytes -> {}",
-        summary.mapsquares,
-        summary.width,
-        summary.height,
-        summary.walkable,
-        summary.edges,
-        summary.banks,
-        baked.pack.len(),
-        baked.flags.len(),
-        baked.reach.len(),
-        pois.len(),
-        pack_path.display()
-    );
-    Ok(NavIdentityRow {
-        revision,
-        cache_id: cache_id.to_string(),
-        content_id: manifest.content_id.clone(),
-        source_sha256: manifest.source_sha256.clone(),
-        format: FORMAT_ID.to_string(),
-        nav_sha256: manifest.nav_sha256,
-        flags_sha256: Some(flags_sha256),
-        reach_sha256: Some(reach_sha256),
-        canlight_sha256: Some(canlight_sha256),
-        canlight_identity: Some(baked.canlight_identity),
-        pois_sha256: Some(pois_sha256),
-        relative_path: layout.relative_pack.clone(),
-    })
-}
-
-/// Publish the compile-time identity table: the generated row wins for its
-/// `(revision, cache_id)`; checked-in rows fill in identities this build did
-/// not generate.
-fn publish(
-    out_dir: &Path,
-    checked_in: Vec<NavIdentityRow>,
-    generated: Vec<NavIdentityRow>,
-) -> usize {
-    let (rows, notes) = merge_identity_rows(generated, checked_in);
-    for note in notes {
-        println!("cargo:warning=nav bundle: {note}");
-    }
-    let count = rows.len();
-    let bytes = match serde_json::to_vec_pretty(&rows) {
-        Ok(bytes) => bytes,
-        Err(e) => fail(&format!("bundled nav identities: {e}")),
-    };
-    let path = out_dir.join("bundled-nav-identities.json");
-    if let Err(e) = std::fs::write(&path, bytes) {
-        fail(&format!("write {}: {e}", path.display()));
-    }
-    count
 }
 
 fn selected_revision() -> u16 {
@@ -577,122 +76,6 @@ fn selected_revision() -> u16 {
         )),
         Err(_) => 289,
     }
-}
-
-/// The engine root and the variable that supplied it. `BOT_NAV_ENGINE_DIR` is the same
-/// setting as `ENGINE_DIR`, scoped to this build.
-fn engine_dir(revision: u16) -> (PathBuf, &'static str) {
-    for key in ["BOT_NAV_ENGINE_DIR", "ENGINE_DIR"] {
-        if let Some(dir) = env_path(key) {
-            return (dir, key);
-        }
-    }
-    fail(&format!(
-        "set ENGINE_DIR to the revision {revision} engine root (the `engine/` folder of the \
-         engine checkout, with `content/` beside it), or BOT_NAV_BUILD=skip to build without \
-         bundled navigation"
-    ))
-}
-
-/// A non-empty path variable, with a leading `~/` expanded: shells don't expand `~`
-/// inside quotes, so `ENGINE_DIR="~/…"` arrives literally.
-fn env_path(key: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var_os(key).filter(|value| !value.is_empty())?);
-    let Ok(rest) = path.strip_prefix("~") else {
-        return Some(path);
-    };
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    Some(PathBuf::from(home).join(rest))
-}
-
-fn read_rows(path: &Path) -> Vec<NavIdentityRow> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) => fail(&format!("navigation identities {}: {e}", path.display())),
-    };
-    match serde_json::from_slice::<Vec<NavIdentityRow>>(&bytes) {
-        Ok(rows) => rows,
-        Err(e) => fail(&format!("navigation identities {}: {e}", path.display())),
-    }
-}
-
-fn read_known_identities(path: &Path) -> Vec<CacheManifest> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) => fail(&format!("known cache identities {}: {e}", path.display())),
-    };
-    match serde_json::from_slice(&bytes) {
-        Ok(rows) => rows,
-        Err(e) => fail(&format!("known cache identities {}: {e}", path.display())),
-    }
-}
-
-fn read_stamp(path: &Path) -> Option<BakeStamp> {
-    let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
-
-fn file_len(path: &Path) -> Option<u64> {
-    std::fs::metadata(path)
-        .ok()
-        .filter(|metadata| metadata.is_file())
-        .map(|metadata| metadata.len())
-}
-
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let temp = path.with_extension(format!("tmp{}", std::process::id()));
-    std::fs::write(&temp, bytes).map_err(|e| format!("write {}: {e}", temp.display()))?;
-    if std::fs::rename(&temp, path).is_err() {
-        // Windows keeps the destination on rename; replace and retry.
-        let _ = std::fs::remove_file(path);
-        std::fs::rename(&temp, path).map_err(|e| format!("write {}: {e}", path.display()))?;
-    }
-    Ok(())
-}
-
-fn require_dir(path: &Path, revision: u16, origin: &str) {
-    if !path.is_dir() {
-        fail(&missing_input(path, revision, origin));
-    }
-}
-
-fn require_file(path: &Path, revision: u16, origin: &str) {
-    if !path.is_file() {
-        fail(&missing_input(path, revision, origin));
-    }
-}
-
-fn missing_input(path: &Path, revision: u16, origin: &str) -> String {
-    format!(
-        "{} (revision {revision}) is missing ({origin}); ENGINE_DIR must be the `engine/` \
-         folder of a complete revision {revision} engine checkout with its `content/` beside \
-         it (set BOT_NAV_CONTENT_DIR only if content lives elsewhere), or set \
-         BOT_NAV_BUILD=skip to build without bundled navigation",
-        path.display()
-    )
-}
-
-/// The canonical-input inventory failure. Naming every missing input would
-/// bury the actionable part on a reduced tree, so the first few are listed
-/// and the rest counted.
-fn incomplete_content(revision: u16, content_dir: &Path, missing: &[String]) -> String {
-    const SHOWN: usize = 8;
-    let mut listed = missing
-        .iter()
-        .take(SHOWN)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("; ");
-    if missing.len() > SHOWN {
-        listed.push_str(&format!("; and {} more", missing.len() - SHOWN));
-    }
-    format!(
-        "canonical revision {revision} content at {} is incomplete: {} required input(s) \
-         missing ({listed}); point BOT_NAV_CONTENT_DIR at the canonical revision {revision} \
-         content tree, or set BOT_NAV_BUILD=skip to build without bundled navigation",
-        content_dir.display(),
-        missing.len()
-    )
 }
 
 fn fail(message: &(impl std::fmt::Display + ?Sized)) -> ! {

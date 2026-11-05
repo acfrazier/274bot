@@ -17,7 +17,7 @@ use crate::collision::WorldCollision;
 use crate::grid::StepGrid;
 use crate::movement::step_ok;
 use crate::pack::{BankAccess, BankStand};
-use crate::quest_gates::{QuestEvidence, QuestFamilyMismatch, QuestGates};
+use crate::quest_gates::{QuestEvidence, QuestGates};
 use crate::router::{
     find, find_actionable_quest_gates, find_allow_teleports, find_bounded,
     find_first_missing_item_reqs_with_avoid, find_first_with, find_first_with_fallback,
@@ -29,8 +29,7 @@ use crate::router::{
     BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK, REVERSE_PROOF_BUDGET,
 };
 use crate::test_support::{
-    family as gate_family, range as gate_range, stamp, tbwt_evidence, window as gate_window,
-    Resolved,
+    range as gate_range, stamp, tbwt_evidence, window as gate_window, Resolved,
 };
 use crate::tile::Tile;
 use crate::transport::{
@@ -1209,16 +1208,11 @@ fn find_prefers_walking_around_over_a_cheap_door() {
 #[test]
 fn false_complete_gate_selects_an_alternate_walk_route() {
     let wc = bake(5, 5, &[(2, 2, CollisionFlag::W_W as u32)]);
-    let family = gate_family(1);
     let mut graph = door(tile(1, 2, 0), tile(2, 2, 0), 2);
-    graph.quest_family = Some(family);
     graph.edges[0].quest_gates = Some(
-        QuestGates::new(
-            family,
-            [QuestGate::Complete(api::selected::FactKey::new(
-                "biohazard",
-            ))],
-        )
+        QuestGates::new([QuestGate::Complete(api::selected::FactKey::new(
+            "biohazard",
+        ))])
         .unwrap(),
     );
     let evidence = QuestEvidence::new(
@@ -1227,7 +1221,6 @@ fn false_complete_gate_selects_an_alternate_walk_route() {
             signals: Vec::new(),
             complete: vec![("biohazard", false)],
         }),
-        family,
         stamp(1),
     );
     let state = WorldState::empty().with_quest_evidence(evidence);
@@ -1301,11 +1294,10 @@ fn find_gates_toll_edge_on_inventory_coins() {
 
 // --- Quest-stage gates: typed windows, decided by evidence only ---
 
-/// The walled 5×5 whose one door is gated by `gates` (quest family 1).
+/// The walled 5×5 whose one door carries the given quest gates.
 fn stage_door_graph(gates: Vec<QuestGate>) -> TransportGraph {
     let mut g = door(tile(1, 2, 0), tile(2, 2, 0), 1);
-    g.quest_family = Some(gate_family(1));
-    g.edges[0].quest_gates = Some(QuestGates::new(gate_family(1), gates).unwrap());
+    g.edges[0].quest_gates = Some(QuestGates::new(gates).unwrap());
     g
 }
 
@@ -1328,8 +1320,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
     let route = |state: &WorldState| find_with(&wc, &g, from, to, opts, state);
     let needs =
         |state: &WorldState| find_unresolved_quest_gates(&wc, &g, from, &[to], opts, state, &[]);
-    let named: Result<Option<Arc<[QuestGate]>>, QuestFamilyMismatch> =
-        Ok(Some(Arc::from(vec![exact])));
+    let named: Option<Arc<[QuestGate]>> = Some(Arc::from(vec![exact]));
 
     let proven = evidenced(tbwt_evidence(gate_range(Some(3), Some(3))));
     let crossed = route(&proven).expect("a proven window opens the door");
@@ -1337,7 +1328,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
         .legs
         .iter()
         .any(|leg| matches!(leg, Leg::Transport { edge } if edge.quest_gates.is_some())));
-    assert_eq!(needs(&proven), Ok(None));
+    assert_eq!(needs(&proven), None);
 
     let stale = evidenced(QuestEvidence::new(
         Arc::new(Resolved {
@@ -1345,7 +1336,6 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
             signals: vec![("tbwt", "tbwt_main", gate_range(Some(3), Some(3)))],
             complete: vec![],
         }),
-        gate_family(1),
         stamp(11),
     ));
     let straddling = evidenced(tbwt_evidence(gate_range(Some(3), Some(4))));
@@ -1365,7 +1355,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
 
     let past = evidenced(tbwt_evidence(gate_range(Some(4), Some(6))));
     assert_eq!(route(&past), Err(RouteError::NoPath));
-    assert_eq!(needs(&past), Ok(None), "a disproven window needs no read");
+    assert_eq!(needs(&past), None, "a disproven window needs no read");
 }
 
 #[test]
@@ -1490,7 +1480,6 @@ fn actionable_quest_diagnosis_preserves_strict_route_and_crossing_identity() {
             &state,
             &[],
         )
-        .unwrap()
         .expect("the establishment implication opens one diagnostic route");
         assert_eq!(actionable.len(), 1, "{label}");
         assert_eq!(actionable[0].gate, gate, "{label}");
@@ -1595,8 +1584,7 @@ fn unknown_only_edge_admission_skips_a_cheaper_proven_false_gate() {
     let mut unknown_edge = graph.edges[0].clone();
     unknown_edge.loc_id += 1;
     unknown_edge.ticks += 10;
-    unknown_edge.quest_gates =
-        Some(QuestGates::new(gate_family(1), vec![unknown_gate.clone()]).unwrap());
+    unknown_edge.quest_gates = Some(QuestGates::new(vec![unknown_gate.clone()]).unwrap());
     let unknown_crossing = unknown_edge.loc_id;
     graph.at.entry(unknown_edge.at).or_default().push(1);
     graph.edges.push(unknown_edge);
@@ -1685,7 +1673,6 @@ fn no_path_diagnosis_excludes_true_sibling_gates() {
             ],
             complete: Vec::new(),
         }),
-        gate_family(1),
         stamp(5),
     );
     let state = WorldState::empty()
@@ -1713,7 +1700,6 @@ fn no_path_diagnosis_excludes_true_sibling_gates() {
         &state,
         &[],
     )
-    .unwrap()
     .expect("the remaining non-True gate is actionable");
     assert_eq!(actionable.len(), 1);
     assert_eq!(actionable[0].gate, actionable_gate);
@@ -1842,37 +1828,6 @@ fn undecided_stage_gate_is_never_a_shortcut() {
         .any(|leg| matches!(leg, Leg::Transport { .. })));
 }
 
-/// Evidence prepared from another quest family never opens a gate, even
-/// when its provider would prove the window, and the diagnosis refuses
-/// instead of asking for journal reads that could not help.
-#[test]
-fn foreign_quest_family_evidence_is_refused_not_retried() {
-    let wc = walled_5x5();
-    let g = stage_door_graph(vec![gate_window("tbwt", "tbwt_main", Some(3), Some(3))]);
-    let (from, to) = (tile(0, 0, 0), tile(4, 4, 0));
-    let opts = FindOptions::default();
-    let foreign = evidenced(QuestEvidence::new(
-        Arc::new(Resolved {
-            stamp: stamp(10),
-            signals: vec![("tbwt", "tbwt_main", gate_range(Some(3), Some(3)))],
-            complete: vec![],
-        }),
-        gate_family(2),
-        stamp(5),
-    ));
-    assert_eq!(
-        find_with(&wc, &g, from, to, opts, &foreign),
-        Err(RouteError::NoPath)
-    );
-    assert_eq!(
-        find_unresolved_quest_gates(&wc, &g, from, &[to], opts, &foreign, &[]),
-        Err(QuestFamilyMismatch {
-            pack: Some(gate_family(1)),
-            expected: gate_family(2),
-        })
-    );
-}
-
 /// Only the gates evidence leaves undecided are named; a proven gate on the
 /// same crossing is not re-read.
 #[test]
@@ -1891,7 +1846,6 @@ fn stage_gate_diagnosis_names_only_undecided_gates() {
         Err(RouteError::NoPath)
     );
     let named = find_unresolved_quest_gates(&wc, &g, from, &[to], opts, &state, &[])
-        .unwrap()
         .expect("the heroes window is undecided");
     assert_eq!(&named[..], &[heroes]);
 }
@@ -3493,7 +3447,7 @@ fn sewer_web_stands_are_proven_then_reached_with_the_banked_knife_on_real_289_pa
 
 /// A pack-bound query keeps the bounded reverse proof. With nothing owned,
 /// Lumbridge to the Entrana dock side has no route; the proof refuses the
-/// goal after 7,228 settles on the v18 pack, not after the 199,930-node
+/// goal after 7,228 settles on the v19 pack, not after the 199,930-node
 /// flood that skipping the proof costs. Falador, a reachable goal, settles
 /// the same nodes with or without the proof.
 #[test]
@@ -4040,9 +3994,7 @@ fn quest_stage_gated_teleport_routes_only_on_proven_evidence() {
     let dest = tile(4, 4, 0);
     let gate = gate_window("tbwt", "tbwt_main", Some(3), Some(3));
     let mut g = teleport(dest, 3, vec![], vec![]);
-    g.quest_family = Some(gate_family(1));
-    g.teleports[0].quest_gates =
-        Some(QuestGates::new(gate_family(1), [gate]).expect("valid stage gate"));
+    g.teleports[0].quest_gates = Some(QuestGates::new([gate]).expect("valid stage gate"));
 
     assert_eq!(
         find_allow_teleports(&wc, &g, tile(0, 0, 0), dest, &WorldState::empty()),
@@ -6167,24 +6119,22 @@ fn zones_rich_289_state(combat_level: Option<i32>) -> WorldState {
         stats: (0..21).map(|skill| (skill, 99)).collect(),
         ..WorldState::empty()
     };
-    static QUESTS: std::sync::LazyLock<(
-        Arc<api::game_data::QuestIdentityFacts>,
-        crate::quest_gates::QuestFamilyId,
-    )> = std::sync::LazyLock::new(|| {
-        let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-        let (facts, family) = selected.quest_identity_for_bake().unwrap();
-        (
-            Arc::new(facts),
-            crate::quest_gates::QuestFamilyId::new(family.sha256, family.schema),
-        )
-    });
-    let (facts, family) = &*QUESTS;
+    static QUESTS: std::sync::LazyLock<Arc<api::game_data::QuestIdentityFacts>> =
+        std::sync::LazyLock::new(|| {
+            let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+            Arc::new(
+                selected
+                    .quest_identity()
+                    .expect("selected quest facts")
+                    .clone(),
+            )
+        });
+    let facts = &*QUESTS;
     state.quest_evidence = Some(QuestEvidence::new(
         Arc::new(ZonesQuestProfile {
             facts: Arc::clone(facts),
             complete: state.quests.clone(),
         }),
-        *family,
         stamp(10),
     ));
     state
@@ -7094,11 +7044,7 @@ fn missing_item_result_retention_uses_route_edges_not_the_search_budget() {
         graph,
         Vec::new(),
     ));
-    let lease = crate::contract::NavLease::wrap(
-        world,
-        crate::contract::PackDigest::of(b"small toll route with a full search budget"),
-    )
-    .unwrap();
+    let lease = crate::contract::NavLease::wrap(world).unwrap();
     let outcome = advance_real_route_cursor(
         super::SearchRequest::MissingItemReqs {
             from: tile(0, 0, 0),
@@ -7153,7 +7099,7 @@ fn reviewed_real_packs_have_exact_carry_and_worn_row_counts() {
     ];
     for (path, expected_carry, expected_worn) in packs {
         let world = crate::world::NavWorld::load_pack(&path)
-            .expect("load the reviewed v18 pack from its real content");
+            .expect("load the reviewed v19 pack from its real content");
         let envelope = crate::contract::SearchGraphEnvelope::from_graph(&world.graph);
         assert!(envelope.is_representable());
         assert_eq!(
@@ -7170,17 +7116,13 @@ fn real_289_preflight_charges_exact_target_capacity_before_materialization() {
         return;
     };
     let world = Arc::new(world);
-    let digest = *world
-        .content
-        .get()
-        .expect("pack records its content digest");
-    let bound_identity = crate::producer::bind(&world, digest).expect("bind the loaded pack once");
+    let identity = crate::producer::identity(&world).expect("identity for the loaded pack");
     assert!(
         world.search_envelope.get().is_some(),
-        "bind pins the checked graph envelope before publication"
+        "identity prepares the checked graph envelope before publication"
     );
-    let lease = crate::producer::lease(&world).expect("bound real pack lease");
-    assert_eq!(lease.identity(), bound_identity);
+    let lease = crate::producer::lease(&world).expect("loaded pack lease");
+    assert_eq!(lease.identity(), identity);
     assert_eq!(
         lease.search_envelope(),
         crate::contract::SearchGraphEnvelope::from_graph(&world.graph)
@@ -7268,8 +7210,12 @@ fn real_289_preflight_charges_exact_target_capacity_before_materialization() {
     ));
     let another_preflight =
         crate::router::SearchCursor::preflight(shape, &lease, &state).expect("same-pack shape");
-    let another_lease = crate::contract::NavLease::wrap(Arc::clone(&world), digest)
-        .expect("new lease identity for identical content");
+    let another_world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let another_lease = crate::contract::NavLease::wrap(another_world).unwrap();
     let same_shape_request = crate::router::SearchRequest::Many {
         from: tile(3222, 3218, 0),
         targets: vec![tile(3092, 3243, 0)].into_boxed_slice(),
@@ -7394,11 +7340,12 @@ fn retained_compact_view_is_allocation_free_and_pack_checked() {
         assert_eq!(view.leg_count(), 1);
     });
     assert_eq!(allocations.bytes_total, 0);
-    let foreign = crate::contract::NavLease::wrap(
-        Arc::clone(&world),
-        crate::contract::PackDigest::of(b"foreign compact assessment"),
-    )
-    .unwrap();
+    let foreign_world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let foreign = crate::contract::NavLease::wrap(foreign_world).unwrap();
     assert_eq!(
         crate::producer::compact_route_view(&foreign, &route).unwrap_err(),
         crate::contract::ContractError::PackMismatch
@@ -7446,52 +7393,7 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
         std::mem::size_of::<crate::transport::TransportEdge>(),
     );
     let lease = crate::producer::lease(&world).expect("real pack lease");
-    assert_eq!(
-        lease.identity().content().bytes(),
-        [
-            0x81, 0xe5, 0xca, 0x84, 0x56, 0x8b, 0x4e, 0x3d, 0x9b, 0x0e, 0x7f, 0x42, 0x8a, 0x2d,
-            0x43, 0xd5, 0xe9, 0x45, 0xc7, 0x3c, 0xd7, 0x49, 0x10, 0x64, 0x5d, 0xb6, 0x26, 0xc8,
-            0x9b, 0xd4, 0xde, 0x36,
-        ],
-        "qualified entrance pack SHA-256 is 81e5ca84568b4e3d9b0e7f428a2d43d5e945c73cd74910645db626c89bd4de36 (the v18 bake of this head); update this pin with the transport and route corpus diff"
-    );
-    assert_eq!(
-        lease.identity().content(),
-        *world
-            .content
-            .get()
-            .expect("loaded pack has its content identity"),
-        "lease identity must come from the loaded pack"
-    );
-    if let Some(family) = world.graph.quest_family.as_ref() {
-        world
-            .graph
-            .admit_quest_family(family)
-            .expect("the loaded pack admits its own quest family");
-        assert!(
-            world
-                .graph
-                .edges
-                .iter()
-                .chain(&world.graph.teleports)
-                .all(|edge| {
-                    edge.quest_gates
-                        .as_ref()
-                        .is_none_or(|gates| gates.family() == family)
-                }),
-            "every loaded gate uses the pack's decoded quest family"
-        );
-    } else {
-        assert!(
-            world
-                .graph
-                .edges
-                .iter()
-                .chain(&world.graph.teleports)
-                .all(|edge| edge.quest_gates.is_none()),
-            "a pack without a quest family cannot carry quest gates"
-        );
-    }
+
     let from = tile(3222, 3218, 0);
     let west_bank = tile(3092, 3243, 0);
     let east_bank = tile(3253, 3420, 0);
@@ -7574,11 +7476,13 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
             .destination(),
         west_bank
     );
-    let other_lease = crate::contract::NavLease::wrap(
-        Arc::clone(&world),
-        crate::contract::PackDigest::of(b"other real-pack lease"),
-    )
-    .expect("distinct route-view lease");
+    let other_world = Arc::new(crate::world::NavWorld::from_parts(
+        walled_5x5(),
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let other_lease =
+        crate::contract::NavLease::wrap(other_world).expect("distinct route-view world lease");
     assert_eq!(
         plan.view(&other_lease).unwrap_err(),
         crate::contract::ContractError::PackMismatch

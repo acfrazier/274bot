@@ -3,6 +3,8 @@ use api::quest_facts::IdentityPin;
 use client::io::ClientRevision;
 use script_js::{LoadIsolate, LoadShape};
 
+mod common;
+
 fn facts(revision: ClientRevision) -> api::game_data::QuestIdentityFacts {
     api::game_data::for_revision(revision)
         .unwrap()
@@ -49,6 +51,9 @@ fn missing_family_is_the_method_token_before_the_key() {
 
 #[test]
 fn id_matches_seed_id_only_and_name_matches_display_only() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let death = identity(revision, IdentityPin::Id("  DeAtH  ")).unwrap();
         assert!(death.get("rows").is_none(), "{death}");
@@ -149,6 +154,9 @@ fn id_matches_seed_id_only_and_name_matches_display_only() {
 
 #[test]
 fn identity_value_is_the_landed_row_on_both_pins() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let points = [
         ("cook", 1, 2, 29, "cookquest"),
         ("runemysteries", 1, 6, 63, "runemysteries"),
@@ -205,6 +213,9 @@ fn identity_value_is_the_landed_row_on_both_pins() {
 
 #[test]
 fn prereqs_value_is_the_requirements_object_only() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let cook = prereqs(revision, "  cook  ").unwrap();
         assert!(cook.get("id").is_none(), "{cook}");
@@ -378,6 +389,9 @@ fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
 
 #[test]
 fn v2_identity_and_prereqs_are_sync_helper_results() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -555,6 +569,9 @@ export function tick(api) {
 
 #[test]
 fn v2_install_is_typed_not_a_json_op_or_interact() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let value = probe(
         r#"
 export const apiVersion = 2;
@@ -591,6 +608,9 @@ export function tick(api) {
 
 #[test]
 fn example_quest_facts_v2_is_one_read_only_fact_call() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("quest_facts_v2.ts");

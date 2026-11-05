@@ -6,44 +6,45 @@
 follower acts only through the kernel API (`api::interact`,
 `api::settle`) and never deep-copies the world.
 
-## Pack bake
+## Product staging and local generation
 
-Application builds bake the pack themselves. `crates/host-play/build.rs` runs
-the shared baker (`nav_bake::bake::bake_world`) for the selected release revision,
-stages pack + flags + reach + sidecar manifest + stamp under the install resource root
-(`nav/<revision>/` — next to the built binary, `Contents/Resources` in a macOS
-bundle, `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere) and publishes
-the identity that the compile-time table `host_play::bundled_nav_identities()`
-serves. Normal WalkTo in that build needs no manual step. The default revision
-is **289**; `BOT_NAV_REVISION=274` builds the 274 artifact instead. Revision
-289 is the production revision; 274 is best-effort, neither tested nor claimed.
+Product builds do not run `nav-bake`. The host build stages existing payloads
+from `target/local-data/nav/<revision>/` into the product resources. The five
+files are `274bot.navpack`, `274bot.navflags`, `274bot.navreach`,
+`274bot.navcanlight`, and `274bot.navpois`.
 
-The build retains `nav-planner` for manifest schemas, hashes, and format identity.
-`nav-bake` is a separate build dependency, not a normal runtime dependency.
-`BOT_NAV_BUILD=skip` skips baking but does not remove nonoptional Cargo build dependencies.
-Release binaries load shipped artifacts without compiling or baking.
-The v18 schema is in the
-[baked reachability contract](../dev/baked-reachability.md). BR2 produces and reads v18 only.
-
-`nav-pack` remains for deliberate developer/custom-input bakes. It calls the
-same baker and reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
-and writes the current whole-world pack (`encode` in
-`crates/nav-bake/src/pack.rs`):
+Generate game data and navigation from your own engine and content checkouts
+before a product build. The local builder and release tooling use the same
+cross-platform wrapper:
 
 ```bash
-NAV_PACK=/absolute/output/274bot.navpack NAV_FLAGS=/absolute/output/274bot.navflags cargo run -p nav-bake --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]
-# or: nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out F] [--snapshot-root ROOT]
+python tools/local-data/build.py
 ```
 
-When `BOT_NAV_ENGINE_DIR` or `ENGINE_DIR` is set, legacy positional mode
-defaults to `<engine>/../content/maps`, matching doors configs, and
-`<engine>/data/pack/config`. Pass all three paths when using another tree.
-In legacy positional mode output goes to `$NAV_PACK` or `~/.274bot/274bot.navpack`,
-with the flags sidecar at `$NAV_FLAGS` or the pack path with its extension swapped
-to `.navflags` (default `~/.274bot/274bot.navflags`); the `.navreach`/`.navcanlight`/`.navpois`/`.json`
-sidecars are written next to `--out`. Explicit mode ignores `$NAV_PACK` and requires
-`--out NAV_PACK` (plus `--revision`, `--content`, `--cache`, `--cache-manifest`).
-`gates.loc` is derived from the maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
+`BOT_NAV_BUILD=skip` stages nothing. `BOT_NAV_REVISION` selects revision 289
+by default or 274. `BOT_NAV_RESOURCE_DIR` selects another staging root.
+`NAV_PACK` overrides runtime pack selection only; it does not select build
+inputs.
+
+## Direct nav rebake
+
+Use `nav-pack` to rebake navigation after the game data is generated. This
+command uses the local revision-289 content and client cache:
+
+```bash
+cargo run --locked -p nav-bake --bin nav-pack -- \
+  --revision 289 \
+  --content "$GAME_DATA_289_CONTENT" \
+  --cache "$GAME_DATA_289_ENGINE/data/pack/client" \
+  --game-data-dir crates/api/data/game-data \
+  --out target/local-data/nav/289/274bot.navpack
+```
+
+The cache path supplies the local revision's `data/pack/client` directory.
+Nav-pack reads its `config` and the generated `<revision>.json` and
+`<revision>/quests.json` files. It writes all five payloads beside `--out`.
+Use `--flags-out`, `--reach-out`, `--canlight-out`, and `--pois-out` only to
+select different sidecar paths.
 
 Each edge's `members_req` comes from the content handler that edge's op runs,
 resolved as the engine does: type `[<op>,<name>]`, then category
@@ -56,18 +57,16 @@ handler, or any label, choice or queue it may continue into, reads
 `map_members`, unless that exact read is a listed non-gate branch or the shared
 source interpreter proved that edge's specific crossing path. A members-only
 edge must have a leading refusal, a listed members arm (the glider, Zanaris and
-spirit-tree gates), or that same path proof. Path witnesses bind every final
-edge field after observable-gate conversion, so changing the membership flag,
-disguise, landing or price invalidates them. These witnesses are ephemeral bake
-data, not a bypass token stored in the pack; the ordinary content fingerprint
-and before/after input-stability check still bind the whole bake.
-Only bundled packs are rebaked automatically: an external pack
-(`--nav-pack`, `NAV_PACK`, `~/.274bot/…`) keeps the content and membership gates
-it was baked with. Rebake it after content changes or a format upgrade.
+Path witnesses bind every final edge field after observable-gate conversion.
+Changing the membership flag, disguise, landing, or price changes the witness.
+These witnesses are ephemeral bake data. They are not authorization tokens
+stored in the pack and do not authenticate the source tree. Product builds
+stage local payloads without rebaking them. Re-run nav-pack after a content
+change.
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **18**. Each
+the derived `TransportGraph`. Magic `b"274V"`, version byte **19**. Each
 edge's reusable `item_req` remains a held-item gate; v15 added count-prefixed
 `(id, count)` `consumed_req` and `item_returns` vectors after it. Version 16
 added a count-prefixed `worn_all_req` ID vector after the existing any-of
@@ -84,28 +83,27 @@ before interacting and never send from a nearby substitute. Requirement
 counts (`item_req`, `consumed_req`, `item_returns`) must be positive — the
 bake rejects non-positive counts — and returned items require consumed
 resources.
-Version 17 retains v11's selected quest-family binding — its
-`quest_facts_sha256` and `quest_extractor_schema` — and typed per-edge
-quest-stage gates; it keeps the content-derived bank-stand table after the
-edges, per-edge `members_req`, a per-edge wilderness teleport cap, and
-wilderness-level formula after the banks, the content-derived zone table, and
-v13's approach geometry follows the takeoff tag. Geometry is tag `0` (absent)
-or tag `1` followed by `width:u8`, `length:u8`, and `blocked_sides:u8` (a
-rotated four-bit mask). Only footprint-backed
+Version 19 keeps typed per-edge quest-stage gates and the content-derived
+bank-stand table after the edges. It removes quest-family digests and extractor
+schema from the pack. It keeps per-edge `members_req`, a per-edge wilderness
+teleport cap, a wilderness-level formula after the banks, the content-derived
+zone table. V13's approach geometry follows the takeoff tag. It uses tag `0`
+(absent) or tag `1` followed by `width:u8`, `length:u8`, and
+`blocked_sides:u8` (a rotated four-bit mask).
 Ladder/Stairs/AgilityShortcut/SpiritTree edges use it; an exact takeoff still
 honors that geometry. Legacy edges without takeoff retain prior
 Door/NPC/teleport admission. Zone data includes stable kind identities/labels,
 NPC/hazard rows, curated groups, carves and shaped masks. A shape row stores a
 zone index u16, north extent u8, and row-major u64 cell mask; the shaped NPC's
 `r` byte stores its east extent.
-Thus shaped bounds up to 8×8 remain self-describing. Decoding any v18 pack
+Thus shaped bounds up to 8×8 remain self-describing. Decoding any v19 pack
 installs `Some(ZoneTable)`, even when its row counts are zero; legacy grids
 and synthetic in-memory graphs use `zones: None`. After the zone table the
-pack stores sorted unique multiway keys and the reachability atlas. A v17
-pack is a typed rebake failure. The decoder rebuilds the zone
-spatial index. Raw `u32` flags are not on the pack wire. The optional
-`274F` sidecar holds them for collision paint; the paint-reach bitset is a
-separate `274R` sidecar bound to the pack identity.
+pack stores sorted unique multiway keys and the reachability atlas. Older
+incompatible versions return `BadVersion`. The decoder rebuilds the zone spatial
+index. Raw `u32` flags stay off the pack wire.
+The optional `274F` sidecar holds raw flags for collision paint. A separate
+`274R` sidecar carries the paint-reach bitset.
 
 Ranged hunters with content `check_vis=lineofsight` retain their
 range-derived bounds, but the bake carves permanent occlusion only for `nomove`
@@ -146,182 +144,69 @@ the raw flags sidecar.
 
 v14 introduced bit `0x80` in the existing edge-kind byte for player-relative
 Ladder/Stairs landings, including supported gangplank Cross edges encoded as
-Ladder; v18 retains this encoding. The remaining kind value keeps its kind.
+Ladder; v19 retains this encoding. The remaining kind value keeps its kind.
 A flagged edge stores the canonical loc-anchor-derived `to`; decoding recovers
 `player_delta = to - at`. The flag is invalid on other kinds. Absolute
 landings do not set it.
-`decode` accepts version 18 only — v17 and older are `BadVersion` and must be
-rebaked. The `274N` grid decoder (`decode_grid`) stays for old boolean-walk
-files.
+`decode` accepts version 19 only. Older incompatible packs return `BadVersion`.
+The `274N` grid decoder (`decode_grid`) stays for old boolean-walk files.
 
-The revision-289 reference is the v18 bake,
-`274bot-289-v18.navpack` (SHA-256
-`81e5ca84568b4e3d9b0e7f428a2d43d5e945c73cd74910645db626c89bd4de36`), with its
-`274bot-289-v18.navflags` sibling (SHA-256
-`67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a`). The
-matching 274 files are `274bot-274-v18.navpack` and `274bot-274-v18.navflags`.
-Local evidence, the inputs and the bake command are in
-`/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/`
-(on merlot `/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/`).
-The v17 reference pack is refused by the v18 decoder with `BadVersion(17)`.
-Set `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK` to this pack.
-Set `BOT_NAV_BUILD=skip` for tests that use the reference.
-An explicitly selected unreadable or wrong-version pack fails the real-pack
-tests. It does not silently skip the identity and transport-census check.
-CI obtains the same SHA-pinned files from the dedicated `nav-reference-v18`
-release assets. Publishing those assets is an operator action.
+The local producer writes the current pack and its feature sidecars from local
+engine and content inputs. Generate game data and navigation with
+`python tools/local-data/build.py` before a product build. Tests that need a
+real pack must select local payloads. An unreadable or wrong-version pack
+returns its ordinary I/O or format error. `NAV_PACK` overrides runtime pack
+selection only; it does not select build inputs.
 
 
-### Build-time selection, reuse and overrides
+### Staging environment
 
 | Env | Default | Meaning |
 | --- | --- | --- |
-| `BOT_NAV_BUILD` | `require` | `skip`: no artifact baked/staged, checked-in identities only |
-| `BOT_NAV_REVISION` | `289` | selected release revision (`274` supported) |
-| `ENGINE_DIR` | none; required for bundled navigation | the engine root: the `engine/` folder of the engine checkout. A leading `~/` is expanded. To avoid exporting it in every shell, set it once under `[env]` in `~/.cargo/config.toml` |
-| `BOT_NAV_ENGINE_DIR` | `ENGINE_DIR` | the same setting, overriding `ENGINE_DIR` for this build only |
-| `BOT_NAV_CONTENT_DIR` | `<engine>/../content` | canonical content tree; set it only when content isn't beside the engine root |
-| `BOT_CACHE_MANIFEST` | checked-in known cache identities | verified cache manifest |
-| `BOT_NAV_RESOURCE_DIR` | cargo profile dir / bundle Resources | staging root |
-| `BOT_NAV_SNAPSHOT_ROOT` | `~/.274bot/unpack[-289]` | complete version-keyed decoded snapshot, read-only bake input |
+| `BOT_NAV_BUILD` | `require` | Stage the existing local payloads; `skip` stages nothing |
+| `BOT_NAV_REVISION` | `289` | Select the local payload revision (`274` is supported) |
+| `BOT_NAV_RESOURCE_DIR` | Cargo profile dir or bundle Resources | Override the product staging root |
+| `NAV_PACK` | none | Runtime pack override only |
 
-### Decoded-identity migration
-
-Normal profile preparation negotiates the selected `/crc` before freezing an
-owned cache/snapshot shared by all bots using that profile. Transfer CRCs and
-packed hashes remain exact; compatibility uses revision-bound `274DCI01` decoded
-identity. Offline `ProfileSelection::bind()` retains legacy packed binding;
-application callers use `prepare_template()` or `bind_runtime()`.
+### Headerless client-cache archives
 
 Headerless Jagex archives are decoded without copying their compressed payload
 just to restore a header. The normal decoder uses the engine's 100k block size,
-avoiding a 900k libbz2 workspace for each stream. Any block-data error (which
-libbz2 also uses for CRC and table corruption) retries once with the larger
-hint, so larger headerless blocks remain supported; truncated or corrupt
-streams still fail, at most after two attempts. This does not change decoded
-content identities.
+avoiding a 900k libbz2 workspace for each stream. Any block-data error, which
+libbz2 also uses for CRC and table corruption, retries once with the larger
+hint. This supports larger headerless blocks. Truncated or corrupt streams
+still fail, at most after two attempts.
 
-New nav manifests, build stamps and compiled bundle rows carry `content_id` and
-`source_sha256`. Nav manifest JSON also binds the decoded table's `zone_count`
-(all zone rows) and `zone_npc_count` (NPC rows, excluding curated hazards).
-Source provenance hashes the conservative content-tree closure and actual baker
-config; the build stamp also binds generator source bytes. Legacy resources are
-not relabeled: rebuild the application with the complete matching snapshot, or
-use `nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR
---cache-manifest CACHE_MANIFEST --snapshot-root SNAPSHOT_ROOT --out NAV_PACK`.
-The root contains the 16-hex version-keyed snapshot directory. Omitting
-`--snapshot-root` creates an offline-only legacy pack; runtime binding rejects
-it. Missing required decoded records fail rather than claiming Ready.
+The canonical builder and required environment are documented in
+[`selected-data-generation.md`](../dev/selected-data-generation.md). The
+`nav-bake` tool reads the generated revision JSON and quest facts through API
+pure decoders with embedded game data disabled.
+`nav-bake` reads local revision content, the local client-cache config, and
+generated game-data files. Missing files, unreadable files, malformed content,
+and malformed game-data JSON report ordinary I/O or decode errors. The producer
+does not compare source manifests, input fingerprints, cache identities, or
+file digests. `required-content-{274,289}.tsv` remains for Quester and semantic
+nav-coverage; it does not authenticate bake inputs.
 
-Local runtime nav verifies the selected content/config against the bake source
-hash. Supported public profiles trust only compiled build/packager identities;
-users of packaged public applications need no engine/content source checkout.
-These identities attest the supported server-world assumption, not arbitrary
-custom server behavior. Generated facts retain engine/content/decoder input
-hashes and use decoded client identity; explicit endpoint overrides do not
-inherit built-in facts. Local supported facts additionally verify their selected
-source inputs. Unknown client content remains unavailable/rejected, never guessed.
+### Payload decoding and lazy paint
 
-The `tools/game-data` generator and verifier are offline `tsx` tools. Build
-`cargo build -p nav-bake --bin cache-content-id` first. `GAME_DATA_274_ENGINE`,
-`GAME_DATA_274_CONTENT`, `GAME_DATA_289_ENGINE`, `GAME_DATA_289_CONTENT`,
-`RS2B0T`, `GAME_DATA_274_SNAPSHOTS` and `GAME_DATA_289_SNAPSHOTS` are all
-required and name explicit roots — an unset variable fails closed and names
-itself, with no machine default. `GAME_DATA_IDENTITY_BIN` (or
-`CARGO_TARGET_DIR`) still selects a non-default `cache-content-id` binary.
-The Rust codec verifies
-actual pinned assets before generation. This does not relax e2e exact resume
-provenance. Neither build nor runtime accepts a persistent decoded-identity
-sidecar solely because input sizes match.
+The host build stages local payloads. It does not use build stamps or re-bake
+them when source files change. Runtime loading does not compare game-data,
+content, or cache identities. The pack decoder keeps its bounded input buffer
+and fills final collision storage directly. Sidecar decoders keep format,
+geometry, length, and structural checks and fill final shared arrays without
+whole-file staging or decoded-vector copies.
 
-Missing canonical inputs fail the build instead of shipping an app without nav,
-and the guard names the input class: besides `maps/`, the door configs,
-`gates.loc`, the loc `config` jag and the cache archives, the build requires
-what the bake consumes implicitly — the `pack/loc.pack`, `pack/obj.pack` and
-`pack/varp.pack` id tables, the files read by name (`scripts/ladders+stairs/`,
-`area_gnome`'s spirit tree, `area_ardougne_east`'s levers,
-`area_alkharid/configs/border_gate.loc`, `quest_zanaris`,
-`skill_magic/configs/{magic_spells.dbrow,enchanted_jewelry.obj}`,
-`interface_bank/configs/bank_booth.loc`), every file of the recursive script
-scans (`scripts/**/*.rs2` door open scripts, agility shortcuts and jewellery
-rubs, `scripts/**/*.constant`, `scripts/**/*.obj` blades, and the `*.loc` door
-configs under `scripts/doors/configs`, `scripts/quests`, `scripts/areas` and
-`scripts/general_use/configs`) and every mapsquare of the revision's canonical
-map set. The scans are listed one file per row, not anchored by their
-directories: removing a single consumed child (`shortcuts.rs2`, a jewellery
-`*.rs2`, a `.loc` door config) fails the build even when its directory keeps
-its siblings. That inventory is revision-owned data
-(`crates/nav-planner/src/required-content-{289,274}.tsv`, embedded in `nav_bake::bundle` and
-verified against the canonical trees — the `bundle::` tests compare the scan
-classes and the map set to the actual trees; refresh the TSV when the canonical
-content legitimately changes) and it is checked on every default build —
-including one that would otherwise reuse a warm staged artifact set. It judges
-presence only: a deliberate content edit or addition is not rejected, it flows
-through the ordinary input fingerprints and rebakes. Files the bake never reads
-are out of scope, and the baker stays tolerant — a content file added to a scan
-class is baked, an inventory row is the file membership the canonical tree had
-when it was listed. `BOT_NAV_BUILD=skip` and the custom-input `nav-pack` CLI
-keep their behavior.
+Paint reach loads lazily into a shared `Arc<[u64]>` when a map or collision
+view requests it. Routing and first walks do not load it. Closing the map
+releases its consumer lease; reopening shares the process-level decode.
+Canlight is decoded during profile preparation, off client tick threads, so
+Fire queries can use the shared plane. These payloads carry feature data, not
+file-identity bindings.
 
-The cache identity is verified at build time exactly like the runtime verifies
-it: a supplied manifest must match the cache bytes and the selected jag,
-otherwise the captured identity must be one of the checked-in
-`crates/host-play/src/known-cache-identities.json` rows.
+The TUI `r` layer tints walkable-but-unreached cells from the reach words. It
+shows `reach unavailable` when those words are not available.
 
-Warm builds reuse unchanged artifacts: the staged `nav-build.json` stamp
-records the cache identity, SHA-256 digests of all staged navigation artifacts
-(pack, flags, reach, canlight, navpois and manifest), generator identities
-(manual id plus the bytes of `bake.rs`/`collision.rs`/`pack.rs`/`paint.rs`/
-`quest_gates.rs`/`router.rs`/`transport.rs` and transport producers), the
-navpois generator identity (`map/services.rs`/`map/poi.rs`), and an input
-fingerprint (size, mtime and SHA-256) of every canonical input (content tree,
-config jag, cache archives). Source and captured cache digests use one input-
-fingerprint snapshot. The decoded identity is computed from that verified
-cache snapshot and recomputed after baking before publishing. Any change to
-those inputs, to the pack format identity (`nav_planner::pack::FORMAT_ID`), to the
-generator, to the cache identity, a missing navpois sidecar, or a missing/
-replaced staged artifact (including the reach sidecar) rebakes. Runtime
-computes decoded identity once per prepared profile, not per bot. The bundled
-pack fast path keeps its cheap
-revision/cache-identity check and reads + decodes the staged pack once
-(`NavLoadCounters`). Both bundled and external packs expose the same verified
-auxiliary sidecars when their identities are present in the selected manifest.
-Paint reach is checked at preparation (magic/version, geometry, pack binding,
-exact payload length and SHA-256), without retaining its world-scale words.
-The first paint request decodes it once into a shared `Arc<[u64]>`, rechecking
-the header and hashing the very bytes decoded before publishing them. The panel
-binds only the lazy handle at profile install and requests words when the map's
-reach layer or 3D collision/debug paint is enabled. The TUI requests words only
-with the map open and its reach layer enabled. Routing and first walks never use
-them. Closing either map releases its consumer lease; the profile caches the
-process-level decode, so reopening shares it instead of adding another buffer.
-`NavLoadCounters` includes both preparation and the lazy read/hash.
-A failed first decode stays unavailable, not a runtime flood or an all-reached mask.
-
-Canlight is decoded and SHA-256 verified during profile preparation, off the
-client tick threads, so Fire queries can immediately crop the shared plane.
-Bundled identities additionally check the pack+policy header binding; external
-manifests pin the whole sidecar, including that header, to the selected pack and
-cache. Legacy/minimal custom packs without sidecar identities keep reach or
-Fire explicitly unavailable (legacy 3D paint alone may cache a runtime flood).
-An advertised but missing, malformed or mismatched sidecar rejects preparation.
-Changing a reach file between preparation and first use cannot publish new
-words under the old identity. Already published words are owned and immutable,
-so later file edits cannot affect them. The trust boundary remains the selected
-local manifest/bundled identity, not authenticated publisher metadata.
-
-Runtime pack decoding uses a bounded 64 KiB input buffer and fills the final
-collision storage directly. Sidecar decoders fill final shared `Arc<[u64]>`
-bitplanes in fixed-size chunks, without full-file staging or decoded-vector
-copies. External pack SHA-256 covers the exact stream, including accepted
-trailing bytes, before publishing the world; nav formats and routing semantics
-are unchanged. The TUI `r` layer now tints walkable-but-unreached cells using
-the same bound reach words as the panel and displays `reach unavailable` when
-no verified words are available.
-
-Real-artifact check (needs a default application build in this target profile
-plus the canonical cache):
-`cargo test -p host-play --test bundled_nav_build -- --ignored --nocapture`.
 
 ## Collision (`nav_planner::collision`)
 
@@ -422,13 +307,14 @@ Existing specialized edges retain their requirements and measured prices.
 New direct climbs price literal script/helper delays plus the interaction.
 
 Named quest/guild door and secret-wall openers are interpreted from their
-RuneScript control flow. The generic engine crossing helpers must match their
-pinned content bodies. Conjunctive worn checks become strict `worn_all_req`
-gates, including exact primary-slot `inv_getobj` checks; carrying the disguise
-does not authorize the crossing. Named doors use a unique completed-journal proof
-for an untransmitted quest varp. The entrance proof below can instead use exact
-selected stage signals. Hidden bitfields, dialogue choices and unresolved
-conditions stay impassable.
+RuneScript control flow, requirements, and movement behavior. Crossings derive
+from the parsed content; no canonical source-body identity is required.
+Conjunctive worn checks become strict `worn_all_req` gates, including exact
+primary-slot `inv_getobj` checks; carrying the disguise does not authorize the
+crossing. Named doors use a unique completed-journal proof for an untransmitted
+quest varp. The entrance proof below can instead use exact selected stage
+signals. Hidden bitfields, dialogue choices and unresolved conditions stay
+impassable.
 General item-on-loc unlocks go through the same certified door interpreter:
 an `oplocu` handler that checks the selected item (`last_useitem`) derives a
 carried-item requirement on an `option` 0 edge — never a free op — when its
@@ -436,19 +322,18 @@ crossing is proven. Loc entrances whose content performs a deterministic
 sequence of door crossings and teleports derive one edge per proven
 crossing; every live-NPC lookup in the sequence is universally quantified,
 so a state alternative that could refuse or land elsewhere rejects the
-crossing rather than emitting it. Quest gating on these entrances is typed
-`QuestGates` bound to the pack's quest family only; they carry no raw
-`quest_req`/`varp_req` inference. Unguarded, dialogue-driven or
-side-effectful handlers that the interpreter cannot prove stay impassable:
-these producers cover the entrances content proves, not every locked door
-in the world.
+Quest gating on these entrances is typed `QuestGates`; they carry no raw
+`quest_req`/`varp_req` inference or source-family binding. Unguarded,
+dialogue-driven or side-effectful handlers that the interpreter cannot prove
+stay impassable: these producers cover the entrances content proves, not every
+locked door in the world.
 
 The door interpreter distinguishes passability from NPC side effects.
-`black_knights_aggro` may precede a crossing only while its complete body matches
-the pinned content proof. That proc selects Black Knights and starts their
-attack. It does not change the crossing condition or the player landing.
-An unknown or changed proc still rejects that crossing.
-The v17 edge format has no danger-side-effect field. This exception adds no
+`black_knights_aggro` may precede a crossing when the supported handler
+analysis establishes the same crossing. That proc selects Black Knights and
+starts their attack; it does not change the crossing condition or player
+landing. Unsupported calls and control flow remain outside the derived edge.
+The v19 edge format has no danger-side-effect field. This exception adds no
 danger metadata and does not claim that the crossing is safe.
 
 Paired gate entrances can carry existing `QuestGate::Window` conditions for
@@ -481,7 +366,7 @@ Unknown/random/choice gates, unmodelled writes, invalid motion, and trajectories
 without a real requirement are refused. The reviewed obstacle rules below are
 the only exceptions for ungated movement and random failure branches.
 
-The pinned `agility_force_move` primitive shares this machine with exact
+The `agility_force_move` primitive shares this machine with exact
 movement. Death Plateau's east-side climbing rocks (`death_climbingrocks_top`
 and `death_climbingrocks_bottom`, op1 Climb) retain strict worn climbing-boots
 gates and final south/north three-tile landings. Carried or spiked boots do
@@ -491,11 +376,11 @@ The content permits wearing climbing boots only after `death_equiproom`
 reaches quest completion, so Paths must not require this equipment before
 the pre-completion scouting walk.
 
-The obstacle rules share the loc-motion interpreter. They compare the complete
-parsed handler against reviewed content, including called labels. They do not
-store a table of crossing tiles. They derive each exact stand, final landing,
-delay, skill condition, and worn-item condition from that handler and placement.
-Changed handlers or movement primitives lose the proof. Pack format remains 17.
+The obstacle rules use parsed handler control flow and placement rather than a
+table of crossing tiles. They derive each exact stand, final landing, delay,
+skill condition, and worn-item condition from the handler. Unsupported
+statements, invalid motion, and unproved branch outcomes do not produce an
+edge. Pack format remains 19.
 
 | Content obstacle | Success condition | Content source |
 |---|---|---|
@@ -535,7 +420,7 @@ completed-Biohazard gate can operate with current runtime evidence.
 Kharazi jungle crossings retain the first successful roll's minimum delay:
 3 game ticks for bushes and 5 for trees
 (`quest_legends/scripts/jungle_tree.rs2:61-69,115-118`).
-The complete pinned handler still controls admission. These costs do not
+The parsed handler control flow determines admission. These costs do not
 include failed Woodcutting or depletion rolls.
 
 
@@ -563,29 +448,21 @@ the approach side of the loc's row or column can count as crossed before the
 door opens, so callers must not relax it for door hops. Diagonal doors keep
 their separate content-derived geometry.
 
-The corrected straight-door geometry uses generator version `nav-bake-2`;
-it adds no door-specific wire fields. The v18 pack retains the v12 zone table
-described above, carries the resource-accounting vectors described above,
-appends `worn_all_req` after `worn_req` plus the `forbidden_held` and
-`forbidden_worn` exclusion vectors after that, then the multiway key list
-and the reachability atlas. Generator and producer-source
-digests
-invalidate staged bundles and trigger a normal rebake, with refreshed
-pack/reach/canlight/navpois bindings. Explicit custom packs baked with the
-previous generator need to be rebaked too.
+The corrected straight-door geometry adds no door-specific wire fields. The
+v19 pack retains the v12 zone table, resource-accounting vectors, exclusion
+vectors, multiway key list, and reachability atlas. Local payloads reflect the
+content used for their bake. Re-run `nav-pack` after content changes; product
+builds do not automatically rebake.
 
 ### Quest-stage gates (`nav_planner::quest_gates`)
 
 An edge that a quest stage opens carries `quest_gates: Option<QuestGates>`:
-typed `api::selected::QuestGate`s — a completed quest, or a closed
-`StageWindow` over a selected progress signal (`[n,n]` for one stage,
-`[None,n]` for "up to n") — bound to the quest family the pack consumed
-(`TransportGraph::quest_family`). A stage is never faked as a minimum varp
-threshold. Only resolved progress evidence decides a gate:
-`WorldState::with_quest_evidence(QuestEvidence::new(provider, family,
-required_after))` attaches the caller's immutable `EvidenceProvider` snapshot,
-the family it was prepared from and its causal freshness floor. An opaque
-snapshot varp or an unqualified green row is not stage evidence.
+typed quest gates for a completed quest or a closed `StageWindow` over a
+progress signal (`[n,n]` for one stage, `[None,n]` for "up to n"). The pack
+does not bind gates to a source-family digest. Only resolved progress evidence
+decides a gate. The caller attaches an immutable `EvidenceProvider` snapshot
+and its causal freshness floor to `WorldState`. An opaque snapshot varp or an
+unqualified green row is not stage evidence.
 
 The producer starts a progress variable's legal upper bound at quest completion
 and extends it only from that variable's actual writers. An unsupported writer
@@ -594,8 +471,8 @@ Underground Pass's `ibanmulti` bit indices, do not widen the progress bound.
 The same writer index and guarded call analysis derive variables that may
 change after completion. Their quest colour is not stage authority. When no
 stage domain is proved, a content varp comparison stays a typed `StageWindow`,
-not a `Complete` substitute. A fresh, selected-family progress observation
-must decide that comparison; colour alone leaves it `Unknown`.
+not a `Complete` substitute. A fresh progress observation for the selected
+revision must decide it; colour alone leaves it `Unknown`.
 Completion and above-completion trajectories retain separate windows when
 their raw-value conditions differ. NPC presence is still universally checked
 within each trajectory, so an observed exact completion value can preserve a
@@ -633,20 +510,17 @@ interaction is sent the crossing is not rechecked. Only `True` permits
 continuation; missing, disproven, stale or undecided evidence ends the leg as
 `TravelOutcome::EvidenceUnproven { at, leg, verdict, unresolved }` without a
 transport send. `verdict` is `False` or `Unknown`; `unresolved` names the gates
-the evidence leaves `Unknown` (every gate without evidence, none for evidence
-from another quest family), so a caller can acquire them and retry. Ungated
-legs need no provider.
+the evidence leaves `Unknown` (every gate without evidence), so a caller can
+acquire it and retry. Ungated legs need no provider.
 Ordinary quest-list evidence is shared with the Quester.
-`QuestListEvidenceProvider::from_snapshot` copies compact quest-list evidence
-from a frame: it takes the prepared `QuestCatalog`, the catalog family that
-verified it, the currently selected family, and the `SnapshotView`. Both
-family identities (digest plus extractor schema) must be present and equal,
-so a different revision family fails closed. For `QuestGate::Complete`,
-`Complete` reads `True` and `NotStarted`/`InProgress` read `False`. A
-`StageWindow` can use colour only when the catalog proves an authoritative,
-bounded, non-transmitted signal with no possible post-completion writer.
-Other rows leave the window `Unknown`. The provider never infers a
-server-only progress value from an opaque snapshot varp.
+`QuestListEvidenceProvider::from_snapshot` copies compact evidence from a frame
+using the prepared `QuestCatalog` for the selected supported client revision
+and the `SnapshotView`. It does not compare family digests or file identities.
+For `QuestGate::Complete`, `Complete` reads `True` and `NotStarted`/`InProgress`
+read `False`. A `StageWindow` can use colour only when the catalog proves an
+authoritative, bounded, non-transmitted signal with no possible
+post-completion writer. Other rows leave the window `Unknown`. The provider
+never infers a server-only progress value from an opaque snapshot varp.
 
 The two diagnoses see across each other. When the BankBudget diagnosis
 (`find_missing_item_reqs`, which ignores only carry/wear gates) finds no route,
@@ -656,24 +530,21 @@ gates. Each still reports only its own kind, so a door that needs a carried
 rope and an undecided stage names the rope in one and the stage window in the
 other; neither hides behind the other's gate. A `False` gate closes both.
 
-`QuestFamilyId::new(quest_facts_sha256, NonZeroU16)` is the only way to build
-a family: extractor schema 0 is malformed in a pack and cannot be constructed,
-so `encode` never writes a binding its decoder refuses.
-`TransportGraph::admit_quest_family(&manifest_family)` refuses a pack baked
-against another family digest or extractor schema. It also refuses a pack
-without a quest family. Profile loading calls this check only when the pack
-declares a quest family. It still accepts packs without one.
-The standard bake verifies the selected `quests` family artifact before deriving
-content entrances and binds its digest and schema into the graph. Supported
-quest-complete predicates become canonical `QuestGate::Complete` requirements;
-an intermediate or exact hidden quest stage is not inferred from completion.
-When a quest comparison has no authoritative stage domain, the completed
-branch keeps its `Complete` gate only if a green quest-list row proves that
-the varp reached completion: the generated row is colour-authoritative, or the
-content's own colour rule (`send_quest_progress_colour`, green when
-`progress >= complete`) has exactly one row for that varp. The account's
-journal decides at run time. Otherwise the comparison stays unknown. This
-applies to every such varp, transmitted or not.
+The generated quest family retains its schema and fact rows. API decoders
+report unsupported schemas and malformed structure as ordinary data errors.
+The pack contains typed quest gates, not a quest-family digest. The standard
+bake reads the selected revision's generated `quests` facts before it derives
+content entrances. It does not bind their source digest into the graph.
+Supported quest-complete predicates become canonical
+`QuestGate::Complete` requirements; an intermediate or exact hidden quest
+stage is not inferred from completion. When a quest comparison has no
+authoritative stage domain, the completed branch keeps its `Complete` gate only
+if a green quest-list row proves that the varp reached completion: the
+generated row is colour-authoritative, or the content's own colour rule
+(`send_quest_progress_colour`, green when `progress >= complete`) has exactly
+one row for that varp. The account's journal decides at run time. Otherwise
+the comparison stays unknown. This applies to every such varp, transmitted
+or not.
 
 ### Prerequisite crossing steps
 
@@ -690,29 +561,29 @@ is never replaced by a player position. Two directions of one loc have
 distinct identities. The holy barrier also has distinct entries for its two
 legal stands on opposite sides of its blocked anchor.
 
-Conditional edges for the same physical directed crossing share one identity.
-The export retains every distinct requirement array in
+Conditional edges for the same physical directed crossing share one
+`CrossingId`. The export retains every distinct requirement array in
 `quest_gate_alternatives`: any alternative can admit the crossing, but all
 requirements within that alternative must hold. An empty array is an
 unconditional alternative. Fully identical edge records collapse only in the
-export and are listed separately with their source paths; exporting never
-changes the pack.
+export and are listed separately in `identical_edge_groups` with their source
+paths; exporting never changes the pack.
 
-Generate these identities from the actual pack, not an authored coordinate
-table: `nav-pack --export-crossings PACK --out JSON` loads the pack and
-its `navflags` sidecar, groups alternatives over ordinary and teleport edges,
-and records standability and transport admission for each takeoff.
-The prerequisite generator consumes this projection through
-`GAME_DATA_289_PREREQ_CROSSINGS` and verifies it against
-`GAME_DATA_289_NAV_PACK`. Catalog schema 3 retains the required takeoff.
+Generate the schema-3 projection from the local 289 pack, not an authored
+coordinate table. The exporter loads the pack and its `navflags` sidecar,
+groups alternatives over ordinary and teleport edges, and records standability
+and transport admission for each takeoff. `tools/local-data/build.py` exports
+this projection and supplies it to stage 2 through
+`GAME_DATA_289_PREREQ_CROSSINGS`; the JSON has `schema`, `crossings`, and
+`identical_edge_groups`. Catalog schema 3 retains the required takeoff.
 The probe walks to that exact legal stand, then clicks the exact loc anchor.
 It never walks onto a blocked anchor or substitutes an arbitrary nearby tile.
 Loc interaction reach remains the engine's shape-, rotation-, footprint-
 and wall-aware rule; a route endpoint alone does not prove operability.
 
 Probes require the host's current collision reach view; an unverified target
-does not grant permission to click. Compatibility handovers keep their
-request identity, selected pin and continuation in one cold allocation.
+does not grant permission to click. Compatibility handovers keep their request
+identity, selected revision and continuation in one cold allocation.
 Unrelated API seats reserve only a pointer. Native reissues retain the
 original destination and policy, but bind a fresh evidence stamp rather than
 keeping the expired request stamp in every ordinary walk.
@@ -720,10 +591,10 @@ keeping the expired request stamp in every ordinary walk.
 The same catalog can declare a journal evidence source instead of a world
 interaction. The runner reads that page through the native journal owner:
 one quest-row click, a fresh title-checked page, one close, and an observed
-close. All source-pinned text rules must match within that page. No match
+close. All configured exact text rules must match within that page. No match
 or multiple matches leave the gate closed. A failed journal read also leaves
 the gate closed and blocks the walk. The session remembers only the proved
-signal range and its content-checked preservation range.
+signal range and its verified preservation range.
 
 Bank selection uses the same owner after a strict `NoPath`, with a narrower
 diagnostic policy. `GateRelaxation::UnknownOnly` keeps proven-false gates closed.
@@ -875,12 +746,12 @@ still decides whether the proved range remains usable after the read.
 
 Before adding a journal row, either use a generator check that proves its
 stage implication or retain a hand proof with the change's evidence.
-The proof must cite the handler guards and exact title and text at a pinned
-content revision. It must show that every matching page implies the claimed
-signal range and justify the stored preservation range. Check the nearest
-non-qualifying page and other branches that can emit the same text.
-Keep the row's exact content citations with that proof. Schema and text
-validation alone do not prove a stage range.
+The proof must cite handler guards and the exact title and text in the selected
+local content. It must show that every matching page implies the claimed signal
+range and justify the stored preservation range. Check the nearest
+non-qualifying page and other branches that can emit the same text. Keep the
+row's exact content citations with that proof. Schema and text validation alone
+do not prove a stage range.
 
 Prerequisite-aware walks retain their original request and bounded step state.
 On x86_64 Linux and macOS arm64, `Dialogue` measures 520 B and `TalkRun`
@@ -1764,12 +1635,10 @@ does not replace the committed-memory measurement.
 pre-FLOOR cases, or their gate. Report this workload as its own row.
 
 The standard five cases retain their pinned RC comparator. For the proof-only
-row, use the exact development base `3b4cb68ab` and its v17 reference pack only
-if it has a bound quest family and can run the same proof path. Then apply the
-existing PASS/MARGINAL/FAIL band rule. If that base has no family or no proof
-path, report candidate timing and committed scratch as an **absolute cost
-diagnostic, not an A/B or a gate**. Record the structural absence with source
-and receipt lines. Never synthesize a family, gates or permissions.
+row, use development-base and candidate packs only when both can exercise the
+same proof path. Otherwise, report candidate timing and committed scratch as an
+**absolute cost diagnostic, not an A/B or a gate**. Record the structural
+absence with source and receipt lines. Never synthesize gates or permissions.
 
 Prepare one standalone package for each explicitly selected source/API arm:
 

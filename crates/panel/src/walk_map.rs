@@ -16,7 +16,8 @@ use std::sync::Arc;
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{TextureId, Ui};
-use nav_planner::map::identity::{Digest, ImageIdentity};
+use nav_planner::contract::PackId;
+use nav_planner::map::identity::ImageIdentity;
 use nav_planner::map::poi::PoiKind;
 use nav_planner::map::spatial::{
     select_lod, snap_walkable, GameTile, TileKey, View, VisibleTiles, INTERIOR_UV, TEXTURE_CAP,
@@ -150,7 +151,7 @@ pub struct WalkMapRenderer {
     pub show_flood: bool,
     /// Content-defined special-area tint (currently wilderness zones).
     pub show_special_areas: bool,
-    nav_identity: Digest,
+    nav_pack_id: Option<PackId>,
     world_geom: Option<(i32, i32, u32, u32)>,
     pub search: String,
     pub(crate) catalogue_search: WalkSearch,
@@ -176,7 +177,7 @@ struct OverlayKey {
     w: u32,
     h: u32,
     layers: OverlayLayers,
-    nav: Digest,
+    nav: Option<PackId>,
     origin_x: i32,
     origin_z: i32,
     width: u32,
@@ -226,7 +227,7 @@ impl WalkMapRenderer {
             show_nsew: false,
             show_flood: false,
             show_special_areas: false,
-            nav_identity: Digest([0; 32]),
+            nav_pack_id: None,
             world_geom: None,
             search: String::new(),
             catalogue_search: WalkSearch::default(),
@@ -290,10 +291,6 @@ impl WalkMapRenderer {
         self.observed = observed;
     }
 
-    pub fn nav_identity(&self) -> Digest {
-        self.nav_identity
-    }
-
     pub fn is_open(&self) -> bool {
         self.open
     }
@@ -305,16 +302,16 @@ impl WalkMapRenderer {
 
     /// Profile rebind / nav-world replacement. Frame owner calls this outside
     /// the Game pane window closure.
-    pub fn sync_identity(
+    pub fn sync_world(
         &mut self,
-        nav: Digest,
+        nav: Option<PackId>,
         geom: Option<(i32, i32, u32, u32)>,
         gpu: Option<&mut dyn FrameGpu>,
     ) {
-        if self.nav_identity == nav && self.world_geom == geom {
+        if self.nav_pack_id == nav && self.world_geom == geom {
             return;
         }
-        self.nav_identity = nav;
+        self.nav_pack_id = nav;
         self.world_geom = geom;
         if self.open {
             self.invalidate_buffers(gpu);
@@ -1195,7 +1192,7 @@ impl WalkMapRenderer {
             w,
             h,
             layers,
-            nav: self.nav_identity,
+            nav: self.nav_pack_id,
             origin_x: world.collision.origin.x,
             origin_z: world.collision.origin.z,
             width: world.collision.width as u32,

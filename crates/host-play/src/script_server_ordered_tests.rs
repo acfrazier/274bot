@@ -13,6 +13,18 @@ use std::task::Poll;
 
 const CIPHER_SEED: [i32; 4] = [17, 29, 41, 53];
 
+fn selected_r289() -> Option<Arc<api::game_data::SelectedGameData>> {
+    api::test_support::local_asset_path(
+        "",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api/data/game-data/289.json"
+        ),
+        "revision 289 game data for ordered content dispatch",
+    )?;
+    Some(api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap())
+}
+
 #[cfg(feature = "test-support")]
 struct TickHookReset;
 
@@ -155,6 +167,7 @@ struct Rig {
     snapshot: GameSnapshot,
     input: Arc<SlotInput>,
     names: Arc<api::obj_names::ObjNames>,
+    selected: Arc<api::game_data::SelectedGameData>,
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
@@ -163,11 +176,26 @@ struct Rig {
 }
 
 impl Rig {
+    // Packet-only fixtures supply no catalog facts and need no local assets.
     fn new() -> Self {
-        Self::new_with_revision(client::client::ClientRevision::R289)
+        Self::new_with_selected(Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "schema_version": 5,
+                "revision": 289,
+                "items": [],
+                "consumption": [],
+                "pickpocket": [],
+            }))
+            .unwrap(),
+        ))
     }
 
-    fn new_with_revision(revision: client::client::ClientRevision) -> Self {
+    fn with_game_data() -> Option<Self> {
+        selected_r289().map(Self::new_with_selected)
+    }
+
+    fn new_with_selected(selected: Arc<api::game_data::SelectedGameData>) -> Self {
+        let revision = client::client::ClientRevision::R289;
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let mut client = Client::new_with_revision(
@@ -217,6 +245,7 @@ impl Rig {
             snapshot,
             input,
             names,
+            selected,
             scripts: Arc::new(Mutex::new(HashMap::new())),
             cheats: Arc::new(Mutex::new(HashMap::new())),
             navs: test_navs("so3-wire"),
@@ -235,7 +264,7 @@ impl Rig {
                     handle: None,
                     results: Arc::clone(&self.results),
                 }),
-                Some(api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap()),
+                Some(Arc::clone(&self.selected)),
             )
             .unwrap();
     }
@@ -357,7 +386,9 @@ fn close_request() -> ServerOrderedRequest {
 
 #[test]
 fn ordered_native_content_needs_no_external_declaration() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     rig.start([Emission::Content(close_request())]);
     rig.pump(1);
     rig.pump(2);
@@ -371,19 +402,28 @@ fn ordered_native_content_needs_no_external_declaration() {
     assert!(decoded[0].1.is_empty());
 }
 
-fn debug_catalog() -> Arc<api::debug_commands::DebugCatalog> {
-    static CATALOG: std::sync::LazyLock<Arc<api::debug_commands::DebugCatalog>> =
+fn debug_catalog() -> Option<Arc<api::debug_commands::DebugCatalog>> {
+    static CATALOG: std::sync::LazyLock<Option<Arc<api::debug_commands::DebugCatalog>>> =
         std::sync::LazyLock::new(|| {
-            Arc::new(
+            let selected = selected_r289()?;
+            let path = api::test_support::local_asset_path(
+                "",
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../api/data/game-data/289/debug.json"
+                ),
+                "revision 289 debug catalog for ordered cheat dispatch",
+            )?;
+            Some(Arc::new(
                 api::debug_commands::DebugCatalog::decode(
-                    include_bytes!("../../api/data/game-data/289/debug.json"),
+                    &std::fs::read(path).unwrap(),
                     api::selected::ClientRevision::R289,
-                    api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+                    selected,
                 )
                 .unwrap(),
-            )
+            ))
         });
-    Arc::clone(&CATALOG)
+    CATALOG.clone()
 }
 
 fn assert_no_cipher_movement(rig: &Rig) {
@@ -454,7 +494,9 @@ fn ordered_host_queued_receipt_does_not_claim_server_acceptance() {
 #[test]
 fn ordered_advanced_unauthorized_cheat_refuses_before_every_packet_and_cipher_change() {
     let mut rig = Rig::new();
-    let debug = debug_catalog();
+    let Some(debug) = debug_catalog() else {
+        return;
+    };
     rig.start([Emission::Advanced {
         operations: vec![
             Send::if_button(8889).unwrap(),
@@ -475,7 +517,9 @@ fn ordered_advanced_unauthorized_cheat_refuses_before_every_packet_and_cipher_ch
 #[test]
 fn ordered_advanced_cheat_uses_shared_catalog_arguments_and_authorization() {
     let mut rig = Rig::new();
-    let debug = debug_catalog();
+    let Some(debug) = debug_catalog() else {
+        return;
+    };
     for command in [
         "no-such-selected-command",
         "~addxp attack not-an-int",
@@ -500,7 +544,9 @@ fn ordered_advanced_cheat_uses_shared_catalog_arguments_and_authorization() {
 
 #[test]
 fn ordered_every_advanced_destructive_cheat_refuses_without_confirmation_state() {
-    let debug = debug_catalog();
+    let Some(debug) = debug_catalog() else {
+        return;
+    };
     let mut tested = 0;
     for command in debug
         .commands()
@@ -795,7 +841,7 @@ fn start_drop(
                 handle: None,
                 result: Arc::clone(&result),
             }),
-            Some(api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap()),
+            Some(Arc::clone(&rig.selected)),
         )
         .unwrap();
     result
@@ -933,9 +979,9 @@ fn ordered_real_drop_batch_cancellation_retains_committed_prefix_without_replay(
 }
 
 fn bind_waiting_bank(rig: &mut Rig) -> ServerOrderedRequest {
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-    let pin = selected.selected_pin().unwrap();
-    let catalog = selected.server_ordered_catalog(&pin).unwrap();
+    let selected = &rig.selected;
+
+    let catalog = selected.server_ordered_catalog().unwrap();
     rig.snapshot.seed_bank_observation(
         catalog.bank().main_component().id(),
         1,
@@ -964,7 +1010,9 @@ fn bind_waiting_bank(rig: &mut Rig) -> ServerOrderedRequest {
 
 #[test]
 fn ordered_owned_count_resumes_without_a_visible_prompt_and_consumes_its_expectation() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let request = bind_waiting_bank(&mut rig);
     assert!(!rig.client.dialog_input_open);
     rig.start([Emission::Content(request)]);
@@ -991,7 +1039,9 @@ fn ordered_owned_count_resumes_without_a_visible_prompt_and_consumes_its_expecta
 #[test]
 fn ordered_advanced_close_and_non_user_mouse_invalidate_bank_wait_grok_a2() {
     for mouse in [false, true] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let dependent = bind_waiting_bank(&mut rig);
         let operation = if mouse {
             Send::event_mouse_click(1, false, 10, 20).unwrap()
@@ -1045,7 +1095,9 @@ fn ordered_foreign_movement_checked_owner_manual_and_zero_wire_edits_fence_depen
         "manual",
         "amount-edit",
     ] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let dependent = bind_waiting_bank(&mut rig);
         match producer {
             "movement" => rig
@@ -1166,7 +1218,9 @@ fn legacy_observer(rig: &mut Rig) -> Arc<LegacyObserver> {
 }
 
 fn legacy_foreign_packet_fences_at_flush(minimap: bool) {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let dependent = bind_waiting_bank(&mut rig);
     let observer = legacy_observer(&mut rig);
     let before = rig
@@ -1254,7 +1308,9 @@ fn ordered_legacy_manual_minimap_last_at_flush_fences_dependent_with_full_traile
 
 #[test]
 fn ordered_legacy_cheat_then_content_row_keeps_packet_attribution_and_succeeds() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let observer = legacy_observer(&mut rig);
     // Bind to the actual row owner. Misattributing the pending cheat to that
     // owner would leave the invalidation epoch unchanged at its callback.
@@ -1326,9 +1382,9 @@ fn knife_request(rig: &mut Rig, continuing: bool) -> ServerOrderedRequest {
     }
     rig.client.collision[0].flags[8][5] = client::dash3d::CollisionFlag::SQ_BLOCKED;
     rig.snapshot.rebuild(&rig.client);
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-    let pin = selected.selected_pin().unwrap();
-    let catalog = selected.server_ordered_catalog(&pin).unwrap();
+    let selected = &rig.selected;
+
+    let catalog = selected.server_ordered_catalog().unwrap();
     let knife_id = catalog.knife().knife().id();
     let logs_id = catalog.knife().logs()[0].id();
     let rows = vec![
@@ -1395,7 +1451,9 @@ fn knife_request(rig: &mut Rig, continuing: bool) -> ServerOrderedRequest {
 #[test]
 fn ordered_knife_ending_and_continuing_use_exact_unseen_make_and_move_op_order() {
     for continuing in [false, true] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let request = knife_request(&mut rig, continuing);
         assert_ne!(rig.snapshot.modals().chat, 8880);
         assert_ne!(rig.snapshot.modals().main, 8880);
@@ -1407,9 +1465,9 @@ fn ordered_knife_ending_and_continuing_use_exact_unseen_make_and_move_op_order()
         assert_eq!(receipt.row_count, if continuing { 3 } else { 2 });
         assert_eq!(receipt.dispatched_prefix, receipt.row_count);
         assert_eq!(receipt.wire_events, if continuing { 4 } else { 2 });
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let pin = selected.selected_pin().unwrap();
-        let catalog = selected.server_ordered_catalog(&pin).unwrap();
+        let selected = &rig.selected;
+
+        let catalog = selected.server_ordered_catalog().unwrap();
         let mut expected = vec![
             Send::opheldu(
                 catalog.knife().logs()[0].id(),
@@ -1444,7 +1502,9 @@ fn ordered_knife_ending_and_continuing_use_exact_unseen_make_and_move_op_order()
 
 #[test]
 fn ordered_knife_last_row_static_failure_has_zero_prefix_bytes_and_cipher_movement() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let request = knife_request(&mut rig, true);
     rig.snapshot.seed_locs(Vec::new());
     let mut before = rig.client.out.random.clone().unwrap();
@@ -1470,7 +1530,9 @@ fn ordered_knife_last_row_static_failure_has_zero_prefix_bytes_and_cipher_moveme
 #[test]
 fn ordered_knife_stale_modal_stale_reference_and_each_wrong_item_role_emit_nothing() {
     for failure in ["modal", "inventory-stamp", "knife-role", "logs-role"] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let mut request = knife_request(&mut rig, false);
         match failure {
             "modal" => rig.snapshot.seed_chat_modal(8880, Vec::new()),
@@ -1514,7 +1576,9 @@ fn ordered_knife_stale_modal_stale_reference_and_each_wrong_item_role_emit_nothi
 #[test]
 fn ordered_delayed_knife_does_not_charge_later_drain_tick_checked_drop() {
     for continuing in [false, true] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let request = knife_request(&mut rig, continuing);
         rig.start([Emission::ContentThenDrop(request)]);
         crate::script_runtime::delay_ordered_drain_for_test();
@@ -1582,7 +1646,9 @@ impl client::io::PacketObserver for CancelAfterPacket {
 #[test]
 fn ordered_cancellation_before_row_zero_between_rows_and_inside_move_op_keeps_exact_prefix() {
     for committed in 0..=3 {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let request = knife_request(&mut rig, true);
         if committed == 0 {
             crate::script_runtime::install_ordered_dispatch_hook(Box::new(|authority| {
@@ -1633,7 +1699,9 @@ fn ordered_cancellation_before_row_zero_between_rows_and_inside_move_op_keeps_ex
 
 #[test]
 fn ordered_four_packet_requests_repeat_on_consecutive_observed_ticks() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let requests = (0..4)
         .map(|_| Emission::Content(knife_request(&mut rig, true)))
         .collect::<Vec<_>>();
@@ -1659,7 +1727,9 @@ fn ordered_four_packet_requests_repeat_on_consecutive_observed_ticks() {
 
 #[test]
 fn ordered_delayed_request_counts_later_foreign_traffic_without_rate_admission() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let request = knife_request(&mut rig, true);
     rig.start([Emission::Content(request)]);
     crate::script_runtime::delay_ordered_drain_for_test();
@@ -1730,7 +1800,9 @@ fn checked_loc_click(rig: &mut Rig) -> u64 {
 
 #[test]
 fn ordered_knife_and_checked_click_have_no_host_rate_rule_across_adjacent_and_same_drain_ticks() {
-    let mut adjacent = Rig::new();
+    let Some(mut adjacent) = Rig::with_game_data() else {
+        return;
+    };
     let request = knife_request(&mut adjacent, true);
     adjacent.start([Emission::Content(request)]);
     adjacent.pump(1);
@@ -1752,7 +1824,9 @@ fn ordered_knife_and_checked_click_have_no_host_rate_rule_across_adjacent_and_sa
     });
     assert_eq!(adjacent.decoded().len(), 6);
 
-    let mut same_drain = Rig::new();
+    let Some(mut same_drain) = Rig::with_game_data() else {
+        return;
+    };
     let request = knife_request(&mut same_drain, true);
     same_drain.start([Emission::Content(request)]);
     same_drain.input.observe_input_tick(
@@ -1776,7 +1850,9 @@ fn ordered_knife_and_checked_click_have_no_host_rate_rule_across_adjacent_and_sa
 
 #[test]
 fn ordered_native_budget_rejects_second_same_window_emission_before_dispatch() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let request = knife_request(&mut rig, true);
     rig.start([Emission::DoubleContent(request, close_request())]);
     rig.pump(1);
@@ -1806,7 +1882,9 @@ fn ordered_native_budget_rejects_second_same_window_emission_before_dispatch() {
 fn ordered_dispatch_does_not_relax_ordinary_invisible_ui_or_target_mask_checks() {
     use api::interact::{Interactions, OpTarget, SendReason, SendResult};
     use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let _ = knife_request(&mut rig, false);
     let locs = rig.snapshot.locs().to_vec();
     rig.client.set_iface(
@@ -2042,7 +2120,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn ordered_existing_shop_move_op_npc_spills_to_engine_without_host_deferral_or_replay() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let _ = knife_request(&mut rig, false);
     {
         let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
@@ -2106,7 +2186,9 @@ fn ordered_existing_shop_move_op_npc_spills_to_engine_without_host_deferral_or_r
 
 #[test]
 fn ordered_real_drain_releases_one_owner_and_one_completion_for_every_terminal_outcome() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let requests = (0..40)
         .map(|index| match index % 4 {
             0 | 3 => Emission::Content(close_request()),
@@ -2173,18 +2255,6 @@ fn ordered_missing_sink_observation_refuses_before_cipher_or_payload_movement() 
 }
 
 #[test]
-fn ordered_mismatched_selected_revision_refuses_before_packet_or_cipher_movement() {
-    let mut rig = Rig::new_with_revision(client::client::ClientRevision::R274);
-    rig.start([Emission::Content(close_request())]);
-    rig.pump(1);
-    rig.pump(2);
-    let receipt = rig.receipt();
-    assert_eq!(receipt.terminal, Some(ServerOrderedError::RevisionMismatch));
-    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
-    assert_no_cipher_movement(&rig);
-}
-
-#[test]
 fn ordered_invalid_bank_expectations_and_conflicting_cleanup_emit_no_prefix() {
     for failure in [
         "missing",
@@ -2193,7 +2263,9 @@ fn ordered_invalid_bank_expectations_and_conflicting_cleanup_emit_no_prefix() {
         "bank-session",
         "prompt",
     ] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let mut request = bind_waiting_bank(&mut rig);
         let tick = match failure {
             "missing" => {
@@ -2264,7 +2336,9 @@ fn ordered_invalid_request_shapes_fail_at_admission_without_cipher_or_payload_mo
         ));
         assert_no_cipher_movement(&rig);
     }
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let mut request = bind_waiting_bank(&mut rig);
     if let ServerOrderedRequest::CountResume { value, .. } = &mut request {
         *value = 0;
@@ -2280,7 +2354,9 @@ fn ordered_invalid_request_shapes_fail_at_admission_without_cipher_or_payload_mo
 
 #[test]
 fn ordered_stale_dispatch_observation_refuses_before_cipher_or_payload_movement() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let input = Arc::clone(&rig.input);
     crate::script_runtime::install_ordered_dispatch_hook(Box::new(move |_| {
         input.with_server_ordered_input(|state| state.observe_tick(2));
@@ -2299,7 +2375,9 @@ fn ordered_advanced_cheat_without_shared_catalog_refuses_the_whole_request() {
     let mut rig = Rig::new();
     rig.client
         .set_cheat_admission(client::CheatAdmission::Granted);
-    let debug = debug_catalog();
+    let Some(debug) = debug_catalog() else {
+        return;
+    };
     rig.start([Emission::Advanced {
         operations: vec![
             Send::close_modal(),
@@ -2374,12 +2452,11 @@ fn dispatch_with_builtin_gatherer_context(
     let script::native::HostEffect::ServerOrdered(envelope) = action.effect else {
         panic!("expected the real pending ordered envelope")
     };
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     super::dispatch_native_server_ordered(
         &mut rig.client,
         super::OrderedDispatchContext {
             snapshot: &rig.snapshot,
-            selected: Some(&selected),
+            selected: Some(rig.selected.as_ref()),
             input: Some(&rig.input),
             builtin_gatherer_knife: true,
         },
@@ -2391,7 +2468,9 @@ fn dispatch_with_builtin_gatherer_context(
 #[test]
 fn ordered_builtin_gatherer_knife_npc_fishing_uses_operation_click_then_exact_npc_op() {
     for (type_id, operation) in [(309, 1), (309, 3), (800, 1)] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let request = knife_npc_request(&mut rig, type_id, operation);
         let receipt = dispatch_with_builtin_gatherer_context(&mut rig, request);
         assert_eq!(receipt.terminal, None, "{type_id}/{operation}: {receipt:?}");
@@ -2403,9 +2482,9 @@ fn ordered_builtin_gatherer_knife_npc_fishing_uses_operation_click_then_exact_np
             ),
             (3, 3, 4)
         );
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let pin = selected.selected_pin().unwrap();
-        let catalog = selected.server_ordered_catalog(&pin).unwrap();
+        let selected = &rig.selected;
+
+        let catalog = selected.server_ordered_catalog().unwrap();
         let npc_op = match operation {
             1 => Send::opnpc1(7).unwrap(),
             3 => Send::opnpc3(7).unwrap(),
@@ -2437,7 +2516,9 @@ fn ordered_builtin_gatherer_knife_npc_fishing_uses_operation_click_then_exact_np
 #[test]
 fn ordered_builtin_gatherer_knife_npc_packet_between_capture_and_dispatch_is_stale() {
     for (intervening_packet, recapture) in [(false, false), (true, false), (true, true)] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let mut request = knife_npc_request(&mut rig, 309, 1);
         let captured = rig.snapshot.gens().npc_info;
         if intervening_packet {
@@ -2485,7 +2566,9 @@ fn ordered_builtin_gatherer_knife_refuses_event_and_unproved_npc_operations() {
         (9, 1),
         (9, 2),
     ] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let request = knife_npc_request(&mut rig, type_id, operation);
         let receipt = dispatch_with_builtin_gatherer_context(&mut rig, request);
         assert_eq!(
@@ -2501,7 +2584,9 @@ fn ordered_builtin_gatherer_knife_refuses_event_and_unproved_npc_operations() {
 #[test]
 fn ordered_builtin_gatherer_knife_refuses_npc_transformed_since_request() {
     for transformed_type in [390, 403, 404, 405, 406] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let posted = knife_npc_request(&mut rig, 309, 1);
         let _transformed = knife_npc_request(&mut rig, transformed_type, 1);
         let receipt = dispatch_with_builtin_gatherer_context(&mut rig, posted);
@@ -2513,7 +2598,9 @@ fn ordered_builtin_gatherer_knife_refuses_npc_transformed_since_request() {
 
 #[test]
 fn ordered_builtin_gatherer_context_keeps_non_knife_content_on_generic_dispatch() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let receipt = dispatch_with_builtin_gatherer_context(&mut rig, close_request());
     assert_eq!(receipt.terminal, None);
     assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (1, 1));
@@ -2539,7 +2626,9 @@ fn ordered_knife_continuing_npc_fishing_requires_transform_closure() {
             if type_id == 800 && operation == 3 {
                 continue;
             }
-            let mut rig = Rig::new();
+            let Some(mut rig) = Rig::with_game_data() else {
+                return;
+            };
             let request = knife_npc_request(&mut rig, type_id, operation);
             rig.start([Emission::Content(request)]);
             rig.pump(1);
@@ -2559,7 +2648,9 @@ fn ordered_knife_continuing_npc_fishing_requires_transform_closure() {
 #[test]
 fn ordered_knife_transformed_whirlpool_and_big_fish_never_arm() {
     for transformed_type in [390, 403] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let posted = knife_npc_request(&mut rig, 309, 1);
         let _transformed = knife_npc_request(&mut rig, transformed_type, 1);
         rig.start([Emission::Content(posted)]);
@@ -2570,7 +2661,9 @@ fn ordered_knife_transformed_whirlpool_and_big_fish_never_arm() {
         assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
         assert_no_cipher_movement(&rig);
 
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let observed = knife_npc_request(&mut rig, transformed_type, 1);
         rig.start([Emission::Content(observed)]);
         rig.pump(1);
@@ -2588,7 +2681,9 @@ fn ordered_knife_transformed_whirlpool_and_big_fish_never_arm() {
 #[test]
 fn ordered_knife_npc_snapshot_action_without_content_handler_proof_emits_nothing() {
     for (type_id, operation) in [(309, 2), (316, 1), (9, 2)] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let request = knife_npc_request(&mut rig, type_id, operation);
         rig.start([Emission::Content(request)]);
         rig.pump(1);
@@ -2606,7 +2701,9 @@ fn ordered_knife_npc_snapshot_action_without_content_handler_proof_emits_nothing
 #[test]
 fn ordered_knife_npc_exact_generation_type_tile_and_index_must_match() {
     for mismatch in ["generation", "type", "tile", "index"] {
-        let mut rig = Rig::new();
+        let Some(mut rig) = Rig::with_game_data() else {
+            return;
+        };
         let mut request = knife_npc_request(&mut rig, 309, 1);
         let npc = &rig.snapshot.npcs()[0];
         let mut tile = npc.network;
@@ -2642,7 +2739,9 @@ fn ordered_knife_npc_exact_generation_type_tile_and_index_must_match() {
 
 #[test]
 fn ordered_current_numeric_npc_proofs_refuse_the_whole_knife_request() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     {
         let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
         cache.npcs.resize_with(10, client::config::NpcType::default);
@@ -2678,42 +2777,6 @@ fn ordered_current_numeric_npc_proofs_refuse_the_whole_knife_request() {
         Some(ServerOrderedError::ContractUnavailable)
     );
     assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
-    assert_no_cipher_movement(&rig);
-}
-
-#[test]
-fn ordered_unbound_selected_pin_refuses_start_before_any_encrypted_input() {
-    let mut valid = Rig::new();
-    valid.start([Emission::Content(close_request())]);
-    valid.pump(1);
-    valid.pump(2);
-    assert_eq!(valid.receipt().wire_events, 1);
-
-    // Deserialization alone does not authenticate a generated artifact.
-    // The normal selected-data loader binds its pin; this value has none.
-    let selected: api::game_data::SelectedGameData =
-        serde_json::from_slice(include_bytes!("../../api/data/game-data/289.json")).unwrap();
-    let expected = format!("{:?}", selected.selected_pin().unwrap_err());
-    let mut rig = Rig::new();
-    let slot = script_slot_or_insert(&rig.scripts, "so3-wire");
-    let error = slot
-        .lock()
-        .unwrap()
-        .start_test_script(
-            Box::new(OrderedScript {
-                pending: [Emission::Content(close_request())].into_iter().collect(),
-                handle: None,
-                results: Arc::clone(&rig.results),
-            }),
-            Some(Arc::new(selected)),
-        )
-        .unwrap_err();
-    assert_eq!(error, expected);
-    rig.pump(1);
-    rig.pump(2);
-    let results = rig.results.lock().unwrap();
-    assert!(results.receipts.is_empty());
-    assert!(results.errors.is_empty());
     assert_no_cipher_movement(&rig);
 }
 

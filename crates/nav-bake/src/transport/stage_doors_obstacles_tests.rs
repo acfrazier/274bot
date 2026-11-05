@@ -2,7 +2,7 @@ use super::*;
 use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 use std::sync::Arc;
 
 // Verbatim handlers, with comments removed:
@@ -67,18 +67,13 @@ fn obstacle_fixture(script: &str) -> Fixture {
 
 fn obstacle_graph(fx: &Fixture) -> TransportGraph {
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
-    obstacle_graph_with_facts(
-        fx,
-        &facts,
-        QuestFamilyId::new(identity.sha256, identity.schema),
-    )
+    let facts = selected.quest_identity().unwrap();
+    obstacle_graph_with_facts(fx, facts)
 }
 
 fn obstacle_graph_with_facts(
     fx: &Fixture,
     facts: &api::game_data::QuestIdentityFacts,
-    family: QuestFamilyId,
 ) -> TransportGraph {
     let defs = loc_defs(&[
         (3730, 1, 2),
@@ -93,7 +88,7 @@ fn obstacle_graph_with_facts(
         (2866, 1, 1),
     ]);
     let collision = bake_collision(fx, &defs, &HashSet::new());
-    let quests = QuestSource { family, facts };
+    let quests = QuestSource { facts };
     derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None).0
 }
 
@@ -148,7 +143,7 @@ impl EvidenceProvider for ObstacleSignals {
     }
 }
 
-fn obstacle_state(graph: &TransportGraph, signal: &'static str, value: i32) -> WorldState {
+fn obstacle_state(signal: &'static str, value: i32) -> WorldState {
     let stamp = EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -160,7 +155,6 @@ fn obstacle_state(graph: &TransportGraph, signal: &'static str, value: i32) -> W
     };
     WorldState::empty().with_quest_evidence(QuestEvidence::new(
         Arc::new(ObstacleSignals(signal, value, stamp)),
-        graph.quest_family.unwrap(),
         stamp,
     ))
 }
@@ -219,7 +213,7 @@ fn obstacle_lower_rocks_require_started_progress_skill_and_south_only_worn_boots
                     .any(|edge| state.allows(edge))
             };
             for value in 0..=50 {
-                let mut state = obstacle_state(&graph, "troll_quest", value);
+                let mut state = obstacle_state("troll_quest", value);
                 state.stats.insert(16, 15);
                 state.worn.insert(3105);
                 assert_eq!(allows(&state), value >= 10, "Troll value {value}");
@@ -235,7 +229,7 @@ fn obstacle_lower_rocks_require_started_progress_skill_and_south_only_worn_boots
                 );
             }
             for value in [i32::MIN, -1, 51, i32::MAX] {
-                let mut state = obstacle_state(&graph, "troll_quest", value);
+                let mut state = obstacle_state("troll_quest", value);
                 state.stats.insert(16, 15);
                 state.worn.insert(3105);
                 assert!(!allows(&state), "out-of-domain Troll value {value}");
@@ -296,9 +290,9 @@ fn obstacle_wall_gate_requires_exact_biohazard_completion_through_the_label() {
         (2049, tile(2559, 3300), tile(2556, 3300)),
     ] {
         let edge = crossing(&graph, id, from, to);
-        assert!(obstacle_state(&graph, "biohazard", 16).allows(edge));
-        assert!(!obstacle_state(&graph, "biohazard", 15).allows(edge));
-        assert!(!obstacle_state(&graph, "biohazard", 17).allows(edge));
+        assert!(obstacle_state("biohazard", 16).allows(edge));
+        assert!(!obstacle_state("biohazard", 15).allows(edge));
+        assert!(!obstacle_state("biohazard", 17).allows(edge));
         assert!(!WorldState::empty().allows(edge));
     }
 }
@@ -335,9 +329,9 @@ fn obstacle_watchtower_window_and_precompletion_ladder_keep_their_conditions() {
             level: 2,
         },
     );
-    assert!(obstacle_state(&graph, "itwatchtower", 0).allows(edge));
-    assert!(obstacle_state(&graph, "itwatchtower", 12).allows(edge));
-    assert!(!obstacle_state(&graph, "itwatchtower", 13).allows(edge));
+    assert!(obstacle_state("itwatchtower", 0).allows(edge));
+    assert!(obstacle_state("itwatchtower", 12).allows(edge));
+    assert!(!obstacle_state("itwatchtower", 13).allows(edge));
     assert!(!WorldState::empty().allows(edge));
 }
 
@@ -404,7 +398,7 @@ fn obstacle_wall_equality_stays_a_window_without_the_completion_upper_bound() {
         "[proc,future_stage]\n%biohazard = 17;\n",
     );
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let (mut facts, identity) = selected.quest_identity_for_bake().unwrap();
+    let mut facts = selected.quest_identity().unwrap().clone();
     let row = facts
         .rows
         .iter_mut()
@@ -412,17 +406,13 @@ fn obstacle_wall_equality_stays_a_window_without_the_completion_upper_bound() {
         .unwrap();
     // At7dac,289.json:128138-150 and real quest_biohazard.rs2:160 prove
     // completion16/domain0..16. Only this synthetic future writer adds17;
-    // its in-memory family must say so too. Actual generated facts stay intact.
+    // its in-memory facts must say so too. Actual generated facts stay intact.
     assert_eq!(row.stage_domain.unwrap().max, Some(16));
     row.stage_domain = Some(InclusiveRange {
         min: Some(0),
         max: Some(17),
     });
-    let graph = obstacle_graph_with_facts(
-        &fx,
-        &facts,
-        QuestFamilyId::new(identity.sha256, identity.schema),
-    );
+    let graph = obstacle_graph_with_facts(&fx, &facts);
     let edge = crossing(&graph, 2049, tile(2556, 3299), tile(2559, 3299));
     let gates = edge.quest_gates.as_ref().expect("exact signal gate");
     let [QuestGate::Window(window)] = gates.gates() else {
@@ -432,13 +422,13 @@ fn obstacle_wall_equality_stays_a_window_without_the_completion_upper_bound() {
     assert_eq!(window.values.max, Some(16));
     for value in 0..=17 {
         assert_eq!(
-            obstacle_state(&graph, "biohazard", value).allows(edge),
+            obstacle_state("biohazard", value).allows(edge),
             value == 16,
             "Biohazard value {value}"
         );
     }
     for value in [i32::MIN, -1, 18, i32::MAX] {
-        assert!(!obstacle_state(&graph, "biohazard", value).allows(edge));
+        assert!(!obstacle_state("biohazard", value).allows(edge));
     }
     assert!(!WorldState::empty().allows(edge));
 }

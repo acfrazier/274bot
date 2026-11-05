@@ -3,12 +3,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use nav_planner::collision::WorldCollision;
-use nav_planner::map::identity::Digest;
 use nav_planner::tile::Tile;
 use nav_planner::world::NavWorld;
 
 use super::map_host;
-use map_host::profile::{CacheManifest, NavManifest, ProfileEnvironment};
+use map_host::profile::ProfileEnvironment;
 use map_host::{Play, ProfileOptions, SharedClientTemplate, SlotArm, SlotStatus};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -39,7 +38,6 @@ impl MapFixture {
             "textures",
             "wordenc",
             "sounds",
-            "manifest-289.json",
         ] {
             std::fs::copy(source.join(name), root.join(name)).unwrap();
         }
@@ -69,40 +67,16 @@ impl MapFixture {
         let bytes = nav_bake::pack::encode(collision, &world.graph, world.banks()).unwrap();
         let pack = root.join("selected.navpack");
         std::fs::write(&pack, &bytes).unwrap();
-        let manifest = NavManifest {
-            revision: 289,
-            cache_id: CacheManifest::capture(289, &root).unwrap().identity(),
-            content_id: None,
-            source_sha256: None,
-            nav_sha256: Digest::of(&bytes).to_string(),
-            flags_sha256: None,
-            reach_sha256: None,
-            canlight_sha256: None,
-            pois_sha256: None,
-            zone_count: world
-                .graph
-                .zones
-                .as_ref()
-                .map_or(0, |table| table.zones().len() as u32),
-            zone_npc_count: world.graph.zones.as_ref().map_or(0, |table| {
-                table
-                    .zones()
-                    .iter()
-                    .filter(|zone| table.kinds()[usize::from(zone.kind)].npc_id >= 0)
-                    .count() as u32
-            }),
-        };
-        std::fs::write(
-            map_host::profile::nav_manifest_path(&pack),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .unwrap();
         let profile = ProfileOptions {
             profile: Some(profile.into()),
             revision: Some("289".into()),
             cache_dir: Some(root.clone()),
-            cache_manifest: Some(root.join("manifest-289.json")),
             nav_pack: Some(pack),
+            // The synthetic fixture has no world.json. Mark its endpoint
+            // explicit so this navigation-only test does not request local
+            // API game-data assets.
+            asset_host: Some("127.0.0.1".into()),
+            http_port: Some(9),
             ..Default::default()
         }
         .resolve_with_env(

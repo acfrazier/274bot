@@ -1423,7 +1423,7 @@ fn the_shared_flow_previews_confirms_and_deletes_only_on_request() {
     let mut core = session(vault_with("flow-vault", &[]));
     let mut scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     );
     let mut flow = ProfileImport::new();
     assert_eq!(flow.stage(), Stage::Path);
@@ -1515,7 +1515,7 @@ fn a_locked_vault_refuses_the_preview() {
     let dir = temp_dir("locked");
     let scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     );
     let mut flow = ProfileImport::new();
     *flow.path_mut() = "rs2b0t-profiles.json".into();
@@ -1879,7 +1879,7 @@ fn the_shared_flow_offers_deletion_only_when_every_write_is_durable() {
     let mut core = failing_session("flow-failed-vault");
     let mut scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     );
     let mut flow = ProfileImport::new();
     *flow.path_mut() = path.display().to_string();
@@ -2026,7 +2026,7 @@ fn r3_h3_b_a_skipped_accounts_password_reaches_no_log_line() {
     ));
     let mut scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     );
     let mut flow = ProfileImport::new();
     *flow.path_mut() = path.display().to_string();

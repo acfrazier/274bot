@@ -33,7 +33,7 @@ fn write_world_members(engine: &Path, revision: u16, port: u16, members: bool) -
 }
 
 #[test]
-fn profile_identity_records_effective_world_membership_and_provenance() {
+fn profile_identity_records_effective_world_membership_and_path() {
     let root = std::env::temp_dir().join(format!(
         "274bot-e2e-members-{}-{:?}",
         std::process::id(),
@@ -62,13 +62,8 @@ fn profile_identity_records_effective_world_membership_and_provenance() {
         "local_world_json"
     );
     assert_eq!(
-        inherited_json["effective_world_members"]["declaration"]["target"],
+        inherited_json["effective_world_members"]["declaration"],
         declaration.display().to_string()
-    );
-    assert!(
-        inherited_json["effective_world_members"]["declaration"]["sha256"]
-            .as_str()
-            .is_some_and(|digest| digest.len() == 64)
     );
 
     write_world_members(&engine, 274, 43594, false);

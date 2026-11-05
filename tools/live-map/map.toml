@@ -187,6 +187,16 @@ cells = [
   "tui.startup-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib o1_ -- --nocapture",
 ]
 
+# Saved-format decisions use real files and the actual noninteractive CLI.
+# The vault suite proves encrypted old-shape refusal before any vault is installed.
+[[cover]]
+globs = ["crates/host-play/src/saved_data.rs", "crates/host-play/src/main.rs", "crates/vault/src/lib.rs", "crates/vault/src/compiled_settings.rs"]
+cells = [
+  "host-play.saved-data-probe-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib saved_data::tests:: -- --nocapture",
+  "host-play.saved-data-startup-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test saved_data_startup -- --nocapture",
+  "vault.saved-format-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p vault --lib -- --nocapture",
+]
+
 # Saved settings take effect from the durable snapshot, and a pending or failed
 # save shows at its setting (T5.3-S3). The cells drive a held, then failed, disk
 # through the headless driver, the panel session and dialogs, and the terminal

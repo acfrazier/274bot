@@ -9,7 +9,7 @@ use api::prereq_steps::{CrossingId, CrossingKind};
 use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
-use crate::quest_gates::{QuestFamilyId, QuestGates};
+use crate::quest_gates::QuestGates;
 
 mod static_routes;
 mod webs;
@@ -124,12 +124,9 @@ pub struct TransportEdge {
     /// (`~wilderness_level(coord) > cap` refuses). `None` = no wilderness cap.
     /// Packed as i32le on the v10 wire after `members_req` (`-1` = None).
     pub wildy_cap: Option<i32>,
-    /// Quest-stage gates ([`QuestGates`]: a completed quest or a closed
-    /// stage window over a selected progress signal), bound to the quest
-    /// family the pack was baked against. `None` = no stage gate. Only
-    /// resolved progress evidence from that family can open a gated edge;
-    /// snapshot varps and the quest list never do. Packed on the v11 wire
-    /// after `wildy_cap`.
+    /// Quest-stage gates: a completed quest or a closed stage window over a
+    /// selected progress signal. Only resolved progress evidence can open
+    /// a gated edge; snapshot varps and the quest list never do.
     pub quest_gates: Option<QuestGates>,
 }
 
@@ -243,10 +240,7 @@ pub struct TransportGraph {
     /// Optional packed exclusion-zone table. `None` for legacy grids and
     /// intentionally synthetic worlds.
     pub zones: Option<crate::zones::ZoneTable>,
-    /// The selected quest family the bake consumed stage signals from
-    /// (digest + extractor schema). `None` when it consumed none; then no
-    /// edge carries [`TransportEdge::quest_gates`].
-    pub quest_family: Option<QuestFamilyId>,
+
     /// Sorted unique packed multiway 8×8 cell keys (`level << 28 | x << 14 | z`).
     /// Empty on legacy grids and synthetic graphs that did not consume a
     /// revision's `maps/multiway.csv`.

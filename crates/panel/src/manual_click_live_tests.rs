@@ -283,7 +283,8 @@ fn prepare_session_n(
     count: usize,
 ) -> Result<(Session, String), String> {
     prime_local_cache(&inputs.cache)?;
-    let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip());
+    let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip())
+        .map_err(|error| error.to_string())?;
     session.persist_ui = false;
     session.ui.nav.pause_script_on_manual_walk_abort = pause_owner;
     session

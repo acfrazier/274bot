@@ -2801,7 +2801,8 @@ mod tests {
     use std::time::Duration;
 
     fn catalog_bank(name: &str) -> NamedBank {
-        let definition = api::named_banks::BANK_CATALOG
+        let definition = api::named_banks::bank_catalog()
+            .unwrap()
             .iter()
             .find(|definition| definition.name == name)
             .unwrap();

@@ -5999,9 +5999,27 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     let cell_name = cell.name_for_case(case);
     let _home = script::IsolatedEnv::enter(cell_name);
     api::hostlog::set_debug(true);
-    let nav_pack = PathBuf::from(required("GATHERER_NAV_PACK")?);
-    let engine_dir = PathBuf::from(required("GATHERER_ENGINE_DIR")?);
-    let catalog_root = PathBuf::from(required("GATHERER_CATALOG_ROOT")?);
+    let Some(nav_pack) = api::test_support::local_asset_path(
+        "GATHERER_NAV_PACK",
+        "",
+        "real navigation pack for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(engine_dir) = api::test_support::local_asset_path(
+        "GATHERER_ENGINE_DIR",
+        "",
+        "real 289 engine content for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(catalog_root) = api::test_support::local_asset_path(
+        "GATHERER_CATALOG_ROOT",
+        "",
+        "real frozen script catalog for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
     for (name, path) in [
         ("GATHERER_NAV_PACK", &nav_pack),
         ("GATHERER_ENGINE_DIR", &engine_dir),
@@ -7707,9 +7725,27 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
     const CELL: &str = "g3_quester_sheep_bank_shared_core";
     let _home = script::IsolatedEnv::enter(CELL);
     api::hostlog::set_debug(true);
-    let nav_pack = PathBuf::from(required("GATHERER_NAV_PACK")?);
-    let engine_dir = PathBuf::from(required("GATHERER_ENGINE_DIR")?);
-    let catalog_root = PathBuf::from(required("GATHERER_CATALOG_ROOT")?);
+    let Some(nav_pack) = api::test_support::local_asset_path(
+        "GATHERER_NAV_PACK",
+        "",
+        "real navigation pack for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(engine_dir) = api::test_support::local_asset_path(
+        "GATHERER_ENGINE_DIR",
+        "",
+        "real 289 engine content for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(catalog_root) = api::test_support::local_asset_path(
+        "GATHERER_CATALOG_ROOT",
+        "",
+        "real frozen script catalog for the Gatherer live proof",
+    ) else {
+        return Ok(());
+    };
     for (name, path, is_file) in [
         ("GATHERER_NAV_PACK", &nav_pack, true),
         ("GATHERER_ENGINE_DIR", &engine_dir, false),
@@ -8218,11 +8254,11 @@ mod bank_conservation_tests {
 
     fn bank_fixture(items: &[(i32, i32)]) -> (Arc<script::native::PreparedConfig>, GameSnapshot) {
         let config = api::selected::FamilyPreparation::run(|families| {
-            let selected =
-                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            let revision = api::selected::ClientRevision::R289;
+            let selected = api::game_data::for_revision(revision).unwrap();
             let mut cx = script::native::PrepareContext {
                 zones: None,
-                pin: selected.selected_pin().unwrap(),
+                revision,
                 selected,
                 banks: Arc::default(),
                 families,
@@ -8541,11 +8577,11 @@ mod bank_conservation_tests {
         use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
         let settings = Cell::Fishing.settings(LiveCase::FishBankSoak);
         let config = api::selected::FamilyPreparation::run(|families| {
-            let selected =
-                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            let revision = api::selected::ClientRevision::R289;
+            let selected = api::game_data::for_revision(revision).unwrap();
             let mut cx = script::native::PrepareContext {
                 zones: None,
-                pin: selected.selected_pin().unwrap(),
+                revision,
                 selected,
                 banks: Arc::default(),
                 families,

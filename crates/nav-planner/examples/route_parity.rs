@@ -6,7 +6,7 @@ use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestListEvidenceProvider};
 use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
 use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, WorldTile};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{find_blocking_zones, find_first_with, find_many_with, FindOptions};
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
@@ -86,11 +86,11 @@ fn quest_state(
     data: &api::game_data::SelectedGameData,
     signals: &[(&'static str, &'static str, i32)],
 ) -> Result<WorldState, String> {
-    let (facts, identity) = data
-        .quest_identity_for_bake()
-        .map_err(|error| format!("quest identity: {error:?}"))?;
+    let facts = data
+        .quest_identity()
+        .ok_or_else(|| "quest facts unavailable".to_string())?;
     let catalog =
-        QuestCatalog::from_identity(Some(&facts)).map_err(|error| format!("catalog: {error:?}"))?;
+        QuestCatalog::from_identity(Some(facts)).map_err(|error| format!("catalog: {error:?}"))?;
     let stamp = EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -129,8 +129,6 @@ fn quest_state(
     let provider = CorpusEvidence {
         completion: QuestListEvidenceProvider::from_snapshot(
             &catalog,
-            Some(identity),
-            Some(identity),
             SnapshotView::new(Some(&snapshot), stamp),
         ),
         signals: signals.to_vec(),
@@ -145,11 +143,7 @@ fn quest_state(
     }
     state.inventory_ready = true;
     state.equipment_ready = true;
-    state.quest_evidence = Some(QuestEvidence::new(
-        Arc::new(provider),
-        QuestFamilyId::new(identity.sha256, identity.schema),
-        stamp,
-    ));
+    state.quest_evidence = Some(QuestEvidence::new(Arc::new(provider), stamp));
     Ok(state)
 }
 

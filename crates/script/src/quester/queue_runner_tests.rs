@@ -957,7 +957,6 @@ fn a_held_tick_sends_no_close() {
         ..Default::default()
     });
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-    let pin = data.selected_pin().unwrap();
     let evidence = EvidenceStamp {
         run: queued.run,
         tick: 1,
@@ -988,7 +987,7 @@ fn a_held_tick_sends_no_close() {
     let flow = crate::native::with_test_tick(
         frame,
         evidence,
-        &pin,
+        api::selected::ClientRevision::R289,
         (Duration::from_millis(600), std::time::Instant::now()),
         &mut ledger,
         &mut output,

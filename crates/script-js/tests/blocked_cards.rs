@@ -4,8 +4,12 @@
 
 use script_js::{LoadIsolate, LoadShape};
 
+mod common;
 #[test]
 fn melee_weapon_and_partner_trade_exports_answer_from_rust() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { bestMeleeWeapon, knownMeleeWeapon } from '../../api/combat/meleeWeapons.js';
 import {

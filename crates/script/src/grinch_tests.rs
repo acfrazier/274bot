@@ -76,12 +76,11 @@ fn prepare_revision(
     revision: u64,
 ) -> Result<Arc<PreparedConfig>, crate::native::StartError> {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    let pin = selected.selected_pin().unwrap();
     FamilyPreparation::run(move |families| {
         let mut cx = crate::native::PrepareContext {
             zones: None,
             selected,
-            pin,
+            revision: ClientRevision::R289,
             banks,
             families,
         };
@@ -119,7 +118,6 @@ impl NativeOutput for CaptureOutput {
 struct Driver {
     run: RunKey,
     selected: Arc<SelectedGameData>,
-    pin: Arc<api::selected::SelectedPin>,
     retained: RetainedMemory,
     ledger: Option<Box<ledger::Ledger>>,
     pending_note_progress: Option<RunKey>,
@@ -134,11 +132,9 @@ struct TickResult {
 impl Driver {
     fn new(run: RunKey) -> Self {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
-        let pin = selected.selected_pin().unwrap();
         Self {
             run,
             selected,
-            pin,
             retained: RetainedMemory::default(),
             ledger: None,
             pending_note_progress: None,
@@ -165,7 +161,6 @@ impl Driver {
             sequence: tick,
         };
         let selected = Arc::clone(&self.selected);
-        let pin = Arc::clone(&self.pin);
         let mut budget = ledger::TickBudget::default();
         budget.observe(tick);
         let flow = {
@@ -177,7 +172,7 @@ impl Driver {
                 poison_unknown_pulse: u8::MAX,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
                 evidence,
-                pin: &pin,
+                revision: ClientRevision::R289,
                 snapshot: SnapshotView::new(Some(snapshot), evidence)
                     .with_reach(reach)
                     .with_world_members(Truth::Unknown)

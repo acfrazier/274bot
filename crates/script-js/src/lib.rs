@@ -16,6 +16,18 @@ pub mod scene;
 pub mod shim;
 pub mod surface;
 pub mod tooling;
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::path::Path;
+
+    pub(crate) fn local_api_asset(relative_path: &str, description: &str) -> bool {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../api")
+            .join(relative_path);
+        let path = path.to_string_lossy();
+        api::test_support::local_asset_path("", &path, description).is_some()
+    }
+}
 pub mod wire;
 
 pub use library::shape::{

@@ -2,7 +2,7 @@ use super::*;
 use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::transport::{TransportEdge, TransportGraph};
 use std::sync::Arc;
 
@@ -45,7 +45,6 @@ impl EvidenceProvider for StageEvidence {
 }
 
 fn stage_state(
-    family: QuestFamilyId,
     quest: &'static str,
     signal: &'static str,
     stage: Option<InclusiveRange>,
@@ -72,23 +71,12 @@ fn stage_state(
             stage,
             complete,
         }),
-        family,
         required_after,
     ))
 }
 
-fn grand_tree_state(
-    graph: &TransportGraph,
-    stage: Option<InclusiveRange>,
-    complete: bool,
-) -> WorldState {
-    stage_state(
-        graph.quest_family.expect("selected quest family"),
-        "grandtree",
-        "grandtree",
-        stage,
-        complete,
-    )
+fn grand_tree_state(stage: Option<InclusiveRange>, complete: bool) -> WorldState {
+    stage_state("grandtree", "grandtree", stage, complete)
 }
 
 // Test the union of the authoritative partitions, not one historical edge shape.
@@ -101,7 +89,7 @@ fn assert_stage_values(
 ) {
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
-    let (facts, identity) = selected.quest_identity_for_bake().expect("verified family");
+    let facts = selected.quest_identity().expect("selected quest facts");
     let row = facts
         .rows
         .iter()
@@ -114,10 +102,8 @@ fn assert_stage_values(
             max: Some(last),
         })
     );
-    let family = QuestFamilyId::new(identity.sha256, identity.schema);
     let allows = |value, complete| {
         let state = stage_state(
-            family,
             quest,
             signal,
             Some(InclusiveRange {
@@ -210,11 +196,10 @@ fn quest_complete(varp: &str) -> i32 {
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
     selected
-        .quest_identity_for_bake()
-        .expect("verified quest family")
-        .0
+        .quest_identity()
+        .expect("selected quest facts")
         .rows
-        .into_iter()
+        .iter()
         .find(|row| row.varp == varp)
         .expect("selected quest signal")
         .complete
@@ -264,7 +249,6 @@ while (loc_findnext = true) {
 fn stage_edges_for_facts(
     handler: &str,
     facts: &api::game_data::QuestIdentityFacts,
-    family: QuestFamilyId,
 ) -> Vec<TransportEdge> {
     let fx = Fixture::new();
     write_forced_fixture(&fx, handler);
@@ -274,7 +258,7 @@ fn stage_edges_for_facts(
     );
     let defs = loc_defs(&[(6000, 2, 2), (6001, 2, 2)]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
-    let quests = QuestSource { family, facts };
+    let quests = QuestSource { facts };
     derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None)
         .0
         .edges
@@ -342,7 +326,6 @@ fn grand_tree_gate_retains_stage_windows_without_colour_authority() {
     let from = tile(2818, 3438);
     let to = tile(2821, 3438);
     let in_window = grand_tree_state(
-        &graph,
         Some(InclusiveRange {
             min: Some(80),
             max: Some(80),
@@ -351,7 +334,6 @@ fn grand_tree_gate_retains_stage_windows_without_colour_authority() {
     );
     assert!(crosses(&graph, &collision, from, to, &in_window, 6000).unwrap());
     let below_window = grand_tree_state(
-        &graph,
         Some(InclusiveRange {
             min: Some(0),
             max: Some(79),
@@ -363,7 +345,6 @@ fn grand_tree_gate_retains_stage_windows_without_colour_authority() {
         Err(RouteError::NoPath)
     );
     let complete_stage = grand_tree_state(
-        &graph,
         Some(InclusiveRange {
             min: Some(160),
             max: Some(160),
@@ -377,7 +358,7 @@ fn grand_tree_gate_retains_stage_windows_without_colour_authority() {
             &collision,
             from,
             to,
-            &grand_tree_state(&graph, None, true),
+            &grand_tree_state(None, true),
             6000,
         ),
         Err(RouteError::NoPath),
@@ -480,17 +461,17 @@ fn absent_or_ambiguous_stage_signal_never_authorizes_a_crossing() {
     let handler = paired_stage_handler("if (%grandtree < 80) { return; }");
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
-    let (mut facts, identity) = selected
-        .quest_identity_for_bake()
-        .expect("verified quest family");
-    let family = QuestFamilyId::new(identity.sha256, identity.schema);
+    let mut facts = selected
+        .quest_identity()
+        .expect("selected quest facts")
+        .clone();
     facts.rows.retain(|row| row.varp != "grandtree");
-    assert!(stage_edges_for_facts(&handler, &facts, family).is_empty());
+    assert!(stage_edges_for_facts(&handler, &facts).is_empty());
 
-    let (mut facts, identity) = selected
-        .quest_identity_for_bake()
-        .expect("verified quest family");
-    let family = QuestFamilyId::new(identity.sha256, identity.schema);
+    let mut facts = selected
+        .quest_identity()
+        .expect("selected quest facts")
+        .clone();
     let mut duplicate = facts
         .rows
         .iter()
@@ -499,7 +480,7 @@ fn absent_or_ambiguous_stage_signal_never_authorizes_a_crossing() {
         .clone();
     duplicate.id = "ambiguous_grandtree".to_owned();
     facts.rows.push(duplicate);
-    assert!(stage_edges_for_facts(&handler, &facts, family).is_empty());
+    assert!(stage_edges_for_facts(&handler, &facts).is_empty());
 }
 
 #[test]

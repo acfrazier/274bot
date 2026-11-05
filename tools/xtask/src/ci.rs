@@ -410,7 +410,7 @@ fn run_shell_step(step: &Step, command: &str, root: &Path, log: &mut File) -> Re
     writeln!(log, "== {}: {command}", step.name).map_err(io_error)?;
     let mut process = Command::new("bash");
     process.arg("-c").arg(command).current_dir(root);
-    configure_common_environment(&mut process);
+    configure_common_environment(&mut process, root);
     run_logged(process, log)
 }
 
@@ -423,7 +423,7 @@ fn run_test_step(step: &Step, command: &str, root: &Path, log: &mut File) -> Res
         .current_dir(root)
         .env_remove("WAYLAND_DISPLAY")
         .env_remove("WAYLAND_SOCKET");
-    configure_common_environment(&mut process);
+    configure_common_environment(&mut process, root);
 
     let temp_home = if env::var("GITHUB_ACTIONS").as_deref() == Ok("true") {
         None
@@ -488,7 +488,7 @@ fn clear_cargo_run_package_environment(
     }
 }
 
-fn configure_common_environment(process: &mut Command) {
+fn configure_common_environment(process: &mut Command, root: &Path) {
     clear_cargo_run_package_environment(process, env::vars_os().map(|(name, _)| name));
     process
         .env("CARGO_INCREMENTAL", "0")
@@ -502,19 +502,24 @@ fn configure_common_environment(process: &mut Command) {
         return;
     }
 
-    let default_pack = match env::var("CI_NAV_PACK_RELEASE").as_deref() {
-        Ok("nav-reference-v17") | Err(_) => Some(
-            "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
-        ),
-        _ => {
-            Some("/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack")
-        }
-    };
     let pack = env::var("NAV_PACK")
         .or_else(|_| env::var("WORLD_NAV_PACK"))
         .or_else(|_| env::var("NAV_ARRIVAL_PACK"))
         .ok()
-        .or_else(|| default_pack.map(str::to_owned));
+        .or_else(|| {
+            [
+                root.join("target/local-data/nav/289/274bot.navpack"),
+                PathBuf::from(
+                    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack",
+                ),
+                PathBuf::from(
+                    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
+                ),
+            ]
+            .into_iter()
+            .find(|path| path.is_file())
+            .map(|path| path.to_string_lossy().into_owned())
+        });
     if let Some(pack) = pack {
         for name in ["NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK"] {
             if env::var_os(name).is_none() {

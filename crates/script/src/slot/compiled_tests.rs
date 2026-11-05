@@ -1700,7 +1700,7 @@ fn gatherer_snapshot_for_resource(
         let selected = selected();
         let mut cx = PrepareContext {
             zones: None,
-            pin: selected.selected_pin().unwrap(),
+            revision: api::selected::ClientRevision::R289,
             selected,
             banks: Arc::default(),
             families,
@@ -2345,10 +2345,9 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
         ) {
             FamilyPreparation::run(move |families| {
                 let selected = selected();
-                let pin = selected.selected_pin().unwrap();
                 let mut cx = PrepareContext {
                     zones: None,
-                    pin: Arc::clone(&pin),
+                    revision: api::selected::ClientRevision::R289,
                     selected: Arc::clone(&selected),
                     banks: Arc::default(),
                     families,
@@ -3278,7 +3277,6 @@ mod api_gather_seat {
             assert!(crate::combat::guard::shared_tables_ref().is_some());
         });
         println!("API gather once-per-process combat tables={shared_tables:?}");
-        let pin = selected.selected_pin().unwrap();
         let banks = Arc::default();
         let run_key = api::selected::RunKey {
             slot: 209,
@@ -3315,7 +3313,7 @@ mod api_gather_seat {
                     config,
                     script,
                     Arc::clone(&selected),
-                    Arc::clone(&pin),
+                    api::selected::ClientRevision::R289,
                 ));
                 retained = Some(retained_memory);
             });

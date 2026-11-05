@@ -4,7 +4,9 @@ use std::sync::Arc;
 #[cfg(feature = "test-support")]
 #[test]
 fn ordered_real_native_dispatch_uses_packet_clock_after_session_reset() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     let _hook_reset = TickHookReset;
     let hook = crate::tick_engine_test_support::TickEngineTestHook::new("so3-wire");
     hook.bind_client(&mut rig.client, "so3-wire", Arc::clone(&rig.input));
@@ -210,7 +212,9 @@ fn ordered_packet_clock_older_raw_generation_is_stale_before_and_after_relog() {
 
 #[test]
 fn ordered_packet_clock_old_session_is_refused_at_the_same_relative_tick() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     rig.client.gens.player_info = 99;
     rig.snapshot.seed_tick(7);
     rig.snapshot.seed_player_info_generation(99);
@@ -259,12 +263,11 @@ fn ordered_packet_clock_old_session_is_refused_at_the_same_relative_tick() {
         !authority.live(),
         "the real session boundary revokes the owner"
     );
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let receipt = super::super::dispatch_native_server_ordered(
         &mut rig.client,
         super::super::OrderedDispatchContext {
             snapshot: &rig.snapshot,
-            selected: Some(&selected),
+            selected: Some(rig.selected.as_ref()),
             input: Some(&rig.input),
             builtin_gatherer_knife: false,
         },

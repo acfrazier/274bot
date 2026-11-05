@@ -1,8 +1,8 @@
-// Content indexes for the gathering family. Reads only the pinned content tree (`scripts`, `pack`, `maps`);
+// Content indexes for the gathering family. Reads only the local content tree (`scripts`, `pack`, `maps`);
 // never the engine, never the network. Every fact carries a content-relative source span.
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseMapsquarePath, parsePack, placementMapInputs, requireGatherText } from './common.ts';
+import { parseMapsquarePath, parsePack, placementMapFiles, requireGatherText } from './common.ts';
 
 /** One physical line range in a content file (1-based, inclusive). */
 export type Span = { file: string; first: number; last: number };
@@ -283,7 +283,7 @@ export function indexContent(content: string): ContentIndex {
         headers,
         blocks: (file) => blockCache.get(file) ?? blockCache.set(file, parseRs2Blocks(file, text(file))).get(file)!,
         text,
-        maps: () => (mapList ??= placementMapInputs(content).map((input) => ({ path: input.path, ...parseMapsquarePath(input.path) }))),
+        maps: () => (mapList ??= placementMapFiles(content).map((path) => ({ path, ...parseMapsquarePath(path) }))),
     };
 }
 

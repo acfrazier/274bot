@@ -350,6 +350,15 @@ export default class S2bCompat extends LoopingBot {{
 fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
+    if api::test_support::local_asset_path(
+        "WORLD_ENGINE_DIR",
+        "",
+        "real 289 engine content for survivability admission",
+    )
+    .is_none()
+    {
+        return;
+    }
     install_nav_logs();
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("owned account prefix");
     assert!(!prefix.is_empty() && prefix.len() <= 4);
@@ -488,59 +497,58 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
         );
         let cell_dir = directory.join(format!("compat-v1-hp{initial_hp}"));
         std::fs::create_dir_all(&cell_dir).expect("create compat evidence");
-        let receipt = {
-            let state = state.lock().expect("fixture state");
-            let input = admission::capture(&state.snapshot, state.members, None, false);
-            let food = state
-                .snapshot
-                .inventory()
-                .iter()
-                .filter(|item| item.def.name.as_deref() == Some("Lobster"))
-                .map(|item| item.count)
-                .sum::<i32>();
-            assert!(
-                food < 6 && input.hp > 0,
-                "the real script hook must consume food without death"
-            );
-            assert!(
-                state
-                    .frames
-                    .windows(2)
-                    .any(|frames| frames[1]["hp"].as_u64() > frames[0]["hp"].as_u64()),
-                "the real script hook must produce an observed HP rise"
-            );
-            assert!(
-                state.snapshot.tile().is_some_and(|here| {
-                    here.2 == destination.level
-                        && (here.0 - destination.x)
-                            .abs()
-                            .max((here.1 - destination.z).abs())
-                            <= 2
-                }),
-                "v1's legacy Reach(2) completion must be honored"
-            );
-            let logs = nav_logs(&name);
-            assert!(
-                logs.iter().any(
-                    |line| line["message"]
+        let receipt =
+            {
+                let state = state.lock().expect("fixture state");
+                let input = admission::capture(&state.snapshot, state.members, None, false);
+                let food = state
+                    .snapshot
+                    .inventory()
+                    .iter()
+                    .filter(|item| item.def.name.as_deref() == Some("Lobster"))
+                    .map(|item| item.count)
+                    .sum::<i32>();
+                assert!(
+                    food < 6 && input.hp > 0,
+                    "the real script hook must consume food without death"
+                );
+                assert!(
+                    state
+                        .frames
+                        .windows(2)
+                        .any(|frames| frames[1]["hp"].as_u64() > frames[0]["hp"].as_u64()),
+                    "the real script hook must produce an observed HP rise"
+                );
+                assert!(
+                    state.snapshot.tile().is_some_and(|here| {
+                        here.2 == destination.level
+                            && (here.0 - destination.x)
+                                .abs()
+                                .max((here.1 - destination.z).abs())
+                                <= 2
+                    }),
+                    "v1's legacy Reach(2) completion must be honored"
+                );
+                let logs = nav_logs(&name);
+                assert!(
+                    logs.iter().any(|line| line["message"]
                         .as_str()
                         .is_some_and(|message| message.contains("risk=")
-                            && message.contains("compat_v1=true"))
-                ),
-                "compat risk assessment must be in the real hostlog: {logs:?}"
-            );
-            assert!(
-                !logs.iter().any(|line| line["message"]
-                    .as_str()
-                    .is_some_and(|message| message.contains("escape="))),
-                "compat must not run an escape: {logs:?}"
-            );
-            json!({"request": "SURVIVABLE-NAV-S2B", "account": name,
-                "engine": format!("127.0.0.1:{}", host_play::live_ports::game_port()), "nav": profile.nav_identity().expect("nav identity").nav_sha256,
+                            && message.contains("compat_v1=true"))),
+                    "compat risk assessment must be in the real hostlog: {logs:?}"
+                );
+                assert!(
+                    !logs.iter().any(|line| line["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("escape="))),
+                    "compat must not run an escape: {logs:?}"
+                );
+                json!({"request": "SURVIVABLE-NAV-S2B", "account": name,
+                "engine": format!("127.0.0.1:{}", host_play::live_ports::game_port()),
                 "baseline": state.baseline, "assessment": seen_risk.expect("real assessment"),
                 "terminal": terminal, "observed_frames": state.frames, "hostlog": logs,
                 "final_hp": input.hp, "final_food": food, "final_tile": state.snapshot.tile()})
-        };
+            };
         std::fs::write(
             cell_dir.join("receipt.json"),
             serde_json::to_vec_pretty(&receipt).expect("JSON"),

@@ -16,8 +16,7 @@ pub use actions::{
     WalkSlotOutcomeKind, WalkSlotReady, WalkSlotRequest, WalkSlotStatus,
 };
 pub use catalogue::{
-    display_name_into, AuthenticatedServices, Catalogue, DisplayName, Entry, Meaning, Search,
-    SourceStatus, BANK_API_NOTE,
+    display_name_into, Catalogue, DisplayName, Entry, Meaning, Search, SourceStatus, BANK_API_NOTE,
 };
 pub use observations::{observed_services, ObservedService, MAX_OBSERVED_SERVICES};
 pub use routes::{

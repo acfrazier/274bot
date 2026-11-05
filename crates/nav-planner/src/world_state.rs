@@ -399,8 +399,8 @@ impl WorldState {
     }
 
     /// Attach the caller's resolved quest progress evidence (its immutable
-    /// provider snapshot, source quest family and freshness floor). A
-    /// refreshed provider replaces the previous evidence wholesale.
+    /// provider snapshot and causal freshness floor). A refreshed provider
+    /// replaces the previous evidence wholesale.
     pub fn with_quest_evidence(mut self, evidence: QuestEvidence) -> Self {
         self.quest_evidence = Some(evidence);
         self

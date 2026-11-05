@@ -9,12 +9,11 @@ use std::sync::Arc;
 
 use super::{
     available_levels, cached_remaining_path, cached_remaining_path_view, click_to_tile,
-    decode_sidecar_file, drop_flags_sidecar, ensure_flags_sidecar, flags_content_hash_count,
-    flags_load_count, flags_sidecar_for, flags_sidecar_state, flood_cache_occupied,
-    format_walkto_status, last_picker_layout, map_reach_bitset, pack, pan_by, picker_map_window,
-    picker_nested_in_game, reach_binding_occupied, reach_bitset, reset_flags_content_hash_count,
-    reset_flags_load_count, reset_route_cache, right_align_x, route_flatten_count,
-    set_navflags_binding, set_pack, set_reach_binding, sidecar_for_grid, snap,
+    decode_sidecar_file, drop_flags_sidecar, ensure_flags_sidecar, flags_load_count,
+    flags_sidecar_for, flags_sidecar_state, flood_cache_occupied, format_walkto_status,
+    last_picker_layout, map_reach_bitset, pack, pan_by, picker_map_window, picker_nested_in_game,
+    reach_binding_occupied, reach_bitset, reset_flags_load_count, reset_route_cache, right_align_x,
+    route_flatten_count, set_navflags_binding, set_pack, set_reach_binding, sidecar_for_grid, snap,
     walkto_actions_enabled, walkto_canvas_flags, walkto_footer_labels, walkto_selection_caption,
     walkto_window_flags, zoom_toward, FlagSidecar, FlagsSidecarState, WalktoCaption,
     ROUTE_THROUGH_ZONES_TOOLTIP,
@@ -1123,9 +1122,9 @@ fn picker_pack_uses_injected_arc_not_a_second_decode() {
 }
 
 #[test]
-fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
+fn flags_sidecar_preserves_geometry_and_drops_on_toggle_off() {
     let _guard = super::lock_nav_statics();
-    let dir = TestDir::new("flags-identity");
+    let dir = TestDir::new("flags-geometry");
     let path = dir.join("flags.navflags");
     let origin = WorldTile {
         x: 3200,
@@ -1135,116 +1134,37 @@ fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
     let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
     let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
-    reset_flags_content_hash_count();
-    set_navflags_binding(path.clone(), None, false);
-    ensure_flags_sidecar();
-    assert_eq!(
-        flags_sidecar_state(),
-        FlagsSidecarState::Refused("flags identity is unknown")
-    );
-    assert!(flags_sidecar_for(origin, 1, 1).is_none());
-    assert_eq!(flags_content_hash_count(), 0);
-
-    drop_flags_sidecar();
-    set_navflags_binding(path.clone(), Some("00".repeat(32)), false);
-    ensure_flags_sidecar();
-    assert_eq!(
-        flags_sidecar_state(),
-        FlagsSidecarState::Refused("flags sidecar hash mismatch")
-    );
-    assert!(flags_sidecar_for(origin, 1, 1).is_none());
-    assert_eq!(flags_content_hash_count(), 1);
-
-    drop_flags_sidecar();
-    set_navflags_binding(path.clone(), Some(digest), false);
+    set_navflags_binding(path);
     ensure_flags_sidecar();
     assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
-    assert_eq!(
-        flags_sidecar_for(origin, 1, 1)
-            .as_ref()
-            .map(|v| v.as_slice()),
-        Some(flags.as_slice())
-    );
-    assert_eq!(flags_content_hash_count(), 2);
+    let first = flags_sidecar_for(origin, 1, 1).unwrap();
+    assert_eq!(first.as_slice(), flags.as_slice());
+    ensure_flags_sidecar();
+    let second = flags_sidecar_for(origin, 1, 1).unwrap();
+    assert!(Arc::ptr_eq(&first, &second));
+    assert!(flags_sidecar_for(origin, 2, 1).is_none());
     drop_flags_sidecar();
     assert_eq!(flags_sidecar_state(), FlagsSidecarState::Unloaded);
     assert!(flags_sidecar_for(origin, 1, 1).is_none());
 }
 
 #[test]
-fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
+fn missing_and_malformed_flags_sidecars_remain_unavailable() {
     let _guard = super::lock_nav_statics();
-    let dir = TestDir::new("flags-bundled");
+    let dir = TestDir::new("flags-unavailable");
     let path = dir.join("flags.navflags");
-    let origin = WorldTile {
-        x: 3200,
-        z: 3200,
-        level: 0,
-    };
-    let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
-    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
-    std::fs::write(&path, &bytes).unwrap();
-    // Digest is still bound (identity names flags) but must not be rehashed.
-    let digest = nav_planner::manifest::hash_bytes(&bytes);
-
-    reset_flags_content_hash_count();
-    set_navflags_binding(path.clone(), Some(digest.clone()), true);
+    set_navflags_binding(path.clone());
     ensure_flags_sidecar();
-    assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
-    assert_eq!(
-        flags_sidecar_for(origin, 1, 1)
-            .as_ref()
-            .map(|v| v.as_slice()),
-        Some(flags.as_slice())
-    );
-    assert_eq!(
-        flags_content_hash_count(),
-        0,
-        "trusted bundled flags must not content-hash on first paint"
-    );
+    assert_eq!(flags_sidecar_state(), FlagsSidecarState::Missing);
 
-    // Per-session reuse: second ensure is a no-op and still does not hash.
-    ensure_flags_sidecar();
-    assert_eq!(flags_content_hash_count(), 0);
-    assert_eq!(
-        flags_sidecar_for(origin, 1, 1)
-            .as_ref()
-            .map(|v| v.as_slice()),
-        Some(flags.as_slice())
-    );
-
-    // Geometry mismatch still refuses paint application without a rehash.
-    assert!(flags_sidecar_for(origin, 2, 1).is_none());
-    assert_eq!(flags_content_hash_count(), 0);
-
-    drop_flags_sidecar();
-    // Explicit same-path override remains external and must hash.
-    set_navflags_binding(path.clone(), Some(digest), false);
-    ensure_flags_sidecar();
-    assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
-    assert_eq!(flags_content_hash_count(), 1);
-
-    drop_flags_sidecar();
-    set_navflags_binding(path.clone(), Some("00".repeat(32)), false);
-    ensure_flags_sidecar();
-    assert_eq!(
-        flags_sidecar_state(),
-        FlagsSidecarState::Refused("flags sidecar hash mismatch")
-    );
-    assert_eq!(flags_content_hash_count(), 2);
-
-    // Malformed header refused after trusted bind without hashing.
-    drop_flags_sidecar();
     std::fs::write(&path, b"not-a-flags-sidecar").unwrap();
-    set_navflags_binding(path.clone(), Some("ab".repeat(32)), true);
+    set_navflags_binding(path);
     ensure_flags_sidecar();
     assert_eq!(
         flags_sidecar_state(),
         FlagsSidecarState::Refused("flags sidecar is unreadable")
     );
-    assert_eq!(flags_content_hash_count(), 2);
 }
 
 #[test]
@@ -1397,11 +1317,10 @@ fn flags_load_once_on_ensure_and_drop_releases() {
     let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
     let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     drop_flags_sidecar();
     reset_flags_load_count();
-    set_navflags_binding(path.clone(), Some(digest), true);
+    set_navflags_binding(path);
     assert_eq!(flags_load_count(), 0);
     assert_eq!(flags_sidecar_state(), FlagsSidecarState::Unloaded);
 

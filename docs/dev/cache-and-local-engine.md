@@ -55,17 +55,21 @@ The standalone `unpack-cache` layout remains separate: its child folder is
 the first 8 bytes of SHA-256(`versionlist`), encoded as 16 hex characters,
 not a hash of the `/crc` table.
 
-Nav pack: an ordinary application build bakes and stages the selected
-**build-time** revision’s pack next to the binary
-(`target/<profile>/nav/289/` by default via `BOT_NAV_REVISION`, default
-**289**), so WalkTo has a bound nav world with no manual step. Missing
-canonical inputs fail the build (`BOT_NAV_BUILD=skip` opts out;
-`BOT_NAV_REVISION=274` builds 274). Runtime profile revision and
-build-time nav revision should match the world you play. `nav-pack` stays
-for custom bakes: `cargo run -p nav-bake --bin nav-pack` over the content maps
-tree (output `$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`,
-version byte **18**; v17 and older are `BadVersion` and must be rebaked).
-Details: [docs/api/nav.md](../api/nav.md).
+Before a product build, generate game data and navigation from your own engine
+and content checkouts with the canonical builder:
+
+```bash
+python tools/local-data/build.py
+```
+
+See [the generation guide](selected-data-generation.md) for the required
+environment and the direct `nav-pack` rebake command. The host build stages
+the five existing payloads from `target/local-data/nav/<revision>/`; it does
+not bake them. `BOT_NAV_BUILD=skip` stages nothing. `BOT_NAV_REVISION` selects
+the staged revision. `NAV_PACK` is a runtime override, not a build input.
+The current pack format is `274V19`; older incompatible packs fail with
+`BadVersion`. The pack and its flags, reachability, canlight, and POI sidecars
+are ordinary local data, not a published reference.
 
 Catalog scripts (optional): set **`$RS2B0T`** or pass `--catalog` to an
 rs2b0t checkout so panel/TUI can Browse/Start catalog cards.

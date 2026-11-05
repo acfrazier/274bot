@@ -108,6 +108,10 @@ export default class T extends LoopingBot {
 
 #[test]
 fn a_bank_walk_across_a_reconnect_goes_on_to_open_the_bank() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
+
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -268,6 +272,10 @@ export default class T extends LoopingBot {
 
 #[test]
 fn kept_bank_transfer_steps_take_the_closed_bank_path_without_replay() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
+
     use script::native::snapshot_source::{ItemRowInput, NativeFactsInput};
     use script::native::{HostEffect, InteractionReceipt};
 
@@ -390,6 +398,10 @@ export default class T extends LoopingBot {{
 
 #[test]
 fn non_kept_reset_aborts_bank_opening_and_settles_its_promise_once() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
+
     use script::native::HostEffect;
 
     let source = r#"

@@ -3,6 +3,8 @@ use script::native::snapshot_source::{
 };
 use script_js::{LoadIsolate, LoadShape};
 
+mod common;
+
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
 }
@@ -93,6 +95,9 @@ fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
 
 #[test]
 fn posted_spell_db_and_staff_runes_construct_later_superheater_fire_staves() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SPELL_DB, STAFF_RUNES } from '../../data/spelldb.js';
 export default class T extends LoopingBot {
@@ -146,6 +151,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn casts_available_and_withdraw_list_use_rust_staff_substitution() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { castsAvailable, runeWithdrawList, spellButtonCom } from '../../api/combat/CombatStyleLogic.js';
 export default class T extends LoopingBot {
@@ -190,6 +198,9 @@ export default class T extends LoopingBot {
 /// `runeWithdrawList` converts `casts` once per cost (`c.count * casts`).
 #[test]
 fn casts_available_calls_held_per_remaining_cost_in_order() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { castsAvailable, runeWithdrawList } from '../../api/combat/CombatStyleLogic.js';
 const capture = (fn) => { try { return fn(); } catch (e) { return 'THREW ' + e.name + ': ' + e.message; } };

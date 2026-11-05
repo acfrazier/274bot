@@ -257,6 +257,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn life_ticks_are_revision_independent_on_selected_caches() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { ENT_LIFE_TICKS, ENT_NPC_IDS, isEntNpcId } from '@rs2b0t/api';
 export default class T extends LoopingBot {

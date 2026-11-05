@@ -254,9 +254,9 @@ Example: `crates/script-js/examples/supply_helpers_v2.ts`.
 
 ## Gather query helpers
 
-Three sync `HelperResult` methods over the selected pin's typed gathering
-catalog (the checked `gathering.json` family: woodcutting, mining and fishing
-methods, their targets, products, tools, consumed bait, requirements and world
+Three sync `HelperResult` methods over the selected revision's typed gathering
+catalog (the `gathering.json` family: woodcutting, mining and fishing methods,
+their targets, products, tools, consumed bait, requirements and world
 placements). They are not Promises, not `request()` ops, and they do not push
 `h.interact`. `bestAxe` and `bestPickaxe` are not `NativeApi` members
 (`api.bestAxe` is `undefined`); the rs2b0t `Tools` exports of those names are
@@ -268,11 +268,10 @@ separate native calls for compat scripts.
 | `gatherResource({ name })` | `{ rows }` | `invalid-args`, `missing-selected-data`, `family-unavailable:gather_methods`, `unknown-resource` |
 | `gatherPlacements({ resource, region, limit, after? })` | `{ rows, truncated, next, resource_ids, qualification, gaps? }` | `invalid-args`, `missing-region`, `missing-selected-data`, `family-unavailable:gather_placements`, `unknown-resource` |
 
-The catalog is prepared once per selected pin the first time a helper needs
-it, shared with every other holder, and released after its last holder. An
-unbound pin, or a family whose bytes, manifest digest, extractor schema or
-identities do not match the pin, is `family-unavailable:*` and is never an
-empty list.
+The catalog is prepared once per selected revision when a helper first needs
+it. The process shares it with every other holder until the last holder
+releases it. An absent family returns `family-unavailable:*`; malformed
+schema or structure reports a data error instead of an empty list.
 
 A method row is one tree kind, one rock kind or one fishing option of one spot
 type (`fishing.freshfish.op1` is Lure, `.op3` is Bait). It carries `id`,
@@ -291,7 +290,7 @@ content value and the source-derived tick bounds.
 `gatherMethods()` and `gatherMethods({})` omit the skill. Accepted skills, after
 trim and ASCII case-fold, are only `woodcutting`, `mining`, and `fishing`. A
 skill filter keeps the woodcutting, mining, fishing content order and does not
-filter coverage. `coverage` is the loaded pin's full gap list, beside `rows`:
+filter coverage. `coverage` is the loaded catalog's full gap list, beside `rows`:
 one entry per incomplete method cell and one per entity content could not
 classify (`class: 'unclassified'`, with the content reason such as
 `custom-handler`). `gatherResource` matches `resources` (trim, ASCII
@@ -741,9 +740,9 @@ and `bank_v2.ts`.
 
 ## Quest query helpers
 
-Two sync `HelperResult` methods over the selected pin's quest-identity family.
-They are not Promises, not `request()` ops, and they do not read varp 101.
-Both methods read `quest_identity` only. There is no second writer field.
+Two sync `HelperResult` methods over the selected revision's quest-identity
+facts. They are not Promises, not `request()` ops, and they do not read varp
+101. Both methods read `quest_identity` only. There is no second writer field.
 
 | Method | OK | Errors |
 | --- | --- | --- |
@@ -812,8 +811,8 @@ normal view returns. No additional script action or snapshot field is needed.
 ## Clue helpers
 
 Five sync `HelperResult` fact reads and one owned session with a synchronous
-`begin` plus one awaited `run`. `row` and `heldStep` read the selected pin's
-landed trail membership family; `packPlan` is pure slot arithmetic over the
+`begin` plus one awaited `run`. `row` and `heldStep` read the selected revision's
+landed trail membership facts; `packPlan` is pure slot arithmetic over the
 caller's own numbers and reads nothing at all; `hardKit` is a pure hard-clue kit
 status over the caller's own facts and reads nothing at all; `keep` is the pure
 bank-stop keep predicate over the caller's own names and reads nothing at all.

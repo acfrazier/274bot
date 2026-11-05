@@ -419,6 +419,7 @@ pub struct TuiSession {
     core: OperatorSession<()>,
     auto_world: Option<u16>,
     pub error: Option<String>,
+    vault_refusal: Option<frontend_core::saved_data::SavedDataRefusal>,
     /// The banner message's expiry clock ([`Self::expire_error`]).
     error_expiry: frontend_core::ErrorExpiry<ErrorNeed>,
     /// All profile names (for the strip's slot list), in vault order.
@@ -619,7 +620,8 @@ pub(crate) mod seam {
             let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
             launcher.set_play_host("127.0.0.1");
             let session =
-                TuiSession::with_launcher(launcher, frontend_core::launch::InstancePermit::skip());
+                TuiSession::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
+                    .expect("isolated script settings are readable");
             Self { session }
         }
 
@@ -736,6 +738,7 @@ impl TuiSession {
         let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
         launcher.set_play_host(&options.host);
         Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
+            .expect("isolated script settings are readable")
     }
 
     /// A session bound to the prepared host `template`.
@@ -744,19 +747,18 @@ impl TuiSession {
         let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
         launcher.install_template(frontend_core::launch::ProfileTemplate::from_host(template));
         Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
+            .expect("isolated script settings are readable")
     }
 
     fn with_launcher(
         launcher: frontend_core::launch::ProfileLauncher,
         permit: frontend_core::launch::InstancePermit,
-    ) -> Self {
+    ) -> Result<Self, frontend_core::ScriptSettingsError> {
         #[cfg(test)]
         let _quester_paths_test_guard = seam::lock_quester_paths_test_state();
         #[cfg(test)]
         frontend_core::test_support::IsolatedStores::ensure_thread();
-        // A missing store is a first run; a refused or corrupt one is said out
-        // loud (and nothing is saved over a refused one).
-        let (scripts, restore_error) = frontend_core::Scripts::open_default();
+        let (scripts, restore_error) = frontend_core::Scripts::open_default()?;
         if let Some(error) = restore_error {
             eprintln!("tui-play: {error}");
         }
@@ -776,12 +778,13 @@ impl TuiSession {
         // This front end draws no game image: the capacity warning says so.
         core.declare_headless_render();
         let background_ack = frontend_core::resources::background_bots_acked(&preferences);
-        Self {
+        Ok(Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
             core,
             auto_world: None,
             error: None,
+            vault_refusal: None,
             error_expiry: frontend_core::ErrorExpiry::default(),
             names: Vec::new(),
             mainland: false,
@@ -834,7 +837,7 @@ impl TuiSession {
             notice_feedback: None,
             #[cfg(test)]
             _quester_paths_test_guard,
-        }
+        })
     }
 
     /// The server profile this session is bound to, once bound.
@@ -902,6 +905,7 @@ impl TuiSession {
     /// run, when there is no vault file yet (`CreateVault`), and start the
     /// play.
     fn unlock_at(&mut self, path: &Path, pass: &str) -> Result<(), String> {
+        self.vault_refusal = None;
         let (launch, hook) = self.play_launch();
         let command = if path.is_file() {
             self.core
@@ -917,8 +921,11 @@ impl TuiSession {
         let submitted = core
             .submit(command, Targets::Application, &mut surface)
             .map_err(|error| error.to_string())?;
-        if let Some(reason) = self.core.command_failure(submitted.request()) {
-            return Err(reason.to_string());
+        let request = submitted.request();
+        let failure = self.core.command_failure(request).map(str::to_owned);
+        self.vault_refusal = self.core.take_vault_refusal(request);
+        if let Some(reason) = failure {
+            return Err(reason);
         }
         self.play_started();
         Ok(())
@@ -1628,7 +1635,7 @@ impl TuiSession {
 
     fn map_context(&self, app: &TuiApp) -> Option<frontend_core::walk_map::WalkMapContext> {
         let name = app.focused_name()?;
-        let nav = self.bound()?.nav_identity()?;
+        let nav = self.bound()?.nav_pack_id()?;
         Some(self.core.walk_map_context(
             Some(&name),
             nav,
@@ -1748,12 +1755,12 @@ impl TuiSession {
             return;
         };
         let identity = ready.identity();
-        let Some(nav) = profile.nav_identity() else {
+        let Some(nav) = profile.nav_pack_id() else {
             return;
         };
         let data = profile.game_data().or_else(|| self.core.game_data());
         let same = app.map_catalogue.as_ref().is_some_and(|catalogue| {
-            catalogue.identity() == identity && catalogue.nav_identity() == nav
+            catalogue.identity() == identity && catalogue.nav_pack_id() == nav
         });
         if same && (self.map_catalogue_named || data.is_none()) {
             return;
@@ -4892,6 +4899,14 @@ fn prompt_instance_conflict(conflict: &frontend_core::launch::InstanceConflict) 
         "c" | "C" | "continue" | "Continue" | "Continue anyway"
     )
 }
+fn prompt_saved_data(refusal: &str) -> bool {
+    eprintln!("{refusal}");
+    eprint!("Move these files aside and continue? [y/N]: ");
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    matches!(line.trim(), "y" | "Y" | "yes" | "Yes")
+}
 
 /// Run the interactive (or `--live`) TUI: unlock, load + log in, event loop.
 fn new_app(title: impl Into<String>, preferences: &UiPreferences) -> TuiApp {
@@ -4956,6 +4971,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
     };
     let skip_lock = !matches!(mode, RunMode::Interactive) || memory;
+    let interactive_saved_data = !skip_lock && std::io::IsTerminal::is_terminal(&std::io::stdin());
     let permit = match frontend_core::launch::acquire_instance(
         frontend_core::launch::InstanceKind::Tui,
         skip_lock,
@@ -4969,6 +4985,40 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
         Err(e) => return Err(format!("instance lock: {e}")),
     };
+    let root = frontend_core::saved_data::StateRoot::new(
+        frontend_core::scripts::paths::bot_home().join(".274bot"),
+    );
+    let startup = frontend_core::saved_data::SavedDataStartup::check(&root).map_err(|error| {
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+        message
+    })?;
+    let refusal_message = startup.refusal().map(ToString::to_string);
+    if let Some(message) = refusal_message {
+        if !interactive_saved_data || !prompt_saved_data(&message) {
+            let error = startup
+                .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
+                .expect_err("the preflight found refused saved data");
+            let message = error.to_string();
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+            return Err(message);
+        }
+        startup
+            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+            .map_err(|error| {
+                let message = error.to_string();
+                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+                message
+            })?;
+    } else {
+        startup
+            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+            .map_err(|error| {
+                let message = error.to_string();
+                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+                message
+            })?;
+    }
     let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
     launcher
         .configure(
@@ -5004,7 +5054,11 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             ));
         }
     }
-    let mut session = TuiSession::with_launcher(launcher, permit);
+    let mut session = TuiSession::with_launcher(launcher, permit).map_err(|error| {
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+        message
+    })?;
     session.auto_world = args.world;
     session
         .bound()
@@ -5081,11 +5135,38 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
                     return Err(unknown_profile_error(name));
                 }
             }
-            let pass =
+            let mut pass =
                 frontend_core::launch::obtain_passphrase("tui-play", args.pass_stdin, vault_exists)
                     .map_err(|error| error.to_string())?;
-            if let Err(e) = session.unlock_at(&vault_path, &pass) {
-                return Err(format!("vault {}: {e}", vault_path.display()));
+            if let Err(error) = session.unlock_at(&vault_path, &pass) {
+                if let Some(refusal) = session.vault_refusal.take() {
+                    let message = refusal.to_string();
+                    api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play vault unlock: {message}");
+                    if interactive_saved_data && prompt_saved_data(&message) {
+                        refusal.resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+                            .map_err(|error| {
+                                let message = error.to_string();
+                                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play vault unlock: {message}");
+                                message
+                            })?;
+                        pass = frontend_core::launch::obtain_passphrase(
+                            "tui-play",
+                            args.pass_stdin,
+                            false,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        session
+                            .unlock_at(&vault_path, &pass)
+                            .map_err(|error| format!("vault {}: {error}", vault_path.display()))?;
+                    } else {
+                        return Err(refusal
+                            .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
+                            .expect_err("Keep returns the typed vault refusal")
+                            .to_string());
+                    }
+                } else {
+                    return Err(format!("vault {}: {error}", vault_path.display()));
+                }
             }
             // The passphrase has done its job; do not keep it through the run.
             drop(pass);

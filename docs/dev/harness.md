@@ -389,26 +389,24 @@ inventory tab to become available.
 ```sh
 ENGINE_DIR=<engine-dir> BOT_LIVE_NAME_PREFIX=ge BOT_CPU=1 BOT_NAV_BUILD=skip \
   isohome target/release/tui-play --profile local-289 \
-  --nav-pack <274bot-289-v18.navpack> --nav-flags <274bot-289-v18.navflags> \
+  --nav-pack <target/local-data/nav/289/274bot.navpack> \
+  --nav-flags <target/local-data/nav/289/274bot.navflags> \
   --catalog <rs2b0t> --live script_guardian_skill_river_troll
 ```
 
 ## Running a scenario
 
 Start the local engine for the profile under test and provide its client
-cache. Application builds already bake and stage nav for the selected
-**build-time** revision (`BOT_NAV_REVISION`, default **289**) next to the
-binary, so ordinary WalkTo needs no manual pack step. Use `nav-pack` only for
-deliberate custom-input bakes. `RS2B0T` (or `--catalog DIR`) names the
-external catalog checkout for scenarios that start a catalog script:
+cache. Before a product build, generate game data and navigation from your own
+engine and content checkouts with `python tools/local-data/build.py`. The host
+build stages existing local payloads; `BOT_NAV_BUILD=skip` stages none.
+`NAV_PACK` and `--nav-pack` select runtime overrides. `RS2B0T` (or `--catalog
+DIR`) names the external catalog checkout for scenarios that start a catalog
+script:
 
 ```sh
 export ENGINE_DIR=/absolute/path/to/engine
 export RS2B0T=/absolute/path/to/catalog
-# optional custom bake (not required for default bundled nav):
-# export NAV_PACK=/absolute/output/274bot.navpack
-# export NAV_FLAGS=/absolute/output/274bot.navflags
-# cargo run --locked --release -p nav-bake --bin nav-pack
 
 cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
 cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_thiever
@@ -1096,7 +1094,7 @@ PNG with a matching JSON/Core record in a per-run capture folder under
 `$LIVE_EVIDENCE_DIR`; inspect that image alongside the receipt before
 accepting the live proof. The final receipt's `tile` is normalized to
 `local_player.tile`. An explicit navigation pack must have its
-`.navpack.json`, `.navreach`, `.navflags`, `.navcanlight` and `.navpois` files
+`.navreach`, `.navflags`, `.navcanlight` and `.navpois` files
 beside it.
 
 The ignored offline replay `replay_walk_guard_w1_retained_receipts` applies
@@ -1422,13 +1420,10 @@ not apply (a headless `tui-play` has no adapter or panel frames):
   `adapter_selections` counting how many times the panel selected one (more than
   one means the GPU stack was rebuilt). It is recorded once, in the run metadata,
   without `BOT_DEBUG` and without a log line.
-- `game_data`: the profile's generated-facts trust decision with its reason:
-  `attached`, or withheld because the selection is `unsupported-server`, the
-  cache does not match the generated asset (`cache-identity`), or a pinned
-  generator source failed verification (`source-rejected`, with how many of the
-  inputs failed and the first failures by root, pinned path and kind). Facts are
-  withheld exactly as before; only the cause is recorded, and the same cause is
-  logged once at warn level when a profile is bound for play.
+- `game_data`: whether generated facts were attached for the selected supported
+  revision. Only an unsupported selection withholds them
+  (`unsupported-server`). Cache-identity and source-audit reasons are no longer
+  part of this status.
 - Startup timeline, in seconds from the process entry the frontend `main`
   recorded: `startup_window_created_s`, `startup_gpu_ready_s`,
   `startup_first_render_s`, `startup_first_frame_presented_s` (the first

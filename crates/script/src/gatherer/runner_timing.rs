@@ -68,7 +68,7 @@ impl Gatherer {
                     .op;
                 self.prepared
                     .selected
-                    .server_ordered_catalog(cx.pin())
+                    .server_ordered_catalog()
                     .ok()?
                     .builtin_gatherer_fishing_operation(id, operation)?;
                 Some(id)

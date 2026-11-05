@@ -5,6 +5,8 @@ use client::io::ClientRevision;
 use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
 
+mod common;
+
 fn facts(revision: ClientRevision) -> api::game_data::TrailFacts {
     api::game_data::for_revision(revision)
         .unwrap()
@@ -44,6 +46,9 @@ fn missing_family_is_the_method_token_before_the_key() {
 
 #[test]
 fn every_landed_row_is_copied_without_invented_fields() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let facts = facts(revision);
         assert_eq!(facts.rows.len(), 257);
@@ -87,6 +92,9 @@ fn every_landed_row_is_copied_without_invented_fields() {
 
 #[test]
 fn the_bounded_row_is_access_constrained_and_not_playable() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let sextant = row(revision, CluePin::Id(3554)).unwrap();
         assert_eq!(sextant["alias"], "trail_clue_hard_sextant028");
@@ -125,6 +133,9 @@ fn the_bounded_row_is_access_constrained_and_not_playable() {
 
 #[test]
 fn params_stay_raw_strings_in_file_order_and_empty_arrays_stay() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let simple = row(revision, CluePin::Id(2677)).unwrap();
         assert_eq!(
@@ -155,6 +166,9 @@ fn params_stay_raw_strings_in_file_order_and_empty_arrays_stay() {
 
 #[test]
 fn non_members_and_challenge_rows_are_unknown_id() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         for id in [
             3533,
@@ -546,6 +560,9 @@ fn data_without_trails() -> std::sync::Arc<api::game_data::SelectedGameData> {
 
 #[test]
 fn v2_clue_row_is_a_sync_helper_result() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -628,6 +645,9 @@ export function tick(api) {
 
 #[test]
 fn v2_clue_row_rejects_a_converted_id() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -691,6 +711,9 @@ export function tick(api) {
 
 #[test]
 fn v2_clue_held_step_is_a_sync_helper_result_over_the_posted_page() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -733,6 +756,9 @@ export function tick(api) {
 
 #[test]
 fn v2_clue_held_step_takes_the_first_held_step_and_else_none_held() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -872,6 +898,9 @@ export function tick(api) {
 
 #[test]
 fn example_clue_facts_v2_is_one_read_only_row_call() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("clue_facts_v2.ts");
@@ -907,6 +936,9 @@ fn example_clue_facts_v2_is_one_read_only_row_call() {
 
 #[test]
 fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("clue_held_step_v2.ts");
@@ -942,6 +974,9 @@ fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
 
 #[test]
 fn v2_clue_run_without_hooks_defaults_enabled_true_and_progresses() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 let started = false;
@@ -1029,6 +1064,9 @@ export async function tick(api) {
 /// settles the one promise.
 #[test]
 fn v2_clue_run_invokes_hooks_and_maps_wait_walk_loc_and_terminal_yield() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 let started = false;
@@ -1311,6 +1349,9 @@ fn clue_stock(
 
 #[test]
 fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     const PASS: i32 = 1854;
     const SHANTAY: i32 = 836;
     const DEST: (i32, i32, i32) = (3209, 3218, 1);
@@ -1491,6 +1532,9 @@ fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
 
 #[test]
 fn v2_clue_run_reads_guarded_combat_scene_and_redigs_owned_death() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_live_clue_run();
     let page = [(2723, 1), (952, 1)];
     let names = [(952, "Spade")];
@@ -1530,6 +1574,9 @@ fn v2_clue_run_reads_guarded_combat_scene_and_redigs_owned_death() {
 
 #[test]
 fn v2_clue_run_abandons_a_keeper_row_and_refuses_the_next_begin() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 let phase = 0;
@@ -1618,6 +1665,9 @@ fn puzzle_rows(solved: bool) -> Vec<script::native::snapshot_source::ItemRowInpu
 
 #[test]
 fn v2_clue_run_reads_puzzle_board_and_generation() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_live_clue_run();
     let page = [(2794, 1), (2795, 1)];
     assert_eq!(

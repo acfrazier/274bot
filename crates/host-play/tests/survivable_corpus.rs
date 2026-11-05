@@ -38,7 +38,6 @@ const DEFAULT_GUIDE_67: &str = "/Volumes/dev-scratch-2/274bot-worktrees/quest-pa
 const DEFAULT_OUTPUT: &str = "/Volumes/dev-scratch/274bot-evidence/SURVIVABLE-P1C/corpus";
 const GUIDE_25_PIN: &str = "fcc930b755794f0c7d02d024a2c450731a16ce14";
 const GUIDE_67_PIN_PREFIX: &str = "764a49853";
-const PACK_SHA256: &str = "4e8ab5af4694cf6722ed3836c3e1f42e9ac1be136d4d1127c7db698f4fc6500b";
 
 #[derive(Clone)]
 struct Loadout {
@@ -89,22 +88,64 @@ fn export_survivable_p1c_corpus_and_diff() {
 
 fn export() -> Result<(), String> {
     let output = env_path("SURVIVABLE_CORPUS_OUT_DIR", DEFAULT_OUTPUT);
-    fs::create_dir_all(&output).map_err(|e| format!("create output {}: {e}", output.display()))?;
-    let pack_path = env_path("NAV_PACK", DEFAULT_PACK);
-    let pack_bytes = fs::read(&pack_path)
-        .map_err(|e| format!("read selected pack {}: {e}", pack_path.display()))?;
-    let pack_sha = sha256(&pack_bytes);
-    if pack_sha != PACK_SHA256 {
-        return Err(format!(
-            "selected v17 pack digest mismatch: expected {PACK_SHA256}, observed {pack_sha}"
-        ));
+    let Some(pack_path) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        DEFAULT_PACK,
+        "real navigation pack for the survivability corpus",
+    ) else {
+        return Ok(());
+    };
+    if api::test_support::local_asset_path(
+        "",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api/data/game-data/289.json"
+        ),
+        "revision 289 game data for the survivability corpus",
+    )
+    .is_none()
+    {
+        return Ok(());
     }
+    let Some(query_path) = api::test_support::local_asset_path(
+        "SURVIVABLE_QUERY_FILE",
+        DEFAULT_QUERY,
+        "real survivability query corpus",
+    ) else {
+        return Ok(());
+    };
+    let Some(guide_25_root) = api::test_support::local_asset_path(
+        "SURVIVABLE_GUIDE_25_ROOT",
+        DEFAULT_GUIDE_25,
+        "real 25-guide source checkout",
+    ) else {
+        return Ok(());
+    };
+    let Some(guide_67_root) = api::test_support::local_asset_path(
+        "SURVIVABLE_GUIDE_67_ROOT",
+        DEFAULT_GUIDE_67,
+        "real 67-guide source checkout",
+    ) else {
+        return Ok(());
+    };
+    let Some(design_r2_path) = api::test_support::local_asset_path(
+        "",
+        "/Volumes/dev-scratch/274bot-evidence/SURVIVABLE-ACCURACY/design-r2.md",
+        "survivability design R2 document",
+    ) else {
+        return Ok(());
+    };
+    let Some(design_r4_path) = api::test_support::local_asset_path(
+        "",
+        "/Volumes/dev-scratch/274bot-evidence/SURVIVABLE-ACCURACY/design-r4.md",
+        "survivability design R4 document",
+    ) else {
+        return Ok(());
+    };
+    fs::create_dir_all(&output).map_err(|e| format!("create output {}: {e}", output.display()))?;
 
     let selected = api::game_data::for_revision(ClientRevision::R289)
         .map_err(|e| format!("selected R289 game data: {e}"))?;
-    let pin = selected
-        .selected_pin()
-        .map_err(|e| format!("selected R289 pin: {e:?}"))?;
     let combat = CombatTables::build(std::sync::Arc::clone(&selected))
         .map_err(|e| format!("build R289 combat tables: {e:?}"))?;
     let risks = RiskTables::build(&combat);
@@ -125,8 +166,7 @@ fn export() -> Result<(), String> {
     let path_schema_path = worktree.join("crates/script/tests/path_schema.rs");
     let w4_source = source_file("w4_perf_corpus", &w4_path)?;
     let path_schema_source = source_file("script_path_schema", &path_schema_path)?;
-    let source_roots = load_guide_roots()?;
-    let query_path = env_path("SURVIVABLE_QUERY_FILE", DEFAULT_QUERY);
+    let source_roots = load_guide_roots(guide_25_root, guide_67_root)?;
     let query_bytes = fs::read(&query_path)
         .map_err(|e| format!("read calculator query file {}: {e}", query_path.display()))?;
     let query_sha = sha256(&query_bytes);
@@ -177,19 +217,6 @@ fn export() -> Result<(), String> {
     let model = detect_model(&records)?;
     let guide_coverage = guide_coverage(&inputs);
     let corpus_signature = input_signature(&records)?;
-    let nav_pin_json = json!({
-        "revision": format!("{:?}", pin.revision),
-        "engine_commit": pin.engine_commit.as_ref(),
-        "content_commit": pin.content_commit.as_ref(),
-        "cache_id": pin.cache_id.as_ref(),
-        "content_id": pin.content_id.as_ref(),
-        "nav_sha256": hex(&pin.nav_sha256),
-        "flags_sha256": hex(&pin.flags_sha256),
-        "schema": pin.schema,
-        "manifest_sha256": hex(&pin.manifest_sha256),
-    });
-    let flags_path = pack_path.with_extension("navflags");
-    let navflags_sha = fs::read(&flags_path).ok().map(|bytes| sha256(&bytes));
     let artifact = json!({
         "schema": "survivable-p1c-corpus-v1",
         "model": model,
@@ -201,16 +228,11 @@ fn export() -> Result<(), String> {
             "feature_flags": "ordinary host-play integration-test features; no model-selection product flag",
         },
         "selected_data": {
-            "client_revision": "R289",
-            "selected_pin": nav_pin_json,
+            "client_revision": selected.revision(),
             "combat_facts_version": selected.npc_names().map(|rows| rows.combat_facts_version),
         },
         "selected_navigation": {
             "path": pack_path.display().to_string(),
-            "sha256": pack_sha,
-            "expected_sha256": PACK_SHA256,
-            "sibling_navflags_path": flags_path.display().to_string(),
-            "sibling_navflags_sha256": navflags_sha,
             "pack_version": "reference-v17",
         },
         "sources": {
@@ -218,8 +240,8 @@ fn export() -> Result<(), String> {
             "path_schema": path_schema_source,
             "query_file": query_source,
             "guides": source_roots,
-            "design_r2": source_file("design_r2", Path::new("/Volumes/dev-scratch/274bot-evidence/SURVIVABLE-ACCURACY/design-r2.md"))?,
-            "design_r4": source_file("design_r4", Path::new("/Volumes/dev-scratch/274bot-evidence/SURVIVABLE-ACCURACY/design-r4.md"))?,
+            "design_r2": source_file("design_r2", &design_r2_path)?,
+            "design_r4": source_file("design_r4", &design_r4_path)?,
         },
         "retained_layout_sizes_bytes": {
             "script::combat::risk::RouteAssessment": std::mem::size_of::<script::combat::risk::RouteAssessment>(),
@@ -261,6 +283,13 @@ fn export() -> Result<(), String> {
     write_json(&output.join(file_name), &artifact)?;
     if model == "p1c_probability" {
         let old_path = output.join("p1b-worst.json");
+        let Some(old_path) = api::test_support::local_asset_path(
+            "",
+            &old_path.to_string_lossy(),
+            "approved P1-B survivability corpus",
+        ) else {
+            return Ok(());
+        };
         let old: Value = serde_json::from_slice(
             &fs::read(&old_path)
                 .map_err(|e| format!("read approved P1-B corpus {}: {e}", old_path.display()))?,
@@ -323,18 +352,10 @@ fn source_file(label: &str, path: &Path) -> Result<Value, String> {
     }))
 }
 
-fn load_guide_roots() -> Result<Value, String> {
+fn load_guide_roots(guide_25_root: PathBuf, guide_67_root: PathBuf) -> Result<Value, String> {
     let roots = [
-        (
-            "guide_25",
-            env_path("SURVIVABLE_GUIDE_25_ROOT", DEFAULT_GUIDE_25),
-            GUIDE_25_PIN,
-        ),
-        (
-            "guide_67",
-            env_path("SURVIVABLE_GUIDE_67_ROOT", DEFAULT_GUIDE_67),
-            GUIDE_67_PIN_PREFIX,
-        ),
+        ("guide_25", guide_25_root, GUIDE_25_PIN),
+        ("guide_67", guide_67_root, GUIDE_67_PIN_PREFIX),
     ];
     let mut result = Map::new();
     for (name, root, expected_pin) in roots {

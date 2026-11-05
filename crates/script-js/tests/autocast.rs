@@ -156,6 +156,9 @@ fn missing_controls_throw_and_do_not_send() {
 
 #[test]
 fn unknown_spell_refuses_without_send() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { Autocast } from '../../api/magic/Autocast.js';
 export default class T extends LoopingBot {
@@ -182,6 +185,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn staff_not_attached_refuses_without_send() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let tabs = [SideTabIfaceInput { index: 0, id: 192 }];
     let mut snap = base_snapshot();
@@ -195,6 +201,9 @@ fn staff_not_attached_refuses_without_send() {
 
 #[test]
 fn initially_armed_reads_posted_varp_on_both_selected_caches() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { Autocast } from '../../api/magic/Autocast.js';
 export default class T extends LoopingBot {
@@ -230,6 +239,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn native_autocast_does_not_roundtrip_js_snapshot_observations() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let staff = [SideTabIfaceInput { index: 0, id: 328 }];
     let idle = [VarpInput {
@@ -260,6 +272,9 @@ fn native_autocast_does_not_roundtrip_js_snapshot_observations() {
 
 #[test]
 fn arm_three_presses_across_delta_omissions_then_posted_armed_state() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let mut encoder = IsolateBuf::new();
     let mut last = None;
@@ -314,6 +329,9 @@ fn arm_three_presses_across_delta_omissions_then_posted_armed_state() {
 
 #[test]
 fn stale_chooser_times_out_after_choose() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let staff = [SideTabIfaceInput { index: 0, id: 328 }];
     let mut snap = base_snapshot();
@@ -336,6 +354,9 @@ fn stale_chooser_times_out_after_choose() {
 
 #[test]
 fn pause_and_hold_freeze_mid_arm_without_late_press() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let staff = [SideTabIfaceInput { index: 0, id: 328 }];
     let mut snap = base_snapshot();
@@ -386,6 +407,9 @@ fn pause_and_hold_freeze_mid_arm_without_late_press() {
 // settled `message` and is what the caller's `log` receives.
 #[test]
 fn a_timed_out_press_logs_the_frozen_line_from_rust() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let staff = [SideTabIfaceInput { index: 0, id: 328 }];
     let mut snap = base_snapshot();

@@ -2973,10 +2973,7 @@ mod tests {
         let protected = supply::protected_ids(&prepared, tool);
         assert_eq!(protected.as_slice().len(), 9);
         let kit = prepared.supply.tick_kit.as_ref().unwrap();
-        let ordered = prepared
-            .selected
-            .server_ordered_catalog(prepared.catalog.pin())
-            .unwrap();
+        let ordered = prepared.selected.server_ordered_catalog().unwrap();
         assert_eq!(kit.knife.id, ordered.knife().knife().id());
         assert!(ordered
             .knife()
@@ -5802,8 +5799,7 @@ mod tests {
 
     #[test]
     fn hazard_retreat_uses_a_reachable_draynor_stand_on_the_real_pack() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };

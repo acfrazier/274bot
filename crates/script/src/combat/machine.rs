@@ -325,14 +325,12 @@ impl NativeMachine for Combat {
         if request.tactic != Tactic::Open || matches!(request.fallback, Fallback::FaceTank { .. }) {
             return Err(unavailable("tactic slice"));
         }
-        if tables
-            .selected()
-            .selected_pin()
-            .map_err(|_| unavailable("combat pin"))?
-            .as_ref()
-            != cx.pin()
-        {
-            return Err(unavailable("combat pin"));
+        let expected_revision = match cx.revision() {
+            api::selected::ClientRevision::R274 => 274,
+            api::selected::ClientRevision::R289 => 289,
+        };
+        if tables.selected().revision() != expected_revision {
+            return Err(unavailable("combat data revision"));
         }
         if let Target::Npc { types, .. } = &request.target {
             if types.is_empty() || types.iter().any(|id| tables.npc(*id).is_none()) {

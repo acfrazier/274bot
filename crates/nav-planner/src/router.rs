@@ -44,7 +44,6 @@ use crate::collision::WorldCollision;
 use crate::contract::{ContractError, NavLease, PackId, RouteView};
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
 use crate::movement::step_ok;
-use crate::quest_gates::QuestFamilyMismatch;
 use crate::transport::{select_web_action, TransportEdge, TransportGraph};
 use crate::world_state::WorldState;
 use crate::zones::{ZoneExempt, ZoneFilter, ZoneFilterOwned, ZoneKey, ZoneTable};
@@ -1586,8 +1585,8 @@ pub enum SearchOutcome {
         missing: MissingRequirements,
     },
     BlockingZones(Option<Box<[ZoneKey]>>),
-    UnresolvedQuestGates(Result<Option<Box<[QuestGate]>>, QuestFamilyMismatch>),
-    ActionableQuestGates(Result<Option<Box<[ActionableGate]>>, QuestFamilyMismatch>),
+    UnresolvedQuestGates(Option<Box<[QuestGate]>>),
+    ActionableQuestGates(Option<Box<[ActionableGate]>>),
     /// First real exclusion on the relaxed route, if the route contains one.
     /// The diagnosis does not return or retain a route.
     EntranceRequirements(Option<crate::world_state::EntranceRequirement>),
@@ -7071,18 +7070,7 @@ async fn unresolved_quest_cursor_search(
     budget: usize,
     max_quest_gates: usize,
     progress: Option<&AtomicUsize>,
-) -> Result<(Result<Option<Box<[QuestGate]>>, QuestFamilyMismatch>, usize), SearchCursorError> {
-    if let (Some(evidence), Some(pack)) = (&state.quest_evidence, graph.quest_family) {
-        if *evidence.family() != pack {
-            return Ok((
-                Err(QuestFamilyMismatch {
-                    pack: Some(pack),
-                    expected: *evidence.family(),
-                }),
-                0,
-            ));
-        }
-    }
+) -> Result<(Option<Box<[QuestGate]>>, usize), SearchCursorError> {
     let mut forward_settled = 0usize;
     let mut selected = None;
     for relax in [Relax::UnknownQuest, Relax::CarryWornUnknownQuest] {
@@ -7111,7 +7099,7 @@ async fn unresolved_quest_cursor_search(
         }
     }
     let Some(route) = selected else {
-        return Ok((Ok(None), forward_settled));
+        return Ok((None, forward_settled));
     };
     let mut unresolved = Vec::new();
     unresolved
@@ -7128,18 +7116,7 @@ async fn unresolved_quest_cursor_search(
         let Some(gates) = &edge.quest_gates else {
             continue;
         };
-        let evidence = match &state.quest_evidence {
-            Some(evidence) if evidence.family() != gates.family() => {
-                return Ok((
-                    Err(QuestFamilyMismatch {
-                        pack: Some(*gates.family()),
-                        expected: *evidence.family(),
-                    }),
-                    forward_settled,
-                ));
-            }
-            evidence => evidence.as_ref(),
-        };
+        let evidence = state.quest_evidence.as_ref();
         for gate in gates.gates() {
             work_unit().await;
             let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
@@ -7163,7 +7140,7 @@ async fn unresolved_quest_cursor_search(
         }
     }
     Ok((
-        Ok((!unresolved.is_empty()).then(|| unresolved.into_boxed_slice())),
+        (!unresolved.is_empty()).then(|| unresolved.into_boxed_slice()),
         forward_settled,
     ))
 }
@@ -7183,24 +7160,7 @@ async fn actionable_quest_cursor_search(
     max_quest_gates: usize,
     relaxation: GateRelaxation,
     progress: Option<&AtomicUsize>,
-) -> Result<
-    (
-        Result<Option<Box<[ActionableGate]>>, QuestFamilyMismatch>,
-        usize,
-    ),
-    SearchCursorError,
-> {
-    if let (Some(evidence), Some(pack)) = (&state.quest_evidence, graph.quest_family) {
-        if *evidence.family() != pack {
-            return Ok((
-                Err(QuestFamilyMismatch {
-                    pack: Some(pack),
-                    expected: *evidence.family(),
-                }),
-                0,
-            ));
-        }
-    }
+) -> Result<(Option<Box<[ActionableGate]>>, usize), SearchCursorError> {
     let search = first_cursor_search(
         collision,
         graph,
@@ -7219,7 +7179,7 @@ async fn actionable_quest_cursor_search(
     let forward_settled = search.settled();
     let (preferred, _) = search.into_routes();
     let Ok(route) = preferred else {
-        return Ok((Ok(None), forward_settled));
+        return Ok((None, forward_settled));
     };
     let mut actionable = Vec::new();
     actionable
@@ -7236,18 +7196,7 @@ async fn actionable_quest_cursor_search(
         let Some(gates) = &edge.quest_gates else {
             continue;
         };
-        let evidence = match &state.quest_evidence {
-            Some(evidence) if evidence.family() != gates.family() => {
-                return Ok((
-                    Err(QuestFamilyMismatch {
-                        pack: Some(*gates.family()),
-                        expected: *evidence.family(),
-                    }),
-                    forward_settled,
-                ));
-            }
-            evidence => evidence.as_ref(),
-        };
+        let evidence = state.quest_evidence.as_ref();
         for gate in gates.gates() {
             work_unit().await;
             let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
@@ -7272,28 +7221,15 @@ async fn actionable_quest_cursor_search(
         }
     }
     Ok((
-        Ok((!actionable.is_empty()).then(|| actionable.into_boxed_slice())),
+        (!actionable.is_empty()).then(|| actionable.into_boxed_slice()),
         forward_settled,
     ))
 }
 
-/// Diagnose a strict search that could not route through a quest-stage
-/// gate: search again crossing every gate the state's evidence leaves
-/// `Unknown` (a `False` gate still closes, every other requirement stays
-/// strict), and name those gates on the cheapest such route. When that
-/// search fails too, a crossing may need an `Unknown` gate *and* a
-/// carry/wear fact the state lacks: the search runs once more also ignoring
-/// `item_req`/`worn_req`, and names only the undecided gates on that route
-/// ([`find_missing_item_reqs`] names its items), so neither diagnosis hides
-/// behind the other's gate. `Ok(Some)` is what the caller's action owner
-/// must resolve — read the named journals, refresh its provider, search
-/// again; the gates come back as values, never as a diagnostic string.
-/// `Ok(None)`: no evidence can open a route (no relaxed search routes, or
-/// its route needs no undecided gate). `Err`: the state's evidence was
-/// prepared from another quest family than the pack's gates, so no evidence
-/// it supplies can decide them; the caller refuses rather than re-reading
-/// journals. A search that routes never crosses an `Unknown` gate. Runs only
-/// after a failure: the strict searches never collect anything.
+/// Diagnose a strict search that could not route through a quest-stage gate:
+/// search again crossing every gate the state's evidence leaves `Unknown`,
+/// keeping all other requirements strict, and return undecided gates on the
+/// cheapest such route. The search never routes through an `Unknown` gate.
 pub fn find_unresolved_quest_gates(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -7302,15 +7238,7 @@ pub fn find_unresolved_quest_gates(
     opts: FindOptions,
     state: &WorldState,
     avoid: &[AvoidRect],
-) -> Result<Option<Arc<[QuestGate]>>, QuestFamilyMismatch> {
-    if let (Some(evidence), Some(pack)) = (&state.quest_evidence, graph.quest_family) {
-        if *evidence.family() != pack {
-            return Err(QuestFamilyMismatch {
-                pack: Some(pack),
-                expected: *evidence.family(),
-            });
-        }
-    }
+) -> Option<Arc<[QuestGate]>> {
     let search = |relax| {
         first_search(
             collision,
@@ -7330,24 +7258,16 @@ pub fn find_unresolved_quest_gates(
     };
     let Some(route) = search(Relax::UnknownQuest).or_else(|| search(Relax::CarryWornUnknownQuest))
     else {
-        return Ok(None);
+        return None;
     };
     let mut unresolved: Vec<QuestGate> = Vec::new();
+    let evidence = state.quest_evidence.as_ref();
     for leg in &route.legs {
         let Leg::Transport { edge } = leg else {
             continue;
         };
         let Some(gates) = &edge.quest_gates else {
             continue;
-        };
-        let evidence = match &state.quest_evidence {
-            Some(evidence) if evidence.family() != gates.family() => {
-                return Err(QuestFamilyMismatch {
-                    pack: Some(*gates.family()),
-                    expected: *evidence.family(),
-                });
-            }
-            evidence => evidence.as_ref(),
         };
         for gate in gates.gates() {
             let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
@@ -7356,7 +7276,7 @@ pub fn find_unresolved_quest_gates(
             }
         }
     }
-    Ok((!unresolved.is_empty()).then(|| unresolved.into()))
+    (!unresolved.is_empty()).then(|| unresolved.into())
 }
 /// Diagnose a strict `NoPath` by allowing only gates for which an API-owned
 /// prerequisite window proves an establishment implication. Every snapshot
@@ -7369,15 +7289,7 @@ pub fn find_actionable_quest_gates(
     opts: FindOptions,
     state: &WorldState,
     avoid: &[AvoidRect],
-) -> Result<Option<Arc<[ActionableGate]>>, QuestFamilyMismatch> {
-    if let (Some(evidence), Some(pack)) = (&state.quest_evidence, graph.quest_family) {
-        if *evidence.family() != pack {
-            return Err(QuestFamilyMismatch {
-                pack: Some(pack),
-                expected: *evidence.family(),
-            });
-        }
-    }
+) -> Option<Arc<[ActionableGate]>> {
     let Some(route) = first_search(
         collision,
         graph,
@@ -7393,10 +7305,11 @@ pub fn find_actionable_quest_gates(
     )
     .into_route()
     .ok() else {
-        return Ok(None);
+        return None;
     };
 
     let mut actionable = Vec::new();
+    let evidence = state.quest_evidence.as_ref();
     for (leg_index, leg) in route.legs.iter().enumerate() {
         let Leg::Transport { edge } = leg else {
             continue;
@@ -7404,29 +7317,16 @@ pub fn find_actionable_quest_gates(
         let Some(gates) = &edge.quest_gates else {
             continue;
         };
-        let evidence = match &state.quest_evidence {
-            Some(evidence) if evidence.family() != gates.family() => {
-                return Err(QuestFamilyMismatch {
-                    pack: Some(*gates.family()),
-                    expected: *evidence.family(),
-                });
-            }
-            evidence => evidence.as_ref(),
-        };
         for gate in gates.gates() {
             let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
             if truth == Truth::True || !state.gate_actionable(gate) {
                 continue;
             }
             let Some(leg) = u16::try_from(leg_index).ok() else {
-                // The shared API represents route-leg indices as u16. Do
-                // not return a partial list or invent a truncated index.
-                return Ok(None);
+                return None;
             };
             let Some(crossing) = crossing_id(edge) else {
-                // An API crossing identity must preserve the edge's exact
-                // option; an out-of-range nav option cannot be truncated.
-                return Ok(None);
+                return None;
             };
             actionable.push(ActionableGate {
                 gate: gate.clone(),
@@ -7436,7 +7336,7 @@ pub fn find_actionable_quest_gates(
             });
         }
     }
-    Ok((!actionable.is_empty()).then(|| actionable.into()))
+    (!actionable.is_empty()).then(|| actionable.into())
 }
 
 /// Capture every API-establishable quest gate on the accepted route, in
@@ -7459,12 +7359,6 @@ pub fn route_establishable_quest_gates(
         let Some(gates) = transport.quest_gates() else {
             continue;
         };
-        let Some(family) = transport.quest_family() else {
-            continue;
-        };
-        if evidence.is_some_and(|evidence| evidence.family() != family) {
-            return None;
-        }
         if !gates.iter().any(|gate| {
             windows
                 .iter()

@@ -425,14 +425,7 @@ impl Harness {
         let reads = with_tick(&self.snapshot, &mut None, 0, |tick| {
             colours
                 .iter()
-                .map(|&colour| {
-                    resolve_colour(
-                        &self.script.path,
-                        colour,
-                        tick.cx.evidence(),
-                        Arc::new(tick.cx.pin().clone()),
-                    )
-                })
+                .map(|&colour| resolve_colour(&self.script.path, colour, tick.cx.evidence()))
                 .collect()
         });
         let path = Arc::get_mut(&mut self.script.path).expect("unshared path");

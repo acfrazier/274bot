@@ -24,18 +24,18 @@ use paired_catalog::{
     air_operation_gates, air_prepared_current, air_settings, bank_ack_target_absence,
     bank_seed_acknowledged, card_row, catalog_ledger, duel_operation_gates, duel_prepared_current,
     duel_settings, flax_operation_gates, flax_prepared_current, frozen_card_hashes_match,
-    hash_file, mule_mode_requires_partner, mule_operation_gates, mule_prepared_current,
-    mule_settings, near, prepare_card, relog_admission, shared_start_barrier,
-    verify_generated_duel_controls, verify_registry_identity, AirClaim, AirObservation,
-    AirPairWitness, AirRole, AirSlotRecord, DuelClaim, DuelObservation, DuelPairWitness,
-    DuelSlotRecord, FlaxClaim, FlaxObservation, FlaxPairWitness, FlaxRole, FlaxSlotRecord,
-    GateKind, MuleClaim, MulePairWitness, MuleRole, MuleSlotRecord, PairCase, PreparedCard,
-    RelogAdmission, StartBarrier, StartBarrierInput, AIR_RUINS, BANK_SEED_ESSENCE,
-    CATALOG_COMMIT_A, CATALOG_COMMIT_B, DUEL_ARENA, DUEL_ARENA_LOGIC_SHA256, DUEL_ARENA_SHA256,
-    DUEL_CHALLENGE_ANCHOR, DUEL_INTERFACE_SHA256, FALADOR_EAST, FLAXRUNNER, FLAXRUNNER_SHA256,
-    FLAX_BANK, FLAX_FIELD, FLAX_MEET, MULECRAFTER, MULECRAFTER_LOGIC_SHA256, MULECRAFTER_SHA256,
-    MULE_TRADE_CAP, NATURECRAFTER, NATURECRAFTER_SHA256, NATURE_RUNNER_LOGIC_SHA256,
-    PREP_DEADLINE_SECS, SCRIPT_GOLD_DEADLINE_SECS, SCRIPT_GOLD_WATCH_TICKS, TRADE_CAP,
+    mule_mode_requires_partner, mule_operation_gates, mule_prepared_current, mule_settings, near,
+    prepare_card, relog_admission, shared_start_barrier, verify_generated_duel_controls,
+    verify_registry_identity, AirClaim, AirObservation, AirPairWitness, AirRole, AirSlotRecord,
+    DuelClaim, DuelObservation, DuelPairWitness, DuelSlotRecord, FlaxClaim, FlaxObservation,
+    FlaxPairWitness, FlaxRole, FlaxSlotRecord, GateKind, MuleClaim, MulePairWitness, MuleRole,
+    MuleSlotRecord, PairCase, PreparedCard, RelogAdmission, StartBarrier, StartBarrierInput,
+    AIR_RUINS, BANK_SEED_ESSENCE, CATALOG_COMMIT_A, CATALOG_COMMIT_B, DUEL_ARENA,
+    DUEL_ARENA_LOGIC_SHA256, DUEL_ARENA_SHA256, DUEL_CHALLENGE_ANCHOR, DUEL_INTERFACE_SHA256,
+    FALADOR_EAST, FLAXRUNNER, FLAXRUNNER_SHA256, FLAX_BANK, FLAX_FIELD, FLAX_MEET, MULECRAFTER,
+    MULECRAFTER_LOGIC_SHA256, MULECRAFTER_SHA256, MULE_TRADE_CAP, NATURECRAFTER,
+    NATURECRAFTER_SHA256, NATURE_RUNNER_LOGIC_SHA256, PREP_DEADLINE_SECS,
+    SCRIPT_GOLD_DEADLINE_SECS, SCRIPT_GOLD_WATCH_TICKS, TRADE_CAP,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1025,8 +1025,20 @@ fn run_cell(case: PairCase) -> Result<(), String> {
     if !matches!(revision, 274 | 289) {
         return Err("PAIRED_CATALOG_REVISION must be 274 or 289".into());
     }
-    let nav_pack = PathBuf::from(required("PAIRED_CATALOG_NAV_PACK")?);
-    let root = PathBuf::from(required("PAIRED_CATALOG_ROOT")?);
+    let Some(nav_pack) = api::test_support::local_asset_path(
+        "PAIRED_CATALOG_NAV_PACK",
+        "",
+        "real navigation pack for paired catalog live proof",
+    ) else {
+        return Ok(());
+    };
+    let Some(root) = api::test_support::local_asset_path(
+        "PAIRED_CATALOG_ROOT",
+        "",
+        "real frozen script catalog for paired catalog live proof",
+    ) else {
+        return Ok(());
+    };
     if !root.is_dir() {
         return Err(format!(
             "PAIRED_CATALOG_ROOT is not a directory: {}",
@@ -1147,7 +1159,6 @@ fn run_cell(case: PairCase) -> Result<(), String> {
         pair.0.start_handle = Some(handle.clone());
         pair.1.start_handle = Some(handle);
     }
-    let nav_sha256 = hash_file(profile.nav_pack())?;
     println!(
         "{}",
         json!({
@@ -1155,9 +1166,7 @@ fn run_cell(case: PairCase) -> Result<(), String> {
             "case": case,
             "revision": profile.revision().as_i32(),
             "profile": profile.label(),
-            "cache_id": profile.cache_id(),
             "nav_pack": profile.nav_pack(),
-            "nav_sha256": nav_sha256,
             "catalog_commit": commit,
             "catalog_identity": catalog.identity,
             "catalog_read_only_path": catalog.read_only_path,

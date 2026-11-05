@@ -11,7 +11,6 @@ use host::Pump;
 use host_play::walk_map::{ActionError, ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms};
 use nav_planner::bank_fetch::BankRows;
-use nav_planner::map::identity::Digest;
 use nav_planner::router::{FindOptions, Leg};
 use nav_planner::tile::Tile;
 use nav_planner::WorldState;
@@ -127,7 +126,7 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
         .unwrap();
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let world = template.world().expect("explicit pack world");
-    let identity = profile.nav_identity().unwrap();
+    let pack_id = profile.nav_pack_id().expect("navigation pack ownership id");
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     // Map actions normally receive Play's world after its selected-facts bind.
     world.bind_named_bank_facts(&data).unwrap();
@@ -191,7 +190,7 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
         let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
         let context = MapContext {
             focus: Some(FocusToken::capture(&SlotArm::new(1, false))),
-            nav: Digest::from_hex(&identity.nav_sha256).unwrap(),
+            nav: pack_id,
             overlay: None,
             generation: 1,
         };
@@ -355,7 +354,14 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
             "final_tile":snapshot.tile(),"ingame":snapshot.ingame(),"scene_state":snapshot.scene_state(),
             "brimhaven":brimhaven,"karamja":karamja,"ships":ships,"observations":observations});
         cells.push(receipt.clone());
-        std::fs::write(evidence.join("receipt.json"), serde_json::to_vec_pretty(&json!({"pack_format":nav_planner::pack::FORMAT_ID,"pack_sha256":identity.nav_sha256,"cells":cells})).unwrap()).unwrap();
+        std::fs::write(
+            evidence.join("receipt.json"),
+            serde_json::to_vec_pretty(
+                &json!({"pack_format":nav_planner::pack::FORMAT_ID,"cells":cells}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert!(brimhaven && karamja, "{receipt}");
         assert_eq!(
             snapshot.tile(),
@@ -385,7 +391,7 @@ fn live_shilo_cart_ten_coins_to_zero() {
         .unwrap();
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let world = template.world().expect("explicit pack world");
-    let identity = profile.nav_identity().unwrap();
+    let pack_id = profile.nav_pack_id().expect("navigation pack ownership id");
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     world.bind_named_bank_facts(&data).unwrap();
     let coin_id = data.item_by_alias("coins").expect("content coin alias").id;
@@ -451,7 +457,7 @@ fn live_shilo_cart_ten_coins_to_zero() {
     let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
     let context = MapContext {
         focus: Some(FocusToken::capture(&SlotArm::new(1, false))),
-        nav: Digest::from_hex(&identity.nav_sha256).unwrap(),
+        nav: pack_id,
         overlay: None,
         generation: 1,
     };
@@ -502,7 +508,7 @@ fn live_shilo_cart_ten_coins_to_zero() {
         &evidence,
         "00-shilo-ten",
         json!({
-            "account":account, "route":format!("{route:?}"), "pack_sha256":identity.nav_sha256,
+            "account":account, "route":format!("{route:?}"),
         }),
     );
     let arm = Arc::clone(&arms.lock().unwrap()[&account]);
@@ -554,7 +560,7 @@ fn live_shilo_cart_ten_coins_to_zero() {
     let receipt = json!({
         "account":account,"initial_coins":10,"final_coins":coins(&snapshot,coin_id),
         "final_tile":snapshot.tile(),"ingame":snapshot.ingame(),"scene_state":snapshot.scene_state(),
-        "carts":carts,"observations":observations,"pack_format":nav_planner::pack::FORMAT_ID,"pack_sha256":identity.nav_sha256,
+        "carts":carts,"observations":observations,"pack_format":nav_planner::pack::FORMAT_ID,
     });
     save_frame(
         &mut client,

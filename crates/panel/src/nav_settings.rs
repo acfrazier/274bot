@@ -2,10 +2,9 @@
 /// defaults) plus the live-harness overlay that forces paint layers on
 /// for a run without writing prefs.
 ///
-/// `#[serde(default)]`: a prefs file written before a field existed (e.g.
-/// `allow_wilderness`) still loads, with missing fields filled from
-/// [`Default`] — otherwise `load_from` would fail the whole `PanelUiState`
-/// deserialize and wipe focus/collapsed/colors.
+/// `#[serde(default)]`: supported partial preferences can omit nav members;
+/// missing fields take [`Default`] without wiping focus, collapsed sections
+/// or other saved preferences.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct NavSettings {
@@ -263,17 +262,17 @@ mod tests {
     }
 
     #[test]
-    fn danger_level_round_trips_through_both_stored_booleans_and_migrates_old_nav() {
+    fn danger_level_round_trips_through_both_stored_booleans_and_partial_nav() {
         use frontend_core::DangerLevel;
 
         assert_eq!(
             NavSettings::default().danger_level(),
             DangerLevel::WhenSurvivable
         );
-        let old: NavSettings = serde_json::from_str(r#"{"allow_danger_zones":false}"#).unwrap();
-        assert!(old.survivable_routing);
-        assert_eq!(old.danger_level(), DangerLevel::WhenSurvivable);
-        assert!(!old.survivable_routing_notice_ack);
+        let partial: NavSettings = serde_json::from_str(r#"{"allow_danger_zones":false}"#).unwrap();
+        assert!(partial.survivable_routing);
+        assert_eq!(partial.danger_level(), DangerLevel::WhenSurvivable);
+        assert!(!partial.survivable_routing_notice_ack);
 
         for level in [
             DangerLevel::Never,

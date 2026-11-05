@@ -1,11 +1,9 @@
 //! Compact journal/progress evidence shared by the runner, host and nav provider.
 
-use crate::game_data::{QuestFamilyIdentity, Transmission};
+use crate::game_data::Transmission;
 use crate::prereq_knowledge::Observation;
 use crate::quest_facts::QuestCatalog;
-use crate::selected::{
-    FactKey, InclusiveRange, Knowledge, QuestGate, RunKey, SelectedPin, SignalRange, Truth,
-};
+use crate::selected::{FactKey, InclusiveRange, Knowledge, QuestGate, RunKey, SignalRange, Truth};
 use crate::snapshot::{Observed, QuestListStatus, QuestStatusView, SnapshotView};
 use std::sync::Arc;
 
@@ -36,7 +34,6 @@ pub struct QuestProgress {
     pub binding: FactKey,
     pub role: Option<FactKey>,
     pub rule: Knowledge<FactKey>,
-    pub pin: Arc<SelectedPin>,
 }
 
 /// One typed flag result from an examined quest journal.
@@ -60,12 +57,10 @@ pub struct JournalRead {
     pub colour: Option<i32>,
     pub acquired: EvidenceStamp,
     pub closed: EvidenceStamp,
-    pub pin: Arc<SelectedPin>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProgressError {
-    WrongPin,
     WrongQuest,
     WrongRole,
     Stale,
@@ -219,54 +214,33 @@ struct QuestListStatusEvidence {
 #[derive(Debug, Clone)]
 pub struct QuestListEvidenceProvider {
     stamp: Option<EvidenceStamp>,
-    family_matches: bool,
     statuses: Vec<QuestListStatusEvidence>,
 }
 
 impl QuestListEvidenceProvider {
     /// Copy compact quest-list evidence from a frame.
-    ///
-    /// `catalog_family` identifies the verified family used to create
-    /// `quests`. `selected_family` identifies the currently selected family.
-    /// Both identities must be available and equal. Each identity contains the
-    /// family SHA-256 and schema, so a different revision family fails closed.
-    pub fn from_snapshot(
-        quests: &QuestCatalog,
-        catalog_family: Option<QuestFamilyIdentity>,
-        selected_family: Option<QuestFamilyIdentity>,
-        snapshot: SnapshotView<'_>,
-    ) -> Self {
-        let family_matches = matches!(
-            (catalog_family, selected_family),
-            (Some(catalog), Some(selected)) if catalog == selected
-        );
+    pub fn from_snapshot(quests: &QuestCatalog, snapshot: SnapshotView<'_>) -> Self {
         let Some(observed) = snapshot.quest_statuses() else {
             return Self {
                 stamp: None,
-                family_matches,
                 statuses: Vec::new(),
             };
         };
-        let statuses = if family_matches {
-            quests
-                .iter()
-                .map(|facts| QuestListStatusEvidence {
-                    quest: facts.id.clone(),
-                    status: status_for_display(&facts.display, observed.value)
-                        .unwrap_or(QuestListStatus::Unknown),
-                    signal: facts.varp.clone(),
-                    complete: facts.complete,
-                    stage_domain: facts.stage_domain,
-                    colour_authoritative: facts.colour_authoritative,
-                    transmission: facts.transmission,
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let statuses = quests
+            .iter()
+            .map(|facts| QuestListStatusEvidence {
+                quest: facts.id.clone(),
+                status: status_for_display(&facts.display, observed.value)
+                    .unwrap_or(QuestListStatus::Unknown),
+                signal: facts.varp.clone(),
+                complete: facts.complete,
+                stage_domain: facts.stage_domain,
+                colour_authoritative: facts.colour_authoritative,
+                transmission: facts.transmission,
+            })
+            .collect();
         Self {
             stamp: Some(observed.stamp),
-            family_matches,
             statuses,
         }
     }
@@ -285,9 +259,7 @@ impl EvidenceProvider for QuestListEvidenceProvider {
             QuestGate::Window(window) => &window.quest,
         };
         let status = self.statuses.iter().find(|status| status.quest == *quest);
-        let truth = if !self.family_matches
-            || !self.stamp.is_some_and(|stamp| stamp.meets(required_after))
-        {
+        let truth = if !self.stamp.is_some_and(|stamp| stamp.meets(required_after)) {
             Truth::Unknown
         } else {
             let Some(status) = status else {
@@ -378,14 +350,12 @@ mod tests {
 #[cfg(test)]
 mod quest_list_tests {
     use super::*;
-    use crate::game_data::QuestFamilyIdentity;
     use crate::selected::{ClientRevision, InclusiveRange, RunKey, StageWindow};
     use crate::snapshot::{GameSnapshot, QuestStatusView};
-    use std::num::NonZeroU16;
 
-    fn catalog() -> QuestCatalog {
-        let selected = crate::game_data::for_revision(ClientRevision::R289).unwrap();
-        QuestCatalog::from_identity(selected.quest_identity()).unwrap()
+    fn catalog() -> Option<QuestCatalog> {
+        let selected = crate::game_data::test_data(ClientRevision::R289)?;
+        Some(QuestCatalog::from_identity(selected.quest_identity()).unwrap())
     }
 
     fn quest(quests: &QuestCatalog) -> (FactKey, String) {
@@ -412,13 +382,6 @@ mod quest_list_tests {
         }
     }
 
-    fn family(sha: u8, schema: u16) -> QuestFamilyIdentity {
-        QuestFamilyIdentity {
-            sha256: [sha; 32],
-            schema: NonZeroU16::new(schema).unwrap(),
-        }
-    }
-
     fn snapshot(rows: Vec<QuestStatusView>, available: bool) -> GameSnapshot {
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -438,13 +401,9 @@ mod quest_list_tests {
         quests: &QuestCatalog,
         snapshot: &GameSnapshot,
         observed: EvidenceStamp,
-        catalog_family: Option<QuestFamilyIdentity>,
-        selected_family: Option<QuestFamilyIdentity>,
     ) -> QuestListEvidenceProvider {
         QuestListEvidenceProvider::from_snapshot(
             quests,
-            catalog_family,
-            selected_family,
             SnapshotView::new(Some(snapshot), observed),
         )
     }
@@ -462,9 +421,10 @@ mod quest_list_tests {
 
     #[test]
     fn observed_statuses_answer_completion_without_other_evidence_sources() {
-        let quests = catalog();
+        let Some(quests) = catalog() else {
+            return;
+        };
         let (quest, display) = quest(&quests);
-        let family = family(1, 1);
         let observed = stamp(run(), 10, 4);
         for (colour, expected) in [
             (0x00F800, Truth::True),
@@ -473,7 +433,7 @@ mod quest_list_tests {
             (0x123456, Truth::Unknown),
         ] {
             let snapshot = snapshot(vec![row(display.clone(), colour)], true);
-            let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
+            let provider = evidence(&quests, &snapshot, observed);
             assert_eq!(
                 provider.test_gate(&complete_gate(quest.clone()), observed),
                 expected
@@ -481,26 +441,21 @@ mod quest_list_tests {
         }
 
         let absent_row = snapshot(Vec::new(), true);
-        let provider = evidence(&quests, &absent_row, observed, Some(family), Some(family));
+        let provider = evidence(&quests, &absent_row, observed);
         assert_eq!(
             provider.test_gate(&complete_gate(quest.clone()), observed),
             Truth::Unknown
         );
 
         let unavailable = snapshot(vec![row(display, 0x00F800)], false);
-        let provider = evidence(&quests, &unavailable, observed, Some(family), Some(family));
+        let provider = evidence(&quests, &unavailable, observed);
         assert_eq!(
             provider.test_gate(&complete_gate(quest.clone()), observed),
             Truth::Unknown
         );
 
-        let provider = evidence(
-            &quests,
-            &snapshot(Vec::new(), true),
-            observed,
-            Some(family),
-            Some(family),
-        );
+        let empty = snapshot(Vec::new(), true);
+        let provider = evidence(&quests, &empty, observed);
         assert_eq!(
             provider.test_gate(&complete_gate(FactKey::new("unknown-quest")), observed),
             Truth::Unknown
@@ -509,12 +464,13 @@ mod quest_list_tests {
 
     #[test]
     fn evidence_requires_the_causal_floor_and_same_run_session() {
-        let quests = catalog();
+        let Some(quests) = catalog() else {
+            return;
+        };
         let (quest, display) = quest(&quests);
-        let family = family(1, 1);
         let observed = stamp(run(), 10, 7);
         let snapshot = snapshot(vec![row(display, 0x00F800)], true);
-        let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
+        let provider = evidence(&quests, &snapshot, observed);
         let gate = complete_gate(quest);
 
         assert_eq!(provider.test_gate(&gate, stamp(run(), 10, 6)), Truth::True);
@@ -546,38 +502,18 @@ mod quest_list_tests {
     }
 
     #[test]
-    fn evidence_requires_the_same_verified_family_sha_and_schema() {
-        let quests = catalog();
-        let (quest, display) = quest(&quests);
-        let selected_family = family(1, 1);
-        let observed = stamp(run(), 10, 4);
-        let snapshot = snapshot(vec![row(display, 0x00F800)], true);
-        let gate = complete_gate(quest);
-
-        for (catalog_family, current_family, expected) in [
-            (Some(selected_family), Some(selected_family), Truth::True),
-            (Some(family(2, 1)), Some(selected_family), Truth::Unknown),
-            (Some(family(1, 2)), Some(selected_family), Truth::Unknown),
-            (None, Some(selected_family), Truth::Unknown),
-            (Some(selected_family), None, Truth::Unknown),
-        ] {
-            let provider = evidence(&quests, &snapshot, observed, catalog_family, current_family);
-            assert_eq!(provider.test_gate(&gate, observed), expected);
-        }
-    }
-
-    #[test]
     fn not_started_biohazard_cannot_prove_zero_without_colour_authority() {
-        let quests = catalog();
+        let Some(quests) = catalog() else {
+            return;
+        };
         // Current F-C witness:
         // scripts/areas/area_ardougne_east/scripts/elena.rs2:132.
         // Its enclosing case118 and nested choice126-132 are a recorded
         // producer accuracy follow-up, not evidence of a real reset.
         assert!(!quests.quest("biohazard").unwrap().colour_authoritative);
-        let family = family(1, 1);
         let observed = stamp(run(), 10, 4);
         let snapshot = snapshot(vec![row(String::from("Biohazard"), 0xF80000)], true);
-        let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
+        let provider = evidence(&quests, &snapshot, observed);
 
         for min in [None, Some(0)] {
             assert_eq!(
@@ -592,13 +528,14 @@ mod quest_list_tests {
 
     #[test]
     fn completed_biohazard_windows_remain_unknown_without_colour_authority() {
-        let quests = catalog();
+        let Some(quests) = catalog() else {
+            return;
+        };
         // The same conservative elena.rs2:118,126-132 writer analysis applies.
         assert!(!quests.quest("biohazard").unwrap().colour_authoritative);
-        let family = family(1, 1);
         let observed = stamp(run(), 10, 4);
         let snapshot = snapshot(vec![row(String::from("Biohazard"), 0x00F800)], true);
-        let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
+        let provider = evidence(&quests, &snapshot, observed);
 
         assert_eq!(
             provider.test_gate(
@@ -624,13 +561,14 @@ mod quest_list_tests {
 
     #[test]
     fn in_progress_biohazard_windows_remain_unknown_without_colour_authority() {
-        let quests = catalog();
+        let Some(quests) = catalog() else {
+            return;
+        };
         // The same conservative elena.rs2:118,126-132 writer analysis applies.
         assert!(!quests.quest("biohazard").unwrap().colour_authoritative);
-        let family = family(1, 1);
         let observed = stamp(run(), 10, 4);
         let snapshot = snapshot(vec![row(String::from("Biohazard"), 0xF8F800)], true);
-        let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
+        let provider = evidence(&quests, &snapshot, observed);
 
         assert_eq!(
             provider.test_gate(
@@ -663,7 +601,6 @@ mod quest_list_tests {
         expected: Truth,
     ) {
         let facts = quests.quest(quest).unwrap();
-        let family = family(1, 1);
         let observed = stamp(run(), 10, 4);
         let snapshot = snapshot(vec![row(facts.display.to_string(), colour)], true);
         let gate = QuestGate::Window(StageWindow {
@@ -674,7 +611,7 @@ mod quest_list_tests {
                 max: Some(max),
             },
         });
-        let provider = evidence(quests, &snapshot, observed, Some(family), Some(family));
+        let provider = evidence(quests, &snapshot, observed);
         assert_eq!(provider.test_gate(&gate, observed), expected);
         assert_eq!(
             observe_quest_gate(
@@ -691,29 +628,40 @@ mod quest_list_tests {
 
     #[test]
     fn window_gate_mort_myre_true_on_yellow() {
-        assert_window_from_colour(&catalog(), "druidspirit", 0xF8F800, 1, 110, Truth::True);
+        let Some(quests) = catalog() else {
+            return;
+        };
+        assert_window_from_colour(&quests, "druidspirit", 0xF8F800, 1, 110, Truth::True);
     }
 
     #[test]
     fn window_gate_barrier_unknown_on_green() {
-        assert_window_from_colour(&catalog(), "priestperil", 0x00F800, 61, 61, Truth::Unknown);
+        let Some(quests) = catalog() else {
+            return;
+        };
+        assert_window_from_colour(&quests, "priestperil", 0x00F800, 61, 61, Truth::Unknown);
     }
 
     #[test]
     fn red_window_answers_follow_colour_authority() {
         // drezel.rs2:147 can write Priest stage61 after completion60.
         // Keep the authoritative Druid Spirit false control separately.
+        let Some(quests) = catalog() else {
+            return;
+        };
         for (quest, min, max, expected) in [
             ("priestperil", 61, 61, Truth::Unknown),
             ("druidspirit", 1, 110, Truth::False),
         ] {
-            assert_window_from_colour(&catalog(), quest, 0xF80000, min, max, expected);
+            assert_window_from_colour(&quests, quest, 0xF80000, min, max, expected);
         }
     }
 
     #[test]
     fn authoritative_colour_windows_keep_positive_and_negative_bounds() {
-        let quests = catalog();
+        let Some(quests) = catalog() else {
+            return;
+        };
         assert!(quests.quest("druidspirit").unwrap().colour_authoritative);
         for (colour, min, max, expected) in [
             (0xF80000, 0, 9, Truth::True),
@@ -729,12 +677,17 @@ mod quest_list_tests {
 
     #[test]
     fn window_gate_unknown_for_upass_row() {
-        assert_window_from_colour(&catalog(), "upass", 0xF8F800, 1, 21, Truth::Unknown);
+        let Some(quests) = catalog() else {
+            return;
+        };
+        assert_window_from_colour(&quests, "upass", 0xF8F800, 1, 21, Truth::Unknown);
     }
 
     #[test]
     fn window_gate_unknown_for_transmitted_misc_quest() {
-        let selected = crate::game_data::for_revision(ClientRevision::R289).unwrap();
+        let Some(selected) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
         let mut facts = selected.quest_identity().unwrap().clone();
         let misc = facts.rows.iter_mut().find(|row| row.id == "misc").unwrap();
         assert_eq!(misc.transmission, Transmission::PostedByContent);
@@ -746,7 +699,9 @@ mod quest_list_tests {
 
     #[test]
     fn window_gate_unknown_without_domain() {
-        let selected = crate::game_data::for_revision(ClientRevision::R289).unwrap();
+        let Some(selected) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
         let mut facts = selected.quest_identity().unwrap().clone();
         facts
             .rows
@@ -760,8 +715,9 @@ mod quest_list_tests {
 
     #[test]
     fn complete_gate_unchanged() {
-        let quests = catalog();
-        let family = family(1, 1);
+        let Some(quests) = catalog() else {
+            return;
+        };
         let observed = stamp(run(), 10, 4);
         for quest in ["priestperil", "druidspirit", "upass", "misc"] {
             let facts = quests.quest(quest).unwrap();
@@ -771,7 +727,7 @@ mod quest_list_tests {
                 (0xF80000, Truth::False),
             ] {
                 let snapshot = snapshot(vec![row(facts.display.to_string(), colour)], true);
-                let provider = evidence(&quests, &snapshot, observed, Some(family), Some(family));
+                let provider = evidence(&quests, &snapshot, observed);
                 assert_eq!(
                     provider.test_gate(&complete_gate(facts.id.clone()), observed),
                     expected
@@ -782,7 +738,9 @@ mod quest_list_tests {
 
     #[test]
     fn shared_lookup_returns_the_observed_status_and_stamp() {
-        let quests = catalog();
+        let Some(quests) = catalog() else {
+            return;
+        };
         let (quest, display) = quest(&quests);
         let observed = stamp(run(), 10, 4);
         let snapshot = snapshot(vec![row(display, 0xF8F800)], true);

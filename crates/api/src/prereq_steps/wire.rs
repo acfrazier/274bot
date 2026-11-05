@@ -1,40 +1,16 @@
 //! Wire format for the source-pinned `prereq_steps.json` family.
 
 use super::{PrereqCatalog, PrereqJournal, PrereqStep};
-use crate::selected::{FactError, SelectedPin, SourceSpan};
-use serde::de::IgnoredAny;
+use crate::selected::{FactError, SourceSpan};
 use serde::Deserialize;
 use std::sync::Arc;
 
 pub(super) const SCHEMA: u16 = 3;
 
 #[derive(Deserialize)]
-struct Header<'a> {
-    schema: u16,
-    revision: i32,
-    engine_commit: &'a str,
-    content_commit: &'a str,
-    cache_id: &'a str,
-    content_id: &'a str,
-}
-
-#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Family {
-    #[serde(rename = "schema")]
-    _schema: IgnoredAny,
-    #[serde(rename = "revision")]
-    _revision: IgnoredAny,
-    #[serde(rename = "engine_commit")]
-    _engine_commit: IgnoredAny,
-    #[serde(rename = "content_commit")]
-    _content_commit: IgnoredAny,
-    #[serde(rename = "cache_id")]
-    _cache_id: IgnoredAny,
-    #[serde(rename = "content_id")]
-    _content_id: IgnoredAny,
-    #[serde(rename = "inputs")]
-    _inputs: IgnoredAny,
+    schema: u16,
     facts: Facts,
 }
 
@@ -56,30 +32,15 @@ fn invalid(reason: impl Into<String>) -> FactError {
     }
 }
 
-fn check_header(pin: &SelectedPin, header: &Header<'_>) -> Result<(), FactError> {
-    if header.schema != SCHEMA {
-        return Err(FactError::Schema {
-            expected: SCHEMA,
-            actual: header.schema,
-        });
-    }
-    if header.revision != pin.revision.as_i32()
-        || header.engine_commit != &*pin.engine_commit
-        || header.content_commit != &*pin.content_commit
-        || header.cache_id != &*pin.cache_id
-        || header.content_id != &*pin.content_id
-    {
-        return Err(FactError::PinMismatch);
-    }
-    Ok(())
-}
-
-pub(super) fn decode(pin: &SelectedPin, bytes: &[u8]) -> Result<PrereqCatalog, FactError> {
-    let header: Header<'_> = serde_json::from_slice(bytes)
-        .map_err(|error| invalid(format!("prerequisite family header: {error}")))?;
-    check_header(pin, &header)?;
+pub(super) fn decode(bytes: &[u8]) -> Result<PrereqCatalog, FactError> {
     let family: Family = serde_json::from_slice(bytes)
         .map_err(|error| invalid(format!("prerequisite family: {error}")))?;
+    if family.schema != SCHEMA {
+        return Err(FactError::Schema {
+            expected: SCHEMA,
+            actual: family.schema,
+        });
+    }
     for row in &family.facts.rows {
         for entry in row.crossings.iter() {
             check_tile(&entry.crossing.at, "anchor")?;

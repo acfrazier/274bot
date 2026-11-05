@@ -9,7 +9,7 @@ use crate::native::{
     StatusValue, WalkHandover, WalkReceipt,
 };
 use crate::quester::prereq::walk::PrereqWalk;
-use api::selected::{RunKey, SelectedPin};
+use api::selected::{ClientRevision, RunKey};
 use std::sync::Mutex;
 
 #[path = "progress.rs"]
@@ -51,7 +51,7 @@ enum CompatWalkSeat {
 struct CompatWalkOwner {
     run: RunKey,
     request_id: RequestId,
-    pin: Arc<SelectedPin>,
+    revision: ClientRevision,
     state: CompatWalkState,
 }
 
@@ -315,14 +315,14 @@ impl SlotScript {
             .ok_or_else(|| {
                 StartError::Unavailable("compatibility walk has no selected game data".into())
             })?;
-        let pin = selected.selected_pin().map_err(StartError::Facts)?;
+        let revision = compiled::selected_revision(selected)?;
         self.retained
             .get_or_insert_with(|| Arc::new(Mutex::new(RetainedMemory::default())));
         let seat = self.api.get_or_insert_with(|| Box::new(ApiSeat::default()));
         seat.compat_walk = CompatWalkSeat::Owned(Box::new(CompatWalkOwner {
             run,
             request_id,
-            pin,
+            revision,
             state: CompatWalkState::Walking(PrereqWalk::from_handover(handover)),
         }));
         Ok(())
@@ -978,7 +978,7 @@ impl SlotScript {
             let mut cx = compiled::frame_context(
                 ctx,
                 owner.run,
-                &owner.pin,
+                owner.revision,
                 &mut retained,
                 &mut self.native_runtime,
             );

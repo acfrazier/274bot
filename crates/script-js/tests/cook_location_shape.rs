@@ -6,9 +6,11 @@
 use std::sync::Arc;
 
 use api::game_data::SelectedGameData;
-use api::named_banks::{NamedBankFacts, BANK_CATALOG};
+use api::named_banks::{bank_catalog, NamedBankFacts};
 use nav_planner::named_banks::resolve;
 use script_js::{LoadIsolate, LoadIsolateError, LoadShape};
+
+mod common;
 
 fn data() -> Arc<SelectedGameData> {
     api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
@@ -17,7 +19,7 @@ fn data() -> Arc<SelectedGameData> {
 /// The full bank roster, every bank reachable.
 fn roster() -> NamedBankFacts {
     resolve(
-        BANK_CATALOG,
+        bank_catalog().expect("local bank catalog"),
         &data().bank_placements().unwrap().rows,
         |_| true,
     )
@@ -113,6 +115,9 @@ fn probe(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
 
 #[test]
 fn every_bank_is_a_location_between_auto_and_custom() {
+    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+        return;
+    }
     let names: Vec<_> = roster().banks().iter().map(|bank| bank.name).collect();
     let iso = spawn(SRC);
     assert_eq!(probe(&iso, "__names"), serde_json::json!(names));
@@ -125,6 +130,9 @@ fn every_bank_is_a_location_between_auto_and_custom() {
 
 #[test]
 fn a_curated_bank_keeps_its_hand_walked_surface() {
+    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+        return;
+    }
     let iso = spawn(SRC);
     let catherby = probe(&iso, "__catherby");
     assert_eq!(catherby["whereName"], "Catherby");
@@ -148,6 +156,9 @@ fn a_curated_bank_keeps_its_hand_walked_surface() {
 
 #[test]
 fn auto_takes_the_nearest_unlocked_bank_and_its_nearest_oven() {
+    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+        return;
+    }
     let iso = spawn(SRC);
     assert_eq!(probe(&iso, "__autoCatherby")["whereName"], "Catherby");
     let varrock = probe(&iso, "__autoVarrock");
@@ -177,6 +188,9 @@ fn auto_takes_the_nearest_unlocked_bank_and_its_nearest_oven() {
 
 #[test]
 fn a_locked_location_is_null_by_name_and_for_auto() {
+    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+        return;
+    }
     let iso = spawn(SRC);
     assert_eq!(probe(&iso, "__lockedNamed"), serde_json::Value::Null);
     assert_eq!(probe(&iso, "__lockedAuto"), serde_json::Value::Null);
@@ -214,7 +228,7 @@ try { resolveCookLocation('Catherby', { x: 2809, z: 3441, level: 0 }); } catch (
 globalThis.__offline = { count: COOK_LOCATIONS.length, custom: resolveCookLocation('Custom'), error };
 export default class T extends LoopingBot { loop() {} }
 "#;
-    let iso = spawn_with(src, None, roster()).unwrap();
+    let iso = spawn_with(src, None, NamedBankFacts::empty()).unwrap();
     let offline = probe(&iso, "__offline");
     assert_eq!(offline["count"], 0);
     assert_eq!(offline["custom"], serde_json::Value::Null);

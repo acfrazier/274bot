@@ -2,7 +2,7 @@ use super::*;
 use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::transport::TransportGraph;
 use std::sync::Arc;
 
@@ -144,11 +144,8 @@ fn content_gate_graph(script: &str, shipyard: bool) -> TransportGraph {
     let defs = loc_defs(&[(left, 1, 1), (right, 1, 1)]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let (facts, identity) = selected.quest_identity_for_bake().unwrap();
-    let quests = QuestSource {
-        family: QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    };
+    let facts = selected.quest_identity().expect("selected quest facts");
+    let quests = QuestSource { facts };
     derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None).0
 }
 
@@ -179,7 +176,7 @@ impl EvidenceProvider for ExactSignals {
     }
 }
 
-fn content_state(graph: &TransportGraph, grandtree: i32, mm: i32, biohazard: i32) -> WorldState {
+fn content_state(grandtree: i32, mm: i32, biohazard: i32) -> WorldState {
     let stamp = EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -198,7 +195,6 @@ fn content_state(graph: &TransportGraph, grandtree: i32, mm: i32, biohazard: i32
             ],
             stamp,
         )),
-        graph.quest_family.unwrap(),
         stamp,
     ));
     state.map_members = true;
@@ -226,9 +222,9 @@ fn content_crossing(
 #[test]
 fn actual_shipyard_handlers_preserve_direct_windows_and_refuse_the_password_arm() {
     let graph = content_gate_graph(SHIPYARD, true);
-    let direct = content_state(&graph, 80, 2, 14);
-    let password = content_state(&graph, 80, 1, 14);
-    let unreleased = content_state(&graph, 79, 2, 14);
+    let direct = content_state(80, 2, 14);
+    let password = content_state(80, 1, 14);
+    let unreleased = content_state(79, 2, 14);
     for (id, z) in [(2438, 3438), (2439, 3439)] {
         assert!(content_crossing(&graph, &direct, id, z, true), "entry {id}");
         assert!(content_crossing(&graph, &direct, id, z, false), "exit {id}");
@@ -246,9 +242,9 @@ fn actual_shipyard_handlers_preserve_direct_windows_and_refuse_the_password_arm(
 #[test]
 fn actual_varrock_handlers_keep_membership_and_refuse_the_guard_search_arm() {
     let graph = content_gate_graph(VARROCK, false);
-    let direct = content_state(&graph, 80, 2, 14);
-    let searching = content_state(&graph, 80, 2, 10);
-    let mut free = content_state(&graph, 80, 2, 14);
+    let direct = content_state(80, 2, 14);
+    let searching = content_state(80, 2, 10);
+    let mut free = content_state(80, 2, 14);
     free.map_members = false;
     for (id, z) in [(2050, 3438), (2051, 3439)] {
         assert!(content_crossing(&graph, &direct, id, z, true), "entry {id}");
@@ -269,7 +265,7 @@ fn shipyard_interface_close_proof_is_lost_after_a_command_or_yield() {
     ] {
         let script = SHIPYARD.replace("if_close;", &format!("{prefix} if_close;"));
         let graph = content_gate_graph(&script, true);
-        let direct = content_state(&graph, 80, 2, 14);
+        let direct = content_state(80, 2, 14);
         assert!(
             !content_crossing(&graph, &direct, 2438, 3438, true),
             "{prefix}"

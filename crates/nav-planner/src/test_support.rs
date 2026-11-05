@@ -1,13 +1,12 @@
 //! Shared planner fixtures and source-boundary checks for test builds.
 
-use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{FactKey, InclusiveRange, QuestGate, RunKey, StageWindow, Truth};
 
-use crate::quest_gates::{QuestEvidence, QuestFamilyId};
+use crate::quest_gates::QuestEvidence;
 
 pub mod source_scan;
 
@@ -47,17 +46,6 @@ impl EvidenceProvider for Resolved {
     }
 }
 
-pub fn family(byte: u8) -> QuestFamilyId {
-    family_schema(byte, 1)
-}
-
-pub fn family_schema(byte: u8, schema: u16) -> QuestFamilyId {
-    QuestFamilyId::new(
-        [byte; 32],
-        NonZeroU16::new(schema).expect("Quest fixture schemas must be nonzero"),
-    )
-}
-
 pub fn stamp(tick: u64) -> EvidenceStamp {
     EvidenceStamp {
         run: RunKey {
@@ -82,8 +70,8 @@ pub fn window(quest: &str, signal: &str, min: Option<i32>, max: Option<i32>) -> 
     })
 }
 
-/// Evidence for family 1, observed at tick 10 against a floor of tick 5,
-/// leaving `possible` for one `tbwt`/`tbwt_main` signal.
+/// Evidence observed at tick 10 against a floor of tick 5, leaving
+/// `possible` for one `tbwt`/`tbwt_main` signal.
 pub fn tbwt_evidence(possible: InclusiveRange) -> QuestEvidence {
     QuestEvidence::new(
         Arc::new(Resolved {
@@ -91,7 +79,6 @@ pub fn tbwt_evidence(possible: InclusiveRange) -> QuestEvidence {
             signals: vec![("tbwt", "tbwt_main", possible)],
             complete: vec![],
         }),
-        family(1),
         stamp(5),
     )
 }

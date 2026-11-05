@@ -1520,7 +1520,7 @@ fn servers_load_rejects_case_insensitive_vault_collisions() {
     .unwrap();
 
     let error = Servers::load(&bot_dir).unwrap_err();
-    assert!(error.contains("duplicate vault"), "{error}");
+    assert!(error.to_string().contains("duplicate vault"), "{error}");
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -1609,22 +1609,8 @@ fn open_vault_wrong_pass_is_not_already_exists() {
 }
 
 #[test]
-fn open_vault_accepts_short_new_and_legacy_vaults() {
-    // A vault written by the released code under passphrase `bot`.
-    let old = tmp_vault("old");
-    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-    std::fs::write(
-        &old,
-        include_bytes!("../../vault/tests/fixtures/legacy-0.1.9.vault"),
-    )
-    .unwrap();
-    let opened = open_vault(&old, "bot").expect("a legacy vault still opens");
-    assert_eq!(
-        opened.get("alice").unwrap().password,
-        "alice-password-legacy"
-    );
-
-    let fresh = old.parent().unwrap().join("new");
+fn open_vault_accepts_short_passphrases() {
+    let fresh = tmp_vault("short");
     let created =
         open_vault(&fresh.join("vault"), "bot").expect("a short passphrase creates a new vault");
     assert!(created.get("alice").is_none());
@@ -6616,13 +6602,17 @@ fn radius_route_job_drops_detour_outside_radius() {
 #[test]
 #[ignore = "requires the locally generated actual 289 navpack"]
 fn actual_289_radius_arrival_stays_out_of_horvik() {
-    let world = Arc::new(
-        NavWorld::load_pack(std::path::Path::new(concat!(
+    let Some(path) = api::test_support::local_asset_path(
+        "",
+        concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../target/debug/nav/289/274bot.navpack"
-        )))
-        .expect("actual 289 navpack"),
-    );
+        ),
+        "actual 289 navpack",
+    ) else {
+        return;
+    };
+    let world = Arc::new(NavWorld::load_pack(&path).expect("actual 289 navpack"));
     let request = ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
@@ -27571,7 +27561,7 @@ fn host_gated_npc_hop_recovery_uses_retained_route_evidence() {
         members_req: false,
         wildy_cap: None,
         quest_gates: Some(
-            QuestGates::new(family(1), [window("tbwt", "tbwt_main", Some(3), Some(3))])
+            QuestGates::new([window("tbwt", "tbwt_main", Some(3), Some(3))])
                 .expect("typed gated NPC crossing"),
         ),
     };
@@ -29521,11 +29511,14 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
 /// and detours whose distance alone cannot decide the dequeue-rank budget.
 #[test]
 fn real_v16_batched_arrival_matches_every_forward_predicate() {
-    let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
-        eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
+    let Some(path) = api::test_support::local_asset_path(
+        "NAV_ARRIVAL_PACK",
+        "",
+        "real v16 NAV_ARRIVAL_PACK for batched arrival comparison",
+    ) else {
         return;
     };
-    let world = NavWorld::load_pack(std::path::Path::new(&path)).expect("real v16 pack");
+    let world = NavWorld::load_pack(&path).expect("real v16 pack");
     let tile = |x, z, level| WorldTile { x, z, level };
     let cases = [
         (tile(3017, 3170, 0), 12),
@@ -29604,14 +29597,24 @@ fn real_v16_batched_arrival_matches_every_forward_predicate() {
 /// endpoint scene without connecting to the game engine.
 #[test]
 fn real_v16_return_radius_endpoint_is_native_arrival() {
-    let Some(path) = std::env::var_os("NAV_ARRIVAL_PACK") else {
-        eprintln!("SKIP: NAV_ARRIVAL_PACK is not set");
+    let Some(path) = api::test_support::local_asset_path(
+        "NAV_ARRIVAL_PACK",
+        "",
+        "real v16 NAV_ARRIVAL_PACK for Return endpoint arrival",
+    ) else {
         return;
     };
-    let path = std::path::PathBuf::from(path);
     let mut world = NavWorld::load_pack(&path).expect("real v16 pack");
-    let flags = nav_planner::pack::read_flags_sidecar(&path.with_extension("navflags"), false)
-        .expect("matching raw flags");
+    let sidecar = path.with_extension("navflags");
+    let sidecar = sidecar.to_string_lossy().into_owned();
+    let Some(sidecar) = api::test_support::local_asset_path(
+        "",
+        &sidecar,
+        "matching raw flags sidecar for real v16 NAV_ARRIVAL_PACK",
+    ) else {
+        return;
+    };
+    let flags = nav_planner::pack::read_flags_sidecar(&sidecar, false).expect("matching raw flags");
     assert_eq!(flags.origin, world.collision.origin);
     assert_eq!(
         (flags.width, flags.height),
@@ -31693,8 +31696,6 @@ mod quest_route_evidence_tests {
     use api::selected::{QuestGate, Truth};
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, QuestStatusView, StatView};
     use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
-    #[cfg(feature = "js")]
-    use std::num::NonZeroU16;
     use std::sync::LazyLock;
 
     #[derive(Clone, Copy)]
@@ -31723,7 +31724,7 @@ mod quest_route_evidence_tests {
             .expect("submit production quest preparation")
             .join()
             .expect("quest preparation worker")
-            .expect("prepare selected quest family");
+            .expect("prepare selected quest facts");
             assert!(
                 selected.try_quests().is_some(),
                 "production preparation must retain the selected quest catalog"
@@ -31744,23 +31745,11 @@ mod quest_route_evidence_tests {
         (facts.id.clone(), facts.display.to_string())
     }
 
-    fn family(
-        selected: &api::game_data::SelectedGameData,
-    ) -> nav_planner::quest_gates::QuestFamilyId {
-        let identity = selected
-            .quest_family_identity()
-            .expect("selected quest family identity");
-        nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema)
-    }
-
     fn tile(x: i32, z: i32) -> api::snapshot::WorldTile {
         api::snapshot::WorldTile { x, z, level: 0 }
     }
 
-    fn gate_world(
-        family: nav_planner::quest_gates::QuestFamilyId,
-        quest: api::selected::FactKey,
-    ) -> Arc<NavWorld> {
+    fn gate_world(quest: api::selected::FactKey) -> Arc<NavWorld> {
         use client::dash3d::CollisionFlag;
         use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
 
@@ -31793,14 +31782,11 @@ mod quest_route_evidence_tests {
             members_req: false,
             wildy_cap: None,
             quest_gates: Some(
-                nav_planner::quest_gates::QuestGates::new(family, [QuestGate::Complete(quest)])
+                nav_planner::quest_gates::QuestGates::new([QuestGate::Complete(quest)])
                     .expect("typed Complete gate"),
             ),
         };
-        let mut graph = TransportGraph {
-            quest_family: Some(family),
-            ..TransportGraph::default()
-        };
+        let mut graph = TransportGraph::default();
         graph.at.entry(origin).or_default().push(0);
         graph.edges.push(edge);
         Arc::new(NavWorld::from_parts(
@@ -31978,17 +31964,13 @@ export default class T extends LoopingBot {
     fn compatibility_queue_route_uses_only_matching_observed_complete_rows() {
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
-        let selected_family = family(&selected);
 
-        let rig = start_compat_route(
-            gate_world(selected_family, quest.clone()),
-            Arc::clone(&selected),
-        );
+        let rig = start_compat_route(gate_world(quest.clone()), Arc::clone(&selected));
         let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
         let snapshot = quest_snapshot(&selected, QuestListFrame::Complete);
         let mut driver = NavRec::default();
 
-        // Observation retains selected identity and its causal stamp only.
+        // Observation retains ordinary quest evidence and its causal stamp only.
         observe(&rig, &mut driver, &snapshot, 1, None);
         {
             let navs = rig.navs.lock().unwrap();
@@ -32036,33 +32018,15 @@ export default class T extends LoopingBot {
 
     #[cfg(feature = "js")]
     #[test]
-    fn compatibility_queue_route_fails_closed_for_wrong_family_and_bad_rows() {
+    fn compatibility_queue_route_fails_closed_for_unavailable_or_unsupported_rows() {
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
-        let selected_family = family(&selected);
-        let wrong_family = nav_planner::quest_gates::QuestFamilyId::new(
-            [0xA5; 32],
-            NonZeroU16::new(1).expect("nonzero test schema"),
-        );
-        assert_ne!(wrong_family, selected_family);
 
-        for (label, edge_family, frame) in [
-            ("wrong family", wrong_family, QuestListFrame::Complete),
-            (
-                "unavailable list",
-                selected_family,
-                QuestListFrame::Unavailable,
-            ),
-            (
-                "unsupported status colour",
-                selected_family,
-                QuestListFrame::Unsupported,
-            ),
+        for (label, frame) in [
+            ("unavailable list", QuestListFrame::Unavailable),
+            ("unsupported status colour", QuestListFrame::Unsupported),
         ] {
-            let rig = start_compat_route(
-                gate_world(edge_family, quest.clone()),
-                Arc::clone(&selected),
-            );
+            let rig = start_compat_route(gate_world(quest.clone()), Arc::clone(&selected));
             let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
             start_walk(&slot);
             let snapshot = quest_snapshot(&selected, frame);
@@ -32124,7 +32088,7 @@ export default class T extends LoopingBot {
     fn native_assessment_uses_the_same_complete_row_and_request_stamp() {
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
-        let world = gate_world(family(&selected), quest);
+        let world = gate_world(quest);
         let rig = nav_rig_with(Some(world));
         let slot = script_slot(&rig.scripts, "alice").expect("test slot");
         let shared = Arc::new(Mutex::new(Advice::default()));
@@ -32251,7 +32215,6 @@ export default class T extends LoopingBot {
 
     fn gatherer_world(
         target: api::snapshot::WorldTile,
-        family: nav_planner::quest_gates::QuestFamilyId,
         quest: api::selected::FactKey,
     ) -> Arc<NavWorld> {
         use client::dash3d::CollisionFlag;
@@ -32292,14 +32255,11 @@ export default class T extends LoopingBot {
             members_req: false,
             wildy_cap: None,
             quest_gates: Some(
-                nav_planner::quest_gates::QuestGates::new(family, [QuestGate::Complete(quest)])
+                nav_planner::quest_gates::QuestGates::new([QuestGate::Complete(quest)])
                     .expect("typed Complete gate"),
             ),
         };
-        let mut graph = TransportGraph {
-            quest_family: Some(family),
-            ..TransportGraph::default()
-        };
+        let mut graph = TransportGraph::default();
         // Resource selection needs observed zone data. This synthetic world
         // has no danger zones, rather than an unavailable zone table.
         graph.zones = Some(
@@ -32545,10 +32505,9 @@ export default class T extends LoopingBot {
     fn native_gatherer_walk_crosses_the_typed_gate_from_live_quest_rows() {
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
-        let family = family(&selected);
         let target = tile(3085, 3468);
         let from = tile(target.x - 4, target.z);
-        let world = gatherer_world(target, family, quest.clone());
+        let world = gatherer_world(target, quest.clone());
         let rig = nav_rig_with(Some(world));
         let slot = script_slot(&rig.scripts, "alice").expect("Gatherer slot");
         let snapshot = gatherer_snapshot(&selected, target);
@@ -32819,7 +32778,7 @@ export default class T extends LoopingBot {
                 args: serde_json::json!({"tile": [3224, 3220, 0], "radius": 0}),
             },
         );
-        let world = gatherer_world(tile(3224, 3220), family(&selected), quest.clone());
+        let world = gatherer_world(tile(3224, 3220), quest.clone());
         let rig = nav_rig_with(Some(world));
         let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
         let snapshot = quester_snapshot(&selected, &quest);

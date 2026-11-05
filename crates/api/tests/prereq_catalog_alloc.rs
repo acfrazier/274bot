@@ -6,6 +6,7 @@ use api::prereq_steps::{ActionableGate, CrossingId, PrereqCatalog, PrereqStep};
 use api::selected::{
     ClientRevision, FactKey, FamilyPreparation, InclusiveRange, QuestGate, StageWindow,
 };
+use api::test_support::local_asset_path;
 use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
 use std::mem::size_of;
 use std::num::NonZeroU32;
@@ -18,6 +19,15 @@ fn process_catalog_is_bounded_and_warm_preparation_and_queries_allocate_nothing(
     assert!(size_of::<PrereqStep>() <= 768);
     assert!(size_of::<CrossingId>() <= 48);
     assert!(size_of::<ActionableGate>() <= 128);
+    if local_asset_path(
+        "",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
+        "revision 289 game data for prerequisite catalog allocation test",
+    )
+    .is_none()
+    {
+        return;
+    }
 
     let data = for_revision(ClientRevision::R289).expect("selected R289 data");
     let clock = SystemClock;
@@ -34,23 +44,8 @@ fn process_catalog_is_bounded_and_warm_preparation_and_queries_allocate_nothing(
                 .expect("verified prerequisite family prepares"),
         );
     });
+    eprintln!("prereq process allocation: cold={cold:?}");
     let catalog = prepared.expect("cold preparation returns the shared table");
-    assert!(
-        cold.count_total > 0,
-        "counter observes cold family preparation"
-    );
-    assert!(
-        cold.count_total <= 100_000,
-        "cold allocation event tripwire"
-    );
-    assert!(
-        cold.bytes_total <= 32 * 1024 * 1024,
-        "cold allocation byte tripwire"
-    );
-    assert!(
-        cold.bytes_current > 0,
-        "the process cache retains its table"
-    );
     assert_eq!(
         catalog.len(),
         5,
@@ -92,11 +87,6 @@ fn process_catalog_is_bounded_and_warm_preparation_and_queries_allocate_nothing(
             );
         }
     });
-    assert_eq!(
-        warm.count_total, 0,
-        "another bot/request does not decode or allocate the shared family"
-    );
-    assert_eq!(warm.bytes_current, 0);
     eprintln!(
         "prereq process allocation: cold={cold:?} warm={warm:?} catalog={} row={} crossing={} actionable={}",
         size_of::<PrereqCatalog>(),
@@ -104,6 +94,33 @@ fn process_catalog_is_bounded_and_warm_preparation_and_queries_allocate_nothing(
         size_of::<CrossingId>(),
         size_of::<ActionableGate>(),
     );
+    assert_eq!(
+        warm.count_total, 0,
+        "another bot/request does not decode or allocate the shared family"
+    );
+    assert_eq!(warm.bytes_current, 0);
+
+    assert!(
+        cold.count_total > 0,
+        "counter observes cold family preparation"
+    );
+    assert!(
+        cold.count_total <= 100_000,
+        "cold allocation event tripwire"
+    );
+    assert!(
+        cold.bytes_total <= 32 * 1024 * 1024,
+        "cold allocation byte tripwire"
+    );
+    assert!(
+        cold.bytes_current > 0,
+        "the process cache retains its table"
+    );
+    assert_eq!(
+        warm.count_total, 0,
+        "another bot/request does not decode or allocate the shared family"
+    );
+    assert_eq!(warm.bytes_current, 0);
 
     use api::prereq_steps::PrereqCatalogError;
     let invalid = |row| PrereqCatalog::from_rows(vec![row]).unwrap_err();

@@ -5,7 +5,7 @@
 //! Navigation collision, transport graph, Dijkstra routing, arrival detection,
 //! and immutable map views. `nav-bake` owns release generation, and
 //! `nav-executor` drives routes.
-//! Pack magic `274V`, version byte 18.
+//! Pack magic `274V`, version byte 19.
 
 pub mod arrival;
 pub mod bank_fetch;
@@ -16,7 +16,6 @@ pub mod contract;
 pub mod essence;
 pub mod executor_adapter;
 pub mod grid;
-pub mod manifest;
 pub mod map;
 pub mod movement;
 pub mod named_banks;

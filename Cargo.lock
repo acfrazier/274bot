@@ -178,7 +178,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "sha2",
  "smallvec",
  "thiserror 2.0.21",
 ]
@@ -1464,8 +1463,6 @@ dependencies = [
  "host-play",
  "image",
  "libc",
- "nav-bake",
- "nav-planner",
  "scenario",
  "serde",
  "serde_json",
@@ -2721,7 +2718,6 @@ dependencies = [
  "nav-planner",
  "serde",
  "serde_json",
- "sha2",
  "thiserror 2.0.21",
 ]
 

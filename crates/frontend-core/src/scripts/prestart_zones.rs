@@ -470,7 +470,7 @@ mod tests {
     use api::selected::{ClientRevision, FamilyPreparation};
     use api::snapshot::WorldTile;
     use nav_planner::collision::WorldCollision;
-    use nav_planner::contract::{NavLease, PackDigest};
+    use nav_planner::contract::NavLease;
     use nav_planner::router::AvoidRect;
     use nav_planner::transport::{TransportGraph, WildernessRules};
     use nav_planner::world::NavWorld;
@@ -551,8 +551,7 @@ mod tests {
             },
             Vec::new(),
         ));
-        NavLease::wrap(world, PackDigest::of(b"prestart-zone-fixture"))
-            .expect("bind the fixture's navigation lease")
+        NavLease::wrap(world).expect("bind the fixture's navigation lease")
     }
 
     fn registry_fixture() -> RegistryFixture {

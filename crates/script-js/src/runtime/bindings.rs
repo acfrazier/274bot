@@ -792,10 +792,9 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("bank tasks v8: {e}"))?;
     crate::materialize::hunt_v8::install(runtime).map_err(|e| format!("hunt v8: {e}"))?;
     crate::materialize::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
-    let content = format!(
-        "globalThis.__rs2b0t_host.content = {};",
-        crate::shim::content_json(game_data.as_deref())
-    );
+    let content_json =
+        crate::shim::content_json(game_data.as_deref()).map_err(|e| format!("content: {e}"))?;
+    let content = format!("globalThis.__rs2b0t_host.content = {content_json};");
     crate::materialize::lineage_v8::eval::<()>(runtime, content.as_str())
         .map_err(|e| format!("content: {e}"))?;
     let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);

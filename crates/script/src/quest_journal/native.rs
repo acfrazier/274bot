@@ -3,7 +3,7 @@ use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, NativeMachine, QuietReadLease, WaitDeadline};
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, JournalRead};
-use api::selected::{ClientRevision, FactKey, SelectedPin};
+use api::selected::{ClientRevision, FactKey};
 use std::{sync::Arc, task::Poll, time::Duration};
 
 // Selected 289 interface.pack: questjournal_scroll and :ifquestname. The
@@ -32,7 +32,6 @@ pub struct JournalMachine {
     title: Arc<str>,
     component: i32,
     colour: i32,
-    pin: Arc<SelectedPin>,
     lease: Option<QuietReadLease>,
     phase: Phase,
     deadline_tick: u64,
@@ -78,7 +77,7 @@ impl NativeMachine for JournalMachine {
     type Output = JournalRead;
 
     fn begin(args: JournalRequest, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
-        if cx.pin().revision != ClientRevision::R289 {
+        if cx.revision() != ClientRevision::R289 {
             return Err(ActionError::Unavailable(Arc::from(
                 "journal interface unavailable for selected revision",
             )));
@@ -137,7 +136,6 @@ impl NativeMachine for JournalMachine {
             title,
             component,
             colour,
-            pin: Arc::new(cx.pin().clone()),
             lease: Some(lease),
             phase: adopted_before
                 .map(|before| Phase::Adopt { before })
@@ -292,7 +290,6 @@ impl NativeMachine for JournalMachine {
                             colour: Some(self.colour),
                             acquired: self.acquired.expect("captured before close"),
                             closed,
-                            pin: Arc::clone(&self.pin),
                         }));
                     }
                     if pair.value.root != ROOT_289 {

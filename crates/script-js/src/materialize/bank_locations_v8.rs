@@ -903,54 +903,66 @@ fn usable<'s>(
     callback_v8::finish(scope, rv, result);
 }
 
-/// The bank roster paired with its cook surfaces; `None` without selected
-/// game data.
-fn cook_roster() -> Option<(Vec<api::named_banks::NamedBank>, Vec<CookLocation>)> {
-    let data = crate::scene::supply_v2::selected_data()?;
+/// The bank roster paired with its cook surfaces; `Ok(None)` without selected
+/// game data, and a fact error when local cook data is unavailable.
+fn cook_roster(
+) -> Result<Option<(Vec<api::named_banks::NamedBank>, Vec<CookLocation>)>, api::selected::FactError>
+{
+    let Some(data) = crate::scene::supply_v2::selected_data() else {
+        return Ok(None);
+    };
     let banks = bank_select::banks();
-    let locations = cook_locations::build(&banks, data.cook_surfaces());
-    Some((banks, locations))
+    let locations = cook_locations::build(&banks, data.cook_surfaces()?)?;
+    Ok(Some((banks, locations)))
 }
 
 /// Frozen `COOK_LOCATIONS` (`api/cooking/CookLocations.ts:12`): one row per
-/// roster bank, `bank` its index in `BANK_LOCATIONS`. Every shim module
-/// evaluates at load, so without game data the table is empty (like
-/// `ITEM_DB`) and `resolveCookLocation` reports the missing data.
+/// roster bank, `bank` its index in `BANK_LOCATIONS`. Without selected game
+/// data the table stays empty, and `resolveCookLocation` reports missing data.
 fn cook_catalog<'s>(
     scope: &mut v8::HandleScope<'s>,
     _args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
-    let locations = cook_roster().map_or_else(Vec::new, |(_, locations)| locations);
-    let tile = |tile: WorldTile| json!({"x": tile.x, "z": tile.z, "level": tile.level});
-    let rows: Vec<_> = locations
-        .iter()
-        .map(|location| {
-            let surface = location.surface.as_ref().map(|plan| {
-                let mut surface = json!({
-                    "stand": tile(plan.stand),
-                    "locName": plan.loc_name,
-                    "kind": plan.kind.as_str(),
-                    "loc": tile(plan.loc),
-                    "arriveRadius": plan.arrive_radius,
-                    "label": plan.label,
+    let result = (|| {
+        let Some((_, locations)) = cook_roster()
+            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error}")))?
+        else {
+            return serde_v8::to_v8(scope, Vec::<serde_json::Value>::new())
+                .map_err(|e| callback_v8::type_error(scope, &format!("cook locations: {e}")));
+        };
+        let obstacles = api::cook_locations::default_obstacles()
+            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error}")))?;
+        let tile = |tile: WorldTile| json!({"x": tile.x, "z": tile.z, "level": tile.level});
+        let rows: Vec<_> = locations
+            .iter()
+            .map(|location| {
+                let surface = location.surface.as_ref().map(|plan| {
+                    let mut surface = json!({
+                        "stand": tile(plan.stand),
+                        "locName": plan.loc_name,
+                        "kind": plan.kind.as_str(),
+                        "loc": tile(plan.loc),
+                        "arriveRadius": plan.arrive_radius,
+                        "label": plan.label,
+                    });
+                    if let Some(approach) = plan.approach {
+                        surface["approach"] = tile(approach);
+                    }
+                    surface
                 });
-                if let Some(approach) = plan.approach {
-                    surface["approach"] = tile(approach);
-                }
-                surface
-            });
-            json!({
-                "bank": location.bank,
-                "name": location.name,
-                "surface": surface,
-                "obstacles": api::cook_locations::DEFAULT_OBSTACLES,
-                "verified": location.verified,
+                json!({
+                    "bank": location.bank,
+                    "name": location.name,
+                    "surface": surface,
+                    "obstacles": obstacles,
+                    "verified": location.verified,
+                })
             })
-        })
-        .collect();
-    let result = serde_v8::to_v8(scope, rows)
-        .map_err(|e| callback_v8::type_error(scope, &format!("cook locations: {e}")));
+            .collect();
+        serde_v8::to_v8(scope, rows)
+            .map_err(|e| callback_v8::type_error(scope, &format!("cook locations: {e}")))
+    })();
     callback_v8::finish(scope, rv, result);
 }
 
@@ -1091,14 +1103,18 @@ fn nearest_cook_surface<'s>(
         let Some(data) = crate::scene::supply_v2::selected_data() else {
             return Ok(v8::null(scope).into());
         };
-        let surfaces = data.cook_surfaces();
+        let surfaces = data
+            .cook_surfaces()
+            .map_err(|error| callback_v8::type_error(scope, &format!("cook surface: {error}")))?;
         if surfaces.is_empty() {
             return Ok(v8::null(scope).into());
         }
         let origin = origin(scope, args.get(0))?;
         let max_cheb = args.get(1);
         let max_cheb = if max_cheb.is_undefined() {
-            f64::from(api::cook_locations::MAX_SURFACE_CHEB)
+            f64::from(api::cook_locations::max_surface_cheb().map_err(|error| {
+                callback_v8::type_error(scope, &format!("cook surface: {error}"))
+            })?)
         } else {
             callback_v8::number(scope, max_cheb)?
         };
@@ -1134,12 +1150,18 @@ fn resolve_cook<'s>(
         let Some(wanted) = cook_locations::wanted(&setting) else {
             return Ok(None);
         };
-        let Some((banks, locations)) = cook_roster() else {
-            let message = v8::String::new(scope, crate::scene::supply_v2::GAME_DATA_UNAVAILABLE)
-                .unwrap_or_else(|| v8::String::empty(scope));
-            return Err(callback_v8::Throw::Value(v8::Exception::error(
-                scope, message,
-            )));
+        let (banks, locations) = match cook_roster()
+            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error}")))?
+        {
+            Some(roster) => roster,
+            None => {
+                let message =
+                    v8::String::new(scope, crate::scene::supply_v2::GAME_DATA_UNAVAILABLE)
+                        .unwrap_or_else(|| v8::String::empty(scope));
+                return Err(callback_v8::Throw::Value(v8::Exception::error(
+                    scope, message,
+                )));
+            }
         };
         let predicate = args.get(2);
         let predicate = (!predicate.is_undefined())
@@ -1465,8 +1487,10 @@ globalThis.__checkEmptyBankResults = () => {
 };
 "#;
 
-    fn test_bank_facts() -> api::named_banks::NamedBankFacts {
-        let mut banks = api::named_banks::BANK_CATALOG
+    fn test_bank_facts(
+        catalog: &[api::named_banks::BankDefinition],
+    ) -> api::named_banks::NamedBankFacts {
+        let mut banks = catalog
             .iter()
             .map(|definition| api::named_banks::NamedBank {
                 name: definition.name,
@@ -1521,9 +1545,9 @@ globalThis.__checkEmptyBankResults = () => {
         shapes.iter().filter(|present| **present).count()
     }
 
-    fn bank_result_object_count() -> usize {
-        let mut count = 1 + 2 * (api::named_banks::BANK_CATALOG.len() + 1);
-        for definition in api::named_banks::BANK_CATALOG {
+    fn bank_result_object_count(catalog: &[api::named_banks::BankDefinition]) -> usize {
+        let mut count = 1 + 2 * (catalog.len() + 1);
+        for definition in catalog {
             if definition.approach.is_some() {
                 count += 1;
             }
@@ -1554,6 +1578,13 @@ globalThis.__checkEmptyBankResults = () => {
 
     #[test]
     fn bank_result_shapes_cover_callbacks_and_bound_v8_heap() {
+        if !crate::test_support::local_api_asset(
+            "data/game-data/bank-catalog.rs",
+            "local bank catalog (generate with `tools/local-data/build.sh`)",
+        ) {
+            return;
+        }
+        let catalog = api::named_banks::bank_catalog().expect("local bank catalog");
         if std::env::var_os(BANK_SHAPE_CHILD_ENV).is_none() {
             let output = std::process::Command::new(
                 std::env::current_exe().expect("unit-test executable path"),
@@ -1582,7 +1613,7 @@ globalThis.__checkEmptyBankResults = () => {
         v8::V8::set_flags_from_string("--allow-natives-syntax");
         let _reset = ResetBankSelection;
         bank_select::settings(&serde_json::Map::<String, serde_json::Value>::new());
-        bank_select::install(std::sync::Arc::new(test_bank_facts()));
+        bank_select::install(std::sync::Arc::new(test_bank_facts(catalog)));
         let expected = bank_select::banks()
             .iter()
             .map(script::native_bank::bank_value)
@@ -1614,13 +1645,13 @@ globalThis.__checkEmptyBankResults = () => {
         // baseline). Charge each retained bank-result object at 1 KiB.
         const COMPARABLE_ENTITY_HEAP_BOUND: usize = 4_194_304;
         const COMPARABLE_ENTITY_ROWS: usize = 4_096;
-        let growth_limit =
-            bank_result_object_count() * (COMPARABLE_ENTITY_HEAP_BOUND / COMPARABLE_ENTITY_ROWS);
+        let growth_limit = bank_result_object_count(catalog)
+            * (COMPARABLE_ENTITY_HEAP_BOUND / COMPARABLE_ENTITY_ROWS);
         println!(
             "Bank result collected V8 heap after warmup: rows={} objects={} baseline={} \
              after_repeat={} growth={} limit={growth_limit}",
-            api::named_banks::BANK_CATALOG.len() + 1,
-            bank_result_object_count(),
+            catalog.len() + 1,
+            bank_result_object_count(catalog),
             baseline,
             after_repeat,
             growth

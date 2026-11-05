@@ -26,7 +26,6 @@ use host_play::admission::RiskInput;
 use host_play::walk_map::{ActionKind, MapContext, MapModel, WalkActionOutcome};
 use host_play::{self, ProfileOptions, SharedClientTemplate, WalkArms, WalkGlobals};
 use nav_planner::bank_fetch::BankRows;
-use nav_planner::map::identity::Digest;
 use nav_planner::router::FindOptions;
 use nav_planner::tile::Tile;
 use nav_planner::WorldState;
@@ -160,16 +159,14 @@ fn required_port(name: &str) -> u16 {
         .unwrap_or_else(|_| panic!("{name} must be a port"))
 }
 
-fn quest_varp(selected: &api::game_data::SelectedGameData, quest: &str) -> String {
-    selected
-        .quest_identity()
-        .expect("selected R289 quest identity")
-        .rows
+fn quest_varp(quests: &api::quest_facts::QuestCatalog, quest: &str) -> String {
+    quests
         .iter()
-        .find(|row| row.id.eq_ignore_ascii_case(quest))
-        .unwrap_or_else(|| panic!("selected R289 data has no quest {quest:?}"))
+        .find(|facts| facts.id.0.eq_ignore_ascii_case(quest))
+        .unwrap_or_else(|| panic!("selected R289 quest facts lack quest {quest:?}"))
         .varp
-        .clone()
+        .0
+        .to_string()
 }
 
 fn live_globals(dialogue: bool, quest_start: bool) -> WalkGlobals {
@@ -268,6 +265,7 @@ struct LiveFixture {
     template: Arc<SharedClientTemplate>,
     state: Arc<SlotState>,
     selected: Arc<api::game_data::SelectedGameData>,
+    quests: Arc<api::quest_facts::QuestCatalog>,
     snapshot: Arc<Mutex<GameSnapshot>>,
     manual_arms: WalkArms,
     name: String,
@@ -360,6 +358,18 @@ fn make_fixture_with_seed_commands(
 
     let selected =
         api::game_data::for_revision(ClientRevision::R289).expect("selected R289 game data");
+    let clock = api::work::SystemClock;
+    let cancellation = api::work::SharedCancellation::new();
+    let budget = api::work::SliceBudget::new(
+        std::num::NonZeroU32::new(1).expect("nonzero quest preparation budget"),
+        api::identity::Deadline::at(Instant::now() + Duration::from_secs(90)),
+    );
+    let mut preparation =
+        api::work::StepContext::<api::work::PreparationPhase>::new(&clock, budget, &cancellation);
+    let quests = api::selected::FamilyPreparation::within(&mut preparation, |worker| {
+        selected.prepare_quests(worker)
+    });
+    let quests = quests.expect("prepare selected R289 quest facts");
     let mut frame_commands = server_stages
         .iter()
         .map(|(quest, stage)| {
@@ -369,7 +379,7 @@ fn make_fixture_with_seed_commands(
                 // its real quest-list colour: debug_quests.rs2:327-331.
                 format!("~setpp {stage}")
             } else {
-                format!("setvar {} {stage}", quest_varp(&selected, quest))
+                format!("setvar {} {stage}", quest_varp(&quests, quest))
             }
         })
         .collect::<Vec<_>>();
@@ -566,7 +576,7 @@ fn make_fixture_with_seed_commands(
     );
 
     for (quest, stage) in server_stages {
-        let varp = quest_varp(&selected, quest);
+        let varp = quest_varp(&quests, quest);
         play.cheat(&seed_name, &format!("getvar {varp}"))
             .expect("queue live server stage query");
         wait_for(
@@ -628,6 +638,7 @@ fn make_fixture_with_seed_commands(
         template,
         state,
         selected,
+        quests,
         snapshot,
         manual_arms,
         name: seed_name,
@@ -723,13 +734,13 @@ fn nav_tile(tile: WorldTile) -> Tile {
 }
 
 fn map_context(fixture: &LiveFixture) -> MapContext {
-    let identity = fixture
+    let pack_id = fixture
         .profile
-        .nav_identity()
-        .expect("bound navigation identity");
+        .nav_pack_id()
+        .expect("bound navigation pack ownership id");
     MapContext {
         focus: fixture.play.map_focus(&fixture.name),
-        nav: Digest::from_hex(&identity.nav_sha256).expect("selected navigation digest"),
+        nav: pack_id,
         overlay: None,
         generation: 1,
     }
@@ -1391,7 +1402,7 @@ fn print_prereq_receipt(test: &str, receipt: &serde_json::Value) {
 }
 
 fn observed_quest_stage(fixture: &LiveFixture, quest: &str, stage: i32) -> serde_json::Value {
-    let varp = quest_varp(&fixture.selected, quest);
+    let varp = quest_varp(&fixture.quests, quest);
     fixture
         .play
         .cheat(&fixture.name, &format!("getvar {varp}"))

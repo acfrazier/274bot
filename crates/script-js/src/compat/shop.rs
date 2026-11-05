@@ -870,49 +870,51 @@ pub(crate) struct BuyoutPlanResult {
 
 /// Rust-owned buyout selection/ranking/stock-price/budget. JS only marshals
 /// primitives into this in-isolate helper.
-pub fn run_buyout_plan(req: &BuyoutPlanRequest) -> BuyoutPlanResult {
+pub fn run_buyout_plan(
+    req: &BuyoutPlanRequest,
+) -> Result<BuyoutPlanResult, api::selected::FactError> {
     GAME_DATA.with(|slot| {
         let data = slot.borrow();
         let Some(data) = data.as_deref() else {
-            return BuyoutPlanResult {
+            return Ok(BuyoutPlanResult {
                 ok: false,
                 reason: "missing shop facts".into(),
                 items: Vec::new(),
-            };
+            });
         };
         let shop = if !req.inv.is_empty() {
-            match api::shop_facts::shop_by_inv(data, &req.inv) {
+            match api::shop_facts::shop_by_inv(data, &req.inv)? {
                 Some(shop) => shop,
                 None => {
-                    return BuyoutPlanResult {
+                    return Ok(BuyoutPlanResult {
                         ok: false,
                         reason: format!("unsupported shop {}", req.inv),
                         items: Vec::new(),
-                    }
+                    });
                 }
             }
         } else if !req.keeper.is_empty() {
-            match api::shop_facts::shop_by_keeper(data, &req.keeper) {
+            match api::shop_facts::shop_by_keeper(data, &req.keeper)? {
                 Some(shop) => shop,
                 None => {
-                    return BuyoutPlanResult {
+                    return Ok(BuyoutPlanResult {
                         ok: false,
                         reason: "unknown shopkeeper".into(),
                         items: Vec::new(),
-                    }
+                    });
                 }
             }
         } else {
-            return BuyoutPlanResult {
+            return Ok(BuyoutPlanResult {
                 ok: false,
                 reason: "missing shop identity".into(),
                 items: Vec::new(),
-            };
+            });
         };
         let stock: HashMap<String, i32> = req.stock.iter().cloned().collect();
         let chosen: HashSet<String> = req.chosen.iter().cloned().collect();
         let items = api::shop_facts::buyout_plan(&shop, &stock, req.coins, &chosen);
-        BuyoutPlanResult {
+        Ok(BuyoutPlanResult {
             ok: true,
             reason: String::new(),
             items: items
@@ -924,7 +926,7 @@ pub fn run_buyout_plan(req: &BuyoutPlanRequest) -> BuyoutPlanResult {
                     est_cost: row.est_cost,
                 })
                 .collect(),
-        }
+        })
     })
 }
 

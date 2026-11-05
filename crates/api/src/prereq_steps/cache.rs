@@ -4,34 +4,36 @@
 //! never decodes or hashes the artifact.
 
 use super::{wire, PrereqCatalog};
-use crate::family_asset;
 use crate::game_data::SelectedGameData;
-use crate::selected::{
-    ClientRevision, FactError, FamilyPreparation, SelectedPin, PREREQ_STEPS_FAMILY,
-};
+use crate::selected::{ClientRevision, FactError, FamilyPreparation, PREREQ_STEPS_FAMILY};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 const PREREQ_STEPS_289: &[u8] = include_bytes!("../../data/game-data/289/prereq_steps.json");
 
-fn embedded(revision: ClientRevision) -> &'static [u8] {
+#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+fn embedded(revision: ClientRevision) -> Option<&'static [u8]> {
     match revision {
-        ClientRevision::R289 => PREREQ_STEPS_289,
-        ClientRevision::R274 => &[],
+        ClientRevision::R289 => Some(PREREQ_STEPS_289),
+        ClientRevision::R274 => None,
     }
+}
+
+#[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+fn embedded(_revision: ClientRevision) -> Option<&'static [u8]> {
+    None
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Key {
     revision: i32,
-    manifest: [u8; 32],
 }
 
 impl Key {
-    fn of(pin: &SelectedPin) -> Self {
+    fn of(revision: ClientRevision) -> Self {
         Self {
-            revision: pin.revision.as_i32(),
-            manifest: pin.manifest_sha256,
+            revision: revision.as_i32(),
         }
     }
 }
@@ -80,7 +82,7 @@ impl Cache {
             .lock()
             .iter()
             .position(Option::is_none)
-            .ok_or(FactError::PinMismatch)?;
+            .ok_or_else(unavailable)?;
         let catalog = Arc::new(load()?);
         self.slots.lock()[empty] = Some(Slot {
             key,
@@ -92,22 +94,26 @@ impl Cache {
 
 static CACHE: Cache = Cache::new();
 
+fn unavailable() -> FactError {
+    FactError::FamilyUnavailable((*PREREQ_STEPS_FAMILY).clone())
+}
+
 pub(crate) fn prepare(
     data: &SelectedGameData,
     _worker: &mut FamilyPreparation,
 ) -> Result<Arc<PrereqCatalog>, FactError> {
-    let pin = data.selected_pin()?;
-    CACHE.prepare(Key::of(&pin), || {
-        load(&pin, crate::game_data::MANIFEST, embedded(pin.revision))
+    let revision = data.selected_revision().ok_or_else(unavailable)?;
+    CACHE.prepare(Key::of(revision), || {
+        let family = embedded(revision).ok_or_else(unavailable)?;
+        load(family)
     })
 }
 
 pub(crate) fn cached(data: &SelectedGameData) -> Option<Arc<PrereqCatalog>> {
-    let pin = data.selected_pin().ok()?;
-    CACHE.lookup(&Key::of(&pin))
+    let revision = data.selected_revision()?;
+    CACHE.lookup(&Key::of(revision))
 }
 
-fn load(pin: &SelectedPin, manifest: &[u8], family: &[u8]) -> Result<PrereqCatalog, FactError> {
-    family_asset::verify_family(pin, manifest, &PREREQ_STEPS_FAMILY, wire::SCHEMA, family)?;
-    wire::decode(pin, family)
+fn load(family: &[u8]) -> Result<PrereqCatalog, FactError> {
+    wire::decode(family)
 }

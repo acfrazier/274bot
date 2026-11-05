@@ -19,6 +19,8 @@ use {
     script_js::wire::{encode_snapshot, Snapshot},
 };
 
+mod common;
+
 fn reset() {
     hunt_leave::on_reset();
 }
@@ -210,6 +212,9 @@ fn already_out_missing_leave_by_walk_yields_true_without_abort() {
 
 #[test]
 fn missing_leave_by_walk_aborts_instead_of_casting() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     reset();
     let data = cache();
     let spell = falador(&data);
@@ -225,6 +230,9 @@ fn missing_leave_by_walk_aborts_instead_of_casting() {
 
 #[test]
 fn leave_by_walk_skips_teleport_even_when_runes_suffice() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     reset();
     let data = cache();
     let spell = falador(&data);
@@ -244,6 +252,9 @@ fn leave_by_walk_skips_teleport_even_when_runes_suffice() {
 #[test]
 fn teleport_names_the_escape_id_and_does_not_invent_a_button() {
     reset();
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data);
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(spell)));
@@ -258,6 +269,9 @@ fn teleport_names_the_escape_id_and_does_not_invent_a_button() {
 #[test]
 fn rune_precheck_matches_ids_not_names_and_ignores_a_staff() {
     reset();
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(
@@ -289,6 +303,9 @@ fn rune_precheck_matches_ids_not_names_and_ignores_a_staff() {
 #[test]
 fn magic_gate_reads_base_not_effective() {
     reset();
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     let inv: Vec<ItemRowInput> = spell
@@ -342,6 +359,9 @@ fn magic_gate_reads_base_not_effective() {
 
 #[test]
 fn unknown_id_falls_through_and_is_not_blocked() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     reset();
     set_observation(obs(Some(inside()), Some(99), vec![]));
     let token = begin();
@@ -370,6 +390,9 @@ fn unknown_id_falls_through_and_is_not_blocked() {
 #[test]
 fn helper_done_while_inside_is_not_left() {
     reset();
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -385,6 +408,9 @@ fn helper_done_while_inside_is_not_left() {
 #[test]
 fn left_despite_helper_false_yields_true_without_a_walk() {
     reset();
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -400,6 +426,9 @@ fn left_despite_helper_false_yields_true_without_a_walk() {
 #[test]
 fn three_failed_casts_then_walk_out_and_no_fourth() {
     reset();
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -433,6 +462,9 @@ fn three_failed_casts_then_walk_out_and_no_fourth() {
 #[test]
 fn mid_loop_shortfall_stops_further_teleports() {
     reset();
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -634,6 +666,9 @@ fn gateless_is_walk_near_radius_3_not_a_sixth_kind() {
 #[test]
 fn kbd_key_route_or_loc_aborts_before_teleport_or_walk() {
     reset();
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(99), rows_by_id(&spell)));
@@ -676,6 +711,9 @@ fn size_one_point_outside_the_box_is_already_out() {
 #[test]
 fn enter_pause_does_not_freeze_the_leave_door_window() {
     reset();
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -738,6 +776,9 @@ fn walk_leg_is_not_the_fight_window() {
 #[test]
 fn hold_during_proof_yields_false() {
     reset();
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));

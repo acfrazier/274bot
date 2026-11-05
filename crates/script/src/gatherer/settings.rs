@@ -2,7 +2,7 @@ use crate::native::{ConfigError, SettingsBag, StartError};
 use crate::SettingDef;
 use api::game_data::SelectedGameData;
 use api::gather_methods::{first_gap, GatherCatalog, GatherMethod, GatherSkill, GatherTarget};
-use api::named_banks::{BankPreferences, BANK_CATALOG};
+use api::named_banks::BankPreferences;
 use api::selected::{Knowledge, RequirementKind};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
@@ -294,17 +294,22 @@ impl GathererSettings {
         }
         if self.bank.eq_ignore_ascii_case("nearest") {
             self.bank = "Nearest".into();
-        } else if let Some(bank) = BANK_CATALOG
-            .iter()
-            .find(|bank| bank.name.eq_ignore_ascii_case(self.bank.trim()))
-        {
-            self.bank = bank.name.to_string();
         } else {
-            return Err(ConfigError::new(
-                "bank",
-                "invalid-option",
-                "bank must be Nearest or a named bank from the catalog",
-            ));
+            let catalog = api::named_banks::bank_catalog().map_err(|error| {
+                ConfigError::new("bank", "catalog-unavailable", error.to_string())
+            })?;
+            if let Some(bank) = catalog
+                .iter()
+                .find(|bank| bank.name.eq_ignore_ascii_case(self.bank.trim()))
+            {
+                self.bank = bank.name.to_string();
+            } else {
+                return Err(ConfigError::new(
+                    "bank",
+                    "invalid-option",
+                    "bank must be Nearest or a named bank from the catalog",
+                ));
+            }
         }
         if !(1..=10_000).contains(&self.bait_target) {
             return Err(ConfigError::new(

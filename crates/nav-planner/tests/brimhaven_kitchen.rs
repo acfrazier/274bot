@@ -109,7 +109,6 @@ fn matrix(world: &NavWorld, qualified: bool) -> Vec<serde_json::Value> {
             .filter(|(_, edge)| edge.loc_id == 2628)
             .map(|(index, _)| world.graph.approaches.get(index).copied().flatten())
             .collect(),
-        quest_family: world.graph.quest_family,
         ..Default::default()
     };
     graph.rebuild_index(&collision);
@@ -169,11 +168,7 @@ fn matrix(world: &NavWorld, qualified: bool) -> Vec<serde_json::Value> {
     for (profile, account, expected) in profiles {
         let state = WorldState::empty()
             .with_map_members(true)
-            .with_quest_evidence(QuestEvidence::new(
-                Arc::new(account),
-                graph.quest_family.expect("selected quest family"),
-                stamp(),
-            ));
+            .with_quest_evidence(QuestEvidence::new(Arc::new(account), stamp()));
         for edge in &graph.edges {
             let id = edge.crossing_id().expect("kitchen door crossing identity");
             let route = find_with(

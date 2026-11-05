@@ -1,160 +1,119 @@
 use super::*;
+use std::borrow::Cow;
+use std::io::Read;
+#[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+use std::io::Write;
 
-const RAW_289: &[u8] = include_bytes!("../data/game-data/289.json");
+fn raw_game_data(revision: ClientRevision) -> Option<Vec<u8>> {
+    let (path, description) = match revision {
+        ClientRevision::R274 => (
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/274.json"),
+            "revision 274 game data for API tests",
+        ),
+        ClientRevision::R289 => (
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
+            "revision 289 game data for API tests",
+        ),
+    };
+    let path = crate::test_support::local_asset_path("", path, description)?;
+    Some(
+        std::fs::read(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display())),
+    )
+}
+
+fn raw_debug_catalog() -> Option<Vec<u8>> {
+    let path = crate::test_support::local_asset_path(
+        "",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289/debug.json"),
+        "revision 289 debug catalog for API tests",
+    )?;
+    Some(
+        std::fs::read(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display())),
+    )
+}
 
 #[test]
 fn generated_game_data_gzip_preserves_every_source_byte() {
-    for (revision, compressed, source) in [
-        (
-            274,
-            REVISION_274,
-            include_bytes!("../data/game-data/274.json").as_slice(),
-        ),
-        (289, REVISION_289, RAW_289),
-    ] {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let Some(source) = raw_game_data(revision) else {
+            return;
+        };
+        #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+        let compressed = Cow::Borrowed(match revision {
+            ClientRevision::R274 => REVISION_274,
+            ClientRevision::R289 => REVISION_289,
+        });
+        #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+        let compressed = {
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+            encoder.write_all(&source).unwrap();
+            Cow::Owned(encoder.finish().unwrap())
+        };
         let mut decoded = Vec::new();
-        GzDecoder::new(compressed)
+        flate2::read::GzDecoder::new(compressed.as_ref())
             .read_to_end(&mut decoded)
             .unwrap();
-        assert_eq!(decoded, source, "revision {revision} generated gzip");
-    }
-}
-
-#[test]
-fn selected_pin_is_shared_and_unbound_facts_fail_closed() {
-    let data = for_revision(ClientRevision::R289).unwrap();
-    let first = data.selected_pin().unwrap();
-    let second = data.selected_pin().unwrap();
-    assert!(Arc::ptr_eq(&first, &second));
-    let legacy =
-        SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274).unwrap();
-    assert!(matches!(
-        legacy.selected_pin(),
-        Err(FactError::FamilyUnavailable(_))
-    ));
-    let unbound: SelectedGameData = serde_json::from_slice(RAW_289).unwrap();
-    assert!(matches!(
-        unbound.selected_pin(),
-        Err(FactError::FamilyUnavailable(_))
-    ));
-}
-
-#[test]
-fn selected_pin_refuses_changed_assets_and_mismatched_manifest_identity() {
-    let data = for_revision(ClientRevision::R289).unwrap();
-    let mut changed = RAW_289.to_vec();
-    changed.push(b' ');
-    assert_eq!(
-        data.bind_pin(
-            changed.len() as u64,
-            Sha256::digest(&changed).into(),
-            MANIFEST,
-            ClientRevision::R289,
-        ),
-        Err(FactError::PinMismatch)
-    );
-    // Same length but changed bytes must fail too.
-    changed = RAW_289.to_vec();
-    changed[0] = b' ';
-    assert_eq!(
-        data.bind_pin(
-            changed.len() as u64,
-            Sha256::digest(&changed).into(),
-            MANIFEST,
-            ClientRevision::R289,
-        ),
-        Err(FactError::PinMismatch)
-    );
-    for field in ["nav_sha256", "flags_sha256", "content_id", "cache_id"] {
-        let mut manifest: serde_json::Value = serde_json::from_slice(MANIFEST).unwrap();
-        manifest["revisions"][1]["cache_identity"][field] = "00".repeat(32).into();
         assert_eq!(
-            data.bind_pin(
-                RAW_289.len() as u64,
-                Sha256::digest(RAW_289).into(),
-                &serde_json::to_vec(&manifest).unwrap(),
-                ClientRevision::R289,
-            ),
-            Err(FactError::PinMismatch),
-            "{field}"
+            decoded,
+            source,
+            "revision {} generated gzip",
+            revision.as_i32()
         );
     }
-    assert_eq!(
-        data.bind_pin(
-            RAW_289.len() as u64,
-            Sha256::digest(RAW_289).into(),
-            MANIFEST,
-            ClientRevision::R274,
-        ),
-        Err(FactError::PinMismatch)
-    );
 }
 
 #[test]
-fn streamed_pin_covers_trailing_whitespace_and_refuses_truncated_input() {
-    // Cross the decode buffer boundary with valid JSON whitespace: it must
-    // count toward the original-byte pin, even though it adds no facts.
-    let bytes = RAW_289
+fn caller_selected_revision_overrides_the_wire_revision() {
+    let bytes = minimal_json("").replace("\"revision\": 274", "\"revision\": 289");
+    let data = SelectedGameData::decode(bytes.as_bytes(), ClientRevision::R274).unwrap();
+    assert_eq!(data.revision, ClientRevision::R274.as_i32());
+    assert_eq!(data.selected_revision(), Some(ClientRevision::R274));
+}
+
+#[test]
+fn streamed_game_data_accepts_trailing_whitespace_and_rejects_truncation() {
+    let Some(raw) = raw_game_data(ClientRevision::R289) else {
+        return;
+    };
+    let bytes = raw
         .iter()
         .copied()
         .chain(std::iter::repeat_n(b' ', 128 * 1024));
     let changed: Vec<u8> = bytes.collect();
     let data = SelectedGameData::decode(changed.as_slice(), ClientRevision::R289).unwrap();
-    assert_eq!(data.selected_pin(), Err(FactError::PinMismatch));
-    assert!(SelectedGameData::decode(&RAW_289[..RAW_289.len() / 2], ClientRevision::R289).is_err());
+    assert_eq!(data.revision, ClientRevision::R289.as_i32());
+    assert!(SelectedGameData::decode(&raw[..raw.len() / 2], ClientRevision::R289).is_err());
 }
 
 #[test]
 fn family_preparation_runs_off_the_callers_thread() {
     let caller = std::thread::current().id();
-    let prepared = crate::selected::FamilyPreparation::run(|worker| {
-        let data = for_revision(ClientRevision::R289).unwrap();
+    let Some(data) = crate::game_data::test_data(ClientRevision::R289) else {
+        return;
+    };
+    let prepared = crate::selected::FamilyPreparation::run(move |worker| {
         assert!(!data.prepare_quests(worker).unwrap().is_empty());
-        assert!(data.quest_family_identity().is_some());
-        (std::thread::current().id(), data.selected_pin().unwrap())
+        (std::thread::current().id(), data.selected_revision())
     })
     .unwrap()
     .join()
     .unwrap();
     assert_ne!(prepared.0, caller);
-    assert!(Arc::ptr_eq(
-        &prepared.1,
-        &for_revision(ClientRevision::R289)
-            .unwrap()
-            .selected_pin()
-            .unwrap()
-    ));
+    assert_eq!(prepared.1, Some(ClientRevision::R289));
 }
-
-#[test]
-fn unbound_selected_data_refuses_the_gathering_family() {
-    let (cached, refused) = crate::selected::FamilyPreparation::run(|worker| {
-        let unbound = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
-            .expect("schema 4 without provenance commits still decodes");
-        (
-            unbound.try_gathering().is_some(),
-            unbound.prepare_gathering(worker).map(|_| ()),
-        )
-    })
-    .unwrap()
-    .join()
-    .unwrap();
-    assert!(!cached, "an unbound pin never hits the cache");
-    assert!(
-        matches!(refused, Err(FactError::FamilyUnavailable(_))),
-        "{refused:?}"
-    );
-}
-fn prepared_r289_gathering() -> std::sync::Arc<crate::gather_methods::GatherCatalog> {
-    crate::selected::FamilyPreparation::run(|worker| {
-        for_revision(ClientRevision::R289)
-            .unwrap()
-            .prepare_gathering(worker)
-            .unwrap()
-    })
-    .unwrap()
-    .join()
-    .unwrap()
+fn prepared_r289_gathering() -> Option<std::sync::Arc<crate::gather_methods::GatherCatalog>> {
+    let data = crate::game_data::test_data(ClientRevision::R289)?;
+    Some(
+        crate::selected::FamilyPreparation::run(move |worker| {
+            data.prepare_gathering(worker).unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap(),
+    )
 }
 
 fn tick_method<'a>(
@@ -184,7 +143,9 @@ fn tick_tool<'a>(
 fn r289_tick_arm_is_fully_classified_and_matches_reviewed_families() {
     use crate::gather_methods::{GatherSkill, TickArmKind, TickRollSignal};
 
-    let catalog = prepared_r289_gathering();
+    let Some(catalog) = prepared_r289_gathering() else {
+        return;
+    };
     assert_eq!(catalog.methods().len(), 41);
     for method in catalog.methods() {
         assert!(
@@ -316,7 +277,10 @@ fn r289_tick_arm_is_fully_classified_and_matches_reviewed_families() {
 
 #[test]
 fn facts_old_data_is_refused_by_version() {
-    let mut old: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
+    let Some(raw) = raw_game_data(ClientRevision::R289) else {
+        return;
+    };
+    let mut old: serde_json::Value = serde_json::from_slice(&raw).unwrap();
     let npc_names = old["npc_names"]
         .as_object_mut()
         .expect("generated NPC facts");
@@ -375,7 +339,7 @@ fn facts_old_data_is_refused_by_version() {
         "{error}"
     );
 
-    let mut unsupported: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
+    let mut unsupported: serde_json::Value = serde_json::from_slice(&raw).unwrap();
     unsupported["npc_names"]["combat_facts_version"] = serde_json::json!(0);
     let unversioned: SelectedGameData = serde_json::from_value(unsupported).unwrap();
     assert_eq!(
@@ -383,7 +347,7 @@ fn facts_old_data_is_refused_by_version() {
         Err(GameDataError::CombatFacts)
     );
 
-    let mut incomplete: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
+    let mut incomplete: serde_json::Value = serde_json::from_slice(&raw).unwrap();
     incomplete["npc_names"]["rows"][0]
         .as_object_mut()
         .unwrap()
@@ -395,7 +359,7 @@ fn facts_old_data_is_refused_by_version() {
     .expect_err("a current-version row cannot omit a required combat fact");
     assert!(error.contains("missing field `attack`"), "{error}");
 
-    let mut incomplete: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
+    let mut incomplete: serde_json::Value = serde_json::from_slice(&raw).unwrap();
     incomplete["npc_names"]["rows"][0]
         .as_object_mut()
         .unwrap()
@@ -408,7 +372,9 @@ fn facts_old_data_is_refused_by_version() {
     assert!(error.contains("missing field `max_dealt`"), "{error}");
 
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let data = for_revision(revision).expect("selected game data");
+        let Some(data) = crate::game_data::test_data(revision) else {
+            return;
+        };
         let facts = data.npc_combat_facts().expect("current NPC combat facts");
         assert_eq!(facts.combat_facts_version, NPC_COMBAT_FACTS_VERSION);
         assert!(!facts.rows.is_empty());
@@ -444,10 +410,14 @@ fn facts_old_data_is_refused_by_version() {
 #[test]
 fn facts_negative_bonus_is_signed() {
     // generate.ts:3044-3047,3161-3178 publishes PvP V0 bonuses only on289.
-    let unavailable = for_revision(ClientRevision::R274).expect("selected game data");
+    let Some(unavailable) = crate::game_data::test_data(ClientRevision::R274) else {
+        return;
+    };
     assert!(unavailable.item_combat_bonus_rows().is_empty());
     assert!(unavailable.item_combat_bonus(3190).is_none());
-    let data = for_revision(ClientRevision::R289).expect("selected game data");
+    let Some(data) = crate::game_data::test_data(ClientRevision::R289) else {
+        return;
+    };
     let halberd = data.item_combat_bonus(3190).expect("bronze halberd");
     assert_eq!((halberd.magicattack, halberd.stabdefence), (-4, -1));
 }
@@ -457,12 +427,6 @@ fn minimal_json(tail: &str) -> String {
         r#"{{
                 "schema_version": 5,
                 "revision": 274,
-                "provenance": {{
-                    "cache_identity": {{"cache_id": "x"}},
-                    "inputs": [],
-                    "content_inputs": [],
-                    "decoder_sources": []
-                }},
                 "items": [],
                 "npc_names": {{
                     "combat_facts_version": 2,
@@ -503,7 +467,9 @@ fn named_sites_are_selected_core_rows_with_skill_key_closure() {
         (ClientRevision::R274, [231, 37, 26]),
         (ClientRevision::R289, [231, 37, 26]),
     ] {
-        let data = for_revision(revision).unwrap();
+        let Some(data) = crate::game_data::test_data(revision) else {
+            return;
+        };
         let mut ids = std::collections::HashSet::new();
         let mut labels = std::collections::HashSet::new();
         for (skill, expected) in ["woodcutting", "mining", "fishing"].into_iter().zip(counts) {
@@ -591,7 +557,9 @@ fn named_sites_are_selected_core_rows_with_skill_key_closure() {
 fn lower_mine_site_declares_the_tourist_trap_and_banking_limit_for_both_revisions() {
     let reason = "No bank route returns from the lower mine. The mine requires the slave kit, but the camp exit rejects worn kit pieces.";
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let data = for_revision(revision).unwrap();
+        let Some(data) = crate::game_data::test_data(revision) else {
+            return;
+        };
         let site = data
             .gather_site("mining", "mining.desert_mining_camp.underground")
             .unwrap();
@@ -684,13 +652,16 @@ fn named_site_requirements_decode_and_reject_unknown_shapes() {
 
 #[test]
 fn selected_prayer_layout_rejects_noncontiguous_or_oversized_rows() {
-    let mut gap: SelectedGameData = serde_json::from_slice(RAW_289).unwrap();
+    let Some(raw) = raw_game_data(ClientRevision::R289) else {
+        return;
+    };
+    let mut gap: SelectedGameData = serde_json::from_slice(&raw).unwrap();
     gap.prayers[0].varp += 1;
     let error = validate_prayer_layout(&gap, ClientRevision::R289).unwrap_err();
     assert!(error.contains("revision 289"));
     assert!(error.contains("row 0"));
 
-    let mut oversized: SelectedGameData = serde_json::from_slice(RAW_289).unwrap();
+    let mut oversized: SelectedGameData = serde_json::from_slice(&raw).unwrap();
     let extra_rows = oversized.prayers.clone();
     oversized.prayers.extend(extra_rows);
     let error = validate_prayer_layout(&oversized, ClientRevision::R289).unwrap_err();
@@ -977,25 +948,26 @@ fn ranged_fact_payload_decodes_and_is_exposed_by_selected_data() {
     assert_eq!(data.ranged_mode_varp(), Some(43));
 }
 
-fn debug_catalog() -> crate::debug_commands::DebugCatalog {
-    crate::debug_commands::DebugCatalog::decode(
-        include_bytes!("../data/game-data/289/debug.json"),
-        ClientRevision::R289,
-        for_revision(ClientRevision::R289).unwrap(),
-    )
-    .unwrap()
+fn debug_catalog() -> Option<crate::debug_commands::DebugCatalog> {
+    let bytes = raw_debug_catalog()?;
+    let items = crate::game_data::test_data(ClientRevision::R289)?;
+    Some(crate::debug_commands::DebugCatalog::decode(&bytes, ClientRevision::R289, items).unwrap())
 }
 
 #[test]
 fn debug_picker_exact_alias_precedes_substrings() {
-    let data = debug_catalog();
+    let Some(data) = debug_catalog() else {
+        return;
+    };
     assert_eq!(data.search_names("npc", "man", 40)[0].alias, "man");
     assert_eq!(data.search_names("inv", "inv", 40)[0].alias, "inv");
 }
 
 #[test]
 fn debug_catalog_commands_and_name_families_are_searchable() {
-    let data = debug_catalog();
+    let Some(data) = debug_catalog() else {
+        return;
+    };
     assert!(data
         .commands()
         .iter()
@@ -1025,7 +997,9 @@ fn scanned_fixed_food_heal(data: &SelectedGameData, name: &str) -> Option<i32> {
 #[test]
 fn selected_lookup_indexes_match_straight_scans() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let data = for_revision(revision).expect("selected game data");
+        let Some(data) = crate::game_data::test_data(revision) else {
+            return;
+        };
         for item in data.items() {
             let indexed = data.item_by_id(item.id).expect("indexed selected item");
             assert_eq!(indexed.id, item.id);
@@ -1062,22 +1036,15 @@ fn selected_lookup_indexes_match_straight_scans() {
 }
 
 #[test]
-fn missing_quest_identity_is_absent_not_an_empty_list() {
-    let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
-        .expect("schema 4 without the field still decodes");
-    assert!(data.quest_identity().is_none());
-}
-
-#[test]
-fn generated_quest_starts_are_pinned_to_selected_content() {
-    let data = for_revision(ClientRevision::R289).expect("selected game data");
+fn generated_quest_starts_preserve_schema_and_fact_rows() {
+    let Some(data) = crate::game_data::test_data(ClientRevision::R289) else {
+        return;
+    };
     let starts = data.quest_starts().expect("generated quest start family");
     assert_eq!(starts.schema, 1);
-    assert_eq!(starts.revision, 289);
-    assert_eq!(Some(starts.content_id.as_str()), data.content_id());
     assert!(
         !starts.rows.is_empty(),
-        "the pinned content has quest starts"
+        "selected game data has quest starts"
     );
     assert!(
         starts
@@ -1089,14 +1056,14 @@ fn generated_quest_starts_are_pinned_to_selected_content() {
 }
 
 #[test]
-fn quest_starts_with_mismatched_content_are_rejected() {
+fn quest_start_revision_label_does_not_override_caller_selection() {
     let json = minimal_json(
-        r#", "quest_starts": {"schema": 1, "revision": 274, "content_id": "not-the-cache", "rows": [{"quest": "cook", "target": {"kind": "npc", "id": 100}, "op": 1}]}"#,
-    )
-    .replace(r#""cache_id": "x""#, r#""cache_id": "x", "content_id": "the-cache""#);
-    let error = SelectedGameData::decode(json.as_bytes(), ClientRevision::R274)
-        .expect_err("quest starts must be pinned to the selected content");
-    assert!(error.contains("content identity mismatch"), "{error}");
+        r#", "quest_starts": {"schema": 1, "revision": 289, "rows": [{"quest": "cook", "target": {"kind": "npc", "id": 100}, "op": 1}]}"#,
+    );
+    let data = SelectedGameData::decode(json.as_bytes(), ClientRevision::R274)
+        .expect("quest-start facts do not authenticate the caller revision");
+    assert_eq!(data.revision, ClientRevision::R274.as_i32());
+    assert_eq!(data.quest_starts().unwrap().rows[0].quest, "cook");
 }
 
 #[test]
@@ -1192,7 +1159,7 @@ fn partial_quest_identity_row_decodes() {
 #[test]
 fn missing_trails_is_absent_not_an_empty_list() {
     let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
-        .expect("schema 4 without the field still decodes");
+        .expect("schema 5 without the field still decodes");
     assert!(data.trails().is_none());
 }
 
@@ -1345,7 +1312,7 @@ fn talk_key_tail(talk: &str, keys: &str, coverage: Option<&str>) -> String {
 #[test]
 fn missing_talk_key_is_absent_not_an_empty_list() {
     let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
-        .expect("schema 4 without the field still decodes");
+        .expect("schema 5 without the field still decodes");
     assert!(data.talk_key().is_none());
 }
 
@@ -1532,7 +1499,7 @@ fn trio_givers_tail(rows: &str, coverage: Option<&str>) -> String {
 #[test]
 fn missing_trio_givers_is_absent_not_an_empty_list() {
     let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
-        .expect("schema 4 without the field still decodes");
+        .expect("schema 5 without the field still decodes");
     assert!(data.trio_givers().is_none());
 }
 
@@ -1710,7 +1677,9 @@ fn gather_resources_decode_and_skill_lookup() {
 #[test]
 fn generated_karamja_facts_join_selected_items_npcs_and_locs() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let data = for_revision(revision).expect("selected game data");
+        let Some(data) = crate::game_data::test_data(revision) else {
+            return;
+        };
         let facts = data.karamja().expect("generated Karamja facts");
         assert!(facts.crate_capacity > 0);
         assert!(facts.coin_payout > 0);
@@ -1753,7 +1722,9 @@ fn generated_karamja_facts_join_selected_items_npcs_and_locs() {
 #[test]
 fn generated_fishing_groups_have_members_aliases_and_unique_labels() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let data = for_revision(revision).unwrap();
+        let Some(data) = crate::game_data::test_data(revision) else {
+            return;
+        };
         let groups = data.gather_resources_for("fishing").collect::<Vec<_>>();
         assert_eq!(groups.len(), 13, "{revision:?} fishing group count");
         let labels = groups
@@ -1870,7 +1841,7 @@ fn dialogue_ui_controls_are_optional_and_refuse_invalid_identities() {
 }
 
 #[test]
-fn generated_dialogue_ui_roles_match_both_pinned_sources() {
+fn generated_dialogue_ui_roles_match_both_revisions() {
     // Revision 289's pack publishes `11104=inter_199`: the Monkey Madness
     // chapter page. Revision 274's pack has no `inter_199` row, so its
     // chapter root is absent instead of a copied 289 id.
@@ -1878,7 +1849,9 @@ fn generated_dialogue_ui_roles_match_both_pinned_sources() {
         (ClientRevision::R274, None),
         (ClientRevision::R289, Some(11104)),
     ] {
-        let data = for_revision(revision).unwrap();
+        let Some(data) = crate::game_data::test_data(revision) else {
+            return;
+        };
         assert_eq!(
             data.dialogue_ui(),
             Some(&DialogueUiIds {
@@ -1893,7 +1866,9 @@ fn generated_dialogue_ui_roles_match_both_pinned_sources() {
             "{revision:?} forward is the handler, not the visibility marker"
         );
     }
-    let without_chapters = for_revision(ClientRevision::R274).unwrap();
+    let Some(without_chapters) = crate::game_data::test_data(ClientRevision::R274) else {
+        return;
+    };
     let ids = without_chapters.dialogue_ui().unwrap();
     assert!(
         [
@@ -1912,7 +1887,9 @@ fn generated_dialogue_ui_roles_match_both_pinned_sources() {
 
 #[test]
 fn operator_item_names_use_the_native_alias_then_case_insensitive_name_rule() {
-    let data = for_revision(crate::selected::ClientRevision::R289).unwrap();
+    let Some(data) = crate::game_data::test_data(ClientRevision::R289) else {
+        return;
+    };
     let item = data
         .items()
         .iter()
@@ -1974,13 +1951,15 @@ fn duplicate_display_names_preserve_selected_order_and_exact_aliases_win() {
 // These tests fail when a fact is wrong: they assert the generated values,
 // not the generator's source text.
 
-fn pvp_289() -> Arc<SelectedGameData> {
-    for_revision(ClientRevision::R289).unwrap()
+fn pvp_289() -> Option<Arc<SelectedGameData>> {
+    crate::game_data::test_data(ClientRevision::R289)
 }
 
 #[test]
 fn special_facts_match_scripts() {
-    let data = pvp_289();
+    let Some(data) = pvp_289() else {
+        return;
+    };
     assert_eq!(data.special_weapons().len(), 14);
     // Every field of every row against the §6.1 effect table. Tabs follow
     // the `combat_tabs` roots (C`player_attackstyles.rs2`); style is the
@@ -2287,7 +2266,9 @@ fn special_fact_longbow_always_hits() {
     // The named failure-mode row of §10.1: the magic longbow has no hit
     // roll (C`pvp_magic_longbow.rs2:20-25). A generator that emits a
     // percentage field or an ordinary `Ranged` accuracy here fails.
-    let data = pvp_289();
+    let Some(data) = pvp_289() else {
+        return;
+    };
     let longbow = data.special_weapon(859).expect("magic longbow");
     assert_eq!(
         (
@@ -2323,7 +2304,9 @@ fn special_fact_longbow_always_hits() {
 fn special_button_resolves_one_component_per_tab() {
     // Content: one `[if_button,combat_<tab>:specbar]` per tab
     // (C`specwep.rs2:51-115`). The staff (15) and scythe (5) tabs have none.
-    let data = pvp_289();
+    let Some(data) = pvp_289() else {
+        return;
+    };
     let expected: [(u8, Option<i32>); 16] = [
         (0, Some(7737)),
         (1, Some(7687)),
@@ -2357,7 +2340,9 @@ fn duel_rule_buttons_match_revision_support() {
         6721, 6722, 6723, 6724, 6725, 6726, 6727, 6728, 6729, 6730, 6732, 671, 670, 7816,
     ];
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        let data = for_revision(revision).unwrap();
+        let Some(data) = crate::game_data::test_data(revision) else {
+            return;
+        };
         let controls = data.duel_controls().expect("duel controls");
         // generate.ts:3044-3047,3161-3178 excludes every PvP V0 fact on274.
         if revision == ClientRevision::R274 {
@@ -2398,7 +2383,9 @@ fn melee_weapon_tier_matches_the_wield_gates() {
     // (`scripts/levelrequire/scripts/levelrequire.rs2:186-192`; halberds
     // `tier30.rs2:17` needs attack 30 and strength 15, `tier60.rs2:10`
     // needs attack 60 and strength 30).
-    let data = pvp_289();
+    let Some(data) = pvp_289() else {
+        return;
+    };
     let tier = |id: i32| data.melee_weapon_tier(id).expect("melee weapon");
     assert_eq!(
         (tier(1333).tier, tier(1333).quest_gated, tier(1333).strength),
@@ -2614,7 +2601,9 @@ fn item_combat_bonus_matches_the_obj_params() {
     // C`skill_combat/configs/melee/daggers.obj:240`, the rune thrownaxe
     // `rangebonus` of 36 at C`thrownaxes.obj:187`, the steel arrow
     // `rangebonus` of 16 at C`arrows.obj:123,126-127`).
-    let data = pvp_289();
+    let Some(data) = pvp_289() else {
+        return;
+    };
     let dagger = data.item_combat_bonus(1215).expect("dragon dagger");
     assert_eq!((dagger.strengthbonus, dagger.rangebonus), (40, 0));
     assert_eq!(
@@ -2973,7 +2962,9 @@ fn destroy_death_is_true_on_exactly_the_flagged_rows() {
     // (C`player/configs/death.param:1-3`); 18 rows in
     // C`quests/quest_viking/configs/viking.obj` and 1 in
     // C`quests/quest_desertrescue/configs/desertrescue.obj`.
-    let data = pvp_289();
+    let Some(data) = pvp_289() else {
+        return;
+    };
     let mut flagged: Vec<&str> = data
         .items()
         .iter()
@@ -3018,7 +3009,9 @@ fn style_spotanims_carry_the_special_attacks() {
     // C`pvp_dragon_dagger.rs2:4`, C`pvp_magic_shortbow.rs2:21,24-25`,
     // C`pvp_rune_thrownaxe.rs2:4,86`). The halberd map spotanims 282-285
     // (C`pvp_dragon_halberd.rs2:9-21`) are not attributed.
-    let data = pvp_289();
+    let Some(data) = pvp_289() else {
+        return;
+    };
     let where_is = |id: i32| {
         data.style_spotanims()
             .iter()
@@ -3054,7 +3047,9 @@ fn duel_zones_match_the_dbrow_bounds() {
     // C`minigames/game_duelarena/configs/duelarena.dbrow:1-11`, the challenge
     // row `:13-15`, and the lobby telejump of
     // C`minigames/game_duelarena/scripts/duel_arena_finish.rs2:75`.
-    let data = pvp_289();
+    let Some(data) = pvp_289() else {
+        return;
+    };
     let zones = data.duel_zones().expect("duel zones");
     assert_eq!(
         zones
@@ -3094,7 +3089,9 @@ fn duel_zones_match_the_dbrow_bounds() {
 #[test]
 fn pvp_varp_ids_come_from_the_transmit_pack() {
     // Content: `transmit=yes` varps (`pack/varp.pack:286,300-301`).
-    let data = pvp_289();
+    let Some(data) = pvp_289() else {
+        return;
+    };
     let special = data.special_controls().expect("special controls");
     assert_eq!(
         (special.energy_varp, special.armed_varp, special.max_energy),
@@ -3118,7 +3115,9 @@ fn special_fact_formulas_match_content() {
     fn combat_maxhit(stat: i32) -> i32 {
         (stat + 320) / 640
     }
-    let data = pvp_289();
+    let Some(data) = pvp_289() else {
+        return;
+    };
     // Longbow at ranged 40 with steel arrows: `RangedSpecialBasis` adds 10
     // (C`pvp_magic_longbow.rs2:20-21`), steel arrow `rangebonus` is 16.
     let longbow = data.special_weapon(859).expect("magic longbow");
@@ -3192,5 +3191,11 @@ fn pvp_shared_facts_have_bounded_layout() {
     assert!(std::mem::size_of::<Needs>() <= 4);
     assert!(std::mem::size_of::<SideRoll>() <= 8);
     // `for_revision` shares one `Arc` per process, not one copy per bot.
-    assert!(std::sync::Arc::ptr_eq(&pvp_289(), &pvp_289()));
+    let Some(data) = pvp_289() else {
+        return;
+    };
+    let Some(other) = pvp_289() else {
+        return;
+    };
+    assert!(std::sync::Arc::ptr_eq(&data, &other));
 }

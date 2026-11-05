@@ -144,3 +144,49 @@ pub fn ingame_snapshot() -> SnapshotInput<'static> {
         walk_outcome_cancel_reason: Default::default(),
     }
 }
+#[allow(
+    dead_code,
+    reason = "shared across integration test binaries; each binary uses a subset, so expect would misfire"
+)]
+pub fn local_api_asset(relative_path: &str, description: &str) -> bool {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../api")
+        .join(relative_path);
+    let path = path.to_string_lossy();
+    api::test_support::local_asset_path("", &path, description).is_some()
+}
+
+#[allow(
+    dead_code,
+    reason = "shared across integration test binaries; each binary uses a subset, so expect would misfire"
+)]
+pub fn local_game_data_available(revision: i32) -> bool {
+    let relative_path = format!("data/game-data/{revision}.json");
+    let description = format!(
+        "API local asset `{relative_path}`; generate it with `python tools/local-data/build.py`"
+    );
+    local_api_asset(&relative_path, &description)
+}
+#[allow(
+    dead_code,
+    reason = "shared across integration test binaries; each binary uses a subset, so expect would misfire"
+)]
+pub fn local_bank_catalog_available() -> bool {
+    local_api_asset(
+        "data/game-data/bank-catalog.rs",
+        "API local asset `data/game-data/bank-catalog.rs`; generate it with `python tools/local-data/build.py`",
+    )
+}
+
+#[allow(
+    dead_code,
+    reason = "shared across integration test binaries; each binary uses a subset, so expect would misfire"
+)]
+pub fn local_fact_catalogs_available() -> bool {
+    let banks = local_bank_catalog_available();
+    let cooking = local_api_asset(
+        "data/game-data/cook-catalog.rs",
+        "API local asset `data/game-data/cook-catalog.rs`; generate it with `python tools/local-data/build.py`",
+    );
+    banks && cooking
+}

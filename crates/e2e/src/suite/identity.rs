@@ -3,7 +3,7 @@
 //! A run records the manifest/reference identity, the host and client revision *including
 //! the working-tree content*, the resolved executable identities (a real file hash, never
 //! an unresolved command string), the resolved native profile/input configuration with
-//! content digests for the catalog, vault, engine and cache paths, the settings and the
+//! content digests for the catalog, vault and engine RSA key, the settings and the
 //! ordered selection.
 //!
 //! Resume accepts only an unchanged identity and selection, and it refuses an identity
@@ -514,108 +514,9 @@ pub fn bind_input(path: &Path) -> InputDigest {
     }
 }
 
-/// P1 cache identity: the eight jag archives, not a walk of the pack directory.
-pub fn bind_cache(path: &Path, revision: u16) -> InputDigest {
-    match classify_input(path) {
-        PathClass::Absent => InputDigest::absent(
-            path,
-            "the resolved cache directory does not exist; the panel fills it from the engine",
-        ),
-        PathClass::Unresolved(note) => InputDigest::unresolved_at(path, &note),
-        PathClass::File => {
-            InputDigest::unresolved_at(path, "cache path is a file, not a directory")
-        }
-        PathClass::Dir(canonical) => {
-            match nav_planner::manifest::CacheManifest::capture(revision, &canonical) {
-                Ok(manifest) => InputDigest {
-                    target: path.display().to_string(),
-                    sha256: Some(manifest.identity()),
-                    bytes: None,
-                    files: nav_planner::manifest::CacheManifest::ARCHIVES.len(),
-                    note: Some("cache profile identity (jag archives)".into()),
-                },
-                Err(error) => InputDigest::unresolved_at(
-                    path,
-                    &format!("cannot capture cache profile identity: {error}"),
-                ),
-            }
-        }
-    }
-}
-
-/// Native consumed content: maps, door configs, and gates.loc — not the whole
-/// content tree (models, sprites, fonts).
-pub fn bind_content(path: &Path) -> InputDigest {
-    match classify_input(path) {
-        PathClass::Absent => {
-            InputDigest::absent(path, "the resolved content directory does not exist")
-        }
-        PathClass::Unresolved(note) => InputDigest::unresolved_at(path, &note),
-        PathClass::File => {
-            InputDigest::unresolved_at(path, "content path is a file, not a directory")
-        }
-        PathClass::Dir(canonical) => {
-            let inputs = nav_bake::bake::content_inputs(&canonical);
-            let maps = bind_input(&inputs.maps_dir);
-            let doors = bind_input(&inputs.doors_dir);
-            let gates = bind_input(&inputs.gates);
-            for part in [&maps, &doors, &gates] {
-                if !part.resolved() {
-                    return InputDigest::unresolved_at(
-                        path,
-                        part.note.as_deref().unwrap_or("unresolved content input"),
-                    );
-                }
-            }
-            let mut hasher = Sha256::new();
-            for part in [&maps, &doors, &gates] {
-                hasher.update(part.target.as_bytes());
-                hasher.update(b"\0");
-                hasher.update(part.sha256.as_deref().unwrap_or("").as_bytes());
-                hasher.update(b"\0");
-            }
-            InputDigest {
-                target: path.display().to_string(),
-                sha256: Some(format!("{:x}", hasher.finalize())),
-                bytes: Some(
-                    maps.bytes.unwrap_or(0) + doors.bytes.unwrap_or(0) + gates.bytes.unwrap_or(0),
-                ),
-                files: maps.files + doors.files + gates.files,
-                note: Some("nav content inputs (maps, doors, gates)".into()),
-            }
-        }
-    }
-}
-
 /// The RSA pem the local profile reads from the engine install. Never the engine tree.
 pub fn bind_engine_pem(engine_dir: &Path) -> InputDigest {
     bind_input(&engine_dir.join("data/config/private.pem"))
-}
-
-/// Unpack is derived runtime of the bound cache. An explicit override must be a
-/// pack directory the cache identity can name, otherwise resume is refused.
-pub fn bind_unpack(path: &Path, revision: u16, overridden: bool) -> InputDigest {
-    if !overridden {
-        match classify_input(path) {
-            PathClass::Absent => InputDigest::absent(
-                path,
-                "default unpack is derived runtime of the bound cache; the path is recorded, the cache archives are the content identity",
-            ),
-            PathClass::Unresolved(note) => InputDigest::unresolved_at(path, &note),
-            _ => InputDigest {
-                target: path.display().to_string(),
-                sha256: Some(sha256(b"unpack-derived-runtime")),
-                bytes: Some(0),
-                files: 0,
-                note: Some(
-                    "default unpack is derived runtime; cache archives are the bound content"
-                        .into(),
-                ),
-            },
-        }
-    } else {
-        bind_cache(path, revision)
-    }
 }
 
 /// Canonicalize a path the suite will both hash and launch. Relative paths are
@@ -891,14 +792,10 @@ pub struct ResolvedInputs {
     pub unpack: String,
 }
 
-/// The explicit native profile/input configuration a run was started with, including the
-/// content identity of every input the suite binds.
-///
-/// Catalog scripts, the selected vault, the P1 cache jag identity, nav pack/flags, the
-/// nav content inputs (maps/doors/gates), and the engine RSA pem are content-bound.
-/// Default unpack is derived runtime of that cache (path recorded; cache archives are
-/// the content). An explicit unpack override must be identifiable as a cache pack or the
-/// run refuses. The engine *tree* is never hashed.
+/// The resolved native configuration and test-run inputs.
+/// Game-data, cache, nav and content assets have paths in `resolved`, not
+/// file-authentication digests. Catalogue scripts, vault and RSA key remain
+/// part of the existing test-run ownership record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileIdentity {
     pub profile: String,
@@ -910,22 +807,12 @@ pub struct ProfileIdentity {
     #[serde(default)]
     pub resolved: ResolvedInputs,
     pub engine: Option<InputDigest>,
-    pub cache: InputDigest,
     pub catalog: InputDigest,
     pub vault: InputDigest,
     #[serde(default)]
-    pub nav_pack: InputDigest,
-    #[serde(default)]
-    pub nav_flags: InputDigest,
-    #[serde(default)]
-    pub content: InputDigest,
-    #[serde(default)]
-    pub unpack: InputDigest,
-    #[serde(default)]
     pub world_members: Option<bool>,
     /// Effective immutable WORLD membership from the resolved child profile.
-    /// This distinguishes unknown from known-free and binds a local declaration
-    /// to the exact bytes the resolver read.
+    /// This distinguishes unknown from known-free and records the declaration path.
     #[serde(default)]
     pub effective_world_members: EffectiveWorldMembersIdentity,
     pub lowmem: bool,
@@ -938,7 +825,7 @@ pub struct EffectiveWorldMembersIdentity {
     pub value: Option<bool>,
     pub source: WorldMembersIdentitySource,
     #[serde(default)]
-    pub declaration: Option<InputDigest>,
+    pub declaration: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1016,9 +903,6 @@ impl RunIdentity {
         if !self.profile.catalog.resolved() {
             unresolved.push("catalog script content".to_string());
         }
-        if !self.profile.cache.resolved() {
-            unresolved.push("cache content".to_string());
-        }
         if let Some(engine) = &self.profile.engine {
             if !engine.resolved() {
                 unresolved.push("engine content".to_string());
@@ -1026,18 +910,6 @@ impl RunIdentity {
         }
         if !self.profile.vault.resolved() {
             unresolved.push("vault content".to_string());
-        }
-        if !self.profile.nav_pack.resolved() {
-            unresolved.push("nav pack content".to_string());
-        }
-        if !self.profile.nav_flags.resolved() {
-            unresolved.push("nav flags content".to_string());
-        }
-        if !self.profile.content.resolved() {
-            unresolved.push("content inputs".to_string());
-        }
-        if !self.profile.unpack.resolved() {
-            unresolved.push("unpack content".to_string());
         }
         unresolved
     }

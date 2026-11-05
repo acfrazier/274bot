@@ -1844,11 +1844,8 @@ pub(crate) mod tests {
         collision: nav_planner::collision::WorldCollision,
         configure: impl FnOnce(&mut nav_planner::world::NavWorld),
     ) -> nav_planner::contract::NavLease {
-        nav_planner::contract::NavLease::wrap(
-            test_nav_world_over(collision, configure),
-            nav_planner::contract::PackDigest::of(b"script test fixture"),
-        )
-        .expect("lease ids are not exhausted in tests")
+        nav_planner::contract::NavLease::wrap(test_nav_world_over(collision, configure))
+            .expect("lease ids are not exhausted in tests")
     }
 
     /// A lease over a small synthetic collision the test keeps for its raw
@@ -1875,11 +1872,8 @@ pub(crate) mod tests {
 
     /// A lease over the shared real 289 pack world, without copying it.
     pub(crate) fn test_real_nav_lease() -> nav_planner::contract::NavLease {
-        nav_planner::contract::NavLease::wrap(
-            std::sync::Arc::clone(super::test_real_nav_world()),
-            nav_planner::contract::PackDigest::of(b"real 289 pack"),
-        )
-        .expect("lease ids are not exhausted in tests")
+        nav_planner::contract::NavLease::wrap(std::sync::Arc::clone(super::test_real_nav_world()))
+            .expect("lease ids are not exhausted in tests")
     }
 
     #[test]
@@ -4174,8 +4168,7 @@ pub(crate) mod tests {
 
     #[test]
     fn draynor_real_router_returns_to_the_spots_not_the_bank_booth() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
@@ -4783,8 +4776,7 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_guild_ardougne_approach_picks_a_legal_stand() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
@@ -4877,8 +4869,7 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_approach_keeps_a_legal_clamped_stand() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
@@ -5031,8 +5022,7 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_stand_search_does_not_repeat_on_waiting_ticks() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
@@ -5209,8 +5199,7 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_npc_bounds_have_legal_initial_stands_on_every_side() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
@@ -5748,8 +5737,7 @@ pub(crate) mod tests {
 
     #[test]
     fn catherby_candidates_route_from_the_guild_and_keep_the_island_start() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };
@@ -6417,7 +6405,7 @@ pub(crate) mod tests {
                 .bank_placements()
                 .expect("selected bank placement facts");
             let facts = nav_planner::named_banks::resolve(
-                api::named_banks::BANK_CATALOG,
+                api::named_banks::bank_catalog().expect("selected bank catalogue"),
                 &placements.rows,
                 |tile| world.collision.standable(tile),
             );
@@ -7473,16 +7461,8 @@ pub(crate) mod tests {
                     "preferred_proof": route.preferred_proof,
                 })),
             });
-            let pin = catalog.pin();
             let metadata = serde_json::json!({
-                "client_revision": format!("{:?}", pin.revision),
-                "engine_commit": pin.engine_commit.as_ref(),
-                "content_commit": pin.content_commit.as_ref(),
-                "cache_id": pin.cache_id.as_ref(),
-                "content_id": pin.content_id.as_ref(),
-                "nav_sha256": hex(&pin.nav_sha256),
-                "flags_sha256": hex(&pin.flags_sha256),
-                "manifest_sha256": hex(&pin.manifest_sha256),
+                "client_revision": selected.revision(),
                 "nav_pack_path": std::env::var_os("NAV_PACK").map(|path| path.to_string_lossy().into_owned()),
                 "evidence_json_path": output.display().to_string(),
             });

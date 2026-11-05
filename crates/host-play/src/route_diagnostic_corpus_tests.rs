@@ -5,7 +5,7 @@ use api::selected::{FactKey, QuestGate};
 use api::snapshot::WorldTile;
 use api::work::{MonotonicClock, SharedCancellation, SliceBudget, SystemClock};
 use nav_planner::grid::StepGrid;
-use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
+use nav_planner::quest_gates::QuestGates;
 use nav_planner::router::FindOptions;
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
@@ -14,7 +14,6 @@ use script::native::walk::Walk;
 use script::native::{ActionHandle, HostAuthority, NativeTick, Script, ScriptFailure, ScriptFlow};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::num::{NonZeroU16, NonZeroU32};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -623,18 +622,10 @@ fn synthetic_cases() -> Vec<DiagnosticCase> {
         z: 0,
         level: 0,
     };
-    let family = QuestFamilyId::new(
-        [0x5a; 32],
-        NonZeroU16::new(1).expect("quest evidence schema is nonzero"),
-    );
     let quest_world = corridor_world(|world| {
-        world.graph.quest_family = Some(family);
         world.graph.edges[0].quest_gates = Some(
-            QuestGates::new(
-                family,
-                [QuestGate::Complete(FactKey::new("quest:route-diagnostic"))],
-            )
-            .expect("quest diagnostic gate is valid"),
+            QuestGates::new([QuestGate::Complete(FactKey::new("quest:route-diagnostic"))])
+                .expect("quest diagnostic gate is valid"),
         );
     });
     let carry_world = corridor_world(|world| {
@@ -948,10 +939,13 @@ fn assert_expected_native_end(case: &DiagnosticCase, observation: &DiagnosticObs
 #[test]
 #[ignore = "requires BOT_ROUTE_DIAGNOSTIC_NAVPACK and BOT_ROUTE_DIAGNOSTIC_OUT; real diagnostic budget comparison corpus"]
 fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
-    let navpack = PathBuf::from(
-        std::env::var_os("BOT_ROUTE_DIAGNOSTIC_NAVPACK")
-            .expect("set BOT_ROUTE_DIAGNOSTIC_NAVPACK to the reviewed R289 NAV_PACK"),
-    );
+    let Some(navpack) = api::test_support::local_asset_path(
+        "BOT_ROUTE_DIAGNOSTIC_NAVPACK",
+        "",
+        "reviewed R289 NAV_PACK for route diagnostic corpus",
+    ) else {
+        return;
+    };
     let output = PathBuf::from(
         std::env::var_os("BOT_ROUTE_DIAGNOSTIC_OUT")
             .expect("set BOT_ROUTE_DIAGNOSTIC_OUT to the diagnostic comparison JSON path"),
@@ -1149,9 +1143,14 @@ fn diagnostic_budget_cutoff_publishes_no_path_and_the_cutoff_detail() {
 #[test]
 #[ignore = "Linux release measurement; one real-pack diagnosis in a fresh process"]
 fn measures_one_bounded_route_diagnosis_rss() {
-    let navpack = std::env::var_os("BOT_ROUTE_DIAGNOSTIC_NAVPACK")
-        .expect("BOT_ROUTE_DIAGNOSTIC_NAVPACK is required");
-    let world = Arc::new(NavWorld::load_pack(Path::new(&navpack)).expect("real v17 pack"));
+    let Some(navpack) = api::test_support::local_asset_path(
+        "BOT_ROUTE_DIAGNOSTIC_NAVPACK",
+        "",
+        "real navpack for route-diagnostic memory measurement",
+    ) else {
+        return;
+    };
+    let world = Arc::new(NavWorld::load_pack(&navpack).expect("real navpack"));
     let name = std::env::var("BOT_ROUTE_DIAGNOSTIC_MEMORY_CASE")
         .expect("BOT_ROUTE_DIAGNOSTIC_MEMORY_CASE is required");
     let case = real_cases(world)

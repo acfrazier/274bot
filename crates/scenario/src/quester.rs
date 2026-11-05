@@ -1286,11 +1286,8 @@ pub fn reload_quester_path_source(
                         nav_planner::world::NavWorld::from_bytes(&bytes).map_err(|error| {
                             format!("load navigation pack {}: {error}", pack.display())
                         })?;
-                    nav_planner::contract::NavLease::wrap(
-                        std::sync::Arc::new(world),
-                        nav_planner::contract::PackDigest::of(&bytes),
-                    )
-                    .map_err(|error| format!("bind navigation catalog: {error:?}"))
+                    nav_planner::contract::NavLease::wrap(std::sync::Arc::new(world))
+                        .map_err(|error| format!("bind navigation catalog: {error:?}"))
                 })
                 .transpose()?
         } else {

@@ -3,6 +3,8 @@
 use client::io::ClientRevision;
 use script_js::{LoadIsolate, LoadShape};
 
+mod common;
+
 fn post_base(iso: &LoadIsolate, tick: u64) {
     let input = script::native::snapshot_source::SnapshotInput {
         tick,
@@ -82,6 +84,7 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
 
 fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
     let data = api::game_data::for_revision(revision).unwrap();
+    // Real selected data is guarded at each calling test.
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);
@@ -124,6 +127,9 @@ fn helper_ok(value: serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn v2_methods_are_sync_helper_results_with_locked_errors() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -245,6 +251,9 @@ export function tick(api) {
 
 #[test]
 fn v2_install_is_typed_not_a_json_op_or_interact() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let value = probe(
         r#"
 export const apiVersion = 2;
@@ -316,7 +325,7 @@ export function tick(api) {
 }
 
 #[test]
-fn v2_placements_args_precede_the_selected_pin() {
+fn v2_placements_args_are_validated_before_game_data_lookup() {
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -382,7 +391,7 @@ export function tick(api) {
         value["omittedRegionBadLimit"]["error"], "missing-region",
         "{value:?}"
     );
-    // Args first: a well-formed call is the only one that reaches the pin.
+    // Args first: a well-formed call is the only one that reaches the fact query.
     assert_eq!(
         value["good"]["error"],
         "game data unavailable: this server's content isn't verified (see profile/engine settings)",
@@ -392,6 +401,9 @@ export function tick(api) {
 
 #[test]
 fn v2_placements_are_sync_helper_results_with_locked_errors() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -515,6 +527,9 @@ export function tick(api) {
 
 #[test]
 fn example_gather_methods_v2_is_one_read_only_fact_call() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("gather_methods_v2.ts");
@@ -547,6 +562,9 @@ fn example_gather_methods_v2_is_one_read_only_fact_call() {
 
 #[test]
 fn example_gather_placements_v2_is_one_read_only_fact_call() {
+    if !common::local_game_data_available(274) {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("gather_placements_v2.ts");
@@ -590,6 +608,9 @@ fn example_gather_placements_v2_is_one_read_only_fact_call() {
 
 #[test]
 fn frozen_gas_rock_set_skips_gas_variants_on_the_coal_query_path() {
+    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { GAS_ROCK_IDS as apiGas } from '@rs2b0t/api';
 import { GAS_ROCK_IDS } from '../../data/miningRocks.js';

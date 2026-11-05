@@ -6,7 +6,6 @@ use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 use client::dash3d::{CollisionFlag, LocShape};
 use nav_planner::collision::WorldCollision;
-use nav_planner::quest_gates::QuestFamilyId;
 use nav_planner::transport::{
     DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
     CELLAR_SHIFT, SHILO_CART_ROUTES, WEB_USE_OPTION,
@@ -89,7 +88,6 @@ use zanaris::*;
 mod tests;
 
 pub(crate) struct QuestSource<'a> {
-    pub(crate) family: QuestFamilyId,
     pub(crate) facts: &'a api::game_data::QuestIdentityFacts,
 }
 
@@ -141,10 +139,7 @@ fn derive_transports_with_audit(
     quests: Option<&QuestSource<'_>>,
     game_data: Option<&api::game_data::SelectedGameData>,
 ) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
-    let mut graph = TransportGraph {
-        quest_family: quests.map(|quests| quests.family),
-        ..TransportGraph::default()
-    };
+    let mut graph = TransportGraph::default();
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
     let mut audit = VarpGateAudit::default();
     let gates = ObservableGates::from_content(content_root, quests);

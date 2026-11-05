@@ -109,7 +109,6 @@ function runtimeEvidence(
 ): NpcTransformClosureEvidence {
     return {
         schema: 1,
-        source_inputs: { engine: [], content: [] },
         source_spans: [],
         npc_types: [npcType(101), npcType(202)],
         actions: [action(101, baseFingerprint), action(202, temporaryFingerprint)],

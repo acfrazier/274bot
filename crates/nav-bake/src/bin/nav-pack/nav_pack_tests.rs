@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn explicit_289_inputs_bind_content_cache_config_and_outputs() {
+fn explicit_289_inputs_select_game_data_and_config() {
     let inputs = parse_args([
         "--revision",
         "289",
@@ -9,13 +9,13 @@ fn explicit_289_inputs_bind_content_cache_config_and_outputs() {
         "/fixture/289/content",
         "--cache",
         "/fixture/289/engine/data/pack/client",
-        "--cache-manifest",
-        "/fixture/cache-289.json",
+        "--game-data-dir",
+        "/fixture/game-data",
         "--out",
         "/tmp/289.navpack",
     ])
     .unwrap();
-    assert_eq!(inputs.revision, Some(289));
+    assert_eq!(inputs.revision, 289);
     assert_eq!(inputs.maps_dir, PathBuf::from("/fixture/289/content/maps"));
     assert_eq!(
         inputs.doors_dir,
@@ -25,14 +25,7 @@ fn explicit_289_inputs_bind_content_cache_config_and_outputs() {
         inputs.config_jag,
         PathBuf::from("/fixture/289/engine/data/pack/client/config")
     );
-    assert_eq!(
-        inputs.cache_dir,
-        Some(PathBuf::from("/fixture/289/engine/data/pack/client"))
-    );
-    assert_eq!(
-        inputs.cache_manifest,
-        Some(PathBuf::from("/fixture/cache-289.json"))
-    );
+    assert_eq!(inputs.game_data_dir, PathBuf::from("/fixture/game-data"));
     assert_eq!(inputs.out, PathBuf::from("/tmp/289.navpack"));
     assert_eq!(inputs.flags_out, PathBuf::from("/tmp/289.navflags"));
     assert_eq!(inputs.reach_out, PathBuf::from("/tmp/289.navreach"));
@@ -49,8 +42,8 @@ fn explicit_274_uses_server_config_next_to_client_cache() {
         "/fixture/274/content",
         "--cache",
         "/fixture/274/engine/data/pack/client",
-        "--cache-manifest",
-        "/fixture/cache-274.json",
+        "--game-data-dir",
+        "/fixture/game-data",
         "--out",
         "/tmp/274.navpack",
     ])
@@ -63,6 +56,20 @@ fn explicit_274_uses_server_config_next_to_client_cache() {
 
 #[test]
 fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
+    let complete = [
+        "--revision",
+        "289",
+        "--content",
+        "/content",
+        "--cache",
+        "/cache",
+        "--game-data-dir",
+        "/game-data",
+        "--out",
+        "/tmp/x",
+    ];
+    let mut positional = complete.to_vec();
+    positional.push("positional");
     for args in [
         vec!["--revision", "289"],
         vec![
@@ -72,24 +79,12 @@ fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
             "/content",
             "--cache",
             "/cache",
-            "--cache-manifest",
-            "/cache.json",
+            "--game-data-dir",
+            "/game-data",
             "--out",
             "/tmp/x",
         ],
-        vec![
-            "--revision",
-            "289",
-            "--content",
-            "/content",
-            "--cache",
-            "/cache",
-            "--cache-manifest",
-            "/cache.json",
-            "--out",
-            "/tmp/x",
-            "positional",
-        ],
+        positional,
         vec![
             "--revision",
             "274",
@@ -99,8 +94,8 @@ fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
             "/content",
             "--cache",
             "/cache",
-            "--cache-manifest",
-            "/cache.json",
+            "--game-data-dir",
+            "/game-data",
             "--out",
             "/tmp/x",
         ],
@@ -110,49 +105,11 @@ fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
 }
 
 #[test]
-fn legacy_274_positionals_remain_unmanifested() {
-    let inputs = parse_args(["/legacy/maps", "/legacy/doors", "/legacy/config"]).unwrap();
-    assert_eq!(inputs.revision, None);
-    assert_eq!(inputs.maps_dir, PathBuf::from("/legacy/maps"));
-    assert_eq!(inputs.doors_dir, PathBuf::from("/legacy/doors"));
-    assert_eq!(inputs.config_jag, PathBuf::from("/legacy/config"));
-    assert!(inputs.cache_dir.is_none());
-    assert!(inputs.cache_manifest.is_none());
-    // `gates.loc` follows the maps dir's parent, the content root.
-    assert_eq!(
-        content_inputs(&inputs.content_dir).gates,
-        PathBuf::from("/legacy/scripts/general_use/configs/gates.loc")
-    );
-}
-
-#[test]
 fn flags_path_for_swaps_pack_extension() {
     assert_eq!(
         flags_path_for(&PathBuf::from("/tmp/x/274bot.navpack")),
         PathBuf::from("/tmp/x/274bot.navflags")
     );
-}
-
-#[test]
-fn legacy_default_paths_follow_explicit_engine_dir() {
-    let engine_dir = PathBuf::from("/fixture/274/engine");
-    let (maps, doors, config) = legacy_default_paths(Some(engine_dir)).unwrap();
-    assert_eq!(maps, PathBuf::from("/fixture/274/content/maps"));
-    assert_eq!(
-        doors,
-        PathBuf::from("/fixture/274/content/scripts/doors/configs")
-    );
-    assert_eq!(
-        config,
-        PathBuf::from("/fixture/274/engine/data/pack/config")
-    );
-}
-
-#[test]
-fn legacy_default_paths_require_an_engine_root() {
-    let error = legacy_default_paths(None).unwrap_err();
-    assert!(error.contains("BOT_NAV_ENGINE_DIR"));
-    assert!(error.contains("ENGINE_DIR"));
 }
 
 #[test]
@@ -169,21 +126,31 @@ fn cli_bake_rejects_a_missing_door_config_before_baking() {
     let doors = root.join("content/scripts/doors/configs");
     std::fs::create_dir_all(&maps).unwrap();
     std::fs::create_dir_all(&doors).unwrap();
-    std::fs::write(root.join("config.jag"), b"").unwrap();
     std::fs::write(doors.join("doors.loc"), "[loc_100]\nop1=Open\n").unwrap();
-    let inputs = parse_args([
-        maps.to_string_lossy().into_owned(),
-        doors.to_string_lossy().into_owned(),
-        root.join("config.jag").to_string_lossy().into_owned(),
+
+    let inputs = parse_args(vec![
+        "--revision".to_owned(),
+        "274".to_owned(),
+        "--content".to_owned(),
+        root.join("content").to_string_lossy().into_owned(),
+        "--cache".to_owned(),
+        root.join("engine/data/pack/client")
+            .to_string_lossy()
+            .into_owned(),
+        "--game-data-dir".to_owned(),
+        root.join("game-data").to_string_lossy().into_owned(),
+        "--out".to_owned(),
+        root.join("274.navpack").to_string_lossy().into_owned(),
     ])
     .unwrap();
     let gates = root.join("content/scripts/general_use/configs/gates.loc");
-    let error = bake_world(&inputs, &gates, None)
+    let error = bake_world(&inputs, &gates)
         .err()
         .expect("missing door config must fail");
-    assert!(error.contains("doubledoors.loc"), "{error}");
+    assert!(error.to_string().contains("doubledoors.loc"), "{error}");
     std::fs::remove_dir_all(root).unwrap();
 }
+
 fn crossing_tile(x: i32, z: i32, level: i32) -> api::snapshot::WorldTile {
     api::snapshot::WorldTile { x, z, level }
 }
@@ -305,14 +272,7 @@ fn crossing_export_has_exact_schema_and_serde_quest_gate_values() {
     let at = crossing_tile(12, 22, 0);
     let takeoff = crossing_tile(11, 22, 0);
     let to = crossing_tile(13, 22, 0);
-    let family = nav_planner::quest_gates::QuestFamilyId::new(
-        [7; 32],
-        std::num::NonZeroU16::new(1).unwrap(),
-    );
-    let mut graph = nav_planner::transport::TransportGraph {
-        quest_family: Some(family),
-        ..Default::default()
-    };
+    let mut graph = nav_planner::transport::TransportGraph::default();
     let mut edge = crossing_edge(
         nav_planner::transport::TransportKind::Ladder,
         at,
@@ -323,23 +283,19 @@ fn crossing_export_has_exact_schema_and_serde_quest_gate_values() {
         None,
     );
     edge.quest_gates = Some(
-        nav_planner::quest_gates::QuestGates::new(
-            family,
-            [api::selected::QuestGate::Complete(
-                api::selected::FactKey::new("quest"),
-            )],
-        )
+        nav_planner::quest_gates::QuestGates::new([api::selected::QuestGate::Complete(
+            api::selected::FactKey::new("quest"),
+        )])
         .unwrap(),
     );
     graph.edges.push(edge);
 
-    let json = crossing_export_json(b"fixture pack", &collision, &graph).unwrap();
+    let json = crossing_export_json(&collision, &graph).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(
         value,
         serde_json::json!({
-            "schema": 2,
-            "navpack_sha256": nav_planner::manifest::hash_bytes(b"fixture pack"),
+            "schema": 3,
             "crossings": [{
                 "crossing": {
                     "loc_id": 500,
@@ -383,7 +339,7 @@ fn crossing_export_distinguishes_both_a2_wall_directions() {
         Some(nav_planner::transport::DoorDir::E),
     ));
 
-    let json = crossing_export_json(b"a2", &collision, &graph).unwrap();
+    let json = crossing_export_json(&collision, &graph).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     let rows = value["crossings"].as_array().unwrap();
     assert_eq!(rows.len(), 2);
@@ -442,7 +398,7 @@ fn crossing_export_distinguishes_two_a1_takeoffs_at_one_anchor() {
         None,
     ));
 
-    let json = crossing_export_json(b"a1", &collision, &graph).unwrap();
+    let json = crossing_export_json(&collision, &graph).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     let rows = value["crossings"].as_array().unwrap();
     assert_eq!(rows.len(), 2);
@@ -467,14 +423,7 @@ fn crossing_export_keeps_each_stage_window_alternative_for_one_crossing() {
     let at = crossing_tile(12, 22, 0);
     let takeoff = crossing_tile(11, 22, 0);
     let to = crossing_tile(13, 22, 0);
-    let family = nav_planner::quest_gates::QuestFamilyId::new(
-        [8; 32],
-        std::num::NonZeroU16::new(1).unwrap(),
-    );
-    let mut graph = nav_planner::transport::TransportGraph {
-        quest_family: Some(family),
-        ..Default::default()
-    };
+    let mut graph = nav_planner::transport::TransportGraph::default();
     for (min, max) in [(1, 3), (5, 7)] {
         let mut edge = crossing_edge(
             nav_planner::transport::TransportKind::Ladder,
@@ -486,25 +435,22 @@ fn crossing_export_keeps_each_stage_window_alternative_for_one_crossing() {
             None,
         );
         edge.quest_gates = Some(
-            nav_planner::quest_gates::QuestGates::new(
-                family,
-                [api::selected::QuestGate::Window(
-                    api::selected::StageWindow {
-                        quest: api::selected::FactKey::new("quest"),
-                        signal: api::selected::FactKey::new("stage"),
-                        values: api::selected::InclusiveRange {
-                            min: Some(min),
-                            max: Some(max),
-                        },
+            nav_planner::quest_gates::QuestGates::new([api::selected::QuestGate::Window(
+                api::selected::StageWindow {
+                    quest: api::selected::FactKey::new("quest"),
+                    signal: api::selected::FactKey::new("stage"),
+                    values: api::selected::InclusiveRange {
+                        min: Some(min),
+                        max: Some(max),
                     },
-                )],
-            )
+                },
+            )])
             .unwrap(),
         );
         graph.edges.push(edge);
     }
 
-    let json = crossing_export_json(b"stage alternatives", &collision, &graph).unwrap();
+    let json = crossing_export_json(&collision, &graph).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     let rows = value["crossings"].as_array().unwrap();
     assert_eq!(rows.len(), 1);
@@ -527,11 +473,10 @@ fn crossing_export_keeps_each_stage_window_alternative_for_one_crossing() {
             }]
         ])
     );
-    assert_eq!(value["identical_edge_groups"], serde_json::json!([]));
 }
 
 #[test]
-fn crossing_export_lists_full_duplicates_without_failing() {
+fn crossing_export_collapses_duplicate_physical_crossings() {
     let collision = crossing_collision(&[]);
     let at = crossing_tile(12, 22, 0);
     let to = crossing_tile(13, 22, 0);
@@ -559,7 +504,7 @@ fn crossing_export_lists_full_duplicates_without_failing() {
     graph.teleports.push(duplicate_teleport.clone());
     graph.teleports.push(duplicate_teleport);
 
-    let json = crossing_export_json(b"duplicate", &collision, &graph).unwrap();
+    let json = crossing_export_json(&collision, &graph).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["crossings"].as_array().unwrap().len(), 2);
     assert_eq!(
@@ -589,7 +534,7 @@ fn crossing_export_uses_a_legal_takeoff_when_the_anchor_is_blocked() {
         None,
     ));
 
-    let json = crossing_export_json(b"blocked-anchor", &collision, &graph).unwrap();
+    let json = crossing_export_json(&collision, &graph).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     let row = &value["crossings"][0];
     assert_eq!(

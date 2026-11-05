@@ -266,7 +266,6 @@ impl SharedClientTemplate {
         observer: &progress::ProfileProgressObserver,
         worker: Option<&mut api::selected::FamilyPreparation>,
     ) -> Result<Arc<Self>, String> {
-        profile.validate_resources_with_progress(observer)?;
         observer.report(progress::ProfileProgress::steps(
             progress::ProfileProgressStage::LoadingGameData,
             0,

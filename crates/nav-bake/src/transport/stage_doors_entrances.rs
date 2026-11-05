@@ -32,7 +32,7 @@ fn stage_scalar(expr: &Expr, src: &Sources) -> Option<i32> {
 // Exact stage partitions are sound only when every read has a bounded
 // authoritative domain and every quest use is a static comparison.
 fn stage_dimensions(reads: &Reads, src: &Sources) -> Result<Option<Vec<StageDimension>>, ()> {
-    if reads.quests.is_empty() || src.quest_family.is_none() || !reads.stage_partitionable {
+    if reads.quests.is_empty() || !reads.stage_partitionable {
         return Ok(None);
     }
     let mut varps: Vec<_> = reads.quests.iter().collect();
@@ -644,12 +644,8 @@ impl Motion<'_> {
                 let quest_stage = self.base.src.quest_stage.get(quest_varp).copied();
                 let colour_authoritative =
                     quest_stage.is_some_and(|facts| facts.colour_authoritative);
-                let stage_domain = self
-                    .base
-                    .src
-                    .quest_family
-                    .and(quest_stage)
-                    .and_then(|facts| authoritative_stage_domain(facts, *complete));
+                let stage_domain =
+                    quest_stage.and_then(|facts| authoritative_stage_domain(facts, *complete));
                 let selected_stage = input
                     .stage_ranges
                     .and_then(|ranges| stage_partition(ranges, varp));
@@ -683,9 +679,6 @@ impl Motion<'_> {
                 }
                 let value = comparison_value(op, min, max, threshold);
                 let needs = if let Some((_, domain_max)) = stage_domain {
-                    let Some(quest_family) = self.base.src.quest_family else {
-                        return Some(Cond::unknown());
-                    };
                     let values = if let Some(stage) = selected_stage {
                         stage.values
                     } else {
@@ -711,7 +704,6 @@ impl Motion<'_> {
                             domain_max,
                             colour_authoritative,
                         )],
-                        quest_family: Some(quest_family),
                         ..Needs::default()
                     }
                 } else {
@@ -724,9 +716,6 @@ impl Motion<'_> {
                     else {
                         return Some(Cond::unknown());
                     };
-                    let Some(quest_family) = self.base.src.quest_family else {
-                        return Some(Cond::unknown());
-                    };
                     // Content can change a progress varp after publishing a
                     // green row. Keep its actual comparison, never a colour
                     // completion substitute, when no stage domain is proved.
@@ -737,7 +726,6 @@ impl Motion<'_> {
                     };
                     Needs {
                         quests: vec![api::selected::QuestGate::Window(window)],
-                        quest_family: Some(quest_family),
                         ..Needs::default()
                     }
                 };
@@ -1442,13 +1430,8 @@ fn real_camp_gate_read_set_stays_within_the_entrance_bound() {
     );
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
-    let (facts, identity) = selected
-        .quest_identity_for_bake()
-        .expect("verified quest family");
-    let quests = QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts: &facts,
-    };
+    let facts = selected.quest_identity().expect("selected quest facts");
+    let quests = QuestSource { facts };
     let src = Sources::read(&root, &loc_ids_by_name(&root), Some(&quests));
     let name = src
         .ids
@@ -1593,14 +1576,11 @@ mod stage_window_tests {
 
     /// A controlled no-domain comparison, not a change to selected Hero's
     /// 0..15 domain or its exact15 completion Window.
-    fn completed_progress_comparison(
-        colour_authoritative: bool,
-        family: Option<nav_planner::quest_gates::QuestFamilyId>,
-    ) -> Cond {
+    fn completed_progress_comparison(colour_authoritative: bool) -> Cond {
         let src = Sources {
             oplocs: std::array::from_fn(|_| HashMap::new()),
             oplocu: HashMap::new(),
-            quest_family: family,
+
             quest_complete: HashMap::from([(
                 "heroquest".to_owned(),
                 (api::selected::FactKey::new("hero"), 15),
@@ -1692,23 +1672,10 @@ mod stage_window_tests {
     }
 
     #[test]
-    fn no_domain_comparison_without_a_verified_family_is_unknown() {
-        for colour_authoritative in [false, true] {
-            let condition = completed_progress_comparison(colour_authoritative, None);
-            assert_eq!(condition.value, None);
-            assert!(condition.needs.quests.is_empty());
-        }
-    }
-
-    #[test]
     fn no_domain_comparison_preserves_its_raw_window_without_colour_substitution() {
-        let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-        let (_, identity) = selected.quest_identity_for_bake().expect("verified family");
-        let family = nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema);
         for colour_authoritative in [false, true] {
-            let condition = completed_progress_comparison(colour_authoritative, Some(family));
+            let condition = completed_progress_comparison(colour_authoritative);
             assert_eq!(condition.value, Some(true));
-            assert_eq!(condition.needs.quest_family, Some(family));
             let [api::selected::QuestGate::Window(window)] = condition.needs.quests.as_slice()
             else {
                 panic!(

@@ -490,7 +490,7 @@ impl PrereqRun {
                 if !cx.may_begin_this_tick() {
                     return Poll::Pending;
                 }
-                let data = api::game_data::for_revision(cx.pin().revision)
+                let data = api::game_data::for_revision(cx.revision())
                     .expect("catalog revision was validated");
                 let Some(facts) = data.try_quests() else {
                     return Poll::Ready(Err(failed(
@@ -577,7 +577,6 @@ impl PrereqRun {
             };
             self.phase = Phase::Complete;
             if read.quest != journal.quest
-                || read.pin.as_ref() != cx.pin()
                 || !read.acquired.meets(floor)
                 || !read.closed.meets(read.acquired)
                 || !cx.evidence().meets(read.closed)
@@ -1240,11 +1239,9 @@ fn journal_attempt_finished(
 }
 
 fn catalog(cx: &ActionContext<'_>) -> Option<Arc<PrereqCatalog>> {
-    let data = api::game_data::for_revision(cx.pin().revision).ok()?;
-    if data.selected_pin().ok()?.as_ref() != cx.pin() {
-        return None;
-    }
-    data.try_prereq_steps()
+    api::game_data::for_revision(cx.revision())
+        .ok()?
+        .try_prereq_steps()
 }
 fn step_identity(row: &PrereqStep, crossing: &api::prereq_steps::CrossingId) -> PrereqStepIdentity {
     PrereqStepIdentity {
@@ -1313,10 +1310,7 @@ fn frame_observation(
     cx: &ActionContext<'_>,
     floor: EvidenceStamp,
 ) -> Option<Observation> {
-    let data = api::game_data::for_revision(cx.pin().revision).ok()?;
-    if data.selected_pin().ok()?.as_ref() != cx.pin() {
-        return None;
-    }
+    let data = api::game_data::for_revision(cx.revision()).ok()?;
     api::quest_progress::observe_quest_gate(data.try_quests()?.as_ref(), gate, cx.snapshot(), floor)
 }
 fn page(cx: &ActionContext<'_>) -> PageAcknowledgement {
@@ -1527,7 +1521,7 @@ impl ChatDrive {
         let target = if self.probe {
             DialogueTarget::Continuation
         } else {
-            let data = api::game_data::for_revision(cx.pin().revision).map_err(|_| {
+            let data = api::game_data::for_revision(cx.revision()).map_err(|_| {
                 ActionError::Unavailable("selected NPC facts are unavailable".into())
             })?;
             let name = data

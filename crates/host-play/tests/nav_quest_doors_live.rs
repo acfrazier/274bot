@@ -22,7 +22,7 @@ use client::client::Client;
 use host::Pump;
 use host_play::{mint_live_entries, mint_live_names, ProfileOptions, SharedClientTemplate};
 use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{find_with, FindOptions, Leg, Route, RouteError};
 use nav_planner::transport::{TransportEdge, TransportKind};
 use nav_planner::world::NavWorld;
@@ -357,7 +357,6 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         world.collision.standable(DESTINATION),
         "the proof destination must be a real stand, not the adjacent ladder's blocked anchor"
     );
-    let identity = profile.nav_identity().expect("navigation identity");
     let data =
         game_data::for_revision(client::io::ClientRevision::R289).expect("selected R289 game data");
     let helm = data
@@ -379,10 +378,7 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
     assert_eq!(guard.id, 2337);
     assert_eq!(secret_wall.id, 2341);
     receipt["engine_loaded"] = json!(true);
-    receipt["nav_identity"] = json!({
-        "pack_format": nav_planner::pack::FORMAT_ID,
-        "nav_sha256": identity.nav_sha256,
-    });
+    receipt["pack_format"] = json!(nav_planner::pack::FORMAT_ID);
     receipt["selected_facts"] = json!({
         "helmet": {"alias": HELM_ALIAS, "id": helm.id, "wear_position": helm.wear_position},
         "chainbody": {"alias": CHAINBODY_ALIAS, "id": chainbody.id, "wear_position": chainbody.wear_position},
@@ -2096,21 +2092,12 @@ fn run_phoenix_native_and_crossing(
             .map(|fact| fact.observed)
             .min_by_key(|stamp| (stamp.tick, stamp.sequence))
             .ok_or_else(|| "production journal pages recorded no session facts".to_owned())?;
-        let identity = selected
-            .quest_family_identity()
-            .ok_or_else(|| "selected quest family identity is unavailable".to_owned())?;
-        let family = QuestFamilyId::new(identity.sha256, identity.schema);
-        if world.graph.quest_family != Some(family) {
-            return Err("navigation pack and selected quest family identities differ".into());
-        }
         let quests = selected
             .try_quests()
             .ok_or_else(|| "selected quest catalog was not prepared".to_owned())?;
         let snapshot_guard = snapshot.lock();
         let ordinary = QuestListEvidenceProvider::from_snapshot(
             &quests,
-            Some(identity),
-            Some(identity),
             SnapshotView::new(Some(&snapshot_guard), current_stamp),
         );
         let evidence = QuestEvidence::new(
@@ -2118,7 +2105,6 @@ fn run_phoenix_native_and_crossing(
                 memory: memory.clone(),
                 ordinary: ordinary.clone(),
             }),
-            family,
             floor,
         );
         let state = WorldState::from_snapshot(&snapshot_guard)

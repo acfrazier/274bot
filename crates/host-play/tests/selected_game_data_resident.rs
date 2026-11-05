@@ -1,14 +1,24 @@
 //! Separate test process: no other test may warm the selected-data OnceLock or
 //! add resident pages while its one-time load is measured.
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn selected_289_facts_do_not_retain_an_inflated_source_copy() {
+    if api::test_support::local_asset_path(
+        "",
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../api/data/game-data/289.json"
+        ),
+        "revision 289 game data for the selected-data RSS test",
+    )
+    .is_none()
+    {
+        return;
+    }
     let before = host_play::current_resident_bytes().expect("current process RSS before facts");
-    let facts =
+    let _facts =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected 289 facts");
-    let pin = facts.selected_pin().expect("original-byte selected pin");
-    assert_eq!(pin.revision, client::io::ClientRevision::R289);
     let after = host_play::current_resident_bytes().expect("current process RSS after facts");
     let growth = after.saturating_sub(before);
     eprintln!("selected 289 RSS: before={before} after={after} growth={growth}");

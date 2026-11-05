@@ -4338,7 +4338,7 @@ impl AcquireRun {
         if self.prayer_cleanup_owned.is_empty() {
             return Poll::Ready(Ok(()));
         }
-        let selected = api::game_data::for_revision(cx.tick.cx.pin.revision)
+        let selected = api::game_data::for_revision(cx.tick.cx.revision())
             .map_err(|_| ActionError::Unavailable(Arc::from("prayer facts unavailable")))?;
         match begin_clear_owned_prayers(&selected, self.prayer_cleanup_owned, cx.tick) {
             Hygiene::Clean => {

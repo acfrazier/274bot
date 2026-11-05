@@ -1072,6 +1072,8 @@ pub struct Session {
     play_retired: bool,
     /// Last vault/connection error shown in the banner.
     pub error: Option<String>,
+    /// One old-format vault decision, or its terminal failure.
+    vault_saved_data: Option<VaultSavedData>,
     /// The banner message's expiry clock ([`Self::expire_error`]).
     error_expiry: frontend_core::ErrorExpiry<ErrorNeed>,
     /// BOT_MAINLAND=1 / host-play --mainland; not a panel checkbox.
@@ -1747,18 +1749,35 @@ pub(crate) fn reorders_submitted() -> u32 {
     REORDERS_SUBMITTED.get()
 }
 
+enum VaultSavedData {
+    Pending(frontend_core::saved_data::SavedDataRefusal),
+    Failed(frontend_core::saved_data::SavedDataResolveError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SessionStartupError {
+    #[error(transparent)]
+    ScriptSettings(#[from] frontend_core::ScriptSettingsError),
+    #[error(transparent)]
+    PanelPreferences(#[from] crate::ui_state::PanelUiStateError),
+}
+
 impl Session {
     /// Empty session for tests. Product startup uses [`Self::with_instance`].
     #[cfg(test)]
     pub fn new() -> Self {
         Self::with_instance(frontend_core::launch::InstancePermit::skip())
+            .expect("isolated saved data is readable")
     }
 
     /// Interactive startup must pass the lock outcome so prefs/vault cannot
     /// load without a decision. Harness boots pass [`InstancePermit::SkipLock`].
-    pub fn with_instance(instance: frontend_core::launch::InstancePermit) -> Self {
+    pub fn with_instance(
+        instance: frontend_core::launch::InstancePermit,
+    ) -> Result<Self, SessionStartupError> {
         #[cfg(test)]
         frontend_core::test_support::IsolatedStores::ensure_thread();
+        let (scripts, library_error) = frontend_core::Scripts::open_default()?;
         // The composition root: the one place that resolves HOME for state.
         // The process local-state service opened here is the one writer of
         // the operator preferences and loadouts for everything below, and
@@ -1769,7 +1788,7 @@ impl Session {
             .preferences()
             .expect("the session's local state was bound just now");
         let preferences_ready = preferences.ready();
-        let mut ui = crate::ui_state::load(&preferences);
+        let mut ui = crate::ui_state::load(&preferences)?;
         let walk_permissions = core.adopt_operator_preferences();
         let pvp_start_fights =
             frontend_core::PvpSettingView::new(core.pvp_start_fights().unwrap_or(false));
@@ -1789,14 +1808,13 @@ impl Session {
         // Loaded now through the service. A file it refused leaves the form
         // empty with the reason, which the Loadouts window shows as its status.
         let loadouts = LoadoutForm::operator_of(&core);
-        let (scripts, library_error) = frontend_core::Scripts::open_default();
-        // A missing library store is a first run; a refused or corrupt one is
-        // said out loud (and nothing is saved over a refused one).
+        // A missing library store is a first run; library restore failures
+        // remain visible while script-settings load failures stop startup.
         if let Some(error) = library_error {
             eprintln!("panel: {error}");
             process_log(Level::Error, &error);
         }
-        Self {
+        Ok(Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
                 focused: None,
                 renderer: true,
@@ -1813,6 +1831,7 @@ impl Session {
             core,
             play_retired: false,
             error: None,
+            vault_saved_data: None,
             error_expiry: frontend_core::ErrorExpiry::default(),
             mainland: Arc::new(AtomicBool::new(
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
@@ -1961,7 +1980,7 @@ impl Session {
             fixture_path: None,
             launcher: ProfileLauncher::legacy_local(),
             requested_unlock: None,
-        }
+        })
     }
 
     /// Refresh the durable policy before rendering or admitting a manual walk.
@@ -2539,7 +2558,14 @@ impl Session {
         let Ok(document) = self.preferences.document() else {
             return;
         };
-        let saved = crate::ui_state::load_snapshot(&document).nav;
+
+        let saved = match crate::ui_state::load_snapshot(self.preferences.path(), &document) {
+            Ok(saved) => saved.nav,
+            Err(error) => {
+                self.report_ui_state_error(error);
+                return;
+            }
+        };
         if !self.pending_nav_members.contains_key("show_special_areas") {
             self.ui.nav.show_special_areas = saved.show_special_areas;
         }
@@ -2548,6 +2574,22 @@ impl Session {
             .contains_key("pause_script_on_manual_walk_abort")
         {
             self.ui.nav.pause_script_on_manual_walk_abort = saved.pause_script_on_manual_walk_abort;
+        }
+    }
+
+    fn report_ui_state_error(&mut self, error: crate::ui_state::PanelUiStateError) {
+        let message = error.to_string();
+        process_log(Level::Error, &message);
+        self.error = Some(message);
+    }
+
+    fn load_ui_state(&mut self) -> Option<crate::ui_state::PanelUiState> {
+        match crate::ui_state::load(&self.preferences) {
+            Ok(state) => Some(state),
+            Err(error) => {
+                self.report_ui_state_error(error);
+                None
+            }
         }
     }
 
@@ -2575,8 +2617,15 @@ impl Session {
         if self.preferences_ready {
             return;
         }
+        let state = match crate::ui_state::load_snapshot(self.preferences.path(), document) {
+            Ok(state) => state,
+            Err(error) => {
+                self.report_ui_state_error(error);
+                return;
+            }
+        };
         self.ui = crate::ui_state::apply_pending_members(
-            crate::ui_state::load_snapshot(document),
+            state,
             self.pending_panel_members
                 .iter()
                 .filter(|member| !crate::ui_state::is_launch_choice(&member.path))
@@ -2670,14 +2719,22 @@ impl Session {
         let Ok(document) = self.preferences.document() else {
             return;
         };
-        self.ui = crate::ui_state::rebased(
+        let rebased = match crate::ui_state::rebased(
+            self.preferences.path(),
             &self.ui,
             &document,
             self.pending_panel_members
                 .iter()
                 .map(|member| (member.path.as_slice(), &member.value)),
             self.core.selected().is_some(),
-        );
+        ) {
+            Ok(rebased) => rebased,
+            Err(error) => {
+                self.report_ui_state_error(error);
+                return;
+            }
+        };
+        self.ui = rebased;
         // The server revision the next session binds with follows a durable
         // value another process saved (while this panel has no choice of its
         // own pending and no profile is bound).
@@ -3048,6 +3105,46 @@ impl Session {
         }
     }
 
+    pub(crate) fn vault_refusal(&self) -> Option<&frontend_core::saved_data::SavedDataRefusal> {
+        match self.vault_saved_data.as_ref() {
+            Some(VaultSavedData::Pending(refusal)) => Some(refusal),
+            _ => None,
+        }
+    }
+
+    /// Resolve the old-format refusal without opening the locked vault.
+    pub(crate) fn resolve_vault_refusal(
+        &mut self,
+        choice: frontend_core::saved_data::SavedDataChoice,
+    ) {
+        let refusal = match self.vault_saved_data.take() {
+            Some(VaultSavedData::Pending(refusal)) => refusal,
+            other => {
+                self.vault_saved_data = other;
+                return;
+            }
+        };
+        match refusal.resolve(choice) {
+            Ok(()) => {
+                self.error = None;
+                self.pass_scratch.clear();
+            }
+            Err(error) => self.vault_saved_data = Some(VaultSavedData::Failed(error)),
+        }
+    }
+
+    pub(crate) fn take_vault_failure(
+        &mut self,
+    ) -> Option<frontend_core::saved_data::SavedDataResolveError> {
+        match self.vault_saved_data.take() {
+            Some(VaultSavedData::Failed(error)) => Some(error),
+            other => {
+                self.vault_saved_data = other;
+                None
+            }
+        }
+    }
+
     /// Whether the default vault file exists (locked prompt: Unlock vs Create).
     pub fn default_vault_exists(&self) -> Result<bool, ProfileError> {
         self.vault_path().map(|path| path.is_file())
@@ -3126,7 +3223,11 @@ impl Session {
                     UnlockStage::Launch => "profile",
                 };
                 process_log(Level::Error, &format!("{prefix}: {msg}"));
-                self.error = Some(msg);
+                if self.vault_refusal().is_some() {
+                    self.error = None;
+                } else {
+                    self.error = Some(msg);
+                }
                 false
             }
         }
@@ -3623,6 +3724,10 @@ impl Session {
         let submitted = core
             .submit(row, Targets::Application, &mut surface)
             .map_err(|error| (UnlockStage::Vault, error.to_string()))?;
+        self.vault_saved_data = self
+            .core
+            .take_vault_refusal(submitted.request())
+            .map(VaultSavedData::Pending);
         let failed = self
             .core
             .commands()
@@ -4916,7 +5021,7 @@ impl Session {
     pub fn load_all(&mut self) -> usize {
         let had_focus = self.core.selected().is_some();
         let last = if !had_focus && self.persist_ui {
-            crate::ui_state::load(&self.preferences).last_focus
+            self.load_ui_state().and_then(|state| state.last_focus)
         } else {
             None
         };
@@ -5109,7 +5214,7 @@ impl Session {
                 // Live boots never restore the operator's disk last_focus;
                 // the first wall member / later `select(&names[0])` wins.
                 let last = if self.persist_ui {
-                    crate::ui_state::load(&self.preferences).last_focus
+                    self.load_ui_state().and_then(|state| state.last_focus)
                 } else {
                     None
                 };
@@ -5351,14 +5456,16 @@ impl Session {
             return;
         };
         let identity = ready.identity();
-        let nav = self.map_nav_digest_for(Some(world.as_ref()));
+        let nav = nav_planner::producer::identity(world.as_ref())
+            .ok()
+            .map(|identity| identity.pack());
         let data = profile
             .as_ref()
             .and_then(BoundProfile::game_data)
             .or_else(|| self.core.game_data());
         let same = self.map_catalogue.as_ref().is_some_and(|catalogue| {
             catalogue.identity() == identity
-                && catalogue.nav_identity() == nav
+                && Some(catalogue.nav_pack_id()) == nav
                 && catalogue.client_status() == WalkSourceStatus::Available
         });
         if same && (self.map_catalogue_named || data.is_none()) {
@@ -5396,32 +5503,26 @@ impl Session {
         self.observed_map_services = self.core.observed_walk_services(&name, context);
     }
 
-    pub fn map_nav_digest(&self) -> nav_planner::map::identity::Digest {
-        self.map_nav_digest_for(None)
-    }
-
-    fn map_nav_digest_for(&self, world: Option<&NavWorld>) -> nav_planner::map::identity::Digest {
-        self.server_profile()
-            .and_then(BoundProfile::nav_identity)
+    pub fn map_nav_pack_id(&self) -> Option<nav_planner::contract::PackId> {
+        crate::picker::pack()
+            .or_else(|| self.core.nav_world())
+            .as_deref()
+            .and_then(|world| nav_planner::producer::identity(world).ok())
+            .map(|identity| identity.pack())
+            .or_else(|| self.server_profile().and_then(BoundProfile::nav_pack_id))
             .or_else(|| {
-                self.map_catalogue.as_ref().and_then(|catalogue| {
-                    if world.is_some_and(|world| !std::ptr::eq(catalogue.world().as_ref(), world)) {
-                        None
-                    } else {
-                        Some(catalogue.nav_identity())
-                    }
-                })
-            })
-            .unwrap_or_else(|| {
-                nav_planner::map::identity::Digest::of(&self.launcher.generation().to_be_bytes())
+                self.map_catalogue
+                    .as_ref()
+                    .map(|catalogue| catalogue.nav_pack_id())
             })
     }
 
-    /// Current map command binding. Legacy/grid-only views use the profile
-    /// generation, never a pointer address or a client/content compatibility proof.
+    /// Bind commands to the supplied world and current profile generation.
     pub fn picker_context(&self, world: &NavWorld) -> frontend_core::walk_map::WalkMapContext {
         let name = self.focused_name();
-        let nav = self.map_nav_digest_for(Some(world));
+        let nav = nav_planner::producer::identity(world)
+            .expect("a mapped navigation world must have a pack identity")
+            .pack();
         let overlay = self.map_catalogue.as_ref().map(|catalogue| catalogue.key());
         self.core
             .walk_map_context(name.as_deref(), nav, overlay, self.launcher.generation())
@@ -6078,7 +6179,8 @@ mod fleet_hold_tests {
             frontend_core::test_support::IsolatedStores::enter("panel-external-loader-copy-hold");
         let path = iso.dir().join("BoneBurier.ts");
         std::fs::copy(default_frozen_source(), &path).unwrap();
-        let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip());
+        let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip())
+            .expect("isolated script settings are readable");
         session.persist_ui = false;
         session.draw.set_persist(false);
         session.scripts.use_library_at(

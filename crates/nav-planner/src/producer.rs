@@ -9,17 +9,13 @@
 //! an implementation path, so a production script import of it is a
 //! registered violation.
 //!
-//! One loaded world carries **one** facade identity. The host's pack loader
-//! records the verified pack digest with [`bind`]; [`NavWorld::from_bytes`]
-//! records the bytes' digest itself. The identity is minted on the first
-//! view served and shared by every later lease and view of that world, so
-//! a plan, bound key or exemption produced from one view is accepted by
-//! every other view of the same world and refused by any other world
-//! ([`ContractError::PackMismatch`]). A synthetic world (`from_parts`,
-//! `from_grid`) that reaches a view without a bind carries the empty-content
-//! digest: it is a fixture, not a loaded pack, and its [`PackId`] still
-//! distinguishes it. [`crate::contract::NavLease::wrap`] keeps F0's
-//! semantics (a fresh identity per call) and never touches this cache.
+//! One loaded world carries **one** facade identity. It is minted on the first
+//! view served and shared by every later lease and view of that world, so a
+//! plan, bound key or exemption produced from one view is accepted by every
+//! other view of the same world and refused by any other world
+//! ([`ContractError::PackMismatch`]). The opaque [`PackId`] distinguishes
+//! loaded worlds without using file-content digests. Direct lease wrapping
+//! shares this same per-world identity cache.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -29,8 +25,8 @@ use api::snapshot::WorldTile;
 use api::work::InputRevision;
 
 use crate::contract::{
-    BoundZoneExempt, BoundZoneKey, CollisionView, ContractError, NavIdentity, NavLease, PackDigest,
-    PackId, RoutePlanLease, RouteView, WildernessView, ZoneTableView,
+    BoundZoneExempt, BoundZoneKey, CollisionView, ContractError, NavIdentity, NavLease, PackId,
+    RoutePlanLease, RouteView, WildernessView, ZoneTableView,
 };
 use crate::router::{
     CompactRoute, CompactRouteCursor, CompactRouteLeg, CompactTransportStep, Route,
@@ -256,36 +252,21 @@ impl<T: std::fmt::Debug> std::fmt::Debug for OwnerResult<T> {
     }
 }
 
-/// Record the loaded pack's content digest on `world` and mint its
-/// identity. The first bind wins; a later bind with the same digest is a
-/// no-op and a different digest is refused with
-/// [`ContractError::PackMismatch`] (the caller is naming another pack's
-/// bytes).
-pub fn bind(world: &NavWorld, content: PackDigest) -> Result<NavIdentity, ContractError> {
-    let recorded = world.content.get_or_init(|| content);
-    if *recorded != content {
-        return Err(ContractError::PackMismatch);
-    }
-    let _ = world.search_graph_envelope();
-    identity(world)
-}
-
 /// The world's one facade identity, minted on first use.
 pub fn identity(world: &NavWorld) -> Result<NavIdentity, ContractError> {
+    let _ = world.search_graph_envelope();
     if let Some(identity) = world.lease_identity.get() {
         return Ok(*identity);
     }
-    let content = *world.content.get_or_init(|| PackDigest::of(&[]));
-    let minted = NavIdentity::mint(content)?;
+    let minted = NavIdentity::mint()?;
     // A racing first use may have won; its identity is the world's, and the
     // losing mint is never reused.
     Ok(*world.lease_identity.get_or_init(|| minted))
 }
 
 /// A lease over `world` under its one identity. Cloning copies the `Arc`
-/// handle and checked scalar envelope. Production `bind` prepares the
-/// envelope before publishing the loaded world; synthetic worlds initialize
-/// it on their first lease.
+/// handle and checked scalar envelope; the identity and envelope are prepared
+/// on first use.
 pub fn lease(world: &Arc<NavWorld>) -> Result<NavLease, ContractError> {
     Ok(NavLease::with_identity(Arc::clone(world), identity(world)?))
 }

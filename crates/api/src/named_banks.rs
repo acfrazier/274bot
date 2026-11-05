@@ -2,6 +2,7 @@
 //! per-profile stands. Geometry is resolved by `nav`; eligibility by the caller's
 //! captured account facts. Missing geometry remains an air-ranking fallback.
 
+use crate::selected::{FactError, LOCAL_GAME_DATA_FAMILY};
 use crate::snapshot::WorldTile;
 use serde::Deserialize;
 
@@ -25,7 +26,26 @@ pub struct BankDefinition {
     pub choose: Option<&'static str>,
 }
 
-include!("../data/game-data/bank-catalog.rs");
+#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+mod generated {
+    use super::*;
+    include!("../data/game-data/bank-catalog.rs");
+}
+
+fn local_data_unavailable() -> FactError {
+    FactError::FamilyUnavailable((*LOCAL_GAME_DATA_FAMILY).clone())
+}
+
+pub fn bank_catalog() -> Result<&'static [BankDefinition], FactError> {
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        return Ok(generated::BANK_CATALOG);
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(local_data_unavailable())
+    }
+}
 
 /// These opt-ins are false unless the calling script explicitly enables them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

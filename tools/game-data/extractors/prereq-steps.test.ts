@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { captureProgressWriterDomains, extractQuestIdentityFacts } from './quests.ts';
-import { assertPrereqJournalPins, assertPrereqStepFacts, extractPrereqStepsFacts, loadPrereqCrossingProjection, prereqStepInputs, PREREQ_STEPS_SCHEMA } from './prereq-steps.ts';
+import { assertPrereqJournalPins, assertPrereqStepFacts, extractPrereqStepsFacts, loadPrereqCrossingProjection, PREREQ_STEPS_SCHEMA } from './prereq-steps.ts';
 import { revisions } from '../generate.ts';
 import { parseBody } from './gathering-rs2.ts';
 import { boundedJournalRange } from './prereq-journal-proof.ts';
@@ -152,22 +151,6 @@ shifted.crossing.to.x -= 1;
 shifted.pass.landing.x -= 1;
 assert.throws(() => assertPrereqStepFacts(content, misplaced, quests.rows), /cited map tile/);
 
-const inputs = prereqStepInputs(content, facts).map((input) => input.path);
-assert.deepEqual(inputs, [...inputs].sort());
-for (const source of [
-    'content/scripts/quests/quest_druidspirit/scripts/quest_druidspirit.rs2',
-    'content/scripts/areas/area_mausoleum/scripts/drezel.rs2',
-    'content/scripts/skill_combat/scripts/npc/npc_combat.rs2',
-    'content/scripts/general/scripts/quests.rs2',
-    'content/scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2',
-    'content/scripts/quests/quest_hero/scripts/hero_journal.rs2',
-    'content/scripts/quests/quest_blackarmgang/configs/quest_blackarmgang.constant',
-    'content/scripts/quests/quest_hero/configs/quest_hero.constant',
-    'content/scripts/general/configs/quest.constant',
-    'content/pack/loc.pack',
-    'content/pack/npc.pack',
-    'content/pack/varp.pack',
-]) assert.ok(inputs.includes(source), `${source} is pinned by the prerequisite family`);
 
 // Synthetic-projection checks below exercise the fail-closed projection joins
 // without content: templates bind to pack geometry, never to edited constants.
@@ -190,19 +173,16 @@ function baseEntries() {
         packEntry(3506, tile(51, 60), tile(51, 59), tile(51, 60)),
     ];
 }
-function writeProjection(entries: unknown[], shaOverride?: string, identicalEdgeGroups: unknown = []) {
+function writeProjection(entries: unknown[]) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prereq-projection-'));
-    const pack = path.join(dir, 'nav.pack');
-    fs.writeFileSync(pack, 'nav-pack-bytes');
-    const sha = crypto.createHash('sha256').update(fs.readFileSync(pack)).digest('hex');
     const file = path.join(dir, 'crossings.json');
-    fs.writeFileSync(file, JSON.stringify({ schema: 2, navpack_sha256: shaOverride ?? sha, crossings: entries, identical_edge_groups: identicalEdgeGroups }));
-    return { dir, pack, file };
+    fs.writeFileSync(file, JSON.stringify({ schema: 2, crossings: entries }));
+    return { dir, file };
 }
-function withProjection(entries: unknown[], run: (overrides: { projectionPath: string; navPack: string }) => void, shaOverride?: string, identicalEdgeGroups?: unknown) {
-    const { dir, pack, file } = writeProjection(entries, shaOverride, identicalEdgeGroups);
+function withProjection(entries: unknown[], run: (overrides: { projectionPath: string }) => void) {
+    const { dir, file } = writeProjection(entries);
     try {
-        run({ projectionPath: file, navPack: pack });
+        run({ projectionPath: file });
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -227,9 +207,6 @@ withProjection([...baseEntries(), baseEntries()[2]], (overrides) => {
 withProjection(baseEntries().map((entry) => entry.crossing.loc_id === 3443 ? { ...entry, standable: false } : entry), (overrides) => {
     assert.throws(() => extractPrereqStepsFacts(289, overrides), /no legal pack crossing/);
 });
-withProjection(baseEntries(), (overrides) => {
-    assert.throws(() => extractPrereqStepsFacts(289, overrides), /does not match GAME_DATA_289_NAV_PACK/);
-}, '0'.repeat(64));
 withProjection([...baseEntries(), packEntry(3507, tile(50, 60), tile(50, 60), tile(51, 60))], (overrides) => {
     assert.throws(() => extractPrereqStepsFacts(289, overrides), /bound by no template/);
 });
@@ -268,17 +245,6 @@ const stageWindow = (stage: number) => ({
         assert.equal(joined.rows[0].crossings.length, 2);
     });
 }
-// Fully identical TransportEdge duplicates are bake metadata only: listing
-// the repeated physical record in identical_edge_groups must not fail the
-// export, must not change the joined pack rows, and the crossings themselves
-// stay unique.
-withProjection(baseEntries(), (overrides) => {
-    const projection = loadPrereqCrossingProjection(289, overrides)!;
-    assert.deepEqual(projection.identical_edge_groups, [['graph.edges[1833]', 'graph.edges[1834]']]);
-    const joined = extractPrereqStepsFacts(289, overrides);
-    assert.equal(joined.rows[0].crossings.length, 2);
-    assert.equal(joined.rows[1].crossings.length, 4);
-}, undefined, [['graph.edges[1833]', 'graph.edges[1834]']]);
 {
     const malformed = baseEntries().map((entry, index) => index === 0
         ? { ...entry, quest_gate_alternatives: [{ Complete: 'priestperil' }] }

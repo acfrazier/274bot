@@ -3,8 +3,10 @@
 use std::sync::Arc;
 
 use api::game_data::SelectedGameData;
-use api::named_banks::{NamedBank, NamedBankFacts, BANK_CATALOG};
+use api::named_banks::{bank_catalog, NamedBank, NamedBankFacts};
 use {script_js::LoadIsolate, script_js::LoadIsolateError, script_js::LoadShape};
+
+mod common;
 
 fn data() -> Arc<SelectedGameData> {
     api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
@@ -12,7 +14,8 @@ fn data() -> Arc<SelectedGameData> {
 
 fn roster() -> NamedBankFacts {
     NamedBankFacts::from_banks(
-        BANK_CATALOG
+        bank_catalog()
+            .expect("local bank catalog")
             .iter()
             .map(|definition| NamedBank {
                 definition: Some(definition),
@@ -352,6 +355,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn runtime_catalog_exports_keep_aliases_options_surfaces_and_boundaries() {
+    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+        return;
+    }
     let iso = spawn(CATALOG_SOURCE);
     let catalog = probe(&iso, "__cooking_catalog");
     let expected_names: Vec<_> = roster()
@@ -421,6 +427,9 @@ fn runtime_catalog_exports_keep_aliases_options_surfaces_and_boundaries() {
 
 #[test]
 fn caller_row_lookup_preserves_coercion_order_identity_and_errors() {
+    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+        return;
+    }
     let iso = spawn(FIND_SOURCE);
     let found = probe(&iso, "__cooking_find");
     assert_eq!(found["firstTie"], true);
@@ -445,6 +454,9 @@ fn caller_row_lookup_preserves_coercion_order_identity_and_errors() {
 
 #[test]
 fn resolver_keeps_predicate_order_errors_and_default_unlocks() {
+    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+        return;
+    }
     let iso = spawn(RESOLVE_SOURCE);
     let resolved = probe(&iso, "__cooking_resolve");
     let expected_names: Vec<_> = roster()
@@ -483,8 +495,8 @@ fn resolver_keeps_predicate_order_errors_and_default_unlocks() {
 }
 
 #[test]
-fn absent_selected_data_keeps_empty_catalog_and_explicit_resolution_error() {
-    let iso = spawn_with(MISSING_DATA_SOURCE, None, roster()).unwrap();
+fn missing_game_data_keeps_empty_catalog_and_resolution_error() {
+    let iso = spawn_with(MISSING_DATA_SOURCE, None, NamedBankFacts::empty()).unwrap();
     let offline = probe(&iso, "__cooking_offline");
     assert_eq!(offline["locationCount"], 0);
     assert_eq!(offline["options"], serde_json::json!(["Auto", "Custom"]));

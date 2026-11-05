@@ -6,7 +6,6 @@ use crate::{
     debug_commands::DebugCatalog,
     interact::Driver,
     prot::{PacketCategory, PacketError, PacketMetadata, Send},
-    selected::SelectedPin,
     snapshot::{GameSnapshot, ItemContainer, ItemView, LocView, NpcView, WorldTile},
 };
 use client::io::{ClientProt, ClientRevision};
@@ -391,10 +390,7 @@ pub enum ServerOrderedError {
     /// The selected catalog or recipe is unavailable.
     #[error("server-ordered contract is unavailable")]
     ContractUnavailable,
-    /// Selected cache/content identity does not match the live pin.
-    #[error("server-ordered selected pin does not match")]
-    PinMismatch,
-    /// Packet, catalog, and live session revisions differ.
+    /// The packet, catalog, and live session revisions differ.
     #[error("server-ordered revision does not match")]
     RevisionMismatch,
     /// The request shape or one of its typed fields is invalid.
@@ -454,11 +450,8 @@ pub enum ServerOrderedError {
 }
 
 impl From<ContractError> for ServerOrderedError {
-    fn from(error: ContractError) -> Self {
-        match error {
-            ContractError::PinMismatch => Self::PinMismatch,
-            _ => Self::ContractUnavailable,
-        }
+    fn from(_: ContractError) -> Self {
+        Self::ContractUnavailable
     }
 }
 
@@ -572,7 +565,7 @@ impl ServerOrderedInputs {
     /// Preflight and dispatch one named native-content request.
     pub fn dispatch(
         catalog: &ServerOrderedCatalog,
-        pin: &SelectedPin,
+        revision: ClientRevision,
         snapshot: &GameSnapshot,
         driver: &mut dyn Driver,
         request: &ServerOrderedRequest,
@@ -580,7 +573,7 @@ impl ServerOrderedInputs {
     ) -> ServerOrderedDispatch {
         Self::dispatch_with_npc_admission(
             catalog,
-            pin,
+            revision,
             snapshot,
             driver,
             request,
@@ -596,7 +589,7 @@ impl ServerOrderedInputs {
     /// complete transform closure.
     pub fn dispatch_builtin_gatherer_knife(
         catalog: &ServerOrderedCatalog,
-        pin: &SelectedPin,
+        revision: ClientRevision,
         snapshot: &GameSnapshot,
         driver: &mut dyn Driver,
         request: &ServerOrderedRequest,
@@ -604,7 +597,7 @@ impl ServerOrderedInputs {
     ) -> ServerOrderedDispatch {
         Self::dispatch_with_npc_admission(
             catalog,
-            pin,
+            revision,
             snapshot,
             driver,
             request,
@@ -615,7 +608,7 @@ impl ServerOrderedInputs {
 
     fn dispatch_with_npc_admission(
         catalog: &ServerOrderedCatalog,
-        pin: &SelectedPin,
+        revision: ClientRevision,
         snapshot: &GameSnapshot,
         driver: &mut dyn Driver,
         request: &ServerOrderedRequest,
@@ -643,7 +636,7 @@ impl ServerOrderedInputs {
                 error,
             );
         }
-        if let Err(error) = catalog.facts.validate(pin) {
+        if let Err(error) = catalog.facts.validate(revision) {
             return ServerOrderedDispatch::refused(
                 context.request_id,
                 context.dispatch_tick,
@@ -652,7 +645,7 @@ impl ServerOrderedInputs {
                 error.into(),
             );
         }
-        if catalog.revision() != pin.revision.as_i32() || driver.revision() != pin.revision {
+        if catalog.revision() != revision.as_i32() || driver.revision() != revision {
             return ServerOrderedDispatch::refused(
                 context.request_id,
                 context.dispatch_tick,
@@ -661,7 +654,7 @@ impl ServerOrderedInputs {
                 ServerOrderedError::RevisionMismatch,
             );
         }
-        if let Err(error) = request.validate_shape(pin.revision) {
+        if let Err(error) = request.validate_shape(revision) {
             return ServerOrderedDispatch::refused_at(
                 context.request_id,
                 context.dispatch_tick,
@@ -672,7 +665,7 @@ impl ServerOrderedInputs {
         }
         let plan = match build_content_plan(
             catalog,
-            pin.revision,
+            revision,
             snapshot,
             driver,
             request,
@@ -690,7 +683,7 @@ impl ServerOrderedInputs {
                 )
             }
         };
-        dispatch_plan(plan, pin.revision, driver, context)
+        dispatch_plan(plan, revision, driver, context)
     }
 
     /// Preflight and dispatch a sealed surface's typed packet operations.

@@ -358,11 +358,9 @@ impl BoundProfile {
         self.0.world()
     }
 
-    /// Navigation pack identity for map bindings, if the profile published one.
-    pub fn nav_identity(&self) -> Option<nav_planner::map::identity::Digest> {
-        self.0.nav_identity().and_then(|identity| {
-            nav_planner::map::identity::Digest::from_hex(&identity.nav_sha256).ok()
-        })
+    /// Process-lifetime ownership key for the loaded navigation world.
+    pub fn nav_pack_id(&self) -> Option<nav_planner::contract::PackId> {
+        self.0.nav_pack_id()
     }
 
     /// Path to the profile's bound map-flags sidecar.
@@ -370,30 +368,12 @@ impl BoundProfile {
         self.0.nav_flags()
     }
 
-    /// Expected digest for the bound map-flags sidecar, if available.
-    pub fn nav_flags_sha256(&self) -> Option<&str> {
-        self.0
-            .nav_identity()
-            .and_then(|identity| identity.flags_sha256.as_deref())
-    }
-
-    /// Whether the sidecar is the build-stamped bundled resource.
-    pub fn nav_flags_trusted_bundled(&self) -> bool {
-        self.0.nav_flags_origin().is_bundled()
-    }
-
-    /// Lazy verified reach source for the profile.
+    /// Lazy paint-reach source for the profile.
     pub fn walk_reach_source(&self) -> Option<Arc<crate::walk_map::WalkReachSource>> {
         self.0
             .reach_source()
             .map(crate::walk_map::WalkReachSource::from_host)
             .map(Arc::new)
-    }
-
-    /// Whether this profile bound a verified nav identity, even if it has no
-    /// reach sidecar. This prevents substituting a locally baked reach grid.
-    pub fn has_verified_nav_identity(&self) -> bool {
-        self.0.nav_identity().is_some()
     }
 
     /// The selected game data, once loaded.
@@ -1449,20 +1429,41 @@ pub enum UnlockStage {
 
 /// Why an unlock failed.
 #[derive(Debug, thiserror::Error)]
-#[error("{message}")]
-pub struct UnlockError {
-    stage: UnlockStage,
-    message: String,
+pub enum UnlockError {
+    /// The vault could not be opened or created.
+    #[error("{source}")]
+    Vault {
+        #[source]
+        source: vault::VaultError,
+    },
+    /// Another step of the unlock operation failed.
+    #[error("{message}")]
+    Operation { stage: UnlockStage, message: String },
 }
 
 impl UnlockError {
     pub(crate) fn new(stage: UnlockStage, message: String) -> Self {
-        Self { stage, message }
+        Self::Operation { stage, message }
+    }
+
+    pub(crate) fn from_vault(source: vault::VaultError) -> Self {
+        Self::Vault { source }
+    }
+
+    /// The vault error when the unlock failed while opening or creating it.
+    pub fn vault_error(&self) -> Option<&vault::VaultError> {
+        match self {
+            Self::Vault { source } => Some(source),
+            Self::Operation { .. } => None,
+        }
     }
 
     /// The step that failed.
     pub fn stage(&self) -> UnlockStage {
-        self.stage
+        match self {
+            Self::Vault { .. } => UnlockStage::Vault,
+            Self::Operation { stage, .. } => *stage,
+        }
     }
 }
 

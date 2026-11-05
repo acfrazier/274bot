@@ -2,47 +2,24 @@
 #![deny(clippy::disallowed_methods)]
 #![deny(clippy::disallowed_macros)]
 
-//! `nav-pack` CLI: bake the whole world — every `maps/*.jm2` mapsquare —
-//! into a per-level [`WorldCollision`] (four planes like the client's
-//! `collision[4]`), derive the [`TransportGraph`] from
-//! the Server content, and write the v18 nav pack (magic `274V`, version
-//! byte 18; `encode`) to `$NAV_PACK` or
-//! `~/.274bot/274bot.navpack` (default), plus the raw flags sidecar
-//! (magic `274F`; `encode_flags_sidecar`) to `$NAV_FLAGS` or the pack
-//! path with its extension swapped to `.navflags` (default
-//! `~/.274bot/274bot.navflags`). Legacy 274 usage remains:
-//! `nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]`, where omitted paths
-//! resolve from `BOT_NAV_ENGINE_DIR` or `ENGINE_DIR`: the engine's sibling
-//! `content/maps`, matching doors configs under that content tree, and
-//! `<engine>/data/pack/config`. Pass all three paths to use a different tree.
-//! Revision-bound bakes use explicit inputs:
+//! `nav-pack` CLI: bake local Server content and client config into the v19 nav
+//! pack and its local sidecars. Revision selection chooses the game-data
+//! schema; it does not authenticate local content or cache files.
+//!
+//! Bake with explicit inputs:
 //! `nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR
-//! --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out NAV_FLAGS]
-//! [--snapshot-root SNAPSHOT_ROOT]`.
-//! Runtime-compatible packs require `--snapshot-root`: the parent containing
-//! the complete version-keyed decoded snapshot. Omitting it preserves the
-//! legacy offline packed-identity format, which runtime binding rejects.
-//! This mode verifies every cache archive and the selected config before
-//! baking, then emits `<NAV_PACK>.json` using [`nav_planner::manifest::NavManifest`].
+//! --game-data-dir GAME_DATA_DIR --out NAV_PACK [--flags-out NAV_FLAGS]`.
 //! Revision 274 reads the server `data/pack/config` beside the `client/`
 //! cache directory; revision 289 reads `data/pack/client/config`.
 //! Door loc ids come from the `*.loc` door configs plus
-//! `scripts/general_use/configs/gates.loc` (derived from the maps dir's
-//! parent, the Server `content/` root); the loc definitions
-//! (blockwalk, width/length, active) come from the client cache's `config`
-//! jag. Every `.jm2` under the maps dir bakes or the run fails; non-`.jm2`
+//! `scripts/general_use/configs/gates.loc` under CONTENT_DIR; loc definitions
+//! (blockwalk, width/length, active) come from the selected config jag.
+//! Every `.jm2` under `content/maps` bakes or the run fails; non-`.jm2`
 //! files (`ignore.csv`/`free2play.csv`) are metadata and skipped. The
-//! transport graph derives from the Server content tree (the maps dir's
-//! parent): door/ladder/stairs/agility edges, with boats and teleport
-//! spells counted and skipped on stderr. The bank stand table
-//! ([`nav_bake::pack::derive_banks`]) bakes from the same content tree: every
-//! `bankbooth` loc placement with the Use-quickly op, plus NPC tellers
-//! (`category=bank_teller`) from jm2 NPC placements. Rebake whenever the
-//! Server content changes — packs older than v18 are rejected with `BadVersion`.
-//! The derivation itself lives in [`nav_bake::bake`], shared with the ordinary
-//! application build (`host-play`'s build script), which bakes and stages the
-//! selected revision automatically; this CLI stays for deliberate
-//! developer/custom-input bakes. Export all pack crossings with
+//! transport graph and bank stands derive from local Server content.
+//! Rebake whenever Server content changes — older packs fail with
+//! `BadVersion`. The derivation lives in [`nav_bake::bake`], shared with the
+//! ordinary application build. Export crossing facts with
 //! `nav-pack --export-crossings PACK --out JSON`.
 use std::collections::HashMap;
 use std::env;
@@ -51,10 +28,7 @@ use std::process::ExitCode;
 
 use api::prereq_steps::CrossingId;
 use api::selected::QuestGate;
-use nav_bake::bake::{
-    self, config_jag_for, content_inputs, verify_cache_manifest, BakeRequest, BakedNav,
-};
-use nav_planner::manifest::{nav_manifest_path, CacheManifest};
+use nav_bake::bake::{self, config_jag_for, content_inputs, BakeRequest, BakedNav};
 use nav_planner::transport::TransportGraph;
 
 /// Input paths for the standalone crossing projection mode.
@@ -100,7 +74,6 @@ fn parse_export_args(
 #[derive(serde::Serialize)]
 struct CrossingExport<'a> {
     schema: u8,
-    navpack_sha256: String,
     crossings: Vec<CrossingExportRow<'a>>,
     identical_edge_groups: Vec<Vec<String>>,
 }
@@ -114,7 +87,6 @@ struct CrossingExportRow<'a> {
 }
 
 fn crossing_export_json(
-    pack_bytes: &[u8],
     collision: &nav_planner::collision::WorldCollision,
     graph: &TransportGraph,
 ) -> Result<String, String> {
@@ -166,8 +138,7 @@ fn crossing_export_json(
     }
 
     let export = CrossingExport {
-        schema: 2,
-        navpack_sha256: nav_planner::manifest::hash_bytes(pack_bytes),
+        schema: 3,
         crossings,
         identical_edge_groups: identical_edge_groups(graph)?,
     };
@@ -175,6 +146,13 @@ fn crossing_export_json(
         .map_err(|error| format!("serialize crossing export: {error}"))
 }
 
+fn crossing_row_source(index: usize, edge_count: usize) -> String {
+    if index < edge_count {
+        format!("graph.edges[{index}]")
+    } else {
+        format!("graph.teleports[{}]", index - edge_count)
+    }
+}
 fn identical_edge_groups(graph: &TransportGraph) -> Result<Vec<Vec<String>>, String> {
     struct CandidateGroup {
         first_index: usize,
@@ -232,21 +210,13 @@ fn identical_edge_groups(graph: &TransportGraph) -> Result<Vec<Vec<String>>, Str
         .collect())
 }
 
-fn crossing_row_source(index: usize, edge_count: usize) -> String {
-    if index < edge_count {
-        format!("graph.edges[{index}]")
-    } else {
-        format!("graph.teleports[{}]", index - edge_count)
-    }
-}
-
 fn export_crossings(inputs: &ExportInputs) -> Result<(), String> {
     let pack_bytes = std::fs::read(&inputs.pack)
         .map_err(|error| format!("read {}: {error}", inputs.pack.display()))?;
     let (mut collision, graph, _) = nav_planner::pack::decode(&pack_bytes)
         .map_err(|error| format!("decode {}: {error}", inputs.pack.display()))?;
     let flags_path = flags_path_for(&inputs.pack);
-    let flags = nav_planner::pack::read_flags_sidecar(&flags_path, false)
+    let flags = nav_planner::pack::read_flags_sidecar(&flags_path)
         .map_err(|error| format!("read flags sidecar {}: {error}", flags_path.display()))?;
     if flags.origin != collision.origin
         || flags.width != collision.width
@@ -283,140 +253,42 @@ fn export_crossings(inputs: &ExportInputs) -> Result<(), String> {
     })?;
     collision.attach_flags(raw_flags);
 
-    let json = crossing_export_json(&pack_bytes, &collision, &graph)?;
+    let json = crossing_export_json(&collision, &graph)?;
     std::fs::write(&inputs.out, json)
         .map_err(|error| format!("write {}: {error}", inputs.out.display()))
 }
 
-fn legacy_default_paths(
-    engine_dir: Option<PathBuf>,
-) -> Result<(PathBuf, PathBuf, PathBuf), String> {
-    let engine_dir = engine_dir.ok_or_else(|| {
-        "legacy positional defaults require BOT_NAV_ENGINE_DIR or ENGINE_DIR; pass all three input paths to avoid defaults".to_owned()
-    })?;
-    let content_dir = engine_dir
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("content");
-    let inputs = content_inputs(&content_dir);
-    Ok((
-        inputs.maps_dir,
-        inputs.doors_dir,
-        engine_dir.join("data/pack/config"),
-    ))
-}
-
-fn default_out() -> PathBuf {
-    match client::operator_home() {
-        Ok(home) => PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
-        Err(_) => PathBuf::from(".274bot/274bot.navpack"),
-    }
-}
-
-/// Where the flags sidecar goes: `$NAV_FLAGS` if set, else the pack path
-/// with its extension swapped to `.navflags`.
-fn flags_out(out: &Path) -> PathBuf {
-    env::var("NAV_FLAGS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| flags_path_for(out))
-}
-
-/// The default sidecar path next to a pack path: `274bot.navpack` ->
-/// `274bot.navflags`.
 fn flags_path_for(out: &Path) -> PathBuf {
     out.with_extension("navflags")
 }
 
 #[derive(Debug)]
 struct BakeInputs {
-    revision: Option<u16>,
+    revision: u16,
     content_dir: PathBuf,
     maps_dir: PathBuf,
     doors_dir: PathBuf,
     config_jag: PathBuf,
-    cache_dir: Option<PathBuf>,
-    cache_manifest: Option<PathBuf>,
-    snapshot_root: Option<PathBuf>,
+    game_data_dir: PathBuf,
     out: PathBuf,
     flags_out: PathBuf,
     reach_out: PathBuf,
     canlight_out: PathBuf,
     pois_out: PathBuf,
 }
-
 fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInputs, String> {
     let args: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
-    if !args.iter().any(|arg| arg.starts_with("--")) {
-        if args.len() > 3 {
-            return Err("usage: nav-pack [MAPS_DIR [DOORS_CONFIG_DIR [CONFIG_JAG]]]".into());
-        }
-        let defaults = if args.len() < 3 {
-            let engine_dir = env::var_os("BOT_NAV_ENGINE_DIR")
-                .or_else(|| env::var_os("ENGINE_DIR"))
-                .map(PathBuf::from);
-            Some(legacy_default_paths(engine_dir)?)
-        } else {
-            None
-        };
-        let maps_dir = args
-            .first()
-            .map(PathBuf::from)
-            .or_else(|| defaults.as_ref().map(|(maps_dir, _, _)| maps_dir.clone()))
-            .ok_or_else(|| "missing maps path; pass it explicitly".to_owned())?;
-        let doors_dir = args
-            .get(1)
-            .map(PathBuf::from)
-            .or_else(|| defaults.as_ref().map(|(_, doors_dir, _)| doors_dir.clone()))
-            .ok_or_else(|| "missing doors path; pass it explicitly".to_owned())?;
-        let config_jag = args
-            .get(2)
-            .map(PathBuf::from)
-            .or_else(|| {
-                defaults
-                    .as_ref()
-                    .map(|(_, _, config_jag)| config_jag.clone())
-            })
-            .ok_or_else(|| "missing config cache path; pass it explicitly".to_owned())?;
-        let out = env::var("NAV_PACK")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| default_out());
-        let flags_out = flags_out(&out);
-        let reach_out = out.with_extension("navreach");
-        let canlight_out = out.with_extension("navcanlight");
-        let pois_out = out.with_extension("navpois");
-        let content_dir = maps_dir
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf();
-        return Ok(BakeInputs {
-            revision: None,
-            content_dir,
-            maps_dir,
-            doors_dir,
-            config_jag,
-            cache_dir: None,
-            cache_manifest: None,
-            snapshot_root: None,
-            out,
-            flags_out,
-            reach_out,
-            canlight_out,
-            pois_out,
-        });
-    }
-
     let mut revision = None;
     let mut content = None;
     let mut cache_dir = None;
-    let mut cache_manifest = None;
-    let mut snapshot_root = None;
+    let mut game_data_dir = None;
     let mut out = None;
     let mut explicit_flags = None;
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         if !flag.starts_with("--") {
             return Err(format!(
-                "unexpected positional argument {flag:?} in explicit mode"
+                "unexpected positional argument {flag:?}; use named nav-pack inputs"
             ));
         }
         let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -438,18 +310,14 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             }
             "--content" if content.is_none() => content = Some(PathBuf::from(value)),
             "--cache" if cache_dir.is_none() => cache_dir = Some(PathBuf::from(value)),
-            "--cache-manifest" if cache_manifest.is_none() => {
-                cache_manifest = Some(PathBuf::from(value));
-            }
-            "--snapshot-root" if snapshot_root.is_none() => {
-                snapshot_root = Some(PathBuf::from(value))
+            "--game-data-dir" if game_data_dir.is_none() => {
+                game_data_dir = Some(PathBuf::from(value))
             }
             "--out" if out.is_none() => out = Some(PathBuf::from(value)),
             "--flags-out" if explicit_flags.is_none() => {
                 explicit_flags = Some(PathBuf::from(value));
             }
-            "--content" | "--cache" | "--cache-manifest" | "--snapshot-root" | "--out"
-            | "--flags-out" => {
+            "--content" | "--cache" | "--game-data-dir" | "--out" | "--flags-out" => {
                 return Err(format!("duplicate explicit option {flag}"));
             }
             _ => return Err(format!("unknown explicit option {flag}")),
@@ -461,24 +329,22 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         content.ok_or_else(|| "explicit mode requires --content CONTENT_DIR".to_string())?;
     let cache_dir =
         cache_dir.ok_or_else(|| "explicit mode requires --cache CACHE_DIR".to_string())?;
-    let cache_manifest = cache_manifest
-        .ok_or_else(|| "explicit mode requires --cache-manifest CACHE_MANIFEST".to_string())?;
+    let game_data_dir = game_data_dir
+        .ok_or_else(|| "explicit mode requires --game-data-dir GAME_DATA_DIR".to_string())?;
     let out = out.ok_or_else(|| "explicit mode requires --out NAV_PACK".to_string())?;
     let inputs = content_inputs(&content);
-    let config_jag = config_jag_for(revision, &cache_dir)?;
+    let config_jag = config_jag_for(revision, &cache_dir).map_err(|error| error.to_string())?;
     let flags_out = explicit_flags.unwrap_or_else(|| flags_path_for(&out));
     let reach_out = out.with_extension("navreach");
     let canlight_out = out.with_extension("navcanlight");
     let pois_out = out.with_extension("navpois");
     Ok(BakeInputs {
-        revision: Some(revision),
+        revision,
         content_dir: content,
         maps_dir: inputs.maps_dir,
         doors_dir: inputs.doors_dir,
         config_jag,
-        cache_dir: Some(cache_dir),
-        cache_manifest: Some(cache_manifest),
-        snapshot_root,
+        game_data_dir,
         out,
         flags_out,
         reach_out,
@@ -514,25 +380,7 @@ fn main() -> ExitCode {
     };
     let gates = content_inputs(&inputs.content_dir).gates;
 
-    let verified_cache = match (
-        inputs.revision,
-        inputs.cache_dir.as_deref(),
-        inputs.cache_manifest.as_deref(),
-    ) {
-        (Some(revision), Some(cache_dir), Some(manifest_path)) => {
-            match verify_cache_manifest(revision, cache_dir, manifest_path, &inputs.config_jag) {
-                Ok(manifest) => Some(manifest),
-                Err(error) => {
-                    eprintln!("nav-pack: {error}");
-                    return ExitCode::FAILURE;
-                }
-            }
-        }
-        (None, None, None) => None,
-        _ => unreachable!("parse_args keeps explicit resource inputs together"),
-    };
-
-    let baked = match bake_world(&inputs, &gates, verified_cache.as_ref()) {
+    let baked = match bake_world(&inputs, &gates) {
         Ok(baked) => baked,
         Err(error) => {
             eprintln!("nav-pack: {error}");
@@ -545,44 +393,16 @@ fn main() -> ExitCode {
     write_outputs(&inputs, &baked)
 }
 
-fn bake_world(
-    inputs: &BakeInputs,
-    gates: &Path,
-    cache: Option<&CacheManifest>,
-) -> Result<BakedNav, String> {
-    let decoded = match (
-        inputs.revision,
-        inputs.cache_dir.as_deref(),
-        inputs.snapshot_root.as_deref(),
-    ) {
-        (Some(revision), Some(cache), Some(root)) => {
-            Some(bake::decoded_identity(revision, cache, root)?)
-        }
-        _ => None,
-    };
-    let mut baked = bake::bake_world(&BakeRequest {
-        revision: inputs.revision,
+fn bake_world(inputs: &BakeInputs, gates: &Path) -> Result<BakedNav, nav_bake::GenerationError> {
+    bake::bake_world(&BakeRequest {
+        revision: Some(inputs.revision),
+        game_data_dir: &inputs.game_data_dir,
         maps_dir: &inputs.maps_dir,
         doors_dir: &inputs.doors_dir,
         gates,
         config_jag: &inputs.config_jag,
-        cache,
         require_all_door_configs: true,
-        input_fingerprints: None,
-        content_id: decoded.as_deref(),
-    })?;
-    if let (Some(revision), Some(cache_dir), Some(root), Some(id)) = (
-        inputs.revision,
-        inputs.cache_dir.as_deref(),
-        inputs.snapshot_root.as_deref(),
-        decoded.as_deref(),
-    ) {
-        if bake::decoded_identity(revision, cache_dir, root)? != id {
-            return Err("cache changed during navigation bake".into());
-        }
-        baked.manifest.as_mut().expect("bound bake").content_id = Some(id.into());
-    }
-    Ok(baked)
+    })
 }
 
 fn write_outputs(inputs: &BakeInputs, baked: &BakedNav) -> ExitCode {
@@ -607,30 +427,6 @@ fn write_outputs(inputs: &BakeInputs, baked: &BakedNav) -> ExitCode {
             eprintln!("nav-pack: write {}: {e}", inputs.pois_out.display());
             return ExitCode::FAILURE;
         }
-    }
-    if let Some(manifest) = &baked.manifest {
-        let manifest_path = nav_manifest_path(&inputs.out);
-        let bytes = match serde_json::to_vec_pretty(manifest) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!("nav-pack: manifest: {e}");
-                return ExitCode::FAILURE;
-            }
-        };
-        if let Err(e) = std::fs::write(&manifest_path, bytes) {
-            eprintln!("nav-pack: write {}: {e}", manifest_path.display());
-            return ExitCode::FAILURE;
-        }
-        eprintln!(
-            "nav-pack: bound revision {} cache {} nav {} flags {} reach {} canlight {} pois {}",
-            manifest.revision,
-            manifest.cache_id,
-            manifest.nav_sha256,
-            manifest.flags_sha256.as_deref().unwrap_or("none"),
-            manifest.reach_sha256.as_deref().unwrap_or("none"),
-            manifest.canlight_sha256.as_deref().unwrap_or("none"),
-            manifest.pois_sha256.as_deref().unwrap_or("none")
-        );
     }
     let summary = baked.summary;
     eprintln!(
