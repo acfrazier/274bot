@@ -563,7 +563,7 @@ fn revision_377_cache_manifest_retains_revision_and_byte_admission() {
         manifest.identity(),
         CacheManifest::capture(289, &fixture.0).unwrap().identity()
     );
-    fs::write(fixture.0.join("config"), b"changed archive").unwrap();
+    std::fs::write(fixture.0.join("config"), b"changed archive").unwrap();
     assert!(manifest.verify(377, &fixture.0).is_err());
 }
 
