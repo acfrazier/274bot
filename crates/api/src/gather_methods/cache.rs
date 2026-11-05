@@ -110,7 +110,9 @@ pub fn prepare(
     _worker: &mut FamilyPreparation,
 ) -> Result<Arc<GatherCatalog>, FactError> {
     let pin = data.selected_pin()?;
-    CACHE.prepare(Key::of(&pin), || load(&pin, MANIFEST, embedded(pin.revision)))
+    CACHE.prepare(Key::of(&pin), || {
+        load(&pin, MANIFEST, embedded(pin.revision))
+    })
 }
 
 /// The prepared catalog if the selected manifest was already decoded. Never decodes or waits for preparation.
