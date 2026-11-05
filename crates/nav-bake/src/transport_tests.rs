@@ -3298,6 +3298,104 @@ fn derive_transports_without_door_configs_emits_no_door_edges() {
 }
 
 #[test]
+fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
+    let fx = Fixture::new();
+    for (map, spawns) in [
+        ("m47_50", "0 18 17: 378\n0 37 36: 657\n"),
+        ("m46_49", "0 9 11: 380\n"),
+        ("m43_50", "0 20 31: 380\n"),
+        ("m41_51", "0 55 11: 381\n"),
+        ("m44_52", "0 14 7: 658\n"),
+    ] {
+        fx.write(
+            &format!("maps/{map}.jm2"),
+            &format!("==== MAP ====\n0 0 0: h1 u50\n==== NPC ====\n{spawns}"),
+        );
+    }
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let derive =
+        |revision| derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(revision));
+    let (graph, skipped, _) = derive(377);
+    let positions = npc_positions(fx.path());
+    let boats: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == TransportKind::Boat)
+        .collect();
+    assert_eq!(boats.len(), 6);
+    assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 2);
+    for edge in &boats {
+        assert!(positions[&edge.loc_id].iter().any(|spawn| {
+            edge.at
+                == WorldTile {
+                    x: spawn.x,
+                    z: spawn.z,
+                    level: spawn.level,
+                }
+        }));
+    }
+    for (npc, x, z) in [(380, 2953, 3147), (657, 3045, 3236), (658, 2830, 3335)] {
+        assert!(boats
+            .iter()
+            .any(|edge| { edge.loc_id == npc && edge.at == WorldTile { x, z, level: 0 } }));
+    }
+    // Old revisions keep the table, regardless of selected-map differences.
+    for revision in [274, 289] {
+        let (legacy, _, _) = derive(revision);
+        assert_eq!(legacy.edges, derive_transports(fx.path(), &defs, &wc).edges);
+    }
+    // An absent NPC or two candidates at the same dock cannot select a tile.
+    fx.write("maps/m44_52.jm2", "==== NPC ====\n");
+    fx.write(
+        "maps/m47_50.jm2",
+        "==== NPC ====\n0 18 17: 378\n0 37 36: 657\n0 38 36: 657\n",
+    );
+    let (graph, skipped, _) = derive(377);
+    assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 4);
+    assert!(!graph
+        .edges
+        .iter()
+        .any(|edge| edge.kind == TransportKind::Boat && [657, 658].contains(&edge.loc_id)));
+}
+
+#[test]
+#[ignore = "requires NAV_BOAT_PACK and NAV_BOAT_CONTENT from the selected revision"]
+fn selected_pack_boat_and_npc_starts_match_map_spawns() {
+    let pack = std::env::var("NAV_BOAT_PACK").expect("set NAV_BOAT_PACK");
+    let content = std::env::var("NAV_BOAT_CONTENT").expect("set NAV_BOAT_CONTENT");
+    let world = nav_planner::world::NavWorld::load_pack(Path::new(&pack)).unwrap();
+    let positions = npc_positions(Path::new(&content));
+    let mut checked = 0;
+    for edge in world
+        .graph
+        .edges
+        .iter()
+        .filter(|edge| matches!(edge.kind, TransportKind::Boat | TransportKind::Npc))
+    {
+        assert!(
+            positions.get(&edge.loc_id).is_some_and(|spawns| {
+                spawns.iter().any(|spawn| {
+                    edge.at
+                        == WorldTile {
+                            x: spawn.x,
+                            z: spawn.z,
+                            level: spawn.level,
+                        }
+                })
+            }),
+            "NPC {} {:?} start {:?} is not in selected maps",
+            edge.loc_id,
+            edge.kind,
+            edge.at
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "qualification must inspect real NPC journeys");
+    eprintln!("qualified {checked} Boat/Npc starts against selected maps");
+}
+
+#[test]
 fn derive_transports_emits_boat_edges_from_npc_tile_to_dock_tile() {
     let fx = Fixture::new();
     fx.write("pack/varp.pack", "116=zombiequeen\n");
