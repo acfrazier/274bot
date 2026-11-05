@@ -39,6 +39,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   cache decoding and local navigation inputs. Revision 274/289 defaults stay
   unchanged.
 - Adds the `client_377` direct-walk and Hans interaction proof scenario.
+- Updates the revision-377 client dependency to the reviewed bank-operation
+  ports, including inventory buttons, drag and amount prompts.
 
 ### Breaking changes
 
