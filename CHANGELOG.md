@@ -28,6 +28,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Source-derived service POI sidecars accept explicit revision 377 packs.
   Client-derived image/catalogue jobs keep their existing decoder admission,
   and sidecar revision and digest mismatches still fail.
+- Revision 377 boat starts admit multiple selected-map NPC spawns when
+  their script rules select the same journey, restoring Brimhaven to
+  Ardougne. Missing spawns and conflicting journey branches remain refused.
 
 ### Host
 
