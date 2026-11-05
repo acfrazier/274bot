@@ -1535,6 +1535,21 @@ fn native_food_guard_uses_bound_377_tables_for_condition_and_food_rows() {
         bot.condition
             .session_started(1, 0, Some((combat, poison_unknown_v)));
         bot.condition.observe_frame(&rig.snapshot, &drain, false);
+        // An empty safe route does not eat for low HP alone. Make food due,
+        // as in the legacy host regression, without enabling poison cures.
+        rig.snapshot.seed_tick(2);
+        rig.snapshot
+            .seed_chat_lines(vec![api::snapshot::ChatLineView {
+                type_: 0,
+                username: None,
+                text: "You have been poisoned!".into(),
+                sequence: 1,
+            }]);
+        bot.condition.observe_frame(&rig.snapshot, &drain, false);
+        assert!(matches!(
+            bot.condition.current().unwrap().poison,
+            api::condition::PoisonState::Onset { .. }
+        ));
         assert!(
             bot.walk_guard.is_some(),
             "the native food-only guard must be armed"
