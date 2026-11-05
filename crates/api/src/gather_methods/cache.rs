@@ -21,6 +21,7 @@ fn embedded(revision: ClientRevision) -> Option<&'static [u8]> {
     Some(match revision {
         ClientRevision::R274 => GATHERING_274,
         ClientRevision::R289 => GATHERING_289,
+        ClientRevision::R377 => return None,
     })
 }
 
@@ -150,6 +151,7 @@ mod tests {
                 ),
                 "revision 289 gathering family for API tests",
             ),
+            ClientRevision::R377 => return None,
         };
         let path = crate::test_support::local_asset_path("", path, description)?;
         if let Some(bytes) = embedded(revision) {
@@ -159,6 +161,20 @@ mod tests {
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
         let len = bytes.len();
         Some((Cow::Owned(bytes), len))
+    }
+
+    #[test]
+    fn unavailable_revision_377_is_not_prepared_or_cached() {
+        let cache = Cache::new();
+        let key = Key::of(ClientRevision::R377);
+        let error = cache
+            .prepare(key, || {
+                let family = embedded(ClientRevision::R377).ok_or_else(unavailable)?;
+                load(family)
+            })
+            .unwrap_err();
+        assert_eq!(error, unavailable());
+        assert!(cache.lookup(&key).is_none());
     }
 
     #[test]
