@@ -1482,7 +1482,7 @@ fn native_food_guard_uses_bound_377_tables_for_condition_and_food_rows() {
         .effective = 1;
     rig.snapshot.seed_stats(stats);
     rig.snapshot.seed_inventory(
-        [api::snapshot::ItemView {
+        vec![api::snapshot::ItemView {
             def: api::ItemDefView {
                 id: food_id,
                 name: food.name.clone(),
