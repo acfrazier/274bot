@@ -235,7 +235,7 @@ fn load_bound_377() -> Result<Bound377, String> {
         || profile.client().asset_port() != ASSET_PORT
         || profile.client().cache_dir() != prepared.jag_dir.as_path()
         || profile.client().unpack_dir() != prepared.unpack_root()
-        || profile.cache_id() != cache_manifest.identity()
+        || profile.cache_id() != decoded_content_id.as_str()
         || prepared.identity.content_id_hex() != decoded_content_id
         || profile.nav_pack() != nav_pack.as_path()
         || profile.nav_flags_origin() != NavFlagsOrigin::External
