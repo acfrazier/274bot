@@ -1452,6 +1452,100 @@ fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {
 }
 
 #[test]
+fn native_food_guard_uses_bound_377_tables_for_condition_and_food_rows() {
+    let selected =
+        api::game_data::for_revision(api::selected::ClientRevision::R377)
+            .expect("selected revision 377 facts");
+    let food = selected
+        .item_by_alias("cooked_chompy")
+        .expect("revision 377 cooked chompy");
+    let food_id = food.id;
+    let mut rig = open_rig(false);
+    let world = Arc::clone(rig.world.as_ref().expect("native walk world"));
+    crate::admission::bind_377_tables(&world, Some(Arc::clone(&selected)))
+        .expect("bind revision 377 combat tables");
+    assert!(
+        script::combat::guard::shared_tables()
+            .expect("legacy tables")
+            .food(food_id)
+            .is_none(),
+        "the R289 table does not admit the revision-377 cooked-chompy row"
+    );
+
+    rig.shared.lock().food_guard = true;
+    seed_protect_frame(&mut rig.snapshot, 43);
+    let mut stats = rig.snapshot.stats().to_vec();
+    stats
+        .iter_mut()
+        .find(|stat| stat.index == 3)
+        .expect("hitpoints stat")
+        .effective = 1;
+    rig.snapshot.seed_stats(stats);
+    rig.snapshot.seed_inventory(
+        [api::snapshot::ItemView {
+            def: api::ItemDefView {
+                id: food_id,
+                name: food.name.clone(),
+                stackable: false,
+                members: true,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            slot: 0,
+            count: 1,
+            container: api::snapshot::ItemContainer::Inventory,
+            action_family: api::snapshot::ItemActionFamily::Held,
+            actions: vec![Some("Eat".into())],
+            component_id: 3214,
+        }],
+        28,
+    );
+    rig.snapshot
+        .seed_inventory_packet_generations(Some(1), None);
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+
+    let (combat, poison_unknown_v) =
+        crate::admission::condition_tables(&world).expect("bound condition tables");
+    assert_eq!(combat.selected().revision(), 377);
+    assert!(Arc::ptr_eq(combat.selected(), &selected));
+    assert_eq!(
+        combat.food(food_id).expect("selected cooked-chompy row").heal,
+        selected
+            .consumable("cooked_chompy")
+            .expect("selected food fact")
+            .fixed_hp_heal()
+            .expect("fixed food heal")
+    );
+
+    let drain = host::DrainResult {
+        player_info: true,
+        npc_rows_coherent: true,
+        session_changed: false,
+        gens: Default::default(),
+        dirty: Default::default(),
+    };
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").expect("native walk bot");
+        bot.cure_poison = script::survival::CurePoison::Never;
+        bot.condition
+            .session_started(1, 0, Some((combat, poison_unknown_v)));
+        bot.condition.observe_frame(&rig.snapshot, &drain, false);
+        assert!(
+            bot.walk_guard.is_some(),
+            "the native food-only guard must be armed"
+        );
+    }
+    rig.step();
+    assert_eq!(rig.driver.held_ops, 1, "the selected food is admitted");
+    assert_eq!(rig.driver.held_item_ids, [food_id]);
+}
+
+#[test]
 fn a_default_walk_with_food_allowed_starts_no_host_guard() {
     for prayer in [1, 43] {
         let mut rig = open_rig(false);

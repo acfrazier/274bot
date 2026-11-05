@@ -290,6 +290,12 @@ impl SharedClientTemplate {
             4,
         ));
         let world = profile.world();
+        if profile.revision().is_377() {
+            if let Some(world) = world.as_deref() {
+                crate::admission::bind_377_tables(world, game_data.clone())
+                    .map_err(|reason| format!("revision 377 combat tables: {reason:?}"))?;
+            }
+        }
         Ok(Arc::new(Self {
             profile,
             game_data,
