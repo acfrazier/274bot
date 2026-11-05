@@ -160,7 +160,7 @@ mod tests {
     use client::client::{ClientConfig, ClientNpc};
     use client::config::{Cache, IfType, IfTypeMut, NpcType};
     use client::dash3d::ClientPlayer;
-    use client::io::{ClientStream, ServerProt};
+    use client::io::ClientStream;
     use std::sync::Arc;
 
     fn scene_client(revision: ClientRevision) -> Client {
@@ -237,11 +237,13 @@ mod tests {
             client.npc_count = 0;
             client.npc_ids[0] = 0;
         }
-        client.bump_gens(ServerProt::NPC_INFO);
+        client.gens.npc = client.gens.npc.wrapping_add(1);
+        client.gens.npc_info = client.gens.npc_info.wrapping_add(1);
     }
 
     fn next_game_tick(runner: &mut ScenarioRunner, client: &mut Client) {
-        client.bump_gens(ServerProt::PLAYER_INFO);
+        client.gens.player = client.gens.player.wrapping_add(1);
+        client.gens.player_info = client.gens.player_info.wrapping_add(1);
         runner.tick(client);
     }
 
