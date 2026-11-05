@@ -1544,6 +1544,12 @@ fn missing_selected_revision_sidecar_and_missing_pack_keep_existing_refusals() {
     let bytes = tiny_v8_pack();
     let pack = fixture.0.join("orphan.navpack");
     std::fs::write(&pack, &bytes).unwrap();
+    let manifest = CacheManifest::capture(377, &fixture.0).unwrap();
+    std::fs::write(
+        fixture.0.join("manifest-377.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
     for revision in [289, 377] {
         let mut options = fixture.options(revision);
         options.nav_pack = Some(pack.clone());
