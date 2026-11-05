@@ -9,6 +9,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 - The navigation baker accepts explicit revision 377 inputs and uses the
   revision-377 config decoder. It writes the current v19 pack and local sidecars.
+- Revision 377's named Lumbridge stair handlers retain their script-derived
+  landings and one-tick cost. An explicit real-pack qualification covers
+  city routes, bidirectional doors, stairs and the Port Sarim ship journey.
+
+### Host
+
+- Adds explicit `local-377` host selection with revision-specific strict
+  cache decoding and local navigation inputs. Revision 274/289 defaults stay
+  unchanged.
+- Adds the `client_377` direct-walk and Hans interaction proof scenario.
 
 ### Breaking changes
 
@@ -838,14 +848,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   have not opened a profile for editing. Before, it stayed open and could not
   be closed. If a save of the open profile is still being written, the panel
   still asks **Discard** or **Keep editing** first.
-- Revision 377 cache manifests now pass the navigation identity checks.
-  Revision mismatches and changed archive bytes still fail.
-- The existing navigation baker accepts explicit revision 377 inputs and
-  reads their config through the revision-377 decoder. The pack format
-  remains version 17.
-- Revision 377's named Lumbridge stair handlers retain their script-derived
-  landings and one-tick cost. An explicit real-pack qualification covers
-  city routes, bidirectional doors, stairs and the Port Sarim ship journey.
 
 ### Login
 
