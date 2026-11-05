@@ -24,7 +24,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::interact::{self, ActionSpec, Interactions, OpTarget, SendResult};
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::query::SceneQuery;
+use api::snapshot::{GameSnapshot, SceneView, WorldTile};
 use client::client::Client;
 use client::io::ClientRevision;
 use host::Pump;
@@ -530,13 +531,13 @@ fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: Option<usize>) -> Opti
         .min_by_key(|npc| (npc.distance, npc.type_id, npc.index))
 }
 
-fn direct_step_toward(from: WorldTile, to: WorldTile) -> Result<WorldTile, String> {
+fn direct_step_toward(scene: &SceneView, from: WorldTile, to: WorldTile) -> Result<WorldTile, String> {
     if !lumbridge(from) || !lumbridge(to) {
         return Err(format!(
             "direct walk endpoints must remain in Lumbridge: {from:?} to {to:?}"
         ));
     }
-    let start_distance = chebyshev(from, to);
+    let scene = SceneQuery::new(scene, Some(from));
     let dx = (to.x - from.x).signum();
     let dz = (to.z - from.z).signum();
     for (step_x, step_z) in [
@@ -556,12 +557,12 @@ fn direct_step_toward(from: WorldTile, to: WorldTile) -> Result<WorldTile, Strin
         };
         if candidate != from
             && lumbridge(candidate)
-            && (start_distance == 0 || chebyshev(candidate, to) < start_distance)
+            && scene.can_step(from, candidate)
         {
             return Ok(candidate);
         }
     }
-    Err("no one-tile direct step remains inside the loaded Lumbridge region".into())
+    Err("no collision-reachable one-tile direct step remains inside loaded Lumbridge".into())
 }
 
 fn fresh_account_name() -> String {
@@ -679,7 +680,7 @@ fn run_live_interaction() -> Result<(), String> {
         )?;
         let choice = nearest_talk_npc(&snapshot, None)
             .ok_or("no nearby numeric NPC with Talk-to in Lumbridge")?;
-        let target = direct_step_toward(origin, choice.tile)?;
+        let target = direct_step_toward(snapshot.scene(), origin, choice.tile)?;
         if !lumbridge(target) || target.level != origin.level {
             return Err(format!(
                 "direct walk escaped the loaded Lumbridge region: {origin:?} to {target:?}"
@@ -794,6 +795,45 @@ fn run_live_interaction() -> Result<(), String> {
         client.logout();
     }
     result
+}
+
+#[test]
+fn direct_step_uses_loaded_collision_instead_of_the_npc_offset() {
+    let from = WorldTile {
+        x: 3220,
+        z: 3220,
+        level: 0,
+    };
+    let to = WorldTile {
+        x: 3215,
+        z: 3216,
+        level: 0,
+    };
+    let mut scene = SceneView {
+        available: true,
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 64,
+        height: 64,
+        collision_flags: vec![0; 64 * 64],
+    };
+    let west = 19 * 64 + 20;
+    // A blocked first-choice tile must not prevent a clear south step.
+    scene.collision_flags[west] = i32::MAX;
+    let target = direct_step_toward(&scene, from, to).unwrap();
+    assert_eq!(target, WorldTile { z: 3219, ..from });
+    assert!(SceneQuery::new(&scene, Some(from)).can_step(from, target));
+    // A walkable tile behind a wall is not an adjacent reachable step either.
+    scene.collision_flags[west] = client::dash3d::CollisionFlag::W_E;
+    assert!(SceneQuery::new(&scene, Some(from)).walkable(WorldTile { x: 3219, ..from }));
+    assert_eq!(direct_step_toward(&scene, from, to).unwrap(), target);
+
+    // Missing or fully blocked collision must fail closed, not guess a tile.
+    scene.collision_flags.fill(i32::MAX);
+    assert!(direct_step_toward(&scene, from, to).is_err());
+    scene.available = false;
+    assert!(direct_step_toward(&scene, from, to).is_err());
 }
 
 #[test]
