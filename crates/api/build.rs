@@ -8,7 +8,7 @@ use flate2::Compression;
 
 fn main() -> io::Result<()> {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
-    for revision in [274, 289] {
+    for revision in [274, 289, 377] {
         let source = format!("data/game-data/{revision}.json");
         println!("cargo:rerun-if-changed={source}");
         let mut input = File::open(source)?;
