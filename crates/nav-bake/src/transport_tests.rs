@@ -3440,7 +3440,7 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
     for (map, spawns) in [
         ("m47_50", "0 18 17: 378\n0 37 36: 657\n"),
         ("m46_49", "0 9 11: 380\n"),
-        ("m43_50", "0 20 31: 380\n"),
+        ("m43_50", "0 21 29: 380\n0 20 31: 380\n0 20 25: 380\n"),
         ("m41_51", "0 55 11: 381\n"),
         ("m44_52", "0 14 7: 658\n"),
     ] {
@@ -3474,7 +3474,12 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
                 }
         }));
     }
-    for (npc, x, z) in [(380, 2953, 3147), (657, 3045, 3236), (658, 2830, 3335)] {
+    for (npc, x, z) in [
+        (380, 2953, 3147),
+        (380, 2772, 3225),
+        (657, 3045, 3236),
+        (658, 2830, 3335),
+    ] {
         assert!(boats
             .iter()
             .any(|edge| { edge.loc_id == npc && edge.at == WorldTile { x, z, level: 0 } }));
@@ -3498,18 +3503,38 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
             .map(|edge| (edge.loc_id, edge.at, edge.to));
         assert!(legacy_boats.eq(baseline_boats));
     }
-    // An absent NPC or two candidates at the same dock cannot select a tile.
+    // Multiple monks give the same trip, but an absent NPC is unproved.
     fx.write("maps/m44_52.jm2", "==== NPC ====\n");
     fx.write(
         "maps/m47_50.jm2",
         "==== NPC ====\n0 18 17: 378\n0 37 36: 657\n0 38 36: 657\n",
     );
     let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
-    assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 4);
+    assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 3);
+    assert!(graph
+        .edges
+        .iter()
+        .any(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 657));
     assert!(!graph
         .edges
         .iter()
-        .any(|edge| edge.kind == TransportKind::Boat && [657, 658].contains(&edge.loc_id)));
+        .any(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 658));
+    // The boundary is within Brimhaven's mapsquare: x=2814 sails to
+    // Ardougne, x=2815 to Port Sarim. Mixed branches must omit the route.
+    for spawns in ["0 62 25: 380\n0 63 25: 380\n", "0 63 25: 380\n"] {
+        fx.write("maps/m43_50.jm2", &format!("==== NPC ====\n{spawns}"));
+        let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
+        assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 4);
+        assert!(!graph.edges.iter().any(|edge| {
+            edge.kind == TransportKind::Boat
+                && edge.to
+                    == WorldTile {
+                        x: 2683,
+                        z: 3268,
+                        level: 1,
+                    }
+        }));
+    }
 }
 
 #[test]
