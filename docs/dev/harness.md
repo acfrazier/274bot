@@ -882,6 +882,33 @@ All fixtures seed only the tested account before Start. Shared spots, rocks and
 trees remain real content. Each case stops the script and logs out its account,
 including on assertion failure.
 
+### Revision 377
+
+The ignored `revision_377_live::gatherer` cells run the native Gatherer through
+the canonical revision-377 production template. They select generated methods
+and named sites rather than the older live harness's revision-289 profile.
+The cells chop normal trees near Lumbridge and net shrimp at Draynor.
+Both use the selected Draynor bank, return to the resource area, and require
+fresh yield after the return. Lumbridge has no named bank in this data.
+The current selected placements do not provide a Lumbridge-swamp shrimp site.
+
+Run these cells through `isohome` with `LIVE=1`, an owned
+`BOT_LIVE_NAME_PREFIX`, and absolute `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`,
+`CLIENT_UNPACK_DIR`, `NAV_PACK`, and `NAV_FLAGS` paths.
+Set `GATHERER_377_EVIDENCE_DIR` to the evidence output directory.
+Use the test filter `gatherer_377_` with `--ignored --nocapture --test-threads=1`.
+Keep `TMPDIR` and the isolated home outside the operator's normal home.
+
+The fixture makes the mainland hop, then logs out and back in before preparing tools.
+Each fresh account receives one inventory tool and skill level 40 before Start.
+The fixture clears its inventory, equipment and bank, then positions the player.
+It never seeds resources, NPCs, booths, proof products or post-Start XP.
+The proof requires an observed empty bank page, at least 27 deposited products,
+a completed native trip, and renewed gathering with the tool retained.
+Fishing also requires banked shrimp, not only anchovies.
+The real client renderer records prepared, banked and returned frames with
+snapshot sidecars. These finite cases do not establish every site's access.
+
 ### Target switching
 
 `gatherer_live::gatherer_mine_tier_power` supports a single selected ore through
