@@ -93,10 +93,10 @@ impl Case {
         }
         commands.push(interact::tele_args(tile.level, tile.x, tile.z));
         if matches!(self, Self::Eat) {
-            commands.push("~stat_drain hitpoints 12 0".into());
+            commands.push("~hit 12".into());
         }
         if matches!(self, Self::Eat | Self::Cure) {
-            // content/_test/cheat_other.rs2:4-6 queues the real poison proc.
+            // _test/scripts/cheats/cheat_other.rs2:4-6 queues the real poison proc.
             // poison.rs2:68-71 gives a 30-tick first-fire window.
             commands.push("~poison 50".into());
         }
@@ -474,6 +474,11 @@ impl LiveState {
         {
             return Ok(());
         }
+        if let Some(phase) = self.capture.take() {
+            self.save_frame(client, phase, &sample)?;
+            self.captured = true;
+            return Ok(());
+        }
         if self.baseline.is_none() {
             if let Some(command) = self.commands.get(self.next_command) {
                 if self.last_command_tick != Some(sample.tick) {
@@ -493,9 +498,6 @@ impl LiveState {
                 self.baseline = Some(sample.clone());
                 self.save_frame(client, "prepared", &sample)?;
             }
-        } else if let Some(phase) = self.capture.take() {
-            self.save_frame(client, phase, &sample)?;
-            self.captured = true;
         }
         if self.baseline.is_some() && self.last_sample_tick != Some(sample.tick) {
             println!(
@@ -550,6 +552,8 @@ fn run(case: Case) -> Result<(), String> {
     if std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok("f377") {
         return Err("machine qualification requires BOT_LIVE_NAME_PREFIX=f377".into());
     }
+    #[cfg(feature = "js")]
+    script_js::install_cards().map_err(|error| error.to_string())?;
     let bound = load_bound_377()?;
     identity_record(&bound);
     let data = bound
@@ -591,7 +595,7 @@ fn run(case: Case) -> Result<(), String> {
         op: Arc::from("Take"),
         anchor: None,
         radius: 4,
-        wait_if_missing: false,
+        wait_if_missing: true,
         target_tile: None,
         reachable_only: true,
     };
@@ -814,6 +818,9 @@ fn selected_377_operands_and_machine_oracles_do_not_accept_fixture_only_state() 
     assert_eq!(facts.cow, 81);
     assert_eq!(facts.food, 379);
     assert_eq!(facts.cure, 179);
+    assert_eq!(facts.loot, 1739);
+    let commands = Case::Eat.commands();
+    assert_eq!(&commands[commands.len() - 2..], ["~hit 12", "~poison 50"]);
     let tables = CombatTables::build(Arc::clone(&data)).unwrap();
     assert_eq!(tables.selected().revision(), 377);
     assert_eq!(tables.food(facts.food).unwrap().heal, 12);
@@ -1021,6 +1028,8 @@ fn survival_cure_witness_requires_chat_inventory_and_owner_immunity() {
 #[cfg(feature = "js")]
 #[test]
 fn selected_hans_clue_witnesses_require_real_handoffs() {
+    script_js::install_cards().expect("install the production Sherlock card");
+    assert!(script::compiled_card(script::CompiledId("Sherlock")).is_some());
     let data = api::game_data::for_revision(ClientRevision::R377).unwrap();
     for case in [Case::HansClue, Case::HansHardClue] {
         let facts = Facts::selected(&data, case).unwrap();
