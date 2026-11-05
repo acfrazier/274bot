@@ -15,6 +15,49 @@ use nav_planner::map::poi::{
 };
 use nav_planner::map::{Rows, Text};
 
+/// Engine `CollisionType` of a walking NPC (`PathingEntity.getCollisionStrategy`),
+/// tested per tile by `CollisionStrategy.canMove`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StepStrategy {
+    /// `normal` and `passthru`, and the stand-in for `indoors`/`outdoors`:
+    /// those add a roof test to the same mask test, and the bake carries no
+    /// roof flag, so NORMAL reaches a superset of their tiles.
+    Normal,
+    /// `blocked`: only onto blocked ground (`FLOOR`), still stopped by walls,
+    /// scenery and ground decor.
+    Blocked,
+    /// `blocked+normal` (`CollisionType.LINE_OF_SIGHT`): only projectile-
+    /// blocking walls and scenery stop it; ground and ordinary scenery don't.
+    LineOfSight,
+}
+
+impl StepStrategy {
+    pub(crate) fn of(restrict: MoveRestrict) -> Option<Self> {
+        match restrict {
+            MoveRestrict::Normal
+            | MoveRestrict::Passthru
+            | MoveRestrict::Indoors
+            | MoveRestrict::Outdoors => Some(Self::Normal),
+            MoveRestrict::Blocked => Some(Self::Blocked),
+            MoveRestrict::BlockedNormal => Some(Self::LineOfSight),
+            MoveRestrict::Nomove => None,
+        }
+    }
+
+    /// `CollisionStrategy.canMove(collision, tileFlag, blockFlag)`.
+    pub(crate) fn can_move(self, tile: u32, block: u32) -> bool {
+        const FLOOR: u32 = 0x20_0000;
+        // Walls (`0xff`) and scenery (`0x100`); `<< 9` turns each into its
+        // projectile-blocker bit.
+        const LINE_OF_SIGHT_MOVEMENT: u32 = 0x1ff;
+        match self {
+            Self::Normal => tile & block == 0,
+            Self::Blocked => tile & block & !FLOOR == 0 && tile & FLOOR != 0,
+            Self::LineOfSight => tile & ((block & LINE_OF_SIGHT_MOVEMENT) << 9) == 0,
+        }
+    }
+}
+
 pub struct ProduceRequest<'a> {
     pub revision: u16,
     pub content_root: &'a Path,
