@@ -17,6 +17,9 @@
 //!   -- --ignored --nocapture --test-threads=1
 //! ```
 
+#[path = "revision_377_live/gatherer.rs"]
+mod gatherer;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

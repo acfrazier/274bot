@@ -41,7 +41,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   cache decoding and bundled navigation admission. Other revision defaults
   and all navigation digest/provenance checks stay unchanged.
 - Adds the `client_377` direct-walk and Hans interaction proof scenario.
+
 ### Gatherer
+
+- Adds revision-377 Gatherer preparation checks and real-resource bank-trip
+  qualification for Lumbridge normal trees and Draynor shrimp. The live cells
+  use selected 377 sites, the Draynor bank and the production template.
+  They require banked products and fresh gathering after the return.
 
 - After a death, the Gatherer no longer stops on the first blocked step of its
   way back to the resource area. It plans that return again once, as on a
