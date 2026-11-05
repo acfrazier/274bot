@@ -77,6 +77,9 @@ impl DebugCatalog {
         let bytes: &[u8] = match revision {
             ClientRevision::R274 => include_bytes!("../data/game-data/274/debug.json"),
             ClientRevision::R289 => include_bytes!("../data/game-data/289/debug.json"),
+            ClientRevision::R377 => {
+                return Err("debug catalog unavailable for revision 377".to_owned());
+            }
         };
         Self::decode(bytes, revision, items)
     }
@@ -317,9 +320,20 @@ mod tests {
             let other = match revision {
                 ClientRevision::R274 => ClientRevision::R289,
                 ClientRevision::R289 => ClientRevision::R274,
+                ClientRevision::R377 => ClientRevision::R274,
             };
             assert!(super::DebugCatalog::decode(bytes.as_bytes(), other, items).is_err());
         }
+    }
+
+    #[cfg(feature = "debug-catalog")]
+    #[test]
+    fn debug_catalog_load_refuses_revision_377() {
+        let items = crate::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let error = super::DebugCatalog::load(client::io::ClientRevision::R377, items)
+            .unwrap_err();
+        assert!(error.contains("revision 377"));
+        assert!(error.contains("unavailable"));
     }
 
     fn command(args: Vec<DebugArgument>) -> DebugCommand {
