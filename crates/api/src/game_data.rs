@@ -3057,8 +3057,7 @@ pub(crate) fn test_data(revision: ClientRevision) -> Option<Arc<SelectedGameData
         ),
     };
     crate::test_support::local_asset_path("", path, description)?;
-    if !local_game_data_available() {
-        crate::test_support::local_asset_path("", "", "embedded game data for API tests")?;
+    if !crate::test_support::embedded_game_data_available() {
         return None;
     }
     Some(for_revision(revision).expect("embedded selected game data"))

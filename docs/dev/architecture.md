@@ -275,8 +275,9 @@ reasons to change.
 | `interact.rs` | send vocabulary and dispatch | `Driver` seam, accepted-send semantics |
 | `interact/driver.rs` | client transport mapping | `doAction`, `tryMove`, `out`, ISAAC intact |
 | `hostlog.rs` | host logging facade | `host_log!` categories, slot-log allowlist, stderr under `BOT_DEBUG`, one process sink |
-| `../build.rs` | compact embedded revision inputs | deterministic gzip of generated JSON into `OUT_DIR`; no generator or pin changes |
-| `game_data.rs` | generated game facts by revision | buffered streaming decode and original-byte digest, indexes, lookups |
+| `../build.rs` | compact embedded revision inputs | deterministic gzip and static catalogue outputs in `OUT_DIR`; no generator execution |
+| `../build_support/catalog_codegen.rs` | build-time bank and cook catalogue conversion | JSON decoding and Rust constant emission; no runtime parser or catalogue copy |
+| `game_data.rs` | generated game facts by revision | buffered streaming decode, indexes and lookups |
 | `selected.rs` | shared selected-fact values | loading is off-pump; gates never guess missing facts |
 | `content.rs` | shared rock names and loot predicate | revision facts stay in `game_data` |
 | `ent.rs` | Ent NPC identity facts | revision-independent ids and lifetime |

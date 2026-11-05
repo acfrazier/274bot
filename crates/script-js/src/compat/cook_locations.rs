@@ -259,8 +259,8 @@ mod tests {
     #[test]
     fn a_curated_bank_keeps_its_hand_walked_surface() {
         if !crate::test_support::local_api_asset(
-            "data/game-data/cook-catalog.rs",
-            "local cooking catalog (generate with `tools/local-data/build.sh`)",
+            "data/game-data/cook-catalog.json",
+            "local cooking catalog (generate with `python tools/local-data/build.py`)",
         ) {
             return;
         }

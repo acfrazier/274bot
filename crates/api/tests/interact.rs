@@ -1215,10 +1215,13 @@ fn revision_289_typed_packets_match_primary_wire_goldens() {
         &[0, 0, 0, 0, 0, 0, 0, 1]
     );
     let mut has_client_cheat = false;
-    if let Some(path) = api::test_support::local_asset_path(
-        "",
-        concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289/debug.json"),
-        "revision 289 debug catalog for packet golden test",
+    if let (Some(path), true) = (
+        api::test_support::local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289/debug.json"),
+            "revision 289 debug catalog for packet golden test",
+        ),
+        api::test_support::embedded_game_data_available(),
     ) {
         let bytes = std::fs::read(path).expect("read real revision 289 debug catalog");
         let catalog = api::debug_commands::DebugCatalog::decode(
@@ -1495,7 +1498,7 @@ fn typed_packet_builders_refuse_invalid_domains_and_shapes() {
     .is_err());
     assert!(Send::event_mouse_move(&[MouseMoveRecord::Outside { duplicates: 2048 }]).is_err());
 
-    if let (Some(path289), Some(path274)) = (
+    if let (Some(path289), Some(path274), true) = (
         api::test_support::local_asset_path(
             "",
             concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289/debug.json"),
@@ -1506,6 +1509,7 @@ fn typed_packet_builders_refuse_invalid_domains_and_shapes() {
             concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/274/debug.json"),
             "revision 274 debug catalog for revision mismatch test",
         ),
+        api::test_support::embedded_game_data_available(),
     ) {
         let bytes289 = std::fs::read(path289).expect("read real revision 289 debug catalog");
         let catalog = api::debug_commands::DebugCatalog::decode(

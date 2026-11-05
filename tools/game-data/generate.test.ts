@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertTrioGiverNpcJoins, assertTalkKeyNpcJoins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
+import { bankCatalogJson, cookCatalogJson } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
 import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, GATHERING_SCHEMA, isKnownGatherTarget, SITE_OVERRIDES, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
 import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
@@ -24,6 +24,80 @@ import { extractKaramjaFacts } from './extractors/karamja.ts';
 import type { NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
+const bankJsonFixture = bankCatalogJson([
+    {
+        name: 'Main bank',
+        tile: { x: 3200, z: 3201, level: 0 },
+        approach: { x: 3199, z: 3201, level: 0 },
+        requires: { skill: { name: 'fishing', level: 30 }, quest: 'A quest', setting: 'a_setting' },
+        access: { name: 'Bank booth', op: 'Bank', openFirst: { name: 'Door', op: 'Open' } },
+        npcAccess: { name: 'Banker', op: 'Talk-to', choose: 'Bank' },
+    },
+    {
+        name: 'Remote bank',
+        tile: { x: 3300, z: 3301, level: 1 },
+    },
+]);
+assert.equal(bankJsonFixture.endsWith('\n'), true, 'bank catalog JSON ends with a newline');
+assert.deepEqual(JSON.parse(bankJsonFixture), {
+    schema: 1,
+    facts: [
+        {
+            name: 'Main bank',
+            tile: { x: 3200, z: 3201, level: 0 },
+            approach: { x: 3199, z: 3201, level: 0 },
+            skill: [10, 30],
+            quest: 'A quest',
+            setting: 'a_setting',
+            object: { name: 'Bank booth', op: 'Bank' },
+            open_first: { name: 'Door', op: 'Open' },
+            npc: { name: 'Banker', op: 'Talk-to' },
+            choose: 'Bank',
+        },
+        {
+            name: 'Remote bank',
+            tile: { x: 3300, z: 3301, level: 1 },
+            approach: null,
+            skill: null,
+            quest: null,
+            setting: null,
+            object: null,
+            open_first: null,
+            npc: null,
+            choose: null,
+        },
+    ],
+});
+assert.throws(() => bankCatalogJson([{
+    name: 'Unsupported gate',
+    tile: { x: 1, z: 2, level: 0 },
+    requires: { skill: { name: 'mining', level: 1 } },
+}]), /bank catalog: unknown skill mining/);
+
+const cookJsonFixture = cookCatalogJson({
+    camps: [
+        { bank: 'First bank', stand: { x: 1, z: 2, level: 0 }, loc: { x: 3, z: 4, level: 0 }, locName: 'Range', kind: 'oven', label: 'First range' },
+        { bank: 'Second bank', stand: { x: 5, z: 6, level: 1 }, approach: { x: 4, z: 6, level: 1 }, loc: { x: 7, z: 8, level: 1 }, locName: 'Fire', kind: 'fire', label: 'Second fire' },
+    ],
+    kinds: { range: 'oven', fire: 'fire' },
+    maxSurfaceCheb: 9,
+    derivedArriveRadius: 4,
+    obstacles: ['counter', 'wall'],
+});
+assert.equal(cookJsonFixture.endsWith('\n'), true, 'cook catalog JSON ends with a newline');
+assert.deepEqual(JSON.parse(cookJsonFixture), {
+    schema: 1,
+    facts: {
+        max_surface_cheb: 9,
+        derived_arrive_radius: 4,
+        default_obstacles: ['counter', 'wall'],
+        camps: [
+            { bank: 'First bank', stand: { x: 1, z: 2, level: 0 }, approach: null, loc: { x: 3, z: 4, level: 0 }, loc_name: 'Range', kind: 'oven', label: 'First range' },
+            { bank: 'Second bank', stand: { x: 5, z: 6, level: 1 }, approach: { x: 4, z: 6, level: 1 }, loc: { x: 7, z: 8, level: 1 }, loc_name: 'Fire', kind: 'fire', label: 'Second fire' },
+        ],
+    },
+});
+assert.equal(JSON.parse(cookJsonFixture).facts.kinds, undefined, 'cook surface kinds stay internal to extraction');
 
 assert.deepEqual(
     ['fishing.a_b.op1', 'fishing.a-b.op1', 'fishing.A.op1'].sort(compareCodepoint),

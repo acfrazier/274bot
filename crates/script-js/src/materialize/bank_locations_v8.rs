@@ -1579,8 +1579,8 @@ globalThis.__checkEmptyBankResults = () => {
     #[test]
     fn bank_result_shapes_cover_callbacks_and_bound_v8_heap() {
         if !crate::test_support::local_api_asset(
-            "data/game-data/bank-catalog.rs",
-            "local bank catalog (generate with `tools/local-data/build.sh`)",
+            "data/game-data/bank-catalog.json",
+            "local bank catalog (generate with `python tools/local-data/build.py`)",
         ) {
             return;
         }

@@ -11,11 +11,19 @@
       "owner": "T2"
     },
     {
-      "path": "crates/api/data/game-data/bank-catalog.rs",
+      "path": "crates/api/build_support/catalog_codegen.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/api/data/game-data/cook-catalog.rs",
+      "path": "crates/api/src/test_support.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/api/src/test_support/local_asset_path.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/api/tests/catalog_codegen.rs",
       "owner": "T2"
     },
     {
@@ -61,10 +69,6 @@
     {
       "path": "crates/api/src/ent.rs",
       "owner": "T2"
-    },
-    {
-      "path": "crates/api/src/family_asset.rs",
-      "owner": "T1"
     },
     {
       "path": "crates/api/src/game_data.rs",
@@ -739,10 +743,6 @@
       "owner": "T1"
     },
     {
-      "path": "crates/host-play/examples/cache_manifest.rs",
-      "owner": "T1"
-    },
-    {
       "path": "crates/host-play/examples/map_footprint.rs",
       "owner": "T1"
     },
@@ -1119,7 +1119,7 @@
       "owner": "T5"
     },
     {
-      "path": "crates/host-play/src/nav_identity.rs",
+      "path": "crates/host-play/src/nav_assets.rs",
       "owner": "T5"
     },
     {
@@ -1915,11 +1915,7 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-bake/src/manifest.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav-bake/src/manifest_tests.rs",
+      "path": "crates/nav-bake/src/test_support.rs",
       "owner": "T5"
     },
     {
@@ -2015,27 +2011,11 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-bake/src/bin/cache-content-id.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav-bake/src/bin/nav-input-audit.rs",
-      "owner": "T5"
-    },
-    {
       "path": "crates/nav-bake/src/bin/nav-pack.rs",
       "owner": "T5"
     },
     {
       "path": "crates/nav-bake/src/bin/nav-pack/nav_pack_tests.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav-bake/src/bundle.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav-bake/src/bundle_tests.rs",
       "owner": "T5"
     },
     {
@@ -2091,14 +2071,6 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/manifest.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav-planner/src/manifest_tests.rs",
-      "owner": "T5"
-    },
-    {
       "path": "crates/nav-planner/src/map.rs",
       "owner": "T5"
     },
@@ -2144,10 +2116,6 @@
     },
     {
       "path": "crates/nav-planner/src/map/records.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav-planner/src/map/services.rs",
       "owner": "T5"
     },
     {
@@ -2496,10 +2464,6 @@
     },
     {
       "path": "crates/nav-planner/tests/quest_doors_real_pack.rs",
-      "owner": "T5"
-    },
-    {
-      "path": "crates/nav-bake/tests/resource_manifest.rs",
       "owner": "T5"
     },
     {
@@ -6203,19 +6167,11 @@
       "owner": "T1"
     },
     {
-      "path": "tools/game-data/cache-identity.ts",
-      "owner": "T2"
-    },
-    {
       "path": "tools/game-data/debug.test.ts",
       "owner": "T2"
     },
     {
       "path": "tools/game-data/dialogue-ui.test.ts",
-      "owner": "T2"
-    },
-    {
-      "path": "tools/game-data/equipment-names.frozen.ts",
       "owner": "T2"
     },
     {
@@ -6327,8 +6283,12 @@
       "owner": "T2"
     },
     {
-      "path": "tools/game-data/verify.ts",
-      "owner": "T2"
+      "path": "tools/local-data/build.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/local-data/test_build.py",
+      "owner": "T1"
     },
     {
       "path": "tools/harness/check_server_root_selection.py",

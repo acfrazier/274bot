@@ -12,6 +12,7 @@ fn warmed_vendors_for_pass_allocates_nothing() {
         "revision 289 game data for shop facts allocation test",
     )
     .is_none()
+        || !api::test_support::embedded_game_data_available()
     {
         return;
     }

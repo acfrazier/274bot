@@ -1,8 +1,5 @@
 use super::*;
-use std::borrow::Cow;
 use std::io::Read;
-#[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
-use std::io::Write;
 
 fn raw_game_data(revision: ClientRevision) -> Option<Vec<u8>> {
     let (path, description) = match revision {
@@ -41,19 +38,18 @@ fn generated_game_data_gzip_preserves_every_source_byte() {
             return;
         };
         #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
-        let compressed = Cow::Borrowed(match revision {
+        let compressed = Some(match revision {
             ClientRevision::R274 => REVISION_274,
             ClientRevision::R289 => REVISION_289,
         });
         #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
-        let compressed = {
-            let mut encoder =
-                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
-            encoder.write_all(&source).unwrap();
-            Cow::Owned(encoder.finish().unwrap())
+        let compressed: Option<&[u8]> = None;
+        let Some(compressed) = compressed else {
+            assert!(!crate::test_support::embedded_game_data_available());
+            return;
         };
         let mut decoded = Vec::new();
-        flate2::read::GzDecoder::new(compressed.as_ref())
+        flate2::read::GzDecoder::new(compressed)
             .read_to_end(&mut decoded)
             .unwrap();
         assert_eq!(

@@ -2,7 +2,9 @@
 //! kinds and the pairing constants, generated from the local game-data sources;
 //! the placed surfaces themselves are selected content.
 
-use crate::selected::{FactError, LOCAL_GAME_DATA_FAMILY};
+use crate::selected::FactError;
+#[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+use crate::selected::LOCAL_GAME_DATA_FAMILY;
 use crate::snapshot::WorldTile;
 use serde::Deserialize;
 
@@ -38,7 +40,7 @@ pub struct CookCamp {
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 mod generated {
     use super::*;
-    include!("../data/game-data/cook-catalog.rs");
+    include!(concat!(env!("OUT_DIR"), "/cook_catalog.rs"));
 }
 
 /// One cook surface placed in the selected map pack.
@@ -67,6 +69,7 @@ pub struct CookSurfaceFacts {
     pub rows: Vec<CookSurface>,
 }
 
+#[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
 fn unavailable() -> FactError {
     FactError::FamilyUnavailable((*LOCAL_GAME_DATA_FAMILY).clone())
 }

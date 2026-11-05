@@ -11,9 +11,6 @@ use std::num::NonZeroU32;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 fn assets_available() -> bool {
-    if !cfg!(feature = "embedded-game-data") {
-        return false;
-    }
     local_asset_path(
         "",
         concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/274.json"),
@@ -26,6 +23,7 @@ fn assets_available() -> bool {
             "revision 289 game data for gathering JSON tests",
         )
         .is_some()
+        && api::test_support::embedded_game_data_available()
 }
 
 fn prepare(revision: ClientRevision) -> Arc<GatherCatalog> {

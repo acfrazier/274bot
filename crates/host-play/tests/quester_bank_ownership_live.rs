@@ -27,7 +27,7 @@
 //! LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=qn WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_NAV_PACK=<nav-pack> WORLD_ENGINE_DIR=<engine-Q-dir> RS2B0T=<catalog-root> BOT_CACHE_DIR=<owned-writable-cache-snapshot> LIVE_EVIDENCE_DIR=<evidence-root> cargo test -p host-play --test quester_bank_ownership_live --features "live-harness test-support live-probe" quester_bank_preserves_player_open_gundai_bank -- --ignored --nocapture --test-threads=1
 //! ```
 //!
-//! Source distinctions used here: `content/scripts/areas/area_mage_arena/scripts/gundai.rs2:1-11` opens the teller through its bank choice; `content/scripts/minigames/game_duelarena/configs/duelarena.loc:70-83` declares `Open` on the closed lid and `Bank` on the open chest; `content/scripts/minigames/game_duelarena/scripts/misc_locs.rs2:6-13` invokes `open_chest` only for the lid; `content/scripts/general_use/scripts/chests.rs2:63-69` changes the chest loc without opening a bank. The selected catalog is `crates/api/data/game-data/bank-catalog.rs:20-22`.
+//! Source distinctions used here: `content/scripts/areas/area_mage_arena/scripts/gundai.rs2:1-11` opens the teller through its bank choice; `content/scripts/minigames/game_duelarena/configs/duelarena.loc:70-83` declares `Open` on the closed lid and `Bank` on the open chest; `content/scripts/minigames/game_duelarena/scripts/misc_locs.rs2:6-13` invokes `open_chest` only for the lid; `content/scripts/general_use/scripts/chests.rs2:63-69` changes the chest loc without opening a bank. The selected named bank facts are in `crates/api/data/game-data/bank-catalog.json`.
 //!
 //! `crates/host-play/src/bank_npc_live.rs` is a real native teller proof, but
 //! its explicit native `Close` is not treated as Quester lease-close proof.
@@ -712,7 +712,7 @@ fn bank_path(bank: WorldTile, bank_required: bool) -> PathDocument {
             GUNDAI_BANK_TILE => {
                 "content/scripts/areas/area_mage_arena/scripts/gundai.rs2:1-11".to_owned()
             }
-            _ => "api/data/game-data/bank-catalog.rs:20-22".to_owned(),
+            _ => "api/data/game-data/bank-catalog.json".to_owned(),
         },
         required: bank_required,
     };

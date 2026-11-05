@@ -84,6 +84,7 @@ fn borrowed_placement_and_resource_queries_allocate_nothing() {
             "revision 274 game data for gathering allocation test",
         )
         .is_none()
+        || !api::test_support::embedded_game_data_available()
     {
         return;
     }

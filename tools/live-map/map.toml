@@ -5,6 +5,7 @@ globs = [
   "**/Cargo.toml",
   "**/build.rs",
   "crates/api/src/**",
+  "crates/api/build_support/catalog_codegen.rs",
   "crates/api/data/**",
   "crates/host/src/**",
   "crates/host-play/src/**",
@@ -416,7 +417,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/api/data/game-data/274/quests.json", "crates/api/data/game-data/289/quests.json", "crates/api/data/game-data/manifest.json"]
+globs = ["crates/api/data/game-data/274/quests.json", "crates/api/data/game-data/289/quests.json"]
 cells = [
   "api.upass-content-domain|${ISOHOME:?} nice -n 10 cargo test --locked -p api --test game_data generated_upass_stage_domain_excludes_ibanmulti_bits_for_each_revision -- --nocapture",
 ]
@@ -435,9 +436,18 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/nav-planner/src/bank_fetch.rs", "crates/nav-planner/src/bank_fetch/**", "crates/script/src/native_bank.rs", "crates/script/src/bank/**", "crates/api/data/game-data/bank-catalog.rs"]
+globs = ["crates/nav-planner/src/bank_fetch.rs", "crates/nav-planner/src/bank_fetch/**", "crates/script/src/native_bank.rs", "crates/script/src/bank/**", "crates/api/data/game-data/bank-catalog.json", "crates/api/build_support/catalog_codegen.rs"]
 cells = [
   "host.bank-fetch-session|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored live_fetch_closed_session_port_sarim_to_karamja --nocapture --test-threads=1",
+]
+
+# The tracked producer compiles both JSON catalogs into borrowed static tables.
+# Pure decoding and real-data allocation proofs complement the bank game cells.
+[[cover]]
+globs = ["crates/api/build_support/catalog_codegen.rs", "crates/api/data/game-data/bank-catalog.json", "crates/api/data/game-data/cook-catalog.json"]
+cells = [
+  "api.catalog-codegen-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --test catalog_codegen -- --nocapture",
+  "api.static-catalog-memory-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --test prereq_catalog_alloc -- --nocapture --test-threads=1",
 ]
 
 [[cover]]
@@ -874,7 +884,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/script/src/native_bank.rs", "crates/script/src/bank/**", "crates/script/src/bank.rs", "crates/script-js/src/scene/bank_select.rs", "crates/script-js/src/compat/bank_withdraw.rs", "crates/script/src/slot/bank.rs", "crates/script-js/src/shim/*bank*.js", "crates/script-js/src/shim/inventory.js", "crates/script-js/src/shim/periodic_bank.js", "crates/api/data/game-data/bank-catalog.rs", "crates/script-js/src/compat/bank_rows.rs", "crates/script-js/src/compat/hunt_bank.rs", "crates/script-js/src/compat/hunt_bank/plan.rs", "crates/script-js/src/compat/periodic_bank.rs"]
+globs = ["crates/script/src/native_bank.rs", "crates/script/src/bank/**", "crates/script/src/bank.rs", "crates/script-js/src/scene/bank_select.rs", "crates/script-js/src/compat/bank_withdraw.rs", "crates/script/src/slot/bank.rs", "crates/script-js/src/shim/*bank*.js", "crates/script-js/src/shim/inventory.js", "crates/script-js/src/shim/periodic_bank.js", "crates/api/data/game-data/bank-catalog.json", "crates/api/build_support/catalog_codegen.rs", "crates/script-js/src/compat/bank_rows.rs", "crates/script-js/src/compat/hunt_bank.rs", "crates/script-js/src/compat/hunt_bank/plan.rs", "crates/script-js/src/compat/periodic_bank.rs"]
 cells = [
   "compat.bank-core-loop|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_core_live::live_bank_core_compat_gathering_bank_loop_at_draynor --nocapture --test-threads=1",
 ]
@@ -991,7 +1001,7 @@ cells = [
 # the no-food stop. AutoFighter fights Ardougne guards, whose strength
 # line is already explicit.
 [[cover]]
-globs = ["crates/api/data/game-data/274.json", "crates/api/data/game-data/289.json", "crates/api/data/game-data/manifest.json"]
+globs = ["crates/api/data/game-data/274.json", "crates/api/data/game-data/289.json"]
 cells = [
   "host.api-combat-melee|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_melee_kills_a_lumbridge_cow_for_xp --nocapture --test-threads=1",
   "host.api-combat-showcase|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_showcase_script_runs_every_phase --nocapture --test-threads=1",
@@ -1115,10 +1125,10 @@ cells = [
   "host.catalog-start-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib live_start::tests:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib live_start::tests:: --",
 ]
 
-# Selected identity and mismatch refusal are controlled before-login proofs; existing gate cells provide valid-pack integration.
-# Controlled proof, not a game witness: api.quest-facts-headless, nav.quest-family-admission-headless.
-# Owed live positives: host.nav-quest-doors, host.nav-gated-entrances; require the matching W3 quest-bound pack named in wave-1.md.
-# Limit: Final live pack must carry a matching quest-family identity; legacy None skips this guard and is not sufficient proof.
+# Profile preparation loads actual quest facts and decodes nav resources.
+# Controlled facts and gates: api.quest-facts-headless, nav.quest-family-admission-headless.
+# Real quest-door and gated-entrance cells prove normal content navigation.
+# Generate final-head packs with the canonical local-data command before these runs.
 [[cover]]
 globs = ["crates/host-play/src/profile_binding.rs"]
 cells = [

@@ -36,6 +36,7 @@ fn the_catalog_is_lazy_shared_and_retained_for_the_process() {
             "revision 274 game data for gather catalog lifecycle test",
         )
         .is_none()
+        || !api::test_support::embedded_game_data_available()
     {
         return;
     }

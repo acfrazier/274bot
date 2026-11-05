@@ -1,14 +1,19 @@
 //! The selected prerequisite table is process-shared; warm preparation and
 //! borrowed routing queries must not allocate for another bot or request.
+use api::cook_locations::{
+    cook_camps, default_obstacles, derived_arrive_radius, max_surface_cheb, CookCamp,
+};
 use api::game_data::for_revision;
 use api::identity::Deadline;
+use api::named_banks::{bank_catalog, BankDefinition};
 use api::prereq_steps::{ActionableGate, CrossingId, PrereqCatalog, PrereqStep};
 use api::selected::{
     ClientRevision, FactKey, FamilyPreparation, InclusiveRange, QuestGate, StageWindow,
 };
 use api::test_support::local_asset_path;
 use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
-use std::mem::size_of;
+use std::hint::black_box;
+use std::mem::{size_of, size_of_val};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -25,8 +30,55 @@ fn process_catalog_is_bounded_and_warm_preparation_and_queries_allocate_nothing(
         "revision 289 game data for prerequisite catalog allocation test",
     )
     .is_none()
+        || !api::test_support::embedded_game_data_available()
     {
         return;
+    }
+
+    let mut static_catalogs = None;
+    let static_cold = allocation_counter::measure(|| {
+        static_catalogs = Some((
+            bank_catalog().expect("generated bank catalog"),
+            cook_camps().expect("generated cook catalog"),
+            default_obstacles().expect("generated cook obstacles"),
+            max_surface_cheb().expect("generated cook pairing distance"),
+            derived_arrive_radius().expect("generated cook arrival radius"),
+        ));
+    });
+    let (banks, camps, obstacles, distance, radius) =
+        static_catalogs.expect("cold catalog queries return borrowed tables");
+    let static_warm = allocation_counter::measure(|| {
+        for _ in 0..1_000 {
+            assert!(std::ptr::eq(black_box(bank_catalog().unwrap()), banks));
+            assert!(std::ptr::eq(black_box(cook_camps().unwrap()), camps));
+            assert!(std::ptr::eq(
+                black_box(default_obstacles().unwrap()),
+                obstacles
+            ));
+            assert_eq!(black_box(max_surface_cheb().unwrap()), distance);
+            assert_eq!(black_box(derived_arrive_radius().unwrap()), radius);
+        }
+    });
+    eprintln!(
+        "bank/cook static catalogs: cold={static_cold:?} warm={static_warm:?}; \
+         BankDefinition={} CookCamp={} banks={} camps={} obstacles={} \
+         bank_rows_bytes={} cook_rows_bytes={} obstacle_refs_bytes={}",
+        size_of::<BankDefinition>(),
+        size_of::<CookCamp>(),
+        banks.len(),
+        camps.len(),
+        obstacles.len(),
+        size_of_val(banks),
+        size_of_val(camps),
+        size_of_val(obstacles),
+    );
+    for allocations in [static_cold, static_warm] {
+        assert_eq!(
+            allocations.count_total, 0,
+            "JSON catalogs are compiled to borrowed static tables, not loaded at runtime"
+        );
+        assert_eq!(allocations.bytes_total, 0);
+        assert_eq!(allocations.bytes_current, 0);
     }
 
     let data = for_revision(ClientRevision::R289).expect("selected R289 data");

@@ -28,6 +28,7 @@ fn assets_available() -> bool {
             "revision 289 game data for gathering catalog tests",
         )
         .is_some()
+        && api::test_support::embedded_game_data_available()
 }
 
 fn prepare(revision: ClientRevision) -> Arc<GatherCatalog> {

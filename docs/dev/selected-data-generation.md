@@ -30,6 +30,12 @@ generator stage 2 with that projection. Stage 1 writes real game data but no
 prerequisite family. Stage 2 overwrites the intermediate outputs and writes
 real 289 prerequisite facts.
 
+The generator writes the bank and cook catalogs as `bank-catalog.json` and
+`cook-catalog.json` beside the other local game data. Tracked API build code
+converts them to static Rust tables in Cargo's `OUT_DIR`. No Rust source is
+generated beneath the ignored data directory. The application retains borrowed
+static tables, not another JSON copy or a runtime catalog parser.
+
 Build a product only after the builder succeeds. For example:
 
 ```bash

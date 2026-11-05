@@ -18,6 +18,7 @@ fn assets_available() -> bool {
             "revision 289 game data for API integration tests",
         )
         .is_some()
+        && api::test_support::embedded_game_data_available()
 }
 
 #[test]

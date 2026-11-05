@@ -26,6 +26,6 @@ pub fn local_asset_path(env_key: &str, default_path: &str, description: &str) ->
         eprintln!("Skipping {missing}: local asset is unavailable (GITHUB_ACTIONS=true)");
         None
     } else {
-        panic!("missing {missing}; local assets must be generated before building or testing")
+        panic!("missing {missing}; generate local assets with `python tools/local-data/build.py`")
     }
 }
