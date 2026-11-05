@@ -12,6 +12,7 @@ The file is created on first use with these built-ins:
 | --- | --- | --- | --- | --- | --- |
 | `local-274` | 274 | TCP | `127.0.0.1:43594` | HTTP `:80` | `~/.274bot/vault` |
 | `local-289` | 289 | TCP | `127.0.0.1:44594` | HTTP `:1080` | `~/.274bot/vault-289` |
+| `local-377` | 377 | TCP | `127.0.0.1:43595` | HTTP `:81` | `~/.274bot/vault-377` |
 | `rs2b2t` | 289 | WSS | first roster world (default `w1.rs2b2t.com:443`) | HTTPS `:443` | `~/.274bot/vault-prod` |
 
 Select any stored name with `--profile NAME` on `host-play`, `panel-play`, and
@@ -52,8 +53,8 @@ Each profile stores its vault filename explicitly. See the
 
 Each panel/TUI map Walk confirmation emits one Info-level `WalkTo` outcome per requested slot through the shared host log sink, including refusals. It records origin, the routed destination (including snapping), teleport/wilderness/bank-fetch options, effective WORLD membership and compact provenance (`unknown`, `explicit`, `rs2b2t` or `local-world-json`), then route legs/walk steps/transports or the refusal reason. Local declaration paths and digests are not included. Unfocused refusals appear in the Process log; an empty group keeps its selection and reports “no bots selected.” Availability checks and frame-by-frame following do not emit request lines.
 
-Without an explicit profile, the saved panel revision chooses `local-274` or
-`local-289`; otherwise local 274 is the default.
+Without an explicit profile, `--revision`, `BOT_REVISION`, or the saved revision
+chooses the matching local profile. Otherwise, local 274 remains the default.
 
 Local engine roots are never inferred from `HOME`. A local profile resolves
 the root in this order: `--engine`, `ENGINE_DIR`, then `login_key.engine_dir`
@@ -61,6 +62,29 @@ in `~/.274bot/servers.json`. New `servers.json` files leave that path unset;
 without an explicit value, a local profile fails fast with setup guidance.
 The public WSS profile does not need an engine root.
 
-All profiles cache fetched client archives under `~/.274bot/unpack` (274) or `~/.274bot/unpack-289` (289) unless `--cache`/`--unpack` overrides them. This repo ships no Jagex assets; the client fetches `/crc` and jags from the selected profile's asset endpoint.
+Profiles cache fetched client archives under `~/.274bot/unpack` (274),
+`~/.274bot/unpack-289` (289), or `~/.274bot/unpack-377` (377), unless
+`--cache`/`--unpack` overrides them. This repo ships no Jagex assets.
+The client fetches `/crc` and jags from the selected profile's asset endpoint.
 
 Beta's **tested** path is the **local** engine on revision **289**. Revision 274 is best-effort: it may run, but it is neither tested nor claimed. The public world is built in for login/asset fetch; it is **not** a hosted wall, **not** Jagex, and there is **no** public-world CI or SLA.
+
+Revision 377 is an explicit local development target. `host-play --revision 377
+--engine PATH` selects Fairy Ring's local endpoint. It uses the pinned 377
+client decoder, including revision-specific config and interface fields.
+Low- and high-memory clients keep separate mode-dependent tables.
+
+The selected cache and navigation pack must carry real revision-377 identities.
+The driver does not borrow revision-289 data or navigation, relabel a cache, or
+skip a resource check. A changed bound archive or an incompatible pack refuses
+the affected operation. Generated game facts attach only when their cache
+identity and pinned source bytes match; otherwise the runtime logs why it
+withheld them.
+
+The bounded `client_377` scenario uses the existing
+`panel-play --revision 377 --live script_client_377` harness. After the normal
+mainland seed, it captures scene 2, sends a short direct courtyard walk without
+the whole-world router, waits for the exact destination, and talks to the live
+NPC with selected-cache type 0 (Hans). It requires a closed dialogue before the
+send and captures the new dialogue. This client qualification does not qualify
+combat, gathering, questing, banking, or other game-data-dependent families.
