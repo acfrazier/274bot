@@ -253,6 +253,7 @@ impl Driver for Client {
         let Some(bytes) = self.out.data().get(checkpoint.start..self.out.pos) else {
             return false;
         };
+        let revision = Client::revision(self);
         let mut cursor = 0;
         while cursor < bytes.len() {
             let random = checkpoint
@@ -261,22 +262,10 @@ impl Driver for Client {
                 .map_or(0, |cipher| cipher.next_int());
             let opcode = bytes[cursor].wrapping_sub(random as u8);
             cursor += 1;
-            let row = crate::prot::LEGAL_SEND
-                .iter()
-                .map(|row| {
-                    client::io::map_client_prot(
-                        Client::revision(self),
-                        client::io::ClientProt {
-                            id: row.id,
-                            length: row.length,
-                        },
-                    )
-                })
-                .find(|row| row.id == i32::from(opcode));
-            let Some(row) = row else {
+            let Some(metadata) = crate::prot::packet_metadata(revision, opcode) else {
                 return false;
             };
-            let length = match row.length {
+            let length = match metadata.length {
                 length if length >= 0 => length as usize,
                 -1 => {
                     let Some(&length) = bytes.get(cursor) else {
@@ -284,6 +273,18 @@ impl Driver for Client {
                     };
                     cursor += 1;
                     usize::from(length)
+                }
+                -2 => {
+                    let Some(end) = cursor.checked_add(2).filter(|&end| end <= bytes.len()) else {
+                        return false;
+                    };
+                    let length =
+                        usize::from(u16::from_be_bytes([bytes[cursor], bytes[cursor + 1]]));
+                    if crate::prot::PacketLength::VarShort.validate(length).is_err() {
+                        return false;
+                    }
+                    cursor = end;
+                    length
                 }
                 _ => return false,
             };
