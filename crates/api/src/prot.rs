@@ -7,7 +7,7 @@
 
 use std::sync::LazyLock;
 
-use client::io::{map_client_prot, ClientProt, ClientRevision, Packet};
+use client::io::{map_client_prot, ClientProt, ClientProt377, ClientRevision, Packet};
 
 /// One legal outbound packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +120,18 @@ legal_send!(
 
 /// Legal outbound rows selected by named packet identity for `revision`.
 /// The existing [`LEGAL_SEND`] constant remains the revision-274 table.
+/// Revision 377 exposes only rows with a known semantic identity; unknown
+/// 377 wire packets are intentionally omitted.
 pub fn legal_sends_for(revision: ClientRevision) -> Vec<LegalSend> {
+    if revision == ClientRevision::R377 {
+        return R377_NAMED_CLIENT_PROTS
+            .iter()
+            .map(|(_, selected)| LegalSend {
+                id: selected.id,
+                length: selected.length,
+            })
+            .collect();
+    }
     NAMED_CLIENT_PROTS
         .iter()
         .map(|named| {
@@ -159,36 +170,170 @@ pub struct PacketMetadata {
     pub category: PacketCategory,
 }
 
+// Known semantic identities paired with the pinned ClientProt377 wire
+// descriptors. R377-only identities without a known semantic counterpart
+// and legacy identities absent from 377 are deliberately omitted; this
+// observation table does not grant Send admission, which remains guarded by
+// map_client_prot.
+const R377_NAMED_CLIENT_PROTS: &[(ClientProt, ClientProt)] = &[
+    (ClientProt::NO_TIMEOUT, ClientProt377::NO_TIMEOUT),
+    (ClientProt::IDLE_TIMER, ClientProt377::IDLE_TIMER),
+    (ClientProt::EVENT_MOUSE_CLICK, ClientProt377::EVENT_MOUSE_CLICK),
+    (ClientProt::EVENT_MOUSE_MOVE, ClientProt377::EVENT_MOUSE_MOVE),
+    (ClientProt::EVENT_APPLET_FOCUS, ClientProt377::EVENT_HAS_WINDOW),
+    (ClientProt::EVENT_APPLET_FOCUS, ClientProt377::EVENT_APPLET_FOCUS),
+    (
+        ClientProt::EVENT_CAMERA_POSITION,
+        ClientProt377::EVENT_CAMERA_POSITION,
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC1,
+        ClientProt377::ANTICHEAT_OPLOGIC1,
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC2,
+        ClientProt377::ANTICHEAT_OPLOGIC2,
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC3,
+        ClientProt377::ANTICHEAT_OPLOGIC3,
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC4,
+        ClientProt377::ANTICHEAT_OPLOGIC4,
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC5,
+        ClientProt377::ANTICHEAT_OPLOGIC5,
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC1,
+        ClientProt377::ANTICHEAT_CYCLELOGIC1,
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC2,
+        ClientProt377::ANTICHEAT_CYCLELOGIC2,
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC3,
+        ClientProt377::ANTICHEAT_CYCLELOGIC3,
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC4,
+        ClientProt377::ANTICHEAT_CYCLELOGIC4,
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC5,
+        ClientProt377::ANTICHEAT_CYCLELOGIC5,
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC6,
+        ClientProt377::ANTICHEAT_CYCLELOGIC6,
+    ),
+    (ClientProt::OPOBJ1, ClientProt377::OPOBJ1),
+    (ClientProt::OPOBJ2, ClientProt377::OPOBJ2),
+    (ClientProt::OPOBJ3, ClientProt377::OPOBJ3),
+    (ClientProt::OPOBJ4, ClientProt377::OPOBJ4),
+    (ClientProt::OPOBJ5, ClientProt377::OPOBJ5),
+    (ClientProt::OPOBJT, ClientProt377::OPOBJT),
+    (ClientProt::OPOBJU, ClientProt377::OPOBJU),
+    (ClientProt::OPNPC1, ClientProt377::OPNPC1),
+    (ClientProt::OPNPC2, ClientProt377::OPNPC2),
+    (ClientProt::OPNPC3, ClientProt377::OPNPC3),
+    (ClientProt::OPNPC4, ClientProt377::OPNPC4),
+    (ClientProt::OPNPC5, ClientProt377::OPNPC5),
+    (ClientProt::OPNPCT, ClientProt377::OPNPCT),
+    (ClientProt::OPNPCU, ClientProt377::OPNPCU),
+    (ClientProt::OPLOC1, ClientProt377::OPLOC1),
+    (ClientProt::OPLOC2, ClientProt377::OPLOC2),
+    (ClientProt::OPLOC3, ClientProt377::OPLOC3),
+    (ClientProt::OPLOC4, ClientProt377::OPLOC4),
+    (ClientProt::OPLOC5, ClientProt377::OPLOC5),
+    (ClientProt::OPLOCT, ClientProt377::OPLOCT),
+    (ClientProt::OPLOCU, ClientProt377::OPLOCU),
+    (ClientProt::OPPLAYER1, ClientProt377::OPPLAYER1),
+    (ClientProt::OPPLAYER2, ClientProt377::OPPLAYER2),
+    (ClientProt::OPPLAYER3, ClientProt377::OPPLAYER3),
+    (ClientProt::OPPLAYER4, ClientProt377::OPPLAYER4),
+    (ClientProt::OPPLAYER5, ClientProt377::OPPLAYER5),
+    (ClientProt::OPPLAYERT, ClientProt377::OPPLAYERT),
+    (ClientProt::OPPLAYERU, ClientProt377::OPPLAYERU),
+    (ClientProt::OPHELD1, ClientProt377::OPHELD1),
+    (ClientProt::OPHELD2, ClientProt377::OPHELD2),
+    (ClientProt::OPHELD3, ClientProt377::OPHELD3),
+    (ClientProt::OPHELD4, ClientProt377::OPHELD4),
+    (ClientProt::OPHELD5, ClientProt377::OPHELD5),
+    (ClientProt::OPHELDT, ClientProt377::OPHELDT),
+    (ClientProt::OPHELDU, ClientProt377::OPHELDU),
+    (ClientProt::INV_BUTTON1, ClientProt377::INV_BUTTON1),
+    (ClientProt::INV_BUTTON2, ClientProt377::INV_BUTTON2),
+    (ClientProt::INV_BUTTON3, ClientProt377::INV_BUTTON3),
+    (ClientProt::INV_BUTTON4, ClientProt377::INV_BUTTON4),
+    (ClientProt::INV_BUTTON5, ClientProt377::INV_BUTTON5),
+    (ClientProt::IF_BUTTON, ClientProt377::IF_BUTTON),
+    (
+        ClientProt::RESUME_PAUSEBUTTON,
+        ClientProt377::RESUME_PAUSEBUTTON,
+    ),
+    (ClientProt::CLOSE_MODAL, ClientProt377::CLOSE_MODAL),
+    (
+        ClientProt::RESUME_P_COUNTDIALOG,
+        ClientProt377::RESUME_P_COUNTDIALOG,
+    ),
+    (ClientProt::TUT_CLICKSIDE, ClientProt377::TUT_CLICKSIDE),
+    (ClientProt::MAP_BUILD_COMPLETE, ClientProt377::MAP_BUILD_COMPLETE),
+    (ClientProt::MOVE_OPCLICK, ClientProt377::MOVE_OPCLICK),
+    (
+        ClientProt::MOVE_MINIMAPCLICK,
+        ClientProt377::MOVE_MINIMAPCLICK,
+    ),
+    (ClientProt::INV_BUTTOND, ClientProt377::INV_BUTTOND),
+    (ClientProt::IGNORELIST_DEL, ClientProt377::IGNORELIST_DEL),
+    (ClientProt::IGNORELIST_ADD, ClientProt377::IGNORELIST_ADD),
+    (ClientProt::IDK_SAVEDESIGN, ClientProt377::IDK_SAVEDESIGN),
+    (ClientProt::CHAT_SETMODE, ClientProt377::CHAT_SETMODE),
+    (ClientProt::MESSAGE_PRIVATE, ClientProt377::MESSAGE_PRIVATE),
+    (ClientProt::FRIENDLIST_DEL, ClientProt377::FRIENDLIST_DEL),
+    (ClientProt::FRIENDLIST_ADD, ClientProt377::FRIENDLIST_ADD),
+    (ClientProt::CLIENT_CHEAT, ClientProt377::CLIENT_CHEAT),
+    (ClientProt::MESSAGE_PUBLIC, ClientProt377::MESSAGE_PUBLIC),
+    (ClientProt::MOVE_GAMECLICK, ClientProt377::MOVE_GAMECLICK),
+];
+
+fn packet_category(named: ClientProt) -> PacketCategory {
+    match named {
+        ClientProt::NO_TIMEOUT
+        | ClientProt::MAP_BUILD_COMPLETE
+        | ClientProt::ANTICHEAT_OPLOGIC1
+        | ClientProt::ANTICHEAT_OPLOGIC2
+        | ClientProt::ANTICHEAT_OPLOGIC3
+        | ClientProt::ANTICHEAT_OPLOGIC4
+        | ClientProt::ANTICHEAT_OPLOGIC5
+        | ClientProt::ANTICHEAT_OPLOGIC6
+        | ClientProt::ANTICHEAT_OPLOGIC7
+        | ClientProt::ANTICHEAT_OPLOGIC8
+        | ClientProt::ANTICHEAT_OPLOGIC9
+        | ClientProt::ANTICHEAT_CYCLELOGIC1
+        | ClientProt::ANTICHEAT_CYCLELOGIC2
+        | ClientProt::ANTICHEAT_CYCLELOGIC3
+        | ClientProt::ANTICHEAT_CYCLELOGIC4
+        | ClientProt::ANTICHEAT_CYCLELOGIC5
+        | ClientProt::ANTICHEAT_CYCLELOGIC6
+        | ClientProt::ANTICHEAT_CYCLELOGIC7 => PacketCategory::Housekeeping,
+        ClientProt::IDLE_TIMER
+        | ClientProt::EVENT_MOUSE_CLICK
+        | ClientProt::EVENT_MOUSE_MOVE
+        | ClientProt::EVENT_APPLET_FOCUS
+        | ClientProt::EVENT_CAMERA_POSITION => PacketCategory::ClientEvent,
+        _ => PacketCategory::UserEvent,
+    }
+}
+
 const EMPTY_METADATA: [Option<PacketMetadata>; 256] = [None; 256];
-static PACKET_METADATA: LazyLock<[[Option<PacketMetadata>; 256]; 2]> = LazyLock::new(|| {
-    let mut tables = [EMPTY_METADATA; 2];
+static PACKET_METADATA: LazyLock<[[Option<PacketMetadata>; 256]; 3]> = LazyLock::new(|| {
+    let mut tables = [EMPTY_METADATA; 3];
     for &named in NAMED_CLIENT_PROTS {
-        let category = match named {
-            ClientProt::NO_TIMEOUT
-            | ClientProt::MAP_BUILD_COMPLETE
-            | ClientProt::ANTICHEAT_OPLOGIC1
-            | ClientProt::ANTICHEAT_OPLOGIC2
-            | ClientProt::ANTICHEAT_OPLOGIC3
-            | ClientProt::ANTICHEAT_OPLOGIC4
-            | ClientProt::ANTICHEAT_OPLOGIC5
-            | ClientProt::ANTICHEAT_OPLOGIC6
-            | ClientProt::ANTICHEAT_OPLOGIC7
-            | ClientProt::ANTICHEAT_OPLOGIC8
-            | ClientProt::ANTICHEAT_OPLOGIC9
-            | ClientProt::ANTICHEAT_CYCLELOGIC1
-            | ClientProt::ANTICHEAT_CYCLELOGIC2
-            | ClientProt::ANTICHEAT_CYCLELOGIC3
-            | ClientProt::ANTICHEAT_CYCLELOGIC4
-            | ClientProt::ANTICHEAT_CYCLELOGIC5
-            | ClientProt::ANTICHEAT_CYCLELOGIC6
-            | ClientProt::ANTICHEAT_CYCLELOGIC7 => PacketCategory::Housekeeping,
-            ClientProt::IDLE_TIMER
-            | ClientProt::EVENT_MOUSE_CLICK
-            | ClientProt::EVENT_MOUSE_MOVE
-            | ClientProt::EVENT_APPLET_FOCUS
-            | ClientProt::EVENT_CAMERA_POSITION => PacketCategory::ClientEvent,
-            _ => PacketCategory::UserEvent,
-        };
+        let category = packet_category(named);
         for (index, revision) in [ClientRevision::R274, ClientRevision::R289]
             .into_iter()
             .enumerate()
@@ -204,12 +349,28 @@ static PACKET_METADATA: LazyLock<[[Option<PacketMetadata>; 256]; 2]> = LazyLock:
             }
         }
     }
+    for &(named, selected) in R377_NAMED_CLIENT_PROTS {
+        let Ok(opcode) = u8::try_from(selected.id) else {
+            continue;
+        };
+        tables[2][usize::from(opcode)] = Some(PacketMetadata {
+            opcode,
+            named,
+            length: selected.length,
+            category: packet_category(named),
+        });
+    }
     tables
 });
 
 /// Return metadata for an observed opcode without allocating or scanning tables.
 pub fn packet_metadata(revision: ClientRevision, opcode: u8) -> Option<PacketMetadata> {
-    PACKET_METADATA[usize::from(revision.is_289())][usize::from(opcode)]
+    let index = match revision {
+        ClientRevision::R274 => 0,
+        ClientRevision::R289 => 1,
+        ClientRevision::R377 => 2,
+    };
+    PACKET_METADATA[index][usize::from(opcode)]
 }
 
 mod sink {
