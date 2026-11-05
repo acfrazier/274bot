@@ -92,6 +92,7 @@ impl DebugCatalog {
         let bytes: &[u8] = match revision {
             ClientRevision::R274 => include_bytes!("../data/game-data/274/debug.json"),
             ClientRevision::R289 => include_bytes!("../data/game-data/289/debug.json"),
+            ClientRevision::R377 => return Err(DebugCatalogError::LocalDataUnavailable),
         };
         Self::decode(bytes, revision, items)
     }
@@ -332,7 +333,18 @@ mod tests {
             let catalog = super::DebugCatalog::decode(bytes, revision, items.clone())
                 .expect("debug facts decode under the caller-selected revision");
             assert_eq!(catalog.revision(), revision);
+
         }
+    }
+
+    #[cfg(feature = "debug-catalog")]
+    #[test]
+    fn debug_catalog_load_refuses_revision_377() {
+        let Some(items) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
+        let error = super::DebugCatalog::load(ClientRevision::R377, items).unwrap_err();
+        assert_eq!(error, super::DebugCatalogError::LocalDataUnavailable);
     }
 
     fn command(args: Vec<DebugArgument>) -> DebugCommand {
