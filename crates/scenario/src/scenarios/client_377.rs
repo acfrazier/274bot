@@ -56,9 +56,10 @@ pub(crate) fn client_377_scenario() -> Scenario {
                 name: "walk directly south inside the loaded courtyard",
                 kind: StepKind::Perform {
                     send: Box::new(|client, snapshot| {
-                        Interactions::new(snapshot, client)
-                            .walk(COURTYARD_SOUTH)
-                            .is_sent()
+                        matches!(
+                            Interactions::new(snapshot, client).walk(COURTYARD_SOUTH),
+                            SendResult::Sent { .. }
+                        )
                     }),
                 },
                 wait: Wait {
@@ -95,9 +96,11 @@ pub(crate) fn client_377_scenario() -> Scenario {
                         else {
                             return false;
                         };
-                        Interactions::new(snapshot, client)
-                            .interact(OpTarget::Npc(npc), ActionSpec::Label("Talk-to".into()))
-                            .is_sent()
+                        matches!(
+                            Interactions::new(snapshot, client)
+                                .interact(OpTarget::Npc(npc), ActionSpec::Label("Talk-to".into())),
+                            SendResult::Sent { .. }
+                        )
                     }),
                 },
                 wait: Wait {
