@@ -65,9 +65,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   bones reliably. In long fights it can run out of food before the dragon dies
   and return to the bank without the bones. A fix is planned with the native
   hunting rewrite. 0.2.4 to 0.2.8 have the same problem.
-- When Grinch banks, it uses the shared bank trip, which still waits up to a
-  fixed time for some bank steps. These waits are planned to become game-timed.
-  0.2.5 to 0.2.8 have the same problem.
 - A bot can't get through a door that another player closes again on every tick,
   when that player's moves are handled before the bot's. The bot tries the door
   until its retries run out and then stops at the door. Finding another way
@@ -85,12 +82,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   game ticks instead of 570), so it may drink again sooner than needed. It is
   still immune for the real time. Counting the super immunity is planned for a
   later release. 0.2.7 to 0.2.8 have the same problem.
-- Cure poison does not interrupt Gatherer or Quester steps to drink a held
-  antipoison when poison makes a cure necessary. This behavior is not included.
-  0.2.7 to 0.2.8 have the same problem.
-- The panel and terminal app do not show a status row for a poison-related cure
-  need. A poison-need status row is not included. 0.2.7 to 0.2.8 have the same
-  problem.
+- Fetching a cure or food when the bot would otherwise die is planned for a
+  later release. In this release a native script that would die of poison with
+  no cure held pauses its work and names what it needs.
+- Buying a cure from a shop is planned, not included here.
+- Taking a cure from a ground spawn, or making one from held supplies, is
+  planned for a later release.
+- The serialization and date libraries retain compatibility versions until the
+  JavaScript runtime libraries can be updated together. The recorded date-parser
+  advisory is not reachable: the calendar dependency does not enable date
+  parsing or formatting.
 - The Knife tick technique is offered for oak and higher trees only. Normal
   trees still use the ordinary gathering cadence.
 - Karambwan fishing uses a fixed delay rather than the skill delay. No Knife arm
@@ -115,17 +116,30 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
   zones). This permits dangerous routes. Use it only when the account can handle
   the monsters on the route. 0.2.0 to 0.2.8 have the same problem.
-- **Quester:** The Quester has routes for 20 of the 68 quests. Routes for the
-  other quests are planned in waves. 0.2.0 to 0.2.8 have the same problem.
+- **Quester:** The following Quester guides are drafts. Release builds do not
+  support them: - Cook's Assistant - Sheep Shearer - Rune Mysteries - Romeo &
+  Juliet - Imp Catcher - Vampire Slayer - Doric's Quest - Goblin Diplomacy -
+  Witch's Potion - Prince Ali Rescue - Pirate's Treasure - Demon Slayer - The
+  Knight's Sword - Death Plateau - The Tourist Trap - Priest in Peril - Clock
+  Tower - Monk's Friend - Hazeel Cult - Plague City - Druidic Ritual -
+  Gertrude's Cat - Jungle Potion - Sea Slug Quest - Tribal Totem - Black
+  Knight's Fortress - Ernest the Chicken - Fishing Contest - Elemental Workshop
+  - Merlin's Crystal - Lost City - Tree Gnome Village - Scorpion Catcher -
+  Observatory Quest - Shield of Arrav - Hero's Quest - Temple of Ikov - Holy
+  Grail - Watch Tower - Digsite Quest - Biohazard - Murder Mystery - Witch's
+  House - Big Chompy Bird Hunting - Dwarf Cannon - Family Crest - Fight Arena -
+  The Grand Tree - Dragon Slayer - Horror from the Deep - Shilo Village - Tai
+  Bwo Wannai Trio - Nature Spirit - In Search of the Myreque - Troll Stronghold
+  - Eadgar's Ruse - Troll Romance - Throne of Miscellania - Waterfall Quest -
+  Legends Quest - Sheep Herder - Underground Pass - Regicide - Shades of
+  Mort'ton - The Fremennik Trials - Monkey Madness 0.2.0 to 0.2.8 have the same
+  problem.
 - **Quester:** When the Quester cannot start a walk between quest steps, it can
   stop the quest at once instead of trying again, and asks you to resolve the
   condition and restart the Quester. 0.2.0 to 0.2.8 have the same problem.
 - **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
   it cannot use. The cause is under investigation. 0.2.0 to 0.2.8 have the same
   problem.
-- **Banking:** `Bank.depositAllMatching` checks about one item per game tick, so
-  large deposits can be slow. A fix is planned for a later release. 0.2.4 to
-  0.2.8 have the same problem.
 - **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
   than the game requires after each stun, so it gains Thieving XP more slowly
   than it could. A fix is planned with the native thieving rework. 0.2.4 to
@@ -140,6 +154,60 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Quester fights. With the setting on, any running rs2b0t script pauses. A
   built-in script pauses while it walks or acts, but not between actions. 0.2.6
   to 0.2.8 have the same problem.
+- **Scripts:** A green poison hitsplat that the game shows without poison makes
+  the bot keep a poison reserve until the next poison message, poison tick or
+  cure. 0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** Strange fruit is recognized as a held cure and never fetched.
+  0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** When the game reports poison and the bot cannot see which
+  creature poisoned it, when the poison message and the creatures' update
+  arrived together so the bot cannot tell which game tick the message belongs
+  to, or when a poisoned bot takes any hit, the bot assumes the strongest poison
+  in the game (330 damage) until the next poison tick shows the real value. Each
+  poison tick then shows the true remaining value. A bot with a cure may drink
+  it earlier than it strictly needed to. A script with no cure held can pause on
+  a poison it would have survived. The pause ends within five poison ticks
+  (about 150 game ticks) of the first poison tick at which the bot's hitpoints
+  and food would have carried it through, which can be later than the message
+  when the bot is eating as it waits, and then the script continues on its own.
+  0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** When the game reports poison in a frame before its creatures'
+  update, the bot waits for that update before it decides which creature
+  poisoned it. A cure that is needed only for the worst case is then drunk one
+  game tick later. A cure that is needed at once is drunk at once. 0.2.7 to
+  0.2.8 have the same problem.
+- **Scripts:** The game does not say when a poison has ended. A paused script
+  whose hitpoints plus food are at or below the last poison tick's worst case (4
+  after the weakest tick) stays paused after the poison ran out, until it heals
+  past that or gets a cure.
+- **Scripts:** A paused script that is being hit by any creature stays paused
+  while the hits continue, because any hit can be a fresh poisoning. It does not
+  flee or fight back for that reason in this release.
+- **Scripts:** A native script that needs a cure while a bank deposit or
+  withdrawal is in flight lets that one transfer settle or time out first: eight
+  observed game ticks, without an elapsed-time minimum (twice that for a deposit
+  the game did not apply the first time). Then it closes the bank and drinks.
+  The Quester's own provisioning trips follow the same rule.
+- **Scripts:** When the bot reconnects while it is poisoned, it does not know it
+  is poisoned until the next poison tick, up to 30 game ticks later: the game
+  keeps the poison but does not repeat the poison message. In that time the bot
+  does not drink a held cure for that poison and does not eat early for it. A
+  bot whose hitpoints are at or below one poison tick's damage can die in that
+  tick. 0.2.7 to 0.2.8 have the same problem.
+- **Combat:** In a fight with no food left, a poisoned bot that holds an
+  antipoison can retreat or end the fight when its hitpoints are near the
+  poison-raised stop line, even though it drinks the antipoison in the same game
+  tick and would then be safe. 0.2.7 to 0.2.8 have the same problem.
+- **Navigation:** During a walk, a dialogue page that is open (for example a
+  level-up page or a gate's dialogue) can delay a drink or a bite until the walk
+  moves on and the page closes. An ordinary bite during a walk can go out in the
+  same game tick as a door or gate click. 0.2.7 to 0.2.8 have the same problem.
+- **Scripts:** In Power mode, a Gatherer that finishes its last dose of an
+  antipoison keeps the empty vial. The vial takes a pack slot until you drop it.
+  Bank mode deposits it on the next bank trip.
+- **Panel and terminal app:** During a walk or a fight, the status row shows
+  that a cure or food is needed while the walk or the fight drinks or eats; it
+  does not show the drink or the bite itself.
 - **Scripts:** During a Karamja trip to the mainland without the 30-coin boat
   fare, the bot earns the fare by working for Luthas. You may see "I can't reach
   that!" when the bot approaches Luthas or after he pays and before the boat
@@ -170,7 +238,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Support is planned for 0.2.9. 0.2.0 to 0.2.8 have the same problem.
 - **Host:** Background work can stop for the rest of the session after one disk
   operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
-  planned for 0.2.9. 0.2.6 to 0.2.8 have the same problem.
+  planned for 0.2.9. 0.2.4 to 0.2.8 have the same problem.
+- **Audio:** When music is on, a bot reads the music font once, at its first
+  song. Music is off in the default low-memory mode. 0.1.0 to 0.2.8 have the
+  same problem.
+- **Combat:** A combat step can end at its start with `prep-failed:weapon` even
+  though the weapon is in the pack. The server moves a worn weapon in one step,
+  but the game client applies the pack update and the worn update in separate
+  packets, so one frame can show the weapon in neither place. The machine reads
+  that frame as a missing weapon. A live run of the style switch showed the same
+  client behaviour; preparation has the same exposure and has not been seen to
+  fail yet. **Workaround:** run the combat step again; the weapon is worn by
+  then. 0.2.0 to 0.2.8 have the same problem.
 
 ### Fixed during development
 
