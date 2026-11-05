@@ -49,11 +49,11 @@ pub fn content_inputs(content_dir: &Path) -> ContentInputs {
     }
 }
 
-/// The loc-definition jag of a revision-bound cache directory: revision 289
-/// keeps `config` inside the cache directory, revision 274 reads the server
-/// `data/pack/config` beside the `client/` cache directory.
+/// The loc-definition jag of a revision-bound cache directory: revisions 289
+/// and 377 keep `config` inside the cache directory. Revision 274 reads the
+/// server `data/pack/config` beside the `client/` cache directory.
 pub fn config_jag_for(revision: u16, cache_dir: &Path) -> Result<PathBuf, crate::GenerationError> {
-    if revision == 289 {
+    if matches!(revision, 289 | 377) {
         Ok(cache_dir.join("config"))
     } else {
         cache_dir
@@ -1041,6 +1041,7 @@ fn selected_game_data(
     let game_revision = match selected_revision {
         274 => api::selected::ClientRevision::R274,
         289 => api::selected::ClientRevision::R289,
+        377 => api::selected::ClientRevision::R377,
         revision => return Err(crate::GenerationError::UnsupportedRevision { revision }),
     };
 
@@ -1155,9 +1156,24 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
     // Loc/NPC definitions from the selected local config archive.
     let (loc_defs, npc_types, loc_types) = match std::fs::read(request.config_jag) {
         Ok(bytes) => {
-            let cache = Cache::unpack(&JagFile::new(bytes));
-            let loc_defs = LocDefs::from_locs(&cache.locs);
-            (loc_defs, cache.npcs, cache.locs)
+            let jag = JagFile::new(bytes);
+            let (npcs, locs) = if request.revision == Some(377) {
+                let cache = client::config::config_377::Cache377::unpack(&jag).map_err(|source| {
+                    crate::GenerationError::ConfigDecode377 {
+                        path: request.config_jag.to_path_buf(),
+                        source,
+                    }
+                })?;
+                (
+                    cache.npcs.into_iter().map(Into::into).collect(),
+                    cache.locs.into_iter().map(Into::into).collect(),
+                )
+            } else {
+                let cache = Cache::unpack(&jag);
+                (cache.npcs, cache.locs)
+            };
+            let loc_defs = LocDefs::from_locs(&locs);
+            (loc_defs, npcs, locs)
         }
         Err(e) => {
             return Err(crate::GenerationError::SourceInput(

@@ -23,7 +23,7 @@ fn bake_rejects_unknown_revision_before_reading_local_game_data() {
 }
 
 #[test]
-fn the_289_config_jag_is_inside_the_cache_and_274_beside_it() {
+fn config_jag_uses_the_selected_revision_layout() {
     assert_eq!(
         config_jag_for(289, Path::new("/289/engine/data/pack/client")).unwrap(),
         PathBuf::from("/289/engine/data/pack/client/config")
@@ -31,6 +31,10 @@ fn the_289_config_jag_is_inside_the_cache_and_274_beside_it() {
     assert_eq!(
         config_jag_for(274, Path::new("/274/engine/data/pack/client")).unwrap(),
         PathBuf::from("/274/engine/data/pack/config")
+    );
+    assert_eq!(
+        config_jag_for(377, Path::new("/377/cache")).unwrap(),
+        PathBuf::from("/377/cache/config")
     );
     assert!(matches!(
         config_jag_for(274, Path::new("")),

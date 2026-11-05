@@ -55,6 +55,27 @@ fn explicit_274_uses_server_config_next_to_client_cache() {
 }
 
 #[test]
+fn explicit_377_selects_its_own_cache_and_game_data() {
+    let inputs = parse_args([
+        "--revision",
+        "377",
+        "--content",
+        "/fixture/377/content",
+        "--cache",
+        "/fixture/377/cache",
+        "--game-data-dir",
+        "/fixture/game-data",
+        "--out",
+        "/fixture/nav/377.navpack",
+    ])
+    .unwrap();
+    assert_eq!(inputs.revision, 377);
+    assert_eq!(inputs.maps_dir, PathBuf::from("/fixture/377/content/maps"));
+    assert_eq!(inputs.config_jag, PathBuf::from("/fixture/377/cache/config"));
+    assert_eq!(inputs.game_data_dir, PathBuf::from("/fixture/game-data"));
+}
+
+#[test]
 fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
     let complete = [
         "--revision",
@@ -74,7 +95,7 @@ fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
         vec!["--revision", "289"],
         vec![
             "--revision",
-            "377",
+            "378",
             "--content",
             "/content",
             "--cache",

@@ -5,6 +5,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## [0.2.9] — Unreleased
 
+### Navigation
+
+- The navigation baker accepts explicit revision 377 inputs and uses the
+  revision-377 config decoder. It writes the current v19 pack and local sidecars.
+
 ### Breaking changes
 
 - Source builds require local game-data and navigation generation before the product build.
