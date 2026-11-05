@@ -1,10 +1,10 @@
 //! Revision-377 constructor and bounded live interaction qualification.
 //!
 //! Both tests are ignored and require `LIVE=1` plus `BOT_LIVE_NAME_PREFIX=f377`.
-//! They use the explicit 377 profile paths `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`,
-//! `CLIENT_UNPACK_DIR`, `NAV_PACK`, `NAV_FLAGS`, and (optionally) a real
-//! `BOT_CACHE_MANIFEST`. The profile resolver gets a private temporary home;
-//! no operator `~/.274bot` files are consulted.
+//! They use the canonical `--revision 377` local profile with explicit paths
+//! `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`, `CLIENT_UNPACK_DIR`, `NAV_PACK`,
+//! `NAV_FLAGS`, and (optionally) a real `BOT_CACHE_MANIFEST`. Template
+//! preparation follows the production runtime-cache path in a private home.
 //!
 //! Live invocation (with the real resource paths supplied by the owner):
 //! ```text
@@ -143,10 +143,6 @@ fn load_bound_377() -> Result<Bound377, String> {
     if let Some(path) = &cache_manifest_path {
         path_is_file(path, "BOT_CACHE_MANIFEST")?;
     }
-    path_is_file(
-        &engine_dir.join("data/config/world.json"),
-        "377 engine world.json",
-    )?;
 
     let cache_manifest = CacheManifest::capture(REVISION, &cache_dir)?;
     if let Some(path) = &cache_manifest_path {
@@ -200,12 +196,7 @@ fn load_bound_377() -> Result<Bound377, String> {
         ..ProfileEnvironment::default()
     };
     let options = ProfileOptions {
-        profile: Some("local-377".into()),
         revision: Some(REVISION.to_string()),
-        host: Some(GAME_HOST.into()),
-        port: Some(GAME_PORT),
-        asset_host: Some(GAME_HOST.into()),
-        http_port: Some(ASSET_PORT),
         engine_dir: Some(engine_dir.clone()),
         cache_dir: Some(cache_dir.clone()),
         unpack_dir: Some(unpack_dir.clone()),
@@ -227,10 +218,14 @@ fn load_bound_377() -> Result<Bound377, String> {
         || selection.nav_pack() != nav_pack.as_path()
         || selection.nav_flags() != nav_flags.as_path()
     {
-        return Err("resolved profile differs from the explicit 377 localhost resources".into());
+        return Err("resolved profile differs from the canonical 377 localhost resources".into());
     }
 
-    let profile = selection.bind()?;
+    let template = selection.prepare_template()?;
+    let profile = Arc::clone(template.profile());
+    let prepared = profile
+        .prepared_cache()
+        .ok_or("production template did not retain its verified runtime cache")?;
     if profile.revision() != ClientRevision::R377
         || profile.profile_class() != ProfileClass::Local
         || profile.client().revision() != ClientRevision::R377
@@ -238,9 +233,10 @@ fn load_bound_377() -> Result<Bound377, String> {
         || profile.client().game_port() != GAME_PORT
         || profile.client().asset_host() != GAME_HOST
         || profile.client().asset_port() != ASSET_PORT
-        || profile.client().cache_dir() != cache_dir.as_path()
-        || profile.client().unpack_dir() != unpack_dir.as_path()
+        || profile.client().cache_dir() != prepared.jag_dir.as_path()
+        || profile.client().unpack_dir() != prepared.unpack_root()
         || profile.cache_id() != cache_manifest.identity()
+        || prepared.identity.content_id_hex() != decoded_content_id
         || profile.nav_pack() != nav_pack.as_path()
         || profile.nav_flags_origin() != NavFlagsOrigin::External
         || profile.nav_availability() != &NavAvailability::Bound
@@ -262,7 +258,6 @@ fn load_bound_377() -> Result<Bound377, String> {
         return Err("bound game data does not identify the selected 377 cache/snapshot".into());
     }
 
-    let template = SharedClientTemplate::load(Arc::clone(&profile))?;
     if !Arc::ptr_eq(template.profile(), &profile)
         || template.world().is_none()
         || template.game_data().is_none()
@@ -354,6 +349,8 @@ fn identity_record(bound: &Bound377) {
             "engine_dir": bound.engine_dir,
             "cache_dir": bound.cache_dir,
             "unpack_dir": bound.unpack_dir,
+            "bound_cache_dir": bound.profile.client().cache_dir(),
+            "bound_unpack_dir": bound.profile.client().unpack_dir(),
             "nav_pack": bound.nav_pack,
             "nav_flags": bound.nav_flags,
             "cache_manifest": bound.cache_manifest_path,
