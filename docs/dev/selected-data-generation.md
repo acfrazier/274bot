@@ -61,6 +61,12 @@ The verifier reruns the 377 extractors into a temporary directory and compares
 all four artifacts and the complete manifest row. It does not change the
 historical verifier's checks or require byte equality with 289 facts.
 
+Weapon attack rates must be integers in `0..=255` for every revision, including
+explicit per-object parameters. An invalid rate refuses generation with its
+object ID; it is not clamped or replaced by a default. Missing rates retain the
+historical default of 4 for 274/289; 377 reads and validates its selected
+`combat.param` default before validating each resolved weapon rate.
+
 The initial nav bake verifies the quest family through the offline upstream
 identity seam, before nav/flag hashes exist. Rebind the core and manifest to the
 real bake's hashes afterward. Runtime selection still requires the complete

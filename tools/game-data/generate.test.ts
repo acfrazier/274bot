@@ -662,6 +662,35 @@ assert.deepEqual(styleFacts.weapon_styles.map((row) => [
     [59, 2, 4, 3, 14], [60, 2, 4, 4, 14], [61, 1, 4, 0, null],
     [62, 2, 4, 1, 12],
 ]);
+// Validate explicit object rates after fallback resolution on every supported revision.
+fs.writeFileSync(combatParamFile, combatParams
+    .replace('[attackrate]\ntype=int\ndefault=4', '[attackrate]\ntype=int\ndefault=6')
+    + '[attackrange]\ntype=int\ndefault=0\n[levelrequire]\ntype=int\ndefault=0\n');
+try {
+    for (const revision of [274, 289, 377]) {
+        const weapon = (rate: number | string | undefined) => ({
+            id: 52,
+            category: 12,
+            params: new Map<number, number | string>(rate === undefined ? [] : [[9, rate]]),
+        });
+        const extractRate = (rate: number | string | undefined) =>
+            extractCombatStyleFacts(content, [weapon(rate)], [], combatScripts, revision).weapon_styles[0]!.attackrate;
+        assert.equal(extractRate(undefined), revision === 377 ? 6 : 4, `${revision}: selected attackrate fallback`);
+        for (const rate of [0, 4, 255]) {
+            assert.equal(extractRate(rate), rate, `${revision}: valid explicit attackrate ${rate}`);
+        }
+        assert.throws(() => extractRate('4'), /obj 52: attackrate is not numeric/, `${revision}: reject a string rate`);
+        for (const rate of [-1, 256, 1.5, NaN, Infinity, -Infinity]) {
+            assert.throws(
+                () => extractRate(rate),
+                new RegExp(`obj 52: attackrate ${String(rate).replace('.', '\\.')} is out of range`),
+                `${revision}: reject invalid explicit attackrate ${rate}`,
+            );
+        }
+    }
+} finally {
+    fs.writeFileSync(combatParamFile, combatParams);
+}
 assert.deepEqual(styleFacts.combat_tabs.map((row) => [row.tab, row.root_id]), [
     [0, 904], [1, 901], [6, 902], [9, 903], [12, 900], [13, 910], [14, 911], [15, 328],
 ]);
