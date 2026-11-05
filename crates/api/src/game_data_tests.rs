@@ -137,6 +137,144 @@ fn streamed_pin_covers_trailing_whitespace_and_refuses_truncated_input() {
     assert!(SelectedGameData::decode(&RAW_289[..RAW_289.len() / 2], ClientRevision::R289).is_err());
 }
 
+fn offline_bake_fixture(
+    update: impl FnOnce(&mut serde_json::Value),
+) -> (Arc<SelectedGameData>, Vec<u8>, Vec<u8>) {
+    let mut core: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
+    let cache = core["provenance"]["cache_identity"]
+        .as_object_mut()
+        .unwrap();
+    cache.remove("nav_sha256");
+    cache.remove("flags_sha256");
+    update(&mut core);
+    let bytes = serde_json::to_vec(&core).unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_slice(MANIFEST).unwrap();
+    let row = manifest["revisions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["revision"] == 289)
+        .unwrap();
+    row["bytes"] = (bytes.len() as u64).into();
+    row["sha256"] = format!("{:x}", Sha256::digest(&bytes)).into();
+    row["engine_commit"] = core["provenance"]["engine_commit"].clone();
+    row["content_commit"] = core["provenance"]["content_commit"].clone();
+    row["cache_identity"] = core["provenance"]["cache_identity"].clone();
+    let data = SelectedGameData::decode(bytes.as_slice(), ClientRevision::R289).unwrap();
+    (data, bytes, serde_json::to_vec(&manifest).unwrap())
+}
+
+#[test]
+fn offline_quest_bake_verifies_real_family_before_nav_exists_without_a_runtime_pin() {
+    let (data, core, manifest) = offline_bake_fixture(|_| {});
+    assert!(matches!(
+        data.bind_pin(
+            core.len() as u64,
+            Sha256::digest(&core).into(),
+            &manifest,
+            ClientRevision::R289,
+        ),
+        Err(FactError::FamilyUnavailable(_))
+    ));
+    let (facts, identity) = crate::quest_facts::for_bake(&data, &manifest).unwrap();
+    assert!(facts.rows.iter().any(|row| row.alias == "cook"));
+    assert_eq!(
+        identity.sha256,
+        <[u8; 32]>::from(Sha256::digest(include_bytes!(
+            "../data/game-data/289/quests.json"
+        )))
+    );
+    assert!(data.selected_pin().is_err());
+    assert!(data.quest_family_identity().is_none());
+    assert!(
+        data.try_quests().is_none(),
+        "offline decoding cannot prepare runtime facts"
+    );
+}
+
+#[test]
+fn offline_quest_bake_refuses_unverified_core_and_changed_manifest() {
+    let (data, mut core, manifest) = offline_bake_fixture(|_| {});
+    let unverified: SelectedGameData = serde_json::from_slice(&core).unwrap();
+    assert!(matches!(
+        crate::quest_facts::for_bake(&unverified, &manifest),
+        Err(FactError::FamilyUnavailable(_))
+    ));
+    core.push(b' ');
+    let changed = SelectedGameData::decode(core.as_slice(), ClientRevision::R289).unwrap();
+    assert!(matches!(
+        crate::quest_facts::for_bake(&changed, &manifest),
+        Err(FactError::PinMismatch)
+    ));
+    for field in ["bytes", "sha256", "engine_commit", "content_commit"] {
+        let mut changed: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        let row = &mut changed["revisions"][1];
+        row[field] = if field == "bytes" {
+            0.into()
+        } else {
+            "00".repeat(32).into()
+        };
+        assert!(
+            matches!(
+                crate::quest_facts::for_bake(&data, &serde_json::to_vec(&changed).unwrap()),
+                Err(FactError::PinMismatch)
+            ),
+            "{field}"
+        );
+    }
+    for field in ["cache_id", "content_id"] {
+        let mut changed: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        changed["revisions"][1]["cache_identity"][field] = "00".repeat(32).into();
+        assert!(
+            matches!(
+                crate::quest_facts::for_bake(&data, &serde_json::to_vec(&changed).unwrap()),
+                Err(FactError::PinMismatch)
+            ),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn offline_quest_bake_still_checks_family_descriptor_and_header_provenance() {
+    let (data, _, manifest) = offline_bake_fixture(|_| {});
+    for field in ["path", "bytes", "sha256", "schema"] {
+        let mut changed: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        changed["revisions"][1]["families"]["quests"][field] = match field {
+            "bytes" | "schema" => 0.into(),
+            _ => "changed".into(),
+        };
+        assert!(
+            crate::quest_facts::for_bake(&data, &serde_json::to_vec(&changed).unwrap()).is_err(),
+            "{field}"
+        );
+    }
+    for field in ["engine_commit", "content_commit", "cache_id", "content_id"] {
+        let (data, _, manifest) = offline_bake_fixture(|core| {
+            if matches!(field, "engine_commit" | "content_commit") {
+                core["provenance"][field] = "ab".repeat(20).into();
+            } else {
+                core["provenance"]["cache_identity"][field] = "ab".repeat(32).into();
+                if field == "content_id" {
+                    if let Some(starts) = core
+                        .get_mut("quest_starts")
+                        .filter(|value| value.is_object())
+                    {
+                        starts["content_id"] = "ab".repeat(32).into();
+                    }
+                }
+            }
+        });
+        assert!(
+            matches!(
+                crate::quest_facts::for_bake(&data, &manifest),
+                Err(FactError::PinMismatch)
+            ),
+            "{field}"
+        );
+    }
+}
+
 #[test]
 fn family_preparation_runs_off_the_callers_thread() {
     let caller = std::thread::current().id();

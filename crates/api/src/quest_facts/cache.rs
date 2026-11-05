@@ -144,13 +144,14 @@ fn load(
 }
 
 /// The offline bake consumes identity rows, not a runtime progress catalog.
-/// Keep verification shared with normal worker preparation while avoiding
-/// construction of a catalog that the bake would immediately discard.
+/// Authenticate the decoded core and artifact against the same manifest even
+/// before nav/flags exist; runtime preparation still requires SelectedPin.
 pub(crate) fn for_bake(
     data: &SelectedGameData,
+    manifest: &[u8],
 ) -> Result<(crate::game_data::QuestIdentityFacts, QuestFamilyIdentity), FactError> {
-    let pin = data.selected_pin()?;
-    verified_identity(&pin, MANIFEST, embedded(pin.revision))
+    let source = data.family_source_for_bake(manifest)?;
+    verified_source_identity(&source, manifest, embedded(source.revision))
 }
 
 fn verified_identity(
@@ -158,13 +159,21 @@ fn verified_identity(
     manifest: &[u8],
     family: &[u8],
 ) -> Result<(crate::game_data::QuestIdentityFacts, QuestFamilyIdentity), FactError> {
+    verified_source_identity(&family_asset::FamilySource::from(pin), manifest, family)
+}
+
+fn verified_source_identity(
+    source: &family_asset::FamilySource<'_>,
+    manifest: &[u8],
+    family: &[u8],
+) -> Result<(crate::game_data::QuestIdentityFacts, QuestFamilyIdentity), FactError> {
     let verified =
-        family_asset::verify_family(pin, manifest, &QUESTS_FAMILY, wire::SCHEMA, family)?;
+        family_asset::verify_family_source(source, manifest, &QUESTS_FAMILY, wire::SCHEMA, family)?;
     let schema = NonZeroU16::new(verified.schema).ok_or(FactError::Schema {
         expected: wire::SCHEMA,
         actual: verified.schema,
     })?;
-    let facts = wire::decode(pin, family)?;
+    let facts = wire::decode(source, family)?;
     Ok((
         facts,
         QuestFamilyIdentity {

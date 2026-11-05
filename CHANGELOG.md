@@ -16,6 +16,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 - Revision 377 cache manifests now pass the navigation identity checks.
   Revision mismatches and changed archive bytes still fail.
+- An offline quest-family bake verifies the actual core, manifest, family
+  bytes and source provenance before navigation exists. Runtime selected pins
+  still require the final real navigation and flags digests.
 
 ### Gatherer
 
