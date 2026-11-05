@@ -14,6 +14,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Revision 377 generated-input pins now come from a fresh engine/content
   build, without inherited generated IDs. Regeneration requires clean-checkout
   pack outputs and a navigation rebake before the final identity binding.
+- Shop lookups now report revision-377 facts as unavailable instead of
+  returning legacy revision-289 stock, price or keeper values.
 
 ### Navigation
 
@@ -43,6 +45,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Adds the `client_377` direct-walk and Hans interaction proof scenario.
 - Updates the revision-377 client dependency to the reviewed bank-operation
   ports, including inventory buttons, drag and amount prompts.
+- Survival and walk guards use the world's selected combat and consumption
+  facts. Revision 377 no longer inherits revision-289 guard tables.
+- Adds finite revision-377 native cow combat and loot, food and antipoison
+  witnesses, plus individual Hans clue handoffs. Each cell discloses its
+  pre-Start account fixtures and records real rendered frames.
 
 ### Gatherer
 
