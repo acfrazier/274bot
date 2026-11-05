@@ -1953,7 +1953,9 @@ fn legal_send_rows_are_selected_for_revision_289() {
 fn legal_send_rows_are_selected_for_revision_377() {
     let rows = legal_sends_for(ClientRevision::R377);
     assert_eq!(rows.len(), 77, "only known semantic identities are listed");
-    assert!(rows.iter().all(|row| (0..=i32::from(u8::MAX)).contains(&row.id)));
+    assert!(rows
+        .iter()
+        .all(|row| (0..=i32::from(u8::MAX)).contains(&row.id)));
 
     let mut ids: Vec<_> = rows.iter().map(|row| row.id).collect();
     ids.sort_unstable();
@@ -1968,10 +1970,7 @@ fn legal_send_rows_are_selected_for_revision_377() {
 #[test]
 fn revision_377_packet_metadata_uses_pinned_wire_rows_and_known_semantics() {
     assert_eq!(
-        packet_metadata(
-            ClientRevision::R377,
-            ClientProt377::MOVE_GAMECLICK.id as u8
-        ),
+        packet_metadata(ClientRevision::R377, ClientProt377::MOVE_GAMECLICK.id as u8),
         Some(PacketMetadata {
             opcode: 28,
             named: ClientProt::MOVE_GAMECLICK,
@@ -2014,7 +2013,10 @@ fn revision_377_packet_metadata_uses_pinned_wire_rows_and_known_semantics() {
     ];
     for wire_row in ClientProt377::ALL {
         let observed = packet_metadata(ClientRevision::R377, wire_row.id as u8);
-        if unsupported.iter().any(|unmapped| unmapped.id == wire_row.id) {
+        if unsupported
+            .iter()
+            .any(|unmapped| unmapped.id == wire_row.id)
+        {
             assert_eq!(observed, None, "unmapped R377 row {wire_row:?}");
         } else {
             let observed = observed.expect("known R377 wire row has metadata");
