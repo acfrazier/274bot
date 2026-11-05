@@ -2664,7 +2664,7 @@ async function generate(spec: Revision, stage: GenerationStage) {
     const spellMaxHits = buildSpellMaxHits(spec.content);
     const npcTypeSource = fs.readFileSync(path.join(spec.engine, 'src/cache/config/NpcType.ts'), 'utf8');
     const npcNames = extractNpcNamesFacts(spec.content, spec.revision, npcTypeSource, combatScripts, spellMaxHits);
-    const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts, pvpV0);
+    const combatStyles = extractCombatStyleFacts(spec.content, objModule.default.configs, npcNames.combatNpcs, combatScripts, pvpV0, spec.revision);
     // PvP V0 facts use content aliases to join decoded obj configurations.
     const aliasToId = new Map(items.filter((item) => item.alias !== null).map((item) => [item.alias as string, item.id]));
     const idToAlias = new Map(items.filter((item) => item.alias !== null).map((item) => [item.id, item.alias as string]));
