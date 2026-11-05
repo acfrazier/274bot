@@ -48,12 +48,52 @@ bun tools/game-data/verify.ts --revision 377
 
 The 377 source pins are engine `bc47497ee8cf6148dbfb7239714ddd5045c40194`
 and content `a15d0faa809f5f8455ef43e1ae4edfdd22512bb2`.
-Use a members-world decode (`NODE_MEMBERS=true`). Build the server pack with the
-selected engine's full build. For Fairy Ring's modified content, that build uses
-`BUILD_VERIFY=false`; this does not bypass the generator's input-pin checks.
+Use a members-world decode (`NODE_MEMBERS=true`). Build the server pack from
+**fresh checkouts**, not an existing engine/content build directory.
+`PackFile.ts` preserves existing generated IDs and appends new names.
+A clean Git status therefore does not prove a canonical pack build.
+Ignored generated maps can retain older IDs.
+
+Use Node `26.12.0` for this 377 pin. Start with a new, empty parent directory:
+
+```bash
+mkdir clean-377
+cd clean-377
+git clone --no-checkout "$ENGINE_REPOSITORY" engine
+git clone --no-checkout "$CONTENT_REPOSITORY" content
+git -C engine checkout --detach bc47497ee8cf6148dbfb7239714ddd5045c40194
+git -C content checkout --detach a15d0faa809f5f8455ef43e1ae4edfdd22512bb2
+test -z "$(git -C content ls-files --others --ignored --exclude-standard -- pack)"
+test ! -e engine/data/pack/server/obj.dat
+test ! -e engine/data/pack/server/npc.dat
+cd engine
+npm ci
+NODE_MEMBERS=true BUILD_VERIFY=false npm run build
+```
+
+Do not copy generated pack files from an older build.
+Copying dependencies installed from the same `package-lock.json` is acceptable.
+For Fairy Ring's modified content, the full build uses `BUILD_VERIFY=false`.
+This setting does not bypass the generator's input checks.
+Point `GAME_DATA_377_ENGINE` and `GAME_DATA_377_CONTENT` at these fresh checkouts.
+Compare every generated input against `tools/game-data/generated-inputs.json`.
+Do not update pins merely to accept an existing local build.
+
 The client inputs are the published 377 cache, not a newly repacked versionlist.
-`cache-content-id` must verify that cache against its complete decoded snapshot.
-The generator never invents a snapshot or copies another revision's identity.
+Restore those published archives into the fresh engine's `data/pack/client`
+before generation. `cache-content-id` must verify that cache against its complete
+decoded snapshot. The generator never invents a snapshot or copies another
+revision's identity.
+
+Rebake navigation after a generated-map pin change, then rebind the core and manifest.
+The baker's conservative content digest includes generated maps under `content/`.
+The navpack also binds the complete quest artifact digest, including provenance.
+Equal quest facts alone do not permit reuse of the old navpack.
+
+The generator rejects bytes that differ from committed pins.
+It cannot determine build history from matching bytes or a clean Git status.
+A separate clean-build comparison could make future pin updates fail closed.
+That comparison should require equal bytes for every generated input before accepting new pins.
 
 The API embeds `377.json` and its `377/{gathering,quests,debug}.json` families.
 It requires the exact selected revision, schema, source pins and family digests.
