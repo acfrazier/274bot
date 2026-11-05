@@ -739,6 +739,39 @@ Sequence, Stop/restart and death assertions belong to the live cell. Additional
 bank stock or auxiliary quest flags may be inserted into the pre-Start setup,
 never into the gameplay proof. Shared world entities must remain real content.
 
+## Revision-377 combat, Survival and clue cells
+
+The ignored `revision_377_live::machines` cells use the same production
+template and resource inputs as the revision-377 Gatherer cells below.
+Run with `BOT_LIVE_NAME_PREFIX=f377` through `isohome`.
+Set an absolute `MACHINES_377_EVIDENCE_DIR`.
+Use `machines_377_` with `--ignored --nocapture --test-threads=1`.
+Enable `debug-catalog,live-harness,test-support`. Clue cells also require `js`.
+
+Each cell uses a fresh account and the normal mainland logout/login.
+All account fixtures finish before the native machine starts:
+
+- Cow combat receives Attack, Strength, Defence and Hitpoints 40, one bronze
+  sword, and five lobsters. It starts inside the real Lumbridge cow pasture.
+  The native Combat action must report a kill and a swing.
+  Combat XP must increase. Native Reach must then take a new cowhide.
+- Survival eating receives Hitpoints 15, drains 12 HP, and receives five
+  lobsters. Poison severity 50 supplies the poison line before Start.
+  Cure policy remains `never`. A native food-guarded walk must move, consume
+  food, and increase observed HP.
+- Survival cure receives Hitpoints 40, five lobsters, and one single-dose
+  antipoison. Poison severity 50 supplies the poison line before Start.
+  A native food-guarded walk must move and produce the drink message,
+  dose-to-vial inventory change, and owner-observed immunity.
+- Sherlock receives one selected Hans clue, either easy `simple005` or hard
+  `riddle012`. Its handoff must remove that clue and produce another clue or
+  casket. This does not qualify the rest of the generated trail.
+
+The cells seed no scene entities, loot, replacement clues or post-Start actions.
+They capture prepared and result frames from the real client renderer.
+These finite witnesses do not establish general combat safety, every cure,
+search/dig clues, or complete treasure trails.
+
 ## Gatherer live cells
 
 Gatherer cells live in `crates/host-play/tests/gatherer_live.rs`. Each uses an

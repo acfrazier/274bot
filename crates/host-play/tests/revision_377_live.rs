@@ -20,6 +20,9 @@
 #[path = "revision_377_live/gatherer.rs"]
 mod gatherer;
 
+#[path = "revision_377_live/machines.rs"]
+mod machines;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
