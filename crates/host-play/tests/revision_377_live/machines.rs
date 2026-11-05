@@ -126,7 +126,7 @@ impl Facts {
                 .ok_or_else(|| format!("377 item unavailable: {alias}"))
         };
         let loot = data
-            .item_by_alias("cowhide")
+            .item_by_alias("cow_hide")
             .ok_or("377 cowhide unavailable")?;
         let clue = case
             .clue_alias()
