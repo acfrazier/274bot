@@ -491,6 +491,7 @@ pub fn compile_path_for_gang(
             let revision = match pin.revision {
                 ClientRevision::R274 => 274,
                 ClientRevision::R289 => 289,
+                ClientRevision::R377 => 377,
             };
             (
                 revision,
