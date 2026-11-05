@@ -86,11 +86,18 @@ impl Case {
 
     fn commands(self) -> Vec<String> {
         let tile = self.start();
-        vec![
+        let mut commands = vec![
             "~clearinv".into(),
             "~clearinv worn".into(),
             "~clearbank".into(),
             format!("setstat {} 40", self.skill()),
+        ];
+        if matches!(self, Self::Shrimp) {
+            // Fresh HP 10 and Defence 60 produce combat 18, above the
+            // selected Draynor level-7 wizard zone's combat cap of 14.
+            commands.push("setstat defence 60".into());
+        }
+        commands.extend([
             format!("give {} 1", self.tool().1),
             format!(
                 "tele {},{},{},{},{}",
@@ -100,7 +107,12 @@ impl Case {
                 tile.x & 63,
                 tile.z & 63
             ),
-        ]
+        ]);
+        commands
+    }
+
+    fn combat_prepared(self, combat_level: i32) -> bool {
+        !matches!(self, Self::Shrimp) || combat_level == 18
     }
 }
 
@@ -110,6 +122,7 @@ struct Sample {
     tile: Option<(i32, i32, i32)>,
     xp: i32,
     level: i32,
+    combat_level: i32,
     tool_in_inventory: i32,
     tool_equipped: bool,
     inventory_slots: usize,
@@ -137,6 +150,9 @@ impl Sample {
             tile: snapshot.tile(),
             xp: stat.map_or(0, |stat| stat.xp),
             level: stat.map_or(0, |stat| stat.base),
+            combat_level: snapshot
+                .local_player()
+                .map_or(0, |player| player.player.combat_level),
             tool_in_inventory: count(snapshot.inventory(), &[case.tool().0]),
             tool_equipped: snapshot
                 .equipment()
@@ -334,6 +350,7 @@ impl LiveState {
             }
             if self.last_command_tick == Some(sample.tick)
                 || sample.level != 40
+                || !self.case.combat_prepared(sample.combat_level)
                 || !sample.at_resource(self.case)
                 || sample.tool_in_inventory != 1
                 || sample.inventory_slots != 1
@@ -547,6 +564,7 @@ fn bank_witness_requires_an_empty_live_page_and_fresh_yield_after_return() {
         tile: Some((3087, 3228, 0)),
         xp: 1000,
         level: 40,
+        combat_level: 18,
         tool_in_inventory: 1,
         tool_equipped: false,
         inventory_slots: 1,
@@ -604,4 +622,13 @@ fn bank_witness_requires_an_empty_live_page_and_fresh_yield_after_return() {
     };
     returned.tile = Some((3220, 3245, 0));
     assert!(witness.returned(&distant_site, &baseline, &returned, 1));
+}
+
+#[test]
+fn fishing_fixture_requires_the_combat_appearance_acknowledgement() {
+    for combat_level in [0, 3, 14, 17] {
+        assert!(!Case::Shrimp.combat_prepared(combat_level));
+    }
+    assert!(Case::Shrimp.combat_prepared(18));
+    assert!(Case::Trees.combat_prepared(3));
 }
