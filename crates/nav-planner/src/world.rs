@@ -218,7 +218,6 @@ impl NavWorld {
             named_banks: OnceLock::new(),
             transport_item_names: OnceLock::new(),
             risk_facts: OnceLock::new(),
-            content: OnceLock::new(),
             lease_identity: OnceLock::new(),
             search_envelope: OnceLock::new(),
         }
