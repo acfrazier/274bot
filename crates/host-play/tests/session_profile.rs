@@ -1539,19 +1539,24 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
 }
 
 #[test]
-fn missing_289_sidecar_and_missing_pack_keep_existing_refusals() {
+fn missing_selected_revision_sidecar_and_missing_pack_keep_existing_refusals() {
     let fixture = Fixture::new();
     let bytes = tiny_v8_pack();
     let pack = fixture.0.join("orphan.navpack");
     std::fs::write(&pack, &bytes).unwrap();
-    let mut options = fixture.options(289);
-    options.nav_pack = Some(pack);
-    assert!(options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind()
-        .unwrap_err()
-        .contains("revision 289 requires"));
+    for revision in [289, 377] {
+        let mut options = fixture.options(revision);
+        options.nav_pack = Some(pack.clone());
+        let error = options
+            .resolve_with_env(None, &fixture.env())
+            .unwrap()
+            .bind()
+            .unwrap_err();
+        assert!(
+            error.contains(&format!("revision {revision} requires")),
+            "{error}"
+        );
+    }
 
     let missing = fixture
         .options(274)
