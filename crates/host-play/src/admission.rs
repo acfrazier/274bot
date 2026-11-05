@@ -218,10 +218,47 @@ fn tables_cell(world: &NavWorld) -> &OnceLock<Option<Tables>> {
     world.risk_facts(OnceLock::new)
 }
 
+fn build_tables_for(selected: Arc<api::game_data::SelectedGameData>) -> Option<Tables> {
+    let combat = CombatTables::build(selected).ok()?;
+    let risks = RiskTables::build(&combat);
+    Some(Tables { combat, risks })
+}
+
 fn build_tables() -> Option<Tables> {
     let combat = script::combat::guard::shared_tables().ok()?;
     let risks = RiskTables::build(&combat);
     Some(Tables { combat, risks })
+}
+
+/// Pin revision 377's combat and risk facts on its world before any slot can
+/// observe it. A failed build remains unavailable in this world's one cache;
+/// it must not fall through to the legacy shared revision-289 tables.
+pub(crate) fn bind_377_tables(
+    world: &NavWorld,
+    selected: Option<Arc<api::game_data::SelectedGameData>>,
+) -> Result<(), script::combat::guard::GuardRefusal> {
+    let cached = tables_cell(world).get_or_init(|| {
+        let selected = selected.filter(|data| data.revision() == 377)?;
+        build_tables_for(selected)
+    });
+    if cached
+        .as_ref()
+        .is_some_and(|tables| tables.combat.selected().revision() != 377)
+    {
+        return Err(script::combat::guard::GuardRefusal::Tables);
+    }
+    Ok(())
+}
+
+/// The route-job charge uses the world's selected combat rows when bound.
+/// Before a synthetic/legacy world is initialized, retain its R289 estimate;
+/// an explicitly unavailable world stays unavailable.
+pub(crate) fn combat_tables_for_estimate(world: &NavWorld) -> Option<Arc<CombatTables>> {
+    match tables_cell(world).get() {
+        Some(Some(tables)) => Some(Arc::clone(&tables.combat)),
+        Some(None) => None,
+        None => script::combat::guard::shared_tables().ok(),
+    }
 }
 
 fn tables(world: &NavWorld) -> Option<&Tables> {
