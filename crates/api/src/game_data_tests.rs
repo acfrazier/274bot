@@ -191,7 +191,7 @@ fn offline_quest_bake_verifies_real_family_before_nav_exists_without_a_runtime_p
         Err(FactError::FamilyUnavailable(_))
     ));
     let (facts, identity) = crate::quest_facts::for_bake(&data, &manifest).unwrap();
-    assert!(facts.rows.iter().any(|row| row.alias == "cook"));
+    assert!(facts.rows.iter().any(|row| row.id == "cook"));
     assert_eq!(
         identity.sha256,
         <[u8; 32]>::from(Sha256::digest(include_bytes!(

@@ -19,6 +19,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - An offline quest-family bake verifies the actual core, manifest, family
   bytes and source provenance before navigation exists. Runtime selected pins
   still require the final real navigation and flags digests.
+- Source-derived service POI sidecars accept explicit revision 377 packs.
+  Client-derived image/catalogue jobs keep their existing decoder admission,
+  and sidecar revision and digest mismatches still fail.
 
 ### Gatherer
 
