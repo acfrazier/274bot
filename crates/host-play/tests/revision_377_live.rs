@@ -1,6 +1,6 @@
 //! Revision-377 constructor and bounded live interaction qualification.
 //!
-//! Both tests are ignored and require `LIVE=1` plus `BOT_LIVE_NAME_PREFIX=fr377_`.
+//! Both tests are ignored and require `LIVE=1` plus `BOT_LIVE_NAME_PREFIX=f377`.
 //! They use the explicit 377 profile paths `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`,
 //! `CLIENT_UNPACK_DIR`, `NAV_PACK`, `NAV_FLAGS`, and (optionally) a real
 //! `BOT_CACHE_MANIFEST`. The profile resolver gets a private temporary home;
@@ -9,7 +9,7 @@
 //! Live invocation (with the real resource paths supplied by the owner):
 //! ```text
 //! /Users/acfrazier/experiments/274bot/.superpowers/bin/isohome env \
-//!   LIVE=1 BOT_LIVE_NAME_PREFIX=fr377_ ENGINE_DIR=<377-engine> \
+//!   LIVE=1 BOT_LIVE_NAME_PREFIX=f377 ENGINE_DIR=<377-engine> \
 //!   CLIENT_377_CACHE_DIR=<377-raw-cache> CLIENT_UNPACK_DIR=<377-decoded-snapshot> \
 //!   NAV_PACK=<377-nav-pack> NAV_FLAGS=<377-nav-flags> \
 //!   BOT_CACHE_MANIFEST=<real-377-cache-manifest> \
@@ -41,7 +41,7 @@ const GAME_PORT: u16 = 43595;
 const ASSET_PORT: u16 = 81;
 const LUMBRIDGE_REGION: i32 = 50;
 const TALK_ACTION: &str = "Talk-to";
-const ACCOUNT_PREFIX: &str = "fr377_";
+const ACCOUNT_PREFIX: &str = "f377";
 
 struct ScratchHome(PathBuf);
 
@@ -104,7 +104,7 @@ fn require_live_guard() -> Result<(), String> {
         return Err("set LIVE=1 to run revision-377 qualification".into());
     }
     if std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok(ACCOUNT_PREFIX) {
-        return Err("set BOT_LIVE_NAME_PREFIX=fr377_ to isolate the one live account".into());
+        return Err("set BOT_LIVE_NAME_PREFIX=f377 to isolate the one live account".into());
     }
     if std::env::var_os("HOME").is_none() {
         return Err("run through isohome so HOME is throwaway".into());
@@ -144,12 +144,16 @@ fn load_bound_377() -> Result<Bound377, String> {
     if let Some(path) = &cache_manifest_path {
         path_is_file(path, "BOT_CACHE_MANIFEST")?;
     }
-    path_is_file(&engine_dir.join("data/config/world.json"), "377 engine world.json")?;
+    path_is_file(
+        &engine_dir.join("data/config/world.json"),
+        "377 engine world.json",
+    )?;
 
     let cache_manifest = CacheManifest::capture(REVISION, &cache_dir)?;
     if let Some(path) = &cache_manifest_path {
         let declared: CacheManifest = serde_json::from_slice(
-            &fs::read(path).map_err(|error| format!("read cache manifest {}: {error}", path.display()))?,
+            &fs::read(path)
+                .map_err(|error| format!("read cache manifest {}: {error}", path.display()))?,
         )
         .map_err(|error| format!("parse cache manifest {}: {error}", path.display()))?;
         declared.verify(REVISION, &cache_dir)?;
@@ -157,14 +161,19 @@ fn load_bound_377() -> Result<Bound377, String> {
             return Err("declared 377 cache manifest differs from captured cache bytes".into());
         }
     }
-    let decoded_content_id =
-        nav_bake::bake::decoded_identity(REVISION, &cache_dir, &unpack_dir)?;
+    let decoded_content_id = nav_bake::bake::decoded_identity(REVISION, &cache_dir, &unpack_dir)?;
     let nav_manifest_path = nav_manifest_path(&nav_pack);
     path_is_file(&nav_manifest_path, "NAV_PACK manifest")?;
-    let nav_manifest: NavManifest = serde_json::from_slice(&fs::read(&nav_manifest_path).map_err(
-        |error| format!("read nav manifest {}: {error}", nav_manifest_path.display()),
-    )?)
-    .map_err(|error| format!("parse nav manifest {}: {error}", nav_manifest_path.display()))?;
+    let nav_manifest: NavManifest =
+        serde_json::from_slice(&fs::read(&nav_manifest_path).map_err(|error| {
+            format!("read nav manifest {}: {error}", nav_manifest_path.display())
+        })?)
+        .map_err(|error| {
+            format!(
+                "parse nav manifest {}: {error}",
+                nav_manifest_path.display()
+            )
+        })?;
     let nav_hash = hash_file(&nav_pack)?;
     nav_manifest.verify_pack(
         REVISION,
@@ -241,13 +250,15 @@ fn load_bound_377() -> Result<Bound377, String> {
     {
         return Err("bound profile lost the explicit 377 cache or navigation identity".into());
     }
-    let data = profile
-        .game_data()
-        .ok_or_else(|| format!("377 generated game data was not attached: {}", profile.game_data_status().detail()))?;
+    let data = profile.game_data().ok_or_else(|| {
+        format!(
+            "377 generated game data was not attached: {}",
+            profile.game_data_status().detail()
+        )
+    })?;
     if data.revision() != REVISION as i32
         || data.content_id() != Some(decoded_content_id.as_str())
-        || (data.cache_id() != profile.cache_id()
-            && data.content_id() != Some(profile.cache_id()))
+        || (data.cache_id() != profile.cache_id() && data.content_id() != Some(profile.cache_id()))
     {
         return Err("bound game data does not identify the selected 377 cache/snapshot".into());
     }
@@ -257,7 +268,9 @@ fn load_bound_377() -> Result<Bound377, String> {
         || template.world().is_none()
         || template.game_data().is_none()
     {
-        return Err("production shared template lost the bound 377 profile, data, or nav world".into());
+        return Err(
+            "production shared template lost the bound 377 profile, data, or nav world".into(),
+        );
     }
 
     Ok(Bound377 {
@@ -316,7 +329,9 @@ fn assert_377_client(client: &Client, lowmem: bool) -> Result<(), String> {
         || sidecar.interfaces.initial_overlays.len() != client.ifaces_mut.len()
         || sidecar.interfaces.initial_overlays.len() != client.ifaces.len()
     {
-        return Err("377 interface sidecars are absent or not aligned with decoded components".into());
+        return Err(
+            "377 interface sidecars are absent or not aligned with decoded components".into(),
+        );
     }
     Ok(())
 }
@@ -360,7 +375,7 @@ fn identity_record(bound: &Bound377) {
 }
 
 #[test]
-#[ignore = "explicit 377 cache/snapshot/nav resources; LIVE=1 and BOT_LIVE_NAME_PREFIX=fr377_ are required"]
+#[ignore = "explicit 377 cache/snapshot/nav resources; LIVE=1 and BOT_LIVE_NAME_PREFIX=f377 are required"]
 fn retained_377_template_shares_mode_correct_revision_bound_caches() -> Result<(), String> {
     let bound = load_bound_377()?;
     identity_record(&bound);
@@ -381,10 +396,11 @@ fn retained_377_template_shares_mode_correct_revision_bound_caches() -> Result<(
     {
         return Err("prepared 377 clients do not share the exact cache within, and only within, one memory mode".into());
     }
-    if !Arc::ptr_eq(&low_a.ifaces, &low_b.ifaces)
-        || !Arc::ptr_eq(&high_a.ifaces, &high_b.ifaces)
-    {
-        return Err("prepared 377 clients do not share immutable interface tables within their memory mode".into());
+    if !Arc::ptr_eq(&low_a.ifaces, &low_b.ifaces) || !Arc::ptr_eq(&high_a.ifaces, &high_b.ifaces) {
+        return Err(
+            "prepared 377 clients do not share immutable interface tables within their memory mode"
+                .into(),
+        );
     }
     println!(
         "{}",
@@ -521,7 +537,9 @@ fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: Option<usize>) -> Opti
 
 fn direct_step_toward(from: WorldTile, to: WorldTile) -> Result<WorldTile, String> {
     if !lumbridge(from) || !lumbridge(to) {
-        return Err(format!("direct walk endpoints must remain in Lumbridge: {from:?} to {to:?}"));
+        return Err(format!(
+            "direct walk endpoints must remain in Lumbridge: {from:?} to {to:?}"
+        ));
     }
     let start_distance = chebyshev(from, to);
     let dx = (to.x - from.x).signum();
@@ -555,7 +573,10 @@ fn fresh_account_name() -> String {
     let mut bytes = [0u8; 4];
     let mut rng = rand_core::OsRng;
     rng.fill_bytes(&mut bytes);
-    format!("{ACCOUNT_PREFIX}{:06x}", u32::from_le_bytes(bytes) & 0x00ff_ffff)
+    format!(
+        "{ACCOUNT_PREFIX}{:06x}",
+        u32::from_le_bytes(bytes) & 0x00ff_ffff
+    )
 }
 
 fn run_live_interaction() -> Result<(), String> {
@@ -566,7 +587,9 @@ fn run_live_interaction() -> Result<(), String> {
     let mut client = bound.template.prepare_client(fresh_uid(10), false)?;
     assert_377_client(&client, false)?;
     if !Arc::ptr_eq(
-        client.session_profile().ok_or("prepared client has no bound session profile")?,
+        client
+            .session_profile()
+            .ok_or("prepared client has no bound session profile")?,
         bound.profile.client(),
     ) {
         return Err("prepared client session is not bound to the selected 377 profile".into());
@@ -621,7 +644,9 @@ fn run_live_interaction() -> Result<(), String> {
                 &snapshot,
                 json!({"expected_region": [LUMBRIDGE_REGION, LUMBRIDGE_REGION, 0]}),
             );
-            return Err(format!("fresh 377 account did not attach in Lumbridge: {origin:?}"));
+            return Err(format!(
+                "fresh 377 account did not attach in Lumbridge: {origin:?}"
+            ));
         }
         record(
             "attached-lumbridge-scene2",
@@ -640,7 +665,9 @@ fn run_live_interaction() -> Result<(), String> {
             .ok_or("no nearby numeric NPC with Talk-to in Lumbridge")?;
         let target = direct_step_toward(origin, choice.tile)?;
         if !lumbridge(target) || target.level != origin.level {
-            return Err(format!("direct walk escaped the loaded Lumbridge region: {origin:?} to {target:?}"));
+            return Err(format!(
+                "direct walk escaped the loaded Lumbridge region: {origin:?} to {target:?}"
+            ));
         }
         record(
             "direct-walk-request",
@@ -682,7 +709,9 @@ fn run_live_interaction() -> Result<(), String> {
             json!({"from": origin, "target": target, "same_loaded_region": true}),
         );
 
-        let (px, pz, level) = snapshot.tile().ok_or("missing tile before NPC interaction")?;
+        let (px, pz, level) = snapshot
+            .tile()
+            .ok_or("missing tile before NPC interaction")?;
         let npc = snapshot
             .npcs()
             .iter()
@@ -690,7 +719,11 @@ fn run_live_interaction() -> Result<(), String> {
                 npc.r#type == Some(choice.type_id)
                     && npc.tile.level == level
                     && chebyshev(
-                        WorldTile { x: px, z: pz, level },
+                        WorldTile {
+                            x: px,
+                            z: pz,
+                            level,
+                        },
                         npc.tile,
                     ) <= 8
                     && npc
@@ -748,7 +781,7 @@ fn run_live_interaction() -> Result<(), String> {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=fr377_, explicit 377 cache/snapshot/nav inputs, and the local 377 engine at 127.0.0.1:43595/assets:81"]
+#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=f377, explicit 377 cache/snapshot/nav inputs, and the local 377 engine at 127.0.0.1:43595/assets:81"]
 fn live_377_attaches_walks_and_interacts_with_numeric_npc() -> Result<(), String> {
     run_live_interaction()
 }
