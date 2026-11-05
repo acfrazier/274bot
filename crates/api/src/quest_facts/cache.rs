@@ -116,7 +116,9 @@ pub(crate) fn prepare(
     _worker: &mut FamilyPreparation,
 ) -> Result<Arc<QuestCatalog>, FactError> {
     let pin = data.selected_pin()?;
-    CACHE.prepare(Key::of(&pin), || load(&pin, MANIFEST, embedded(pin.revision)))
+    CACHE.prepare(Key::of(&pin), || {
+        load(&pin, MANIFEST, embedded(pin.revision))
+    })
 }
 /// Return a prepared catalog without decoding or waiting for a preparation.
 pub(crate) fn cached(data: &SelectedGameData) -> Option<Arc<QuestCatalog>> {
@@ -278,7 +280,10 @@ mod tests {
             assert_eq!(pin.revision, ClientRevision::R377);
 
             let catalog = data.prepare_quests(worker).expect("prepared 377 quests");
-            assert!(!catalog.is_empty(), "the 377 quest family has identity rows");
+            assert!(
+                !catalog.is_empty(),
+                "the 377 quest family has identity rows"
+            );
             assert!(Arc::ptr_eq(
                 &catalog,
                 &data.try_quests().expect("preparation caches its catalog")
