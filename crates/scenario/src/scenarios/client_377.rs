@@ -13,6 +13,9 @@ const AT_COURTYARD_SOUTH: Proof = Proof::ArrivedNear {
     radius: 0,
 };
 const HANS_ID: usize = 0;
+// Match shop_buyout_open_npc_bank: let the server's NPC approach run before
+// retrying Talk-to against the NPC's current observation.
+const HANS_TALK_APPROACH_TICKS: u32 = 24;
 
 /// Qualify the selected 377 client without a whole-world route or game-data
 /// operation: observe the mainland landing, walk four to six courtyard tiles,
@@ -21,7 +24,7 @@ const HANS_ID: usize = 0;
 /// The existing mainland seed owns the teleport. Its landing is not counted as
 /// the walk, and an already-open dialogue cannot satisfy the fresh NPC step.
 pub(crate) fn client_377_scenario() -> Scenario {
-    let talked = std::sync::Mutex::new(false);
+    let talked = std::sync::Mutex::new(None::<u32>);
     Scenario {
         name: "client_377",
         seed: Seed {
@@ -85,11 +88,13 @@ pub(crate) fn client_377_scenario() -> Scenario {
                         let Ok(mut talked) = talked.lock() else {
                             return false;
                         };
-                        if *talked {
-                            return true;
-                        }
                         if !Proof::NoActiveContinue.check(snapshot, None) {
-                            return false;
+                            return talked.is_some();
+                        }
+                        if talked.is_some_and(|tick| {
+                            snapshot.tick().saturating_sub(tick) <= HANS_TALK_APPROACH_TICKS
+                        }) {
+                            return true;
                         }
                         let Some(npc) = snapshot
                             .npcs()
@@ -107,7 +112,7 @@ pub(crate) fn client_377_scenario() -> Scenario {
                             .interact(OpTarget::Npc(npc), ActionSpec::Label("Talk-to".into()))
                         {
                             SendResult::Sent { .. } => {
-                                *talked = true;
+                                *talked = Some(snapshot.tick());
                                 true
                             }
                             SendResult::Refused {
@@ -123,7 +128,7 @@ pub(crate) fn client_377_scenario() -> Scenario {
                 },
                 wait: Wait {
                     arm: Proof::ActiveContinue,
-                    budget_ticks: 30,
+                    budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
                 },
             },
             Step {
@@ -299,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn hans_repeat_waits_for_a_visible_target_then_talks_once() {
+    fn hans_repeat_waits_for_visibility_and_retries_after_the_approach_window() {
         let mut runner = talk_runner();
         let mut client = scene_client(ClientRevision::R377);
         client.local_player = Some(ClientPlayer::at(20, 16));
@@ -348,11 +353,28 @@ mod tests {
             "the interaction alone must not fabricate a conversation"
         );
 
+        for _ in 0..HANS_TALK_APPROACH_TICKS {
+            next_game_tick(&mut runner, &mut client);
+            assert_eq!(
+                client.out.pos, after_talk,
+                "allow the pending server approach instead of re-talking every tick"
+            );
+        }
+        publish_hans(&mut client, Some((21, 17)));
         next_game_tick(&mut runner, &mut client);
-        assert_eq!(
-            client.out.pos, after_talk,
-            "wait for chat instead of re-talking"
+        assert!(
+            client.out.pos > after_talk,
+            "a missing dialogue must retry the wandering NPC after the approach window"
         );
         assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+
+        // A received fresh continue is terminal; do not send another Talk-to
+        // on the poll that observes it, even after the approach window expires.
+        let after_retry = client.out.pos;
+        client.chat_modal_id = 100;
+        client.gens.iface = client.gens.iface.wrapping_add(1);
+        next_game_tick(&mut runner, &mut client);
+        assert_eq!(client.out.pos, after_retry);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
     }
 }
