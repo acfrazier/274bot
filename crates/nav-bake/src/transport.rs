@@ -218,7 +218,14 @@ fn derive_transports_with_audit(
         collision,
         &mut skipped,
     );
-    boat_edges(&mut graph, &gates, &mut audit, game_data);
+    boat_edges(
+        content_root,
+        &mut graph,
+        &gates,
+        &mut audit,
+        game_data,
+        &mut skipped,
+    );
     cart_edges(
         &mut graph,
         gates.completed_quest_name("zombiequeen", "zombiequeen_complete"),
