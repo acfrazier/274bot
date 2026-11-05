@@ -1919,7 +1919,14 @@ fn spawn_slot_thread(
                             // The observer borrows the account's bank memory
                             // for the compiled tick alone; the slot's own
                             // write for the frame already happened above.
-                            let mut observe = |c: &mut Client, tick_edge, evidence_dirty, state, snapshot: &mut GameSnapshot| {
+                            let mut observe = |
+                                c: &mut Client,
+                                tick_edge,
+                                evidence_dirty,
+                                state,
+                                #[cfg(feature = "test-support")] snapshot: &mut GameSnapshot,
+                                #[cfg(not(feature = "test-support"))] snapshot: &GameSnapshot,
+                            | {
                                 script_observe_cached_with_channels(
                                 c,
                                 name,
@@ -1933,7 +1940,7 @@ fn spawn_slot_thread(
                                 #[cfg(feature = "test-support")]
                                 snapshot,
                                 #[cfg(not(feature = "test-support"))]
-                                Some(&*snapshot),
+                                Some(snapshot),
                                 Some(slot_bank.memory()),
                                 #[cfg(feature = "js")]
                                 npc_boxes.as_deref(),
@@ -1968,7 +1975,10 @@ fn spawn_slot_thread(
                                 tick_edge,
                                 script_evidence_dirty(drain.dirty),
                                 nav_state,
+                                #[cfg(feature = "test-support")]
                                 &mut nav_snapshot,
+                                #[cfg(not(feature = "test-support"))]
+                                &nav_snapshot,
                             );
                             #[cfg(feature = "test-support")]
                             if let Some(test_hook) = TickEngineTestHook::current() {
@@ -2091,7 +2101,10 @@ fn spawn_slot_thread(
                                             map_members,
                                             session_epoch,
                                         ),
+                                        #[cfg(feature = "test-support")]
                                         &mut nav_snapshot,
+                                        #[cfg(not(feature = "test-support"))]
+                                        &nav_snapshot,
                                     );
                                     c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);
                                 }

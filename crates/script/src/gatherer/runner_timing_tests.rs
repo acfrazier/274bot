@@ -651,22 +651,20 @@ fn eating_after_an_ended_idle_cycle_adds_no_verdict_and_the_next_gather_restarts
     let food = gatherer.prepared.supply.food.as_ref().unwrap();
     let food_id = food.id;
     let food_name = food.name.clone();
-    snapshot.seed_inventory(
-        [1265, 946, 1511, food_id]
-            .into_iter()
-            .enumerate()
-            .map(|(slot, id)| ItemView {
-                def: def(id, "Fixture item"),
-                container: ItemContainer::Inventory,
-                action_family: ItemActionFamily::Held,
-                slot: slot as i32,
-                count: 1,
-                actions: vec![],
-                component_id: 3214,
-            })
-            .collect(),
-        28,
-    );
+    let mut inventory: Vec<_> = [1265, 946, 1511, food_id]
+        .into_iter()
+        .enumerate()
+        .map(|(slot, id)| ItemView {
+            def: def(id, "Fixture item"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: slot as i32,
+            count: 1,
+            actions: vec![],
+            component_id: 3214,
+        })
+        .collect();
+    snapshot.seed_inventory(inventory.clone(), 28);
     snapshot.seed_inventory_packet_generations(Some(1), None);
     let mining = StatView {
         index: 14,
@@ -755,6 +753,11 @@ fn eating_after_an_ended_idle_cycle_adds_no_verdict_and_the_next_gather_restarts
             used: true,
         },
     ]);
+    // The accepted bite's observation includes its consumed item. HP alone
+    // cannot settle Eat because regeneration can raise it independently.
+    inventory.retain(|row| row.def.id != food_id);
+    snapshot.seed_inventory(inventory, 28);
+    snapshot.seed_inventory_packet_generations(Some(2), None);
     let handle = with_tick(&snapshot, &mut ledger, 103, |tick| {
         let Active::Tend(eat) = &gatherer.active else {
             panic!("eat owner")
