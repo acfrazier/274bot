@@ -1,6 +1,6 @@
 //! Revision-377 constructor and bounded live interaction qualification.
 //!
-//! Both tests are ignored and require `LIVE=1` plus `BOT_LIVE_NAME_PREFIX=f377`.
+//! Both tests are ignored and require `LIVE=1` plus an owned `BOT_LIVE_NAME_PREFIX`.
 //! They use the canonical `--revision 377` local profile with explicit paths
 //! `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`, `CLIENT_UNPACK_DIR`, `NAV_PACK`,
 //! `NAV_FLAGS`, and (optionally) a real `BOT_CACHE_MANIFEST`. Template
@@ -33,7 +33,6 @@ use host_play::nav_identity::NavFlagsOrigin;
 use host_play::profile::{NavAvailability, ProfileEnvironment};
 use host_play::{ProfileClass, ProfileOptions, ServerProfile, SharedClientTemplate};
 use nav_planner::manifest::{hash_file, nav_manifest_path, CacheManifest, NavManifest};
-use rand_core::RngCore;
 use serde_json::{json, Value};
 
 const REVISION: u16 = 377;
@@ -42,7 +41,6 @@ const GAME_PORT: u16 = 43595;
 const ASSET_PORT: u16 = 81;
 const LUMBRIDGE_REGION: i32 = 50;
 const TALK_ACTION: &str = "Talk-to";
-const ACCOUNT_PREFIX: &str = "f377";
 
 struct ScratchHome(PathBuf);
 
@@ -103,8 +101,10 @@ fn require_live_guard() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Err("set LIVE=1 to run revision-377 qualification".into());
     }
-    if std::env::var("BOT_LIVE_NAME_PREFIX").as_deref() != Ok(ACCOUNT_PREFIX) {
-        return Err("set BOT_LIVE_NAME_PREFIX=f377 to isolate the one live account".into());
+    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX")
+        .map_err(|_| "set BOT_LIVE_NAME_PREFIX to isolate the one live account")?;
+    if !(1..=4).contains(&prefix.len()) {
+        return Err("BOT_LIVE_NAME_PREFIX must be 1-4 characters".into());
     }
     if std::env::var_os("HOME").is_none() {
         return Err("run through isohome so HOME is throwaway".into());
@@ -371,7 +371,7 @@ fn identity_record(bound: &Bound377) {
 }
 
 #[test]
-#[ignore = "explicit 377 cache/snapshot/nav resources; LIVE=1 and BOT_LIVE_NAME_PREFIX=f377 are required"]
+#[ignore = "explicit 377 cache/snapshot/nav resources; LIVE=1 and an owned BOT_LIVE_NAME_PREFIX are required"]
 fn retained_377_template_shares_mode_correct_revision_bound_caches() -> Result<(), String> {
     let bound = load_bound_377()?;
     identity_record(&bound);
@@ -565,20 +565,10 @@ fn direct_step_toward(scene: &SceneView, from: WorldTile, to: WorldTile) -> Resu
     Err("no collision-reachable one-tile direct step remains inside loaded Lumbridge".into())
 }
 
-fn fresh_account_name() -> String {
-    let mut bytes = [0u8; 4];
-    let mut rng = rand_core::OsRng;
-    rng.fill_bytes(&mut bytes);
-    format!(
-        "{ACCOUNT_PREFIX}{:06x}",
-        u32::from_le_bytes(bytes) & 0x00ff_ffff
-    )
-}
-
 fn run_live_interaction() -> Result<(), String> {
     let bound = load_bound_377()?;
     identity_record(&bound);
-    let username = fresh_account_name();
+    let username = host_play::mint_live_names(1).remove(0);
     let password = host_play::profile_password(&username);
     let mut client = bound.template.prepare_client(fresh_uid(10), false)?;
     assert_377_client(&client, false)?;
@@ -837,7 +827,7 @@ fn direct_step_uses_loaded_collision_instead_of_the_npc_offset() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=f377, explicit 377 cache/snapshot/nav inputs, and the local 377 engine at 127.0.0.1:43595/assets:81"]
+#[ignore = "requires LIVE=1, an owned BOT_LIVE_NAME_PREFIX, explicit 377 cache/snapshot/nav inputs, and the local 377 engine at 127.0.0.1:43595/assets:81"]
 fn live_377_attaches_walks_and_interacts_with_numeric_npc() -> Result<(), String> {
     run_live_interaction()
 }
