@@ -2987,6 +2987,9 @@ pub fn for_revision(revision: ClientRevision) -> Result<Arc<SelectedGameData>, S
     let (cell, bytes) = match revision {
         ClientRevision::R274 => (&DATA_274, REVISION_274),
         ClientRevision::R289 => (&DATA_289, REVISION_289),
+        ClientRevision::R377 => {
+            return Err("generated game data unavailable for revision 377".to_owned());
+        }
     };
     match cell.get_or_init(|| {
         let data = SelectedGameData::decode(GzDecoder::new(bytes), revision)?;
