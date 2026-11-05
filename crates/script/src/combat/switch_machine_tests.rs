@@ -1607,9 +1607,9 @@ fn the_machine_layout_stays_inside_its_tripwires() {
     assert!(std::mem::size_of::<CombatReport>() <= 80);
 }
 
-/// Bytes of an idle `Combat` after V2 (measured: 520 + 24); the exact per-bot pin
-/// is in `host-play`.
-const MACHINE_BYTES: usize = 544;
+/// Main-approved ceiling for the measured 552 B composed machine plus 8 B.
+/// Field attribution and both platform measurements are beside Combat's guard.
+const MACHINE_BYTES: usize = 560;
 
 #[test]
 fn a_steady_pvp_fight_with_kits_allocates_nothing_for_two_hundred_ticks() {
@@ -1965,6 +1965,152 @@ fn an_active_melee_opening_keeps_reach_refusal_for_an_authored_mage_request() {
         harness.pending(&scene, 1).is_none(),
         "the active melee style must not attack or walk toward the penned target"
     );
+}
+
+fn exhausted_penned_mage(pending_wear: bool, alternative: bool) -> (Scene, Harness) {
+    let (mut scene, mut harness) = penned_npc_opening(Style::Mage, Style::Mage);
+    assert_eq!(harness.machine.active_style(), Style::Mage);
+    assert_eq!(
+        harness.machine.engaged(),
+        Some(ActorRef {
+            kind: ActorKind::Npc,
+            index: 7,
+        })
+    );
+    if alternative {
+        let here = scene.local.player.network;
+        let mut open = scene.npcs[0].clone();
+        open.index = 8;
+        open.tile = tile(here.x, here.z + 6);
+        open.network = open.tile;
+        open.distance = 6;
+        scene.npcs.push(open);
+    }
+    if pending_wear {
+        let slot = scene
+            .equipment
+            .iter()
+            .position(|row| row.slot == 3)
+            .unwrap();
+        let mut sword = scene.equipment.remove(slot);
+        sword.container = ItemContainer::Inventory;
+        sword.slot = scene.inventory.len() as i32;
+        scene.inventory.push(sword);
+    }
+    scene.refresh();
+    let melee_pick = {
+        let machine = &harness.machine;
+        harness.runtime.context(&scene.snapshot, 1, 1, |_, cx| {
+            let frame = Frame::borrow(cx.snapshot()).unwrap();
+            select::pick_target(
+                &machine.request,
+                Style::Melee,
+                &frame,
+                &machine.threats,
+                &machine.tables,
+                1,
+            )
+        })
+    };
+    assert_eq!(
+        melee_pick,
+        alternative.then_some(ActorRef {
+            kind: ActorKind::Npc,
+            index: 8,
+        }),
+        "melee selection must refuse the penned NPC 7"
+    );
+    // The review's scratch case starts from an installed Mage fight. Exhaustion
+    // then drives the production T1 switch through poll and real wear receipts.
+    harness.machine.phase = Phase::Fight;
+    let (mind, air) = (id(&scene, "mindrune"), id(&scene, "airrune"));
+    scene
+        .inventory
+        .retain(|row| row.def.id != mind && row.def.id != air);
+    scene.refresh();
+    (scene, harness)
+}
+
+#[test]
+fn t1_melee_switch_refuses_the_penned_npc_and_uses_the_existing_no_target_path() {
+    for pending_wear in [false, true] {
+        let (mut scene, mut harness) = exhausted_penned_mage(pending_wear, false);
+        for tick in 2..=17 {
+            let polled = harness.poll(&scene.snapshot, tick);
+            let batch = harness.drain(None);
+            assert!(
+                !(0..batch.len()).any(|index| {
+                    matches!(
+                        batch.get(index),
+                        Some(HostEffect::Interaction(InteractReq::Npc {
+                            action,
+                            index: Some(7),
+                            ..
+                        })) if action == "Attack"
+                    )
+                }),
+                "tick {tick}, pending_wear={pending_wear}: {:?}",
+                rows(&batch)
+            );
+            assert_eq!(harness.machine.engaged(), None);
+            if pending_wear && tick == 2 {
+                assert!(matches!(
+                    harness.machine.switch_state(),
+                    SwitchState::Converging {
+                        to: Style::Melee,
+                        ..
+                    }
+                ));
+            }
+            apply_wears(&mut scene, &batch);
+            scene.refresh();
+            if let Poll::Ready(result) = polled {
+                assert_eq!(result.unwrap().end, CombatEnd::NoTarget);
+                break;
+            }
+        }
+        assert_eq!(harness.machine.active_style(), Style::Melee);
+        assert_eq!(
+            harness.machine.end,
+            Some(CombatEnd::NoTarget),
+            "the ordinary 15-observation no-target clock starts at tick 2"
+        );
+    }
+}
+
+#[test]
+fn t1_melee_switch_reselects_a_reachable_npc_instead_of_the_penned_one() {
+    for pending_wear in [false, true] {
+        let (mut scene, mut harness) = exhausted_penned_mage(pending_wear, true);
+        let mut attacked = false;
+        for tick in 2..10 {
+            let batch = step(&mut harness, &mut scene, tick);
+            assert_eq!(
+                harness.machine.engaged(),
+                Some(ActorRef {
+                    kind: ActorKind::Npc,
+                    index: 8,
+                })
+            );
+            for index in 0..batch.len() {
+                if let Some(HostEffect::Interaction(InteractReq::Npc { action, index, .. })) =
+                    batch.get(index)
+                {
+                    assert_ne!(
+                        *index,
+                        Some(7),
+                        "a melee row must not restore the old target"
+                    );
+                    attacked |= action == "Attack" && *index == Some(8);
+                }
+            }
+        }
+        assert_eq!(harness.machine.active_style(), Style::Melee);
+        assert!(
+            attacked,
+            "the valid melee alternative must still be attacked"
+        );
+    }
 }
 
 #[test]

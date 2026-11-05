@@ -725,6 +725,7 @@ impl Combat {
                 mask: self.opp_protect,
                 rate_old,
             };
+            self.reselect_npc_target(frame, tick);
         }
     }
 
@@ -836,9 +837,14 @@ impl Combat {
             since: tick,
             rate_old,
         };
-        // The boost families and the rest of the per-style worth follow the
-        // style now being executed.
-        self.resolve_worth(frame);
+        // Target selection follows the style now being executed. A rejected
+        // NPC enters the ordinary no-target path instead of retaining a chase.
+        let previous = self.engaged;
+        self.reselect_npc_target(frame, tick);
+        // A different selected actor already resolves worth in engage().
+        if self.engaged == previous || self.engaged.is_none() {
+            self.resolve_worth(frame);
+        }
     }
 
     /// Plan one tick and undo a `Converging` that carried no wear: a switch is
@@ -856,6 +862,7 @@ impl Combat {
         if let SwitchState::Converging { since, .. } = self.switch {
             if since == tick && !plan.contains(RowKind::Wear) {
                 self.switch = SwitchState::Idle;
+                self.reselect_npc_target(frame, tick);
             }
         }
         Ok(plan)

@@ -313,31 +313,35 @@ mod tests {
             OneOpArgs::stray_modal(tick.cx.snapshot()).unwrap()
         });
         assert_eq!(args.kind, OneOpKind::CloseChat { root: 8880 });
-        let mut close = begin(&snapshot, &mut ledger, 1, args);
+        let close = begin(&snapshot, &mut ledger, 1, args);
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            close.poll(&mut tick.cx)
+            tick.actions.poll(&close, &mut tick.cx)
         })
         .is_pending());
 
         snapshot.seed_chat_modal(2437, vec!["Next page".into()]);
         snapshot.seed_chat_options(vec![], 17);
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 3, |tick| close.poll(&mut tick.cx)),
+            with_tick(&snapshot, &mut ledger, 3, |tick| tick
+                .actions
+                .poll(&close, &mut tick.cx)),
             Poll::Ready(Ok(true))
         ));
         let args = with_tick(&snapshot, &mut ledger, 3, |tick| {
             OneOpArgs::stray_modal(tick.cx.snapshot()).unwrap()
         });
         assert_eq!(args.kind, OneOpKind::ContinueDialog);
-        let mut next = begin(&snapshot, &mut ledger, 3, args);
+        let next = begin(&snapshot, &mut ledger, 3, args);
         assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
-            next.poll(&mut tick.cx)
+            tick.actions.poll(&next, &mut tick.cx)
         })
         .is_pending());
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 5, |tick| next.poll(&mut tick.cx)),
+            with_tick(&snapshot, &mut ledger, 5, |tick| tick
+                .actions
+                .poll(&next, &mut tick.cx)),
             Poll::Ready(Ok(true))
         ));
     }
@@ -351,21 +355,23 @@ mod tests {
             OneOpArgs::close_modal_if_open(tick.cx.snapshot()).unwrap()
         });
         assert_eq!(args.kind, OneOpKind::CloseModal);
-        let mut close = begin(&snapshot, &mut ledger, 1, args);
+        let close = begin(&snapshot, &mut ledger, 1, args);
         snapshot.seed_chat_modal(2437, vec!["Another chat".into()]);
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            close.poll(&mut tick.cx)
+            tick.actions.poll(&close, &mut tick.cx)
         })
         .is_pending());
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_count_dialog(true);
         assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
-            close.poll(&mut tick.cx)
+            tick.actions.poll(&close, &mut tick.cx)
         })
         .is_pending());
         snapshot.seed_count_dialog(false);
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 4, |tick| close.poll(&mut tick.cx)),
+            with_tick(&snapshot, &mut ledger, 4, |tick| tick
+                .actions
+                .poll(&close, &mut tick.cx)),
             Poll::Ready(Ok(true))
         ));
     }
@@ -379,14 +385,16 @@ mod tests {
             OneOpArgs::close_modal_if_open(tick.cx.snapshot()).unwrap()
         });
         assert_eq!(args.kind, OneOpKind::CloseModal);
-        let mut close = begin(&snapshot, &mut ledger, 1, args);
+        let close = begin(&snapshot, &mut ledger, 1, args);
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            close.poll(&mut tick.cx)
+            tick.actions.poll(&close, &mut tick.cx)
         })
         .is_pending());
         snapshot.seed_count_dialog(false);
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 3, |tick| close.poll(&mut tick.cx)),
+            with_tick(&snapshot, &mut ledger, 3, |tick| tick
+                .actions
+                .poll(&close, &mut tick.cx)),
             Poll::Ready(Ok(true))
         ));
     }
@@ -407,7 +415,7 @@ mod tests {
             28,
         );
         let mut ledger = None;
-        let mut drink = begin(
+        let drink = begin(
             &snapshot,
             &mut ledger,
             1,
@@ -416,12 +424,14 @@ mod tests {
         snapshot.seed_chat_modal(2437, vec!["Another chat".into()]);
         snapshot.seed_count_dialog(true);
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            drink.poll(&mut tick.cx)
+            tick.actions.poll(&drink, &mut tick.cx)
         })
         .is_pending());
         snapshot.seed_inventory(vec![], 28);
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 3, |tick| drink.poll(&mut tick.cx)),
+            with_tick(&snapshot, &mut ledger, 3, |tick| tick
+                .actions
+                .poll(&drink, &mut tick.cx)),
             Poll::Ready(Ok(true))
         ));
     }
@@ -431,7 +441,7 @@ mod tests {
         let mut snapshot = snapshot();
         snapshot.seed_chat_modal(8880, vec!["Make".into()]);
         let mut ledger = None;
-        let mut close = begin(
+        let close = begin(
             &snapshot,
             &mut ledger,
             1,
@@ -442,13 +452,15 @@ mod tests {
         );
         snapshot.seed_ingame(0);
         assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            close.poll(&mut tick.cx)
+            tick.actions.poll(&close, &mut tick.cx)
         })
         .is_pending());
         snapshot.seed_ingame(2);
         snapshot.seed_chat_modal(-1, vec![]);
         assert!(matches!(
-            with_tick(&snapshot, &mut ledger, 3, |tick| close.poll(&mut tick.cx)),
+            with_tick(&snapshot, &mut ledger, 3, |tick| tick
+                .actions
+                .poll(&close, &mut tick.cx)),
             Poll::Ready(Ok(true))
         ));
     }

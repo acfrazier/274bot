@@ -562,10 +562,11 @@ fn eat_pauses_parked_arm_and_exposes_pause_counter_before_publish() {
         xp: 0,
         used: true,
     }]);
+    let eat = OneOpArgs::eat(&food.name, food.id, 1);
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 102, |tick| {
         gatherer.fence.observe(102);
-        assert!(gatherer.begin_eat(tick));
+        assert!(gatherer.begin_survival_click(eat, tick));
     });
     gatherer.dirty = false;
     gatherer.refresh_tick_status();
@@ -649,6 +650,7 @@ fn eating_after_an_ended_idle_cycle_adds_no_verdict_and_the_next_gather_restarts
     gatherer.refresh_tick_status();
     let food = gatherer.prepared.supply.food.as_ref().unwrap();
     let food_id = food.id;
+    let food_name = food.name.clone();
     snapshot.seed_inventory(
         [1265, 946, 1511, food_id]
             .into_iter()
@@ -718,10 +720,11 @@ fn eating_after_an_ended_idle_cycle_adds_no_verdict_and_the_next_gather_restarts
         map_scene: -1,
         force_approach: 0,
     }]);
+    let eat = OneOpArgs::eat(&food_name, food_id, 1);
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 102, |tick| {
         gatherer.fence.observe(102);
-        assert!(gatherer.begin_eat(tick));
+        assert!(gatherer.begin_survival_click(eat, tick));
     });
     gatherer.refresh_tick_status();
     assert_eq!(gatherer.tick_policy.diagnostic(), ended);

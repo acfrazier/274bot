@@ -120,19 +120,81 @@ fn cold_preferences_adopt_saved_startup_models_without_writing_defaults() {
 }
 
 #[test]
-fn preferences_without_the_pvp_member_load_without_rewriting_the_saved_file() {
-    let dir = scratch("preferences-before-pvp");
-    let path = dir.join("state").join("panel-ui.json");
-    let saved =
-        br#"{"capture":false,"nav":{"allow_teleports":true},"legacy_extension":{"version":7}}"#;
-    vault::write_private_file(&path, saved).unwrap();
+fn saved_pvp_settings_and_legacy_files_keep_the_typed_setting_lifecycle() {
+    use crate::{Setting, SettingEvent, SettingEventState, SettingStatus};
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let setting = Setting::PvpStartFights;
+    assert_eq!(
+        Setting::ALL
+            .iter()
+            .filter(|entry| **entry == setting)
+            .count(),
+        1,
+        "the setting must participate in bounded failure expiry"
+    );
+    assert_eq!(setting.identity(), "start fights with players");
+    for (case, saved, enabled) in [
+        (
+            "legacy",
+            br#"{"capture":false,"nav":{"allow_teleports":true},"legacy_extension":{"version":7}}"#
+                .as_slice(),
+            false,
+        ),
+        (
+            "pvp",
+            br#"{"capture":false,"nav":{"allow_teleports":true},"legacy_extension":{"version":7},"pvp":{"start_fights":true}}"#
+                .as_slice(),
+            true,
+        ),
+    ] {
+        let dir = scratch(&format!("saved-pvp-setting-{case}"));
+        let path = dir.join("state").join("panel-ui.json");
+        vault::write_private_file(&path, saved).unwrap();
+        let mut driver = open_driver(&dir);
+        assert!(driver.session().preferences().unwrap().ready());
+        assert_eq!(driver.session().pvp_start_fights(), Some(enabled));
+        assert_eq!(driver.session().setting_status(setting), SettingStatus::Saved);
+        assert!(!driver.models.draw.capture());
+        assert!(driver.models.walk_globals.globals().allow_teleports());
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
 
-    let driver = open_driver(&dir);
-    assert!(driver.session().preferences().unwrap().ready());
-    assert_eq!(driver.session().pvp_start_fights(), Some(false));
-    assert!(!driver.models.draw.capture());
-    assert!(driver.models.walk_globals.globals().allow_teleports());
-    assert_eq!(std::fs::read(path).unwrap(), saved);
+        driver.session_mut().watch_setting_events(true);
+        let release = hold_first_write(&driver);
+        let submitted = driver
+            .submit(OperatorCommand::SetPvpStartFights(!enabled), Targets::Application)
+            .expect("the saved setting command is admitted");
+        driver.poll();
+        assert_eq!(driver.session().setting_status(setting), SettingStatus::Pending);
+        assert_eq!(
+            driver.session_mut().take_setting_events(),
+            (
+                vec![SettingEvent::new(
+                    setting.identity().into(),
+                    SettingEventState::Pending,
+                    None,
+                )],
+                false,
+            )
+        );
+        release.send(()).unwrap();
+        assert_eq!(settled_app(&mut driver, submitted.request()), Some(done()));
+        assert_eq!(driver.session().setting_status(setting), SettingStatus::Saved);
+        assert_eq!(driver.session().pvp_start_fights(), Some(!enabled));
+        assert_eq!(
+            driver.session_mut().take_setting_events(),
+            (
+                vec![SettingEvent::new(
+                    setting.identity().into(),
+                    SettingEventState::Saved,
+                    None,
+                )],
+                false,
+            )
+        );
+        assert_eq!(preferences_file(&driver)["legacy_extension"]["version"], 7);
+    }
 }
 
 /// A real vault file at `dir/vault` holding `names`.

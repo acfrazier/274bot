@@ -284,7 +284,12 @@ const SINGLE_WAY_END: u8 = 3;
 const DUEL_WAIT_END: u8 = 3;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
-// Composed Linux Combat is 552 B at 7ab903712; Main keeps 8 B of headroom.
+// Linux and macOS measure 552 B, versus 520 B before PvP; Main allows 560 B.
+// V1 +8: pvp_source 1, pvp_hold_until 2, oos_retries 1, single_way_lines 1,
+// duel_wait_lines 1, flags2 2. V2 +24: rhand_pick 4 to 12 (+8), active 1,
+// switch 8, and switches/switch_failed/failed_styles/opp_protect/
+// opp_protect_prev/last_switch_mask/reach_ticks 1 each. Compiler field records:
+// BATCH-029-INT/r2-pvp-v2-{linux,mac}-layout-1. The ceiling leaves 8 B.
 const _: usize = 560 - std::mem::size_of::<Combat>();
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
@@ -602,7 +607,7 @@ impl NativeMachine for Combat {
             if died || arbiter::stat(&frame, 3).0 <= 0 {
                 self.finish(CombatEnd::Died, tick);
             } else {
-                self.observe_target(&frame, tick);
+                self.observe_target(&frame, tick, false);
                 if self.active == Style::Mage {
                     for line in chat.value.iter() {
                         self.magic_refusal(&line.text);
@@ -1309,15 +1314,7 @@ impl Combat {
             }
         }
         if self.engaged != Some(actor) {
-            if let StyleState::Magic(state) = &mut self.style_state {
-                state.reset_for_engagement();
-            }
-            for pending in &mut self.pending {
-                if pending.row.kind == RowKind::Attack {
-                    *pending = PendingRow::default();
-                }
-            }
-            self.schedule.settle(OpKind::Attack);
+            self.reset_target_attack();
         }
         self.engaged = Some(actor);
         self.flags &= !LOST;
@@ -1340,6 +1337,30 @@ impl Combat {
         self.resolve_worth(frame);
         true
     }
+    fn reset_target_attack(&mut self) {
+        if let StyleState::Magic(state) = &mut self.style_state {
+            state.reset_for_engagement();
+        }
+        for pending in &mut self.pending {
+            if pending.row.kind == RowKind::Attack {
+                *pending = PendingRow::default();
+            }
+        }
+        self.schedule.settle(OpKind::Attack);
+    }
+
+    fn reselect_npc_target(&mut self, frame: &Frame<'_>, tick: u16) {
+        // Only authored NPC selection depends on the executable style's reach.
+        // Keep player engagement, self-defence and suspended-target policy.
+        if matches!(self.request.target, Target::Npc { .. })
+            && self
+                .engaged
+                .is_none_or(|actor| actor.kind == ActorKind::Npc)
+        {
+            self.observe_target(frame, tick, true);
+        }
+    }
+
     fn carries_boost(&self) -> bool {
         self.request.kits.get(self.active).is_some_and(|kit| {
             kit.carry.iter().any(|(id, _)| {
@@ -1403,18 +1424,25 @@ impl Combat {
             Style::Melee => switch::best_melee_weapon(&self.tables, frame),
         }
     }
-    fn observe_target(&mut self, frame: &Frame<'_>, tick: u16) {
+    fn observe_target(&mut self, frame: &Frame<'_>, tick: u16, reselect: bool) {
         let seed = u64::from(tick) ^ self.sequence;
-        if self.engaged.is_none() {
+        if self.engaged.is_none() || reselect {
             if let Some(actor) = select::pick_target(
                 &self.request,
-                self.active,
+                self.switch.pending().unwrap_or(self.active),
                 frame,
                 &self.threats,
                 &self.tables,
                 seed,
             ) {
-                self.engage(actor, frame);
+                if self.engaged != Some(actor) {
+                    self.engage(actor, frame);
+                }
+            } else if reselect && self.engaged.take().is_some() {
+                self.reset_target_attack();
+                self.identity_kind = EngagementKind::None;
+                self.identity = 0;
+                self.flags &= !LOST;
             }
         }
         let mut present = false;

@@ -292,6 +292,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   the arrows or runes that make them usable. The new loadouts and switches are
   available to native callers and to Path combat steps (`loadouts`); the script
   API does not expose them yet.
+- NPC target choice now follows the style the fight will execute, including a
+  pending equipment change. A switch to melee selects a reachable monster
+  instead of keeping one behind a wall or fence. If none is reachable, the
+  fight follows its normal no-target stop path.
 - A Path combat step can name one loadout per style (`loadouts`: `melee`,
   `ranged`, `mage`) beside `loadout`, which stays the loadout of the opening
   style. Naming the opening style in both is refused.

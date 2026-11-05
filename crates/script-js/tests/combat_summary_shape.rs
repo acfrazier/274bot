@@ -22,8 +22,9 @@
 use script::api_combat::{CombatEnd, CombatPage, CombatSummary, ReportEnd};
 use script::api_gather::GatherPhase;
 use script::combat::PvpSource;
-use script::shim::InteractReq;
-use script_js::wire::{encode_snapshot_delta_with_native, NativeFactsInput, SnapshotFingerprint};
+use script::interact::InteractReq;
+use script::native::snapshot_source::NativeFactsInput;
+use script_js::wire::{encode_snapshot_delta_with_native, SnapshotFingerprint};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

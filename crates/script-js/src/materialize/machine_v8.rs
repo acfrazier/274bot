@@ -666,7 +666,7 @@ mod tests {
         // 1 341 024 bytes when the shared `serde_v8` path built them in
         // dictionary mode; the bound is 1.5x of the measure.
         const HEAP_GROWTH_LIMIT: usize = 512 * 1024;
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         callback_v8::install_ops(&mut runtime).unwrap();
         install(&mut runtime).unwrap();
@@ -751,7 +751,7 @@ mod tests {
             return;
         }
         v8::V8::set_flags_from_string("--allow-natives-syntax");
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         callback_v8::install_ops(&mut runtime).unwrap();
         install(&mut runtime).unwrap();

@@ -697,7 +697,7 @@ where
         // `reset_session_work`); a native run's seat also holds through
         // `align_seat_session`.
         slot.seat_guardian_hold(guardian_hold);
-        slot.observe_player_fix(tick, snapshot);
+        slot.observe_player_fix(tick, snapshot.read());
         slot.seat_host_hold(hold && !guardian_hold);
         let stop_prayers = slot.take_stop_prayer_cleanup();
         let prayer_cleanup_hold = if let Some(snapshot) = snapshot.read().filter(|_| up) {
@@ -2088,7 +2088,9 @@ where
                                     scope,
                                     world,
                                     state.as_ref(),
-                                    snapshot,
+                                    snapshot
+                                        .read()
+                                        .expect("snapshot access requires a published snapshot"),
                                     super::bank::NativeBankPickInput {
                                         request,
                                         authority,

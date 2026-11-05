@@ -45,6 +45,7 @@ fn ordered_real_gatherer_knife_arm_uses_packet_clock_after_relog() {
             Arc::new(settings),
             Arc::clone(&selected),
             Arc::default(),
+            None,
         )
         .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
