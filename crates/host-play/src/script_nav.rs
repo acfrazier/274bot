@@ -1270,15 +1270,7 @@ impl RouteJob {
             0,
             thread_name.capacity(),
         )?;
-        let missing_capacity = preflights
-            .missing
-            .reservation()
-            .max_missing_carry_ids
-            .max(preflights.missing_route.reservation().max_missing_carry_ids);
-        let mut missing = Vec::new();
-        missing
-            .try_reserve_exact(missing_capacity)
-            .map_err(|_| RouteJobError::Allocation)?;
+        let missing = Vec::new();
         let target_cursor = RouteTargetCursor::new(&request)?;
         let targets = Vec::new();
         let search_mode = if request.candidate_goals.is_some()
@@ -1390,6 +1382,36 @@ impl RouteJob {
 
     fn submission(&self) -> &RouteSubmission {
         &self.submission
+    }
+
+    fn record_missing_carry(&mut self, row: MissingCarry) -> Result<(), RouteJobError> {
+        if row.count <= 0 {
+            return Ok(());
+        }
+        let limit = self
+            .preflights
+            .missing
+            .reservation()
+            .max_missing_carry_ids
+            .max(
+                self.preflights
+                    .missing_route
+                    .reservation()
+                    .max_missing_carry_ids,
+            );
+        if self.missing.len() >= limit {
+            return Err(RouteJobError::ResultShape);
+        }
+        if self.missing.len() == self.missing.capacity() {
+            // Successful searches need no supply-result allocation. Grow
+            // only for real diagnosed rows, within the admitted result bound.
+            let capacity = self.missing.capacity().saturating_mul(2).max(4).min(limit);
+            self.missing
+                .try_reserve_exact(capacity - self.missing.len())
+                .map_err(|_| RouteJobError::Allocation)?;
+        }
+        self.missing.push(row);
+        Ok(())
     }
 
     fn extra_retained_bytes(&self) -> Option<usize> {
@@ -3114,8 +3136,8 @@ impl CooperativeJob for RouteJob {
                     if let Some(MissingReqView::Carry { id, count }) =
                         missing.requirement_at(self.missing_diag_index)
                     {
-                        if count > 0 {
-                            self.missing.push(MissingCarry { id, count });
+                        if let Err(error) = self.record_missing_carry(MissingCarry { id, count }) {
+                            return StepOutcome::Failed(error);
                         }
                         self.missing_diag_index += 1;
                     } else {
@@ -8945,6 +8967,41 @@ mod diagnostic_tests {
     }
 
     #[test]
+    fn missing_carry_storage_is_lazy_bounded_and_charged_on_continuation() {
+        let (world, _, _) = first_goal_probe_world(4, 4, 2, 3, true);
+        let mut job = RouteJob::prepare(
+            "lazy-carry-diagnosis",
+            stage_request(world),
+            RouteDemandKind::Walk { authority: None },
+        )
+        .unwrap();
+        assert_eq!(
+            job.preflights.missing.reservation().max_missing_carry_ids,
+            1
+        );
+        for count in [0, -1] {
+            job.record_missing_carry(MissingCarry { id: 995, count })
+                .unwrap();
+        }
+        assert_eq!(job.missing.capacity(), 0);
+        let before = job.owned_retained_bytes().unwrap();
+        job.record_missing_carry(MissingCarry { id: 995, count: 1 })
+            .unwrap();
+        assert_eq!(job.missing.capacity(), 1);
+        let retained = job.owned_retained_bytes().unwrap();
+        assert_eq!(retained - before, std::mem::size_of::<MissingCarry>());
+        job.prepare_continuation().unwrap();
+        assert!(job.submission.input_bytes >= retained + OwnerResultReservation::storage_bytes());
+        assert!(matches!(
+            job.record_missing_carry(MissingCarry { id: 995, count: 2 }),
+            Err(RouteJobError::ResultShape),
+        ));
+        assert_eq!(job.missing.len(), 1);
+        assert_eq!(job.missing[0].id, 995);
+        assert_eq!(job.missing[0].count, 1);
+    }
+
+    #[test]
     fn budget_exhausted_strict_search_keeps_non_supply_diagnostics() {
         let mut job = RouteJob::prepare(
             "test",
@@ -9209,6 +9266,7 @@ mod diagnostic_tests {
             .expect("the full radius-104 host request must fit its unchanged limit");
             assert_eq!(RouteTargetCursor::capacity(&job.request).unwrap(), GOALS);
             assert_eq!(job.excluded_targets.capacity(), 0);
+            assert_eq!(job.missing.capacity(), 0);
             assert_eq!(job.request.opts.allow_teleports, allow_teleports);
             let expected = SearchCursor::preflight(
                 SearchRequestShape::First {

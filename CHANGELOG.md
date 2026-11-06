@@ -72,7 +72,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Host requests also avoid the excluded-target table when bank planning cannot
   use it. Captured inputs and reachable diagnostics remain charged.
   Candidate storage stays charged once as input across initial and continuation
-  admissions.
+  admissions. Missing-supply result storage grows only for actual diagnosed
+  rows, within its existing bound, instead of reserving it before every search.
 - Host route and bank diagnostics use the data-only quest-gate API. Their
   existing evidence, prerequisite handover and search-budget outcomes remain.
   Hosted regression tests keep explicit guards for absent local data.

@@ -803,6 +803,9 @@ Captured request buffers always remain input custody. Missing-carry,
 entrance, blocker and quest-gate diagnostics remain charged in both modes.
 Candidate capacity stays reserved once as input. The retained cursor or target
 buffer consumes that reservation instead of adding a second scratch charge.
+Missing-carry result storage starts empty and grows only for actual positive
+diagnosis rows, within the existing graph bound. Its allocated capacity remains
+charged as retained input on continuation.
 Bank buffers use the largest diagnosed requirement count admitted for the
 request, capped by the unchanged graph bound. Undo storage and post-bank
 inventory and worn reservations use this same count. A later, smaller
