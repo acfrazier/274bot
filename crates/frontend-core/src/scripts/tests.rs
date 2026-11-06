@@ -2918,6 +2918,8 @@ fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_sch
             .save_profile(row, crate::ArmMirror::none(), "restore")
             .unwrap();
         f.core.flush_writes();
+        let vault_path = f.dir.join("vault");
+        let saved_bytes = std::fs::read(&vault_path).unwrap();
         assert!(matches!(
             f.scripts
                 .compiled_schema(&f.core, Some("alice"), CompiledCardId::from_script(id)),
@@ -2936,10 +2938,19 @@ fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_sch
                 Map::new()
             )
             .is_err());
-        assert_eq!(
-            f.saved_bag("alice", &key),
-            Some(entry.as_object().unwrap().clone())
-        );
+        f.core.flush_writes();
+        assert_eq!(std::fs::read(&vault_path).unwrap(), saved_bytes);
+        if entry.as_object().unwrap().is_empty() {
+            assert!(matches!(
+                Vault::unlock(&vault_path, "test-passphrase-01"),
+                Err(vault::VaultError::UnsupportedSavedFormat { path }) if path == vault_path,
+            ));
+        } else {
+            assert_eq!(
+                f.saved_bag("alice", &key),
+                Some(entry.as_object().unwrap().clone())
+            );
+        }
     }
     assert!(matches!(
         f.scripts.compiled_schema(
