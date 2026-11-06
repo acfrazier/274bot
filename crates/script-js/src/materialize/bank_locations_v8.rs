@@ -903,11 +903,11 @@ fn usable<'s>(
     callback_v8::finish(scope, rv, result);
 }
 
+type CookRoster = (Vec<api::named_banks::NamedBank>, Vec<CookLocation>);
+
 /// The bank roster paired with its cook surfaces; `Ok(None)` without selected
 /// game data, and a fact error when local cook data is unavailable.
-fn cook_roster(
-) -> Result<Option<(Vec<api::named_banks::NamedBank>, Vec<CookLocation>)>, api::selected::FactError>
-{
+fn cook_roster() -> Result<Option<CookRoster>, api::selected::FactError> {
     let Some(data) = crate::scene::supply_v2::selected_data() else {
         return Ok(None);
     };
