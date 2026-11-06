@@ -60,6 +60,12 @@ Native door traversal sends its one-tile step through the bound driver. On
 `Client::write_pending_door_step_377`. It does not reuse the 274/289 movement
 body or add another API-side encoder. Unbound 377 drivers refuse this step.
 
+Revision-377 navigation resolves the door and gate config names, including
+`next_loc_stage`, through the selected content's `pack/loc.pack`. This includes
+the wheat-field gates 1551 and 1553 south of the Lumbridge mill. Rebuild the
+377 pack with this parser before running Cook; an older pack can leave the
+field disconnected. Revision-274/289 config parsing remains numeric-only.
+
 `cargo test -p script revision_377_` covers bundle selection, Path compilation,
 folder validation and missing-table admission. The ignored host-play test
 `quester::quester_377_cook_native` starts the production Quester card. It records
