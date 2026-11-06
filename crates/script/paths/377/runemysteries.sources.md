@@ -49,3 +49,28 @@ Every hand-out in this quest is re-issuable in the source, and each sequence mod
 - The state-2 journal line is flagged best-guess in the source (`runemysteries_journal.rs2:21`); the rule for `runemysteries:2` inherits that uncertainty but the stage itself is source-certain (`sedridor.rs2:98-109`).
 - Sedridor's lost-package teleport visual is unimplemented upstream (`sedridor.rs2:15` todo); the Path relies only on the re-given item fact.
 - Post-quest teleports (`sedridor.rs2:32-42`, `aubury.rs2:22-24,32-33,45-47`) are out of scope and unmodelled.
+
+## Live fixture and unexpected combat
+
+The Varrock approach is not safe for an unprepared level-3 account. Mugger
+175 is placed just south of the shop at `(3249,3391,0)` in `m50_52.jm2`
+(NPC section; `0 49 63: 175`), within its wander range 12 and hunt range 5
+of the shop approach. Its level is 6 and its hunt mode is `cowardly`
+(`scripts/_unpack/377/all.npc:5012-5046`). The same map places level-7/20
+dark wizards by the southern Varrock entrance.
+
+`all.hunt:37-40` selects the outside-Wilderness not-too-strong filter;
+engine `Npc.ts:1017-1019` excludes a player above twice the NPC level.
+The live witness therefore labels and observes a combat-only level-40
+Attack/Strength/Defence/Hitpoints fixture plus five trout before Start.
+This leaves Runecrafting, quest variables, quest items and quest points
+unseeded. The harness runbook's area-sized-fixture rule owns this setup;
+it is not a quest requirement.
+
+The 289 Rune Mysteries Path has no combat step or automatic fight/flee/resume
+rule. Shared TalkRun only hands an interrupt to an explicitly authored
+`expect_combat` target. Other combat interrupts park Quester without advancing
+the journal or cursor; the runner's combat-interrupted-talk regression also
+rejects Resume/SessionReady as an implicit restart. The explicit combat family
+has its own encounter and abort/escape rules, but is not a background interrupt
+handler. No such policy is added to this non-combat quest.
