@@ -235,7 +235,9 @@ static STATIC_OPTION_TABLES: LazyLock<HashMap<&'static str, Vec<String>>> = Lazy
         .collect()
 });
 
-static BANK_OPTION_TABLES: LazyLock<Result<(Vec<String>, Vec<String>), api::selected::FactError>> =
+type BankOptionTables = (Vec<String>, Vec<String>);
+
+static BANK_OPTION_TABLES: LazyLock<Result<BankOptionTables, api::selected::FactError>> =
     LazyLock::new(|| {
         let names = api::named_banks::bank_catalog()?
             .iter()
