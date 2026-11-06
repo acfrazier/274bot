@@ -3447,6 +3447,9 @@ const noOverrides: readonly SiteOverride[] = [];
         /missing the strength level/,
         'a one-argument strength gate throws',
     );
+}
+
+{
     // An unknown specwep obj (no §6.1 row) fails closed instead of emitting
     // an untyped fact.
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pvp-facts-fixture-'));
