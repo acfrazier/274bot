@@ -44,7 +44,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use api::game_data::SelectedGameData;
-use api::named_banks::{BankDefinition, BankOperation, NamedBankFacts, BANK_CATALOG};
+use api::named_banks::{bank_catalog, BankDefinition, BankOperation, NamedBankFacts};
 use api::quest_facts::QuestCatalog;
 use api::selected::{ClientRevision, FactKey, RunKey};
 use api::snapshot::{GameSnapshot, LocView, WorldTile};
@@ -759,7 +759,8 @@ fn selected_gundai_metadata(selected: &SelectedGameData) -> (i32, &'static BankD
     let npc = selected
         .npc_by_config("magearena_banker")
         .expect("selected R289 Gundai NPC config");
-    let definition = BANK_CATALOG
+    let definition = bank_catalog()
+        .expect("prepared named bank catalogue")
         .iter()
         .find(|row| row.name == GUNDAI_BANK_NAME)
         .expect("selected Mage Arena bank definition");
