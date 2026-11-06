@@ -45,6 +45,12 @@ It fails if the selector exits with an error or lists no tests. The selector is
 a proxy: verification does not validate the live command, wrapper arguments,
 `--live` name, inputs or assigned host. It does not run the live cell.
 
+The combat-summary cell uses a `harness = false` executable, which cannot list
+libtest tests. Its explicit proxy lists the cached-summary heap unit test.
+The actual cell still runs the full summary-shape executable.
+The headed survival cell lists its `app::tests` status-card proxy.
+Neither proxy listing proves a headed frame or a live game result.
+
 ## Clean logout
 
 A gameplay pass does not excuse a failed shutdown. Live terminal runs and the
