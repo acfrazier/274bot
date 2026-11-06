@@ -223,3 +223,110 @@ fn romeo_377_missing_message_path_skips_juliet_detour() {
         "the Path must not walk back to Juliet for an item Romeo does not check"
     );
 }
+
+#[test]
+fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
+    let document: serde_json::Value =
+        serde_json::from_slice(bundled_path_for(ClientRevision::R377, "hetty").unwrap()).unwrap();
+    assert!(
+        document["roles"][0]["progress"]["rules"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "hetty is not in the selected 377 journal button table"
+    );
+    let start = document["roles"][0]["sequences"][0]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"] == "start-hetty")
+        .unwrap()
+        .clone();
+    let prefer: Vec<Arc<str>> = start["args"]["prefer"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|text| Arc::from(text.as_str().unwrap()))
+        .collect();
+    // hetty.rs2:5 last option does not start the quest. :43 last option does not set the varp.
+    let menus: [&[&str]; 2] = [
+        &[
+            "I am in search of a quest.",
+            "I've heard that you are a witch.",
+        ],
+        &[
+            "Yes help me become one with my darker side.",
+            "No I have my principles and honour.",
+            "What, you mean improve my magic?",
+        ],
+    ];
+    for choices in menus {
+        let options: Vec<api::snapshot::ChatOptionView> = choices
+            .iter()
+            .enumerate()
+            .map(|(index, text)| api::snapshot::ChatOptionView {
+                component_id: index as i32 + 1,
+                text: (*text).into(),
+            })
+            .collect();
+        let selected = super::super::families::dialogue::pick_preferred(&options, &prefer);
+        assert_eq!(selected, Some(0), "{choices:?}");
+    }
+    assert_eq!(
+        document["quest"]["acquire"]["acquire:burnt-meat"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|step| step["id"] == "cook-beef")
+            .unwrap()["args"]["target"]["loc"],
+        "rimmington_poor_range",
+        "377 places the poor range, not the generic range loc"
+    );
+    api::selected::FamilyPreparation::run(|worker| {
+        let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+        let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let bytes = bundled_path_for(ClientRevision::R377, "hetty").unwrap();
+        compile::compile_path(
+            bytes,
+            &selected,
+            &quests,
+            worker,
+            &crate::local_state::OperatorLoadouts::absent(),
+        )
+        .unwrap_or_else(|error| panic!("377 Witch's Potion failed to compile: {error:?}"));
+        let gobdip = bundled_path_for(ClientRevision::R377, "gobdip").unwrap();
+        compile::compile_path(
+            gobdip,
+            &selected,
+            &quests,
+            worker,
+            &crate::local_state::OperatorLoadouts::absent(),
+        )
+        .unwrap_or_else(|error| panic!("377 Goblin Diplomacy failed to compile: {error:?}"));
+        let vampire = bundled_path_for(ClientRevision::R377, "vampire").unwrap();
+        compile::compile_path(
+            vampire,
+            &selected,
+            &quests,
+            worker,
+            &crate::local_state::OperatorLoadouts::absent(),
+        )
+        .unwrap_or_else(|error| panic!("377 Vampire Slayer failed to compile: {error:?}"));
+        let demon = bundled_path_for(ClientRevision::R377, "demon").unwrap();
+        compile::compile_path(
+            demon,
+            &selected,
+            &quests,
+            worker,
+            &crate::local_state::OperatorLoadouts::absent(),
+        )
+        .unwrap_or_else(|error| panic!("377 Demon Slayer failed to compile: {error:?}"));
+        assert_eq!(
+            selected.loc_by_config("rimmington_poor_range").unwrap().id,
+            9682
+        );
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+}

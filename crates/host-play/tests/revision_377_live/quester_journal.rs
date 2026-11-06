@@ -101,6 +101,71 @@ const ROMEO: Quest = Quest {
     qp_delta: 5,
     qp_reward: "5 Quest Points",
 };
+// Magic is stat index 6 (quester_imp.rs). Crafting is 12 (sheep). Attack is 0.
+// Vampire's reward skill is Attack, which the combat fixture also raises, so
+// its witness compares the delta against the post-fixture baseline.
+const HETTY: Quest = Quest {
+    key: "hetty",
+    label: "Witch's Potion",
+    row_label: "Witch's Potion",
+    var: "hetty",
+    terminal: "3",
+    skill: 6,
+    xp_delta: 325,
+    qp_delta: 1,
+    qp_reward: "1 Quest Point",
+};
+const GOBDIP: Quest = Quest {
+    key: "gobdip",
+    label: "Goblin Diplomacy",
+    row_label: "Goblin Diplomacy",
+    var: "goblinquest",
+    terminal: "6",
+    skill: 12,
+    xp_delta: 200,
+    qp_delta: 5,
+    qp_reward: "5 Quest Points",
+};
+const VAMPIRE: Quest = Quest {
+    key: "vampire",
+    label: "Vampire Slayer",
+    row_label: "Vampire Slayer",
+    var: "vampire",
+    terminal: "3",
+    skill: 0,
+    xp_delta: 4825,
+    qp_delta: 3,
+    qp_reward: "3 Quest Points",
+};
+const DEMON: Quest = Quest {
+    key: "demon",
+    label: "Demon Slayer",
+    row_label: "Demon Slayer",
+    var: "demonstart",
+    terminal: "30",
+    skill: 6,
+    xp_delta: 0,
+    qp_delta: 3,
+    qp_reward: "3 Quest Points",
+};
+
+fn needs_combat_fixture(key: &str) -> bool {
+    matches!(
+        key,
+        "runemysteries" | "hetty" | "gobdip" | "vampire" | "demon"
+    )
+}
+
+fn split_completion(key: &str) -> Option<&'static str> {
+    match key {
+        "romeojuliet" => Some("Romeo & Juliet Quest!"),
+        "hetty" => Some("Witches Potion Quest!"),
+        "gobdip" => Some("Goblin Diplomacy Quest!"),
+        "vampire" => Some("Vampire Slayer Quest!"),
+        "demon" => Some("Demon Slayer Quest!"),
+        _ => None,
+    }
+}
 
 impl Sample {
     fn read(client: &Client, snapshot: &GameSnapshot, quest: Quest) -> Self {
@@ -190,14 +255,11 @@ impl Sample {
                 == 5
     }
     fn complete(&self, q: Quest, base_xp: i32) -> bool {
-        let completion = if q.key == "romeojuliet" {
+        let completion = if let Some(second) = split_completion(q.key) {
             self.main_text
                 .iter()
                 .any(|s| s.contains("You have completed the"))
-                && self
-                    .main_text
-                    .iter()
-                    .any(|s| s.contains("Romeo & Juliet Quest!"))
+                && self.main_text.iter().any(|s| s.contains(second))
         } else {
             self.main_text
                 .iter()
@@ -213,10 +275,33 @@ impl Sample {
                     && self.main_text.iter().any(|s| s == "Air talisman")
                     && self.main_text.iter().any(|s| s == q.qp_reward)
             }
+            "hetty" => {
+                self.main_text.iter().any(|s| s == "325 Magic XP")
+                    && self.main_text.iter().any(|s| s == q.qp_reward)
+            }
+            "gobdip" => {
+                self.main_text.iter().any(|s| s == "200 Crafting XP")
+                    && self.main_text.iter().any(|s| s == "A Gold Bar")
+                    && self.main_text.iter().any(|s| s == q.qp_reward)
+            }
+            "vampire" => {
+                self.main_text.iter().any(|s| s == "4,825 Attack XP")
+                    && self.main_text.iter().any(|s| s == q.qp_reward)
+            }
+            "demon" => {
+                self.main_text.iter().any(|s| s == "Silverlight")
+                    && self.main_text.iter().any(|s| s == q.qp_reward)
+            }
             "romeojuliet" => self.main_text.iter().any(|s| s == q.qp_reward),
             _ => false,
         };
-        self.xp - base_xp == q.xp_delta
+        // Count Draynor grants variable Attack XP before the 4,825 reward.
+        let xp_ok = if q.key == "vampire" {
+            self.xp - base_xp >= q.xp_delta
+        } else {
+            self.xp - base_xp == q.xp_delta
+        };
+        xp_ok
             && self.qp == q.qp_delta
             && self.quest_colour == Some(0x00F800)
             && completion
@@ -232,9 +317,14 @@ fn native_run_completed(receipt: Option<&ScriptLifecycleReceipt>, generation: Op
 
 fn witness_predicate(sample: &Sample, quest: Quest, base_xp: i32, baseline: bool) -> bool {
     if baseline {
-        sample.fresh()
-            && base_xp == 0
-            && (quest.key != "runemysteries" || sample.rune_fixture_ready())
+        if quest.key == "vampire" {
+            // The labelled combat fixture raises Attack, the reward skill.
+            sample.qp == 0 && sample.quest_colour == Some(0xF80000) && sample.rune_fixture_ready()
+        } else {
+            sample.fresh()
+                && base_xp == 0
+                && (!needs_combat_fixture(quest.key) || sample.rune_fixture_ready())
+        }
     } else {
         sample.complete(quest, base_xp)
     }
@@ -406,7 +496,7 @@ impl Witness {
         let client::render::backend::FrameOutput::PixMap(pixels) = out else {
             return Err("377 Quester capture did not return CPU framebuffer".into());
         };
-        let seeds = if self.quest.key == "runemysteries" {
+        let seeds = if needs_combat_fixture(self.quest.key) {
             vec!["own-account tutorial bypass and mainland position, then clean relog", "labelled combat-only area fixture: Attack/Strength/Defence/Hitpoints 40, five trout"]
         } else {
             vec!["own-account tutorial bypass and mainland position, then clean relog"]
@@ -461,7 +551,7 @@ impl Witness {
                     && s.tile
                         .is_some_and(|(x, z, l)| lumbridge(WorldTile { x, z, level: l }))
                 {
-                    if self.quest.key == "runemysteries" {
+                    if needs_combat_fixture(self.quest.key) {
                         if !self.fixture_seeded {
                             for command in RUNE_FIXTURE {
                                 if !interact::cheat(client, command).is_sent() {
@@ -492,6 +582,11 @@ impl Witness {
             }
         }
         if self.baseline.is_none() {
+            // The first post-relog frame can publish combat level and food
+            // before named stat rows. Do not fail that partial frame.
+            if needs_combat_fixture(self.quest.key) && !s.rune_fixture_ready() {
+                return Ok(());
+            }
             if !witness_predicate(&s, self.quest, 0, true) {
                 return Err(format!("fresh-account quest conditions failed: {s:?}"));
             }
@@ -604,7 +699,12 @@ fn run_quest(q: Quest) -> Result<(), String> {
         None,
         None,
     )?;
-    let deadline = Instant::now() + Duration::from_secs(1500);
+    let budget = if matches!(q.key, "hetty" | "gobdip" | "vampire" | "demon") {
+        3600
+    } else {
+        1500
+    };
+    let deadline = Instant::now() + Duration::from_secs(budget);
     let prep = Instant::now() + Duration::from_secs(180);
     let mut started = false;
     let mut complete = false;
@@ -701,4 +801,81 @@ fn quester_377_runemysteries_native() -> Result<(), String> {
 #[ignore = "requires LIVE=1, owned qj3 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_romeojuliet_native() -> Result<(), String> {
     run_quest(ROMEO)
+}
+fn batch2_product(quest: Quest, extra: &[&str]) -> Sample {
+    let mut sample = Sample {
+        tick: 2,
+        tile: Some((3200, 3200, 0)),
+        xp: quest.xp_delta,
+        level: 1,
+        qp: quest.qp_delta,
+        quest_colour: Some(0x00F800),
+        inventory: vec![],
+        main_root: 0,
+        main_text: vec!["You have completed the".into()],
+        dialogue: vec![],
+        chat: vec![],
+        combat_level: 49,
+        combat_stats: [40; 4],
+        hitpoints: 40,
+        in_combat: false,
+        local_index: Some(1),
+        nearby_npcs: vec![],
+    };
+    if let Some(second) = split_completion(quest.key) {
+        sample.main_text.push(second.into());
+    }
+    sample.main_text.push(quest.qp_reward.into());
+    sample
+        .main_text
+        .extend(extra.iter().map(|line| (*line).into()));
+    sample
+}
+
+#[test]
+fn batch2_witness_accepts_the_377_scroll_and_rejects_a_red_row() {
+    for (quest, extra) in [
+        (HETTY, &["325 Magic XP"][..]),
+        (GOBDIP, &["200 Crafting XP", "A Gold Bar"][..]),
+        (VAMPIRE, &["4,825 Attack XP"][..]),
+        (DEMON, &["Silverlight"][..]),
+    ] {
+        let base = if quest.key == "vampire" { 1154 } else { 0 };
+        let mut sample = batch2_product(quest, extra);
+        if quest.key == "vampire" {
+            sample.xp = base + quest.xp_delta + 40;
+        }
+        assert!(
+            witness_predicate(&sample, quest, base, false),
+            "{} product",
+            quest.key
+        );
+        sample.quest_colour = Some(0xF80000);
+        assert!(
+            !witness_predicate(&sample, quest, base, false),
+            "{}",
+            quest.key
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires LIVE=1, owned qb4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+fn quester_377_hetty_native() -> Result<(), String> {
+    run_quest(HETTY)
+}
+#[test]
+#[ignore = "requires LIVE=1, owned qb4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+fn quester_377_gobdip_native() -> Result<(), String> {
+    run_quest(GOBDIP)
+}
+#[test]
+#[ignore = "requires LIVE=1, owned qb4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+fn quester_377_vampire_native() -> Result<(), String> {
+    run_quest(VAMPIRE)
+}
+#[test]
+#[ignore = "requires LIVE=1, owned qb4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+fn quester_377_demon_native() -> Result<(), String> {
+    run_quest(DEMON)
 }
