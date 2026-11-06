@@ -457,11 +457,11 @@
           "version": 1,
           "advances": false,
           "args": {
-            "target": { "loc": "millbase_flour" },
+            "target": { "loc": "millbase" },
             "op": "Empty",
             "anchor": {
               "tile": [3166, 3306, 0],
-              "source": "C maps/m49_51.jm2:5645 (LOC 1781 maps to millbase); all.loc:12411-12450 selects millbase_flour when millcheck_multi is 1; windmills.rs2:31-40,53-69"
+              "source": "C maps/m49_51.jm2:5645 (placed LOC 1781=millbase); all.loc:12407-12450 (Empty on placed base and visible flour face); windmills.rs2:21-69"
             },
             "radius": 8,
             "settle_ms": 15000
