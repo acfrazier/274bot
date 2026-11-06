@@ -1249,23 +1249,19 @@ edge (including a new target cfg or cross-crate feature request), an edge kind,
 a migration, an optional-dependency activation, a vendored path package, a client manifest change, a root patch or replacement entry, or a checker change.
 The operator edits `policy.toml` where the rule change needs it.
 First merge current `dev` into the branch being merged.
-Regenerate the baseline from that merged branch tree in the same arch commit:
-
-```bash
-python3 -B check.py --emit-provenance-baseline /path/to/merged-branch > graph-provenance.json
-```
-
-Review removed records. Retain records that other active branches still need.
+Review the protected policy against that merged branch.
+The checker derives crate identities and ownership from the checked tree.
+It does not emit or refresh a graph-provenance baseline.
 
 The operator publishes first; the product change lands after. Only the
 operator can push `274bot-arch`; agents cannot. Propose the policy edit as
 a patch or branch bundle for the operator to review and push.
 Outside the pinned client manifests, purely local features with no optional dependency or cross-crate edge need no operator commit.
-Fine ownership/seam/inventory data also needs no operator commit. Fine-data
-changes (ownership rows, inventory rows, foreign-type rows) are ordinary
-product diffs in `tools/architecture/`, reviewed like code — the checker
-loads them from the checked tree, refuses malformed or stale data, and
-cannot widen the protected edge policy.
+Semantic foreign-type classification in `tools/architecture/foreign_types.json`
+remains ordinary reviewed product data. Ownership classes come from syntax,
+not candidate-side ownership or inventory rows.
+Existing seam and import exceptions stay protected. Candidate changes cannot
+add or widen an exception.
 
 1. Update the tables on this page so the public description matches.
 2. Run the local command above (point local-only `ARCH_REPO` at a local
