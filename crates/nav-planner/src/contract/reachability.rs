@@ -393,11 +393,11 @@ mod tests {
         );
     }
 
-    /// Upper bound on the real 289 atlas tables in memory. The v18 289 tables
-    /// hold about 6.20 MB (the pack grew 6,216,880 bytes over v17, minus the
-    /// multiway keys and section directories). Growth past this limit is a
-    /// new once-per-process cost to review, not a per-bot cost.
-    const REAL_ATLAS_RESIDENT_LIMIT: usize = 6_300_000;
+    /// Once-per-process tables measured at 6,436,920 bytes, plus 8 bytes.
+    /// The v18 producer added this atlas in 4dd65ac8aa8280f4e0ee98106f069f63d9450289.
+    /// Its tables are byte-identical before and after the provenance strip,
+    /// so the growth predates the strip. Main approved this guard adjustment.
+    const REAL_ATLAS_RESIDENT_LIMIT: usize = 6_436_920 + 8;
 
     #[test]
     fn real_289_atlas_stays_inside_its_size_tripwire_and_lookups_do_not_allocate() {

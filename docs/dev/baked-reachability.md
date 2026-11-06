@@ -212,6 +212,12 @@ labels and immutable tables. `NavLease::reachability()` returns a borrowed
 No runtime dense labels, whole-world floods, or per-idle-bot reach bitset exists.
 Admitted jobs own their temporary account traversal scratch.
 
+The revision-289 atlas retains 6,436,920 table bytes once per process.
+Its regression guard permits 8 additional bytes. The v18 producer introduced
+these tables in `4dd65ac8aa8280f4e0ee98106f069f63d9450289`. The retained v18
+and canonical v19 tables are byte-identical, so this cost predates the
+provenance strip. Additional bot leases do not duplicate the tables.
+
 The closed facade exposes these meanings, not raw atlas or transport storage:
 
 - `BoundComponentKey`: private pack identity and component index.

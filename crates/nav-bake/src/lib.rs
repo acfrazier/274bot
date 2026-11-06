@@ -13,9 +13,6 @@ pub mod services;
 pub mod transport;
 mod zones;
 
-#[cfg(test)]
-mod test_support;
-
 /// Failure at a navigation-generation boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum GenerationError {

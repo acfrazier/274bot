@@ -834,6 +834,8 @@ fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
 }
 
 fn plant_snapshot(unpack: &std::path::Path, revision: u16, packs: &[(String, Vec<u8>)]) {
+    use sha2::Digest;
+
     struct FixtureEntries(Vec<(i32, i32)>);
     impl client::unpack::EntrySource for FixtureEntries {
         fn request_entry(&mut self, archive: i32, file: i32) -> Result<(), String> {
@@ -863,8 +865,8 @@ fn plant_snapshot(unpack: &std::path::Path, revision: u16, packs: &[(String, Vec
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let transfer = nav_planner::manifest::hash_bytes(versionlist);
-    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let transfer = format!("{:x}", sha2::Sha256::digest(versionlist));
+    let negotiated = format!("{:x}", sha2::Sha256::digest(&crc_body(packs)[..36]));
     let input = unpack.join("fixture-input");
     std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {

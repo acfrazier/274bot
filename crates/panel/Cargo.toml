@@ -77,4 +77,5 @@ host-play = { path = "../host-play", default-features = false, features = ["live
 nav-bake = { path = "../nav-bake" }
 proc-macro2 = "1"
 syn = "2"
+sha2 = "0.10.9"
 parking_lot = "0.12"
