@@ -16,6 +16,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   name and menu actions, while retaining the placed type. Null forms expose
   no menu. Quester can defer unnamed 377 talk roots to that observed menu;
   it never substitutes a static leaf target. Revision 274/289 is unchanged.
+- Prepare the revision-377 Rune Mysteries live witness with a labelled,
+  observed combat-only area fixture and food before Start. Retain combat
+  stats and nearby NPC targets in its evidence; leave quest state, items,
+  Runecrafting XP and quest points to the native Path and content.
 - Add the bespoke revision-377 `cook_377` scenario and a fresh-account live
   witness. Ingredients come from world interactions. Completion, Cooking XP
   and quest points must come from Fairy Ring's product scripts.
