@@ -1,0 +1,619 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "sheep",
+  "display_name": "Sheep Shearer",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      {
+        "obj": "shears",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": "acquire:shears",
+        "from_stage": "sheep:1"
+      },
+      {
+        "obj": "wool",
+        "qty": 20,
+        "kind": "acquirable",
+        "acquire": "acquire:wool",
+        "from_stage": "sheep:1"
+      },
+      {
+        "obj": "ball_of_wool",
+        "qty": 20,
+        "kind": "acquirable",
+        "acquire": "acquire:balls",
+        "from_stage": "sheep:1"
+      }
+    ],
+    "acquire": {
+      "acquire:shears": [
+        {
+          "id": "withdraw-shears",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "shears",
+                "qty": 1
+              }
+            ]
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "shears"
+                  }
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "bank_known",
+                      "version": 1,
+                      "args": {}
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "bank_has",
+                        "version": 1,
+                        "args": {
+                          "obj": "shears"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "shears"
+              }
+            }
+          }
+        },
+        {
+          "id": "take-shears",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "ground": "shears"
+            },
+            "op": "Take",
+            "anchor": {
+              "tile": [
+                3192,
+                3272,
+                0
+              ],
+              "source": "C maps/m49_51.jm2:7424 (OBJ 1735 at 0 56 8); pack/obj.pack:1736 (1735=shears)"
+            },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "shears"
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "shears"
+              }
+            }
+          }
+        }
+      ],
+      "acquire:wool": [
+        {
+          "id": "shear",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "shears",
+            "target": {
+              "npc": "sheepunsheered"
+            },
+            "anchor": {
+              "tile": [
+                3198,
+                3268,
+                0
+              ],
+              "source": "C maps/m49_51.jm2:7417-7418 (NPC 43 at 0 62 1 and 0 62 8); pack/npc.pack:44 (43=sheepunsheered); general_use/scripts/shear_sheep.rs2:5-24"
+            },
+            "radius": 8,
+            "product": "wool",
+            "until": {
+              "obj": "wool",
+              "qty": {
+                "progress": {
+                  "quest": "sheep",
+                  "flag": "sheep:balls_to_go"
+                },
+                "minus_item": "ball_of_wool"
+              }
+            },
+            "no_product": {
+              "Fact": {
+                "kind": "message",
+                "version": 1,
+                "args": {
+                  "any": [
+                    "The sheep manages to get away from you!",
+                    "This sheep has already been shorn."
+                  ]
+                }
+              }
+            },
+            "settle_ms": 240000
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "wool",
+                    "qty": 20
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ball_of_wool",
+                    "qty": 20
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "wool",
+                    "qty": {
+                      "progress": {
+                        "quest": "sheep",
+                        "flag": "sheep:balls_to_go"
+                      },
+                      "minus_item": "ball_of_wool"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "wool",
+                "qty": {
+                  "progress": {
+                    "quest": "sheep",
+                    "flag": "sheep:balls_to_go"
+                  },
+                  "minus_item": "ball_of_wool"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "acquire:balls": [
+        {
+          "id": "spin",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "wool",
+            "target": {
+              "loc": "spinningwheel"
+            },
+            "anchor": {
+              "tile": [
+                3209,
+                3212,
+                1
+              ],
+              "source": "C maps/m50_50.jm2:9464 (LOC 2644 at 1 9 12); pack/loc.pack:2645 (2644=spinningwheel); skill_crafting/scripts/spinning/spinning.rs2:1-2,13-22"
+            },
+            "radius": 8,
+            "product": "ball_of_wool",
+            "until": {
+              "obj": "ball_of_wool",
+              "qty": {
+                "progress": {
+                  "quest": "sheep",
+                  "flag": "sheep:balls_to_go"
+                }
+              }
+            }
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ball_of_wool",
+                    "qty": 20
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ball_of_wool",
+                    "qty": {
+                      "progress": {
+                        "quest": "sheep",
+                        "flag": "sheep:balls_to_go"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "ball_of_wool",
+                "qty": {
+                  "progress": {
+                    "quest": "sheep",
+                    "flag": "sheep:balls_to_go"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:shears",
+      "obj:wool",
+      "obj:ball_of_wool"
+    ],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:sheep",
+      "progress": {
+        "colour": {
+          "not_started": "sheep:0",
+          "in_progress": "sheep:1",
+          "complete": "sheep:22"
+        },
+        "rules": [
+          {
+            "stage": "sheep:22",
+            "all": [
+              "i brought farmer fred 20 balls of wool"
+            ]
+          },
+          {
+            "stage": "sheep:1",
+            "all": [
+              "i asked farmer fred",
+              "i need to collect"
+            ]
+          },
+          {
+            "stage": "sheep:0",
+            "all": [
+              "i can start this quest by speaking to"
+            ]
+          }
+        ],
+        "flags": [
+          {
+            "flag": "sheep:balls_to_go",
+            "any": [
+              "i need to collect"
+            ],
+            "count": "(\\d+)"
+          }
+        ],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "sheep:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "fred_the_farmer",
+                "anchor": {
+                  "tile": [
+                    3189,
+                    3273,
+                    0
+                  ],
+                  "source": "C maps/m49_51.jm2:7408 (NPC 758 at 0 53 9); pack/npc.pack:759 (758=fred_the_farmer); areas/area_lumbridge/scripts/fred_the_farmer.rs2:17-39,81-86"
+                },
+                "leash": 6,
+                "prefer": [
+                  "I'm looking for a quest.",
+                  "Yes okay. I can do that."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "sheep",
+                    "is": "in_progress"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "sheep:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "shears",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:shears"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "shears"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "shears"
+                  }
+                }
+              }
+            },
+            {
+              "id": "wool",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:wool"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "wool",
+                        "qty": 20
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "ball_of_wool",
+                        "qty": 20
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "wool",
+                        "qty": {
+                          "progress": {
+                            "quest": "sheep",
+                            "flag": "sheep:balls_to_go"
+                          },
+                          "minus_item": "ball_of_wool"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "wool",
+                    "qty": {
+                      "progress": {
+                        "quest": "sheep",
+                        "flag": "sheep:balls_to_go"
+                      },
+                      "minus_item": "ball_of_wool"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "balls",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:balls"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "ball_of_wool",
+                        "qty": 20
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "ball_of_wool",
+                        "qty": {
+                          "progress": {
+                            "quest": "sheep",
+                            "flag": "sheep:balls_to_go"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "ball_of_wool",
+                    "qty": {
+                      "progress": {
+                        "quest": "sheep",
+                        "flag": "sheep:balls_to_go"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "hand-in",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "comment": "gap_ticks 2: fred_give_wool closes the chat (if_close) then p_delay(1) while the loop continues; fred_the_farmer.rs2:214-221.",
+              "args": {
+                "npc": "fred_the_farmer",
+                "anchor": {
+                  "tile": [
+                    3189,
+                    3273,
+                    0
+                  ],
+                  "source": "C maps/m49_51.jm2:7408 (NPC 758 at 0 53 9); pack/npc.pack:759 (758=fred_the_farmer); areas/area_lumbridge/scripts/fred_the_farmer.rs2:160-193,211-234"
+                },
+                "leash": 6,
+                "prefer": [],
+                "gap_ticks": 2
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "ball_of_wool"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "sheep",
+                    "is": "complete"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "sheep:22",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}
