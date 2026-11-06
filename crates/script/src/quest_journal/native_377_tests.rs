@@ -100,7 +100,17 @@ fn selected_377_captures_the_discontinuous_tail_and_ignores_static_controls() {
 
 #[test]
 fn selected_377_click_capture_close_is_fresh_ordered_and_normalized() {
-    for id in ["sheep", "runemysteries", "romeojuliet"] {
+    for id in [
+        "cook",
+        "runemysteries",
+        "romeojuliet",
+        "sheep",
+        "demon",
+        "gobdip",
+        "squire",
+        "vampire",
+        "hetty",
+    ] {
         let (mut snapshot, request, title, component) = fixture(id);
         let mut ledger = None;
         let handle: ActionHandle<JournalMachine> = tick(&snapshot, &mut ledger, 1, |t| {
@@ -227,3 +237,4 @@ fn selected_377_missing_body_and_button_tables_fail_closed() {
         matches!(revision_377::admit(catalog.quest("imp").unwrap()), Err(ActionError::Unavailable(reason)) if reason.contains("button table unavailable"))
     );
 }
+
