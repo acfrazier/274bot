@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "paths": [
+    { "id": "cook", "file": "cook.json" }
+  ]
+}
