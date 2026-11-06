@@ -31,8 +31,8 @@ pub(super) use script_nav::CarriedWalk;
 pub(super) use script_nav::PostedWalkOutcome;
 #[cfg(test)]
 pub(super) use script_nav::{
-    approach_tiles, publish_route_owner_refusal, resolve_route_exclusions, route_world_state,
-    RouteDemandKind, ScriptRouteRequest,
+    approach_tiles, drain_route_work_for_test, publish_route_owner_refusal,
+    resolve_route_exclusions, route_world_state, RouteDemandKind, ScriptRouteRequest,
 };
 pub(super) use script_nav::{
     blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, ScriptRouteExclusions,
