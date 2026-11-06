@@ -77,9 +77,17 @@ fn document(id: &str) -> Value {
 }
 
 fn step<'a>(document: &'a Value, stage: &str, id: &str) -> &'a Value {
-    document["roles"][0]["sequences"].as_array().unwrap().iter()
-        .find(|sequence| sequence["stage"] == stage).unwrap()["steps"]
-        .as_array().unwrap().iter().find(|step| step["id"] == id).unwrap()
+    document["roles"][0]["sequences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|sequence| sequence["stage"] == stage)
+        .unwrap()["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"] == id)
+        .unwrap()
 }
 
 #[test]
@@ -96,17 +104,29 @@ fn batch2_377_dialogue_transitions_settle_on_native_journal_stages() {
         let action = step(&document, stage, action);
         assert_eq!(action["advances"], true, "{id} must reread after {action}");
         assert_eq!(action["settle"]["Fact"]["kind"], "stage_in");
-        assert_eq!(action["settle"]["Fact"]["args"]["any"], serde_json::json!([next]));
+        assert_eq!(
+            action["settle"]["Fact"]["args"]["any"],
+            serde_json::json!([next])
+        );
     }
     let demon = document("demon");
     let ritual = step(&demon, "demon:2", "ask-traiborn");
-    assert_eq!(ritual["settle"], serde_json::json!({"All": []}),
-        "the journal does not distinguish the bone counter; only the completed talk is claimed");
+    assert_eq!(
+        ritual["settle"],
+        serde_json::json!({"All": []}),
+        "the journal does not distinguish the bone counter; only the completed talk is claimed"
+    );
     assert_eq!(ritual["args"]["gap_ticks"], 3);
     let hand_in = step(&demon, "demon:2", "give-traiborn-bones");
     assert_eq!(hand_in["args"]["gap_ticks"], 3);
-    assert_eq!(hand_in["settle"]["Fact"]["args"]["obj"], "silverlight_key_1");
-    assert_eq!(step(&demon, "demon:2", "bank-for-bones")["args"]["op"], "deposit_all");
+    assert_eq!(
+        hand_in["settle"]["Fact"]["args"]["obj"],
+        "silverlight_key_1"
+    );
+    assert_eq!(
+        step(&demon, "demon:2", "bank-for-bones")["args"]["op"],
+        "deposit_all"
+    );
 }
 
 #[test]
@@ -121,8 +141,14 @@ fn batch2_377_coin_acquisition_exercises_real_palace_spawns() {
     ] {
         assert_eq!(action["kind"], "interact");
         assert_eq!(action["args"]["target"]["ground"], "coins");
-        assert_eq!(action["args"]["anchor"]["tile"], serde_json::json!([3232, 3500, 0]));
-        assert_eq!(action["args"]["until"], serde_json::json!({"obj": "coins", "qty": qty}));
+        assert_eq!(
+            action["args"]["anchor"]["tile"],
+            serde_json::json!([3232, 3500, 0])
+        );
+        assert_eq!(
+            action["args"]["until"],
+            serde_json::json!({"obj": "coins", "qty": qty})
+        );
         assert_eq!(action["args"]["wait_if_missing"], true);
     }
 }
