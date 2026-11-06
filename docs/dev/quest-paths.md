@@ -207,11 +207,35 @@ exact mapped command in `tools/live-map/map.toml`.
 
 Unavailable content rows retain their existing reasons.
 
+### Revision 377
+
+Quester uses the selected revision's bundle. Revision 289 keeps its existing
+roster. Revision 274 remains unavailable. Revision 377 currently bundles only
+`crates/script/paths/377/cook.json`, indexed by `377/index.json` and embedded in
+`quester/registry.rs`. Its `cook.sources.md` sidecar cites the Fairy Ring content
+for dialogue, state, messages and targets.
+
+Revision-377 admission requires selected item, quest identity/progress, NPC and
+loc tables. Missing tables give an explicit unavailable reason. Step-specific
+families still compile against the selected world, so missing gathering,
+shop, production or other facts do not fall back to revision 289.
+
+Cook uses the visible quest-list colours, not private server varps or the
+289-only native journal reader. The Path authors the mill ladders explicitly.
+Other quests need their own 377 Paths and a check of their selected family,
+progress and transport requirements. A 377 content script alone is not proof
+that its Path or every required host capability works.
+
+`cargo test -p script revision_377_` covers bundle selection, Path compilation,
+folder validation and missing-table admission. The ignored host-play test
+`quester::quester_377_cook_native` starts the production Quester card. It records
+fresh read-only server replies, XP, quest points and a client completion capture.
+
 ## Folder loading pipeline
 
 Folder loading runs on the existing preparation worker; active runs keep their snapshot (`crates/script/src/quester/registry.rs:1-2`). Limits are constants at the top of that file. Files cap at 1 MiB (`MAX_PATH_BYTES`, `:19`), rows at 256 (`MAX_REGISTRY_ROWS`, `:31`), diagnostics at 32 lines (`MAX_DIAGNOSTIC_LINES`, `:36`). Observed folder entries cap at 4096 (`MAX_FOLDER_ENTRIES`, `:35`).
 
-The loader sorts valid folder filenames and loads at most the first 256 in filename order; later files are omitted with a `too-many-paths` diagnostic (`crates/script/src/quester/registry.rs:1402-1429,1295-1301`). An invalid override falls back to its bundled guide, while an invalid draft stays visible but unavailable, with the validation error as its reason (`crates/script/src/quester/registry.rs:1336-1364`). Other documents still load. The report reads `Reload Paths: N folder documents, M registry rows, K validation errors (folder)` (`crates/script/src/quester/registry.rs:1212-1218`). Picker labels append `[folder]` or `[draft]`, plus the reason after an em dash (`crates/script/src/quester/registry.rs:1233-1255`). Folder guides support revision 289 only (`crates/script/src/quester/registry.rs:744-747`).
+The loader sorts valid folder filenames and loads at most the first 256 in filename order; later files are omitted with a `too-many-paths` diagnostic (`crates/script/src/quester/registry.rs:1402-1429,1295-1301`). An invalid override falls back to its bundled guide, while an invalid draft stays visible but unavailable, with the validation error as its reason (`crates/script/src/quester/registry.rs:1336-1364`). Other documents still load. The report reads `Reload Paths: N folder documents, M registry rows, K validation errors (folder)` (`crates/script/src/quester/registry.rs:1212-1218`). Picker labels append `[folder]` or `[draft]`, plus the reason after an em dash (`crates/script/src/quester/registry.rs:1233-1255`). Folder guides support revisions 289 and 377. Overrides and fallback bundles use the selected revision.
 
 Both front ends share the labels in `crates/frontend-core/src/quester_paths.rs:12-18`. The panel wraps a success summary and leaves an error unwrapped (`crates/panel/src/app.rs:4404-4408`). The terminal app shows only the first line, with details in the Logs (`crates/tui/src/shell.rs:175-180`; every notice is also logged at `crates/frontend-core/src/quester_paths.rs:484-490`).
 
