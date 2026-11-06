@@ -2512,9 +2512,7 @@ fn a_rename_edit_replaces_its_row_in_place_or_is_refused_whole() {
 
 type NoticeLines = Arc<std::sync::Mutex<Vec<(Level, String)>>>;
 
-fn loadouts_service_with_notices(
-    scratch: &IsolatedEnv,
-) -> (Arc<LocalStateService>, NoticeLines) {
+fn loadouts_service_with_notices(scratch: &IsolatedEnv) -> (Arc<LocalStateService>, NoticeLines) {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
     let state = State {
