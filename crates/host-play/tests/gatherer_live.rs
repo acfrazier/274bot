@@ -1939,6 +1939,9 @@ struct Witness {
     relog_offline_observed: bool,
     /// Published trip steps after the new session, without repeats.
     relog_steps_after: Vec<String>,
+    /// `BankTripRelog` at Access: the character's tile on the first frame of
+    /// the walk to the bank.
+    relog_access_origin: Option<(i32, i32, i32)>,
 }
 
 /// Bank-trip soak counters (`LiveCase::FishBankSoak`). Trips are summed
@@ -2026,11 +2029,18 @@ struct GatherSlot {
     /// The cut is a silent server (`RelogPlan::dead_server`): the main loop
     /// owns the relay and stops forwarding when this is set.
     relog_pause_requested: bool,
+    /// `BankTripRelog`: the preparation sent the mainland hop itself.
+    relog_prep_hop_sent: bool,
 }
+/// How far the character walks toward the bank before an `Access` cut. The
+/// oak fixture (3017,3170) is 75 tiles from the Draynor bank (3092,3243), so
+/// 20 tiles leaves the walk well under way and the bank well ahead.
+const RELOG_ACCESS_CUT_TILES: i32 = 20;
+
 /// Where a `BankTripRelog` cell cuts the connection, and how.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RelogPlan {
-    /// The Gatherer's published trip step at the cut: `Open` or `Deposit`.
+    /// The Gatherer's published trip step at the cut: `Access`, `Open` or `Deposit`.
     step: &'static str,
     /// `false`: an unknown opcode fails the client's own dispatch (the T1
     /// path of `relog_live_tests.rs`) and a fresh login follows. `true`: a
@@ -2049,10 +2059,11 @@ impl RelogPlan {
 fn relog_plan() -> Result<RelogPlan, String> {
     let step = match std::env::var("GATHERER_RELOG_STEP").as_deref() {
         Ok("Open") | Err(_) => "Open",
+        Ok("Access") => "Access",
         Ok("Deposit") => "Deposit",
         Ok(other) => {
             return Err(format!(
-                "GATHERER_RELOG_STEP must be Open or Deposit, not {other:?}"
+                "GATHERER_RELOG_STEP must be Access, Open or Deposit, not {other:?}"
             ))
         }
     };
@@ -2066,6 +2077,16 @@ fn relog_plan() -> Result<RelogPlan, String> {
         }
     };
     Ok(RelogPlan { step, dead_server })
+}
+
+/// The published trip steps after the new session include `step`. The status
+/// labels "withdrawal confirmed" and "bank closed; validating equipment" last
+/// one tick. In one run of twelve the Gatherer's own log shows the close label
+/// and the witness did not record it. The Close and Validate steps follow those
+/// labels and the Gatherer reaches them only when the withdrawal and the close
+/// completed, so the step trail states the same facts.
+fn relog_step_seen(steps: &[String], step: &str) -> bool {
+    steps.iter().any(|seen| seen == step)
 }
 
 /// The trip steps a restarted bank trip must publish, in this order, after
@@ -2298,13 +2319,15 @@ impl GatherSlot {
             soak_last_refill: Instant::now(),
             relog: relog_plan().unwrap_or(RelogPlan::DEFAULT),
             relog_pause_requested: false,
+            relog_prep_hop_sent: false,
         }
     }
 
     /// `BankTripRelog`: cut the connection the first frame the published trip
-    /// step is the planned one (`Open`: before the table loads; `Deposit`:
-    /// with the table loaded), then follow the steps the new session
-    /// publishes.
+    /// step is the planned one (`Access`: the walk to the bank is
+    /// `RELOG_ACCESS_CUT_TILES` under way; `Open`: before the table loads;
+    /// `Deposit`: with the table loaded), then follow the steps the new
+    /// session publishes.
     fn relog_frame(&mut self, client: &mut client::client::Client) {
         let step = self
             .witness
@@ -2318,6 +2341,17 @@ impl GatherSlot {
             }
             let at_boundary = match self.relog.step {
                 "Open" => !self.snapshot.bank_loaded(),
+                "Access" => {
+                    // Mid-walk: the character has left the tile it stood on
+                    // when the walk to the bank began.
+                    let Some(here) = self.latest.as_ref().and_then(|row| row.tile) else {
+                        return;
+                    };
+                    let origin = *self.witness.relog_access_origin.get_or_insert(here);
+                    here.2 == origin.2
+                        && (here.0 - origin.0).abs().max((here.1 - origin.1).abs())
+                            >= RELOG_ACCESS_CUT_TILES
+                }
                 _ => self.snapshot.bank_loaded(),
             };
             if !at_boundary {
@@ -4076,11 +4110,18 @@ impl GatherSlot {
                 self.phase = Prep::WaitRelog;
             }
             Prep::WaitRelog => {
-                if self.snapshot.ingame()
-                    && self.snapshot.scene_state() == 2
-                    && self.inventory_tab_available()
-                {
-                    self.phase = Prep::ReseedTutorial;
+                if self.snapshot.ingame() && self.snapshot.scene_state() == 2 {
+                    if self.case == LiveCase::BankTripRelog && !self.relog_prep_hop_sent {
+                        // The product's own hop is off for this cell (see
+                        // `run_cell`), so the preparation sends it once here,
+                        // where the product would have sent it, before the
+                        // planned cut. The cut is never followed by one.
+                        interact::mainland_hop(client);
+                        self.relog_prep_hop_sent = true;
+                    }
+                    if self.inventory_tab_available() {
+                        self.phase = Prep::ReseedTutorial;
+                    }
                 }
             }
             Prep::ReseedTutorial => {
@@ -5652,8 +5693,10 @@ impl GatherSlot {
                     || !self.witness.relog_session_advanced
                     || !relog_steps_in_order(&self.witness.relog_steps_after)
                     || !relog_restart_logged(&fired_step)
-                    || !self.witness.bank_withdrawal_confirmed
-                    || !self.witness.bank_closed_observed
+                    || !(self.witness.bank_withdrawal_confirmed
+                        || relog_step_seen(&self.witness.relog_steps_after, "Close"))
+                    || !(self.witness.bank_closed_observed
+                        || relog_step_seen(&self.witness.relog_steps_after, "Validate"))
                     || !self.status_integer_seen("trips", 1)
                     || !self.witness.bank_return_step_seen
                     || self.witness.post_bank_yields == 0
@@ -6497,7 +6540,14 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     let frame_capture_job = Arc::new(Mutex::new(None::<PendingGathererCapture>));
     let mut play = host_play::run_with_template(
         Arc::clone(&template),
-        true,
+        // The product re-sends this hop (a teleport to 3220,3220 and
+        // `setvar tutorial 1000`) at every new session of a --mainland run
+        // (`play_slots.rs:1461,1801-1804`). A relog cell cuts a session on
+        // purpose, and the hop after the cut moved the character off its
+        // walk. The cell's preparation sends the hop once itself
+        // (`Prep::WaitRelog`), before the cut, and the cut is never followed
+        // by one.
+        case != LiveCase::BankTripRelog,
         vec![],
         |_| (None, None),
         move |client, username, frame| {
