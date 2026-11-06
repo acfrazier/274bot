@@ -626,7 +626,12 @@ pub struct Scenario {
 /// `per_frame` hook runs once per client cycle, like the driven slot's hook.
 pub struct Companion {
     pub profile: usize,
-    pub per_frame: Box<dyn FnMut(&mut Client) + Send>,
+    /// The client-cycle hook. `true` requests the host's explicit Login for
+    /// this slot: a bot with no script stays parked after its logout, so a
+    /// fixture that relogs (the shared tutorial seed) must be logged in by
+    /// the operator's own intent. The request is one-shot; the driver reads
+    /// it through [`ScenarioRunner::companion_tick`].
+    pub per_frame: Box<dyn FnMut(&mut Client) -> bool + Send>,
 }
 
 /// Gold script cells run on the engine's documented 600 ms default game tick

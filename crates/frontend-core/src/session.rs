@@ -2463,6 +2463,22 @@ impl<Io> OperatorSession<Io> {
         self.poll_at(Instant::now());
     }
 
+    /// Post the operator Login for slots whose live fixture relogged itself.
+    /// A bot with no script stays parked after its exit, so the scenario's
+    /// Relog step and a companion's prep relog ask the front end for this
+    /// intent; a scripted bot ignores it (its own demand already relogs it).
+    #[cfg(feature = "live-harness")]
+    fn service_live_relog_logins(&mut self) {
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        for name in self.live_runner.take_relog_logins() {
+            if let Some(arm) = play.arm(&name) {
+                arm.arm_explicit_login();
+            }
+        }
+    }
+
     pub fn poll_at(&mut self, now: Instant) {
         self.advance_removals(now);
         self.poll_host_at(now);
@@ -2477,6 +2493,8 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn poll_host_at(&mut self, now: Instant) {
+        #[cfg(feature = "live-harness")]
+        self.service_live_relog_logins();
         self.sync_snapshot();
         // The saved Load order follows the vault before anything reads it
         // (both halves of a split poll reach here).

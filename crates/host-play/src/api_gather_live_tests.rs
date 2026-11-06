@@ -201,6 +201,7 @@ fn live_frame(
     account: &str,
     tile: WorldTile,
     shared: &Arc<Mutex<LiveSetup>>,
+    arm: &Arc<SlotArm>,
 ) {
     if username != account {
         return;
@@ -251,6 +252,11 @@ fn live_frame(
                 let ifaces = Arc::clone(&client.ifaces);
                 if api::interact::logout(client, &ifaces) {
                     state.phase = SeedPhase::WaitRelog;
+                    // The fixture has no script yet, so the approved
+                    // scriptless policy parks this bot after the logout;
+                    // post the operator's explicit Login before waiting for
+                    // the new session.
+                    arm.arm_explicit_login();
                     Ok(())
                 } else {
                     Err("logout interface unavailable during Gather API setup".into())
@@ -629,13 +635,24 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     let setup = Arc::new(Mutex::new(LiveSetup::default()));
     let frame_setup = Arc::clone(&setup);
     let frame_account = account.clone();
+    // The fixture relogs a scriptless bot before its script starts, so it
+    // owns the arm that posts the operator Login after its own logout.
+    let arm = SlotArm::new(274_279_003, true);
+    let frame_arm = Arc::clone(&arm);
     let mut play = run_with_template(
         template,
         true,
         vec![],
         |_| (None, None),
         move |client, username, _hold| {
-            live_frame(client, username, &frame_account, tile, &frame_setup);
+            live_frame(
+                client,
+                username,
+                &frame_account,
+                tile,
+                &frame_setup,
+                &frame_arm,
+            );
         },
     )
     .expect("start live Play");
@@ -661,7 +678,9 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
             },
             None,
             None,
-            None,
+            // The Gather account's fixture relogs itself; the receiver keeps
+            // the default arm (it never logs out before its script).
+            (index == 0).then(|| Arc::clone(&arm)),
         )
         .expect("spawn minted live account");
     }

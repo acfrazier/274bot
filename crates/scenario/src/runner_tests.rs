@@ -1610,6 +1610,7 @@ fn companion_slots_tick_their_hook_while_the_driven_slot_runs() {
             profile: 1,
             per_frame: Box::new(move |_| {
                 hook.store(true, Ordering::Relaxed);
+                false
             }),
         }],
         settings: ScenarioSettings::default(),
@@ -1635,6 +1636,47 @@ fn companion_slots_tick_their_hook_while_the_driven_slot_runs() {
         .expect("the companion slot resolves by profile name");
     runner.companion_tick(index, &mut c);
     assert!(flipped.load(Ordering::Relaxed));
+}
+
+/// A companion hook's `true` is a one-shot host-login request: the driver
+/// reads it from the tick and posts the slot's operator Login, which the
+/// scriptless park policy needs after a prep relog's logout.
+#[test]
+fn companion_tick_surfaces_a_one_shot_host_login_request() {
+    let scenario = Scenario {
+        name: "companion-login",
+        seed: Seed {
+            profiles: vec![("test", "test"), ("test2", "test2")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "set run energy",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    c.runenergy = 99;
+                    true
+                }),
+            },
+            wait: wait(Proof::Stat { id: 16, min: 1 }, 10),
+        }],
+        proof: Proof::Stat { id: 16, min: 1 },
+        companions: vec![Companion {
+            profile: 1,
+            per_frame: {
+                let mut pending = true;
+                Box::new(move |_| std::mem::take(&mut pending))
+            },
+        }],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::new(scenario);
+    let mut c = seeded_client();
+    let index = runner.companion_for("test2").expect("companion slot");
+    assert!(runner.companion_tick(index, &mut c));
+    assert!(
+        !runner.companion_tick(index, &mut c),
+        "the fixture consumes its request, exactly like pair_companion_hook"
+    );
 }
 
 /// Live boots mint per-run usernames: the runner drives/companions the
@@ -1666,6 +1708,7 @@ fn live_names_replace_the_seed_names_for_dispatch() {
             profile: 1,
             per_frame: Box::new(move |_| {
                 hook.store(true, Ordering::Relaxed);
+                false
             }),
         }],
         settings: ScenarioSettings::default(),
@@ -2026,6 +2069,18 @@ fn relog_presses_the_logout_button_while_ingame() {
     assert!(
         matches!(runner.status(), RunnerStatus::Running { .. }),
         "still waiting to come back; we do not DC-wait"
+    );
+    assert!(
+        runner.relog_login_wanted(),
+        "a scriptless relog needs the host's explicit Login"
+    );
+    assert!(
+        runner.take_relog_login(),
+        "the host consumes the one-shot Login request"
+    );
+    assert!(
+        !runner.take_relog_login(),
+        "the request is posted once per relog step"
     );
 }
 
