@@ -1345,7 +1345,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
         ("3 or 4 still possible", straddling),
     ] {
         assert_eq!(route(&state), Err(RouteError::NoPath), "{label}");
-        assert_eq!(needs(&state), named.clone(), "{label}");
+        assert_eq!(needs(&state), named, "{label}");
         assert_eq!(
             find_missing_item_reqs(&wc, &g, from, to, opts, &state),
             None,
