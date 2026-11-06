@@ -6,6 +6,61 @@ use api::quest_progress::{EvidenceStamp, JournalRead};
 use api::selected::{ClientRevision, FactKey, SelectedPin};
 use std::{sync::Arc, task::Poll, time::Duration};
 
+#[path = "native_377.rs"]
+mod revision_377;
+
+#[derive(Clone, Copy)]
+enum Layout {
+    R289,
+    R377,
+}
+
+impl Layout {
+    fn root(self) -> i32 {
+        match self {
+            Self::R289 => ROOT_289,
+            Self::R377 => revision_377::ROOT,
+        }
+    }
+
+    fn title(self) -> i32 {
+        match self {
+            Self::R289 => TITLE_289,
+            Self::R377 => revision_377::TITLE,
+        }
+    }
+
+    fn capture<'a>(
+        self,
+        snapshot: api::snapshot::SnapshotView<'_>,
+        page_lines: impl Iterator<Item = &'a str>,
+    ) -> Result<Arc<[Arc<str>]>, ActionError> {
+        match self {
+            Self::R289 => Ok(page_lines.map(Arc::<str>::from).collect()),
+            Self::R377 => Ok(revision_377::body(snapshot)?
+                .into_iter()
+                .filter(|line| !line.is_empty())
+                .map(Arc::<str>::from)
+                .collect()),
+        }
+    }
+
+    fn unchanged<'a>(
+        self,
+        snapshot: api::snapshot::SnapshotView<'_>,
+        page_lines: impl Iterator<Item = &'a str>,
+        lines: &[Arc<str>],
+    ) -> Result<bool, ActionError> {
+        Ok(match self {
+            Self::R289 => page_lines.eq(lines.iter().map(AsRef::as_ref)),
+            Self::R377 => revision_377::body(snapshot)?
+                .into_iter()
+                .filter(|line| !line.is_empty())
+                .eq(lines.iter().map(AsRef::as_ref)),
+        })
+    }
+}
+
 // Selected 289 interface.pack: questjournal_scroll and :ifquestname. The
 // generic player/quest_journal.rs2 opens this root for every roster journal.
 pub const ROOT_289: i32 = 8134;
@@ -33,6 +88,7 @@ pub struct JournalMachine {
     component: i32,
     colour: i32,
     pin: Arc<SelectedPin>,
+    layout: Layout,
     lease: Option<QuietReadLease>,
     phase: Phase,
     deadline_tick: u64,
@@ -78,11 +134,15 @@ impl NativeMachine for JournalMachine {
     type Output = JournalRead;
 
     fn begin(args: JournalRequest, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
-        if cx.pin().revision != ClientRevision::R289 {
-            return Err(ActionError::Unavailable(Arc::from(
-                "journal interface unavailable for selected revision",
-            )));
-        }
+        let layout = match cx.pin().revision {
+            ClientRevision::R289 => Layout::R289,
+            ClientRevision::R377 => Layout::R377,
+            _ => {
+                return Err(ActionError::Unavailable(Arc::from(
+                    "journal interface unavailable for selected revision",
+                )));
+            }
+        };
         let facts = args
             .facts
             .quest(args.quest.0.as_ref())
@@ -91,6 +151,11 @@ impl NativeMachine for JournalMachine {
             .journal_title
             .as_ref()
             .ok_or_else(|| failure("journal title unavailable"))?;
+        let expected_component = if matches!(layout, Layout::R377) {
+            Some(revision_377::admit(cx.pin(), facts)?)
+        } else {
+            None
+        };
         let snapshot = cx.snapshot();
         let pair = snapshot.main_modal().ok_or(ActionError::Busy)?;
         let chat = snapshot.chat_modal().ok_or(ActionError::Busy)?;
@@ -99,8 +164,8 @@ impl NativeMachine for JournalMachine {
             || chat.value.continue_component_id >= 0
         {
             return Err(ActionError::Busy);
-        } else if pair.value.root == ROOT_289 {
-            match snapshot.journal_widgets(ROOT_289, TITLE_289) {
+        } else if pair.value.root == layout.root() {
+            match snapshot.journal_widgets(layout.root(), layout.title()) {
                 Some(page) if title_matches(page.value.title, title) => Some(page.stamp),
                 Some(page) => {
                     return Err(ActionError::Failed(Arc::from(format!(
@@ -125,6 +190,9 @@ impl NativeMachine for JournalMachine {
             .find(|row| row.name.eq_ignore_ascii_case(&facts.display))
             .filter(|row| row.component_id >= 0)
             .ok_or_else(|| failure("quest row unavailable"))?;
+        if expected_component.is_some_and(|expected| row.component_id != expected) {
+            return Err(failure("selected 377 journal quest row component mismatch"));
+        }
         let component = row.component_id;
         let colour = row.colour;
         let title = Arc::clone(title);
@@ -135,6 +203,7 @@ impl NativeMachine for JournalMachine {
             component,
             colour,
             pin: Arc::new(cx.pin().clone()),
+            layout,
             lease: Some(lease),
             phase: adopted_before
                 .map(|before| Phase::Adopt { before })
@@ -147,6 +216,9 @@ impl NativeMachine for JournalMachine {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<JournalRead, ActionError>> {
+        if matches!(self.layout, Layout::R377) && cx.pin() != self.pin.as_ref() {
+            return Poll::Ready(Err(failure("selected 377 journal pin changed")));
+        }
         if cx.active_now() >= self.overall_deadline {
             return Poll::Ready(Err(failure("journal transaction timeout")));
         }
@@ -198,16 +270,21 @@ impl NativeMachine for JournalMachine {
                     if pair.value.root == -1 {
                         return Poll::Pending;
                     }
-                    if pair.value.root != ROOT_289 {
+                    if pair.value.root != self.layout.root() {
                         return Poll::Ready(Err(failure("journal root changed")));
                     }
-                    let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
+                    let Some(page) =
+                        snapshot.journal_widgets(self.layout.root(), self.layout.title())
+                    else {
                         return Poll::Pending;
                     };
                     if !title_matches(page.value.title, &self.title) {
                         return Poll::Ready(Err(failure("journal title changed")));
                     }
-                    self.lines = page.value.lines().map(Arc::<str>::from).collect();
+                    self.lines = match self.layout.capture(snapshot, page.value.lines()) {
+                        Ok(lines) => lines,
+                        Err(error) => return Poll::Ready(Err(error)),
+                    };
                     self.acquired = Some(page.stamp);
                     self.phase = Phase::Close;
                     self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
@@ -220,7 +297,9 @@ impl NativeMachine for JournalMachine {
                     {
                         return Poll::Ready(Err(failure("journal ownership lost before close")));
                     }
-                    let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
+                    let Some(page) =
+                        snapshot.journal_widgets(self.layout.root(), self.layout.title())
+                    else {
                         return Poll::Ready(Err(failure("journal ownership lost before close")));
                     };
                     if !strictly_later(page.stamp, before)
@@ -231,7 +310,10 @@ impl NativeMachine for JournalMachine {
                         }
                         return Poll::Ready(Err(failure("journal ownership lost before close")));
                     }
-                    self.lines = page.value.lines().map(Arc::<str>::from).collect();
+                    self.lines = match self.layout.capture(snapshot, page.value.lines()) {
+                        Ok(lines) => lines,
+                        Err(error) => return Poll::Ready(Err(error)),
+                    };
                     self.acquired = Some(page.stamp);
                     self.phase = Phase::Close;
                     self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
@@ -244,11 +326,19 @@ impl NativeMachine for JournalMachine {
                     {
                         return Poll::Ready(Err(failure("journal ownership lost before close")));
                     }
-                    let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) else {
+                    let Some(page) =
+                        snapshot.journal_widgets(self.layout.root(), self.layout.title())
+                    else {
                         return Poll::Ready(Err(failure("journal ownership lost before close")));
                     };
                     if !title_matches(page.value.title, &self.title)
-                        || !page.value.lines().eq(self.lines.iter().map(AsRef::as_ref))
+                        || !match self
+                            .layout
+                            .unchanged(snapshot, page.value.lines(), &self.lines)
+                        {
+                            Ok(unchanged) => unchanged,
+                            Err(error) => return Poll::Ready(Err(error)),
+                        }
                     {
                         return Poll::Ready(Err(failure("journal ownership lost before close")));
                     }
@@ -284,7 +374,7 @@ impl NativeMachine for JournalMachine {
                         }
                         return Poll::Ready(Ok(JournalRead {
                             quest: self.quest.clone(),
-                            root: ROOT_289,
+                            root: self.layout.root(),
                             lines: Arc::clone(&self.lines),
                             colour: Some(self.colour),
                             acquired: self.acquired.expect("captured before close"),
@@ -292,7 +382,7 @@ impl NativeMachine for JournalMachine {
                             pin: Arc::clone(&self.pin),
                         }));
                     }
-                    if pair.value.root != ROOT_289 {
+                    if pair.value.root != self.layout.root() {
                         return Poll::Ready(Err(failure("journal ownership lost while closing")));
                     }
                 }
@@ -311,3 +401,7 @@ impl NativeMachine for JournalMachine {
 #[cfg(test)]
 #[path = "native_tests.rs"]
 pub mod tests;
+
+#[cfg(test)]
+#[path = "native_377_tests.rs"]
+mod tests_377;
