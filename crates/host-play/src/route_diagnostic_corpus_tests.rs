@@ -14,6 +14,7 @@ use script::native::walk::Walk;
 use script::native::{ActionHandle, HostAuthority, NativeTick, Script, ScriptFailure, ScriptFlow};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};

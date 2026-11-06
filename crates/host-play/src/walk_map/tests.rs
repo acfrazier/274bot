@@ -2092,7 +2092,6 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
             &state,
             &[],
         )
-        .unwrap()
         .is_some(),
         "the route must need a real catalog-backed prerequisite"
     );

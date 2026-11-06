@@ -29614,7 +29614,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
     ) else {
         return;
     };
-    let flags = nav_planner::pack::read_flags_sidecar(&sidecar, false).expect("matching raw flags");
+    let flags = nav_planner::pack::read_flags_sidecar(&sidecar).expect("matching raw flags");
     assert_eq!(flags.origin, world.collision.origin);
     assert_eq!(
         (flags.width, flags.height),

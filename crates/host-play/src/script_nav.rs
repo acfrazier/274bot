@@ -2250,31 +2250,26 @@ impl RouteJob {
             }
             (RouteSearchPurpose::Actionable, SearchOutcome::ActionableQuestGates(result)) => {
                 match result {
-                    Ok(Some(gates)) if !gates.is_empty() => {
+                    Some(gates) if !gates.is_empty() => {
                         self.native_failure =
                             Some(script::native::WalkEnd::NeedsStep(Arc::from(gates)));
                         self.schedule_search(RouteSearchPurpose::MissingCarry);
                     }
-                    Ok(_) => {
+                    _ => {
                         self.prepare_goal_copy(
                             RouteGoalCopy::Diagnostics,
                             RouteSearchPurpose::Unresolved,
                         )?;
                     }
-                    Err(_) => {
-                        self.native_failure = Some(script::native::WalkEnd::Refused);
-                        self.schedule_search(RouteSearchPurpose::MissingCarry);
-                    }
                 }
             }
             (RouteSearchPurpose::Unresolved, SearchOutcome::UnresolvedQuestGates(result)) => {
                 self.native_failure = Some(match result {
-                    Ok(Some(gates)) if !gates.is_empty() => {
+                    Some(gates) if !gates.is_empty() => {
                         script::native::WalkEnd::NeedsEvidence(Arc::from(gates))
                     }
-                    Ok(_) if self.budget_settled.is_some() => script::native::WalkEnd::Refused,
-                    Ok(_) => script::native::WalkEnd::NoPath,
-                    Err(_) => script::native::WalkEnd::Refused,
+                    _ if self.budget_settled.is_some() => script::native::WalkEnd::Refused,
+                    _ => script::native::WalkEnd::NoPath,
                 });
                 self.stage = RouteJobStage::Diagnostics;
             }
@@ -9354,7 +9349,7 @@ mod diagnostic_tests {
         let expected = gate.clone();
 
         job.handle_search(
-            SearchOutcome::ActionableQuestGates(Ok(Some(Box::from([gate])))),
+            SearchOutcome::ActionableQuestGates(Some(Box::from([gate]))),
             0,
         )
         .unwrap();
@@ -9385,7 +9380,7 @@ mod diagnostic_tests {
                 .unwrap();
             assert_eq!(job.search_purpose, RouteSearchPurpose::Unresolved);
             assert!(job.native_failure.is_none());
-            job.handle_search(SearchOutcome::UnresolvedQuestGates(Ok(None)), 0)
+            job.handle_search(SearchOutcome::UnresolvedQuestGates(None), 0)
                 .unwrap();
             assert_eq!(job.search_purpose, RouteSearchPurpose::Unresolved);
             assert!(matches!(job.stage, RouteJobStage::Diagnostics));
@@ -11718,7 +11713,7 @@ mod route_quest_provider_tests {
         assert_eq!(charged.result_bytes - baseline.result_bytes, owned_bytes);
     }
 
-    fn compat_bot(request_id: u64) -> NavBot {
+    fn compat_bot(selected: Arc<api::game_data::SelectedGameData>, request_id: u64) -> NavBot {
         let target = WorldTile {
             x: 3423,
             z: 3485,
@@ -11739,7 +11734,7 @@ mod route_quest_provider_tests {
             ..Default::default()
         };
         let mut bot = NavBot {
-            quest_context: Some(context(selected_r289(), stamp(run(), 100, 100))),
+            quest_context: Some(context(selected, stamp(run(), 100, 100))),
             route_generation: 7,
             walk_request_id: request_id,
             requested_route: Some((target, 3, false, false, true, ZoneExempt::NONE)),
@@ -11769,13 +11764,13 @@ mod route_quest_provider_tests {
         bot
     }
 
-    fn compat_gates() -> (
+    fn compat_gates(
+        selected: &api::game_data::SelectedGameData,
+    ) -> (
         Arc<api::prereq_steps::PrereqCatalog>,
         Arc<[api::prereq_steps::ActionableGate]>,
     ) {
-        let catalog = selected_r289()
-            .try_prereq_steps()
-            .expect("prepared prerequisites");
+        let catalog = selected.try_prereq_steps().expect("prepared prerequisites");
         let (_, row) = catalog
             .iter()
             .find(|(_, row)| row.id.contains("drezel-advice"))
@@ -11793,7 +11788,10 @@ mod route_quest_provider_tests {
     fn journal_prerequisite_metadata_does_not_invent_crossing_messages() {
         use api::prereq_steps::{ActionableGate, CrossingId, CrossingKind};
         use api::selected::{FactKey, InclusiveRange, StageWindow};
-        let catalog = selected_r289().try_prereq_steps().unwrap();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let catalog = selected.try_prereq_steps().expect("prepared prerequisites");
         let gate = ActionableGate {
             gate: QuestGate::Window(StageWindow {
                 quest: FactKey::new("blackarmgang"),
@@ -11837,7 +11835,10 @@ mod route_quest_provider_tests {
 
     #[test]
     fn registered_refusal_content_survives_preceding_proved_ladder_gates() {
-        let (catalog, gates) = compat_gates();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let (catalog, gates) = compat_gates(&selected);
         let mut barrier = gates[0].clone();
         barrier.truth = Truth::True;
         barrier.leg = 7;
@@ -11880,7 +11881,10 @@ mod route_quest_provider_tests {
 
     #[test]
     fn unproved_unregistered_crossings_do_not_get_partial_repair_content() {
-        let (catalog, gates) = compat_gates();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let (catalog, gates) = compat_gates(&selected);
         for truth in [Truth::False, Truth::Unknown] {
             let mut unregistered = gates[0].clone();
             unregistered.truth = truth;
@@ -11912,8 +11916,11 @@ mod route_quest_provider_tests {
 
     #[test]
     fn compat_handover_moves_original_policy_and_preserves_rectangular_exclusions() {
-        let mut bot = compat_bot(11);
-        let (_, gates) = compat_gates();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let mut bot = compat_bot(Arc::clone(&selected), 11);
+        let (_, gates) = compat_gates(&selected);
         fail_compat(
             &mut bot,
             script::native::WalkEnd::NeedsStep(Arc::clone(&gates)),
@@ -11977,8 +11984,11 @@ mod route_quest_provider_tests {
 
     #[test]
     fn compat_refusal_keeps_the_acknowledged_page_stamp_and_same_observation() {
-        let mut bot = compat_bot(12);
-        let (catalog, gates) = compat_gates();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let mut bot = compat_bot(Arc::clone(&selected), 12);
+        let (catalog, gates) = compat_gates(&selected);
         let content = route_prereq_content(&catalog, run(), Arc::clone(&gates))
             .expect("canonical route content");
         let observation = content
@@ -12018,6 +12028,9 @@ mod route_quest_provider_tests {
 
     #[test]
     fn compat_handover_rejects_a_refusal_from_each_stale_run_component() {
+        let Some(selected) = selected_r289() else {
+            return;
+        };
         for stale in [
             RunKey { slot: 2, ..run() },
             RunKey { run: 2, ..run() },
@@ -12026,8 +12039,8 @@ mod route_quest_provider_tests {
                 ..run()
             },
         ] {
-            let mut bot = compat_bot(16);
-            let (catalog, gates) = compat_gates();
+            let mut bot = compat_bot(Arc::clone(&selected), 16);
+            let (catalog, gates) = compat_gates(&selected);
             let content = route_prereq_content(&catalog, stale, Arc::clone(&gates))
                 .expect("canonical route content");
             let observation = content
@@ -12057,6 +12070,9 @@ mod route_quest_provider_tests {
 
     #[test]
     fn compat_handover_and_native_children_reject_each_stale_run_component() {
+        let Some(selected) = selected_r289() else {
+            return;
+        };
         for stale in [
             RunKey { slot: 2, ..run() },
             RunKey { run: 2, ..run() },
@@ -12065,8 +12081,8 @@ mod route_quest_provider_tests {
                 ..run()
             },
         ] {
-            let mut bot = compat_bot(13);
-            let (_, gates) = compat_gates();
+            let mut bot = compat_bot(Arc::clone(&selected), 13);
+            let (_, gates) = compat_gates(&selected);
             fail_compat(&mut bot, script::native::WalkEnd::NeedsStep(gates));
             bot.quest_context.as_mut().expect("context").stamp.run = stale;
             assert!(!bot.compat_walk_context_current());
@@ -12088,8 +12104,11 @@ mod route_quest_provider_tests {
 
     #[test]
     fn compat_completion_reports_only_the_outer_id_and_only_once() {
-        let mut bot = compat_bot(14);
-        let (_, gates) = compat_gates();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let mut bot = compat_bot(Arc::clone(&selected), 14);
+        let (_, gates) = compat_gates(&selected);
         fail_compat(&mut bot, script::native::WalkEnd::NeedsStep(gates));
         let handover = bot
             .take_compat_walk_handover(WorldTile {
@@ -12116,8 +12135,11 @@ mod route_quest_provider_tests {
 
     #[test]
     fn rejected_compat_handover_keeps_outer_terminal_for_seat_observer() {
-        let mut bot = compat_bot(17);
-        let (_, gates) = compat_gates();
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let mut bot = compat_bot(Arc::clone(&selected), 17);
+        let (_, gates) = compat_gates(&selected);
         fail_compat(&mut bot, script::native::WalkEnd::NeedsStep(gates));
         let mut slot = script::SlotScript::new();
         assert!(!super::super::script_walk::observe_compat_walk(
@@ -12145,11 +12167,14 @@ mod route_quest_provider_tests {
 
     #[test]
     fn compat_reissue_preserves_a_false_bank_fetch_policy() {
-        let mut bot = compat_bot(15);
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let mut bot = compat_bot(Arc::clone(&selected), 15);
         let walk = bot.compat_walk.as_mut().expect("retained owner");
         walk.key.4 = false;
         walk.outer.as_mut().expect("original walk").allow_bank_fetch = false;
-        let (_, gates) = compat_gates();
+        let (_, gates) = compat_gates(&selected);
         fail_compat(&mut bot, script::native::WalkEnd::NeedsStep(gates));
         let handover = bot
             .take_compat_walk_handover(WorldTile {

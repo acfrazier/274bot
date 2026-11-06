@@ -1044,7 +1044,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                                     }
                                 }
                                 SearchOutcome::ActionableQuestGates(gates) => {
-                                    if let Ok(Some(gates)) = gates {
+                                    if let Some(gates) = gates {
                                         self.result
                                             .as_mut()
                                             .expect("journal diagnosis retains the strict failure")

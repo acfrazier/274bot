@@ -1474,7 +1474,7 @@ impl Play {
                         .is_some_and(|windows| !windows.is_empty())
                 {
                     if let (Some(run), Some(catalog)) = (route_run, route_catalog) {
-                        if let Ok(Some(gates)) = nav_planner::router::find_actionable_quest_gates(
+                        if let Some(gates) = nav_planner::router::find_actionable_quest_gates(
                             &world.collision,
                             &world.graph,
                             world_tile(origin),
