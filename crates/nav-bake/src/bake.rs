@@ -1332,12 +1332,18 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
     )?;
     let mut notes = Vec::new();
 
-    // Revision 377 names these configs through loc.pack. Empty name lookup
-    // preserves the numeric-only 274/289 parser, including open-stage ids.
+    // The 289 parser admits numeric door declarations and the closed categories
+    // (pack/config_parse.rs). Resolving 377 names must not promote a named
+    // op1=Open refusal into a door. Other named doors use handler proofs.
     let door_names = if request.revision == Some(377) {
         crate::transport::loc_ids_by_name(content_root)
     } else {
         HashMap::new()
+    };
+    let parse_doors = if request.revision == Some(377) {
+        crate::pack::parse_door_config_377
+    } else {
+        crate::pack::parse_door_config_ids
     };
     // Openable wall door loc ids from the Server door configs.
     let mut door_ids = HashSet::new();
@@ -1349,7 +1355,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
         let path = request.doors_dir.join(name);
         match std::fs::read_to_string(&path) {
             Ok(text) => {
-                door_ids.extend(crate::pack::parse_door_config_ids(&text, &door_names));
+                door_ids.extend(parse_doors(&text, &door_names));
                 door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &door_names));
                 parsed_door_configs.push(path);
             }
@@ -1373,7 +1379,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
     // and source paths are passed to `door_edges` to avoid deriving them twice.
     match std::fs::read_to_string(request.gates) {
         Ok(text) => {
-            door_ids.extend(crate::pack::parse_door_config_ids(&text, &door_names));
+            door_ids.extend(parse_doors(&text, &door_names));
             door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &door_names));
             parsed_door_configs.push(request.gates.to_path_buf());
         }
