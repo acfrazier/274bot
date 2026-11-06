@@ -62,10 +62,18 @@ fn decode_settings(bag: &SettingsBag) -> Result<QuesterSettings, ConfigError> {
     .map_err(|error| ConfigError::new("", "invalid-settings", error.to_string()))
 }
 
-pub(crate) fn requires_pairs(bag: &SettingsBag) -> Result<bool, ConfigError> {
+pub(crate) fn requires_pairs(
+    bag: &SettingsBag,
+    selected: &api::game_data::SelectedGameData,
+) -> Result<bool, ConfigError> {
     let settings = decode_settings(bag)?;
+    let revision = if selected.revision() == 377 {
+        api::selected::ClientRevision::R377
+    } else {
+        api::selected::ClientRevision::R289
+    };
     let allow_unqualified = cfg!(feature = "test-hooks");
-    Ok(BUNDLED_INDEX.paths.iter().any(|entry| {
+    Ok(registry::bundled_index_for(revision).paths.iter().any(|entry| {
         let qualified = entry.status == Some(ReleasePathStatus::Qualified);
         let default_selected = settings.quests.is_empty()
             && (qualified
@@ -425,17 +433,54 @@ pub(crate) fn prepare_with_registry(
     prepare_from(cx, revision, bag, |_| Ok(ready))
 }
 
+/// Revision 377 uses its own selected identities, never the 289 name tables.
+/// Optional step families still fail at Path compilation when their facts are absent.
+fn admit_revision(selected: &api::game_data::SelectedGameData) -> Result<(), StartError> {
+    match selected.revision() {
+        289 => Ok(()),
+        377 => {
+            for (available, table) in [
+                (!selected.items().is_empty(), "item"),
+                (
+                    selected
+                        .quest_identity()
+                        .is_some_and(|facts| !facts.rows.is_empty()),
+                    "quest identity/progress",
+                ),
+                (
+                    selected
+                        .npc_names()
+                        .is_some_and(|facts| !facts.rows.is_empty()),
+                    "NPC identity",
+                ),
+                (
+                    selected
+                        .loc_names()
+                        .is_some_and(|facts| !facts.rows.is_empty()),
+                    "loc identity",
+                ),
+            ] {
+                if !available {
+                    return Err(StartError::Unavailable(
+                        format!("Quester revision 377 requires selected {table} tables").into(),
+                    ));
+                }
+            }
+            Ok(())
+        }
+        _ => Err(StartError::Unavailable(
+            "Quester S1 supports revision 289 only".into(),
+        )),
+    }
+}
+
 fn prepare_from(
     cx: &mut PrepareContext<'_>,
     revision: u64,
     bag: Arc<SettingsBag>,
     source: impl FnOnce(&mut PrepareContext<'_>) -> Result<QuesterRegistryReady, StartError>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
-    if cx.revision != api::selected::ClientRevision::R289 {
-        return Err(StartError::Unavailable(
-            "Quester S1 supports revision 289 only".into(),
-        ));
-    }
+    admit_revision(&cx.selected)?;
     let settings = decode_settings(&bag).map_err(StartError::Config)?;
     let gang = match settings
         .gang
@@ -465,8 +510,9 @@ fn prepare_from(
         }),
         gang,
     };
-    for entry in &BUNDLED_INDEX.paths {
-        if entry.unavailable.is_none() && registry::bundled_path(&entry.id).is_none() {
+    let QuesterRegistryReady { registry, quests } = source(cx)?;
+    for entry in &registry.index().paths {
+        if entry.unavailable.is_none() && registry.bytes(&entry.id).is_none() {
             return Err(StartError::Unavailable(Arc::from(format!(
                 "release index Path is unavailable: {} ({})",
                 entry.id,
@@ -474,7 +520,6 @@ fn prepare_from(
             ))));
         }
     }
-    let QuesterRegistryReady { registry, quests } = source(cx)?;
     let queue = Queue::from_registry(registry, queue_settings).map_err(|error| {
         let code = match error.kind {
             QueueConfigErrorKind::InvalidSetting => "invalid-queue",
@@ -552,6 +597,53 @@ mod tests {
                     assert_eq!(reason.as_ref(), "Quester S1 supports revision 289 only");
                 }
                 other => panic!("274 must be unavailable, got {other:?}"),
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn revision_377_requires_its_selected_tables_before_creating_a_run() {
+        let complete = api::game_data::for_revision(ClientRevision::R377).unwrap();
+        assert!(admit_revision(&complete).is_ok());
+        assert!(!requires_pairs(&SettingsBag::new(), &complete).unwrap());
+        FamilyPreparation::run(move |families| {
+            for (field, expected) in [
+                ("items", "item"),
+                ("quest_identity", "quest identity/progress"),
+                ("npc_names", "NPC identity"),
+                ("loc_names", "loc identity"),
+            ] {
+                let mut wire: serde_json::Value =
+                    serde_json::from_slice(include_bytes!("../../../api/data/game-data/377.json"))
+                        .unwrap();
+                wire[field] = if field == "items" {
+                    serde_json::json!([])
+                } else {
+                    serde_json::Value::Null
+                };
+                let selected = Arc::new(
+                    serde_json::from_value::<api::game_data::SelectedGameData>(wire).unwrap(),
+                );
+                let mut cx = PrepareContext {
+                    selected,
+                    revision: ClientRevision::R377,
+                    zones: None,
+                    banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+                    families,
+                };
+                let result = prepare_from(&mut cx, 1, Arc::new(SettingsBag::new()), |_| {
+                    panic!("377 without {field} must refuse before loading the registry");
+                });
+                let Err(StartError::Unavailable(reason)) = result else {
+                    panic!("377 without {field} must be unavailable");
+                };
+                assert_eq!(
+                    reason.as_ref(),
+                    format!("Quester revision 377 requires selected {expected} tables"),
+                );
             }
         })
         .unwrap()
