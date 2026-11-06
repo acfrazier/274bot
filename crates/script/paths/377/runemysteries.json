@@ -229,7 +229,7 @@
                   "source": "C maps/m50_50.jm2:10724 (NPC 741 at 1 12 20); pack/npc.pack:742 (741=duke_of_lumbridge); areas/area_lumbridge/scripts/duke_horacio.rs2:40-51"
                 },
                 "leash": 6,
-                "prefer": []
+                "prefer": ["Have you any quests for me?"]
               },
               "skip_if": {
                 "Any": [

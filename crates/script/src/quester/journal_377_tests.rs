@@ -92,3 +92,53 @@ fn selected_377_journal_paths_compile_and_recover_source_states() {
         }
     }).unwrap().join().unwrap();
 }
+
+#[test]
+fn rune_377_lost_talisman_path_selects_dukes_quest_branch() {
+    let document: serde_json::Value =
+        serde_json::from_slice(bundled_path_for(ClientRevision::R377, "runemysteries").unwrap())
+            .unwrap();
+    let sequence = document["roles"][0]["sequences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|sequence| sequence["stage"] == "runemysteries:1")
+        .unwrap();
+    let recover = sequence["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"] == "recover-duke")
+        .unwrap();
+    let prefer: Vec<Arc<str>> = recover["args"]["prefer"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|text| Arc::from(text.as_str().unwrap()))
+        .collect();
+    // duke_horacio.rs2:5,7 offers both forms of the menu. The lost-item
+    // branch is reached only through the quest option (:12-15,40-47).
+    for choices in [
+        vec!["Have you any quests for me?", "Where can I find money?"],
+        vec![
+            "I seek a shield that will protect me from the dragon's breath.",
+            "Have you any quests for me?",
+            "Where can I find money?",
+        ],
+    ] {
+        let options: Vec<_> = choices
+            .iter()
+            .enumerate()
+            .map(|(index, text)| api::snapshot::ChatOptionView {
+                component_id: index as i32,
+                text: (*text).into(),
+            })
+            .collect();
+        let selected = super::super::families::dialogue::pick_preferred(&options, &prefer);
+        assert_eq!(
+            selected.map(|index| options[index].text.as_str()),
+            Some("Have you any quests for me?"),
+            "recover-duke must not fall back to the final money option"
+        );
+    }
+}

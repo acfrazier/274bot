@@ -38,7 +38,7 @@ All strings are from `quests/quest_runemysteries/scripts/runemysteries_journal.r
 
 Every hand-out in this quest is re-issuable in the source, and each sequence models the no-item state explicitly:
 
-- State 1 without the talisman: `duke_horacio.rs2:40-47` detects `obj_gettotal(air_talisman) = 0` and re-gives it (`recover-duke`). A banked talisman is withdrawn first (`withdraw-talisman`).
+- State 1 without the talisman: `recover-duke` selects “Have you any quests for me?” from the Duke menu (`duke_horacio.rs2:5,7`). That choice dispatches through `duke_handle_rune_mysteries` (`:12-15`) to `duke_rune_mysteries_in_progress` (`:40-47`), which detects `obj_gettotal(air_talisman) = 0` and re-gives it. The money option does not reach this branch. A banked talisman is withdrawn first (`withdraw-talisman`).
 - State 1 with the talisman but refusing the package, and state 2 generally: `accept-package` replays `head_wizard_incredible` until the package is held.
 - State 3 without the package: `sedridor.rs2:11-17` detects the loss and teleports the package back (`recover-package`). A banked package is withdrawn first (`withdraw-package`).
 - State 5 without notes in inventory: `sedridor.rs2:144-148` refuses progress and points back at Aubury; `aubury.rs2:9-20` re-gives duplicates when `obj_gettotal(research_notes) = 0` (`recover-notes`). A banked copy is withdrawn first (`withdraw-notes`). The banked-only branch (`sedridor.rs2:149-152`) is why withdraw precedes the delivery talk.
