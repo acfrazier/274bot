@@ -16,7 +16,8 @@ impl NpcView {
         let entity = &npc.entity;
         let cache = &client.cache;
         let placed = npc.r#type.and_then(|id| cache.npcs.get(id));
-        let form = if client.revision() == client::io::ClientRevision::R377 {
+        let is_377 = client.revision() == client::io::ClientRevision::R377;
+        let form = if is_377 {
             npc.r#type.and_then(|id| npc_377::menu_form(client, id))
         } else {
             placed
@@ -25,9 +26,16 @@ impl NpcView {
             Some(form) => (Some(form.name.clone()), form.op.clone()),
             None => (None, Vec::new()),
         };
-        let (npc_level, size) = placed
-            .map(|placed| (placed.vislevel.max(0), placed.size))
-            .unwrap_or((0, entity.size));
+        let (npc_level, size) = if is_377 {
+            (
+                form.map(|form| form.vislevel.max(0)).unwrap_or(0),
+                placed.map(|placed| placed.size).unwrap_or(entity.size),
+            )
+        } else {
+            placed
+                .map(|placed| (placed.vislevel.max(0), placed.size))
+                .unwrap_or((0, entity.size))
+        };
         NpcView {
             index,
             r#type: npc.r#type,
