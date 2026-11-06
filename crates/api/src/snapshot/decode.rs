@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "npc_377.rs"]
+mod npc_377;
+
 impl NpcView {
     fn from_slot(
         index: usize,
@@ -8,18 +11,23 @@ impl NpcView {
         level: i32,
         distance: i32,
         loop_cycle: i32,
-        cache: &Cache,
+        client: &Client,
     ) -> Self {
         let entity = &npc.entity;
-        let (name, actions, npc_level, size) = match npc.r#type.and_then(|t| cache.npcs.get(t)) {
-            Some(t) => (
-                Some(t.name.clone()),
-                t.op.clone(),
-                t.vislevel.max(0),
-                t.size,
-            ),
-            None => (None, Vec::new(), 0, entity.size),
+        let cache = &client.cache;
+        let placed = npc.r#type.and_then(|id| cache.npcs.get(id));
+        let form = if client.revision() == client::io::ClientRevision::R377 {
+            npc.r#type.and_then(|id| npc_377::menu_form(client, id))
+        } else {
+            placed
         };
+        let (name, actions) = match form {
+            Some(form) => (Some(form.name.clone()), form.op.clone()),
+            None => (None, Vec::new()),
+        };
+        let (npc_level, size) = placed
+            .map(|placed| (placed.vislevel.max(0), placed.size))
+            .unwrap_or((0, entity.size));
         NpcView {
             index,
             r#type: npc.r#type,
@@ -1356,10 +1364,12 @@ impl GameSnapshot {
     }
 
     pub(super) fn rebuild_npcs(&mut self, client: &Client) -> bool {
-        if client.gens.npc == self.gens.npc {
+        let morph_changed = client.revision() == client::io::ClientRevision::R377
+            && track(client.gens.varp, &mut self.npc_varp_gen);
+        let moved = track(client.gens.npc, &mut self.gens.npc);
+        if !moved && !morph_changed {
             return false;
         }
-        self.gens.npc = client.gens.npc;
         self.gens.npc_info = client.gens.npc_info;
         self.npc.clear();
         self.npc.reserve(client.npc_count as usize);
@@ -1380,7 +1390,7 @@ impl GameSnapshot {
                     level,
                     distance,
                     client.loop_cycle,
-                    &client.cache,
+                    client,
                 ));
             }
         }
