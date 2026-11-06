@@ -149,22 +149,28 @@ globs = [
   # and the BR2-S3 change adds one non-map row, so no path compiles differently.
   "crates/nav-planner/src/required-content-274.tsv",
   "crates/nav-planner/src/required-content-289.tsv",
-  # ADR 0019 retires these exact paths. Remove an entry if that path returns;
-  # the mapper's deleted-path reporting is a separate tooling follow-up.
+  # ADR 0019 retires these exact tracked paths. Remove an entry if that path
+  # returns to tracked source; deleted-path reporting stays a separate follow-up.
   "crates/api/src/family_asset.rs",
+  "crates/api/data/game-data/274/debug.json",
+  "crates/api/data/game-data/274/gathering.json",
+  "crates/api/data/game-data/289/debug.json",
+  "crates/api/data/game-data/bank-catalog.rs",
+  "crates/api/data/game-data/cook-catalog.rs",
+  "crates/api/data/game-data/manifest.json",
   "crates/host-play/examples/cache_manifest.rs",
   "crates/host-play/src/nav_identity.rs",
   "crates/nav-bake/src/bin/cache-content-id.rs",
   "crates/nav-bake/src/bin/nav-input-audit.rs",
   "crates/nav-bake/src/bundle.rs",
   "crates/nav-bake/src/manifest.rs",
+  "crates/nav-bake/src/test_support.rs",
   "crates/nav-planner/src/map/services.rs",
   # These modules are explicitly gated to tests or test-support.
   "crates/api/src/test_support.rs",
   "crates/host-play/src/tick_engine_test_support.rs",
   "crates/host-play/src/script_server_ordered_tests/gatherer_relog.rs",
   "crates/host-play/src/script_server_ordered_tests/native_relog.rs",
-  "crates/nav-bake/src/test_support.rs",
   # Exact offline producers. Canonical 274/289 bootstrap, corpus and consuming
   # navigation cells remain required; this is not a runtime-proof exemption.
   "crates/nav-bake/Cargo.toml",
