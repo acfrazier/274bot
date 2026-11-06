@@ -58,6 +58,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Native door traversal uses the revision-377 client's movement encoder for
   the one-tile step after opening a door. Other revisions keep their existing
   packet path.
+- Revision 377 navigation resolves named door and gate configs through its
+  packed loc names, including open-stage IDs. This restores the Lumbridge
+  wheat-field gate crossings. Revision-274/289 parsing is unchanged.
 
 ### Host
 
