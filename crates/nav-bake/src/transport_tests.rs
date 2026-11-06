@@ -3181,6 +3181,53 @@ fn revision_377_lumbridge_stair_names_keep_script_landings_and_costs() {
 }
 
 #[test]
+fn revision_377_wizards_tower_stairs_keep_script_landings_and_costs() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "12536=fai_wiztower_spiralstairs\n12537=fai_wiztower_spiralstairs_middle\n12538=fai_wiztower_spiralstairstop\n",
+    );
+    fx.write(
+        "maps/m48_49.jm2",
+        "==== MAP ====\n0 0 0: h1 o6 u50\n==== LOC ====\n0 31 23: 12536 10 0\n1 31 23: 12537 10 0\n2 32 24: 12538 10 0\n",
+    );
+    // Canonical 377 stairs.rs2:1175-1201: operation 1 on the middle
+    // opens a choice, while operations 2 and 3 move directly.
+    fx.write(
+        "scripts/ladders+stairs/scripts/stairs.rs2",
+        "[oploc1,fai_wiztower_spiralstairs]\nswitch_coord (loc_coord) {\ncase 0_48_49_31_23 : p_telejump(1_48_49_32_25);\n}\n\
+         [oploc1,fai_wiztower_spiralstairs_middle]\nswitch_coord (loc_coord) {\ncase 1_48_49_31_23 : @stair_options(2_48_49_32_25, 0_48_49_32_25);\n}\n\
+         [oploc2,fai_wiztower_spiralstairs_middle]\nswitch_coord (loc_coord) {\ncase 1_48_49_31_23 : p_telejump(2_48_49_32_25);\n}\n\
+         [oploc3,fai_wiztower_spiralstairs_middle]\nswitch_coord (loc_coord) {\ncase 1_48_49_31_23 : p_telejump(0_48_49_32_25);\n}\n\
+         [oploc1,fai_wiztower_spiralstairstop]\nswitch_coord (loc_coord) {\ncase 2_48_49_32_24 : p_telejump(1_48_49_32_25);\n}\n",
+    );
+    let defs = loc_defs(&[(12536, 1, 1), (12537, 1, 1), (12538, 1, 1)]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    for (id, option, level) in [(12536, 1, 1), (12537, 2, 2), (12537, 3, 0), (12538, 1, 1)] {
+        let edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.loc_id == id && edge.option == option)
+            .expect("377 Wizard's Tower direct staircase is priced and resolved");
+        assert_eq!(edge.kind, TransportKind::Stairs);
+        assert_eq!(
+            edge.to,
+            WorldTile {
+                x: 3104,
+                z: 3161,
+                level
+            }
+        );
+        assert_eq!(edge.ticks, 1);
+    }
+    assert!(!graph
+        .edges
+        .iter()
+        .any(|edge| edge.loc_id == 12537 && edge.option == 1));
+}
+
+#[test]
 fn parse_script_records_unguarded_statements_as_fallback() {
     let mut rules = HashMap::new();
     parse_script(
