@@ -299,7 +299,7 @@ fn real_revision_377_wizards_tower_routes() {
     let mut routes = Vec::new();
     for (from, to) in [
         (tile(3220, 3220, 0), tile(3103, 3163, 2)),
-        (tile(3103, 3163, 2), tile(3220, 3220, 0)),
+        (tile(3103, 3163, 2), tile(3011, 3314, 0)),
         (tile(3222, 3218, 0), tile(3210, 3424, 0)),
         (tile(3210, 3424, 0), tile(2964, 3378, 0)),
         (tile(2964, 3378, 0), tile(3222, 3218, 0)),
