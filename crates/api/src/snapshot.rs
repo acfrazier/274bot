@@ -118,6 +118,9 @@ pub struct GameSnapshot {
     /// (separately from the scene family's own counter).
     #[serde(skip)]
     loc_gen: u64,
+    /// Revision 377 loc forms can change on a varp update without scene churn.
+    #[serde(skip)]
+    loc_varp_gen: u64,
     /// Sum of the tiles' loc-layer generations from the last loc sweep. Locs can
     /// change without a scene gen bump (door multiloc, map restamp), so
     /// the cheap stamp gates the 104×104×4 sweep between gen moves.
@@ -323,6 +326,7 @@ impl Default for GameSnapshot {
             map_flag: None,
             hint_tile: None,
             loc_gen: 0,
+            loc_varp_gen: 0,
             loc_model_stamp: empty_loc_model_stamp(),
             loc_static_gen: 0,
             loc_bits_prelude: None,
@@ -610,6 +614,7 @@ impl GameSnapshot {
         *self = Self {
             gens,
             loc_gen: gens.scene,
+            loc_varp_gen: gens.varp,
             ground_item_gen: gens.scene,
             inventory_gate: inv_iface_gate,
             equipment_gate: inv_iface_gate,
