@@ -365,7 +365,7 @@ fn client_with_multiloc(revision: ClientRevision) -> Client {
 }
 
 #[test]
-fn revision_377_multiloc_observes_current_name_actions_and_rotated_size() {
+fn revision_377_multiloc_observes_current_name_actions_and_base_size() {
     let mut c = client_with_multiloc(ClientRevision::R377);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
@@ -385,8 +385,8 @@ fn revision_377_multiloc_observes_current_name_actions_and_rotated_size() {
     );
     assert_eq!(full.name.as_deref(), Some("Flour bin"));
     assert_eq!(full.actions, vec![Some("Empty".into())]);
-    assert_eq!((full.width, full.length), (3, 2));
-    assert_eq!((full.footprint_width, full.footprint_length), (2, 3));
+    assert_eq!((full.width, full.length), (1, 1));
+    assert_eq!((full.footprint_width, full.footprint_length), (1, 1));
     assert!(!snap.rebuild_family(&c, Family::Loc));
 
     c.var[0] = 2;
@@ -395,6 +395,71 @@ fn revision_377_multiloc_observes_current_name_actions_and_rotated_size() {
     let absent = ground_named(&snap, 0);
     assert_eq!(absent.name, None, "a -1 morph has no displayed target");
     assert!(absent.actions.is_empty());
+}
+
+#[test]
+fn revision_377_multiloc_and_null_form_preserve_all_base_placement_fields() {
+    let mut c = client_with_multiloc(ClientRevision::R377);
+    let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+    // Fenkenstrain's table has this base/form footprint mismatch.
+    cache.locs[0] = LocType {
+        id: 0,
+        name: "Base table".into(),
+        desc: "Base description".into(),
+        op: vec![Some("Base action".into())],
+        width: 4,
+        length: 2,
+        blockwalk: false,
+        blockrange: false,
+        active: true,
+        forceapproach: 5,
+        anim: 17,
+        mapfunction: 23,
+        mapscene: 29,
+        ..Default::default()
+    };
+    cache.locs[1] = LocType {
+        id: 1,
+        name: "Morphed table".into(),
+        desc: "Form description".into(),
+        op: vec![Some("Search".into())],
+        width: 1,
+        length: 1,
+        blockwalk: true,
+        blockrange: true,
+        active: false,
+        forceapproach: 0,
+        anim: -1,
+        mapfunction: -1,
+        mapscene: -1,
+        ..Default::default()
+    };
+    let mut snap = GameSnapshot::new();
+    for selector in [0, 2] {
+        c.var[0] = selector;
+        c.gens.varp += 1;
+        assert!(snap.rebuild_family(&c, Family::Loc));
+        let loc = ground_named(&snap, 0);
+        assert_eq!(loc.id, 0);
+        assert_eq!((loc.width, loc.length), (4, 2));
+        assert_eq!((loc.footprint_width, loc.footprint_length), (2, 4));
+        assert!(!loc.block_walk);
+        assert!(!loc.block_range);
+        assert!(loc.active);
+        assert_eq!(loc.force_approach, 5);
+        assert_eq!(loc.animation, 17);
+        assert_eq!(loc.map_function, 23);
+        assert_eq!(loc.map_scene, 29);
+        if selector == 0 {
+            assert_eq!(loc.name.as_deref(), Some("Morphed table"));
+            assert_eq!(loc.description.as_deref(), Some("Form description"));
+            assert_eq!(loc.actions, vec![Some("Search".into())]);
+        } else {
+            assert_eq!(loc.name, None);
+            assert_eq!(loc.description, None);
+            assert!(loc.actions.is_empty());
+        }
+    }
 }
 
 #[test]

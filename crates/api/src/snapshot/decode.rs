@@ -1544,10 +1544,24 @@ fn loc_view(
     let angle = (info >> 6) & 0x3;
     let x = base.0 + sx;
     let z = base.1 + sz;
+    let base_loc = client.cache.locs.get(id as usize);
+    // Java 377 Client:4133-4176 resolves only menu text/options (including
+    // the Examine target). Routing keeps the base size/forceapproach at
+    // Client:6979-6993; World:795-858 keeps base placement/collision/anim.
+    let display_loc = if client.revision() == client::io::ClientRevision::R377 {
+        client.cache.resolve_loc(id as usize, &client.var)
+    } else {
+        base_loc
+    };
+    let (name, description, actions) = match display_loc {
+        Some(loc) => (
+            (!loc.name.is_empty()).then(|| loc.name.clone()),
+            (!loc.desc.is_empty()).then(|| loc.desc.clone()),
+            loc.op.clone(),
+        ),
+        None => (None, None, Vec::new()),
+    };
     let (
-        name,
-        description,
-        actions,
         width,
         length,
         block_walk,
@@ -1557,15 +1571,8 @@ fn loc_view(
         map_function,
         map_scene,
         force_approach,
-    ) = match if client.revision() == client::io::ClientRevision::R377 {
-        client.cache.resolve_loc(id as usize, &client.var)
-    } else {
-        client.cache.locs.get(id as usize)
-    } {
+    ) = match base_loc {
         Some(loc) => (
-            (!loc.name.is_empty()).then(|| loc.name.clone()),
-            (!loc.desc.is_empty()).then(|| loc.desc.clone()),
-            loc.op.clone(),
             loc.width,
             loc.length,
             loc.blockwalk,
@@ -1577,9 +1584,6 @@ fn loc_view(
             loc.forceapproach,
         ),
         None => (
-            None,
-            None,
-            Vec::new(),
             1,
             1,
             true,

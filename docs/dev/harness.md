@@ -40,6 +40,12 @@ quest-list row, the quest-point display, completion interface, exactly
 A refused or unavailable interaction fails its named step. The cell does
 not replace an unavailable action with a state seed.
 
+Revision-377 loc observations resolve morph forms only for name, description
+and actions. Size, oriented footprint, collision flags, active status,
+force-approach, animation ID and map icons remain those of the placed base
+config, even when its selected form is absent. This follows Java 377's
+separate menu/Examine and placement/routing paths; 274/289 are unchanged.
+
 The ignored `cook::cook_377_route_a` test in `revision_377_live` runs this
 registered scenario through the host pump and selected 377 client. Supply
 the resource variables listed in that test's parent module, `LIVE=1`,
