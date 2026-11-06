@@ -7,6 +7,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Content harness
 
+- Add selected revision-377 journal reads for Cook's Assistant, Sheep Shearer,
+  Rune Mysteries and Romeo & Juliet. Reads validate the selected pin, quest
+  button, title and all 100 ordered body fragments. Missing tables fail closed.
+- Add source-mapped revision-377 Paths for Sheep Shearer, Rune Mysteries and
+  Romeo & Juliet, including journal-based intermediate-state recovery.
+- Revision-377 NPC snapshots use the current varbit/varp-selected form's
+  name and menu actions, while retaining the placed type. Null forms expose
+  no menu. Quester can defer unnamed 377 talk roots to that observed menu;
+  it never substitutes a static leaf target. Revision 274/289 is unchanged.
 - Add the bespoke revision-377 `cook_377` scenario and a fresh-account live
   witness. Ingredients come from world interactions. Completion, Cooking XP
   and quest points must come from Fairy Ring's product scripts.
