@@ -809,11 +809,14 @@ it. Captured bank rows remain a separate dimension. Search budgets,
 runtime cursor limits and result bounds do not change.
 
 First-goal zone completion retains the full preferred and fallback targets.
-It stores partition indices and key offsets separately, with sorted zone IDs
-in one shared arena. Both sorts operate in place, so no duplicate key/index
-scratch is needed. Admission still charges both per-target vectors, the full
-per-tile zone-membership bound and the complete grouped-goal tile-copy bound;
-target and settle limits do not change.
+It stores target indices and key offsets in u32 words only when both the
+largest target index and aggregate key-offset bound fit; otherwise it uses
+usize words. Sorted zone IDs share one flat arena. Both sorts operate in
+place, so no duplicate scratch buffer is charged. Admission charges the two
+per-target vectors, terminal offset, maximum zone membership and grouped-goal
+tile copies; target and settle limits do not change.
+Host admission continues to charge its separate candidate-tile buffer and
+owned request inputs.
 
 Consumptive hops debit a path's running inventory and credit script-proven
 replacement items. Walking nodes share interned balance IDs, without a

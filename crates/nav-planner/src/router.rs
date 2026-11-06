@@ -2206,15 +2206,21 @@ fn search_worst_case_reservation(
                 | SearchRequestShape::EntranceRequirements { .. }
         ) {
         // First-family partitions use per-target indices and key offsets
-        // into one flat arena, with a terminal offset. Other shapes keep
-        // their existing rows; all charge zone IDs and grouped-goal copies.
-        // Index and key sorting are in place and need no second buffers.
+        // into one flat arena. Use u32 words only when the target-index and
+        // maximum aggregate key-offset bounds fit; otherwise use usize.
+        // Both sorts are in place, with no duplicate key/index buffers.
+        let zone_ids = graph.zones.as_ref()?.max_zones_per_tile();
+        let index_width = first_zone_index_width(target_count, zone_ids);
+        let word_bytes = match index_width {
+            FirstZoneIndexWidth::Compact => std::mem::size_of::<u32>(),
+            FirstZoneIndexWidth::Native => std::mem::size_of::<usize>(),
+        };
         let row_bytes = match shape {
             SearchRequestShape::Many { .. } => std::mem::size_of::<IndexedZoneGoal>(),
             SearchRequestShape::BlockingZones { .. } => {
                 std::mem::size_of::<(Vec<u16>, usize, WorldTile)>()
             }
-            _ => std::mem::size_of::<usize>().checked_mul(2)?,
+            _ => word_bytes.checked_mul(2)?,
         };
         let goal_bytes = std::mem::size_of::<WorldTile>().checked_add(
             if matches!(shape, SearchRequestShape::Many { .. }) {
@@ -2223,7 +2229,6 @@ fn search_worst_case_reservation(
                 0
             },
         )?;
-        let zone_ids = graph.zones.as_ref()?.max_zones_per_tile();
         let bytes = target_count.checked_mul(
             row_bytes
                 .checked_add(zone_ids.checked_mul(std::mem::size_of::<u16>())?)?
@@ -2235,7 +2240,7 @@ fn search_worst_case_reservation(
         ) {
             bytes
         } else {
-            bytes.checked_add(std::mem::size_of::<usize>())?
+            bytes.checked_add(word_bytes)?
         }
     } else {
         0
@@ -3169,6 +3174,226 @@ struct IndexedZoneGoal {
     index: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FirstZoneIndexWidth {
+    Compact,
+    Native,
+}
+
+fn first_zone_index_width(
+    target_count: usize,
+    max_zones_per_tile: usize,
+) -> FirstZoneIndexWidth {
+    let largest_target_index = target_count.saturating_sub(1);
+    let max_zone_key_count = target_count.checked_mul(max_zones_per_tile);
+    if usize::BITS >= u32::BITS
+        && u32::try_from(largest_target_index).is_ok()
+        && max_zone_key_count.is_some_and(|count| u32::try_from(count).is_ok())
+    {
+        FirstZoneIndexWidth::Compact
+    } else {
+        FirstZoneIndexWidth::Native
+    }
+}
+
+trait FirstZoneWord: Copy {
+    fn from_usize(value: usize) -> Option<Self>;
+    fn into_usize(self) -> usize;
+}
+
+impl FirstZoneWord for u32 {
+    fn from_usize(value: usize) -> Option<Self> {
+        u32::try_from(value).ok()
+    }
+
+    fn into_usize(self) -> usize {
+        usize::try_from(self).expect("compact first-zone word fits usize")
+    }
+}
+
+impl FirstZoneWord for usize {
+    fn from_usize(value: usize) -> Option<Self> {
+        Some(value)
+    }
+
+    fn into_usize(self) -> usize {
+        self
+    }
+}
+
+struct FirstZonePartitionData<I> {
+    indices: Vec<I>,
+    key_offsets: Vec<I>,
+}
+
+impl<I: FirstZoneWord> FirstZonePartitionData<I> {
+    fn try_new(
+        index_capacity: usize,
+        offset_capacity: usize,
+    ) -> Result<Self, SearchCursorError> {
+        let mut indices = Vec::new();
+        indices
+            .try_reserve_exact(index_capacity)
+            .map_err(|_| SearchCursorError::Allocation)?;
+        let mut key_offsets = Vec::new();
+        key_offsets
+            .try_reserve_exact(offset_capacity)
+            .map_err(|_| SearchCursorError::Allocation)?;
+        key_offsets.push(
+            I::from_usize(0).ok_or(SearchCursorError::ResultNotRepresentable)?,
+        );
+        Ok(Self {
+            indices,
+            key_offsets,
+        })
+    }
+
+    fn push_index(&mut self, index: usize) -> Result<(), SearchCursorError> {
+        self.indices.push(
+            I::from_usize(index).ok_or(SearchCursorError::ResultNotRepresentable)?,
+        );
+        Ok(())
+    }
+
+    fn push_key_offset(&mut self, offset: usize) -> Result<(), SearchCursorError> {
+        self.key_offsets.push(
+            I::from_usize(offset).ok_or(SearchCursorError::ResultNotRepresentable)?,
+        );
+        Ok(())
+    }
+
+    fn target_index_at(&self, position: usize) -> Result<usize, SearchCursorError> {
+        self.indices
+            .get(position)
+            .copied()
+            .map(|word| word.into_usize())
+            .ok_or(SearchCursorError::ResultNotRepresentable)
+    }
+
+    fn target_key_range(
+        &self,
+        target_index: usize,
+    ) -> Result<std::ops::Range<usize>, SearchCursorError> {
+        let next_index = target_index
+            .checked_add(1)
+            .ok_or(SearchCursorError::ResultNotRepresentable)?;
+        let start = self
+            .key_offsets
+            .get(target_index)
+            .copied()
+            .map(|word| word.into_usize())
+            .ok_or(SearchCursorError::ResultNotRepresentable)?;
+        let end = self
+            .key_offsets
+            .get(next_index)
+            .copied()
+            .map(|word| word.into_usize())
+            .ok_or(SearchCursorError::ResultNotRepresentable)?;
+        if start > end {
+            return Err(SearchCursorError::ResultNotRepresentable);
+        }
+        Ok(start..end)
+    }
+
+    fn len(&self) -> usize {
+        self.indices.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
+
+    async fn sort_by_key(&mut self, keys: &[u16]) {
+        let key_offsets = &self.key_offsets;
+        sort_unstable_by_cooperative(&mut self.indices, |left, right| {
+            let left_index = left.into_usize();
+            let right_index = right.into_usize();
+            let left_start = key_offsets[left_index].into_usize();
+            let left_end = key_offsets[left_index + 1].into_usize();
+            let right_start = key_offsets[right_index].into_usize();
+            let right_end = key_offsets[right_index + 1].into_usize();
+            keys[left_start..left_end]
+                .cmp(&keys[right_start..right_end])
+                .then_with(|| left_index.cmp(&right_index))
+        })
+        .await;
+    }
+}
+
+enum FirstZonePartitions {
+    Compact(FirstZonePartitionData<u32>),
+    Native(FirstZonePartitionData<usize>),
+}
+
+impl FirstZonePartitions {
+    fn try_new(
+        width: FirstZoneIndexWidth,
+        index_capacity: usize,
+        offset_capacity: usize,
+    ) -> Result<Self, SearchCursorError> {
+        match width {
+            FirstZoneIndexWidth::Compact => Ok(Self::Compact(
+                FirstZonePartitionData::try_new(index_capacity, offset_capacity)?,
+            )),
+            FirstZoneIndexWidth::Native => Ok(Self::Native(
+                FirstZonePartitionData::try_new(index_capacity, offset_capacity)?,
+            )),
+        }
+    }
+
+    fn push_index(&mut self, index: usize) -> Result<(), SearchCursorError> {
+        match self {
+            Self::Compact(data) => data.push_index(index),
+            Self::Native(data) => data.push_index(index),
+        }
+    }
+
+    fn push_key_offset(&mut self, offset: usize) -> Result<(), SearchCursorError> {
+        match self {
+            Self::Compact(data) => data.push_key_offset(offset),
+            Self::Native(data) => data.push_key_offset(offset),
+        }
+    }
+
+    fn target_index_at(&self, position: usize) -> Result<usize, SearchCursorError> {
+        match self {
+            Self::Compact(data) => data.target_index_at(position),
+            Self::Native(data) => data.target_index_at(position),
+        }
+    }
+
+    fn target_key_range(
+        &self,
+        target_index: usize,
+    ) -> Result<std::ops::Range<usize>, SearchCursorError> {
+        match self {
+            Self::Compact(data) => data.target_key_range(target_index),
+            Self::Native(data) => data.target_key_range(target_index),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Compact(data) => data.len(),
+            Self::Native(data) => data.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Compact(data) => data.is_empty(),
+            Self::Native(data) => data.is_empty(),
+        }
+    }
+
+    async fn sort_by_key(&mut self, keys: &[u16]) {
+        match self {
+            Self::Compact(data) => data.sort_by_key(keys).await,
+            Self::Native(data) => data.sort_by_key(keys).await,
+        }
+    }
+}
+
 async fn consider_many_best(
     best: &mut Option<(usize, RouteTrace)>,
     indices: Option<&[usize]>,
@@ -3877,22 +4102,18 @@ async fn first_cursor_search_with_output(
         return Ok(into_first_pass(pass, fallback_only));
     }
 
-    let partition_capacity = targets
-        .len()
-        .checked_add(fallback.len())
-        .ok_or(SearchCursorError::ResultNotRepresentable)?;
     let offset_capacity = partition_capacity
         .checked_add(1)
         .ok_or(SearchCursorError::ResultNotRepresentable)?;
-    let mut key_offsets = Vec::new();
-    key_offsets
-        .try_reserve_exact(offset_capacity)
-        .map_err(|_| SearchCursorError::Allocation)?;
-    key_offsets.push(0);
-    let mut partitions = Vec::new();
-    partitions
-        .try_reserve_exact(partition_capacity)
-        .map_err(|_| SearchCursorError::Allocation)?;
+    let max_zone_ids = graph
+        .zones
+        .as_ref()
+        .map_or(0, |table| table.max_zones_per_tile());
+    let mut partitions = FirstZonePartitions::try_new(
+        first_zone_index_width(partition_capacity, max_zone_ids),
+        partition_capacity,
+        offset_capacity,
+    )?;
     let mut key_count = 0usize;
     for (index, &target) in targets.iter().chain(fallback.iter()).enumerate() {
         work_unit().await;
@@ -3900,9 +4121,9 @@ async fn first_cursor_search_with_output(
         key_count = key_count
             .checked_add(key_len)
             .ok_or(SearchCursorError::ResultNotRepresentable)?;
-        key_offsets.push(key_count);
+        partitions.push_key_offset(key_count)?;
         if key_len != 0 || options.zones != ZoneExempt::NONE {
-            partitions.push(index);
+            partitions.push_index(index)?;
         }
     }
     let mut zone_keys = Vec::new();
@@ -3912,17 +4133,10 @@ async fn first_cursor_search_with_output(
     zone_keys.resize(key_count, 0);
     for (index, &target) in targets.iter().chain(fallback.iter()).enumerate() {
         work_unit().await;
-        let start = key_offsets[index];
-        let end = key_offsets[index + 1];
-        fill_goal_zone_key_cooperative(graph, filter, target, &mut zone_keys[start..end])
-            .await?;
+        let range = partitions.target_key_range(index)?;
+        fill_goal_zone_key_cooperative(graph, filter, target, &mut zone_keys[range]).await?;
     }
-    sort_unstable_by_cooperative(&mut partitions, |left, right| {
-        let left_key = &zone_keys[key_offsets[*left]..key_offsets[*left + 1]];
-        let right_key = &zone_keys[key_offsets[*right]..key_offsets[*right + 1]];
-        left_key.cmp(right_key).then_with(|| left.cmp(right))
-    })
-    .await;
+    partitions.sort_by_key(&zone_keys).await;
     if partitions.is_empty() {
         let pass = first_search_core_compact(
             collision,
@@ -3980,13 +4194,15 @@ async fn first_cursor_search_with_output(
         let mut start = 0usize;
         while start < partitions.len() {
             work_unit().await;
-            let first_index = partitions[start];
-            let first_key = &zone_keys[key_offsets[first_index]..key_offsets[first_index + 1]];
+            let first_index = partitions.target_index_at(start)?;
+            let first_key_range = partitions.target_key_range(first_index)?;
+            let first_key = &zone_keys[first_key_range];
             let mut end = start + 1;
             while end < partitions.len() {
                 work_unit().await;
-                let index = partitions[end];
-                let key = &zone_keys[key_offsets[index]..key_offsets[index + 1]];
+                let index = partitions.target_index_at(end)?;
+                let key_range = partitions.target_key_range(index)?;
+                let key = &zone_keys[key_range];
                 if key != first_key {
                     break;
                 }
@@ -3998,8 +4214,9 @@ async fn first_cursor_search_with_output(
             }
             let mut preferred_count = 0usize;
             let mut fallback_count = 0usize;
-            for &index in &partitions[start..end] {
+            for position in start..end {
                 work_unit().await;
+                let index = partitions.target_index_at(position)?;
                 if index < targets.len() {
                     preferred_count += 1;
                 } else {
@@ -4014,13 +4231,15 @@ async fn first_cursor_search_with_output(
             fallbacks
                 .try_reserve_exact(fallback_count)
                 .map_err(|_| SearchCursorError::Allocation)?;
-            for &index in &partitions[start..end] {
+            for position in start..end {
                 work_unit().await;
+                let index = partitions.target_index_at(position)?;
                 if index < targets.len() {
                     preferred.push(targets[index]);
                 } else {
                     fallbacks.push(fallback[index - targets.len()]);
                 }
+            }
             let endpoint = preferred
                 .first()
                 .or_else(|| fallbacks.first())

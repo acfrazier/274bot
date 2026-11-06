@@ -8308,5 +8308,30 @@ fn first_goal_request_with_over_limit_inputs_stays_over_the_route_cap() {
     );
 }
 
+#[test]
+fn first_zone_partition_uses_native_words_when_compact_bounds_do_not_fit() {
+    let max = usize::try_from(u32::MAX).expect("u32 fits usize");
+    assert_eq!(
+        super::first_zone_index_width(1, max),
+        super::FirstZoneIndexWidth::Compact
+    );
+    assert_eq!(
+        super::first_zone_index_width(2, max),
+        super::FirstZoneIndexWidth::Native
+    );
+    if let Some(count) = max.checked_add(1) {
+        assert_eq!(
+            super::first_zone_index_width(count, 0),
+            super::FirstZoneIndexWidth::Compact
+        );
+    }
+    if let Some(count) = max.checked_add(2) {
+        assert_eq!(
+            super::first_zone_index_width(count, 0),
+            super::FirstZoneIndexWidth::Native
+        );
+    }
+}
+
 #[path = "router/consumption_tests.rs"]
 mod consumption;
