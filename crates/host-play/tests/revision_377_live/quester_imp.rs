@@ -288,7 +288,7 @@ impl Witness {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, owned qp3 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+#[ignore = "requires LIVE=1, owned qd3 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_imp_native() -> Result<(), String> {
     let bound = load_bound_377()?;
     identity_record(&bound);
