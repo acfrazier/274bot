@@ -11,7 +11,7 @@ Varp values are `quest_romeojuliet.constant` (whole file): not started 0, spoken
 - Message delivery (`romeo.rs2:54-63`): talking to Romeo at state 20 unconditionally deletes one message and writes `%rjquest = 30` (`:57-58`).
 - Father Lawrence (`areas/area_varrock/scripts/father_lawrence.rs2:54-62`): talking at state 30 writes `%rjquest = 40` with no choices.
 - Apothecary briefing (`areas/area_varrock/scripts/apothecary.rs2:97-107`): talking at state 40 writes `%rjquest = 50` with no choices.
-- Potion (`apothecary.rs2:82-95`): at state 50, talking with berries held deletes them and gives one `cadava` (`:86-92`); with the potion already held the shop branch runs (`:83-85`); with neither, “Keep searching for the berries.” (`:93-95`).
+- Potion (`apothecary.rs2:82-95`): at state 50, talking with berries held deletes them and gives one `cadava` (`:86-92`); with the potion already held, `:83-85` calls the standard potion-chat branch (`apothecary_standard`, `:36-80`); with neither, “Keep searching for the berries.” (`:93-95`).
 - Potion delivery (`juliet.rs2:88-103`): at state 50 with the potion held, the talk deletes it and writes `%rjquest = 60` (`:95-102`). Without it (`:89-94`) there is no advance.
 - Finale (`romeo.rs2:90-98`): talking to Romeo at state 60 queues completion unconditionally (`:98`).
 - Post-quest lines (`romeo.rs2:12-14`, `juliet.rs2:105-109`) confirm the terminal state.
@@ -51,7 +51,7 @@ All strings are from `quests/quest_romeojuliet/scripts/romeojuliet_journal.rs2`;
 
 ## Talk-only states and item recovery
 
-- State 20 without the message: `juliet.rs2:67-75` re-gives it when neither inventory nor bank holds one (`replace-message`); Juliet's own check covers the banked case (`juliet.rs2:68`). Banked copies are withdrawn first (`scan-message-bank`, `withdraw-message`).
+- State 20 without the message: Juliet's `juliet_deliver_letter` branch re-gives a message only when neither inventory nor bank holds one (`juliet.rs2:67-75`, check at `:68`), but Romeo's state-20 delivery (`romeo.rs2:54-63`) advances without checking for it. The Path omits the unnecessary Juliet detour; it still withdraws a banked copy when one exists (`scan-message-bank`, `withdraw-message`).
 - State 50 without berries or potion: `take-berries` targets the ground spawn at `m51_52.jm2:6653` (OBJ 753 at `0 13 42`), world `(3277,3370,0)`; sibling spawns at `m51_52.jm2:6649` (`(3266,3361,0)`) and `:6652` (`(3273,3375,0)`) are the same bush patch. `make-potion` converts berries to potion by talk; a banked potion or berries are withdrawn first.
 - States 30, 40, 60 and the finale need no items: the repeat-talk branches (`romeo.rs2:6-11`, `father_lawrence.rs2:5-22`, `juliet.rs2:77-86`, `apothecary.rs2:82-85`) restate directions without advancing, so re-running the talk step is the recovery.
 - `monotonic` is true: every advance is a one-way dialogue write with no way to regress a stage.

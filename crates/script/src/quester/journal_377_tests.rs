@@ -143,3 +143,85 @@ fn rune_377_lost_talisman_path_selects_dukes_quest_branch() {
         );
     }
 }
+
+#[test]
+fn sheep_377_path_targets_shearable_forms_and_prefers_freds_hand_in() {
+    let document: serde_json::Value =
+        serde_json::from_slice(bundled_path_for(ClientRevision::R377, "sheep").unwrap()).unwrap();
+    let shear = document["quest"]["acquire"]["acquire:wool"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["id"] == "shear")
+        .unwrap();
+    assert_eq!(
+        shear["args"]["target"]["npc"],
+        serde_json::json!(["sheepunsheered", "sheepunsheered3"]),
+        "the Path must allow both placed shearable NPC forms, not The Thing"
+    );
+
+    // fred_the_farmer.rs2:163-166 offers these exact choices once
+    // %the_thing_sheared is 1.
+    let menu = ["I'm back!", "Fred! Fred! I've seen The Thing!"];
+    let options: Vec<_> = menu
+        .iter()
+        .enumerate()
+        .map(|(index, text)| api::snapshot::ChatOptionView {
+            component_id: index as i32,
+            text: (*text).into(),
+        })
+        .collect();
+    for (stage, step_id) in [
+        ("sheep:1", "hand-held"),
+        ("sheep:1", "hand-in"),
+        ("sheep:enough", "hand-in-enough"),
+    ] {
+        let sequence = document["roles"][0]["sequences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|sequence| sequence["stage"] == stage)
+            .unwrap();
+        let step = sequence["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|step| step["id"] == step_id)
+            .unwrap();
+        let prefer: Vec<Arc<str>> = step["args"]["prefer"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|text| Arc::from(text.as_str().unwrap()))
+            .collect();
+        let selected = super::super::families::dialogue::pick_preferred(&options, &prefer);
+        assert_eq!(
+            selected.map(|index| options[index].text.as_str()),
+            Some("I'm back!"),
+            "{step_id} must choose Fred's wool hand-in branch"
+        );
+    }
+}
+
+#[test]
+fn romeo_377_missing_message_path_skips_juliet_detour() {
+    let document: serde_json::Value = serde_json::from_slice(
+        bundled_path_for(ClientRevision::R377, "romeojuliet").unwrap(),
+    )
+    .unwrap();
+    let sequence = document["roles"][0]["sequences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|sequence| sequence["stage"] == "romeojuliet:20")
+        .unwrap();
+    let steps = sequence["steps"].as_array().unwrap();
+    assert!(
+        steps.iter().any(|step| step["id"] == "deliver-message"),
+        "Romeo's state-20 talk advances even if the message is absent"
+    );
+    assert!(
+        steps.iter().all(|step| step["id"] != "replace-message"),
+        "the Path must not walk back to Juliet for an item Romeo does not check"
+    );
+}
