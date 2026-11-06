@@ -34,6 +34,8 @@ mod quester_imp;
 
 #[path = "revision_377_live/quester_doric.rs"]
 mod quester_doric;
+#[path = "revision_377_live/quester_journal.rs"]
+mod quester_journal;
 
 use std::fs;
 use std::path::{Path, PathBuf};
