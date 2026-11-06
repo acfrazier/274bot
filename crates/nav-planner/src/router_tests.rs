@@ -6529,7 +6529,8 @@ fn real_289_named_bank_many_matches_every_single_without_goal_partitions() {
         .filter(|b| b.routable)
         .map(|b| b.tile)
         .collect();
-    assert_eq!(targets.len(), 19);
+    // The content-derived catalog includes the Legends Guild bank.
+    assert_eq!(targets.len(), 20);
     for (from, combat) in [
         (tile(3222, 3218, 0), 126),
         (tile(3222, 3218, 0), 3),

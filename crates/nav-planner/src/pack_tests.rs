@@ -54,12 +54,11 @@ fn flags_decoder_rejects_partial_words() {
 
 #[test]
 fn reach_decoder_rejects_incomplete_word_payload() {
-    let mut bytes = b"274R\x01".to_vec();
+    let mut bytes = b"274R\x02".to_vec();
     bytes.extend_from_slice(&[0; 12]);
     bytes.extend_from_slice(&1u32.to_le_bytes());
     bytes.extend_from_slice(&1u32.to_le_bytes());
     bytes.extend_from_slice(&1u32.to_le_bytes());
-    bytes.extend_from_slice(&[0; 32]);
     bytes.extend_from_slice(&[0; 7]);
     assert!(matches!(
         decode_reach_sidecar(&bytes),
