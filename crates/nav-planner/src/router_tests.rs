@@ -6810,6 +6810,15 @@ fn ordered_first_preserves_input_order_for_goals_in_a_shared_zone() {
     ));
     let lease = crate::producer::lease(&world).expect("shared-zone fixture lease");
     for targets in [[first, second], [second, first]] {
+        let single = find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            targets[0],
+            options,
+            &state,
+        )
+        .expect("the shared-zone target has its ordinary route cost");
         let synchronous = find_first_with(
             &world.collision,
             &world.graph,
@@ -6820,7 +6829,10 @@ fn ordered_first_preserves_input_order_for_goals_in_a_shared_zone() {
         )
         .into_route()
         .expect("the shared-zone goal set has a route");
-        assert_eq!((synchronous.dest, synchronous.ticks), (targets[0], 1.5));
+        assert_eq!(
+            (synchronous.dest, synchronous.ticks),
+            (targets[0], single.ticks),
+        );
 
         let completion = advance_real_route_completion(
             super::SearchRequest::First {
@@ -6839,7 +6851,10 @@ fn ordered_first_preserves_input_order_for_goals_in_a_shared_zone() {
         };
         let (route, fallback) = search.into_routes();
         let route = route.expect("the cooperative shared-zone goal set has a route");
-        assert_eq!((route.destination(), route.ticks()), (targets[0], 1.5));
+        assert_eq!(
+            (route.destination(), route.ticks()),
+            (targets[0], single.ticks),
+        );
         assert!(fallback.is_none());
     }
 }
