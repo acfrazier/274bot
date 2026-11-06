@@ -362,7 +362,7 @@ fn squire_pie_retry_with_spares_skips_the_varrock_legs() {
             .expect("squire decodes");
     let compiled = compile_document(&document, &selected, &quests).expect("squire compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(&compiled, &selected, "squire:2", &[])];
+    let progress = [progress_for_stage(&compiled, "squire:2", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1178,12 +1178,7 @@ fn ordered_hazeel_valves_run_once_each_and_reach_the_fight() {
             .expect("hazeelcult decodes");
     let compiled = compile_document(&document, &selected, &quests).expect("hazeelcult compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(
-        &compiled,
-        &selected,
-        "hazeelcult:4",
-        &[],
-    )];
+    let progress = [progress_for_stage(&compiled, "hazeelcult:4", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1317,12 +1312,7 @@ fn hazeel_cave_entry_runs_on_surface_and_skips_underground() {
     let on_surface = snapshot_at(2565, 3271);
     let in_cave = snapshot_at(2570, 9682);
 
-    let progress = [progress_for_stage(
-        &compiled,
-        &selected,
-        "hazeelcult:2",
-        &[],
-    )];
+    let progress = [progress_for_stage(&compiled, "hazeelcult:2", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1339,12 +1329,7 @@ fn hazeel_cave_entry_runs_on_surface_and_skips_underground() {
         Choice::Step(FactKey::new("meet-clivet"))
     );
 
-    let progress = [progress_for_stage(
-        &compiled,
-        &selected,
-        "hazeelcult:3",
-        &[],
-    )];
+    let progress = [progress_for_stage(&compiled, "hazeelcult:3", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1380,7 +1365,7 @@ fn elena_mud_refill_fetches_on_interrupted_fill_and_pours_on_resume() {
         serde_json::from_value(read_path(&paths_dir().join("elena.json"))).expect("elena decodes");
     let compiled = compile_document(&document, &selected, &quests).expect("elena compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(&compiled, &selected, "elena:03-06", &[])];
+    let progress = [progress_for_stage(&compiled, "elena:03-06", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1451,7 +1436,7 @@ fn ordered_plague_city_clerk_door_bravek_runs_once_each() {
         serde_json::from_value(read_path(&paths_dir().join("elena.json"))).expect("elena decodes");
     let compiled = compile_document(&document, &selected, &quests).expect("elena compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(&compiled, &selected, "elena:24-25", &[])];
+    let progress = [progress_for_stage(&compiled, "elena:24-25", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1505,7 +1490,7 @@ fn plague_city_cellar_return_skips_the_gate_outside_the_basement() {
         serde_json::from_value(read_path(&paths_dir().join("elena.json"))).expect("elena decodes");
     let compiled = compile_document(&document, &selected, &quests).expect("elena compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(&compiled, &selected, "elena:28", &[])];
+    let progress = [progress_for_stage(&compiled, "elena:28", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1587,12 +1572,7 @@ fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
             .expect("drunkmonk decodes");
     let compiled = compile_document(&document, &selected, &quests).expect("drunkmonk compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(
-        &compiled,
-        &selected,
-        "drunkmonk:50",
-        &[],
-    )];
+    let progress = [progress_for_stage(&compiled, "drunkmonk:50", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
@@ -1741,12 +1721,7 @@ fn priestperil_stage_6_leaves_the_cell_from_the_south_east_walkway_before_dousin
             .expect("priestperil decodes");
     let compiled = compile_document(&document, &selected, &quests).expect("priestperil compiles");
     let bank = known_empty_bank();
-    let progress = [progress_for_stage(
-        &compiled,
-        &selected,
-        "priestperil:6",
-        &[],
-    )];
+    let progress = [progress_for_stage(&compiled, "priestperil:6", &[])];
     let probe = Probe {
         path: &compiled,
         selected: &selected,
