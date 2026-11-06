@@ -166,7 +166,7 @@ impl Sample {
     fn fresh(&self) -> bool {
         self.xp == 0 && self.qp == 0 && self.quest_colour == Some(0xF80000)
     }
-    fn rune_fixture_ready(&self) -> bool {
+    fn rune_can_relog(&self) -> bool {
         self.combat_level > 40
             && self.combat_stats.iter().all(|level| *level == 40)
             && self.hitpoints == 40
@@ -178,6 +178,9 @@ impl Sample {
                             && Some(target.index) == self.local_index
                     })
             })
+    }
+    fn rune_fixture_ready(&self) -> bool {
+        self.rune_can_relog()
             && self
                 .inventory
                 .iter()
@@ -278,6 +281,12 @@ fn journal_witness_rejects_stale_or_partial_product_evidence() {
             _ => sample.in_combat = true,
         }
         assert!(!witness_predicate(&sample, RUNE, 0, true));
+        if invalid == 1 {
+            assert!(
+                sample.rune_can_relog(),
+                "mainland inventory is published only after the clean relog"
+            );
+        }
     }
     for quest in [SHEEP, RUNE, ROMEO] {
         let mut completed = Sample {
@@ -465,7 +474,9 @@ impl Witness {
                             self.fixture_seeded = true;
                             return Ok(());
                         }
-                        if !s.rune_fixture_ready() {
+                        // Tutorial login has no inventory side tab yet. The
+                        // food seed is observed after clean relog, before Start.
+                        if !s.rune_can_relog() {
                             return Ok(());
                         }
                         self.record(json!({"phase":"combat-only area fixture observed before clean relog","sample":s}))?;
