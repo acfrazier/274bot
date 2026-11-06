@@ -104,7 +104,9 @@ fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
         "consumption": [],
         "pickpocket": []
     }"#;
-    std::sync::Arc::new(serde_json::from_str(raw).expect("selected data without gathering families"))
+    std::sync::Arc::new(
+        serde_json::from_str(raw).expect("selected data without gathering families"),
+    )
 }
 
 fn catalog(revision: ClientRevision) -> std::sync::Arc<api::gather_methods::GatherCatalog> {

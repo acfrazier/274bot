@@ -745,9 +745,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        build_blob, derive_key, is_unsupported_saved_shape, parse_header, serialize_profiles, Profile,
-        ProfileSettings, ScriptAssignment, Vault, VaultChange, VaultError, MAX_PBKDF2_ROUNDS,
-        MAX_VAULT_FILE_BYTES, SALT_LEN,
+        build_blob, derive_key, is_unsupported_saved_shape, parse_header, serialize_profiles,
+        Profile, ProfileSettings, ScriptAssignment, Vault, VaultChange, VaultError,
+        MAX_PBKDF2_ROUNDS, MAX_VAULT_FILE_BYTES, SALT_LEN,
     };
 
     /// A passphrase used by the vaults these tests create.

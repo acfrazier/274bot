@@ -925,14 +925,16 @@ fn cook_catalog<'s>(
     rv: v8::ReturnValue,
 ) {
     let result = (|| {
-        let Some((_, locations)) = cook_roster()
-            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error:?}")))?
+        let Some((_, locations)) = cook_roster().map_err(|error| {
+            callback_v8::type_error(scope, &format!("cook locations: {error:?}"))
+        })?
         else {
             return serde_v8::to_v8(scope, Vec::<serde_json::Value>::new())
                 .map_err(|e| callback_v8::type_error(scope, &format!("cook locations: {e}")));
         };
-        let obstacles = api::cook_locations::default_obstacles()
-            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error:?}")))?;
+        let obstacles = api::cook_locations::default_obstacles().map_err(|error| {
+            callback_v8::type_error(scope, &format!("cook locations: {error:?}"))
+        })?;
         let tile = |tile: WorldTile| json!({"x": tile.x, "z": tile.z, "level": tile.level});
         let rows: Vec<_> = locations
             .iter()
@@ -1150,9 +1152,9 @@ fn resolve_cook<'s>(
         let Some(wanted) = cook_locations::wanted(&setting) else {
             return Ok(None);
         };
-        let (banks, locations) = match cook_roster()
-            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error:?}")))?
-        {
+        let (banks, locations) = match cook_roster().map_err(|error| {
+            callback_v8::type_error(scope, &format!("cook locations: {error:?}"))
+        })? {
             Some(roster) => roster,
             None => {
                 let message =

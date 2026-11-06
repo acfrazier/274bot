@@ -3180,10 +3180,7 @@ enum FirstZoneIndexWidth {
     Native,
 }
 
-fn first_zone_index_width(
-    target_count: usize,
-    max_zones_per_tile: usize,
-) -> FirstZoneIndexWidth {
+fn first_zone_index_width(target_count: usize, max_zones_per_tile: usize) -> FirstZoneIndexWidth {
     let largest_target_index = target_count.saturating_sub(1);
     let max_zone_key_count = target_count.checked_mul(max_zones_per_tile);
     if usize::BITS >= u32::BITS
@@ -3227,10 +3224,7 @@ struct FirstZonePartitionData<I> {
 }
 
 impl<I: FirstZoneWord> FirstZonePartitionData<I> {
-    fn try_new(
-        index_capacity: usize,
-        offset_capacity: usize,
-    ) -> Result<Self, SearchCursorError> {
+    fn try_new(index_capacity: usize, offset_capacity: usize) -> Result<Self, SearchCursorError> {
         let mut indices = Vec::new();
         indices
             .try_reserve_exact(index_capacity)
@@ -3239,9 +3233,7 @@ impl<I: FirstZoneWord> FirstZonePartitionData<I> {
         key_offsets
             .try_reserve_exact(offset_capacity)
             .map_err(|_| SearchCursorError::Allocation)?;
-        key_offsets.push(
-            I::from_usize(0).ok_or(SearchCursorError::ResultNotRepresentable)?,
-        );
+        key_offsets.push(I::from_usize(0).ok_or(SearchCursorError::ResultNotRepresentable)?);
         Ok(Self {
             indices,
             key_offsets,
@@ -3249,16 +3241,14 @@ impl<I: FirstZoneWord> FirstZonePartitionData<I> {
     }
 
     fn push_index(&mut self, index: usize) -> Result<(), SearchCursorError> {
-        self.indices.push(
-            I::from_usize(index).ok_or(SearchCursorError::ResultNotRepresentable)?,
-        );
+        self.indices
+            .push(I::from_usize(index).ok_or(SearchCursorError::ResultNotRepresentable)?);
         Ok(())
     }
 
     fn push_key_offset(&mut self, offset: usize) -> Result<(), SearchCursorError> {
-        self.key_offsets.push(
-            I::from_usize(offset).ok_or(SearchCursorError::ResultNotRepresentable)?,
-        );
+        self.key_offsets
+            .push(I::from_usize(offset).ok_or(SearchCursorError::ResultNotRepresentable)?);
         Ok(())
     }
 
@@ -3332,12 +3322,14 @@ impl FirstZonePartitions {
         offset_capacity: usize,
     ) -> Result<Self, SearchCursorError> {
         match width {
-            FirstZoneIndexWidth::Compact => Ok(Self::Compact(
-                FirstZonePartitionData::try_new(index_capacity, offset_capacity)?,
-            )),
-            FirstZoneIndexWidth::Native => Ok(Self::Native(
-                FirstZonePartitionData::try_new(index_capacity, offset_capacity)?,
-            )),
+            FirstZoneIndexWidth::Compact => Ok(Self::Compact(FirstZonePartitionData::try_new(
+                index_capacity,
+                offset_capacity,
+            )?)),
+            FirstZoneIndexWidth::Native => Ok(Self::Native(FirstZonePartitionData::try_new(
+                index_capacity,
+                offset_capacity,
+            )?)),
         }
     }
 
@@ -4854,8 +4846,7 @@ async fn fill_goal_zone_key_cooperative(
     for index in filter.blocking_at(&graph.wilderness, goal) {
         work_unit().await;
         if !filter.origin_active(&graph.wilderness, index) {
-            *key
-                .get_mut(key_len)
+            *key.get_mut(key_len)
                 .ok_or(SearchCursorError::ResultNotRepresentable)? = index;
             key_len += 1;
         }
