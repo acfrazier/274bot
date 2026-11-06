@@ -29,6 +29,12 @@ mod cook;
 #[path = "revision_377_live/quester.rs"]
 mod quester;
 
+#[path = "revision_377_live/quester_imp.rs"]
+mod quester_imp;
+
+#[path = "revision_377_live/quester_doric.rs"]
+mod quester_doric;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

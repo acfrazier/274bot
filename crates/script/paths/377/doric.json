@@ -1,0 +1,387 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "doric",
+  "display_name": "Doric's Quest",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      {
+        "obj": "clay",
+        "qty": 6,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "copper_ore",
+        "qty": 4,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "iron_ore",
+        "qty": 2,
+        "kind": "acquirable",
+        "acquire": null
+      }
+    ],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:clay",
+      "obj:copper_ore",
+      "obj:iron_ore"
+    ],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:doric",
+      "progress": {
+        "colour": {
+          "not_started": "doric:0",
+          "in_progress": "doric:10",
+          "complete": "doric:100"
+        },
+        "rules": [],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "doric:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-doric",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "doric",
+                "anchor": {
+                  "tile": [
+                    2952,
+                    3451,
+                    0
+                  ],
+                  "source": "maps/m46_53.jm2:8071"
+                },
+                "leash": 6,
+                "prefer": [
+                  "I wanted to use your anvils.",
+                  "Yes, I will get you materials."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "doric",
+                    "any": [
+                      "doric:10"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "doric:10",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "gather-clay-from-imps",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "imp",
+                  "not_targeting_others": true,
+                  "pick": "random"
+                },
+                "lost_radius": 12,
+                "area": {
+                  "box": [
+                    3003,
+                    3300,
+                    3021,
+                    3321,
+                    0
+                  ],
+                  "source": "maps/m47_51.jm2:7556-7564"
+                },
+                "stand": {
+                  "tile": [
+                    3011,
+                    3314,
+                    0
+                  ],
+                  "source": "maps/m47_51.jm2:7557"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 6,
+                  "auto_retaliate": true
+                },
+                "loadout": null,
+                "kill_budget_ticks": 50,
+                "loot": [
+                  {
+                    "obj": "clay",
+                    "qty": 6
+                  }
+                ],
+                "until": {
+                  "Fact": {
+                    "kind": "item_count_at_least",
+                    "version": 1,
+                    "args": {
+                      "obj": "clay",
+                      "qty": 6
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "clay",
+                    "qty": 6
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "clay",
+                    "qty": 6
+                  }
+                }
+              }
+            },
+            {
+              "id": "gather-ores-from-dwarves",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "dwarf_normal",
+                  "not_targeting_others": true,
+                  "pick": "random"
+                },
+                "lost_radius": 12,
+                "area": {
+                  "box": [
+                    2992,
+                    3439,
+                    3006,
+                    3459,
+                    0
+                  ],
+                  "source": "maps/m46_53.jm2:8088-8089"
+                },
+                "stand": {
+                  "tile": [
+                    2998,
+                    3445,
+                    0
+                  ],
+                  "source": "maps/m46_53.jm2:8088"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 6,
+                  "auto_retaliate": true
+                },
+                "loadout": null,
+                "kill_budget_ticks": 50,
+                "loot": [
+                  {
+                    "obj": "copper_ore",
+                    "qty": 4
+                  },
+                  {
+                    "obj": "iron_ore",
+                    "qty": 2
+                  }
+                ],
+                "until": {
+                  "All": [
+                    {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "copper_ore",
+                          "qty": 4
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "iron_ore",
+                          "qty": 2
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "skip_if": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "copper_ore",
+                        "qty": 4
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "iron_ore",
+                        "qty": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "copper_ore",
+                        "qty": 4
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "iron_ore",
+                        "qty": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "hand-in-ores",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "doric",
+                "anchor": {
+                  "tile": [
+                    2952,
+                    3451,
+                    0
+                  ],
+                  "source": "maps/m46_53.jm2:8071"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": {
+                "Not": {
+                  "All": [
+                    {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "clay",
+                          "qty": 6
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "copper_ore",
+                          "qty": 4
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "iron_ore",
+                          "qty": 2
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "doric",
+                    "is": "complete"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "doric:100",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

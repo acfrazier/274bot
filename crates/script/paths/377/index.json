@@ -1,6 +1,8 @@
 {
   "schema": 1,
   "paths": [
-    { "id": "cook", "file": "cook.json" }
+    { "id": "cook", "file": "cook.json" },
+    { "id": "imp", "file": "imp.json" },
+    { "id": "doric", "file": "doric.json" }
   ]
 }
