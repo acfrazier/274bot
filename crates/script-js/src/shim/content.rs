@@ -160,3 +160,14 @@ pub fn content_json(
     })
     .to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unselected_content_keeps_the_empty_shop_object() {
+        let posted: serde_json::Value =
+            serde_json::from_str(&super::content_json(None).unwrap()).unwrap();
+        assert_eq!(posted["selected_facts"], false);
+        assert_eq!(posted["shops"], serde_json::json!({}));
+    }
+}

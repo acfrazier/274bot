@@ -926,13 +926,13 @@ fn cook_catalog<'s>(
 ) {
     let result = (|| {
         let Some((_, locations)) = cook_roster()
-            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error}")))?
+            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error:?}")))?
         else {
             return serde_v8::to_v8(scope, Vec::<serde_json::Value>::new())
                 .map_err(|e| callback_v8::type_error(scope, &format!("cook locations: {e}")));
         };
         let obstacles = api::cook_locations::default_obstacles()
-            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error}")))?;
+            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error:?}")))?;
         let tile = |tile: WorldTile| json!({"x": tile.x, "z": tile.z, "level": tile.level});
         let rows: Vec<_> = locations
             .iter()
@@ -1105,7 +1105,7 @@ fn nearest_cook_surface<'s>(
         };
         let surfaces = data
             .cook_surfaces()
-            .map_err(|error| callback_v8::type_error(scope, &format!("cook surface: {error}")))?;
+            .map_err(|error| callback_v8::type_error(scope, &format!("cook surface: {error:?}")))?;
         if surfaces.is_empty() {
             return Ok(v8::null(scope).into());
         }
@@ -1113,7 +1113,7 @@ fn nearest_cook_surface<'s>(
         let max_cheb = args.get(1);
         let max_cheb = if max_cheb.is_undefined() {
             f64::from(api::cook_locations::max_surface_cheb().map_err(|error| {
-                callback_v8::type_error(scope, &format!("cook surface: {error}"))
+                callback_v8::type_error(scope, &format!("cook surface: {error:?}"))
             })?)
         } else {
             callback_v8::number(scope, max_cheb)?
@@ -1151,7 +1151,7 @@ fn resolve_cook<'s>(
             return Ok(None);
         };
         let (banks, locations) = match cook_roster()
-            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error}")))?
+            .map_err(|error| callback_v8::type_error(scope, &format!("cook locations: {error:?}")))?
         {
             Some(roster) => roster,
             None => {

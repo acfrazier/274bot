@@ -157,7 +157,8 @@ pub fn shops_for(data: &SelectedGameData) -> Result<&'static [ShopRecord], FactE
 /// Shops follow the generated order, and each record keeps its declared field
 /// order. `serde_json::Map` cannot hold that order without the
 /// `preserve_order` feature, so this type writes the object directly.
-#[derive(Debug)]
+/// Default serializes an empty object when a host has no selected revision.
+#[derive(Debug, Default)]
 pub struct ContentShops {
     shops: &'static [ShopRecord],
 }

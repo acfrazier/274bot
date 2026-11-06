@@ -56,7 +56,7 @@ fn run<'s>(
         stock: stock_objs.into_iter().zip(stock_counts).collect(),
         chosen,
     };
-    let result = crate::compat::shop::run_buyout_plan(&req).map_err(|error| error.to_string())?;
+    let result = crate::compat::shop::run_buyout_plan(&req).map_err(|error| format!("{error:?}"))?;
     materialize_result(scope, &result)
 }
 

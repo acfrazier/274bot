@@ -63,6 +63,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   An unrelated NPC named Bob no longer becomes a bronze-axe vendor.
 - Compiled scripts keep the requested settings revision separate from the
   selected game-client revision during configuration preparation.
+- Compatibility content keeps an empty shop object before a game revision is
+  selected. Selected-fact errors still propagate instead of becoming empty data.
 
 ### Not in this release
 

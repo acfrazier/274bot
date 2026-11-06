@@ -127,7 +127,7 @@ fn resolve_setting_ident(file_src: &str, ident: &str) -> Option<String> {
 pub(super) fn catalog_option_values(ident: &str) -> Result<Option<Vec<String>>, String> {
     catalog_option_table(ident)
         .map(|rows| rows.map(|rows| rows.to_vec()))
-        .map_err(|error| error.to_string())
+        .map_err(|error| format!("{error:?}"))
 }
 
 /// Static `const NAME = ['a', 'b']` (or a same-file / shim alias of one).
@@ -1234,7 +1234,7 @@ fn inferred_options_from(
     };
     if is_revision_fact_option_ident(ident)
         || catalog_option_table(ident)
-            .map_err(|error| error.to_string())?
+            .map_err(|error| format!("{error:?}"))?
             .is_some()
     {
         return Ok(Some(ident.to_string()));
