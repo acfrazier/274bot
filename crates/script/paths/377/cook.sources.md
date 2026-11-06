@@ -5,7 +5,7 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 ## Quest state and hand-in
 
 - Cook's NPC is `cook`, placed at map `m50_50.jm2:10644` (`0 9 15: 278`), resolved by `pack/npc.pack:279` (`278=cook`). The Lumbridge handler dispatches the start, in-progress, and completed quest branches at `areas/area_lumbridge/scripts/cook.rs2:1-13`.
-- The start dialogue first offers “What's wrong?” then asks “Yes, I'll help you.” / “No, I don't feel like it. Maybe later.” (`quests/quest_cook/scripts/quest_cook.rs2:1-39`). The affirmative branch writes `%cookquest = 1` and sends progress at `:31-36`.
+- The start dialogue first offers “What's wrong?” then asks “Yes, I'll help you.” / “No, I don't feel like it. Maybe later.” (`quests/quest_cook/scripts/quest_cook.rs2:1-39`). The affirmative branch writes `%cookquest = 1` at `:32` and sends progress at `:33`.
 - In-progress Cook dialogue checks for `pot_flour`, `egg`, and `bucket_milk` together (`quest_cook.rs2:42-47`). The completion branch deletes one of each, then queues completion (`:77-85`). The queue writes `^cook_complete`, advances cooking by 3,000 tenths, logs completion, and sends `send_quest_complete` with 300 Cooking XP (`:87-91`). The complete value is 2 (`general/configs/quest.constant:4`). The Path therefore uses only the colour bindings `cook:0`, `cook:1`, `cook:2`; its progress rules/flags remain empty. It adds no journal reader or dialogue-rule surface.
 - `cook_journal.rs2:4-29` independently confirms the journal's not-started, in-progress ingredient, and completed states. The selected 377 dialogue UI is not supplied by this Path; the terminal talk step is settled by the quest colour.
 
