@@ -26,6 +26,9 @@ mod machines;
 #[path = "revision_377_live/cook.rs"]
 mod cook;
 
+#[path = "revision_377_live/quester.rs"]
+mod quester;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
