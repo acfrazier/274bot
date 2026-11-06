@@ -196,7 +196,6 @@ fn grand_tree_completion_opens_both_mine_resource_regions() {
         &missing,
         &[],
     )
-    .expect("quest gate diagnosis")
     .expect("typed completion requirement");
     assert_eq!(&*unresolved, gates.gates());
 }
@@ -657,7 +656,6 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
                     state,
                     &[],
                 )
-                .expect("quest gate diagnosis")
                 .expect("strict NoPath has an actionable A1/A2 diagnosis");
                 assert!(
                     actionable
