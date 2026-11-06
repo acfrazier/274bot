@@ -189,6 +189,11 @@ fn bundled_path_for(revision: ClientRevision, id: &str) -> Option<&'static [u8]>
             "cook" => Some(include_bytes!("../../paths/377/cook.json").as_slice()),
             "imp" => Some(include_bytes!("../../paths/377/imp.json").as_slice()),
             "doric" => Some(include_bytes!("../../paths/377/doric.json").as_slice()),
+            "sheep" => Some(include_bytes!("../../paths/377/sheep.json").as_slice()),
+            "runemysteries" => {
+                Some(include_bytes!("../../paths/377/runemysteries.json").as_slice())
+            }
+            "romeojuliet" => Some(include_bytes!("../../paths/377/romeojuliet.json").as_slice()),
             _ => None,
         })
         .flatten()
@@ -1684,6 +1689,10 @@ fn document_uses_gathering(document: &PathDocument) -> bool {
 }
 
 #[cfg(test)]
+#[path = "journal_377_tests.rs"]
+mod journal_377_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use api::selected::{ClientRevision, FamilyPreparation};
@@ -1753,10 +1762,22 @@ mod tests {
             )
             .unwrap();
             let registry = preparation.step(worker).unwrap().unwrap().registry;
-            assert_eq!(registry.ids(), ["cook", "imp", "doric"]);
+            let mut ids = registry.ids();
+            ids.sort();
+            assert_eq!(
+                ids,
+                [
+                    "cook",
+                    "doric",
+                    "imp",
+                    "romeojuliet",
+                    "runemysteries",
+                    "sheep"
+                ]
+            );
             assert!(
-                registry.bytes("sheep").is_none(),
-                "never substitute a 289 Path"
+                registry.bytes("dragon").is_none(),
+                "never substitute an unregistered 289 Path"
             );
             assert_eq!(registry.path_source("cook"), PathSource::Bundled);
             let bytes = registry.bytes("cook").unwrap();
@@ -1883,14 +1904,24 @@ mod tests {
             .unwrap();
             let registry =
                 PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
-            assert_eq!(registry.ids(), ["cook", "imp", "doric"]);
+            assert_eq!(
+                registry.ids(),
+                [
+                    "cook",
+                    "imp",
+                    "doric",
+                    "sheep",
+                    "runemysteries",
+                    "romeojuliet"
+                ]
+            );
             assert!(
                 registry.diagnostics().is_empty(),
                 "{:?}",
                 registry.diagnostics()
             );
             assert_eq!(registry.path_source("cook"), PathSource::Folder);
-            assert!(registry.bytes("sheep").is_none());
+            assert!(registry.bytes("dragon").is_none());
         })
         .unwrap()
         .join()
