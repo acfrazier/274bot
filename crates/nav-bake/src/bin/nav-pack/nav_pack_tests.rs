@@ -72,6 +72,8 @@ fn explicit_377_selects_its_own_cache_and_decoded_snapshot() {
         "/fixture/377/cache",
         "--cache-manifest",
         "/fixture/cache-377.json",
+        "--server-loc-dat",
+        "/fixture/377/engine/data/pack/server/loc.dat",
         "--snapshot-root",
         "/fixture/377/unpack",
         "--out",
@@ -88,6 +90,34 @@ fn explicit_377_selects_its_own_cache_and_decoded_snapshot() {
         inputs.snapshot_root,
         Some(PathBuf::from("/fixture/377/unpack"))
     );
+    assert_eq!(
+        inputs.server_loc_dat_377,
+        Some(PathBuf::from("/fixture/377/engine/data/pack/server/loc.dat"))
+    );
+}
+
+#[test]
+fn explicit_377_requires_an_engine_server_table_without_inferring_cache_layout() {
+    let inputs = [
+        "--revision", "377", "--content", "/content", "--cache", "/published-cache",
+        "--cache-manifest", "/cache.json", "--out", "/nav/377.navpack",
+    ];
+    let error = parse_args(inputs).unwrap_err();
+    assert!(error.contains("requires --server-loc-dat"), "{error}");
+    for revision in ["274", "289"] {
+        let error = parse_args([
+            "--revision", revision, "--content", "/content", "--cache", "/cache",
+            "--cache-manifest", "/cache.json", "--out", "/nav/output",
+            "--server-loc-dat", "/server/loc.dat",
+        ]).unwrap_err();
+        assert!(error.contains("only supported for revision 377"), "{error}");
+    }
+    let error = parse_args([
+        "--revision", "377", "--content", "/content", "--cache", "/published-cache",
+        "--cache-manifest", "/cache.json", "--out", "/nav/377.navpack",
+        "--server-loc-dat", "/server/loc.dat", "--server-loc-dat", "/other/loc.dat",
+    ]).unwrap_err();
+    assert!(error.contains("duplicate explicit option --server-loc-dat"), "{error}");
 }
 
 #[test]
