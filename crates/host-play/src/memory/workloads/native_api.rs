@@ -40,20 +40,21 @@ export function tick(api) {
 
 // Selected-289 normal-tree clusters clear of placed attackable NPC tethers,
 // attack/hunt reach and actor size, including the whole gathering radius.
-// Radius-12 resource neighbourhoods do not overlap. Normal trees deplete after
-// one log for 60..=199 game ticks, so a shared stand cannot prove all ten owners.
+// Radius-12 resource neighbourhoods do not overlap. Several original proof
+// trees must remain available when the pilot and fleet reuse the same world:
+// normal trees deplete after one log for 60..=199 game ticks.
 #[cfg(feature = "js")]
 const STANDS: [(i32, i32); 10] = [
-    (2906, 3375),
-    (3293, 3438),
-    (2704, 3366),
-    (2496, 3371),
-    (2584, 3230),
-    (3290, 3473),
-    (3304, 3530),
+    (2698, 3368),
+    (2584, 3229),
+    (2496, 3375),
+    (2501, 3534),
     (2423, 3146),
-    (3307, 3407),
-    (3078, 3309),
+    (2737, 3483),
+    (3290, 3473),
+    (3304, 3412),
+    (3063, 3323),
+    (3304, 3530),
 ];
 
 #[cfg(feature = "js")]
@@ -444,13 +445,18 @@ mod tests {
                 npc_clear(x, z),
                 "tree stand {tile:?} overlaps an NPC tether"
             );
-            assert!(
-                spots.iter().any(|spot| {
+            let proof_trees = spots
+                .iter()
+                .filter(|spot| {
                     spot.entity == EntityId::Loc(1276)
                         && spot.origin.level == 0
                         && (spot.origin.x - x).abs().max((spot.origin.z - z).abs()) <= 6
-                }),
-                "stand {tile:?} needs its original live-tree proof"
+                })
+                .count();
+            let minimum_proof_trees = if (x, z) == STANDS[0] { 8 } else { 4 };
+            assert!(
+                proof_trees >= minimum_proof_trees,
+                "stand {tile:?} needs several original live-tree proof candidates"
             );
             let trees = spots
                 .iter()

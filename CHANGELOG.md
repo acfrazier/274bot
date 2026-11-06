@@ -57,10 +57,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   repeated host routing.
   Each has an explicit feature-not-used control. Counts and retained-state
   evidence remain separate from the common Thiever A/B lane.
-  The native API fleet uses separate real tree sites with standable ground
-  and full-area clearance from placed attackable NPCs instead of competing for
-  one resource patch or gathering beside a hostile NPC. Every active account
-  still needs fresh XP and yield.
+  The native API fleet uses separate real tree sites with standable ground,
+  several original proof-tree candidates and full-area clearance from placed
+  attackable NPCs. It does not depend on a single tree left after the pilot.
+  Every active account still needs fresh XP and yield.
   Native NPC Combat uses separate real Cow areas and accepted API v2 consumers
   in both phases. Every active account needs native ownership and fresh combat
   XP. Both finite-site workloads accept only the single-account pilot and

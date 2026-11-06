@@ -1261,7 +1261,10 @@ every stand. Canonical NPC placements also keep each whole area outside every
 attackable NPC's tether, attack or hunt reach, and actor footprint. This avoids
 incidental combat without changing the account's combat stats or accepting a
 paused consumer as active proof. Each seed proves a nearby live normal tree
-before starting.
+before starting. Every area has at least four canonical loc-1276 trees within
+the unchanged proof radius of six tiles. The first area, reused by the pilot,
+has at least eight. Proof does not depend on a single tree that a preceding
+cell can deplete. The live-tree predicate and 120-game-tick wait stay unchanged.
 Only account positions change. The bronze axe,
 Woodcutting level, native Gatherer request and 240-game-tick yield deadline stay
 unchanged. Every active bot must still produce fresh XP and yield.
