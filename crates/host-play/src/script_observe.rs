@@ -1946,7 +1946,15 @@ pub(crate) fn script_observe_cached_with_channels(
             Some(cmd) => (cmd.to_string(), false),
             None => (queued, true),
         };
-        if api::interact::cheat(driver, &cmd) == client::CheatSend::Sent {
+        // An operator's command is input to the game: it resets the idle
+        // counter once the client accepts it. A host bookkeeping command
+        // (`INTERNAL_CHEAT_PREFIX`) is not.
+        let sent = if observe_replies {
+            api::interact::operator_cheat(driver, &cmd)
+        } else {
+            api::interact::cheat(driver, &cmd)
+        };
+        if sent == client::CheatSend::Sent {
             #[cfg(test)]
             if let Some(snapshot) = snapshot {
                 crate::combat_proof::record_other_request(

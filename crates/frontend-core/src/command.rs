@@ -1786,6 +1786,7 @@ impl CommandBook {
             Some(ParkReason::OperatorLogout) => Some("a logout was requested"),
             Some(ParkReason::PersistedLogout) => Some("the bot is set to stay logged out"),
             Some(ParkReason::IdleLogout) => Some("the server logged the bot out while it was idle"),
+            Some(ParkReason::ServerLogout) => Some("the server logged the bot out"),
             Some(ParkReason::IdleDisconnect) => Some("the bot disconnected while it was idle"),
             Some(ParkReason::NoIntent | ParkReason::WorldError) | None => None,
         }

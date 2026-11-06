@@ -1452,6 +1452,9 @@ fn write_state(
             Some(host_play::LoginLatchReason::IdleLogout) => {
                 out.push_str("logged out: idle logout by the server (Log in to connect)");
             }
+            Some(host_play::LoginLatchReason::ServerLogout) => {
+                out.push_str("logged out by the server (Log in to connect)");
+            }
             Some(host_play::LoginLatchReason::IdleDisconnect) => {
                 out.push_str("logged out: disconnected while idle (Log in to connect)");
             }

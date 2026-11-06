@@ -587,6 +587,18 @@ impl Play {
         retire_script_run_status(&self.statuses, name);
     }
 
+    /// Publish the slot's script demand to its login mailbox after a Stop.
+    /// The slot thread syncs the demand only between its own steps: while it
+    /// is inside a handshake it cannot, so a login that the script owed
+    /// would complete for a bot that no longer has a script. The mailbox
+    /// row cancels that attempt now, and parks the bot instead. Call only
+    /// after releasing the script-slot guard.
+    fn publish_script_demand(&self, name: &str) {
+        if let Some(arm) = self.arms.get(name) {
+            crate::play_slots::sync_script_login(arm, &self.scripts, name);
+        }
+    }
+
     /// Start the same off-pump compiled preparation transaction as live/scenario
     /// handles. Assignment owners commit only after `script_poll_start` is Ready.
     pub fn script_start(
@@ -938,6 +950,7 @@ impl Play {
         reset_script_nav(&self.navs, name, None);
         drop(slot);
         self.retire_script_run_status(name);
+        self.publish_script_demand(name);
         self.wake(name);
         true
     }
@@ -1053,6 +1066,7 @@ impl Play {
         reset_script_nav(&self.navs, name, None);
         drop(guard);
         self.retire_script_run_status(name);
+        self.publish_script_demand(name);
         self.wake(name);
     }
 
@@ -1087,6 +1101,7 @@ impl Play {
             reset_script_nav(&self.navs, name, None);
         }
         self.retire_script_run_status(name);
+        self.publish_script_demand(name);
         self.wake(name);
         true
     }

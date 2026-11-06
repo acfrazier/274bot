@@ -314,6 +314,11 @@ pub enum LifecycleFact {
         clean: bool,
         /// The client kept its world, so the next handshake may reconnect.
         resumable: bool,
+        /// The client's own idle-logout request (opcode 145) was pending
+        /// when the server logged it out ([`SessionEndCause::IdleLogout`]).
+        /// Only then is the park of a bot without a script an idle logout;
+        /// any other server logout reads as one nobody explained.
+        idle_request_pending: bool,
     },
     /// The repeat guard tripped: `count` unexpected exits within the window
     /// (today `record_unexpected_logout_at`, `play_login.rs:744-778`:
@@ -340,10 +345,12 @@ impl LifecycleFact {
         LifecycleFact::SessionExited {
             clean: true,
             resumable: false,
+            idle_request_pending: false,
         },
         LifecycleFact::SessionExited {
             clean: false,
             resumable: true,
+            idle_request_pending: false,
         },
         LifecycleFact::RepeatGuardTripped {
             count: 3,
@@ -729,14 +736,13 @@ impl IntentSnapshot {
             Some(LoginLatch::PersistedLogout) => Some(ParkReason::PersistedLogout),
             Some(LoginLatch::RepeatGuard { .. }) => Some(ParkReason::RepeatGuard),
             None if self.error_hold => Some(ParkReason::WorldError),
-            None if matches!(self.idle_park, Some(IdlePark::Logout)) => {
-                Some(ParkReason::IdleLogout)
-            }
-            None if matches!(self.idle_park, Some(IdlePark::Disconnect)) => {
-                Some(ParkReason::IdleDisconnect)
-            }
-            None if self.login_wanted() => None,
-            None => Some(ParkReason::NoIntent),
+            None => match self.idle_park {
+                Some(IdlePark::IdleLogout) => Some(ParkReason::IdleLogout),
+                Some(IdlePark::ServerLogout) => Some(ParkReason::ServerLogout),
+                Some(IdlePark::Disconnect) => Some(ParkReason::IdleDisconnect),
+                None if self.login_wanted() => None,
+                None => Some(ParkReason::NoIntent),
+            },
         }
     }
 }
@@ -755,8 +761,12 @@ pub enum ParkReason {
     RepeatGuard,
     /// A world-preference error holds the login.
     WorldError,
-    /// The server logged out a bot that had no script ([`IdlePark::Logout`]).
+    /// The server logged out a bot that had no script after the client's own
+    /// idle request ([`IdlePark::IdleLogout`]).
     IdleLogout,
+    /// The server logged out a bot that had no script and no idle request
+    /// pending ([`IdlePark::ServerLogout`]).
+    ServerLogout,
     /// A bot with no script lost its connection ([`IdlePark::Disconnect`]).
     IdleDisconnect,
 }
@@ -767,9 +777,12 @@ pub enum ParkReason {
 /// until the operator logs it in, or a script that needs a session starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IdlePark {
-    /// The server logged the bot out: the idle logout, or a logout nobody
-    /// asked for.
-    Logout,
+    /// The server logged the bot out after the client's own idle request
+    /// (the Java idle logout).
+    IdleLogout,
+    /// The server logged the bot out with no idle request pending: a logout
+    /// nobody asked for and the client cannot explain.
+    ServerLogout,
     /// The connection ended: a reset, the dead-server deadline, a protocol
     /// error or a server restart.
     Disconnect,
@@ -802,9 +815,11 @@ pub struct IntentMailbox {
     /// a script wants a session. Masks the login intent, never a script's
     /// need. See [`IdlePark`].
     idle_park: Option<IdlePark>,
-    /// An exit nobody asked for ended a session while a script needed it:
-    /// the script's reconnect is owed. The end of the script's need turns it
-    /// into a park; a login or a session clears it.
+    /// An exit nobody asked for ended a session while a script needed it, or
+    /// a script started on a parked slot: the slot's park is owed back. The
+    /// end of the script's need turns it into a park again while the slot is
+    /// offline; a login, a session or an explicit preference change clears
+    /// it.
     owed_park: Option<IdlePark>,
     error_hold: bool,
     auto_login: bool,
@@ -976,6 +991,7 @@ impl IntentMailbox {
                 self.error_hold = false;
                 if turned_on {
                     self.idle_park = None;
+                    self.owed_park = None;
                 }
                 if enabled {
                     self.rederive_auto_want();
@@ -1045,8 +1061,10 @@ impl IntentMailbox {
                     if needs {
                         self.script_needs_session = true;
                         // The script wants a session: the park no longer
-                        // holds the login back.
-                        self.idle_park = None;
+                        // holds the login back. The park is kept owed, so a
+                        // script that ends before the bot is back leaves it
+                        // parked, not logged in by its saved preference.
+                        self.owed_park = self.owed_park.or(self.idle_park.take());
                     } else {
                         // The end of the need parks the slot when it still
                         // owes the reconnect of an exit it was running
@@ -1107,7 +1125,11 @@ impl IntentMailbox {
                 self.idle_park = None;
                 self.owed_park = None;
             }
-            LifecycleFact::SessionExited { clean, resumable } => {
+            LifecycleFact::SessionExited {
+                clean,
+                resumable,
+                idle_request_pending,
+            } => {
                 let was_online = self.session_online;
                 // Nobody asked for this exit: no logout or turnover is open,
                 // no explicit Login is outstanding (one posted after the
@@ -1120,10 +1142,10 @@ impl IntentMailbox {
                     && self.latch.is_none()
                     && !self.error_hold
                     && !self.closed;
-                let kind = unattended.then_some(if clean {
-                    IdlePark::Logout
-                } else {
-                    IdlePark::Disconnect
+                let kind = unattended.then_some(match (clean, idle_request_pending) {
+                    (true, true) => IdlePark::IdleLogout,
+                    (true, false) => IdlePark::ServerLogout,
+                    (false, _) => IdlePark::Disconnect,
                 });
                 // A bot without a script parks at once; a script's own
                 // reconnect is owed instead, and ends when the script does.
@@ -1427,9 +1449,12 @@ pub enum AbortedAttempt {
 /// the owner produces itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionEndCause {
-    /// The server logged the client out: operator logout, world change or
-    /// idle. The only clean end.
+    /// The server logged the client out: operator logout, world change or a
+    /// logout nobody explains (no idle request pending). A clean end.
     ServerLogout,
+    /// The server logged the client out while the client's own idle-logout
+    /// request (opcode 145) was pending: the Java idle logout. A clean end.
+    IdleLogout,
     /// The read side reached end of stream.
     ReadEof,
     /// A read error.
@@ -1466,6 +1491,9 @@ impl SessionEndCause {
     pub fn classify(reason: &client::client::client::SessionExitReason) -> Self {
         use client::client::client::SessionExitReason as Exit;
         match reason {
+            Exit::ServerLogout {
+                local_idle_request_pending: true,
+            } => Self::IdleLogout,
             Exit::ServerLogout { .. } => Self::ServerLogout,
             Exit::ReadEof => Self::ReadEof,
             Exit::ReadError { .. } => Self::ReadError,
@@ -1481,7 +1509,7 @@ impl SessionEndCause {
     /// Whether this end is clean: a server logout or the owner's own
     /// removal. Every other end is unexpected.
     pub const fn is_clean(self) -> bool {
-        matches!(self, Self::ServerLogout | Self::Removed)
+        matches!(self, Self::ServerLogout | Self::IdleLogout | Self::Removed)
     }
 
     /// Whether the owner's repeat guard counts this end: every unexpected
@@ -1489,7 +1517,7 @@ impl SessionEndCause {
     pub const fn counts_toward_repeat_guard(self) -> bool {
         !matches!(
             self,
-            Self::ServerLogout | Self::Removed | Self::ServiceUnavailable { .. }
+            Self::ServerLogout | Self::IdleLogout | Self::Removed | Self::ServiceUnavailable { .. }
         )
     }
 }
