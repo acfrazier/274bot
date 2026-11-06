@@ -237,3 +237,47 @@ fn real_revision_377_wheat_gates_connect_lumbridge() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires explicitly baked revision-377 NAV_377_PACK and NAV_377_REPORT"]
+fn real_revision_377_wizards_tower_routes() {
+    let world = NavWorld::load_pack(&required_path("NAV_377_PACK")).unwrap();
+    let options = FindOptions {
+        zones: nav_planner::zones::ZoneExempt::all(),
+        ..Default::default()
+    };
+    let state = WorldState {
+        map_members: true,
+        inv: [(995, 30)].into_iter().collect(),
+        ..WorldState::empty()
+    };
+    let mut routes = Vec::new();
+    for (from, to) in [
+        (tile(3220, 3220, 0), tile(3103, 3163, 2)),
+        (tile(3103, 3163, 2), tile(3220, 3220, 0)),
+        (tile(3222, 3218, 0), tile(3210, 3424, 0)),
+        (tile(3210, 3424, 0), tile(2964, 3378, 0)),
+        (tile(2964, 3378, 0), tile(3222, 3218, 0)),
+    ] {
+        let result = find_with(&world.collision, &world.graph, from, to, options, &state);
+        routes.push(match result {
+            Ok(route) => json!({"from":from,"to":to,"reachable":true,"ticks":route.ticks,"legs":format!("{:?}",route.legs)}),
+            Err(error) => json!({"from":from,"to":to,"reachable":false,"error":format!("{error:?}")}),
+        });
+    }
+    let edges: Vec<_> = world.graph.edges.iter()
+        .filter(|edge| [12536, 12537, 12538].contains(&edge.loc_id))
+        .map(|edge| json!({"loc_id":edge.loc_id,"option":edge.option,"at":edge.at,"to":edge.to,"ticks":edge.ticks}))
+        .collect();
+    std::fs::write(
+        required_path("NAV_377_REPORT"),
+        serde_json::to_vec_pretty(&json!({"routes":routes,"tower_edges":edges})).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(edges.len(), 4, "all direct Wizard's Tower stair operations");
+    assert!(edges.iter().all(|edge| edge["ticks"] == 1));
+    assert!(
+        routes.iter().all(|route| route["reachable"] == true),
+        "{routes:?}"
+    );
+}
