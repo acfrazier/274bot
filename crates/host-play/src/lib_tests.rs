@@ -32989,7 +32989,20 @@ export default class T extends LoopingBot {
             wait_for_route_work(&rig.navs, "alice", |bot| {
                 bot.walk_outcome_request_id == retry_request && !bot.route_work_pending()
             }),
-            "the bounded Quester fallback route must also settle its real search"
+            "the bounded Quester fallback route must also settle its real search; first_request={first_request}; expected_retry={retry_request}; state={:?}",
+            rig.navs.lock().unwrap().get("alice").map(|bot| (
+                ("current_request", bot.walk_request_id),
+                ("outcome_request", bot.walk_outcome_request_id),
+                ("outcome_seq", bot.walk_outcome_seq),
+                ("work_pending", bot.route_work_pending()),
+                ("ticket_present", bot.route_ticket.is_some()),
+                ("demand_present", bot.pending_route.is_some()),
+                ("native_owner_present", bot.native_walk.is_some()),
+                (
+                    "failure_request",
+                    bot.native_walk_failure.as_ref().map(|(request, _)| *request)
+                ),
+            ))
         );
         assert!(rig.navs.lock().unwrap()["alice"].walk_outcome_seq >= 2);
     }
