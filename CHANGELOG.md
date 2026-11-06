@@ -81,6 +81,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   shared interfaces.
   Saved-settings fixtures keep current envelopes and explicit malformed-format
   refusal checks.
+  Picker fixtures use the decoded world owned by their checked profile.
 
 ### Not in this release
 

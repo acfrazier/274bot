@@ -4132,7 +4132,11 @@ fn map_rows_settle_empty_release_and_wrong_state_decline_explicitly() {
     let _iso = iso;
 }
 
-fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {
+fn bind_picker_session(
+    s: &mut Session,
+    world: &NavWorld,
+    origin: Tile,
+) -> (MapFixture, Arc<NavWorld>) {
     let fixture = MapFixture::new(world, "local-289");
     let play = fixture.play(origin);
     s.launcher
@@ -4140,7 +4144,9 @@ fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFi
     s.set_focus_for_test("alice");
     s.core.set_play(Some(play));
     s.statuses.refresh_from_play(&s.core);
-    fixture
+    // Facade identities belong to one world owner, not to equal map bytes.
+    let world = s.core.nav_world().expect("the checked fixture world");
+    (fixture, world)
 }
 
 /// Frontend vocabulary for a nav tile asserted against route state.
@@ -4153,9 +4159,9 @@ fn world_tile(tile: Tile) -> WorldTile {
 }
 
 fn confirm_map_walk(s: &mut Session, world: &NavWorld, origin: Tile, dest: Tile) -> bool {
-    let _fixture = bind_picker_session(s, world, origin);
-    s.select_picker_tile(world, dest);
-    s.confirm_picker_walk(world)
+    let (_fixture, world) = bind_picker_session(s, world, origin);
+    s.select_picker_tile(&world, dest);
+    s.confirm_picker_walk(&world)
 }
 
 #[test]
@@ -4183,7 +4189,7 @@ fn picker_walk_receipts_reach_process_and_slot_logs_once() {
     assert!(process.rows()[0].message().contains("refused=NoOrigin"));
     assert_eq!(process.rows()[0].slot(), None);
 
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     let name = "panel-walk-receipt";
     push_session_slot(&mut s, name, origin, None, true, true);
     s.statuses.refresh_from_play(&s.core);
@@ -4235,7 +4241,7 @@ fn picker_select_then_confirm_arms_once_and_advances_route_generation() {
         z: 2,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     let generation = s.route_gen();
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     assert_eq!(s.map_desk.walk_dest(), None);
@@ -4298,7 +4304,7 @@ fn picker_focus_switch_walks_the_newly_focused_bot() {
         z: 2,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4360,7 +4366,7 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
         z: 2,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4451,7 +4457,7 @@ fn picker_group_walk_names_marked_bots_that_cannot_walk() {
         z: 2,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4510,7 +4516,7 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         z: 1,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4559,7 +4565,7 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
         z: 1,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4624,7 +4630,7 @@ fn picker_group_walk_uses_fleet_marks_changed_while_open() {
         z: 2,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4830,6 +4836,7 @@ fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
     s.set_focus_for_test("alice");
     s.core.set_play(Some(play));
     s.statuses.refresh_from_play(&s.core);
+    let world = s.core.nav_world().expect("the checked fixture world");
     s.select_picker_tile(
         &world,
         Tile {
@@ -4869,6 +4876,7 @@ fn picker_teleport_without_spawned_queue_is_no_focus() {
     s.set_focus_for_test("alice");
     s.core.set_play(Some(play));
     s.statuses.refresh_from_play(&s.core);
+    let world = s.core.nav_world().expect("the checked fixture world");
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     assert!(!s.confirm_picker_teleport(&world));
     assert_eq!(
@@ -4971,7 +4979,7 @@ fn picker_blocked_selection_refuses_walk_and_teleports_requested() {
         z: 1001,
         level: 1,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     assert_eq!(s.select_picker_tile(&world, blocked), None);
     let pending = s.map_model.pending().expect("miss still selects requested");
     assert_eq!(pending.requested(), blocked);
@@ -5583,7 +5591,7 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
         z: 1,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     s.core.fleet_mut().add("alice");
     s.pump_status();
     let before = s.core.fleet_view().rows_generation();

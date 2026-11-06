@@ -685,6 +685,7 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
         level: 0,
     };
     let (_profile, mut session) = probability_picker_session(&world, outside);
+    let world = session.core.nav_world().expect("the checked fixture world");
     super::note_closed();
     session.walkto_open = true;
     picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
@@ -741,6 +742,7 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
         level: 0,
     };
     let (_escape_profile, mut escape) = probability_picker_session(&world, inside);
+    let world = escape.core.nav_world().expect("the checked fixture world");
     super::note_closed();
     escape.walkto_open = true;
     picker_click_frame(&mut ctx, &mut escape, &world, [0.0, 0.0], false);
