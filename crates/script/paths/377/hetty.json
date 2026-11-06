@@ -1,0 +1,438 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "hetty",
+  "display_name": "Witch's Potion",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "eye_of_newt", "qty": 1, "kind": "acquirable", "acquire": "acquire:eye-of-newt", "from_stage": "hetty:1" },
+      { "obj": "onion", "qty": 1, "kind": "acquirable", "acquire": "acquire:onion", "from_stage": "hetty:1" },
+      { "obj": "rats_tail", "qty": 1, "kind": "acquirable", "acquire": "acquire:rat-tail", "from_stage": "hetty:1" },
+      { "obj": "burnt_meat", "qty": 1, "kind": "acquirable", "acquire": "acquire:burnt-meat", "from_stage": "hetty:1" }
+    ],
+    "acquire": {
+      "acquire:eye-of-newt": [
+        {
+          "id": "withdraw-eye-of-newt",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "eye_of_newt", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
+            { "Not": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "eye_of_newt" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } }
+        },
+        {
+          "id": "take-coins-for-betty",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "npc": ["goblin_unarmed_melee_1", "goblin_unarmed_melee_2", "goblin_unarmed_melee_3", "goblin_unarmed_melee_4", "goblin_unarmed_melee_5", "goblin_unarmed_melee_6", "goblin_unarmed_melee_7"],
+              "not_targeting_others": true,
+              "pick": "nearest"
+            },
+            "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true },
+            "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713; drop_tables/scripts/goblin.rs2 coin bands. Palace OBJ 995 at m50_54.jm2:12022-12023 has no route on this pack." },
+            "area": { "box": [3138, 3224, 3152, 3264, 0], "source": "maps/m49_50.jm2:6702-6713" },
+            "lost_radius": 16,
+            "kill_budget_ticks": 120,
+            "loadout": null,
+            "loot": [{ "obj": "coins", "qty": 3 }],
+            "until": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 3 } } }
+          },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
+            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 3 } } }
+          ] },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 3 } } }
+        },
+        {
+          "id": "buy-eye-of-newt",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "betty",
+              "anchor": {
+                "tile": [3012, 3259, 0],
+                "source": "maps/m47_50.jm2:11894 (NPC 583); pack/npc.pack betty; scripts/_unpack/377/all.npc:15356,15360 (op3=Trade, owned_shop,magicshop)"
+              }
+            },
+            "obj": "eye_of_newt",
+            "qty": 1,
+            "est_gp": 3
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } }
+        }
+      ],
+      "acquire:onion": [
+        {
+          "id": "withdraw-onion",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "onion", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } },
+            { "Not": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "onion" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } }
+        },
+        {
+          "id": "pick-onion",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "onion" },
+            "op": "Pick",
+            "anchor": {
+              "tile": [2950, 3251, 0],
+              "source": "maps/m46_50.jm2:5087 (LOC 3366 at 0 6 51); pack/loc.pack 3366=onion; all.loc:24808 (op2=Pick)"
+            },
+            "radius": 4,
+            "wait_if_missing": true,
+            "until": { "obj": "onion", "qty": 1 },
+            "settle_ms": 120000
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } }
+        }
+      ],
+      "acquire:rat-tail": [
+        {
+          "id": "withdraw-rat-tail",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "rats_tail", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } },
+            { "Not": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "rats_tail" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } }
+        },
+        {
+          "id": "farm-rat-tail",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "npc": "rat_indoors", "not_targeting_others": true, "pick": "nearest" },
+            "tactic": { "kind": "open", "style": "melee", "engage_radius": 8, "auto_retaliate": true },
+            "stand": {
+              "tile": [2956, 3203, 0],
+              "source": "maps/m46_50.jm2:8516-8520 (NPC 2682 rat_indoors); drop_tables/scripts/rat.rs2:15-17"
+            },
+            "lost_radius": 8,
+            "kill_budget_ticks": 240,
+            "loadout": null,
+            "loot": ["rats_tail"],
+            "until": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } }
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } }
+        }
+      ],
+      "acquire:burnt-meat": [
+        {
+          "id": "withdraw-burnt-meat",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "burnt_meat", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+            { "Not": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "burnt_meat" } } } }
+          ] },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+        },
+        {
+          "id": "withdraw-cooked-meat",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "cooked_meat", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+            { "Not": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "cooked_meat" } } } }
+          ] },
+          "settle": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+          ] }
+        },
+        {
+          "id": "withdraw-raw-beef",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "raw_beef", "qty": 1 }], "partial_ok": true },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+            { "Not": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } } },
+            { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "raw_beef" } } } }
+          ] },
+          "settle": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+          ] }
+        },
+        {
+          "id": "kill-cow-for-beef",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "npc": "cow", "not_targeting_others": true, "pick": "nearest" },
+            "tactic": { "kind": "open", "style": "melee", "engage_radius": 10, "auto_retaliate": true },
+            "stand": {
+              "tile": [3252, 3288, 0],
+              "source": "maps/m50_51.jm2:7967 (NPC 81 cow); drop_tables/scripts/cow.rs2:11"
+            },
+            "lost_radius": 12,
+            "kill_budget_ticks": 200,
+            "loadout": null,
+            "loot": ["raw_beef"],
+            "until": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } }
+          },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+          ] },
+          "settle": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+          ] }
+        },
+        {
+          "id": "cook-beef",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "raw_beef",
+            "target": { "loc": "rimmington_poor_range" },
+            "anchor": {
+              "tile": [2972, 3209, 0],
+              "source": "maps/m46_50.jm2:6174 (LOC 9682 at 0 26 9); all.loc:63141-63147 (forceapproach=east, category=cooking_oven)"
+            },
+            "radius": 6,
+            "product": "cooked_meat",
+            "no_product": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["you accidentally burn the meat."] } } },
+            "settle_ms": 30000
+          },
+          "skip_if": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+            { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "raw_beef" } } } }
+          ] },
+          "settle": { "Any": [
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "cooked_meat" } } },
+            { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+          ] }
+        },
+        {
+          "id": "burn-cooked-meat",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "cooked_meat",
+            "target": { "loc": "rimmington_poor_range" },
+            "anchor": {
+              "tile": [2972, 3209, 0],
+              "source": "maps/m46_50.jm2:6174; skill_cooking/configs/cooking_source/cooking_generic.dbrow:52-59 (successchance 1,1)"
+            },
+            "radius": 6,
+            "product": "burnt_meat",
+            "settle_ms": 30000
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:onion", "obj:eye_of_newt", "obj:rats_tail", "obj:burnt_meat", "obj:raw_beef", "obj:cooked_meat", "obj:coins"],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:hetty",
+      "progress": {
+        "colour": { "not_started": "hetty:0", "in_progress": "hetty:1", "complete": "hetty:3" },
+        "rules": [],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "hetty:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "coins-from-draynor-goblins",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": ["goblin_unarmed_melee_1", "goblin_unarmed_melee_2", "goblin_unarmed_melee_3", "goblin_unarmed_melee_4", "goblin_unarmed_melee_5", "goblin_unarmed_melee_6", "goblin_unarmed_melee_7"],
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true },
+                "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713. Palace coins at maps/m50_54.jm2:12022-12023 are unreachable on 274bot-377-v17 from Lumbridge (3220,3220) and from Draynor bank (3092,3243)." },
+                "area": { "box": [3138, 3224, 3152, 3264, 0], "source": "maps/m49_50.jm2:6702-6713; east of x=3135" },
+                "lost_radius": 16,
+                "kill_budget_ticks": 120,
+                "loadout": null,
+                "loot": [{ "obj": "coins", "qty": 3 }],
+                "until": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 3 } } }
+              },
+              "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 3 } } },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 3 } } }
+            },
+            {
+              "id": "start-hetty",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "hetty",
+                "anchor": {
+                  "tile": [2968, 3206, 0],
+                  "source": "maps/m46_50.jm2:8521 (NPC 307); areas/area_rimmington/scripts/hetty.rs2:5,43"
+                },
+                "leash": 6,
+                "prefer": [
+                  "I am in search of a quest.",
+                  "Yes help me become one with my darker side."
+                ]
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hetty", "any": ["hetty:1"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "hetty:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "get-eye-of-newt",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:eye-of-newt" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
+                { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, now drink from the cauldron.", "well are you going to drink the potion or not?"] } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } }
+            },
+            {
+              "id": "get-onion",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:onion" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } },
+                { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, now drink from the cauldron.", "well are you going to drink the potion or not?"] } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } }
+            },
+            {
+              "id": "get-rat-tail",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:rat-tail" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } },
+                { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, now drink from the cauldron.", "well are you going to drink the potion or not?"] } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } }
+            },
+            {
+              "id": "get-burnt-meat",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:burnt-meat" },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
+                { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, now drink from the cauldron.", "well are you going to drink the potion or not?"] } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+            },
+            {
+              "id": "hand-in-ingredients",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "hetty",
+                "anchor": {
+                  "tile": [2968, 3206, 0],
+                  "source": "maps/m46_50.jm2:8521; areas/area_rimmington/scripts/hetty.rs2:13-25"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Not": { "All": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
+              ] } },
+              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, now drink from the cauldron.", "well are you going to drink the potion or not?"] } } }
+            },
+            {
+              "id": "drink-hetty-cauldron",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "loc": "hettycauldron" },
+                "op": "Drink From",
+                "anchor": {
+                  "tile": [2967, 3206, 0],
+                  "source": "maps/m46_50.jm2:6025 (LOC 2024 shape 10 at 2967,3205). Live account stood on 2967,3206 after the hand-in; the loc tile itself is against rimmington_poor_walls. quest_hetty.rs2:1-4; all.loc:13953 op1=Drink From."
+                },
+                "radius": 2,
+                "settle_ms": 90000
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "hetty", "is": "complete" } } }
+            }
+          ]
+        },
+        { "stage": "hetty:3", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+      ]
+    }
+  ]
+}
