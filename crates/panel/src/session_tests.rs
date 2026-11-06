@@ -920,10 +920,9 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v19_world() {
         },
     )
     .unwrap();
-    let error = overridden
-        .bind()
-        .err()
-        .expect("v10 is not a supported pack");
+    let Err(error) = overridden.bind() else {
+        panic!("v10 is not a supported pack");
+    };
     assert!(error.contains("unsupported pack version 10"), "{error}");
     assert!(home.old_pack_untouched());
 }
@@ -4516,7 +4515,7 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         z: 1,
         level: 0,
     };
-    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, _) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",

@@ -219,8 +219,8 @@ pub(crate) fn load_snapshot(
             return from_document(document).map_err(|source| PanelUiStateError::new(path, source));
         }
         let stand_in = TEST_STATE.with(|state| state.borrow().clone());
-        return with_core_owned_keys(stand_in, document)
-            .map_err(|source| PanelUiStateError::new(path, source));
+        with_core_owned_keys(stand_in, document)
+            .map_err(|source| PanelUiStateError::new(path, source))
     }
     #[cfg(not(test))]
     from_document(document).map_err(|source| PanelUiStateError::new(path, source))
