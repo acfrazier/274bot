@@ -64,14 +64,16 @@ fn main() {
             ))
         });
     }
+
 }
 
 fn selected_revision() -> u16 {
     match std::env::var("BOT_NAV_REVISION") {
         Ok(value) if value == "289" => 289,
         Ok(value) if value == "274" => 274,
+        Ok(value) if value == "377" => 377,
         Ok(value) => fail(&format!(
-            "BOT_NAV_REVISION must be 274 or 289, got {value:?}"
+            "BOT_NAV_REVISION must be 274, 289 or 377, got {value:?}"
         )),
         Err(_) => 289,
     }
