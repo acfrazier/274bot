@@ -9435,3 +9435,68 @@ fn a_login_notice_stands_through_retry_states_and_expires_at_both_sizes() {
     assert_eq!(frames, 12);
     let _iso = iso;
 }
+
+/// IDLEFIX-028: a bot with no script whose connection dropped stays logged
+/// out and says why, at 120x40 and 80x24. With `TUI_CAPTURE_DIR` set, the
+/// frames are written to `<dir>/idle-park` by the capture harness.
+#[test]
+fn an_idle_park_says_why_the_bot_is_logged_out_at_both_sizes() {
+    let iso = IsolatedStores::enter("tui-idle-park");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["bob"]);
+    let dir = std::env::var_os("TUI_CAPTURE_DIR")
+        .map(|dir| std::path::PathBuf::from(dir).join("idle-park"));
+    if let Some(dir) = dir.as_deref() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    app.focused = Some(0);
+    dispatch(&mut session, &mut app, AppAction::Focus("bob".into()));
+    app.key_focus = crate::layout::Pane::Detail;
+    let arm = session
+        .core
+        .play_for_test()
+        .and_then(|play| play.arm("bob"))
+        .expect("bob's arm");
+    arm.complete_login_for_test();
+    arm.exit_while_idle_for_test();
+    publish_status(&session, "bob", |row| {
+        row.connected = false;
+        row.ingame = false;
+        row.login_latched = true;
+        row.login_latch_reason = arm.login_latch_reason();
+        row.startup_phase = host_play::StartupPhase::Queueing;
+        row.startup_phase_started = Instant::now();
+    });
+    session.pump(&mut app);
+    let state = "logged out: disconnected while idle (Log in to connect)";
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, rows)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let text: String = (0..rows)
+            .map(|y| {
+                (0..cols)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        // The narrowest status pane wraps the long line: match its head.
+        let head: String = format!("state: {state}").chars().take(30).collect();
+        assert!(text.contains(&head), "{cols}x{rows}:\n{text}");
+        if let Some(dir) = dir.as_deref() {
+            let proof = serde_json::json!({ "state": state });
+            super::manual_click_live_tests::capture(
+                &mut app,
+                cols,
+                rows,
+                dir,
+                &format!("{cols}x{rows}"),
+                "logged-out-while-idle",
+                &proof,
+            )
+            .unwrap();
+        }
+    }
+    let _iso = iso;
+}
