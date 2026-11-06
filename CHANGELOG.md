@@ -20,6 +20,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   observed combat-only area fixture and food before Start. Retain combat
   stats and nearby NPC targets in its evidence; leave quest state, items,
   Runecrafting XP and quest points to the native Path and content.
+- Revision-377 Rune Mysteries lost-talisman recovery selects the Duke's
+  quest branch instead of the default money dialogue.
 - Add the bespoke revision-377 `cook_377` scenario and a fresh-account live
   witness. Ingredients come from world interactions. Completion, Cooking XP
   and quest points must come from Fairy Ring's product scripts.
