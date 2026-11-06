@@ -1,7 +1,5 @@
 //! Public endpoint rosters resolved from the current server profiles.
 
-use std::collections::HashSet;
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,36 +65,6 @@ impl PublicWorlds {
                                 })
                     })
             })
-    }
-
-    pub(crate) fn validate(&self) -> Result<(), String> {
-        if self.schema_version != 1 || self.worlds.is_empty() {
-            return Err("expected schema_version 1 and a nonempty worlds list".into());
-        }
-        let mut numbers = HashSet::new();
-        let mut hosts = HashSet::new();
-        for world in &self.worlds {
-            if world.number == 0
-                || world.port == 0
-                || world.node_id <= 0
-                || world.host.is_empty()
-                || !world
-                    .host
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
-                || world.host.starts_with(['.', '-'])
-                || world.host.ends_with(['.', '-'])
-            {
-                return Err(format!("invalid world {} endpoint/node id", world.number));
-            }
-            if !numbers.insert(world.number) || !hosts.insert(world.host.as_str()) {
-                return Err(format!(
-                    "duplicate world number or host at world {}",
-                    world.number
-                ));
-            }
-        }
-        Ok(())
     }
 
     pub fn by_number(&self, number: u16) -> Option<&PublicWorld> {

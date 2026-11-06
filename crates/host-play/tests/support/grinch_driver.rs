@@ -8467,7 +8467,20 @@ mod tests {
 
     #[test]
     fn ordinary_catalog_banks_allow_default_booth_access() {
-        let definition = api::named_banks::BANK_CATALOG
+        if api::test_support::local_asset_path(
+            "",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../api/data/game-data/bank-catalog.json"
+            ),
+            "named bank catalogue for Grinch access tests",
+        )
+        .is_none()
+        {
+            return;
+        }
+        let catalog = api::named_banks::bank_catalog().expect("prepared bank catalogue");
+        let definition = catalog
             .iter()
             .find(|definition| definition.name == "Varrock West")
             .unwrap();
@@ -8476,7 +8489,7 @@ mod tests {
         assert!(definition.npc.is_none());
         assert!(ordinary_bank(definition));
         for name in ["Fishing Guild", "Canifis", "Mage Arena"] {
-            let restricted = api::named_banks::BANK_CATALOG
+            let restricted = catalog
                 .iter()
                 .find(|definition| definition.name == name)
                 .unwrap();
@@ -8486,8 +8499,21 @@ mod tests {
 
     #[test]
     fn ordinary_catalog_banks_reject_actual_access_overrides() {
+        if api::test_support::local_asset_path(
+            "",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../api/data/game-data/bank-catalog.json"
+            ),
+            "named bank catalogue for Grinch access tests",
+        )
+        .is_none()
+        {
+            return;
+        }
+        let catalog = api::named_banks::bank_catalog().expect("prepared bank catalogue");
         for name in ["Shantay Pass", "Duel Arena"] {
-            let definition = api::named_banks::BANK_CATALOG
+            let definition = catalog
                 .iter()
                 .find(|definition| definition.name == name)
                 .unwrap();
