@@ -636,6 +636,10 @@ native trade, native API owner and repeated routing. The existing V8 unit test
 provides the fast-properties invariant. The measured binary keeps shipped V8
 settings and does not query intrinsics.
 
+The bank-memory owner cell uses its real local-state service tests. In this
+batch the changed code is the private saved-hint fixture. The cell is controlled
+state-service proof, not a gameplay or trade witness.
+
 `scenario.boat-fare-retry-live` runs the same three real cases in order:
 `boat_fare_v1_ts`, `boat_fare_far_start_v1_ts`, and
 `boat_fare_reconnect_v1_ts`. Each uses the caller's explicit engine, pack and

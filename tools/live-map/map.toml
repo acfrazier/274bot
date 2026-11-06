@@ -1290,6 +1290,14 @@ cells = [
   "host.memory-profile-contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --lib memory:: -- --nocapture --test-threads=1|--locked -p host-play --features memory-profile --lib memory::",
 ]
 
+# The saved-hint fixture change is inside the bank-memory owner module.
+# Its real local-state service tests cover that boundary, not a game trade.
+[[cover]]
+globs = ["crates/host-play/src/slot_bank_memory.rs"]
+cells = [
+  "host.bank-memory-owner-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib slot_bank_memory:: -- --nocapture --test-threads=1|--locked -p host-play --lib slot_bank_memory::",
+]
+
 [[cover]]
 globs = ["crates/frontend-core/src/session/native_settings.rs"]
 cells = [

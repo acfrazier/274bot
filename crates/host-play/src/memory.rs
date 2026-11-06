@@ -1705,8 +1705,6 @@ impl Run {
                     config.n
                 ));
             }
-        } else if config.n == 2 {
-            return Err("BOT_MEMORY_N=2 is only the native_partner_trade pilot".into());
         }
         if sustain
             && (!matches!(config.workload, Workload::Active | Workload::Lifecycle)
