@@ -1216,9 +1216,7 @@ impl<'a> Interactions<'a> {
             WireCommand::WalkNearest { tile } => {
                 driver::walk_nearest(&mut *self.driver, tile.x, tile.z)
             }
-            WireCommand::DoorStep { tile } => Send::move_gameclick(false, tile.x, tile.z, &[])
-                .and_then(|send| self.driver.send_packet(&send))
-                .is_ok(),
+            WireCommand::DoorStep { tile } => self.driver.send_pending_door_step(tile.x, tile.z),
             WireCommand::SideTab { tab } => self.driver.click_side_tab(*tab),
             WireCommand::Login { username, password } => {
                 login(&mut *self.driver, username, password, false)
