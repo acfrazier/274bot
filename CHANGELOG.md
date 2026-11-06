@@ -17,6 +17,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Negative attenuation in a SoundFont no longer causes extreme music volume.
 - Music can load SoundFonts whose sample-loop start is after the loop end.
 
+### Client (`FR-client-bothost` `r274-bh-modular`)
+
+- After the server restarts, the "System update in" countdown no longer
+  stays on screen once the bot logs back in. The client clears the countdown
+  on a successful login, as the Java 289 client does.
+
 ## [0.2.8] — 2026-10-29 — Beta 2
 
 ### Panel and terminal app
