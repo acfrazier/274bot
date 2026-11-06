@@ -1,7 +1,7 @@
 //! Shared world bake: local content inputs produce the whole-world collision,
 //! transport graph, bank table, packed navigation data, and actual sidecars.
-//! Both the `nav-pack` developer CLI and the application build use
-//! [`bake_world`] so derivation remains in one place.
+//! The offline `nav-pack` CLI and local-data builder use [`bake_world`] so
+//! derivation remains in one place. Product builds only stage its payloads.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -27,6 +27,9 @@ use nav_planner::canlight::BANK_ZONES_REL;
 use nav_planner::collision::WorldCollision;
 use nav_planner::paint::bake_reach;
 use nav_planner::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP, NO_SHAPE};
+
+#[path = "loc_defs_377.rs"]
+mod loc_defs_377;
 
 /// Door loc configs under `content/scripts/doors/configs`.
 pub const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doors.loc"];
@@ -75,6 +78,9 @@ pub struct BakeRequest<'a> {
     pub doors_dir: &'a Path,
     pub gates: &'a Path,
     pub config_jag: &'a Path,
+    /// Explicit packed server location table for revision-377 collision LocDefs.
+    /// Required for revision 377; ignored for other revisions.
+    pub server_loc_dat_377: Option<&'a Path>,
     /// A missing required config would bake a world that silently disagrees
     /// with the server. Only explicitly diagnostic callers should skip them.
     pub require_all_door_configs: bool,
@@ -1084,6 +1090,20 @@ fn selected_game_data(
 /// Bake the whole world for one request. Every `.jm2` under the maps dir
 /// bakes or the call fails; non-`.jm2` files are metadata and skipped.
 pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::GenerationError> {
+    let server_loc_dat_377 = if request.revision == Some(377) {
+        Some(request.server_loc_dat_377.ok_or_else(|| {
+            crate::GenerationError::SourceInput(crate::SourceInputError::Io {
+                context: crate::SourceInputContext::LocDefinitions,
+                path: request.config_jag.to_path_buf(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "revision 377 requires an explicit server_loc_dat_377 path",
+                ),
+            })
+        })?)
+    } else {
+        None
+    };
     let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
     let mut notes = Vec::new();
 
@@ -1166,11 +1186,13 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
         .map(|(_, open)| *open)
         .collect();
 
-    // Loc/NPC definitions from the selected local config archive.
+    // Client NPC/loc records continue to supply the navpois surface; 377
+    // collision LocDefs use the engine's server-then-client LocType decode.
     let (loc_defs, npc_types, loc_types) = match std::fs::read(request.config_jag) {
         Ok(bytes) => {
             let jag = JagFile::new(bytes);
-            let (npcs, locs) = if request.revision == Some(377) {
+            let mut engine_loc_defs = None;
+            let (npcs, locs) = if let Some(server_loc_dat_path) = server_loc_dat_377 {
                 let cache =
                     client::config::config_377::Cache377::unpack(&jag).map_err(|source| {
                         crate::GenerationError::ConfigDecode377 {
@@ -1178,15 +1200,36 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
                             source,
                         }
                     })?;
-                (
-                    cache.npcs.into_iter().map(Into::into).collect(),
-                    cache.locs.into_iter().map(Into::into).collect(),
+                let mut locs: Vec<client::config::LocType> =
+                    cache.locs.into_iter().map(Into::into).collect();
+                let server_loc_dat = std::fs::read(server_loc_dat_path).map_err(|source| {
+                    crate::GenerationError::SourceInput(crate::SourceInputError::Io {
+                        context: crate::SourceInputContext::LocDefinitions,
+                        path: server_loc_dat_path.to_path_buf(),
+                        source,
+                    })
+                })?;
+                let client_loc_dat = jag.read("loc.dat");
+                let collision_defs = loc_defs_377::from_server_and_client(
+                    &mut locs,
+                    &server_loc_dat,
+                    client_loc_dat.as_deref(),
                 )
+                .map_err(|source| crate::GenerationError::ConfigDecode377 {
+                    path: if source.table == "loc.dat" {
+                        request.config_jag.to_path_buf()
+                    } else {
+                        server_loc_dat_path.to_path_buf()
+                    },
+                    source,
+                })?;
+                engine_loc_defs = Some(collision_defs);
+                (cache.npcs.into_iter().map(Into::into).collect(), locs)
             } else {
                 let cache = Cache::unpack(&jag);
                 (cache.npcs, cache.locs)
             };
-            let loc_defs = LocDefs::from_locs(&locs);
+            let loc_defs = engine_loc_defs.unwrap_or_else(|| LocDefs::from_locs(&locs));
             (loc_defs, npcs, locs)
         }
         Err(e) => {
