@@ -4102,6 +4102,10 @@ async fn first_cursor_search_with_output(
         return Ok(into_first_pass(pass, fallback_only));
     }
 
+    let partition_capacity = targets
+        .len()
+        .checked_add(fallback.len())
+        .ok_or(SearchCursorError::ResultNotRepresentable)?;
     let offset_capacity = partition_capacity
         .checked_add(1)
         .ok_or(SearchCursorError::ResultNotRepresentable)?;
