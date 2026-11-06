@@ -34,6 +34,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 - The navigation baker accepts explicit revision 377 inputs and uses the
   revision-377 config decoder. It writes the current v19 pack and local sidecars.
+- Revision 377's packed-name door admission now requires a closed category
+  for named configs. The refused Black Knights' Fortress doors no longer
+  create crossings. Numeric 274/289 declarations remain unchanged.
+- Quester checks the selected pin before revision admission, preserving the
+  revision-274/289 pin-mismatch error precedence.
 - Revision 377 cache manifests now pass the navigation identity checks.
   Revision mismatches and changed archive bytes still fail.
 - Route-admission inputs now use the navigation world's selected food, prayer,
