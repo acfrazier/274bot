@@ -49,6 +49,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Revision 377 boat starts admit multiple selected-map NPC spawns when
   their script rules select the same journey, restoring Brimhaven to
   Ardougne. Missing spawns and conflicting journey branches remain refused.
+- Native door traversal uses the revision-377 client's movement encoder for
+  the one-tile step after opening a door. Other revisions keep their existing
+  packet path.
 
 ### Host
 
@@ -63,6 +66,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Adds finite revision-377 native cow combat and loot, food and antipoison
   witnesses, plus individual Hans clue handoffs. Each cell discloses its
   pre-Start account fixtures and records real rendered frames.
+
+### Quester
+
+- Adds revision-377 Quester admission and a source-backed Cook's Assistant
+  guide. It uses the selected revision's Path roster and game data. Missing
+  tables refuse explicitly; revision-289 guides do not fill revision-377 gaps.
+- The native Cook witness starts with no ingredients or quest progress and
+  checks the server's completion state, Cooking XP and quest points.
 
 ### Gatherer
 
