@@ -8078,6 +8078,7 @@ fn use_on_walk_user_input_blocks_before_interaction() {
         item: Arc::from("test item"),
         item_id: 1,
         target_id: 2,
+        npc_ids: None,
         product: None,
         until: None,
         no_product: None,
