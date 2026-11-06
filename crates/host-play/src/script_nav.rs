@@ -9151,6 +9151,99 @@ mod diagnostic_tests {
     }
 
     #[test]
+    fn real_pack_radius_104_admission_keeps_full_goals_and_refuses_excess_input() {
+        let Some(path) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "real 289 nav pack for full radius-104 host admission",
+        ) else {
+            return;
+        };
+        let world = Arc::new(NavWorld::load_pack(&path).expect("real nav pack"));
+        const GOALS: usize = 209 * 209;
+        assert_eq!(GOALS, 43_681);
+        assert_eq!(NODE_BUDGET, 4_000_000);
+        assert_eq!(ROUTE_WORK_LIMIT_BYTES, 192 * 1024 * 1024);
+        for allow_teleports in [false, true] {
+            let request = || {
+                let mut request = stage_request(Arc::clone(&world));
+                request.from = WorldTile {
+                    x: 3222,
+                    z: 3218,
+                    level: 0,
+                };
+                request.to = request.from;
+                request.radius = 104;
+                request.arrival = ArrivalKind::Area;
+                request.opts = FindOptions {
+                    allow_teleports,
+                    allow_bank_fetch: false,
+                    ..FindOptions::default()
+                };
+                request.admission = crate::admission::Admission::manual(
+                    request.opts,
+                    Default::default(),
+                    1,
+                    crate::WalkGlobals::default(),
+                );
+                request
+            };
+            let job = RouteJob::prepare(
+                "radius-104-admission",
+                request(),
+                RouteDemandKind::Walk { authority: None },
+            )
+            .expect("the full radius-104 host request must fit its unchanged limit");
+            assert_eq!(RouteTargetCursor::capacity(&job.request).unwrap(), GOALS);
+            assert_eq!(job.request.opts.allow_teleports, allow_teleports);
+            let expected = SearchCursor::preflight(
+                SearchRequestShape::First {
+                    target_capacity: GOALS,
+                    fallback_capacity: GOALS,
+                    options: route_search_options(&job.request),
+                    avoid_capacity: 0,
+                    max_settles: NODE_BUDGET,
+                },
+                &job.lease,
+                &job.state,
+            )
+            .expect("the full preferred and fallback search must fit");
+            assert_eq!(job.preflights.first, expected);
+            assert_eq!(
+                expected.input_bytes(),
+                2 * GOALS * std::mem::size_of::<WorldTile>(),
+            );
+            let charge = <RouteWorkSpec as api::work::WorkFamilySpec>::charge(job.submission())
+                .total_bytes()
+                .unwrap();
+            assert!(charge <= ROUTE_WORK_LIMIT_BYTES);
+            assert!(
+                charge
+                    >= expected.input_bytes()
+                        + expected.reservation().peak_bytes
+                        + expected.reservation().future_layout_bytes
+                        + GOALS * std::mem::size_of::<WorldTile>(),
+                "host admission must retain its candidate buffer and the complete search charge",
+            );
+
+            // Bank fetching stays disabled. This buffer adds only captured
+            // input and exceeds the remaining whole-host allowance.
+            let excess_rows =
+                (ROUTE_WORK_LIMIT_BYTES - charge) / std::mem::size_of::<(i32, i32)>() + 1;
+            let mut excessive = request();
+            excessive.bank = Vec::with_capacity(excess_rows);
+            assert!(matches!(
+                RouteJob::prepare(
+                    "radius-104-admission",
+                    excessive,
+                    RouteDemandKind::Walk { authority: None },
+                ),
+                Err(RouteJobError::Budget),
+            ));
+        }
+    }
+
+    #[test]
     fn route_admission_charges_bank_custody_only_when_bank_fetch_is_reachable() {
         let mut request = tiny_stage_request();
         let state = Arc::new(WorldState::empty());
