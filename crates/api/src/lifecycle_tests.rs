@@ -1968,8 +1968,9 @@ fn a_script_started_and_stopped_on_a_parked_bot_leaves_it_parked() {
     }
 }
 
-/// Start and stop leave the park to the operator: his Login connects, and a
-/// preference turned on or an operator Login in between ends the park.
+/// Start and stop leave the park to the operator: the operator's Login
+/// connects, and a Login that came while the script ran is not undone by the
+/// script's stop.
 #[test]
 fn the_operator_still_ends_a_park_a_script_start_and_stop_went_through() {
     let mut mailbox = armed();
