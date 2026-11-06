@@ -10,10 +10,8 @@ pub(in crate::transport) fn supplemental_edges_377(
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
-    let ladder_source = fs::read_to_string(
-        content_root.join("scripts/ladders+stairs/scripts/ladders.rs2"),
-    )
-    .ok();
+    let ladder_source =
+        fs::read_to_string(content_root.join("scripts/ladders+stairs/scripts/ladders.rs2")).ok();
     let climb_ticks = ladder_source.as_deref().and_then(climb_helper_ticks);
     let mut rules = HashMap::new();
     let mut extras = HashMap::new();
@@ -49,8 +47,13 @@ pub(in crate::transport) fn supplemental_edges_377(
             let Some(&id) = ids.get(&name) else {
                 continue;
             };
-            if graph.edges.iter().any(|edge| edge.loc_id == id && edge.option == option)
-                || !loc_defs.op_at(id, option).is_some_and(|op| op.starts_with("Climb"))
+            if graph
+                .edges
+                .iter()
+                .any(|edge| edge.loc_id == id && edge.option == option)
+                || !loc_defs
+                    .op_at(id, option)
+                    .is_some_and(|op| op.starts_with("Climb"))
             {
                 continue;
             }
@@ -60,10 +63,13 @@ pub(in crate::transport) fn supplemental_edges_377(
                 TransportKind::Ladder
             };
             let key = (name, option);
-            rules.entry(key.clone()).or_insert((kind, ScriptRule {
-                fallback: Some(Outcome::Landing(landing)),
-                ..ScriptRule::default()
-            }));
+            rules.entry(key.clone()).or_insert((
+                kind,
+                ScriptRule {
+                    fallback: Some(Outcome::Landing(landing)),
+                    ..ScriptRule::default()
+                },
+            ));
             extras.insert(key, ticks);
         }
     });
@@ -81,9 +87,9 @@ fn manhole_edges_377(
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
-    let Ok(source) = fs::read_to_string(
-        content_root.join("scripts/general_use/scripts/manholes.rs2"),
-    ) else {
+    let Ok(source) =
+        fs::read_to_string(content_root.join("scripts/general_use/scripts/manholes.rs2"))
+    else {
         return;
     };
     let mut closed = None;
@@ -104,28 +110,36 @@ fn manhole_edges_377(
     let Some(open_body) = open else {
         return;
     };
-    let Some((Landing::FromZ { d: 6400 }, extra)) =
-        direct_climb(&open_body, None)
-    else {
+    let Some((Landing::FromZ { d: 6400 }, extra)) = direct_climb(&open_body, None) else {
         return;
     };
     let Some(&open_id) = ids.get("manholeopen") else {
         return;
     };
-    if !loc_defs.op_at(open_id, 1).is_some_and(|op| op.starts_with("Climb")) {
+    if !loc_defs
+        .op_at(open_id, 1)
+        .is_some_and(|op| op.starts_with("Climb"))
+    {
         return;
     }
     let mut rules = HashMap::new();
     let mut extras = HashMap::new();
     let mut pair = None;
-    for (name, cost) in [("manholeopen", Some(extra)), ("manholeclosed", extra.checked_add(OP_BASE_TICKS))] {
+    for (name, cost) in [
+        ("manholeopen", Some(extra)),
+        ("manholeclosed", extra.checked_add(OP_BASE_TICKS)),
+    ] {
         let Some(cost) = cost else {
             continue;
         };
         let Some(&id) = ids.get(name) else {
             continue;
         };
-        if graph.edges.iter().any(|edge| edge.loc_id == id && edge.option == 1) {
+        if graph
+            .edges
+            .iter()
+            .any(|edge| edge.loc_id == id && edge.option == 1)
+        {
             continue;
         }
         if name == "manholeclosed" {
@@ -137,10 +151,16 @@ fn manhole_edges_377(
             pair = Some((id, open_id));
         }
         let key = (name.to_owned(), 1);
-        rules.insert(key.clone(), (TransportKind::Ladder, ScriptRule {
-            fallback: Some(Outcome::Landing(Landing::FromZ { d: 6400 })),
-            ..ScriptRule::default()
-        }));
+        rules.insert(
+            key.clone(),
+            (
+                TransportKind::Ladder,
+                ScriptRule {
+                    fallback: Some(Outcome::Landing(Landing::FromZ { d: 6400 })),
+                    ..ScriptRule::default()
+                },
+            ),
+        );
         extras.insert(key, cost);
     }
     let first = graph.edges.len();
@@ -174,14 +194,16 @@ fn manhole_opener_is_supported(body: &str) -> bool {
             {
                 changed = true;
             }
-            ("loc_add", [Expr::Call(call, coord), Expr::Word(object), Expr::Word(angle), Expr::Word(shape), Expr::Num(400)])
-                if call == "movecoord"
-                    && matches!(coord.as_slice(), [Expr::Word(origin), Expr::Num(0), Expr::Num(0), Expr::Num(-1)] if origin == "loc_coord")
-                    && object == "manhole_cover"
-                    && angle == "loc_angle"
-                    && shape == "loc_shape"
-                    && changed
-                    && !cover =>
+            (
+                "loc_add",
+                [Expr::Call(call, coord), Expr::Word(object), Expr::Word(angle), Expr::Word(shape), Expr::Num(400)],
+            ) if call == "movecoord"
+                && matches!(coord.as_slice(), [Expr::Word(origin), Expr::Num(0), Expr::Num(0), Expr::Num(-1)] if origin == "loc_coord")
+                && object == "manhole_cover"
+                && angle == "loc_angle"
+                && shape == "loc_shape"
+                && changed
+                && !cover =>
             {
                 cover = true;
             }
