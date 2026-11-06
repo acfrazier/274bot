@@ -2393,7 +2393,7 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
                         pending: None,
                         run,
                         selected,
-                        pin,
+                        revision: api::selected::ClientRevision::R289,
                         output: Output {
                             account: Some("gatherer-lifecycle".into()),
                             ..Default::default()

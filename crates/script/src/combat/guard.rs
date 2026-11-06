@@ -1855,6 +1855,11 @@ mod tests {
         };
         let bytes = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("read R289 game data at {}: {error}", path.display()));
+        let mut scene = Scene::new(43);
+        // R289 classifies dragonfire at the attacker, not on a projectile.
+        // Extend only this test's classification fixture to exercise the
+        // representable incoming Dragonfire + Magic agreement; prayer and
+        // NPC facts still come from the selected revision.
         let mut facts: serde_json::Value = serde_json::from_str(&bytes).unwrap();
         let dragonfire = facts["style_spotanims"]
             .as_array_mut()

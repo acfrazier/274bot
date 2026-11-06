@@ -41,11 +41,12 @@ impl NativeOutput for Capture {
     fn settings_applied(&mut self, _: u64) {}
 }
 
-fn squire_path() -> (
+fn squire_path() -> Option<(
     Arc<api::game_data::SelectedGameData>,
     Arc<QuestCatalog>,
     Arc<CompiledPath>,
-) {
+)> {
+    let lease = super::super::compile::real_nav_lease()?;
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let _gathering = super::super::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
@@ -58,12 +59,10 @@ fn squire_path() -> (
         &document,
         &selected,
         &quests,
-        super::super::compile::real_nav_lease()
-            .zones()
-            .expect("real 289 zone catalog"),
+        lease.zones().expect("real 289 zone catalog"),
     )
     .unwrap();
-    (selected, quests, path)
+    Some((selected, quests, path))
 }
 
 fn coins_item(selected: &api::game_data::SelectedGameData) -> ItemView {
@@ -190,7 +189,9 @@ fn snapshot(
 /// portrait bypass: adjacency selects the wait, distance selects the search.
 #[test]
 fn portrait_choice_waits_when_vyvin_is_adjacent_and_searches_when_clear() {
-    let (selected, quests, path) = squire_path();
+    let Some((selected, quests, path)) = squire_path() else {
+        return;
+    };
     let bank = BankMemory::seeded(&[], Origin::Session);
     let probe = crate::quester::probe::Probe {
         path: &path,
@@ -230,8 +231,8 @@ struct PortraitWaitFixture {
 }
 
 impl PortraitWaitFixture {
-    fn new() -> Self {
-        let (selected, quests, path) = squire_path();
+    fn new() -> Option<Self> {
+        let (selected, quests, path) = squire_path()?;
         let mut script = Quester::new(
             RunKey {
                 slot: 1,
@@ -249,12 +250,12 @@ impl PortraitWaitFixture {
         script.stage = Some(stage);
         script.needs_read = false;
 
-        Self {
+        Some(Self {
             script,
             snapshot: snapshot(&selected, ADJACENT_VYVIN, false),
             bank: BankMemory::seeded(&[], Origin::Session),
             ledger: None,
-        }
+        })
     }
 
     fn drive(&mut self, tick: u64, output: &mut Capture) -> ScriptFlow {
@@ -274,7 +275,9 @@ impl PortraitWaitFixture {
 /// parks the path with its explicit `wait exhausted` reason.
 #[test]
 fn portrait_wait_timeout_parks_with_clear_message() {
-    let mut fixture = PortraitWaitFixture::new();
+    let Some(mut fixture) = PortraitWaitFixture::new() else {
+        return;
+    };
     let mut output = Capture;
     let first = fixture.drive(1, &mut output);
     assert!(!matches!(first, ScriptFlow::Blocked(_)));

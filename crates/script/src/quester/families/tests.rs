@@ -325,6 +325,7 @@ fn with_tick_output_reach<R>(
     collision: Option<nav_planner::contract::CollisionView<'_>>,
     f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
 ) -> R {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let evidence = api::quest_progress::EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -423,6 +424,7 @@ pub(crate) fn with_tick_budget_output<R>(
     output: &mut dyn NativeOutput,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let evidence = api::quest_progress::EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -5660,7 +5662,7 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
                 28,
             );
             with_tick_bank(&snapshot, Some(&bank), &mut None, 1, |tick| {
-                let progress = [counted_sheep_progress(cx.selected, tick.cx.evidence(), 20)];
+                let progress = [counted_sheep_progress(tick.cx.evidence(), 20)];
                 let context = PredicateContext {
                     cx: &tick.cx,
                     pairs: tick.pairs,
