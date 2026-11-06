@@ -57,15 +57,17 @@ All cells not listed below normally run on merlot. Engine A uses game port
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
 | `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |
+| `host.transport-relog`, `host.transport-dead-server`, `host.transport-idle-held`, `host.scriptless-park-protocol-error`, `host.scriptless-park-dead-server`, `host.scriptless-idle-logout` | Run on any host with Engine A at `127.0.0.1:44594` and `127.0.0.1:1080` (on aubaine that is a relay to Engine L). The scripted cells (`transport-*`) run a native script that does nothing, so the bot keeps its reconnect. The `scriptless-*` cells run a bot with no script: it parks after the exit and stays logged out for 30 s until the cell logs it in. Local engines run with `debug: true`, which ignores the idle request. The `scriptless-idle-logout` cell therefore waits for the client's own idle request (90 s), then answers with the Logout packet a production server sends. |
 
 
 Client submodule paths have separate coverage. The gitlink and the client
 workspace and package manifests select the GPU headed cell, including for a
 test-only client bump. `client/client.rs`,
 `client/actor_289.rs`, `render/draw.rs`, and `render/backend/cpu.rs` select
-both headed cells. `client/client.rs` also selects both relog cells because it
+both headed cells. `client/client.rs` also selects the six relog and park cells
+(`host.transport-*` and `host.scriptless-*`) because it
 contains `Client::login` (`vendor/fr-client-rust/crates/client/src/client/client.rs:3445`).
-Changes under `client/src/io/**` select both relog cells. The CPU headed cell
+Changes under `client/src/io/**` select the same six cells. The CPU headed cell
 sets `BOT_CPU=1`; the GPU cell removes it.
 
 The map lists test-only paths in `not_live.globs`. A path in
