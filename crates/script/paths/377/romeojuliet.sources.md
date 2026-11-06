@@ -32,7 +32,19 @@ All strings are from `quests/quest_romeojuliet/scripts/romeojuliet_journal.rs2`;
 ## NPC placements
 
 - Romeo is NPC 639 (`pack/npc.pack:640`), placed at `m50_53.jm2:12932` (`0 11 33: 639`), world `(3211,3425,0)` — Varrock Square, matching the journal (`romeojuliet_journal.rs2:9`).
-- Juliet is NPC 3323 (`pack/npc.pack:3324`, `juliet_multi_visible`), placed at `m49_53.jm2:10592` (`1 22 33: 3323`), world `(3158,3425,1)` — west Varrock upper floor. The Path targets the bare `juliet` config (NPC 637, `pack/npc.pack:638`, display “Juliet”, op `Talk-to`), mirroring the 289 lead: `compile_talk` requires a `Talk-to` op and a display name, and R377 selected facts give `juliet_multi_visible` (NPC 3323) neither (`display=None`, `ops=[]`), so 3323 cannot be a talk target and fails compile with `unavailable-op`. Talk anchors stay at the placed 3323 tile (`m49_53.jm2:10592`, world `(3158,3425,1)`); runtime interaction matches the “Juliet” display name there. The quest script binds `[opnpc1,juliet_multi_visible]` (`juliet.rs2:1`), so if the live world presents only type 3323 at the anchor, `nearest_talk(637)` finds nothing and the repair belongs in selected facts/validator, not the path.
+- Juliet's placed NPC is `juliet_multi_visible` (3323, `pack/npc.pack:3324`).
+  `m49_53.jm2:10592` places it at `1 22 33`, world `(3158,3425,1)`.
+  Every Path talk targets that placed identity, not the leaf-only 637.
+  Its config (`scripts/_unpack/377/all.npc:74445-74451`) uses the varbit
+  `romjul_juliet_visible`: selectors 0 and 2 resolve to `juliet` (637,
+  `pack/npc.pack:638`); the missing selector 1 is a null form. The leaf's
+  name and `Talk-to` are at `all.npc:16810-16829`, not on the root.
+  Java `Client.java:10521-10546` resolves the current form before offering
+  menu text/options. `NpcType.java:359-372` selects the varbit/varp target
+  and returns null for negative, out-of-range or `-1` targets.
+  Revision-377 snapshots resolve the current name/options but retain type
+  3323. The talk family requires its observed current `Talk-to` action.
+  `juliet.rs2:1` binds `[opnpc1,juliet_multi_visible]`.
 - Father Lawrence is NPC 640 (`pack/npc.pack:641`), placed at `m50_54.jm2:12002` (`0 54 28: 640`), world `(3254,3484,0)` — the church north-east of Varrock.
 - The Apothecary is NPC 638 (`pack/npc.pack:639`), placed at `m49_53.jm2:10591` (`0 59 12: 638`), world `(3195,3404,0)`.
 - Item IDs: `julietmessage` 755 (`pack/obj.pack:756`), `cadavaberries` 753 (`pack/obj.pack:754`), `cadava` 756 (`pack/obj.pack:757`).

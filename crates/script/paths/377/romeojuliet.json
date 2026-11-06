@@ -166,7 +166,7 @@
               "version": 1,
               "advances": true,
               "args": {
-                "npc": "juliet",
+                "npc": "juliet_multi_visible",
                 "anchor": {
                   "tile": [
                     3158,
@@ -292,7 +292,7 @@
               "version": 1,
               "advances": false,
               "args": {
-                "npc": "juliet",
+                "npc": "juliet_multi_visible",
                 "anchor": {
                   "tile": [
                     3158,
@@ -687,7 +687,7 @@
               "version": 1,
               "advances": true,
               "args": {
-                "npc": "juliet",
+                "npc": "juliet_multi_visible",
                 "anchor": {
                   "tile": [
                     3158,
