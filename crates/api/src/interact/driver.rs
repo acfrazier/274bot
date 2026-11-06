@@ -75,6 +75,17 @@ pub trait Driver {
         forceapproach: i32,
         r#type: i32,
     ) -> bool;
+    /// Emit the already-validated cardinal step after opening a door, without
+    /// consulting local collision before the server's door update arrives.
+    /// Revision 377 requires the native client's encoder; unbound drivers deny.
+    fn send_pending_door_step(&mut self, x: i32, z: i32) -> bool {
+        if self.revision() == ClientRevision::R377 {
+            return false;
+        }
+        Send::move_gameclick(false, x, z, &[])
+            .and_then(|send| self.send_packet(&send))
+            .is_ok()
+    }
     /// The route origin tile (local player), in the client's build-area
     /// (scene-relative) space, as `route_x[0]`/`route_z[0]`.
     fn local_route(&self) -> Option<(i32, i32)>;
@@ -205,6 +216,15 @@ impl Driver for Client {
             forceapproach,
             r#type,
         )
+    }
+
+    fn send_pending_door_step(&mut self, x: i32, z: i32) -> bool {
+        if self.revision() == ClientRevision::R377 {
+            return self.write_pending_door_step_377(x, z);
+        }
+        Send::move_gameclick(false, x, z, &[])
+            .and_then(|send| self.send_packet(&send))
+            .is_ok()
     }
 
     fn local_route(&self) -> Option<(i32, i32)> {
