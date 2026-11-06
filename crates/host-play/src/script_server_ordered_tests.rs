@@ -639,7 +639,9 @@ fn ordered_housekeeping_is_not_counted_as_dispatched_input() {
 
 #[test]
 fn ordered_foreign_emission_tick_traffic_never_charges_native_batch_allowance_a2_r4() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     for _ in 0..5 {
         rig.client
             .send_packet(&Send::if_button(3651).unwrap())
@@ -2240,7 +2242,9 @@ fn ordered_real_drain_releases_one_owner_and_one_completion_for_every_terminal_o
 
 #[test]
 fn ordered_missing_sink_observation_refuses_before_cipher_or_payload_movement() {
-    let mut rig = Rig::new();
+    let Some(mut rig) = Rig::with_game_data() else {
+        return;
+    };
     rig.client.out.set_observer(None);
     rig.start([Emission::Content(close_request())]);
     rig.pump(1);

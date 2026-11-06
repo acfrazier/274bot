@@ -6285,10 +6285,9 @@ fn s2b_admission_per_bot_layouts() {
         target_env = "gnu",
         not(feature = "memory-profile")
     ))]
-    // FollowRun and WalkHop route-index state adds 48 B to Traveller;
-    // Option<PoisonHold> adds 8 B to NavBot.
-    // Typed bank selection outcomes add 8 B in BankPickState.native_receipt.
-    // Linux: r2-bank-journal-check-4/test-host-default.log:1344-1347.
+    // Provenance removal shrinks each of the two inline NavLease owners
+    // by 32 B and the inline quest evidence by 40 B.
+    // The full Linux suite at 65f18f8c3 measured NavBot at 4056 B.
     assert_eq!(
         (
             std::mem::size_of::<NavBot>(),
@@ -6296,7 +6295,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4160, 1576, 552, 264)
+        (4056, 1576, 552, 264)
     );
     // Linux Combat is 552 B at 7ab903712; Main retains 8 B of headroom.
     // NavBot and SlotScript pins still need their composed measurements.
