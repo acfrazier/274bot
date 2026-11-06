@@ -17038,7 +17038,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
         policy: RiskPolicy::Proceed,
         grants: options.zones,
         allow: Default::default(),
-        input: crate::admission::capture(&snapshot, false, None, false),
+        input: crate::admission::capture(&snapshot, false, None, false, None),
         generation: 7,
         compat_v1: false,
         enforce: true,
@@ -17109,7 +17109,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
     );
     assert_eq!(
         fresh.input,
-        crate::admission::capture(&snapshot, false, bot.condition.current(), false)
+        crate::admission::capture(&snapshot, false, bot.condition.current(), false, None)
     );
     assert!(Arc::ptr_eq(
         bot.route_basis.as_ref().expect("frozen basis"),

@@ -5621,6 +5621,7 @@ impl ScriptWalkArm {
                 state.map_members,
                 bot.and_then(|bot| bot.condition.current()),
                 bot.is_some_and(|bot| bot.walk_guard_off.is_some()),
+                Some(world),
             );
             // A v1 card keeps frozen danger routing on the machine-owned
             // native walks too, as on its compiled walks (`compiled_options`).
@@ -5829,6 +5830,7 @@ impl ScriptWalkArm {
                 self.state.as_ref().is_some_and(|state| state.map_members),
                 condition.as_ref(),
                 off_debt,
+                self.world.as_deref(),
             ),
             generation: 0,
             compat_v1,
@@ -6476,6 +6478,7 @@ impl ScriptWalkArm {
                             .and_then(|bot| bot.condition.current().copied())
                             .as_ref(),
                         false,
+                        self.world.as_deref(),
                     )
                 })
             });

@@ -1541,6 +1541,62 @@ fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {
 }
 
 #[test]
+fn admission_capture_uses_bound_377_food_and_preserves_unavailable_binding() {
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected revision 377 facts");
+    let food = selected.item_by_alias("cooked_chompy").unwrap();
+    let mut rig = open_rig(false);
+    let world = rig.world.as_ref().unwrap();
+    crate::admission::bind_377_tables(world, Some(Arc::clone(&selected))).unwrap();
+    seed_protect_frame(&mut rig.snapshot, 43);
+    let mut player = rig.snapshot.local_player().unwrap().clone();
+    player.player.combat_level = 40;
+    rig.snapshot.seed_local_player(player);
+    rig.snapshot.seed_varps(vec![api::snapshot::VarpView {
+        index: 173,
+        value: 0,
+    }]);
+    rig.snapshot.seed_inventory(
+        vec![api::snapshot::ItemView {
+            def: api::ItemDefView {
+                id: food.id,
+                name: food.name.clone(),
+                stackable: false,
+                members: true,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            slot: 0,
+            count: 2,
+            container: api::snapshot::ItemContainer::Inventory,
+            action_family: api::snapshot::ItemActionFamily::Held,
+            actions: vec![Some("Eat".into())],
+            component_id: 3214,
+        }],
+        28,
+    );
+
+    let input = crate::admission::capture(&rig.snapshot, true, None, false, Some(world));
+    assert_eq!(input.food_iter().collect::<Vec<_>>(), [(food.id, 2)]);
+    assert!(!input.missing_facts(), "selected food is a known 377 fact");
+    assert!(input.map_members());
+
+    let legacy = crate::admission::capture(&rig.snapshot, true, None, false, None);
+    assert!(legacy.missing_facts(), "R289 has no cooked-chompy food row");
+    assert_eq!(legacy.food_iter().count(), 0);
+
+    let unavailable_world = open_world(1, 1);
+    crate::admission::bind_377_tables(&unavailable_world, None).unwrap();
+    let unavailable =
+        crate::admission::capture(&rig.snapshot, true, None, false, Some(&unavailable_world));
+    assert!(unavailable.missing_facts());
+    assert_eq!(unavailable.food_iter().count(), 0);
+    assert_eq!(unavailable.hp, 0, "no fallback capture with legacy tables");
+}
+
+#[test]
 fn native_food_guard_uses_bound_377_tables_for_condition_and_food_rows() {
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R377)
         .expect("selected revision 377 facts");

@@ -391,7 +391,7 @@ fn consumer_rejects_stale_stamp() {
         poison: PoisonState::Clear,
         ..Default::default()
     };
-    let input = crate::admission::capture(&snapshot, true, Some(&stale), false);
+    let input = crate::admission::capture(&snapshot, true, Some(&stale), false, None);
     assert!(matches!(input.poison, PoisonState::Unknown { .. }));
 }
 
@@ -1500,10 +1500,10 @@ fn admission_capture_reads_slot_condition() {
     let mut snapshot = frame(1);
     hit(&mut snapshot, 2, 6, 1);
     owner.observe_frame(&snapshot, &drain(true, true), false);
-    let input = crate::admission::capture(&snapshot, false, owner.current(), false);
+    let input = crate::admission::capture(&snapshot, false, owner.current(), false, None);
     assert_eq!(input.poison, owner.current().unwrap().poison);
     owner.complete = false;
-    let input = crate::admission::capture(&snapshot, false, owner.current(), false);
+    let input = crate::admission::capture(&snapshot, false, owner.current(), false, None);
     assert!(matches!(input.poison, PoisonState::Unknown { .. }));
 }
 

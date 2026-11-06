@@ -572,7 +572,7 @@ pub(crate) fn finish_combat_prayers(
     let Some(debt) = bot.combat_prayer_off.as_mut() else {
         return;
     };
-    let Ok(data) = api::game_data::for_revision(api::selected::ClientRevision::R289) else {
+    let Some(data) = prayer_cleanup_data(driver.revision()) else {
         return;
     };
     // Observe the whole mask while clicks are serialized. Once an accepted
@@ -659,11 +659,40 @@ pub(crate) fn finish_walk_guard<D: Driver>(
     }
 }
 
-fn prayer_varp_value(snapshot: &GameSnapshot, component: i32) -> Option<i32> {
+fn prayer_cleanup_data(
+    revision: api::selected::ClientRevision,
+) -> Option<Arc<api::game_data::SelectedGameData>> {
+    // Preserve legacy cleanup for 274/289 drivers and recording stubs.
+    api::game_data::for_revision(if revision.is_377() {
+        revision
+    } else {
+        api::selected::ClientRevision::R289
+    })
+    .ok()
+}
+
+#[test]
+fn prayer_cleanup_selects_377_without_changing_legacy_drivers() {
+    use api::selected::ClientRevision;
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        let data = prayer_cleanup_data(revision).expect("cleanup prayer facts");
+        assert_eq!(data.revision(), if revision.is_377() { 377 } else { 289 });
+    }
+}
+
+fn prayer_varp_value(
+    snapshot: &GameSnapshot,
+    component: i32,
+    revision: api::selected::ClientRevision,
+) -> Option<i32> {
     if !snapshot.ingame() || snapshot.scene_state() != 2 {
         return None;
     }
-    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).ok()?;
+    let data = prayer_cleanup_data(revision)?;
     let fact = data
         .prayers()
         .iter()
@@ -710,7 +739,7 @@ fn finish_prayer_off(
         off.start_at_first_pump = false;
     }
     let mut age = elapsed(tick, off.admitted_tick);
-    let mut value = prayer_varp_value(snapshot, off.component);
+    let mut value = prayer_varp_value(snapshot, off.component, driver.revision());
     if value == Some(0) && !off.awaiting_on {
         return false;
     }
@@ -721,7 +750,7 @@ fn finish_prayer_off(
             || (age == GUARD_PRAYER_WINDOW_TICKS && value != Some(1)));
     if expired_enable {
         if let Some(fallback_component) = off.fallback_component.filter(|_| value != Some(1)) {
-            if prayer_varp_value(snapshot, fallback_component) == Some(1) {
+            if prayer_varp_value(snapshot, fallback_component, driver.revision()) == Some(1) {
                 api::host_log!(
                     api::hostlog::Category::NavEvent,
                     api::hostlog::Level::Warn,
@@ -1899,6 +1928,7 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
                 map_members,
                 bot.condition.current(),
                 bot.walk_guard_off.is_some(),
+                Some(world),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
             bot.assessment = Some(crate::admission::assess_route_path(
@@ -2080,6 +2110,7 @@ fn step_walk(
                 map_members,
                 bot.condition.current(),
                 bot.walk_guard_off.is_some(),
+                Some(w),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
             let route = match &outcome {
