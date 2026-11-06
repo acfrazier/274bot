@@ -993,7 +993,7 @@ impl FeatureCase for Priest {
                 | PriestPhase::QuesterStopping
                 | PriestPhase::WalkerStarting
                 | PriestPhase::Walker => continue,
-                PriestPhase::New => {
+                PriestPhase::New | PriestPhase::ControlStarting => {
                     return Err(format!(
                         "{name}: Priest activation preceded a ready feature-not-used control"
                     ));
