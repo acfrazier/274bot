@@ -1257,7 +1257,11 @@ The route case requires repeated host routing and ordinary arrivals.
 
 The native API fleet uses ten separate real normal-tree neighbourhoods.
 Its radius-12 resource areas do not overlap. The canonical collision pack checks
-every stand. Each seed proves a nearby live normal tree before starting.
+every stand. Canonical NPC placements also keep each whole area outside every
+attackable NPC's tether, attack or hunt reach, and actor footprint. This avoids
+incidental combat without changing the account's combat stats or accepting a
+paused consumer as active proof. Each seed proves a nearby live normal tree
+before starting.
 Only account positions change. The bronze axe,
 Woodcutting level, native Gatherer request and 240-game-tick yield deadline stay
 unchanged. Every active bot must still produce fresh XP and yield.

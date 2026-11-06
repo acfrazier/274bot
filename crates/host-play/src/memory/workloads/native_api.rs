@@ -38,22 +38,22 @@ export function tick(api) {
 }
 "#;
 
-// Real normal-tree clusters from selected-289 gathering placements in maps
-// m45_52, m46_49, m46_50, m47_51, m47_52, m48_50, m49_50, m49_54 and m51_53.
+// Selected-289 normal-tree clusters clear of placed attackable NPC tethers,
+// attack/hunt reach and actor size, including the whole gathering radius.
 // Radius-12 resource neighbourhoods do not overlap. Normal trees deplete after
 // one log for 60..=199 game ticks, so a shared stand cannot prove all ten owners.
 #[cfg(feature = "js")]
 const STANDS: [(i32, i32); 10] = [
-    (3109, 3228),
-    (3175, 3220),
-    (3190, 3253),
-    (3015, 3269),
-    (2993, 3240),
-    (2994, 3201),
-    (3046, 3328),
     (2906, 3375),
     (3293, 3438),
-    (3163, 3471),
+    (2704, 3366),
+    (2496, 3371),
+    (2584, 3230),
+    (3290, 3473),
+    (3304, 3530),
+    (2423, 3146),
+    (3307, 3407),
+    (3078, 3309),
 ];
 
 #[cfg(feature = "js")]
@@ -388,6 +388,7 @@ mod tests {
             return;
         }
         let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let gathering_source = Arc::clone(&selected);
         let input = script::preparation::PreparationInput::new(
             289,
             std::mem::size_of::<Arc<api::game_data::SelectedGameData>>(),
@@ -400,7 +401,7 @@ mod tests {
             script::preparation::PreparationKind::Profile,
             api::identity::Scope::Process,
             input,
-            move |worker| selected.prepare_gathering(worker),
+            move |worker| gathering_source.prepare_gathering(worker),
         )
         .unwrap()
         .join()
@@ -411,9 +412,38 @@ mod tests {
             panic!("normal-tree placements must be known");
         };
         let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
+        let npc_clear = |x: i32, z: i32| {
+            selected
+                .npc_placements()
+                .expect("canonical NPC placements must be known")
+                .rows
+                .iter()
+                .filter(|spawn| spawn.plane == 0)
+                .all(|spawn| {
+                    let npc = selected
+                        .npc_name(spawn.npc_id)
+                        .expect("placed NPC combat facts must be known");
+                    if !npc.ops.iter().any(|op| op == "Attack") {
+                        return true;
+                    }
+                    let clearance = 12
+                        + npc.maxrange.max(npc.wanderrange)
+                        + npc.attackrange.max(npc.huntrange)
+                        + npc.size.max(1);
+                    (spawn.x - x).abs().max((spawn.z - z).abs()) > clearance
+                })
+        };
+        assert!(
+            !npc_clear(3175, 3220),
+            "the old Bear-adjacent stand must fail NPC clearance"
+        );
         for &(x, z) in &STANDS {
             let tile = WorldTile { x, z, level: 0 };
             assert!(world.collision.standable(tile), "tree stand {tile:?}");
+            assert!(
+                npc_clear(x, z),
+                "tree stand {tile:?} overlaps an NPC tether"
+            );
             assert!(
                 spots.iter().any(|spot| {
                     spot.entity == EntityId::Loc(1276)
