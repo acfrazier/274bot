@@ -5,6 +5,7 @@ use host_play::evidence_writer::{
     EvidenceJob, EvidenceRequest, EvidenceSidecar, EvidenceWriter, PngColor,
 };
 use script::native::NativePhase;
+use script::{ScriptLifecycleReceipt, ScriptTerminalState};
 use std::io::Write;
 use std::sync::Mutex;
 use vault::{Profile, ProfileSettings};
@@ -76,6 +77,39 @@ impl Sample {
     }
 }
 
+// Native Complete status is destroyed with the compiled instance in the same
+// poll. The lifecycle receipt survives that teardown and fences this Start.
+fn native_run_completed(receipt: Option<&ScriptLifecycleReceipt>, generation: Option<u64>) -> bool {
+    receipt.is_some_and(|receipt| {
+        Some(receipt.runtime_generation) == generation
+            && receipt.state == ScriptTerminalState::Completed
+    })
+}
+
+#[test]
+fn native_completion_requires_matching_completed_lifecycle_receipt() {
+    assert!(!native_run_completed(None, Some(7)));
+    for terminal in [
+        ScriptTerminalState::Stopped,
+        ScriptTerminalState::Completed,
+        ScriptTerminalState::Failed,
+        ScriptTerminalState::Cancelled,
+    ] {
+        let receipt = ScriptLifecycleReceipt {
+            runtime_generation: 7,
+            state: terminal,
+            tick: 803,
+            reason: "native terminal".into(),
+        };
+        assert_eq!(
+            native_run_completed(Some(&receipt), Some(7)),
+            terminal == ScriptTerminalState::Completed
+        );
+        assert!(!native_run_completed(Some(&receipt), Some(8)));
+        assert!(!native_run_completed(Some(&receipt), None));
+    }
+}
+
 struct Witness {
     snapshot: GameSnapshot,
     pump: Pump,
@@ -94,6 +128,7 @@ struct Witness {
     baseline: Option<Sample>,
     latest: Option<Sample>,
     product_captured: bool,
+    native_complete: bool,
     error: Option<String>,
 }
 
@@ -192,7 +227,9 @@ impl Witness {
             ("getvar cookquest", "get cookquest: 2"),
             ("getvar qp", "get qp: 1"),
         ];
-        if self.read_index < readbacks.len() && (self.read_index < 2 || self.product_captured) {
+        if self.read_index < readbacks.len()
+            && (self.read_index < 2 || (self.product_captured && self.native_complete))
+        {
             let (command, expected) = readbacks[self.read_index];
             if let Some(before) = self.pending_read {
                 if sample
@@ -259,6 +296,7 @@ fn quester_377_cook_native() -> Result<(), String> {
         baseline: None,
         latest: None,
         product_captured: false,
+        native_complete: false,
         error: None,
     }));
     let frame_state = Arc::clone(&state);
@@ -295,6 +333,8 @@ fn quester_377_cook_native() -> Result<(), String> {
     let mut started = false;
     let mut complete = false;
     let mut last_status = String::new();
+    let mut run_generation = None;
+    let mut completion = None;
     let result = (|| loop {
         if Path::new("/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock").exists() {
             return Err("MAC-QUIET.lock appeared".into());
@@ -303,6 +343,7 @@ fn quester_377_cook_native() -> Result<(), String> {
             return Err(format!("native Quester lifecycle: {error}"));
         }
         let status = play.script_native_status(&account);
+        let lifecycle = play.script_lifecycle_receipt(&account);
         let mut state = state.lock().map_err(|_| "377 Quester witness poisoned")?;
         if let Some(error) = &state.error {
             return Err(error.clone());
@@ -335,14 +376,25 @@ fn quester_377_cook_native() -> Result<(), String> {
             if status.phase == NativePhase::Blocked || status.failure.is_some() {
                 return Err(format!("native Quester failed: {status:?}"));
             }
-            complete |= status.phase == NativePhase::Complete;
+            run_generation.get_or_insert(status.run.run);
+        }
+        if !complete && native_run_completed(lifecycle.as_ref(), run_generation) {
+            let receipt = lifecycle.expect("matching native completion receipt");
+            state.record(json!({"phase":"native lifecycle", "receipt":receipt}))?;
+            println!(
+                "{}",
+                json!({"account":account, "phase":"native lifecycle", "receipt":receipt})
+            );
+            completion = Some(receipt);
+            complete = true;
+            state.native_complete = true;
         }
         if complete && state.product_captured && state.read_index == 4 {
-            let event = json!({"outcome":"PASS", "account":account, "native_complete":complete, "baseline":state.baseline, "latest":state.latest});
+            let event = json!({"outcome":"PASS", "account":account, "native_complete":complete, "native_lifecycle":completion, "baseline":state.baseline, "latest":state.latest});
             state.record(event)?;
             println!(
                 "{}",
-                json!({"outcome":"PASS", "test":"quester_377_cook_native", "account":account, "native_complete":complete, "latest":state.latest})
+                json!({"outcome":"PASS", "test":"quester_377_cook_native", "account":account, "native_complete":complete, "native_lifecycle":completion, "latest":state.latest})
             );
             return Ok(());
         }
