@@ -1181,12 +1181,21 @@ impl GameSnapshot {
     /// gate leaves nav reading the previous build's door or flax.
     pub(super) fn rebuild_loc(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.loc_gen);
+        let morph_changed = client.revision() == client::io::ClientRevision::R377
+            && track(client.gens.varp, &mut self.loc_varp_gen);
         let standalone = self.loc_bits_prelude.is_none();
         let (stamp, static_gen) = self.loc_bits(client);
-        if !moved && stamp == self.loc_model_stamp && static_gen == self.loc_static_gen {
+        if !moved
+            && !morph_changed
+            && stamp == self.loc_model_stamp
+            && static_gen == self.loc_static_gen
+        {
             return false;
         }
-        let dirty = moved || stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
+        let dirty = moved
+            || morph_changed
+            || stamp != self.loc_model_stamp
+            || static_gen != self.loc_static_gen;
         self.loc_model_stamp = stamp;
         self.loc_static_gen = static_gen;
         if standalone && client.ingame && client.scene_state == 2 {
@@ -1210,7 +1219,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(sprite) = client.world.get_scene(level, sx, sz) {
@@ -1223,7 +1232,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(gd) = client.world.get_gd(level, sx, sz) {
@@ -1236,7 +1245,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(decor) = client.world.get_decor(level, sx, sz) {
@@ -1249,7 +1258,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
             }
@@ -1550,7 +1559,7 @@ fn loc_view(
     sx: i32,
     sz: i32,
     local_tile: Option<(i32, i32)>,
-    cache: &Cache,
+    client: &Client,
 ) -> LocView {
     let id = (typecode >> 14) & 0x7fff;
     let shape = info & 0x1f;
@@ -1570,7 +1579,11 @@ fn loc_view(
         map_function,
         map_scene,
         force_approach,
-    ) = match cache.locs.get(id as usize) {
+    ) = match if client.revision() == client::io::ClientRevision::R377 {
+        client.cache.resolve_loc(id as usize, &client.var)
+    } else {
+        client.cache.locs.get(id as usize)
+    } {
         Some(loc) => (
             (!loc.name.is_empty()).then(|| loc.name.clone()),
             (!loc.desc.is_empty()).then(|| loc.desc.clone()),
