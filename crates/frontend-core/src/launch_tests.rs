@@ -1,5 +1,29 @@
 //! Profile preparation on the shared worker and vault passphrases.
 
+#[test]
+fn opaque_unlock_error_keeps_its_borrowed_vault_cause() {
+    let error = super::UnlockError::from_vault(vault::VaultError::WrongPassphrase);
+    assert_eq!(error.stage(), super::UnlockStage::Vault);
+    assert!(matches!(
+        error.vault_error(),
+        Some(vault::VaultError::WrongPassphrase)
+    ));
+    assert_eq!(
+        error.to_string(),
+        vault::VaultError::WrongPassphrase.to_string()
+    );
+    assert!(std::error::Error::source(&error).is_some());
+}
+
+#[test]
+fn opaque_unlock_error_keeps_the_operation_message_and_stage() {
+    let error = super::UnlockError::new(super::UnlockStage::Launch, "launch refused".to_owned());
+    assert_eq!(error.stage(), super::UnlockStage::Launch);
+    assert_eq!(error.to_string(), "launch refused");
+    assert!(error.vault_error().is_none());
+    assert!(std::error::Error::source(&error).is_none());
+}
+
 const PROFILE_PREPARATION_CHILD: &str = "FRONTEND_CORE_PROFILE_PREPARATION_TEST_CHILD";
 
 /// The child's exact filter: the full test path that runs the checks.

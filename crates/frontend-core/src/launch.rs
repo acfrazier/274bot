@@ -1427,9 +1427,13 @@ pub enum UnlockStage {
     Launch,
 }
 
-/// Why an unlock failed.
+/// Why an unlock failed. Owned diagnostics stay behind this seam.
 #[derive(Debug, thiserror::Error)]
-pub enum UnlockError {
+#[error(transparent)]
+pub struct UnlockError(UnlockErrorKind);
+
+#[derive(Debug, thiserror::Error)]
+enum UnlockErrorKind {
     /// The vault could not be opened or created.
     #[error("{source}")]
     Vault {
@@ -1443,26 +1447,26 @@ pub enum UnlockError {
 
 impl UnlockError {
     pub(crate) fn new(stage: UnlockStage, message: String) -> Self {
-        Self::Operation { stage, message }
+        Self(UnlockErrorKind::Operation { stage, message })
     }
 
     pub(crate) fn from_vault(source: vault::VaultError) -> Self {
-        Self::Vault { source }
+        Self(UnlockErrorKind::Vault { source })
     }
 
     /// The vault error when the unlock failed while opening or creating it.
     pub fn vault_error(&self) -> Option<&vault::VaultError> {
-        match self {
-            Self::Vault { source } => Some(source),
-            Self::Operation { .. } => None,
+        match &self.0 {
+            UnlockErrorKind::Vault { source } => Some(source),
+            UnlockErrorKind::Operation { .. } => None,
         }
     }
 
     /// The step that failed.
     pub fn stage(&self) -> UnlockStage {
-        match self {
-            Self::Vault { .. } => UnlockStage::Vault,
-            Self::Operation { stage, .. } => *stage,
+        match &self.0 {
+            UnlockErrorKind::Vault { .. } => UnlockStage::Vault,
+            UnlockErrorKind::Operation { stage, .. } => *stage,
         }
     }
 }

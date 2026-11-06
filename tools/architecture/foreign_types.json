@@ -2,6 +2,11 @@
   "schema_version": 1,
   "foreign_types": [
     {
+      "path": "serde_json::Error",
+      "classification": "owning",
+      "reason": "JSON decoder error, not a navigation or client type; it owns its diagnostic state and is not Copy."
+    },
+    {
       "path": "std::io::Error",
       "classification": "owning",
       "reason": "Standard-library I/O error, not a navigation or client type; it owns its error payload and is not Copy (Main 2026-11-05)."
