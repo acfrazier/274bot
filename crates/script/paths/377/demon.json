@@ -1,0 +1,433 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "demon",
+  "display_name": "Demon Slayer",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 3,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "sewer": {
+        "boxes": [[3200, 9856, 3263, 9919, 0]],
+        "source": "maps/m50_154.jm2; quests/quest_demon/scripts/demon_slayer.rs2:39 (obj_add 0_50_154_25_41)"
+      }
+    },
+    "tools": [
+      "obj:coins",
+      "obj:bones",
+      "obj:bucket_empty",
+      "obj:bucket_water",
+      "obj:silverlight_key_1",
+      "obj:silverlight_key_2",
+      "obj:silverlight_key_3",
+      "obj:silverlight"
+    ],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:demon",
+      "progress": {
+        "colour": { "not_started": "demon:0", "in_progress": "demon:1", "complete": "demon:30" },
+        "rules": [],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "demon:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "take-gypsy-coin",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": ["goblin_unarmed_melee_1", "goblin_unarmed_melee_2", "goblin_unarmed_melee_3", "goblin_unarmed_melee_4", "goblin_unarmed_melee_5", "goblin_unarmed_melee_6", "goblin_unarmed_melee_7"],
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true },
+                "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713; drop_tables/scripts/goblin.rs2. Palace coins m50_54.jm2:12022-12023 have no route from Lumbridge on 274bot-377-v17. gypsy.rs2:151-154 deletes 1 coin." },
+                "area": { "box": [3138, 3224, 3152, 3264, 0], "source": "maps/m49_50.jm2:6702-6713" },
+                "lost_radius": 16,
+                "kill_budget_ticks": 120,
+                "loadout": null,
+                "loot": [{ "obj": "coins", "qty": 1 }],
+                "until": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 1 } } }
+              },
+              "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 1 } } },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 1 } } }
+            },
+            {
+              "id": "start-aris",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "aris",
+                "anchor": { "tile": [3203, 3424, 0], "source": "maps/m50_53.jm2:12928 (NPC 882); gypsy.rs2:79,151,200-214,238" },
+                "leash": 6,
+                "prefer": [
+                  "Ok, here you go.",
+                  "Okay, where is he? I'll kill him for you!",
+                  "Okay, thanks. I'll do my best to stop the demon."
+                ]
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "demon", "any": ["demon:1"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "demon:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-prysin",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "sir_prysin",
+                "anchor": { "tile": [3204, 3473, 0], "source": "maps/m50_54.jm2:11979 (NPC 883); sir_prysin.rs2:111-121,248-250" },
+                "leash": 6,
+                "prefer": [
+                  "Gypsy Aris said I should come and talk to you.",
+                  "Well I'd better go key hunting."
+                ]
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_1" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_2" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } }
+              ] },
+              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, goodbye.", "i managed to drop the key in the drain", "prysin hands you an impressive looking sword"] } } }
+            },
+            {
+              "id": "ask-traiborn",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "traiborn",
+                "anchor": { "tile": [3112, 3162, 1], "source": "maps/m48_49.jm2:7001 (NPC 881); stairs.rs2:1175-1201 fai_wiztower_spiralstairs priced; traiborn.rs2:34-38,51-52,122-136" },
+                "leash": 8,
+                "prefer": [
+                  "I need to get a key given to you by Sir Prysin.",
+                  "Well, have you got any keys knocking around?",
+                  "I'll get the bones for you."
+                ]
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_1" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } }
+              ] },
+              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["i'll speak to you when i've got some bones", "never mind. keep working on it", "you give traiborn a set of bones", "traiborn hands you a key"] } } }
+            },
+            {
+              "id": "collect-25-bones",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": [
+                    "goblin_unarmed_melee_1",
+                    "goblin_unarmed_melee_2",
+                    "goblin_unarmed_melee_3",
+                    "goblin_unarmed_melee_4",
+                    "goblin_unarmed_melee_5",
+                    "goblin_unarmed_melee_6",
+                    "goblin_unarmed_melee_7"
+                  ],
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true },
+                "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6707-6712 (goblin_unarmed_melee_* 3143-3146,3227-3234); drop_tables/scripts/goblin.rs2:5-11,30-32 death_drop bones" },
+                "area": { "box": [3138, 3224, 3152, 3264, 0], "source": "maps/m49_50.jm2:6702-6713; box stays east of x=3135" },
+                "lost_radius": 16,
+                "kill_budget_ticks": 120,
+                "loadout": null,
+                "loot": [{ "obj": "bones", "qty": 25 }],
+                "until": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bones", "qty": 25 } } }
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_1" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bones", "qty": 25 } } }
+              ] },
+              "settle": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_1" } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "bones", "qty": 25 } } }
+              ] }
+            },
+            {
+              "id": "give-traiborn-bones",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "traiborn",
+                "anchor": { "tile": [3112, 3162, 1], "source": "traiborn.rs2:10-32,191-209" },
+                "leash": 8,
+                "prefer": ["I'll get the bones for you."]
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_1" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_1" } } }
+            },
+            {
+              "id": "rovin-key",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "captain_rovin",
+                "anchor": { "tile": [3204, 3496, 2], "source": "maps/m50_54.jm2:12009 (NPC 884 plane 2); stairs.rs2:195,238 scenery_1738/1739 priced; captain_rovin.rs2:57-61,28-45" },
+                "leash": 6,
+                "prefer": [
+                  "Yes I know, but this is important.",
+                  "There's a demon who wants to invade this city."
+                ]
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_2" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_2" } } }
+            },
+            {
+              "id": "take-palace-bucket",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "ground": "bucket_empty" },
+                "op": "Take",
+                "anchor": { "tile": [3222, 3491, 1], "source": "maps/m50_54.jm2:12025 (OBJ 1925 at 1 22 35); stairs.rs2:11 scenery stairs 1722 at 3212,3473 climbs to floor 1" },
+                "radius": 3,
+                "wait_if_missing": true
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
+              ] },
+              "settle": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
+              ] }
+            },
+            {
+              "id": "fill-bucket",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "bucket_empty",
+                "target": { "loc": "sink2" },
+                "anchor": { "tile": [3224, 3494, 0], "source": "maps/m50_54.jm2:7949 (LOC 874); water_sources.rs2:63-84 category watersource" },
+                "radius": 3,
+                "product": "bucket_water"
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
+            },
+            {
+              "id": "wash-key-down-drain",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "bucket_water",
+                "target": { "loc": "questdrain" },
+                "anchor": { "tile": [3225, 3495, 0], "source": "maps/m50_54.jm2:8021 (LOC 2843); demon_slayer.rs2:23-39" },
+                "radius": 3,
+                "product": "bucket_empty",
+                "settle_ms": 10000
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
+                { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } }
+              ] },
+              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["i think i've washed the key down to the sewer"] } } }
+            },
+            {
+              "id": "open-manhole",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "manholeclosed" },
+                "op": "Open",
+                "anchor": { "tile": [3237, 3458, 0], "source": "maps/m50_54.jm2:8588 (LOC 881); manholes.rs2:1-5; all.loc op1=Open" },
+                "radius": 3,
+                "wait_if_missing": true
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
+                { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } },
+                { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "manholeopen" } } }
+              ] },
+              "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "manholeopen" } } }
+            },
+            {
+              "id": "climb-down-manhole",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "manholeopen" },
+                "op": "Climb down",
+                "anchor": { "tile": [3237, 3458, 0], "source": "manholes.rs2:8-9 p_telejump z+6400; all.loc op1=Climb down. Not a priced nav name (nav-bake transport.rs EXTRA_TICKS has no manholeopen); this step sends the op itself." },
+                "radius": 3,
+                "wait_if_missing": true,
+                "settle_ms": 10000
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
+                { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } }
+              ] },
+              "settle": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } }
+            },
+            {
+              "id": "walk-to-sewer-key",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [3225, 9897, 0],
+                "source": "demon_slayer.rs2:39 obj_add 0_50_154_25_41",
+                "radius": 1,
+                "cross": [
+                  "giantspider2@3220,9888,0",
+                  "giantspider2@3217,9889,0",
+                  "giantspider2@3217,9886,0",
+                  "zombie_armed@3226,9903,0",
+                  "zombie_armed@3224,9906,0",
+                  "zombie_armed@3230,9903,0",
+                  "zombie_armed@3230,9906,0"
+                ]
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
+                { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3225, 9897, 0], "radius": 2 } } }
+              ] },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3225, 9897, 0], "radius": 2 } } }
+            },
+            {
+              "id": "take-sewer-key",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "ground": "silverlight_key_3" },
+                "op": "Take",
+                "anchor": { "tile": [3225, 9897, 0], "source": "demon_slayer.rs2:39; maps/m50_154.jm2 has no placed key, the pour spawns it" },
+                "radius": 3,
+                "wait_if_missing": true
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } }
+            },
+            {
+              "id": "climb-out-of-sewer",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "ladder_1755" },
+                "op": "Climb-up",
+                "anchor": { "tile": [3237, 9858, 0], "source": "maps/m50_154.jm2:7911 (LOC 1755); ladders.rs2:90-97 z-6400; all.loc op1=Climb-up. 377 has no ladder_from_cellar." },
+                "radius": 3,
+                "wait_if_missing": true,
+                "settle_ms": 10000
+              },
+              "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } } },
+              "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } } }
+            },
+            {
+              "id": "receive-silverlight",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "sir_prysin",
+                "anchor": { "tile": [3204, 3473, 0], "source": "sir_prysin.rs2:35-36,64-76" },
+                "leash": 6,
+                "prefer": ["I'm still looking."]
+              },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } }
+            },
+            {
+              "id": "wield-silverlight",
+              "kind": "equip",
+              "version": 1,
+              "advances": false,
+              "args": { "obj": "silverlight" },
+              "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "silverlight" } } },
+              "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "silverlight" } } }
+            },
+            {
+              "id": "banish-delrith",
+              "kind": "combat",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "npc": "delrith", "not_targeting_others": true, "pick": "nearest" },
+                "tactic": { "kind": "open", "style": "melee", "engage_radius": 10, "auto_retaliate": true },
+                "stand": { "tile": [3229, 3372, 0], "source": "maps/m50_52.jm2:8272 (NPC 879 at 3229,3370); npc_combat.rs2:172-181 requires Silverlight worn" },
+                "lost_radius": 12,
+                "kill_budget_ticks": 200,
+                "loadout": null,
+                "finish": {
+                  "npc": "delrith_weakened",
+                  "prefer": ["Carlem Aber Camerinthum Purchai Gabindo"],
+                  "strict": true,
+                  "max_ticks": 100
+                }
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "demon", "is": "complete" } } }
+            }
+          ]
+        },
+        { "stage": "demon:30", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+      ]
+    }
+  ]
+}
