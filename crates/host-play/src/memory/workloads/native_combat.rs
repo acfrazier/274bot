@@ -519,10 +519,13 @@ impl FeatureCase for NativeNpcCombat {
                 });
             member.engaged_index = status.as_ref().and_then(|status| {
                 status.fields.iter().find_map(|field| {
-                    (field.key == "engaged_index").then(|| match &field.value {
+                    if field.key != "engaged_index" {
+                        return None;
+                    }
+                    match &field.value {
                         script::native::StatusValue::Integer(index) if *index >= 0 => Some(*index),
                         _ => None,
-                    })?
+                    }
                 })
             });
 

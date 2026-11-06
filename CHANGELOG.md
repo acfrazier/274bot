@@ -64,6 +64,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   in both phases. Every active account needs native ownership and fresh combat
   XP. Both finite-site workloads accept only the single-account pilot and
   ten-account fleet.
+  Combat status decoding keeps its field and integer checks without an
+  unnecessary lazy wrapper.
 
 ### Fixed during development
 
