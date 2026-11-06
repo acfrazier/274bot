@@ -1280,13 +1280,14 @@ cells = [
   "tui.draft-picker-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib script_params::tests::draft_picks_and_priorities_are_refused_by_the_real_tui_picker -- --exact --nocapture --test-threads=1|--locked -p tui --lib script_params::tests::draft_picks_and_priorities_are_refused_by_the_real_tui_picker -- --exact",
 ]
 
-# BATCH-P: controlled memory-profile contracts, not live capacity measurements.
+# Controlled memory-profile contracts, not gameplay or capacity measurements.
+# W6 workload modules also require their separate candidate-only lab lanes.
 [[cover]]
-globs = ["crates/frontend-core/src/bench.rs", "crates/host-play/src/memory.rs", "crates/host-play/src/memory_diagnostics.rs"]
+globs = ["crates/frontend-core/src/bench.rs", "crates/host-play/src/memory.rs", "crates/host-play/src/memory/**", "crates/host-play/src/memory_diagnostics.rs"]
 cells = [
   "panel.memory-profile-exit-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --features memory-profile --lib app::tests::failed_memory_run_retires_play_before_the_gpu_window_is_released -- --exact --nocapture --test-threads=1|--locked -p panel --features memory-profile --lib app::tests::failed_memory_run_retires_play_before_the_gpu_window_is_released -- --exact",
   "panel.memory-profile-scatter-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --features memory-profile --lib session::tests::memory_stress_policies_keep_seed_placement_by_workload -- --exact --nocapture --test-threads=1|--locked -p panel --features memory-profile --lib session::tests::memory_stress_policies_keep_seed_placement_by_workload -- --exact",
-  "host.memory-profile-contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --lib memory::tests:: -- --nocapture --test-threads=1|--locked -p host-play --features memory-profile --lib memory::tests::",
+  "host.memory-profile-contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --lib memory:: -- --nocapture --test-threads=1|--locked -p host-play --features memory-profile --lib memory::",
 ]
 
 [[cover]]

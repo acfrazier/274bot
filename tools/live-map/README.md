@@ -628,6 +628,14 @@ running clients. The Chicken bank boundary and the twelve
 `scenario.chicken-killer-bank-live` command must prove real combat, fresh
 loot and deposit, return, and further work.
 
+The W6 memory workload modules share the controlled memory contract selector.
+It covers scenario names, paired counts, explicit unused controls and field types.
+It is not the gameplay or memory proof for those workloads. The separate
+candidate-only lab lanes must exercise the real Priest page, object caches,
+native trade, native API owner and repeated routing. The existing V8 unit test
+provides the fast-properties invariant. The measured binary keeps shipped V8
+settings and does not query intrinsics.
+
 `scenario.boat-fare-retry-live` runs the same three real cases in order:
 `boat_fare_v1_ts`, `boat_fare_far_start_v1_ts`, and
 `boat_fare_reconnect_v1_ts`. Each uses the caller's explicit engine, pack and
