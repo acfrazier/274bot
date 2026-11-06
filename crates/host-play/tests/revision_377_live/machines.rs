@@ -282,6 +282,7 @@ struct Outcome {
     combat: Option<CombatReport>,
     loot_taken: bool,
     walk: Option<WalkReceipt>,
+    assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
     error: Option<String>,
 }
 
@@ -333,6 +334,8 @@ impl Script for FightScript {
 
 struct SurvivalScript {
     started: bool,
+    advisory: bool,
+    advisory_id: Option<u64>,
     walk: Option<ActionHandle<Walk>>,
     outcome: Arc<Mutex<Outcome>>,
 }
@@ -341,32 +344,45 @@ impl Script for SurvivalScript {
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         let result = (|| -> Result<(), script::native::ActionError> {
             if !self.started {
-                self.started = true;
-                self.walk = Some(tick.actions.begin::<Walk>(
-                    WalkRequest {
-                        target: WorldTile {
-                            x: 3218,
-                            z: 3245,
-                            level: 0,
-                        },
-                        candidate_goals: None,
-                        loc_id: None,
-                        radius: 0,
-                        arrival: nav_planner::arrival::ArrivalKind::Area,
-                        options: Default::default(),
-                        required_after: tick.cx.evidence(),
-                        evidence: None,
-                        cross: Box::default(),
-                        protect: false,
-                        food_guard: true,
-                        allow: script::native::WalkAllow {
-                            prayer: false,
-                            food: true,
-                            escape: false,
-                        },
+                let request = WalkRequest {
+                    target: WorldTile {
+                        x: 3218,
+                        z: 3245,
+                        level: 0,
                     },
-                    &mut tick.cx,
-                )?);
+                    candidate_goals: None,
+                    loc_id: None,
+                    radius: 0,
+                    arrival: nav_planner::arrival::ArrivalKind::Area,
+                    options: Default::default(),
+                    required_after: tick.cx.evidence(),
+                    evidence: None,
+                    cross: Box::default(),
+                    protect: false,
+                    food_guard: true,
+                    allow: script::native::WalkAllow {
+                        prayer: false,
+                        food: true,
+                        escape: false,
+                    },
+                };
+                if self.advisory {
+                    let Some(id) = self.advisory_id else {
+                        self.advisory_id = Some(tick.actions.assess_walk(request, &mut tick.cx)?);
+                        return Ok(());
+                    };
+                    let Some(receipt) = tick.actions.take_assess_receipt(&mut tick.cx, id) else {
+                        return Ok(());
+                    };
+                    if receipt.refusal.is_some() {
+                        self.outcome.lock().unwrap().error =
+                            Some(format!("route admission refused: {receipt:?}"));
+                        return Ok(());
+                    }
+                    self.outcome.lock().unwrap().assessment = receipt.assessment;
+                }
+                self.started = true;
+                self.walk = Some(tick.actions.begin::<Walk>(request, &mut tick.cx)?);
             }
             if let Some(handle) = &self.walk {
                 if let Poll::Ready(receipt) = tick.actions.poll(handle, &mut tick.cx) {
@@ -558,12 +574,10 @@ fn proved(case: Case, baseline: &Sample, sample: &Sample, outcome: &Outcome, imm
         }
         Case::Admission => {
             outcome.walk.as_ref().is_some_and(|receipt| {
-                receipt.refusal.is_none()
-                    && receipt.end == script::native::WalkEnd::Arrived
-                    && receipt.assessment.as_ref().is_some_and(|assessment| {
-                        !assessment.input.missing_facts
-                            && assessment.input.food_iter().any(|(_, count)| count == 5)
-                    })
+                receipt.refusal.is_none() && receipt.end == script::native::WalkEnd::Arrived
+            }) && outcome.assessment.as_ref().is_some_and(|assessment| {
+                !assessment.input.missing_facts
+                    && assessment.input.food_iter().any(|(_, count)| count == 5)
             }) && sample.tile == Some((3218, 3245, 0))
                 && sample.food == baseline.food
         }
@@ -699,6 +713,8 @@ fn run(case: Case) -> Result<(), String> {
         })),
         Case::Eat | Case::Cure | Case::Admission => Some(Box::new(SurvivalScript {
             started: false,
+            advisory: matches!(case, Case::Admission),
+            advisory_id: None,
             walk: None,
             outcome: Arc::clone(&outcome),
         })),
@@ -778,6 +794,10 @@ fn run(case: Case) -> Result<(), String> {
             if started && proved(case, baseline, sample, &outcome, immune) && !state.captured {
                 let witness = json!({"phase":"machine-witness", "case":case.name(), "account":account,
                     "baseline":baseline, "latest":sample, "combat":outcome.combat,
+                    "advisory":outcome.assessment.as_ref().map(|assessment| json!({
+                        "food":assessment.input.food_iter().collect::<Vec<_>>(),
+                        "missing_facts":assessment.input.missing_facts,
+                        "verdict":format!("{:?}",assessment.verdict)})),
                     "loot_taken":outcome.loot_taken, "walk":format!("{:?}",outcome.walk), "condition":format!("{condition:?}")});
                 println!("{witness}");
                 state.witness = Some(witness);
@@ -905,6 +925,91 @@ fn oracle_baseline(case: Case) -> Sample {
         weapon: 1,
         ..Default::default()
     }
+}
+
+#[test]
+fn admission_witness_requires_advisory_food_and_successful_native_arrival() {
+    let baseline = oracle_baseline(Case::Admission);
+    let mut sample = baseline.clone();
+    sample.tick += 1;
+    sample.tile = Some((3218, 3245, 0));
+    let mut input = host_play::admission::RiskInput {
+        missing_facts: false,
+        food_len: 1,
+        ..Default::default()
+    };
+    input.food_ids[0] = Facts::selected(
+        &api::game_data::for_revision(ClientRevision::R377).unwrap(),
+        Case::Admission,
+    )
+    .unwrap()
+    .food;
+    input.food_counts[0] = 5;
+    let mut outcome = Outcome {
+        walk: Some(WalkReceipt {
+            request_id: 1,
+            evidence: api::quest_progress::EvidenceStamp {
+                run: api::selected::RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 2,
+                sequence: 2,
+            },
+            goal: None,
+            end: script::native::WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
+        }),
+        ..Default::default()
+    };
+    assert!(!proved(
+        Case::Admission,
+        &baseline,
+        &sample,
+        &outcome,
+        false
+    ));
+    outcome.assessment = Some(Arc::new(script::combat::risk::RouteAssessment {
+        verdict: script::combat::risk::Verdict::Survivable,
+        plan: Default::default(),
+        crossings: Box::default(),
+        more: 0,
+        supplies: Box::default(),
+        hp_after: 40,
+        volley: 0,
+        input,
+        generation: 1,
+        reason: Arc::from("known advisory input"),
+    }));
+    assert!(proved(Case::Admission, &baseline, &sample, &outcome, false));
+    Arc::get_mut(outcome.assessment.as_mut().unwrap())
+        .unwrap()
+        .input
+        .missing_facts = true;
+    assert!(!proved(
+        Case::Admission,
+        &baseline,
+        &sample,
+        &outcome,
+        false
+    ));
+    Arc::get_mut(outcome.assessment.as_mut().unwrap())
+        .unwrap()
+        .input
+        .missing_facts = false;
+    outcome.walk.as_mut().unwrap().end = script::native::WalkEnd::NoPath;
+    assert!(!proved(
+        Case::Admission,
+        &baseline,
+        &sample,
+        &outcome,
+        false
+    ));
 }
 
 #[test]

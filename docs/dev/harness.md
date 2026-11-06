@@ -715,7 +715,8 @@ All account fixtures finish before the native machine starts:
 
 - Route admission receives five cooked chompy foods and Hitpoints 40.
   Capture must retain all five foods without missing facts.
-  A native walk must arrive at (3218,3245,0) and retain a known assessment.
+  An advisory must retain a known assessment with those foods.
+  A native walk must then arrive at (3218,3245,0).
   This food is absent from the legacy revision-289 combat table.
 - Cow combat receives Attack, Strength, Defence and Hitpoints 40, one bronze
   sword, and five lobsters. It starts inside the real Lumbridge cow pasture.
