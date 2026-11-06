@@ -186,6 +186,18 @@ pub(crate) type TerminalHook = Arc<dyn Fn(&str) + Send + Sync>;
 #[cfg(test)]
 pub(crate) type NoticeHook = Arc<dyn Fn(Level, &str) + Send + Sync>;
 
+fn emit_local_notice(
+    level: Level,
+    line: std::fmt::Arguments<'_>,
+    #[cfg(test)] hook: Option<&NoticeHook>,
+) {
+    host_log!(Category::Lifecycle, level, "{line}");
+    #[cfg(test)]
+    if let Some(hook) = hook {
+        hook(level, &line.to_string());
+    }
+}
+
 /// What one `Play` composes for its slots (§21 §4.2): the process service,
 /// the launch profile's namespace every account keys under, and the
 /// content scope observations are made under. Absent for the legacy
@@ -417,6 +429,8 @@ struct Hooks {
     terminal: Option<TerminalHook>,
     #[cfg(test)]
     notice: Option<NoticeHook>,
+    #[cfg(test)]
+    read_refusal: Option<NoticeHook>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1999,12 +2013,15 @@ impl State {
                 }
             }
             Err(error) => {
-                host_log!(
-                    Category::Lifecycle,
+                emit_local_notice(
                     Level::Warn,
-                    "local state: {domain} file refused path={}: {error}; it is neither leased \
-                     nor written until it reads cleanly",
-                    path.display()
+                    format_args!(
+                        "local state: {domain} file refused path={}: {error}; it is neither leased \
+                         nor written until it reads cleanly",
+                        path.display()
+                    ),
+                    #[cfg(test)]
+                    self.hooks.read_refusal.as_ref(),
                 );
                 FileState::Rejected(Rejection {
                     reason: error.reason(),
@@ -2775,7 +2792,7 @@ impl Shared {
                 Err(error) => {
                     self.notice(
                         Level::Warn,
-                        format!(
+                        format_args!(
                             "local state: preferences file is malformed but its lock was not \
                              taken ({error:?}); it is left as it is path={}",
                             path.display()
@@ -2791,7 +2808,7 @@ impl Shared {
             Err(error) => {
                 self.notice(
                     Level::Warn,
-                    format!(
+                    format_args!(
                         "local state: preferences file is malformed but could not be moved aside: \
                          {error}; it is left as it is path={}",
                         path.display()
@@ -2842,7 +2859,7 @@ impl Shared {
         })?;
         self.notice(
             Level::Warn,
-            format!(
+            format_args!(
                 "local state: preferences file {} was not valid preferences JSON; its bytes are \
                  kept in {} and fresh preferences were started",
                 path.display(),
@@ -2851,7 +2868,7 @@ impl Shared {
         );
         self.notice(
             Level::Info,
-            format!(
+            format_args!(
                 "audit domain={} action=preferences-quarantine path={} quarantined={} at={}",
                 LocalStateDomain::Preferences,
                 path.display(),
@@ -2864,15 +2881,15 @@ impl Shared {
 
     /// Log one line of a repair (the operator's notice, the audit line, or
     /// why the repair could not be made), and hand it to a test's hook.
-    fn notice(&self, level: Level, line: String) {
-        host_log!(Category::Lifecycle, level, "{line}");
+    fn notice(&self, level: Level, line: std::fmt::Arguments<'_>) {
         #[cfg(test)]
-        {
-            let hook = self.state.lock().hooks.notice.clone();
-            if let Some(hook) = hook {
-                hook(level, &line);
-            }
-        }
+        let hook = self.state.lock().hooks.notice.clone();
+        emit_local_notice(
+            level,
+            line,
+            #[cfg(test)]
+            hook.as_ref(),
+        );
     }
 
     /// One write, as one transaction under the file's [`files::WriteLock`]:

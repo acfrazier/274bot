@@ -2510,8 +2510,33 @@ fn a_rename_edit_replaces_its_row_in_place_or_is_refused_whole() {
     assert_eq!(audits.lock().unwrap().len(), 1);
 }
 
+type NoticeLines = Arc<std::sync::Mutex<Vec<(Level, String)>>>;
+
+fn loadouts_service_with_notices(
+    scratch: &IsolatedEnv,
+) -> (Arc<LocalStateService>, NoticeLines) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let state = State {
+        hooks: Hooks {
+            read_refusal: Some(Arc::new(move |level, line| {
+                sink.lock().unwrap().push((level, line.to_string()));
+            })),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let service = LocalStateService::open_with_state(
+        StateRoot::new(scratch.home.join(".274bot")),
+        &[LocalStateDomain::LoadoutsReferences],
+        Arc::new(RequestIdMinter::new()),
+        state,
+    );
+    (service, seen)
+}
+
 /// Preference recovery notices emitted through the service's test-only hook.
-fn quarantine_lines(service: &LocalStateService) -> Arc<std::sync::Mutex<Vec<(Level, String)>>> {
+fn quarantine_lines(service: &LocalStateService) -> NoticeLines {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
     service.set_notice_hook(Arc::new(move |level, line| {
@@ -2827,13 +2852,15 @@ fn preferences_refused_for_permissions_are_never_quarantined() {
 }
 
 /// A refused loadouts file stays byte-for-byte intact and is never renamed,
-/// quarantined, leased or written. Its warning uses the Lifecycle host-log
-/// route, not the preferences-recovery notice hook.
+/// quarantined, leased or written. The refusal hook is installed before eager
+/// hydration starts, at the same boundary as the Lifecycle warning.
 fn assert_loadouts_refused_and_untouched(
     service: &LocalStateService,
     path: &std::path::Path,
     bytes: &[u8],
+    notices: &std::sync::Mutex<Vec<(Level, String)>>,
     reason: FailureReason,
+    message: &str,
 ) {
     let refused = ErrorCode::Failed {
         domain: LocalStateDomain::LoadoutsReferences,
@@ -2849,6 +2876,13 @@ fn assert_loadouts_refused_and_untouched(
     let _ = service.readback_lease(&identity, WAIT);
     assert_eq!(std::fs::read(path).unwrap(), bytes);
     assert_eq!(siblings(path), ["loadouts.json"]);
+    let lines = notices.lock().unwrap().clone();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0].0, Level::Warn, "{lines:?}");
+    assert!(
+        lines[0].1.contains(&path.display().to_string()) && lines[0].1.contains(message),
+        "{lines:?}"
+    );
 }
 
 #[test]
@@ -2873,13 +2907,15 @@ fn pre_0_2_8_loadout_shapes_are_refused_and_kept() {
         let scratch = IsolatedEnv::enter(&format!("local-state-loadout-{case}"));
         let path = StateRoot::new(scratch.home.join(".274bot")).loadouts_file();
         write_private(&path, bytes);
-        let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+        let (service, notices) = loadouts_service_with_notices(&scratch);
 
         assert_loadouts_refused_and_untouched(
             &service,
             &path,
             bytes,
+            &notices,
             FailureReason::UnsupportedSavedFormat,
+            "saved data is in a format from before 0.2.8",
         );
     }
 }
@@ -2894,9 +2930,16 @@ fn current_loadouts_with_duplicate_names_are_refused_and_kept() {
     ];
     let bytes = serde_json::to_vec_pretty(&rows).unwrap();
     write_private(&path, &bytes);
-    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    let (service, notices) = loadouts_service_with_notices(&scratch);
 
-    assert_loadouts_refused_and_untouched(&service, &path, &bytes, FailureReason::Schema);
+    assert_loadouts_refused_and_untouched(
+        &service,
+        &path,
+        &bytes,
+        &notices,
+        FailureReason::Schema,
+        "share a name with an earlier row",
+    );
 }
 
 /// A compound preference patch remains queued while its file publication is
