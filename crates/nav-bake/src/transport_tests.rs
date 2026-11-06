@@ -10178,3 +10178,60 @@ p_telejump($coord);
     assert_eq!(zanaris.to, WorldTile { x: 3201, z: 3169, level: 0 });
     assert_eq!(zanaris.player_delta, None, "special branch is absolute, not the fallback");
 }
+
+#[test]
+fn revision_377_palace_manhole_opens_before_player_relative_descent() {
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "881=manholeclosed\n882=manholeopen\n883=manhole_cover\n");
+    fx.write("maps/m50_54.jm2", "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 37 2: 881 10\n0 40 2: 882 10\n");
+    // Canon general_use/scripts/manholes.rs2:1-10 and m50_54.jm2:8588.
+    let source = "\
+[oploc1,manholeclosed]
+mes(\"You pull back the cover from over the manhole.\");
+sound_synth(coffin_open, 1, 0);
+loc_change(manholeopen, 400);
+loc_add(movecoord(loc_coord, 0, 0, -1), manhole_cover, loc_angle, loc_shape, 400);
+[oploc1,manholeopen]
+mes(\"You climb down through the manhole.\");
+p_telejump(movecoord(coord(), 0, 0, 6400));
+";
+    fx.write("scripts/general_use/scripts/manholes.rs2", source);
+    let defs = LocDefs::from_locs(&[
+        LocType { id: 881, op: vec![Some("Open".into())], ..Default::default() },
+        LocType { id: 882, op: vec![Some("Climb down".into())], ..Default::default() },
+        LocType { id: 883, op: vec![Some("Close".into())], ..Default::default() },
+    ]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let derive = |revision| derive_transports_with_audit(fx.path(), &defs, &collision, None, None, revision).0;
+    let baseline = derive(None);
+    for revision in [Some(274), Some(289)] {
+        assert_eq!(derive(revision).edges, baseline.edges, "legacy extraction stays unchanged");
+    }
+    let graph = derive(Some(377));
+    let closed = graph.edges.iter().find(|edge| edge.loc_id == 881).expect("377 surface-to-sewer entrance");
+    assert_eq!(closed.kind, TransportKind::Ladder);
+    assert_eq!(closed.at, WorldTile { x: 3237, z: 3458, level: 0 });
+    assert_eq!(closed.to, WorldTile { x: 3237, z: 9858, level: 0 });
+    assert_eq!(closed.player_delta, Some(WorldTile { x: 0, z: 6400, level: 0 }));
+    assert_eq!(closed.open_loc_id, Some(882));
+    assert_eq!(closed.option, 1);
+    assert_eq!(closed.ticks, 3, "two source operations plus the arrival tick");
+    let open = graph.edges.iter().find(|edge| edge.loc_id == 882).expect("already-open manhole");
+    assert_eq!(open.at, WorldTile { x: 3240, z: 3458, level: 0 });
+    assert_eq!(open.to, WorldTile { x: 3240, z: 9858, level: 0 });
+    assert_eq!(open.open_loc_id, None);
+    assert_eq!(open.ticks, 2);
+
+    for mutation in [
+        source.replace("loc_change(manholeopen, 400);", "if (%quest = 2) { loc_change(manholeopen, 400); }"),
+        source.replace("loc_change(manholeopen, 400);", "loc_change(manholeopen, 400); inv_del(inv, coins, 1);"),
+    ] {
+        fx.write("scripts/general_use/scripts/manholes.rs2", &mutation);
+        assert!(!derive(Some(377)).edges.iter().any(|edge| edge.loc_id == 881), "never erase an opener gate or side effect");
+    }
+    fx.write("scripts/general_use/scripts/manholes.rs2", &source.replace(
+        "p_telejump(movecoord(coord(), 0, 0, 6400));",
+        "if (%quest = 2) { p_telejump(movecoord(coord(), 0, 0, 6400)); }",
+    ));
+    assert!(!derive(Some(377)).edges.iter().any(|edge| matches!(edge.loc_id, 881 | 882)), "a gated descent certifies neither entry state");
+}
