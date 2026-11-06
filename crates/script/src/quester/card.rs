@@ -397,7 +397,6 @@ fn prepare_from(
     bag: Arc<SettingsBag>,
     source: impl FnOnce(&mut PrepareContext<'_>) -> Result<QuesterRegistryReady, StartError>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
-    admit_revision(&cx.selected)?;
     if cx
         .selected
         .selected_pin()
@@ -407,6 +406,7 @@ fn prepare_from(
     {
         return Err(StartError::Facts(api::selected::FactError::PinMismatch));
     }
+    admit_revision(&cx.selected)?;
     let settings = decode_settings(&bag).map_err(StartError::Config)?;
     let gang = match settings
         .gang
@@ -525,6 +525,40 @@ mod tests {
         .unwrap()
         .join()
         .unwrap();
+    }
+
+    #[test]
+    fn pin_mismatch_precedes_revision_admission_on_274_and_289() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let selected = api::game_data::for_revision(revision).unwrap();
+            let other_revision = if revision == ClientRevision::R274 {
+                ClientRevision::R289
+            } else {
+                ClientRevision::R274
+            };
+            let pin = api::game_data::for_revision(other_revision)
+                .unwrap()
+                .selected_pin()
+                .unwrap();
+            FamilyPreparation::run(move |families| {
+                let mut cx = PrepareContext {
+                    selected,
+                    pin,
+                    banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+                    families,
+                };
+                let result = prepare_from(&mut cx, 1, Arc::new(SettingsBag::new()), |_| {
+                    panic!("pin mismatch must refuse before loading the registry");
+                });
+                assert!(matches!(
+                    result,
+                    Err(StartError::Facts(api::selected::FactError::PinMismatch))
+                ));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        }
     }
 
     #[test]
