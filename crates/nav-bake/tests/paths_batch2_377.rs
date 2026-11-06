@@ -18,6 +18,22 @@ fn tile(x: i32, z: i32, level: i32) -> WorldTile {
 }
 
 #[test]
+#[ignore = "requires an explicitly baked revision-377 NAV_377_PACK"]
+fn server_only_wall_3550_blocks_the_real_map_boundary() {
+    let world = NavWorld::load_pack(&path("NAV_377_PACK")).unwrap();
+    // Canon m34_49.jm2:4968 places 3550 at (25,33), wall shape 0,
+    // angle 0. Opcode 74 must not remove its engine-side west/east wall.
+    assert_ne!(
+        world.collision.flag(2201, 3169, 0) & client::dash3d::CollisionFlag::W_W as u32,
+        0
+    );
+    assert_ne!(
+        world.collision.flag(2200, 3169, 0) & client::dash3d::CollisionFlag::W_E as u32,
+        0
+    );
+}
+
+#[test]
 #[ignore = "requires NAV_377_PACK and PATHS_377_ROUTE_REPORT"]
 fn palace_coin_and_blurite_routes_follow_real_content() {
     let world = NavWorld::load_pack(&path("NAV_377_PACK")).unwrap();
