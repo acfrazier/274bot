@@ -54,9 +54,10 @@
           "version": 1,
           "advances": false,
           "args": {
-            "target": { "npc": ["goblin_greenarmour", "goblin_redarmour"], "not_targeting_others": true, "pick": "nearest" },
-            "tactic": { "kind": "open", "style": "melee", "engage_radius": 18, "auto_retaliate": true },
-            "stand": { "tile": [2958, 3507, 0], "source": "maps/m46_54.jm2:6196-6218; drop_tables/scripts/goblin.rs2 village table dropint 34-39" },
+            "target": { "npc": ["goblin_unarmed_melee_1", "goblin_unarmed_melee_2", "goblin_unarmed_melee_3", "goblin_unarmed_melee_4", "goblin_unarmed_melee_5", "goblin_unarmed_melee_6", "goblin_unarmed_melee_7"], "not_targeting_others": true, "pick": "nearest" },
+            "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true },
+            "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713; pack/npc.pack:1770-1776; drop_tables/scripts/goblin.rs2:6-12,73-76" },
+            "area": { "box": [3138, 3224, 3152, 3264, 0], "source": "maps/m49_50.jm2:6702-6713; outdoor unarmed goblins east of x=3135, as in the qualified 377 Hetty coin farm" },
             "lost_radius": 16,
             "kill_budget_ticks": 2400,
             "loadout": null,

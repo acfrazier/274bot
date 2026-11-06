@@ -19,7 +19,7 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 - Generals: wartface NPC 297 `(2957,3511,0)` and bentnoze NPC 296 `(2958,3511,0)`, `maps/m46_54.jm2:6212,6214`.
 - `quest_gobdip.rs2` stage-1 last option `Do you want me to pick an armour colour for you?` sets stage 2 without taking armour. Prefer it. The offer step is not skipped just because orange armour is already held.
 - Hand-ins consume orange, then blue, then brown. Stage 5 queues complete.
-- Goblins 100/101 and the unarmed melee ids in `maps/m49_50.jm2` drop `goblin_armour` (`drop_tables/scripts/goblin.rs2`). The Path farms the placed ids, not a 289 morph name.
+- The outdoor unarmed melee IDs 1769–1775 at `maps/m49_50.jm2:6702-6713` map to `goblin_unarmed_melee_1` through `_7` (`pack/npc.pack:1770-1776`). Their common drop table yields `goblin_armour` for the five roll values 34–38 (`drop_tables/scripts/goblin.rs2:6-12,73-76`). The Path uses the same bounded outdoor encounter as the live-qualified 377 Hetty coin farm, not the village's red/green goblins spread across divided buildings.
 - Aggie NPC 922 `(3086,3259,0)`. `aggie.rs2:29` last option `Can you make dyes for me please?` is the dye menu. The dye submenu last option and the multi3 last option `I can do without dye` do not buy. Prefer `What do you need to make red/yellow/blue dye?` and `Okay, make me some red/yellow/blue dye please.`
 - Costs: 5 coins + 3 redberries / 2 onions / 2 woad (`aggie.rs2:143-151,186-196`).
 - Dye application is armour used on the dye (`goblin_mail.rs2:1-12`), message `You dye the goblin armour <colour>.` Orange is red dye used on yellow dye.
@@ -27,7 +27,7 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 - Coins: OBJ 995 qty 3 at `(3228,3504,0)` and qty 4 at `(3232,3500,0)`, `maps/m50_54.jm2:12022-12023`. The Path collects 35 through repeated natural pickups. The enclosed alcove is reached through the sewer ladder at `(3230,9904,0)`, `maps/m50_154.jm2:7787`, `ladders.rs2:90-97`; it is not a missing palace gate.
 - Redberries OBJ 1951 at `maps/m51_52.jm2:6650,6651,6654`, anchor `(3271,3366,0)`.
 - Onions: `maps/m46_50.jm2:5084-5089`, anchor `(2950,3251,0)`, `pickables.rs2:35-43`.
-- Mail farm stand `(2958,3507,0)` from `maps/m46_54.jm2:6196-6218`.
+- Mail farm stand `(3146,3232,0)`, bounded to `(3138,3224)`–`(3152,3264)`, from `maps/m49_50.jm2:6702-6713`. The previous unbounded village encounter stalled at `(2953,3507,0)` with repeated `I can't reach that!` and only one mail. The open-melee tactic sends an NPC Attack, rather than opening intervening doors (`crates/script/src/combat/machine.rs:2321-2346,3177-3205`); an outdoor source-bounded encounter avoids selecting across that geometry without changing shared combat behavior.
 
 ## Not copied from 289
 
