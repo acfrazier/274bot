@@ -3727,7 +3727,7 @@ impl TuiSession {
                 Ok(false) => {}
                 Err(error) => {
                     restore_terminal();
-                    eprintln!("FAIL: memory tui: {error}");
+                    api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "FAIL: memory tui: {error}");
                     exit_after_work_shutdown(1);
                 }
             }

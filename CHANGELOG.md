@@ -69,6 +69,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   count as active work or fresh-XP proof.
   Combat status decoding keeps its field and integer checks without an
   unnecessary lazy wrapper.
+  Native API terminal diagnostics keep a bounded result in the fatal Stop
+  reason. Fatal memory TUI errors use the password-redacting host log without
+  changing their error text or exit code.
 
 ### Fixed during development
 

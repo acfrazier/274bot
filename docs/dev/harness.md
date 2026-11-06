@@ -1298,6 +1298,11 @@ Boundary rows add the case's `feature_evidence`. A `post-stop` row records retai
 observations after the normal teardown window. Persistent observation steps are
 not relabelled as passed seeds.
 
+The native API consumer keeps its terminal result JSON in the fatal Stop reason.
+The ordinary Stop path limits the whole reason to 256 UTF-8 bytes on a character
+boundary. Fatal memory TUI errors use `host_log!` and its password redaction,
+without changing their error text, exit code, collector fields or proof rules.
+
 ### Common workload phase gates
 
 Ingame readiness requires every slot to remain `ingame && scene_state == 2`
