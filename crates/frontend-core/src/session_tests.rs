@@ -1181,10 +1181,14 @@ fn coalesced_assignment_log_uses_last_assignment_change_not_parameter_edit() {
         .save_profile_with_log_action(profile, ArmMirror::none(), "script", "Assign")
         .unwrap();
     let mut parameters = s.vault().unwrap().get(name).unwrap().clone();
-    parameters
-        .settings
-        .script_settings
-        .insert("compiled:assigned".into(), serde_json::Map::new());
+    parameters.settings.script_settings.insert(
+        "compiled:assigned".into(),
+        vault::CompiledSettingsRecord {
+            schema_version: 1,
+            values: serde_json::Map::new(),
+        }
+        .into_entry(),
+    );
     s.save_profile_with_log_action(parameters, ArmMirror::none(), "script", "parameter edit")
         .unwrap();
 

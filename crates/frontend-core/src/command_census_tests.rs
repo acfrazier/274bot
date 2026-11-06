@@ -701,6 +701,7 @@ const CORE: &[(&str, Decision)] = &[
     ("session.rs::OperatorSession::take_write_failures", Excluded(RESULT)),
     ("session.rs::OperatorSession::take_settled_saves", Excluded(RESULT)),
     ("session.rs::OperatorSession::take_settings_writes", Excluded(RESULT)),
+    ("session.rs::OperatorSession::take_vault_refusal", Excluded(RESULT)),
     (
         "session.rs::OperatorSession::flush_writes",
         Excluded("startup/harness boundary: blocks until the queued writes settle"),

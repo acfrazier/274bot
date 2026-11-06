@@ -78,6 +78,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   existing evidence, prerequisite handover and search-budget outcomes remain.
   Hosted regression tests keep explicit guards for absent local data.
 - Vault commands and walk-map fixtures use their current shared interfaces.
+  Saved-settings fixtures keep current envelopes and explicit malformed-format
+  refusal checks.
 
 ### Not in this release
 

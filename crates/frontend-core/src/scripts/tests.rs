@@ -2873,15 +2873,11 @@ fn gatherer_settings_record(
 
 #[cfg(feature = "js")]
 #[test]
-fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_schema() {
+fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_schema() {
     let mut f = native_fixture("native-restore", &["alice"]);
     let id = script::CompiledId("Sherlock");
     let key = script::compiled_identity_key(id);
-    for entry in [
-        None,
-        Some(json!({})),
-        Some(json!({"schema_version": 1, "values": {}})),
-    ] {
+    for entry in [None, Some(json!({"schema_version": 1, "values": {}}))] {
         let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
         row.settings.script_settings.remove(&key);
         if let Some(entry) = entry {
@@ -2897,7 +2893,7 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
             f.scripts
                 .compiled_schema(&f.core, Some("alice"), CompiledCardId::from_script(id))
         else {
-            panic!("legacy Sherlock settings stay usable without a schema bump");
+            panic!("current Sherlock settings stay usable without a schema bump");
         };
         assert_eq!(version, 1);
         let bag = f
@@ -2906,10 +2902,11 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
             .unwrap();
         for key in ["allow_teleports", "allow_wilderness", "allow_danger_zones"] {
             assert!(fields.iter().any(|field| field.id() == key));
-            assert_eq!(bag[key], false, "missing legacy permission defaults off");
+            assert_eq!(bag[key], false, "missing permissions default off");
         }
     }
     for entry in [
+        json!({}),
         json!({"schema_version": 2, "values": {"future": 9}}),
         json!({"schema_version": 1, "values": null}),
     ] {
