@@ -32,7 +32,7 @@ and writes the current whole-world pack (`encode` in
 
 ```bash
 NAV_PACK=/absolute/output/274bot.navpack NAV_FLAGS=/absolute/output/274bot.navflags cargo run -p nav-bake --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]
-# or: nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out F] [--snapshot-root ROOT]
+# or: nav-pack --revision 274|289|377 --content CONTENT_DIR --cache CACHE_DIR --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out F] [--snapshot-root ROOT] [--server-loc-dat SERVER_LOC_DAT]
 ```
 
 When `BOT_NAV_ENGINE_DIR` or `ENGINE_DIR` is set, legacy positional mode
@@ -44,6 +44,17 @@ to `.navflags` (default `~/.274bot/274bot.navflags`); the `.navreach`/`.navcanli
 sidecars are written next to `--out`. Explicit mode ignores `$NAV_PACK` and requires
 `--out NAV_PACK` (plus `--revision`, `--content`, `--cache`, `--cache-manifest`).
 `gates.loc` is derived from the maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
+
+Revision 377 also requires `--server-loc-dat` naming the canonical engine's
+packed `server/loc.dat`. This is explicit because a published client cache
+need not live below `data/pack/client`. The 377 collision definitions apply
+the engine's defaults, server record, client record and active-field
+postpass in that order. They do not use the client's
+`breakroutefinding` postpass, which clears collision flags that the server
+retains. The application build takes this server table from its selected
+engine's `data/pack/server/loc.dat`. Its bytes participate in source
+provenance and warm-build invalidation. Revisions 274 and 289 reject the new
+CLI option and keep their existing inputs and collision behavior.
 
 Each edge's `members_req` comes from the content handler that edge's op runs,
 resolved as the engine does: type `[<op>,<name>]`, then category
@@ -199,8 +210,9 @@ New nav manifests, build stamps and compiled bundle rows carry `content_id` and
 Source provenance hashes the conservative content-tree closure and actual baker
 config; the build stamp also binds generator source bytes. Legacy resources are
 not relabeled: rebuild the application with the complete matching snapshot, or
-use `nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR
---cache-manifest CACHE_MANIFEST --snapshot-root SNAPSHOT_ROOT --out NAV_PACK`.
+use `nav-pack --revision 274|289|377 --content CONTENT_DIR --cache CACHE_DIR
+--cache-manifest CACHE_MANIFEST --snapshot-root SNAPSHOT_ROOT --out NAV_PACK`
+(plus `--server-loc-dat SERVER_LOC_DAT` for revision 377).
 The root contains the 16-hex version-keyed snapshot directory. Omitting
 `--snapshot-root` creates an offline-only legacy pack; runtime binding rejects
 it. Missing required decoded records fail rather than claiming Ready.
@@ -267,8 +279,9 @@ records the cache identity, SHA-256 digests of all staged navigation artifacts
 `quest_gates.rs`/`router.rs`/`transport.rs` and transport producers), the
 navpois generator identity (`map/services.rs`/`map/poi.rs`), and an input
 fingerprint (size, mtime and SHA-256) of every canonical input (content tree,
-config jag, cache archives). Source and captured cache digests use one input-
-fingerprint snapshot. The decoded identity is computed from that verified
+config jag, cache archives, and the explicit engine server loc table for
+revision 377). Source and captured cache digests use one input-fingerprint
+snapshot. The decoded identity is computed from that verified
 cache snapshot and recomputed after baking before publishing. Any change to
 those inputs, to the pack format identity (`nav_planner::pack::FORMAT_ID`), to the
 generator, to the cache identity, a missing navpois sidecar, or a missing/
