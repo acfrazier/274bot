@@ -42,7 +42,7 @@
               "pick": "nearest"
             },
             "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true },
-            "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713; drop_tables/scripts/goblin.rs2 coin bands. Palace OBJ 995 at m50_54.jm2:12022-12023 has no route on this pack." },
+            "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713; drop_tables/scripts/goblin.rs2 coin bands." },
             "area": { "box": [3138, 3224, 3152, 3264, 0], "source": "maps/m49_50.jm2:6702-6713" },
             "lost_radius": 16,
             "kill_budget_ticks": 120,
@@ -285,15 +285,15 @@
         "rules": [
           {
             "stage": "hetty:3",
-            "all": ["I drank from the cauldron and my magic power increased!", "QUEST COMPLETE!"]
+            "all": ["i drank from the cauldron and my magic power increased!", "quest complete!"]
           },
           {
             "stage": "hetty:2",
-            "all": ["I brought her an onion, a rat's tail, a piece of burnt meat", "I should drink from the cauldron and improve my magic!"]
+            "all": ["i brought her an onion, a rat's tail, a piece of burnt meat", "i should drink from the cauldron and improve my magic!"]
           },
           {
             "stage": "hetty:1",
-            "all": ["I spoke to Hetty in her house in Rimmington.", "certain ingredients for a potion."]
+            "all": ["i spoke to hetty in her house in rimmington.", "certain ingredients for a potion."]
           }
         ],
         "flags": [],
