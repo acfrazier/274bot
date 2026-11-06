@@ -174,7 +174,7 @@
           },
           "skip_if": {
             "Any": [
-              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 0], "radius": 6 } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 0], "radius": 6 } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
               {
                 "Fact": {
@@ -206,8 +206,8 @@
           },
           "skip_if": {
             "Any": [
-              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 1], "radius": 2 } },
-              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 2], "radius": 2 } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 1], "radius": 2 } } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 2], "radius": 2 } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
               {
                 "Fact": {
@@ -239,7 +239,7 @@
           },
           "skip_if": {
             "Any": [
-              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 2], "radius": 2 } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 2], "radius": 2 } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
               {
                 "Fact": {
@@ -266,7 +266,7 @@
           },
           "skip_if": {
             "Any": [
-              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3305, 2], "radius": 6 } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3305, 2], "radius": 6 } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
               {
                 "Fact": {
@@ -409,8 +409,8 @@
           },
           "skip_if": {
             "Any": [
-              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 1], "radius": 2 } },
-              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 0], "radius": 2 } }
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 1], "radius": 2 } } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 0], "radius": 2 } } }
             ]
           },
           "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 1], "radius": 2 } } }
@@ -445,7 +445,7 @@
           },
           "skip_if": {
             "Any": [
-              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 0], "radius": 6 } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 0], "radius": 6 } } },
               { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
             ]
           },
