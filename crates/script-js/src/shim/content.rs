@@ -170,4 +170,20 @@ mod tests {
         assert_eq!(posted["selected_facts"], false);
         assert_eq!(posted["shops"], serde_json::json!({}));
     }
+
+    #[test]
+    fn selected_shop_absence_still_propagates_its_family_error() {
+        let selected = serde_json::from_value(serde_json::json!({
+            "schema_version": 5,
+            "revision": 274,
+            "items": [],
+            "consumption": [],
+            "pickpocket": []
+        }))
+        .expect("selected data without shops");
+        assert!(matches!(
+            super::content_json(Some(&selected)),
+            Err(api::selected::FactError::FamilyUnavailable(_)),
+        ));
+    }
 }

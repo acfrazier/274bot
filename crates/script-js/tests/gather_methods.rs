@@ -94,22 +94,17 @@ fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
     serde_json::from_str(value.as_str().unwrap()).unwrap()
 }
 
-/// Selected data that never bound a pin (no engine/content commits), so no gathering family can be admitted.
+/// Empty shops allow bootstrap while the gathering families remain absent.
 fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
     let raw = r#"{
         "schema_version": 5,
         "revision": 274,
-        "provenance": {
-            "cache_identity": {"cache_id": "x"},
-            "inputs": [],
-            "content_inputs": [],
-            "decoder_sources": []
-        },
+        "shops": [],
         "items": [],
         "consumption": [],
         "pickpocket": []
     }"#;
-    std::sync::Arc::new(serde_json::from_str(raw).expect("selected data without a pin"))
+    std::sync::Arc::new(serde_json::from_str(raw).expect("selected data without gathering families"))
 }
 
 fn catalog(revision: ClientRevision) -> std::sync::Arc<api::gather_methods::GatherCatalog> {
@@ -302,7 +297,7 @@ export function tick(api) {
   });
 }
 "#;
-    // Selected data with no verified pin cannot admit the gathering family: absence is a token, not empty rows.
+    // Gathering is absent while unrelated shop bootstrap remains valid.
     let iso = LoadIsolate::spawn_with_game_data(
         src.into(),
         LoadShape::NativeTick,

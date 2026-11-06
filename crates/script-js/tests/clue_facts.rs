@@ -540,17 +540,12 @@ fn probe_page(src: &str, revision: ClientRevision, page: &[(i32, i32)]) -> serde
     serde_json::from_str(value.as_str().unwrap()).unwrap()
 }
 
-/// A schema-4 selected slot that decodes with no trail family at all.
+/// Minimal selected data with empty shops and no trail family.
 fn data_without_trails() -> std::sync::Arc<api::game_data::SelectedGameData> {
     let raw = r#"{
         "schema_version": 5,
         "revision": 274,
-        "provenance": {
-            "cache_identity": {"cache_id": "x"},
-            "inputs": [],
-            "content_inputs": [],
-            "decoder_sources": []
-        },
+        "shops": [],
         "items": [],
         "consumption": [],
         "pickpocket": []

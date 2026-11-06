@@ -173,8 +173,8 @@ pub fn local_game_data_available(revision: i32) -> bool {
 )]
 pub fn local_bank_catalog_available() -> bool {
     local_api_asset(
-        "data/game-data/bank-catalog.rs",
-        "API local asset `data/game-data/bank-catalog.rs`; generate it with `python tools/local-data/build.py`",
+        "data/game-data/bank-catalog.json",
+        "API local asset `data/game-data/bank-catalog.json`; generate it with `python tools/local-data/build.py`",
     )
 }
 
@@ -185,8 +185,8 @@ pub fn local_bank_catalog_available() -> bool {
 pub fn local_fact_catalogs_available() -> bool {
     let banks = local_bank_catalog_available();
     let cooking = local_api_asset(
-        "data/game-data/cook-catalog.rs",
-        "API local asset `data/game-data/cook-catalog.rs`; generate it with `python tools/local-data/build.py`",
+        "data/game-data/cook-catalog.json",
+        "API local asset `data/game-data/cook-catalog.json`; generate it with `python tools/local-data/build.py`",
     );
     banks && cooking
 }

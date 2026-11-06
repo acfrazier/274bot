@@ -295,12 +295,7 @@ fn selected_data_without_the_gas_slice_fails_closed_on_every_member() {
     let raw = r#"{
         "schema_version": 5,
         "revision": 274,
-        "provenance": {
-            "cache_identity": {"cache_id": "x"},
-            "inputs": [],
-            "content_inputs": [],
-            "decoder_sources": []
-        },
+        "shops": [],
         "items": [],
         "consumption": [],
         "pickpocket": []
