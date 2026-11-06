@@ -33,11 +33,23 @@ fn palace_coin_and_blurite_routes_follow_real_content() {
     for (name, from, to) in [
         ("palace-west-coin", tile(3220, 3220, 0), tile(3228, 3504, 0)),
         ("palace-east-coin", tile(3220, 3220, 0), tile(3232, 3500, 0)),
+        ("palace-sewer-ladder-approach", tile(3220, 3220, 0), tile(3230, 9903, 0)),
+        ("varrock-manhole-west-approach", tile(3220, 3220, 0), tile(3236, 3458, 0)),
+        ("varrock-sewer-to-palace-ladder", tile(3237, 9858, 0), tile(3230, 9903, 0)),
         ("blurite-entrance", tile(3220, 3220, 0), tile(3007, 9549, 0)),
         ("blurite-exit", tile(3007, 9549, 0), tile(3007, 3150, 0)),
     ] {
         rows.push(match find_with(&world.collision, &world.graph, from, to, options, &state) {
-            Ok(route) => json!({"name":name,"from":from,"to":to,"reachable":true,"ticks":route.ticks,"legs":format!("{:?}",route.legs)}),
+            Ok(route) => {
+                if matches!(name, "palace-west-coin" | "palace-east-coin") {
+                    for loc_id in [881, 1755] {
+                        assert!(route.legs.iter().any(|leg| {
+                            matches!(leg, Leg::Transport { edge } if edge.loc_id == loc_id)
+                        }), "{name} must use the source-proved sewer entrance and palace ladder");
+                    }
+                }
+                json!({"name":name,"from":from,"to":to,"reachable":true,"ticks":route.ticks,"legs":format!("{:?}",route.legs)})
+            }
             Err(error) => {
                 failed = true;
                 json!({"name":name,"from":from,"to":to,"reachable":false,"error":format!("{error:?}")})
@@ -46,8 +58,18 @@ fn palace_coin_and_blurite_routes_follow_real_content() {
     }
     std::fs::write(path("PATHS_377_ROUTE_REPORT"), serde_json::to_vec_pretty(&json!({
         "verdict":if failed {"FAIL"} else {"PASS"}, "routes":rows,
+        "palace_edges": world.graph.edges.iter()
+            .filter(|edge| matches!(edge.loc_id, 881 | 882 | 1755) && (3200..=3260).contains(&edge.at.x) && (3450..=3510).contains(&(edge.at.z % 6400)))
+            .map(|edge| json!({"loc_id":edge.loc_id,"at":edge.at,"to":edge.to,"delta":edge.player_delta,"open":edge.open_loc_id,"ticks":edge.ticks}))
+            .collect::<Vec<_>>(),
     })).unwrap()).unwrap();
     assert!(!failed, "source-grounded palace/blurite routes missing; see PATHS_377_ROUTE_REPORT");
+    let manhole = world.graph.edges.iter().find(|edge| {
+        edge.loc_id == 881 && edge.at == tile(3237, 3458, 0)
+    }).expect("Varrock surface manhole open-and-climb pair");
+    assert_eq!(manhole.to, tile(3237, 9858, 0));
+    assert_eq!(manhole.open_loc_id, Some(882));
+    assert_eq!(manhole.ticks, 3);
     let entry = world.graph.edges.iter().find(|edge| edge.loc_id == 9472).expect("Asgarnian ice dungeon direct trapdoor");
     assert_eq!(entry.at, tile(3008, 3150, 0));
     assert_eq!(entry.to, tile(3007, 9549, 0));
