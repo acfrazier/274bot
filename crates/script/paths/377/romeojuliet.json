@@ -287,43 +287,6 @@
               }
             },
             {
-              "id": "replace-message",
-              "kind": "talk",
-              "version": 1,
-              "advances": false,
-              "args": {
-                "npc": "juliet_multi_visible",
-                "anchor": {
-                  "tile": [
-                    3158,
-                    3425,
-                    1
-                  ],
-                  "source": "C maps/m49_53.jm2:10592 (NPC 3323 at 1 22 33); pack/npc.pack:3324 (3323=juliet_multi_visible); areas/area_varrock/scripts/juliet.rs2:67-75"
-                },
-                "leash": 6,
-                "prefer": []
-              },
-              "skip_if": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "julietmessage"
-                  }
-                }
-              },
-              "settle": {
-                "Fact": {
-                  "kind": "has_item",
-                  "version": 1,
-                  "args": {
-                    "obj": "julietmessage"
-                  }
-                }
-              }
-            },
-            {
               "id": "deliver-message",
               "kind": "talk",
               "version": 1,

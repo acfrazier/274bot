@@ -120,7 +120,7 @@
                 "until": { "obj": "clay", "qty": 6 },
                 "anchor": {
                   "tile": [2986, 3239, 0],
-                  "source": "maps/m46_50.jm2; scripts/skill_mining/configs/mine.dbrow:10-25"
+                  "source": "maps/m46_50.jm2:6925; scripts/skill_mining/configs/mine.dbrow:10-25"
                 },
                 "radius": 3,
                 "settle_ms": 300000
@@ -143,7 +143,7 @@
                 "until": { "obj": "copper_ore", "qty": 4 },
                 "anchor": {
                   "tile": [2976, 3247, 0],
-                  "source": "maps/m46_50.jm2; scripts/skill_mining/configs/mine.dbrow:28-41"
+                  "source": "maps/m46_50.jm2:6481; scripts/skill_mining/configs/mine.dbrow:28-41"
                 },
                 "radius": 3
               },

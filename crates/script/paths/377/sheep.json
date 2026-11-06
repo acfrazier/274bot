@@ -130,7 +130,7 @@
           "args": {
             "item": "shears",
             "target": {
-              "npc": "sheepunsheered"
+              "npc": ["sheepunsheered", "sheepunsheered3"]
             },
             "anchor": {
               "tile": [
@@ -138,7 +138,7 @@
                 3268,
                 0
               ],
-              "source": "C maps/m49_51.jm2:7417-7418 (NPC 43 at 0 62 1 and 0 62 8); pack/npc.pack:44 (43=sheepunsheered); general_use/scripts/shear_sheep.rs2:5-24"
+              "source": "C maps/m49_51.jm2:7411,7413,7415,7417-7418 (NPC 1765 at 0 58 3, 0 59 8, 0 61 5; NPC 43 at 0 62 1, 0 62 8); pack/npc.pack:44,1766; general_use/scripts/shear_sheep.rs2:5-24,26-64"
             },
             "radius": 8,
             "product": "wool",
@@ -389,7 +389,7 @@
                   "source": "C maps/m49_51.jm2:7408 (NPC 758 at 0 53 9); pack/npc.pack:759 (758=fred_the_farmer); areas/area_lumbridge/scripts/fred_the_farmer.rs2:160-193,211-234"
                 },
                 "leash": 6,
-                "prefer": [],
+                "prefer": ["I'm back!"],
                 "gap_ticks": 2
               },
               "skip_if": {
@@ -548,7 +548,7 @@
                   "source": "C maps/m49_51.jm2:7408 (NPC 758 at 0 53 9); pack/npc.pack:759 (758=fred_the_farmer); areas/area_lumbridge/scripts/fred_the_farmer.rs2:160-193,211-234"
                 },
                 "leash": 6,
-                "prefer": [],
+                "prefer": ["I'm back!"],
                 "gap_ticks": 2
               },
               "skip_if": {
@@ -613,7 +613,7 @@
                   "source": "C maps/m49_51.jm2:7408 (NPC 758 at 0 53 9); pack/npc.pack:759 (758=fred_the_farmer); areas/area_lumbridge/scripts/fred_the_farmer.rs2:160-193,211-234"
                 },
                 "leash": 6,
-                "prefer": [],
+                "prefer": ["I'm back!"],
                 "gap_ticks": 2
               },
               "skip_if": {
