@@ -97,6 +97,12 @@
             "all": [
               "i should go and speak to juliet"
             ]
+          },
+          {
+            "stage": "romeojuliet:0",
+            "all": [
+              "i can start this quest by talking to romeo"
+            ]
           }
         ],
         "flags": [],
@@ -160,7 +166,7 @@
               "version": 1,
               "advances": true,
               "args": {
-                "npc": "juliet_multi_visible",
+                "npc": "juliet",
                 "anchor": {
                   "tile": [
                     3158,
@@ -286,7 +292,7 @@
               "version": 1,
               "advances": false,
               "args": {
-                "npc": "juliet_multi_visible",
+                "npc": "juliet",
                 "anchor": {
                   "tile": [
                     3158,
@@ -681,7 +687,7 @@
               "version": 1,
               "advances": true,
               "args": {
-                "npc": "juliet_multi_visible",
+                "npc": "juliet",
                 "anchor": {
                   "tile": [
                     3158,
