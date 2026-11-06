@@ -10,6 +10,10 @@ use script::native::snapshot_source::StatInput;
 use script_js::{JsLibrary, LoadIsolate};
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 mod common;
 
 fn scratch(name: &str) -> PathBuf {
@@ -119,7 +123,7 @@ fn synthetic_bright_catalog_cards_stay_unloadable_clean() {
 
 #[test]
 fn synthetic_bright_catalog_cards_start_without_not_impl() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)

@@ -3,7 +3,10 @@ use script::native::snapshot_source::{
 };
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
@@ -95,7 +98,7 @@ fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
 
 #[test]
 fn posted_spell_db_and_staff_runes_construct_later_superheater_fire_staves() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -151,7 +154,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn casts_available_and_withdraw_list_use_rust_staff_substitution() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -198,7 +201,7 @@ export default class T extends LoopingBot {
 /// `runeWithdrawList` converts `casts` once per cost (`c.count * casts`).
 #[test]
 fn casts_available_calls_held_per_remaining_cost_in_order() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"

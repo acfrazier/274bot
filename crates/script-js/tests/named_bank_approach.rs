@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 use bank_slot::BankSlot;
 
 use api::named_banks::NamedBankFacts;
@@ -322,7 +325,7 @@ fn east_booth<'a>(actions: &'a [String]) -> SceneEntityInput<'a> {
 
 #[test]
 fn named_open_nearest_from_chebyshev_2_queues_walk_near_then_same_named_open_booth() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let mut slot = spawn(OPEN_NEAREST);
@@ -377,7 +380,7 @@ fn named_open_nearest_from_chebyshev_2_queues_walk_near_then_same_named_open_boo
 
 #[test]
 fn native_bank_open_does_not_roundtrip_js_snapshot_collections() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -416,7 +419,7 @@ fn native_bank_open_does_not_roundtrip_js_snapshot_collections() {
 
 #[test]
 fn named_open_nearest_from_chebyshev_1_queues_named_open_booth_only() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -444,7 +447,7 @@ fn named_open_nearest_from_chebyshev_1_queues_named_open_booth_only() {
 
 #[test]
 fn named_open_nearest_missing_loc_after_approach_sends_no_click() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -477,7 +480,7 @@ fn named_open_nearest_missing_loc_after_approach_sends_no_click() {
 
 #[test]
 fn named_open_nearest_replaced_loc_after_approach_sends_no_click() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -513,7 +516,7 @@ fn named_open_nearest_replaced_loc_after_approach_sends_no_click() {
 
 #[test]
 fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -595,7 +598,7 @@ fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
 // A second open supersedes the first and owns the only native approach.
 #[test]
 fn a_second_open_supersedes_the_first() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -672,7 +675,7 @@ export default class T extends LoopingBot {
 }
 #[test]
 fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -731,7 +734,7 @@ fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
 }
 #[test]
 fn supplied_stand_walks_then_delivers_fresh_bank_result() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -814,7 +817,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -881,7 +884,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -954,7 +957,7 @@ export default class T extends LoopingBot {
 }
 #[test]
 fn a_named_approach_opens_the_same_identity_across_an_omitted_locs_delta() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -1006,7 +1009,7 @@ fn a_named_approach_opens_the_same_identity_across_an_omitted_locs_delta() {
 }
 #[test]
 fn session_reset_clears_the_native_bank_observation() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -1031,7 +1034,7 @@ fn session_reset_clears_the_native_bank_observation() {
 }
 #[test]
 fn bank_access_already_adjacent_does_not_rearm_navigation() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -1065,7 +1068,7 @@ export default class T extends LoopingBot {
 /// The default booth's `isArrived` pre-check respects a blocked edge.
 #[test]
 fn bank_access_default_booth_across_a_wall_edge_walks_first() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -1130,7 +1133,7 @@ export default class T extends LoopingBot {
 /// Frozen calls the openers' `log?.()` without awaiting it.
 #[test]
 fn opener_log_promises_are_not_awaited() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 

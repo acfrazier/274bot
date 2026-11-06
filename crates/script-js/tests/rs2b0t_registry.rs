@@ -10,7 +10,10 @@ use std::path::{Path, PathBuf};
 use script::{ScriptKind, ScriptSource};
 use script_js::{JsLibrary, LoadIsolate, LoadShape};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 /// The brief's fake `index.ts`: a default import, a display name that
 /// differs from the folder (`AIO Teleport` vs `AIOTeleport`), a
@@ -1250,7 +1253,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     for revision in [
@@ -1374,7 +1377,7 @@ export default class T extends LoopingBot {
     );
     offline.join();
 
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = LoadIsolate::spawn_with_game_data(

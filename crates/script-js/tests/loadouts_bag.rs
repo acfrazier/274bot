@@ -5,6 +5,10 @@ use {script::SettingDef, script_js::LoadIsolate, script_js::LoadShape};
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 mod common;
 
 const LOADOUT_PROBE: &str = r#"
@@ -62,7 +66,7 @@ fn loadout_combo_resolves_from_store_names_in_script_crate() {
 
 #[test]
 fn isolate_accessors_read_slots_quantities_and_food() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     use api::loadout::Loadout;
@@ -165,10 +169,10 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_provision_composes_fresh_bank_withdraw_and_wear() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 

@@ -17,7 +17,12 @@ use script::native::snapshot_source::{
 use script::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
 use script_js::LoadShape;
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
+#[path = "common/local_bank_catalog.rs"]
+mod local_bank_catalog;
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
     SnapshotInput {
         tick: 1,
@@ -141,7 +146,7 @@ fn post(iso: &mut BankSlot, fishing_base: i32, quests: &[QuestStatusInput<'_>]) 
 
 #[test]
 fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
-    if !common::local_bank_catalog_available() || !common::local_game_data_available(289) {
+    if !local_bank_catalog::local_bank_catalog_available() || !local_game_data::local_game_data_available(289) {
         return;
     }
     let mut iso = spawn(PROBE, catalog());
@@ -186,7 +191,7 @@ fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
 
 #[test]
 fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
-    if !common::local_bank_catalog_available() || !common::local_game_data_available(289) {
+    if !local_bank_catalog::local_bank_catalog_available() || !local_game_data::local_game_data_available(289) {
         return;
     }
     let mut iso = spawn(PROBE, catalog());
@@ -204,7 +209,7 @@ fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
 
 #[test]
 fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -255,7 +260,7 @@ fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
 /// A selected bank controls opening until native facts prove loaded stock.
 #[test]
 fn reachable_bank_continuations_open_npc_access_and_wait_for_loaded_stock() {
-    if !common::local_bank_catalog_available() || !common::local_game_data_available(289) {
+    if !local_bank_catalog::local_bank_catalog_available() || !local_game_data::local_game_data_available(289) {
         return;
     }
     use script::native::snapshot_source::{ChatOptionInput, ItemRowInput, SceneEntityInput};

@@ -4,6 +4,10 @@
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 mod common;
 
 use script_js::{LoadIsolate, LoadShape};
@@ -266,7 +270,7 @@ export default class T extends LoopingBot {
 
     #[test]
     fn a_full_pack_withdraws_nothing() {
-        if !common::local_game_data_available(289) {
+        if !local_game_data::local_game_data_available(289) {
             return;
         }
         let mut harness = Harness::new(22, &LADDER, false);
@@ -275,7 +279,7 @@ export default class T extends LoopingBot {
 
     #[test]
     fn a_withdraw_that_never_lands_ends_at_the_land_bound() {
-        if !common::local_game_data_available(289) {
+        if !local_game_data::local_game_data_available(289) {
             return;
         }
         let mut harness = Harness::new(4, &LADDER, false);
@@ -296,7 +300,7 @@ export default class T extends LoopingBot {
 
     #[test]
     fn a_fixed_only_row_serves_the_withdraw_x_chunk_by_the_ladder() {
-        if !common::local_game_data_available(289) {
+        if !local_game_data::local_game_data_available(289) {
             return;
         }
         let mut harness = Harness::new(22, &LADDER[..3], false);
@@ -327,7 +331,7 @@ export default class T extends LoopingBot {
 
     #[test]
     fn a_need_of_seven_clicks_five_then_one_then_one() {
-        if !common::local_game_data_available(289) {
+        if !local_game_data::local_game_data_available(289) {
             return;
         }
         let mut harness = Harness::new(7, &LADDER, false);
@@ -345,7 +349,7 @@ export default class T extends LoopingBot {
 
     #[test]
     fn a_second_deposit_settles_null_while_the_first_is_live() {
-        if !common::local_game_data_available(289) {
+        if !local_game_data::local_game_data_available(289) {
             return;
         }
         let mut harness = Harness::new_deposit_pair(&LADDER);
@@ -382,7 +386,7 @@ export default class T extends LoopingBot {
 
     #[test]
     fn withdraw_to_settles_zero_while_a_deposit_is_live() {
-        if !common::local_game_data_available(289) {
+        if !local_game_data::local_game_data_available(289) {
             return;
         }
         let mut harness = Harness::new(7, &LADDER, true);

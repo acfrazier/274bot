@@ -4,7 +4,10 @@ use script::native::snapshot_source::{
 };
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
@@ -175,7 +178,7 @@ fn missing_controls_throw_and_do_not_send() {
 
 #[test]
 fn unknown_and_target_names_return_false_without_a_click() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(TELEPORT);
@@ -199,7 +202,7 @@ fn unknown_and_target_names_return_false_without_a_click() {
 
 #[test]
 fn low_magic_level_refuses_without_pressing() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(TELEPORT);
@@ -215,7 +218,7 @@ fn low_magic_level_refuses_without_pressing() {
 
 #[test]
 fn queued_button_is_not_arrival_until_xp_and_tile() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(TELEPORT);
@@ -275,7 +278,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     for selected in [data(), data_289()] {
@@ -309,7 +312,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn timeout_without_xp_and_tile_returns_false() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(TELEPORT);
@@ -346,7 +349,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(src);
@@ -435,7 +438,7 @@ export default class T extends LoopingBot {
 "#;
     let factless = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let mut isolates = vec![factless];
-    if common::local_game_data_available(274) {
+    if local_game_data::local_game_data_available(274) {
         isolates.push(spawn(src));
     }
     for iso in isolates {

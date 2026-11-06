@@ -3,7 +3,10 @@ use api::quest_facts::IdentityPin;
 use client::io::ClientRevision;
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn facts(revision: ClientRevision) -> api::game_data::QuestIdentityFacts {
     api::game_data::for_revision(revision)
@@ -51,7 +54,7 @@ fn missing_family_is_the_method_token_before_the_key() {
 
 #[test]
 fn id_matches_seed_id_only_and_name_matches_display_only() {
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -154,7 +157,7 @@ fn id_matches_seed_id_only_and_name_matches_display_only() {
 
 #[test]
 fn identity_value_is_the_landed_row_on_both_pins() {
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     let points = [
@@ -213,7 +216,7 @@ fn identity_value_is_the_landed_row_on_both_pins() {
 
 #[test]
 fn prereqs_value_is_the_requirements_object_only() {
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -385,7 +388,7 @@ fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
 
 #[test]
 fn v2_identity_and_prereqs_are_sync_helper_results() {
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     let src = r#"
@@ -565,7 +568,7 @@ export function tick(api) {
 
 #[test]
 fn v2_install_is_typed_not_a_json_op_or_interact() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let value = probe(
@@ -604,7 +607,7 @@ export function tick(api) {
 
 #[test]
 fn example_quest_facts_v2_is_one_read_only_fact_call() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

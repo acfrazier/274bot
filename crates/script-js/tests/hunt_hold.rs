@@ -11,7 +11,10 @@ use serde_json::{json, Value};
 use std::thread;
 use std::time::Duration;
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn reset() {
     hunt_fight::on_reset();
@@ -999,7 +1002,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn teleport_out_reports_escape_shortfall() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();

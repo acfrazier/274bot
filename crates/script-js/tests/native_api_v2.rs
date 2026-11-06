@@ -16,6 +16,10 @@ use {
     script_js::wire::encode_snapshot_with_native,
 };
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 mod common;
 
 fn temp_dir() -> std::path::PathBuf {
@@ -966,7 +970,7 @@ export async function tick(api) {
   catch (e) { globalThis.__if = String(e); }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1013,7 +1017,7 @@ export function tick(api) {
   };
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1269,7 +1273,7 @@ export function tick(api) {
   };
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1335,7 +1339,7 @@ export function tick(api) {
   };
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1396,7 +1400,7 @@ export async function tick(api) {
   };
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();

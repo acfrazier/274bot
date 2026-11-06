@@ -6,7 +6,10 @@ use std::path::PathBuf;
 use script_js::{LoadIsolate, LoadShape};
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn scratch(name: &str) -> PathBuf {
     let dir =
@@ -47,7 +50,7 @@ fn spawn_from_card_folder(
 
 #[test]
 fn card_folder_evaluates_herbs_import_with_selected_facts() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let dir = scratch("autofighter-shaped");
@@ -82,7 +85,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn logic_sibling_evaluates_transitive_herbs_with_selected_facts() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let dir = scratch("herb-cleaner-shaped");

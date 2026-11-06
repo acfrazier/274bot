@@ -10,7 +10,14 @@ use api::named_banks::{bank_catalog, NamedBankFacts};
 use nav_planner::named_banks::resolve;
 use script_js::{LoadIsolate, LoadIsolateError, LoadShape};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
+#[path = "common/local_bank_catalog.rs"]
+mod local_bank_catalog;
+#[path = "common/local_fact_catalogs.rs"]
+mod local_fact_catalogs;
 
 fn data() -> Arc<SelectedGameData> {
     api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
@@ -115,7 +122,7 @@ fn probe(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
 
 #[test]
 fn every_bank_is_a_location_between_auto_and_custom() {
-    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+    if !local_fact_catalogs::local_fact_catalogs_available() || !local_game_data::local_game_data_available(289) {
         return;
     }
     let names: Vec<_> = roster().banks().iter().map(|bank| bank.name).collect();
@@ -130,7 +137,7 @@ fn every_bank_is_a_location_between_auto_and_custom() {
 
 #[test]
 fn a_curated_bank_keeps_its_hand_walked_surface() {
-    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+    if !local_fact_catalogs::local_fact_catalogs_available() || !local_game_data::local_game_data_available(289) {
         return;
     }
     let iso = spawn(SRC);
@@ -156,7 +163,7 @@ fn a_curated_bank_keeps_its_hand_walked_surface() {
 
 #[test]
 fn auto_takes_the_nearest_unlocked_bank_and_its_nearest_oven() {
-    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+    if !local_fact_catalogs::local_fact_catalogs_available() || !local_game_data::local_game_data_available(289) {
         return;
     }
     let iso = spawn(SRC);
@@ -188,7 +195,7 @@ fn auto_takes_the_nearest_unlocked_bank_and_its_nearest_oven() {
 
 #[test]
 fn a_locked_location_is_null_by_name_and_for_auto() {
-    if !common::local_fact_catalogs_available() || !common::local_game_data_available(289) {
+    if !local_fact_catalogs::local_fact_catalogs_available() || !local_game_data::local_game_data_available(289) {
         return;
     }
     let iso = spawn(SRC);

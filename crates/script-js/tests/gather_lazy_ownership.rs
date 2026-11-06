@@ -4,7 +4,10 @@
 use client::io::ClientRevision;
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 const IDLE: &str = "export const apiVersion = 2;\nexport function tick(api) {}\n";
 
@@ -30,7 +33,7 @@ fn start(
 
 #[test]
 fn idle_isolates_never_acquire_the_family_and_consumers_release_it() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();

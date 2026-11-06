@@ -14,7 +14,10 @@ use {
     script_js::wire::encode_snapshot_with_native,
 };
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()
 }
@@ -230,7 +233,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn buy_on_a_closed_shop_is_refused_without_a_packet() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(BUY);
@@ -248,7 +251,7 @@ fn buy_on_a_closed_shop_is_refused_without_a_packet() {
 
 #[test]
 fn buy_queues_the_frozen_batch_and_counts_only_the_moved_items() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(BUY);
@@ -320,7 +323,7 @@ fn buy_queues_the_frozen_batch_and_counts_only_the_moved_items() {
 
 #[test]
 fn sell_acts_on_the_shop_player_pack_not_the_stock_row_of_the_same_name() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(SELL);
@@ -364,7 +367,7 @@ fn sell_acts_on_the_shop_player_pack_not_the_stock_row_of_the_same_name() {
 
 #[test]
 fn sell_without_a_decoded_player_pack_fails_closed() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(SELL);
@@ -411,7 +414,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn sell_with_pick_sells_the_row_pick_accepts_and_asks_again_per_batch() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(SELL_PICK);
@@ -483,7 +486,7 @@ fn sell_with_pick_sells_the_row_pick_accepts_and_asks_again_per_batch() {
 
 #[test]
 fn sell_treats_a_promise_returning_pick_as_sync_truthy() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(SELL_PICK);
@@ -525,7 +528,7 @@ fn sell_treats_a_promise_returning_pick_as_sync_truthy() {
 
 #[test]
 fn sell_with_a_refusing_or_throwing_pick_sends_nothing() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(SELL_PICK);
@@ -559,7 +562,7 @@ fn sell_with_a_refusing_or_throwing_pick_sends_nothing() {
 
 #[test]
 fn open_presses_the_keepers_trade_op_and_reports_the_opened_shop() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -597,7 +600,7 @@ fn open_presses_the_keepers_trade_op_and_reports_the_opened_shop() {
 
 #[test]
 fn open_without_a_keeper_resolves_false_without_a_packet() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -632,7 +635,7 @@ fn trades(ops: &[InteractReq]) -> usize {
 /// its tick deadline, however long the wall clock runs.
 #[test]
 fn open_sends_one_trade_while_the_keeper_takes_longer_than_three_seconds() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -669,7 +672,7 @@ fn open_sends_one_trade_while_the_keeper_takes_longer_than_three_seconds() {
 
 #[test]
 fn open_ignores_a_usable_page_posted_on_its_trade_tick() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -698,7 +701,7 @@ fn open_ignores_a_usable_page_posted_on_its_trade_tick() {
 
 #[test]
 fn cant_reach_ends_each_attempt_and_three_resolve_false() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -742,7 +745,7 @@ fn cant_reach_ends_each_attempt_and_three_resolve_false() {
 #[test]
 fn three_expired_attempts_resolve_false_after_their_tick_deadlines() {
     const CAP: u64 = 116;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -781,7 +784,7 @@ fn three_expired_attempts_resolve_false_after_their_tick_deadlines() {
 #[test]
 fn open_with_a_stale_flood_waits_the_cap() {
     const CAP: u64 = 116;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -814,7 +817,7 @@ fn open_with_a_stale_flood_waits_the_cap() {
 /// settles on it and never sends a shop button; three attempts end false.
 #[test]
 fn a_shop_closed_before_its_page_never_opens_and_ends_false() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -948,7 +951,7 @@ fn keeper_at<'a>(actions: &'a [String], x: i32, distance: i32) -> SceneEntityInp
 /// slack), and the shop that opens on that deadline tick is accepted.
 #[test]
 fn open_waits_out_the_keepers_route_with_one_trade() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -1017,7 +1020,7 @@ fn open_waits_out_the_keepers_route_with_one_trade() {
 /// to it first; once beside it, one Trade.
 #[test]
 fn open_walks_to_a_door_blocked_keeper_then_trades_once() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -1075,7 +1078,7 @@ fn open_walks_to_a_door_blocked_keeper_then_trades_once() {
 /// without a Trade (here: the user takes the walk over).
 #[test]
 fn open_fails_without_a_trade_when_the_walk_to_the_keeper_fails() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(OPEN);
@@ -1103,7 +1106,7 @@ fn open_fails_without_a_trade_when_the_walk_to_the_keeper_fails() {
 
 #[test]
 fn closing_the_shop_mid_batch_ends_the_transfer_with_its_partial_count() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(BUY);
@@ -1146,7 +1149,7 @@ fn closing_the_shop_mid_batch_ends_the_transfer_with_its_partial_count() {
 /// with the settled count, and the closed shop gets no further button.
 #[test]
 fn an_if_close_after_a_settled_batch_ends_buy_with_its_settled_count() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(BUY);
@@ -1191,7 +1194,7 @@ fn an_if_close_after_a_settled_batch_ends_buy_with_its_settled_count() {
 
 #[test]
 fn pause_hold_and_session_reset_abort_a_parked_transfer() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(BUY);
@@ -1257,7 +1260,7 @@ fn pause_hold_and_session_reset_abort_a_parked_transfer() {
 /// missing items or issue a post-relog shop button.
 #[test]
 fn sell_kept_reconnect_preserves_partial_count_without_a_post_relog_click() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     for post_relog_count in [8, 6] {

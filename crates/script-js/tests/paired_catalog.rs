@@ -20,6 +20,10 @@ fn wait_ready(isolate: &LoadIsolate) {
 
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 mod common;
 
 fn scratch() -> PathBuf {
@@ -32,7 +36,7 @@ fn scratch() -> PathBuf {
 #[test]
 #[ignore = "requires the frozen RS2B0T catalog"]
 fn paired_catalog_cards_transpile_and_start_with_selected_289_data() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let root = script_js::rs2b0t_root().expect("RS2B0T catalog root configured");
@@ -118,7 +122,7 @@ fn paired_catalog_cards_transpile_and_start_with_selected_289_data() {
 #[test]
 #[ignore = "requires the frozen RS2B0T catalog"]
 fn frozen_jive_party_releases_only_a_complete_fresh_roster() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let root = script_js::rs2b0t_root().expect("RS2B0T catalog root configured");

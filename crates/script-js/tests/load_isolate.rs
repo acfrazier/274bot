@@ -20,6 +20,10 @@ use script_js::{JsLibrary, LoadIsolate, LoadShape};
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 mod common;
 
 /// Spawn and wait (bounded) for setup to finish. `spawn` returns before V8
@@ -2643,7 +2647,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -3155,7 +3159,7 @@ export default class T extends TaskBot {
 // advancing the observed tick or replaying lifecycle work.
 #[test]
 fn snapshot_wake_settles_bank_open_machine_without_advancing_tick() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let src = r#"
@@ -3296,7 +3300,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn snapshot_wake_settles_bank_wait_without_advancing_tick_or_loop() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -4845,7 +4849,7 @@ fn isolate_native_tick_api_is_throw_on_missing_proxy() {
 // snapshot so dispatch cannot retarget between observation and action.
 #[test]
 fn isolate_banking_open_queues_open_booth_without_walk() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -4920,7 +4924,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_bank_open_nearest_and_open_booth_queue_open_booth() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5014,7 +5018,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_bank_access_with_long_name_logs_and_resolves_false() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5083,7 +5087,7 @@ export default class T extends LoopingBot {{
 
 #[test]
 fn isolate_banking_open_reaches_the_preset_access_and_waits_for_loaded_stock() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5196,7 +5200,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_banking_bank_nearest_selects_an_off_scene_bank_before_opening_its_booth() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5381,7 +5385,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_banking_bank_nearest_fails_closed_when_selection_has_no_candidate() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5417,7 +5421,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_banking_open_refuses_unsupported_obstacle_work_without_acting() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5450,7 +5454,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_bank_snapshot_wait_requires_new_items_not_just_a_reopened_session() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5525,7 +5529,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_banking_deposit_all_matching_bounds_duplicate_rows_to_one_request() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5599,7 +5603,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_bank_deposit_skips_side_only_stale_row() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5632,7 +5636,7 @@ export default class T extends LoopingBot {
 /// to ids and presses the first other row by id, with no script predicate.
 #[test]
 fn isolate_bank_deposit_all_except_skips_kept_names() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5725,7 +5729,7 @@ export default class T extends LoopingBot {
 /// false with the target, so withdrawTo sends nothing.
 #[test]
 fn isolate_bank_sync_hooks_take_a_promise_as_a_value() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5821,7 +5825,7 @@ export default class T extends LoopingBot {
 /// awaited 22 would have answered at once.
 #[test]
 fn isolate_close_confirm_count_promise_is_not_awaited() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5869,7 +5873,7 @@ export default class T extends LoopingBot {
 /// side-view wait.
 #[test]
 fn isolate_banking_deposit_waits_for_the_pressed_id_to_leave_the_pack() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -5949,7 +5953,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_common_bank_loot_uses_rust_predicate_and_preserves_short_circuit() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6127,7 +6131,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_wait_bank_ready_adapts_existing_bank_wait() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6204,7 +6208,7 @@ export default class T extends LoopingBot {
 /// 222-225) and sends nothing, and the empty posted ops stay empty.
 #[test]
 fn isolate_bank_items_do_not_invent_ops_and_withdraw_x_answers_false() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6237,7 +6241,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_bank_withdraw_x_queues_one_host_owned_continuation() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6305,7 +6309,7 @@ export default class T extends LoopingBot {
 /// `closeBankAndConfirmCount` closes, then confirms with the caller count.
 #[test]
 fn isolate_withdraw_to_falls_back_and_counts_with_the_callers_count() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6405,7 +6409,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_bank_withdraw_x_zero_is_success_without_a_request() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6436,7 +6440,7 @@ export default class T extends LoopingBot {
 /// settles it false.
 #[test]
 fn isolate_bank_withdraw_load_by_numeric_id_keeps_item_updates_but_rejects_reopened_sessions() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6525,7 +6529,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_bank_withdraw_load_handles_stale_and_full_snapshots_without_requests() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6573,7 +6577,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_bank_withdraw_x_by_id_carries_noted_destination_and_fixed_op() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6624,7 +6628,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_bank_withdraw_x_never_answers_after_bank_session_changes() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6669,7 +6673,7 @@ export default class T extends LoopingBot {
 /// bound: `close(0)` on a bank that stays open is false.
 #[test]
 fn isolate_bank_close_waits_until_posted_shut() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -6755,7 +6759,7 @@ export default class T extends LoopingBot {
 // component, never a name. A missing member still throws.
 #[test]
 fn isolate_banking_deposit_presses_nameless_rows_by_id_and_missing_members_throw() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -7403,7 +7407,7 @@ fn isolate_approach_of_preserves_value_identity_nullish_fallback_and_throws() {
 // set-note-mode verb, then it resolves `undefined` after a tick.
 #[test]
 fn isolate_bank_set_note_mode_queues_op_when_bank_open() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -7446,7 +7450,7 @@ export default class T extends LoopingBot {
 // snapshot carries no control ids (the host maps or refuses the press).
 #[test]
 fn isolate_bank_set_note_mode_never_throws() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -7503,7 +7507,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_live_catalog_uses_selected_certificate_links() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -7577,7 +7581,7 @@ export default class T extends LoopingBot {{
 /// the shop label. The body below is the frozen `dumpables`.
 #[test]
 fn isolate_live_catalog_answers_the_market_dumper() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -8697,7 +8701,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = LoadIsolate::spawn_with_game_data(
@@ -9407,7 +9411,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -9465,7 +9469,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn bank_wait_ready_resolves_when_posted_open_and_loaded() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -9555,7 +9559,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn bank_wait_ready_returns_immediately_when_closed_or_already_ready() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -9589,7 +9593,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn bank_wait_ready_resolves_false_when_the_bank_closes_before_ready() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -9623,7 +9627,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn bank_wait_snapshot_after_rejects_negative_generation() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -10646,7 +10650,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = LoadIsolate::spawn_with_game_data(
@@ -10967,7 +10971,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)
@@ -11603,7 +11607,7 @@ export default class T extends LoopingBot {
 /// call site, so its `false` resolution still includes Strange fruit.
 #[test]
 fn seat_case_23_periodic_bank_common_junk_promise_is_truthy() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -11677,7 +11681,7 @@ export default class T extends LoopingBot {
 /// requests native bank selection instead of walking to the Promise's result.
 #[test]
 fn seat_case_23_periodic_bank_destination_promise_is_not_awaited() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -11815,7 +11819,7 @@ export default class T extends LoopingBot {
 /// with that exact object, rather than converting it to a message.
 #[test]
 fn seat_case_23_periodic_bank_sync_throw_preserves_value_identity() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -11861,7 +11865,7 @@ export default class T extends LoopingBot {
 /// and completes normally.
 #[test]
 fn seat_case_23_periodic_bank_after_deposit_false_is_ignored() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -11953,7 +11957,7 @@ export default class T extends LoopingBot {
 /// awaited/ignored afterDeposit hook remains a failure with the same V8 value.
 #[test]
 fn seat_case_11_bank_nearest_after_deposit_delayed_throw_preserves_identity() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -12009,7 +12013,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn bank_nearest_pause_and_kept_reconnect_revalidate_return_follow_without_repeating_hooks() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 

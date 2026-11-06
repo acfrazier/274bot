@@ -3,6 +3,10 @@
 use script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 mod common;
 use common::post_snapshot_input;
 
@@ -257,7 +261,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn life_ticks_are_revision_independent_on_selected_caches() {
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     let src = r#"

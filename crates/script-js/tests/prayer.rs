@@ -4,6 +4,10 @@ use script::native::snapshot_source::{
 };
 use script_js::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 mod common;
 use common::post_snapshot_input;
 
@@ -149,7 +153,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn v1_queries_trim_case_and_stats_on_both_caches() {
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     for game_data in both_data() {
@@ -179,7 +183,7 @@ fn v1_queries_trim_case_and_stats_on_both_caches() {
 
 #[test]
 fn v1_available_false_when_points_are_zero() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v1(V1_QUERY, data());
@@ -211,7 +215,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v1(src, data());
@@ -234,7 +238,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v1(src, data());
@@ -264,7 +268,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v1(src, data());
@@ -288,7 +292,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v1(src, data());
@@ -324,7 +328,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v1(src, data());
@@ -353,7 +357,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     for game_data in both_data() {
@@ -400,7 +404,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v1(src, data());
@@ -469,7 +473,7 @@ export function tick(api) {
 
 #[test]
 fn v2_queries_are_helper_result_and_if_button_stays_private() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v2(V2_QUERY, data());
@@ -518,7 +522,7 @@ export async function tick(api) {
   globalThis.__on = await api.prayerSet({ name: 'Protect from Melee', on: 1 });
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v2(src, data());
@@ -547,7 +551,7 @@ export async function tick(api) {
   globalThis.__unavail = await api.prayerSet({ name: 'Protect from Melee', on: true });
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v2(src, data());
@@ -573,7 +577,7 @@ export async function tick(api) {
   globalThis.__set = await api.prayerSet({ name: 'Protect from Melee', on: true });
 }
 "#;
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let iso = spawn_v2(src, data_289());
@@ -611,7 +615,7 @@ export async function tick(api) {
   globalThis.__set = await api.prayerSet({ name: 'Protect from Melee', on: true });
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v2(src, data());
@@ -639,7 +643,7 @@ export async function tick(api) {
   globalThis.__clear = await api.prayerClear();
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v2(src, data());
@@ -695,7 +699,7 @@ export async function tick(api) {
   globalThis.__set = set;
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v2(src, data());
@@ -738,7 +742,7 @@ fn published_example_queries_sets_clears_and_stops() {
     assert_eq!(card.shape, LoadShape::NativeTick);
     assert_eq!(card.api_family, ApiFamily::V2);
     assert!(card.unloadable.is_none(), "{:?}", card.unloadable);
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = LoadIsolate::spawn_with_game_data(card.js, card.shape, vec![], data()).unwrap();
@@ -786,7 +790,7 @@ fn published_v1_adapter_imports_prayer_and_stops() {
     let card = library.load(&path).unwrap();
     assert_eq!(card.shape, LoadShape::CompatClass);
     assert!(card.unloadable.is_none(), "{:?}", card.unloadable);
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = LoadIsolate::spawn_with_game_data(card.js, card.shape, vec![], data()).unwrap();
@@ -836,7 +840,7 @@ export async function tick(api) {
   await Promise.all([setP, clearP]);
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v2(src, data());
@@ -897,7 +901,7 @@ export async function tick(api) {
   await Promise.all([first, second]);
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v2(src, data());
@@ -946,7 +950,7 @@ export function tick(api) {
   });
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v2(src, data());
@@ -994,7 +998,7 @@ export async function tick(api) {
   globalThis.__done = true;
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn_v2(src, data());
@@ -1078,7 +1082,7 @@ export async function tick(api) {
   }
 }
 "#;
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let iso = spawn_v2(query, data_289());

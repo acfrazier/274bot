@@ -10,6 +10,10 @@ use script::interact::InteractReq;
 use script::native::snapshot_source::{ChatLineInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 mod common;
 use common::{ingame_snapshot, post_snapshot_input};
 
@@ -108,7 +112,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn a_bank_walk_across_a_reconnect_goes_on_to_open_the_bank() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -272,7 +276,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn kept_bank_transfer_steps_take_the_closed_bank_path_without_replay() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -398,7 +402,7 @@ export default class T extends LoopingBot {{
 
 #[test]
 fn non_kept_reset_aborts_bank_opening_and_settles_its_promise_once() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
 

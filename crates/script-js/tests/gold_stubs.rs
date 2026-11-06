@@ -5,7 +5,10 @@ use std::path::PathBuf;
 use script_js::{JsLibrary, LoadIsolate, LoadShape};
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("274bot-gold-stubs-{name}-{}", std::process::id()));
@@ -317,7 +320,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn posted_herbs_match_selected_revision_facts() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -374,7 +377,7 @@ export default class T extends LoopingBot { loop() { globalThis.__probe = HERBS.
 
 #[test]
 fn empty_herbs_with_selected_facts_fail_at_use_not_import() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -414,7 +417,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn item_db_reads_selected_alcher_gold_row() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -442,7 +445,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn selected_game_data_is_published_before_modules_and_offline_stays_empty() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let source = r#"
@@ -513,7 +516,7 @@ export default class T extends LoopingBot {
 /// Guard fallback. ArdyThiever checks it at Start and on a paint switch.
 #[test]
 fn required_thieving_is_the_selected_level_of_the_named_target() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let source = r#"
@@ -548,7 +551,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn thiever_resolves_food_from_host_loadout_and_queues_eat() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -589,7 +592,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn selected_game_data_composes_with_handwritten_alcher_logic() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let dir = temp_dir("selected-alcher-handwritten");

@@ -4,7 +4,10 @@ use script::native::snapshot_source::{
 };
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
@@ -188,7 +191,7 @@ export default class T extends LoopingBot {
         slot: 3,
     }];
     let tabs = [SideTabIfaceInput { index: 0, id: 2276 }];
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     for (rev, selected) in [(274, data()), (289, data_289())] {
@@ -223,7 +226,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn already_armed_is_idempotent() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -244,7 +247,7 @@ fn already_armed_is_idempotent() {
 
 #[test]
 fn no_bar_refuses_without_send() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -265,7 +268,7 @@ fn no_bar_refuses_without_send() {
 
 #[test]
 fn arm_clicks_bar_then_posted_armed_state() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -295,7 +298,7 @@ fn arm_clicks_bar_then_posted_armed_state() {
 
 #[test]
 fn timeout_without_armed_returns_false() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -331,7 +334,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(src);
@@ -383,7 +386,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn pause_and_hold_freeze_mid_arm_without_late_click() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -441,7 +444,7 @@ fn pause_and_hold_freeze_mid_arm_without_late_click() {
 // the JS snapshot pages must not cross the seam.
 #[test]
 fn arm_reads_the_scene_not_the_js_side_tab_or_varp_pages() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -483,7 +486,7 @@ export default class T extends LoopingBot {
     loop() { Special.energy(); }
 }
 "#;
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(src);

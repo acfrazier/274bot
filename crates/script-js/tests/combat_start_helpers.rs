@@ -1,7 +1,10 @@
 use client::io::ClientRevision;
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 fn probe_json(src: &str) -> serde_json::Value {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
@@ -78,7 +81,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn ranged_loadout_distinguishes_dart_custom_thrown_and_bow() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -171,7 +174,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn food_forms_are_generated_aliases_and_count_slots() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
@@ -217,7 +220,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn food_options_come_from_selected_289_fixed_heal_facts() {
-    if !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();

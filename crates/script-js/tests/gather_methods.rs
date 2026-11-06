@@ -3,7 +3,10 @@
 use client::io::ClientRevision;
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn post_base(iso: &LoadIsolate, tick: u64) {
     let input = script::native::snapshot_source::SnapshotInput {
@@ -125,7 +128,7 @@ fn helper_ok(value: serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn v2_methods_are_sync_helper_results_with_locked_errors() {
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     let src = r#"
@@ -249,7 +252,7 @@ export function tick(api) {
 
 #[test]
 fn v2_install_is_typed_not_a_json_op_or_interact() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let value = probe(
@@ -399,7 +402,7 @@ export function tick(api) {
 
 #[test]
 fn v2_placements_are_sync_helper_results_with_locked_errors() {
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     let src = r#"
@@ -525,7 +528,7 @@ export function tick(api) {
 
 #[test]
 fn example_gather_methods_v2_is_one_read_only_fact_call() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -560,7 +563,7 @@ fn example_gather_methods_v2_is_one_read_only_fact_call() {
 
 #[test]
 fn example_gather_placements_v2_is_one_read_only_fact_call() {
-    if !common::local_game_data_available(274) {
+    if !local_game_data::local_game_data_available(274) {
         return;
     }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -606,7 +609,7 @@ fn example_gather_placements_v2_is_one_read_only_fact_call() {
 
 #[test]
 fn frozen_gas_rock_set_skips_gas_variants_on_the_coal_query_path() {
-    if !common::local_game_data_available(274) || !common::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
         return;
     }
     let src = r#"
