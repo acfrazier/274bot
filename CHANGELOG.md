@@ -52,26 +52,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Memory diagnostics
 
-- Opt-in memory scenarios now exercise the Priest journal, compatibility object
-  caches, native partner trade, the native API owner, native NPC Combat and
-  repeated host routing.
-  Each has an explicit feature-not-used control. Counts and retained-state
-  evidence remain separate from the common Thiever A/B lane.
-  The native API fleet uses separate real tree sites with standable ground,
-  several original proof-tree candidates and full-area clearance from placed
-  attackable NPCs. It does not depend on a single tree left after the pilot.
-  Every active account still needs fresh XP and yield.
-  Native NPC Combat uses separate real Cow areas and accepted API v2 consumers
-  in both phases. Every active account needs native ownership and fresh combat
-  XP. Both finite-site workloads accept only the single-account pilot and
-  ten-account fleet.
-  Combat startup stays pending within the existing proof budget. It does not
-  count as active work or fresh-XP proof.
-  Combat status decoding keeps its field and integer checks without an
-  unnecessary lazy wrapper.
-  Native API terminal diagnostics keep a bounded result in the fatal Stop
-  reason. Fatal memory TUI errors use the password-redacting host log without
-  changing their error text or exit code.
+- Fatal memory TUI errors use the central password-redacting host log.
+  Their error text and exit code are unchanged.
 
 ### Fixed during development
 

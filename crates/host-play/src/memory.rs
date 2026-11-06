@@ -14,8 +14,6 @@
 //! Qualification rows save the rule and every bot's tick, food, bank and tile
 //! facts. Other catalog scenarios explicitly report `phase not gated`.
 
-mod workloads;
-
 use crate::Play;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::{HashMap, VecDeque};
@@ -200,8 +198,7 @@ impl Config {
         let Ok(n) = std::env::var("BOT_MEMORY_N") else {
             return Ok(None);
         };
-        let scenario = std::env::var("BOT_MEMORY_SCENARIO").ok();
-        let n = parse_scenario_n(&n, scenario.as_deref())?;
+        let n = parse_n(&n)?;
         let workload = match std::env::var("BOT_MEMORY_WORKLOAD").as_deref() {
             Err(_) | Ok("idle") => Workload::Idle,
             Ok("seeded-idle") => Workload::SeededIdle,
@@ -243,76 +240,6 @@ pub fn parse_n(n: &str) -> Result<usize, String> {
         "128" => Ok(128),
         _ => Err("BOT_MEMORY_N must be 1, 10, 16, 32, 50, or 128".into()),
     }
-}
-
-// These are real product scenarios, not unsupported-name fallbacks. The shared
-// lab harness also checks these exact literals in each unmodified source arm.
-const FEATURE_SCENARIOS: &[(&str, workloads::Kind, bool)] = &[
-    ("priest_journal", workloads::Kind::PriestJournal, false),
-    (
-        "priest_journal_feature_off",
-        workloads::Kind::PriestJournal,
-        true,
-    ),
-    (
-        "compatibility_object_cache",
-        workloads::Kind::CompatibilityObjectCache,
-        false,
-    ),
-    (
-        "compatibility_object_cache_feature_off",
-        workloads::Kind::CompatibilityObjectCache,
-        true,
-    ),
-    (
-        "native_partner_trade",
-        workloads::Kind::NativePartnerTrade,
-        false,
-    ),
-    (
-        "native_partner_trade_feature_off",
-        workloads::Kind::NativePartnerTrade,
-        true,
-    ),
-    ("merged_native_api", workloads::Kind::MergedNativeApi, false),
-    (
-        "merged_native_api_feature_off",
-        workloads::Kind::MergedNativeApi,
-        true,
-    ),
-    ("native_npc_combat", workloads::Kind::NativeNpcCombat, false),
-    (
-        "native_npc_combat_feature_off",
-        workloads::Kind::NativeNpcCombat,
-        true,
-    ),
-    (
-        "active_route_navigation",
-        workloads::Kind::ActiveRouteNavigation,
-        false,
-    ),
-    (
-        "active_route_navigation_feature_off",
-        workloads::Kind::ActiveRouteNavigation,
-        true,
-    ),
-];
-
-fn feature_scenario(name: &str) -> Option<(workloads::Kind, bool)> {
-    FEATURE_SCENARIOS
-        .iter()
-        .find_map(|&(accepted, kind, unused)| (name == accepted).then_some((kind, unused)))
-}
-
-fn parse_scenario_n(n: &str, scenario: Option<&str>) -> Result<usize, String> {
-    if n == "2"
-        && scenario
-            .and_then(feature_scenario)
-            .is_some_and(|(kind, _)| kind == workloads::Kind::NativePartnerTrade)
-    {
-        return Ok(2);
-    }
-    parse_n(n)
 }
 
 /// Requested panel render cell. Logged as requested metadata, not observed GPU proof.
@@ -1538,50 +1465,6 @@ fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Arc<[api::loadout
         .into()
 }
 
-struct FeatureRun {
-    case: Box<dyn workloads::FeatureCase>,
-    unused: bool,
-    prepared: bool,
-    activated: bool,
-    observation: workloads::Observation,
-    retained_recorded: bool,
-}
-
-impl FeatureRun {
-    fn established(&self, wanted: usize) -> bool {
-        self.prepared
-            && self.observation.ready == wanted
-            && (self.unused
-                || (self.activated
-                    && self.observation.active == wanted
-                    && self.observation.proved == wanted
-                    && self.observation.continuing == wanted))
-    }
-
-    fn write_fields(&self, value: &mut serde_json::Value, scenario: &str) {
-        value["feature_workload"] = scenario.into();
-        value["feature_not_used"] = self.unused.into();
-        value["feature_ready"] = self.observation.ready.into();
-        value["feature_active"] = self.observation.active.into();
-        value["feature_proved"] = self.observation.proved.into();
-        value["feature_continuing"] = self.observation.continuing.into();
-    }
-
-    fn evidence(&self, names: &[String]) -> serde_json::Value {
-        serde_json::json!({
-            "lane": "candidate-only",
-            "feature_not_used": self.unused,
-            "prepared": self.prepared,
-            "activated": self.activated,
-            "ready": self.observation.ready,
-            "active": self.observation.active,
-            "proved": self.observation.proved,
-            "continuing": self.observation.continuing,
-            "evidence": self.case.evidence(names),
-        })
-    }
-}
-
 /// Prepared memory-benchmark run shared by panel-play and tui-play.
 pub struct Run {
     pub config: Config,
@@ -1613,7 +1496,6 @@ pub struct Run {
     /// The profile's game-data trust decision, serialized once on first poll.
     game_data: Option<serde_json::Value>,
     gameplay_phases: Arc<Mutex<GameplayPhases>>,
-    feature: Option<FeatureRun>,
 }
 
 /// Where non-idle seed runners get their [`nav_planner::world::NavWorld`].
@@ -1698,20 +1580,6 @@ impl Run {
         let sustain = std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1");
         let requested_scenario =
             std::env::var("BOT_MEMORY_SCENARIO").unwrap_or_else(|_| "thiever".to_string());
-        let feature_request = feature_scenario(&requested_scenario);
-        if let Some((kind, _)) = feature_request {
-            if config.workload != Workload::Active {
-                return Err(format!(
-                    "BOT_MEMORY_SCENARIO {requested_scenario} requires BOT_MEMORY_WORKLOAD=active"
-                ));
-            }
-            if !kind.supports_count(config.n) {
-                return Err(format!(
-                    "{requested_scenario} does not support {} accounts",
-                    config.n
-                ));
-            }
-        }
         if sustain
             && (!matches!(config.workload, Workload::Active | Workload::Lifecycle)
                 || requested_scenario != "thiever")
@@ -1732,18 +1600,6 @@ impl Run {
         use vault::{Profile, ProfileSettings, Vault};
 
         let names = crate::mint_live_names(config.n);
-        let feature = feature_request
-            .map(|(kind, unused)| {
-                kind.build(&names).map(|case| FeatureRun {
-                    case,
-                    unused,
-                    prepared: false,
-                    activated: false,
-                    observation: workloads::Observation::default(),
-                    retained_recorded: false,
-                })
-            })
-            .transpose()?;
         let diagnostics = std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1");
         if diagnostics {
             crate::memory_diagnostics::enable(&names);
@@ -1791,9 +1647,7 @@ impl Run {
         } else {
             Some(requested_scenario)
         };
-        let card = if feature.is_some() {
-            None
-        } else if let Some(scenario_name) = scenario_name.as_deref() {
+        let card = if let Some(scenario_name) = scenario_name.as_deref() {
             let benchmark = scenario::get(scenario_name)
                 .ok_or_else(|| format!("unknown BOT_MEMORY_SCENARIO {scenario_name}"))?;
             let card_name = benchmark.settings.start_script.ok_or_else(|| {
@@ -1919,7 +1773,6 @@ impl Run {
             ready_latch,
             game_data: None,
             gameplay_phases,
-            feature,
         })
     }
 
@@ -1962,9 +1815,7 @@ impl Run {
             );
         }
         for (slot, name) in self.names.iter().enumerate() {
-            let mut scenario = if let Some(feature) = &self.feature {
-                feature.case.seed(slot, &self.names)?
-            } else if self.config.workload == Workload::SeededIdle {
+            let mut scenario = if self.config.workload == Workload::SeededIdle {
                 seeded_idle_scenario()
             } else if self.scenario_name.as_deref() == Some("thiever")
                 && std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1")
@@ -1978,12 +1829,10 @@ impl Run {
                 scenario::get(scenario_name)
                     .ok_or_else(|| format!("missing benchmark scenario {scenario_name}"))?
             };
-            if self.feature.is_none() {
-                widen_fleet_post_start_waits(&mut scenario, self.config.n);
-                qualify_contentious_moss_fleet(&mut scenario, self.config.n)?;
-                qualify_gatherer_fleet(&mut scenario, self.config.n)?;
-                qualify_duel_arena_fleet(&mut scenario, self.config.n, slot, duel_gate.as_ref())?;
-            }
+            widen_fleet_post_start_waits(&mut scenario, self.config.n);
+            qualify_contentious_moss_fleet(&mut scenario, self.config.n)?;
+            qualify_gatherer_fleet(&mut scenario, self.config.n)?;
+            qualify_duel_arena_fleet(&mut scenario, self.config.n, slot, duel_gate.as_ref())?;
             scenario.settings.terminal_shot = None;
             let mut seed = seed_runner(scenario, name, seed_world.clone(), map_members);
             seed.duel = duel_gate.as_ref().map(|gate| DuelSlot {
@@ -2263,34 +2112,6 @@ impl Run {
             }
         }
 
-        if let Some(feature) = &mut self.feature {
-            if self.teardown.is_none() {
-                if !feature.prepared
-                    && ready == self.config.n
-                    && (seeded == self.config.n || feature.observation.ready == self.config.n)
-                {
-                    feature.prepared = feature.case.prepare_unused(play, &self.names)?;
-                }
-                if feature.prepared && !feature.unused && !feature.activated {
-                    feature.activated = feature.case.activate(play, &self.names)?;
-                }
-            }
-            feature.observation = feature.case.observe(play, &self.names)?;
-            seeded = feature.observation.ready;
-            proved = feature.observation.proved;
-            if self.observing.is_some()
-                && self.teardown.is_none()
-                && !feature.unused
-                && (feature.observation.active != self.config.n
-                    || feature.observation.continuing != self.config.n)
-            {
-                return Err(format!(
-                    "feature workload stopped or idled during collection: active={} continuing={} wanted={}",
-                    feature.observation.active, feature.observation.continuing, self.config.n
-                ));
-            }
-        }
-
         let active = self
             .names
             .iter()
@@ -2300,9 +2121,7 @@ impl Run {
         // Unseeded idle: stable ingame readiness only. Seeded idle: seed
         // completed, no scripts. Active/lifecycle: all ready, seeded,
         // XP-proved, and scripts up.
-        let established = if let Some(feature) = &self.feature {
-            ready == self.config.n && feature.established(self.config.n)
-        } else if self.config.workload == Workload::SeededIdle {
+        let established = if self.config.workload == Workload::SeededIdle {
             ready == self.config.n && seeded == self.config.n && active == 0
         } else if self.card.is_none() {
             ready == self.config.n
@@ -2405,12 +2224,8 @@ impl Run {
                     return Err("gatherer_restart_incomplete_at_observe_end".into());
                 }
                 self.write_qualification(play, "observe-end")?;
-                if let Some(feature) = &mut self.feature {
-                    feature.case.stop(play, &self.names)?;
-                } else {
-                    for name in &self.names {
-                        play.script_stop(name);
-                    }
+                for name in &self.names {
+                    play.script_stop(name);
                 }
                 self.stopped = true;
                 self.teardown = Some(now);
@@ -2565,12 +2380,6 @@ impl Run {
             value["seeded"] = seed_counts.map(|(seeded, _)| seeded).into();
             value["proved"] = seed_counts.map(|(_, proved)| proved).into();
             value["game_data"] = self.game_data_json(play);
-            if let Some(feature) = &self.feature {
-                feature.write_fields(
-                    &mut value,
-                    self.scenario_name.as_deref().expect("feature scenario"),
-                );
-            }
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
             // Flush complete rows before returning a terminal result; a
             // frontend may exit without running destructors.
@@ -2584,27 +2393,6 @@ impl Run {
         let finished = self
             .teardown
             .is_some_and(|t| t.elapsed() >= self.config.teardown);
-        if finished
-            && self
-                .feature
-                .as_ref()
-                .is_some_and(|feature| !feature.retained_recorded)
-        {
-            if self
-                .names
-                .iter()
-                .any(|name| play.script_state(name) != script::RunState::Idle)
-            {
-                return Err(
-                    "feature workload Stop did not settle within the teardown window".into(),
-                );
-            }
-            self.write_qualification(play, "post-stop")?;
-            self.feature
-                .as_mut()
-                .expect("feature retained observation")
-                .retained_recorded = true;
-        }
         Ok(finished)
     }
 
@@ -2636,21 +2424,16 @@ impl Run {
                     .map(|seed| seed.lock().unwrap());
                 let status = statuses.iter().find(|s| &s.username == name);
                 let script_state = play.script_state(name);
-                let qualified_now = if let Some(feature) = &self.feature {
-                    status.is_some_and(|s| s.ingame && s.scene_state == 2)
-                        && feature.established(self.config.n)
-                } else {
-                    slot_qualified(
-                        self.config.workload,
-                        self.card.is_some(),
-                        status.is_some_and(|s| s.ingame && s.scene_state == 2),
-                        seed.as_ref()
-                            .map(|seed| (seed.runner.status(), seed.runner.on_start_script()))
-                            .as_ref()
-                            .map(|(status, on_start)| (status, *on_start)),
-                        script_state == script::RunState::Running,
-                    )
-                };
+                let qualified_now = slot_qualified(
+                    self.config.workload,
+                    self.card.is_some(),
+                    status.is_some_and(|s| s.ingame && s.scene_state == 2),
+                    seed.as_ref()
+                        .map(|seed| (seed.runner.status(), seed.runner.on_start_script()))
+                        .as_ref()
+                        .map(|(status, on_start)| (status, *on_start)),
+                    script_state == script::RunState::Running,
+                );
                 slot_outcome(
                     name,
                     self.ready_latch
@@ -2704,13 +2487,6 @@ impl Run {
                 value["gatherer_fleet_qualification"] = summary;
             }
         }
-        if let Some(feature) = &self.feature {
-            feature.write_fields(
-                &mut value,
-                self.scenario_name.as_deref().expect("feature scenario"),
-            );
-            value["feature_evidence"] = feature.evidence(&self.names);
-        }
         write_row(&mut self.qualification_output, &value).map_err(|e| e.to_string())
     }
 
@@ -2757,13 +2533,6 @@ impl Run {
             if let Some((_, summary)) = crate::memory_diagnostics::gatherer_verdict_json(false) {
                 value["gatherer_fleet_qualification"] = summary;
             }
-        }
-        if let Some(feature) = &self.feature {
-            feature.write_fields(
-                &mut value,
-                self.scenario_name.as_deref().expect("feature scenario"),
-            );
-            value["feature_evidence"] = feature.evidence(&self.names);
         }
         if let Err(write_error) = write_row(&mut self.qualification_output, &value) {
             eprintln!("memory benchmark: could not record slot outcomes: {write_error}");
@@ -2910,103 +2679,6 @@ mod tests {
         for s in ["0", "2", "49", "51", "", "-1"] {
             assert!(parse_n(s).is_err(), "expected err for {s:?}");
         }
-    }
-
-    #[test]
-    fn feature_names_have_explicit_controls_without_foreign_alias_fallbacks() {
-        assert_eq!(FEATURE_SCENARIOS.len(), 12);
-        for &(name, kind, unused) in FEATURE_SCENARIOS {
-            assert_eq!(feature_scenario(name), Some((kind, unused)));
-            assert_eq!(name.ends_with("_feature_off"), unused);
-        }
-        for name in [
-            "thiever",
-            "native_trade",
-            "native-api",
-            "priest-journal",
-            "npc-combat",
-            "unknown",
-        ] {
-            assert_eq!(feature_scenario(name), None, "{name}");
-        }
-    }
-
-    #[test]
-    fn only_the_native_trade_scenarios_accept_the_paired_pilot() {
-        for name in ["native_partner_trade", "native_partner_trade_feature_off"] {
-            assert_eq!(parse_scenario_n("2", Some(name)), Ok(2));
-        }
-        for name in [
-            None,
-            Some("thiever"),
-            Some("merged_native_api"),
-            Some("native_npc_combat"),
-            Some("native_npc_combat_feature_off"),
-            Some("native_trade"),
-        ] {
-            assert!(parse_scenario_n("2", name).is_err(), "{name:?}");
-        }
-    }
-
-    fn scalar_feature_fixture(unused: bool, observation: workloads::Observation) -> FeatureRun {
-        let names = ["memory-scalar-fixture".to_string()];
-        FeatureRun {
-            case: workloads::Kind::MergedNativeApi.build(&names).unwrap(),
-            unused,
-            prepared: true,
-            activated: !unused,
-            observation,
-            retained_recorded: false,
-        }
-    }
-
-    #[test]
-    fn unused_feature_fields_preserve_zero_active_proof_and_the_real_types() {
-        let feature = scalar_feature_fixture(
-            true,
-            workloads::Observation {
-                ready: 1,
-                active: 0,
-                proved: 0,
-                continuing: 0,
-            },
-        );
-        let mut value = serde_json::json!({});
-        feature.write_fields(&mut value, "merged_native_api_feature_off");
-        assert_eq!(value["feature_workload"], "merged_native_api_feature_off");
-        assert_eq!(value["feature_not_used"].as_bool(), Some(true));
-        assert_eq!(value["feature_ready"].as_u64(), Some(1));
-        for key in ["feature_active", "feature_proved", "feature_continuing"] {
-            assert_eq!(value[key].as_u64(), Some(0), "{key}");
-        }
-        assert!(
-            feature.established(1),
-            "an unused control is not active proof"
-        );
-    }
-
-    #[test]
-    fn active_feature_qualification_requires_current_ownership_proof_and_work() {
-        let mut feature = scalar_feature_fixture(
-            false,
-            workloads::Observation {
-                ready: 1,
-                active: 1,
-                proved: 1,
-                continuing: 0,
-            },
-        );
-        assert!(
-            !feature.established(1),
-            "past proof cannot hide idle gameplay"
-        );
-        feature.observation.continuing = 1;
-        assert!(feature.established(1));
-        feature.observation.proved = 0;
-        assert!(!feature.established(1), "seeding is not feature proof");
-        feature.observation.proved = 1;
-        feature.observation.active = 0;
-        assert!(!feature.established(1), "an absent owner is not active");
     }
 
     fn clear_render_env() -> EnvGuard {

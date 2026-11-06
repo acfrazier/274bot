@@ -1227,81 +1227,14 @@ catalog script. `lifecycle` additionally alternates Stop and restart every 60
 observation seconds. After observation, scripts Stop and the harness remains
 open for `BOT_MEMORY_TEARDOWN_S`.
 
-### Candidate-only feature workloads
+### Diagnostic logging
 
-The following `BOT_MEMORY_SCENARIO` values require
-`BOT_MEMORY_WORKLOAD=active`. Do not set `BOT_MEMORY_SUSTAIN` for them.
-Each name has a separate `_feature_off` value. Unknown names fail startup.
+Active and lifecycle memory benchmarks use the ordinary catalog scenarios.
+Unsupported scenario names fail startup; there are no candidate-only aliases.
 
-| Active scenario | Feature-not-used control |
-|---|---|
-| `priest_journal` | `priest_journal_feature_off` |
-| `compatibility_object_cache` | `compatibility_object_cache_feature_off` |
-| `native_partner_trade` | `native_partner_trade_feature_off` |
-| `merged_native_api` | `merged_native_api_feature_off` |
-| `native_npc_combat` | `native_npc_combat_feature_off` |
-| `active_route_navigation` | `active_route_navigation_feature_off` |
-
-These lanes compare the same candidate binary on the same guest. They are not
-verdicts against a comparator that lacks the feature. Common sustained Thiever
-remains the A/B workload for the WorldState cache during continued gameplay.
-The existing cache tests separately check Arc reuse and unchanged-poll allocation.
-
-Only the benchmark accounts' state is seeded. Feature proof comes from ordinary
-content and production owners after setup. Priest proof uses the actual emitted
-journal Page interval. Object-cache proof retains real rows and shared identities.
-Trade proof uses paired native actors, decoded confirm lists and actual handoff.
-The native API case requires an accepted native owner and fresh resource yield.
-NPC Combat proof requires accepted native Combat ownership and fresh combat XP.
-The route case requires repeated host routing and ordinary arrivals.
-
-The native API fleet uses ten separate real normal-tree neighbourhoods.
-Its radius-12 resource areas do not overlap. The canonical collision pack checks
-every stand. Canonical NPC placements also keep each whole area outside every
-attackable NPC's tether, attack or hunt reach, and actor footprint. This avoids
-incidental combat without changing the account's combat stats or accepting a
-paused consumer as active proof. Each seed proves a nearby live normal tree
-before starting. Every area has at least four canonical loc-1276 trees within
-the unchanged proof radius of six tiles. The first area, reused by the pilot,
-has at least eight. Proof does not depend on a single tree that a preceding
-cell can deplete. The live-tree predicate and 120-game-tick wait stay unchanged.
-Only account positions change. The bronze axe,
-Woodcutting level, native Gatherer request and 240-game-tick yield deadline stay
-unchanged. Every active bot must still produce fresh XP and yield.
-The independent-site fixture supports the single-account pilot and ten-account
-fleet. Other counts are refused instead of silently reusing a tree patch.
-
-The native NPC Combat case uses ten separate real Cow areas. It supports only
-the single-account pilot and ten-account fleet. Both phases prepare the same
-accounts and accepted API v2 NativeTick isolates. The active consumer repeatedly
-requests real NPC fights; the control never requests Combat. Every active account
-must show native ownership, fresh post-activation combat XP and current work.
-An accepted isolate's `Starting` state stays pending within the same proof
-budget. It earns no active, continuing or fresh-XP proof credit. Idle, Paused,
-Stopping and Error still fail before normal Stop.
-Engagement evidence accepts only non-negative integer target indices from the
-named Combat status field.
-Normal Stop observations retain the actual owner and Idle state. This lane
-measures real V8 heaps separately from Rust and process memory. It is not a
-process-memory A/B verdict against a comparator without this scenario.
-
-The measured V8 runtime uses the shipped settings. The object-cache lane reports
-actual V8 heaps, cache reuse and shared identities. The existing internal V8 test
-separately checks fast properties and its used-heap bound. The measured binary
-does not enable native syntax or query intrinsics.
-
-Samples and boundary rows contain `feature_workload`, the exact scenario string,
-and `feature_not_used`, a boolean. `feature_ready`, `feature_active`,
-`feature_proved` and `feature_continuing` are integer bot counts. Unused features
-do not report active proof. Native-only cases do not invent V8 isolates.
-Boundary rows add the case's `feature_evidence`. A `post-stop` row records retained
-observations after the normal teardown window. Persistent observation steps are
-not relabelled as passed seeds.
-
-The native API consumer keeps its terminal result JSON in the fatal Stop reason.
-The ordinary Stop path limits the whole reason to 256 UTF-8 bytes on a character
-boundary. Fatal memory TUI errors use `host_log!` and its password redaction,
-without changing their error text, exit code, collector fields or proof rules.
+Fatal memory TUI errors use `host_log!` and its central password redaction.
+Their error text and exit code are unchanged. In-process allocation, layout,
+V8 shape and heap-bound tests remain separate from lab process-memory results.
 
 ### Common workload phase gates
 
