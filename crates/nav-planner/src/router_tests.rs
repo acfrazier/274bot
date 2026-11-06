@@ -1328,7 +1328,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
         .legs
         .iter()
         .any(|leg| matches!(leg, Leg::Transport { edge } if edge.quest_gates.is_some())));
-    assert_eq!(needs(&proven), None);
+    assert!(needs(&proven).is_none());
 
     let stale = evidenced(QuestEvidence::new(
         Arc::new(Resolved {
@@ -1345,7 +1345,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
         ("3 or 4 still possible", straddling),
     ] {
         assert_eq!(route(&state), Err(RouteError::NoPath), "{label}");
-        assert_eq!(needs(&state), named, "{label}");
+        assert_eq!(needs(&state), named.clone(), "{label}");
         assert_eq!(
             find_missing_item_reqs(&wc, &g, from, to, opts, &state),
             None,
@@ -1355,7 +1355,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
 
     let past = evidenced(tbwt_evidence(gate_range(Some(4), Some(6))));
     assert_eq!(route(&past), Err(RouteError::NoPath));
-    assert_eq!(needs(&past), None, "a disproven window needs no read");
+    assert!(needs(&past).is_none(), "a disproven window needs no read");
 }
 
 #[test]
@@ -1390,12 +1390,12 @@ fn cooperative_quest_gate_diagnosis_matches_blocked_and_satisfied_stage_fixture(
         if blocked {
             assert_eq!(route, Err(RouteError::NoPath), "{label}");
             assert!(
-                matches!(&old_gates, Ok(Some(gates)) if !gates.is_empty()),
+                matches!(&old_gates, Some(gates) if !gates.is_empty()),
                 "the existing blocked stage fixture must name a gate"
             );
         } else {
             assert!(route.is_ok(), "{label}");
-            assert_eq!(old_gates, Ok(None), "{label}");
+            assert!(old_gates.is_none(), "{label}");
         }
         let completion = advance_real_route_completion(
             crate::router::SearchRequest::UnresolvedQuestGates {
@@ -1415,9 +1415,9 @@ fn cooperative_quest_gate_diagnosis_matches_blocked_and_satisfied_stage_fixture(
             panic!("quest-gate cursor returned the wrong result shape")
         };
         assert_eq!(
-            format!("{old_gates:#?}").as_bytes(),
-            format!("{new_gates:#?}").as_bytes(),
-            "{label}: cooperative stage diagnosis must match the old API"
+            new_gates.as_deref(),
+            old_gates.as_deref(),
+            "{label}: cooperative stage diagnosis must match the direct diagnostic"
         );
     }
 }
@@ -1514,9 +1514,7 @@ fn actionable_quest_diagnosis_preserves_strict_route_and_crossing_identity() {
         else {
             panic!("actionable quest cursor returned the wrong result shape")
         };
-        let cursor_gates = cursor_gates
-            .unwrap()
-            .expect("cursor finds the implied gate");
+        let cursor_gates = cursor_gates.expect("cursor finds the implied gate");
         assert_eq!(cursor_gates.len(), actionable.len(), "{label}");
         assert_eq!(cursor_gates[0].gate, actionable[0].gate, "{label}");
         assert_eq!(cursor_gates[0].truth, actionable[0].truth, "{label}");
@@ -1540,9 +1538,9 @@ fn actionable_quest_diagnosis_preserves_strict_route_and_crossing_identity() {
         else {
             panic!("unknown-only diagnosis returned the wrong result shape");
         };
-        let unknown_gates = unknown_gates.unwrap();
+        let unknown_gates = unknown_gates.as_deref();
         if truth == Truth::Unknown {
-            assert_eq!(unknown_gates.as_deref(), Some(cursor_gates.as_ref()));
+            assert_eq!(unknown_gates, Some(cursor_gates.as_ref()));
         } else {
             assert!(unknown_gates.is_none(), "a false gate must stay closed");
         }
@@ -1563,7 +1561,6 @@ fn actionable_quest_diagnosis_preserves_strict_route_and_crossing_identity() {
             &WorldState::empty().with_establishable(not_implied),
             &[],
         )
-        .unwrap()
         .is_none(),
         "a stage window outside the accepted implication is not actionable"
     );
@@ -1632,7 +1629,7 @@ fn unknown_only_edge_admission_skips_a_cheaper_proven_false_gate() {
         else {
             panic!("actionable diagnosis returns its typed gates");
         };
-        let gates = gates.unwrap().expect("the chosen route names its gate");
+        let gates = gates.expect("the chosen route names its gate");
         assert_eq!(gates.len(), 1, "{relaxation:?}");
         assert_eq!(gates[0].gate, expected_gate, "{relaxation:?}");
         assert_eq!(gates[0].truth, expected_truth, "{relaxation:?}");
@@ -1897,7 +1894,7 @@ fn rope_and_stage_door_diagnoses_name_each_missing_kind() {
         );
         assert_eq!(
             find_unresolved_quest_gates(&wc, &g, from, &[to], opts, &state, &[]),
-            Ok(journal),
+            journal,
             "{label}: stage diagnosis"
         );
     }
@@ -8007,8 +8004,8 @@ fn real_289_cooperative_request_shapes_match_legacy_serialization() {
         panic!("quest-gate cursor returned the wrong result shape")
     };
     assert_eq!(
-        new_gates.as_ref().map(|gates| gates.as_deref()),
-        old_gates.as_ref().map(|gates| gates.as_deref()),
+        new_gates.as_deref(),
+        old_gates.as_deref(),
         "the cooperative path must preserve this pack's unresolved quest-gate result"
     );
     let old_bytes = format!("{old_gates:#?}");
