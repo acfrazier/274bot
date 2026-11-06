@@ -812,7 +812,10 @@ fn run_quest(q: Quest) -> Result<(), String> {
         None,
         None,
     )?;
-    let budget = if matches!(q.key, "hetty" | "gobdip" | "vampire" | "demon") {
+    let budget = if matches!(
+        q.key,
+        "hetty" | "gobdip" | "vampire" | "demon" | "squire"
+    ) {
         3600
     } else {
         1500
