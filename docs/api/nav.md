@@ -273,6 +273,11 @@ An explicitly selected revision-377 bake also runs `vertical_377.rs`.
 It prices the renamed `ladder_1755` from the canonical climb helper while
 preserving its coordinate-specific landing and relative fallback. That return
 connects the Varrock sewer to the otherwise walled-in palace coin alcove.
+The surface entrance is the canonical `manholeclosed` Open followed by
+`manholeopen` Climb down. Its edge retains the opened loc ID and the player's
+z+6400 landing, at three ticks for the pair. Already-open placements take
+two ticks. The producer certifies every opener statement, including the
+cover placement, and rejects gates or additional side effects.
 Direct absolute climbs, including `trapdoor_9472`, use the strict source
 recognizer: presentation, suspension and one fixed move only, with a matching
 Climb operation. The ice-dungeon trapdoor lands at `(3007,9549,0)` in three
