@@ -11,9 +11,9 @@
     "quest_points": 3,
     "requirements": [],
     "items": [
-      { "obj": "garlic", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "vampire:1" },
-      { "obj": "stake", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "vampire:1" },
-      { "obj": "hammer", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "vampire:1" }
+      { "obj": "garlic", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "vampire:2" },
+      { "obj": "stake", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "vampire:2" },
+      { "obj": "hammer", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "vampire:2" }
     ],
     "acquire": {},
     "bank": "nearest",
@@ -29,7 +29,12 @@
       "progress_binding": "journal:vampire",
       "progress": {
         "colour": { "not_started": "vampire:0", "in_progress": "vampire:1", "complete": "vampire:3" },
-        "rules": [],
+        "rules": [
+          { "stage": "vampire:3", "all": ["quest complete!"], "varp": 3 },
+          { "stage": "vampire:2", "all": ["i have spoken to dr harlow"], "varp": 2 },
+          { "stage": "vampire:1", "all": ["i need to speak to dr harlow"], "varp": 1 },
+          { "stage": "vampire:0", "all": ["i can start this quest"], "varp": 0 }
+        ],
         "flags": [],
         "monotonic": false
       },
@@ -67,7 +72,7 @@
               "id": "ask-harlow",
               "kind": "talk",
               "version": 1,
-              "advances": false,
+              "advances": true,
               "args": {
                 "npc": "dr_harlow",
                 "anchor": { "tile": [3222, 3397, 0], "source": "maps/m50_53.jm2:12938; harlow.rs2:11-22" },
@@ -75,8 +80,16 @@
                 "prefer": ["Morgan needs your help"]
               },
               "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "stake" } } },
-              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["buy me a beer", "buy ush a drink", "dr harlow hands you a stake"] } } }
-            },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "vampire", "any": ["vampire:2"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "vampire:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
             {
               "id": "climb-morgan-stairs",
               "kind": "interact",
@@ -141,23 +154,17 @@
             },
             {
               "id": "take-beer-coins",
-              "kind": "combat",
+              "kind": "interact",
               "version": 1,
               "advances": false,
               "args": {
-                "target": {
-                  "npc": ["goblin_unarmed_melee_1", "goblin_unarmed_melee_2", "goblin_unarmed_melee_3", "goblin_unarmed_melee_4", "goblin_unarmed_melee_5", "goblin_unarmed_melee_6", "goblin_unarmed_melee_7"],
-                  "not_targeting_others": true,
-                  "pick": "nearest"
-                },
-                "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true },
-                "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713; drop_tables/scripts/goblin.rs2. Palace coins m50_54.jm2:12022-12023 have no route from Lumbridge on 274bot-377-v17." },
-                "area": { "box": [3138, 3224, 3152, 3264, 0], "source": "maps/m49_50.jm2:6702-6713" },
-                "lost_radius": 16,
-                "kill_budget_ticks": 120,
-                "loadout": null,
-                "loot": [{ "obj": "coins", "qty": 2 }],
-                "until": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 2 } } }
+                "target": { "ground": "coins" },
+                "op": "Take",
+                "anchor": { "tile": [3232, 3500, 0], "source": "maps/m50_54.jm2:12022-12023 (OBJ 995 qty 3/4); maps/m50_154.jm2:7787 ladder_1755 and ladders.rs2:90-97 provide the alcove route" },
+                "radius": 6,
+                "wait_if_missing": true,
+                "until": { "obj": "coins", "qty": 2 },
+                "settle_ms": 300000
               },
               "skip_if": { "Any": [
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "beer" } } },
