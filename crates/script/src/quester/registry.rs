@@ -194,6 +194,10 @@ fn bundled_path_for(revision: ClientRevision, id: &str) -> Option<&'static [u8]>
                 Some(include_bytes!("../../paths/377/runemysteries.json").as_slice())
             }
             "romeojuliet" => Some(include_bytes!("../../paths/377/romeojuliet.json").as_slice()),
+            "hetty" => Some(include_bytes!("../../paths/377/hetty.json").as_slice()),
+            "gobdip" => Some(include_bytes!("../../paths/377/gobdip.json").as_slice()),
+            "vampire" => Some(include_bytes!("../../paths/377/vampire.json").as_slice()),
+            "demon" => Some(include_bytes!("../../paths/377/demon.json").as_slice()),
             _ => None,
         })
         .flatten()
@@ -1768,11 +1772,15 @@ mod tests {
                 ids,
                 [
                     "cook",
+                    "demon",
                     "doric",
+                    "gobdip",
+                    "hetty",
                     "imp",
                     "romeojuliet",
                     "runemysteries",
-                    "sheep"
+                    "sheep",
+                    "vampire"
                 ]
             );
             assert!(
@@ -1912,7 +1920,11 @@ mod tests {
                     "doric",
                     "sheep",
                     "runemysteries",
-                    "romeojuliet"
+                    "romeojuliet",
+                    "hetty",
+                    "gobdip",
+                    "vampire",
+                    "demon"
                 ]
             );
             assert!(
