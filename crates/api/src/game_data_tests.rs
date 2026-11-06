@@ -331,7 +331,9 @@ fn facts_old_data_is_refused_by_version() {
     let error = preflight_combat_facts_version(old_bytes.as_slice())
         .expect_err("the streaming preflight rejects an unversioned family");
     assert!(
-        error.contains("combat facts are missing or outdated"),
+        error
+            .to_string()
+            .contains("combat facts are missing or outdated"),
         "{error}"
     );
 
