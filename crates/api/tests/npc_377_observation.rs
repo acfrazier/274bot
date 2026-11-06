@@ -24,18 +24,21 @@ fn client(revision: ClientRevision, varbit: bool) -> Client {
                 id: 0,
                 name: "Placed identity".into(),
                 size: 2,
+                vislevel: 12,
                 op: vec![Some("Root action".into())],
                 ..Default::default()
             },
             NpcType {
                 id: 1,
                 name: "Juliet".into(),
+                vislevel: 7,
                 op: vec![Some("Talk-to".into())],
                 ..Default::default()
             },
             NpcType {
                 id: 2,
                 name: "Different form".into(),
+                vislevel: 19,
                 op: vec![Some("Trade".into())],
                 ..Default::default()
             },
@@ -106,6 +109,7 @@ fn revision_377_npc_varbit_and_varp_resolve_current_menu_without_changing_placed
         assert_eq!(npc.r#type, Some(0));
         assert_eq!(npc.name.as_deref(), Some("Juliet"));
         assert_eq!(npc.actions, [Some("Talk-to".into())]);
+        assert_eq!(npc.level, 7, "NPC level comes from the selected form");
         assert_eq!(npc.size, 2, "menu form must not replace placed actor size");
         assert!(!snapshot.rebuild_family(&client, Family::Npc));
         for (selector, expected) in [
@@ -124,11 +128,23 @@ fn revision_377_npc_varbit_and_varp_resolve_current_menu_without_changing_placed
             );
             let npc = &snapshot.npcs()[0];
             assert_eq!(npc.r#type, Some(0));
+            assert_eq!(
+                npc.level,
+                match selector {
+                    2 => 19,
+                    1 | 3 | -1 => 0,
+                    _ => 7,
+                },
+                "NPC level follows its selected form; a null form has no level"
+            );
             assert_eq!(npc.name.as_deref(), expected);
             assert_eq!(
                 npc.actions.first().and_then(|op| op.as_deref()),
                 expected.map(|name| if name == "Juliet" { "Talk-to" } else { "Trade" })
             );
+            if expected.is_none() {
+                assert!(npc.actions.is_empty());
+            }
         }
         Arc::get_mut(&mut client.cache)
             .unwrap()
@@ -141,6 +157,7 @@ fn revision_377_npc_varbit_and_varp_resolve_current_menu_without_changing_placed
         client.gens.npc += 1;
         assert!(snapshot.rebuild_family(&client, Family::Npc));
         assert!(snapshot.npcs()[0].name.is_none());
+        assert_eq!(snapshot.npcs()[0].level, 0);
         assert!(
             snapshot.npcs()[0].actions.is_empty(),
             "Java's noninteractive current form offers no menu"
@@ -161,6 +178,7 @@ fn revision_274_289_npc_snapshot_bytes_ignore_377_morph_tables_and_varp_changes(
         let expected = serde_json::to_vec(control.npcs()).unwrap();
         assert_eq!(serde_json::to_vec(actual.npcs()).unwrap(), expected);
         assert_eq!(actual.npcs()[0].name.as_deref(), Some("Placed identity"));
+        assert_eq!(actual.npcs()[0].level, 12);
         with_morph.var[0] = 2;
         with_morph.gens.varp += 1;
         assert!(!actual.rebuild_family(&with_morph, Family::Npc));
