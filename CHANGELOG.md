@@ -818,10 +818,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Music can load SoundFonts whose sample-loop start is after the loop end.
 ### Navigation
 
-- Navigation packs are now `274V18`. They include the multiway combat-cell list
+- Navigation packs are now `274V19`. They include the multiway combat-cell list
   and a baked reachability atlas (movement components, directed links, loc
-  stands). An older `274V17` pack is refused with a rebake error. 274bot does
-  not convert an old pack at run time.
+  stands), without a quest-family header. Older incompatible packs are refused
+  with a rebake error. 274bot does not convert an old pack at run time.
 - The baked loc stands follow the game's own reach rules. A wall corner
   (shapes 1 and 3) and a straight wall decoration (shapes 4 and 5) can be
   operated only from their own tile, as in the game. The first v18 bake listed
@@ -835,8 +835,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   functions, so the baker cannot write a pack that the reader refuses. This
   includes a missing or short chunk directory, a chunk bit width above the
   minimum for its palette, a chunk palette range past the palette, and an empty
-  paint run. Developer and CI test packs use the `274V18` reference bake
-  (`nav-reference-v18`); the `274V17` reference is no longer read.
+  paint run. Developer and CI test packs use the same current-format local
+  payloads. They do not need a published reference bake.
 
 ## [0.2.8] — 2026-10-29 — Beta 2
 

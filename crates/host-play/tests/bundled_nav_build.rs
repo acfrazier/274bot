@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use host_play::cache::CacheAvailability;
 use host_play::profile::{NavAvailability, ProfileEnvironment, ProfileOptions};
-use host_play::{nav_assets, ProfileProgressObserver, SharedClientTemplate};
+use host_play::progress::ProfileProgressObserver;
+use host_play::{nav_assets, SharedClientTemplate};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 const ARCHIVES: [&str; 8] = [
