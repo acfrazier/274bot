@@ -1974,6 +1974,7 @@ mod tests {
         let host = frame.ctx(&mut driver, Some(selected));
         script::native::with_test_tick(
             host,
+            evidence,
             revision,
             (
                 Duration::from_millis(tick.saturating_mul(600)),

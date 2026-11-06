@@ -1488,7 +1488,7 @@ globalThis.__checkEmptyBankResults = () => {
 "#;
 
     fn test_bank_facts(
-        catalog: &[api::named_banks::BankDefinition],
+        catalog: &'static [api::named_banks::BankDefinition],
     ) -> api::named_banks::NamedBankFacts {
         let mut banks = catalog
             .iter()
