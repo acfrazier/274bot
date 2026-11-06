@@ -206,7 +206,7 @@ pub fn load(preferences: &Preferences) -> Result<PanelUiState, PanelUiStateError
         #[cfg(not(test))]
         return Ok(PanelUiState::default());
     };
-    load_snapshot(preferences.path(), &document)
+    load_snapshot(&preferences.path(), &document)
 }
 
 pub(crate) fn load_snapshot(
@@ -298,7 +298,7 @@ pub fn load_from(preferences: &Preferences) -> Result<PanelUiState, PanelUiState
     let Ok(document) = preferences.document() else {
         return Ok(PanelUiState::default());
     };
-    from_document(&document).map_err(|source| PanelUiStateError::new(preferences.path(), source))
+    from_document(&document).map_err(|source| PanelUiStateError::new(&preferences.path(), source))
 }
 
 pub(crate) fn from_document(

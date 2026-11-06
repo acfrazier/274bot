@@ -8221,7 +8221,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                     }
                 }
             }
-            if let Some((startup, message)) = saved_data_prompt.as_ref() {
+            if let Some((_, message)) = saved_data_prompt.as_ref() {
                 match saved_data_choice(ui, message) {
                     None => return false,
                     Some(false) => {

@@ -2559,7 +2559,7 @@ impl Session {
             return;
         };
 
-        let saved = match crate::ui_state::load_snapshot(self.preferences.path(), &document) {
+        let saved = match crate::ui_state::load_snapshot(&self.preferences.path(), &document) {
             Ok(saved) => saved.nav,
             Err(error) => {
                 self.report_ui_state_error(error);
@@ -2617,7 +2617,7 @@ impl Session {
         if self.preferences_ready {
             return;
         }
-        let state = match crate::ui_state::load_snapshot(self.preferences.path(), document) {
+        let state = match crate::ui_state::load_snapshot(&self.preferences.path(), document) {
             Ok(state) => state,
             Err(error) => {
                 self.report_ui_state_error(error);
@@ -2720,7 +2720,7 @@ impl Session {
             return;
         };
         let rebased = match crate::ui_state::rebased(
-            self.preferences.path(),
+            &self.preferences.path(),
             &self.ui,
             &document,
             self.pending_panel_members
