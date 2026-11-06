@@ -1,6 +1,6 @@
 //! Canon 377 journal recovery: quest_{sheep,runemysteries,romeojuliet}/scripts/*_journal.rs2.
-use super::super::{compile, progress};
 use super::super::probe::{known_empty_bank, Choice, Probe};
+use super::super::{compile, progress};
 use super::bundled_path_for;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, JournalRead};
@@ -190,7 +190,6 @@ fn hetty_377_journal_state_skips_consumed_items_and_selects_cauldron() {
     .join()
     .unwrap();
 }
-
 
 #[test]
 fn rune_377_lost_talisman_path_selects_dukes_quest_branch() {
