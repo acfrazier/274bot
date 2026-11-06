@@ -14,6 +14,7 @@ use api::identity::RequestId;
 use super::commands::{Applied, Submitted};
 use crate::command::{FailureKind, OperatorCommand, Rejection};
 use crate::launch::{Passphrase, PlayLaunch, UnlockError, UnlockStage};
+use crate::surface::SlotSurface;
 use crate::OperatorSession;
 
 /// One vault row.

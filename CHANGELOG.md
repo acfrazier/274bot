@@ -77,6 +77,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Host route and bank diagnostics use the data-only quest-gate API. Their
   existing evidence, prerequisite handover and search-budget outcomes remain.
   Hosted regression tests keep explicit guards for absent local data.
+- Vault commands build against the shared front-end command surface.
 
 ### Not in this release
 
