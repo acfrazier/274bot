@@ -8,12 +8,17 @@
 //!
 //! Bake with explicit inputs:
 //! `nav-pack --revision 274|289|377 --content CONTENT_DIR --cache CACHE_DIR
-//! --game-data-dir GAME_DATA_DIR --out NAV_PACK [--flags-out NAV_FLAGS]`.
+//! --game-data-dir GAME_DATA_DIR --out NAV_PACK [--flags-out NAV_FLAGS]
+//! [--server-loc-dat SERVER_LOC_DAT]`.
+//! Revision 377 requires `--server-loc-dat` for the engine's packed
+//! `server/loc.dat`; the other revisions do not accept that option.
 //! Revision 274 reads the server `data/pack/config` beside the `client/`
 //! cache directory. Revisions 289 and 377 read `config` inside the cache directory.
 //! Door loc ids come from the `*.loc` door configs plus
-//! `scripts/general_use/configs/gates.loc` under CONTENT_DIR; loc definitions
-//! (blockwalk, width/length, active) come from the selected config jag.
+//! `scripts/general_use/configs/gates.loc` under CONTENT_DIR.
+//! Revision 377 collision definitions decode the explicit engine server table
+//! followed by the client `loc.dat`, using engine post-decode semantics.
+//! Other revisions retain collision definitions from the selected config jag.
 //! Every `.jm2` under `content/maps` bakes or the run fails; non-`.jm2`
 //! files (`ignore.csv`/`free2play.csv`) are metadata and skipped. The
 //! transport graph and bank stands derive from local Server content.
@@ -270,6 +275,7 @@ struct BakeInputs {
     doors_dir: PathBuf,
     config_jag: PathBuf,
     game_data_dir: PathBuf,
+    server_loc_dat_377: Option<PathBuf>,
     out: PathBuf,
     flags_out: PathBuf,
     reach_out: PathBuf,
@@ -282,6 +288,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
     let mut content = None;
     let mut cache_dir = None;
     let mut game_data_dir = None;
+    let mut server_loc_dat_377 = None;
     let mut out = None;
     let mut explicit_flags = None;
     let mut it = args.iter();
@@ -313,11 +320,15 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             "--game-data-dir" if game_data_dir.is_none() => {
                 game_data_dir = Some(PathBuf::from(value))
             }
+            "--server-loc-dat" if server_loc_dat_377.is_none() => {
+                server_loc_dat_377 = Some(PathBuf::from(value));
+            }
             "--out" if out.is_none() => out = Some(PathBuf::from(value)),
             "--flags-out" if explicit_flags.is_none() => {
                 explicit_flags = Some(PathBuf::from(value));
             }
-            "--content" | "--cache" | "--game-data-dir" | "--out" | "--flags-out" => {
+            "--content" | "--cache" | "--game-data-dir" | "--out" | "--flags-out"
+            | "--server-loc-dat" => {
                 return Err(format!("duplicate explicit option {flag}"));
             }
             _ => return Err(format!("unknown explicit option {flag}")),
@@ -332,6 +343,12 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
     let game_data_dir = game_data_dir
         .ok_or_else(|| "explicit mode requires --game-data-dir GAME_DATA_DIR".to_string())?;
     let out = out.ok_or_else(|| "explicit mode requires --out NAV_PACK".to_string())?;
+    if revision == 377 && server_loc_dat_377.is_none() {
+        return Err("revision 377 requires --server-loc-dat SERVER_LOC_DAT".into());
+    }
+    if revision != 377 && server_loc_dat_377.is_some() {
+        return Err("--server-loc-dat is only supported for revision 377".into());
+    }
     let inputs = content_inputs(&content);
     let config_jag = config_jag_for(revision, &cache_dir).map_err(|error| error.to_string())?;
     let flags_out = explicit_flags.unwrap_or_else(|| flags_path_for(&out));
@@ -345,6 +362,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         doors_dir: inputs.doors_dir,
         config_jag,
         game_data_dir,
+        server_loc_dat_377,
         out,
         flags_out,
         reach_out,
@@ -401,6 +419,7 @@ fn bake_world(inputs: &BakeInputs, gates: &Path) -> Result<BakedNav, nav_bake::G
         doors_dir: &inputs.doors_dir,
         gates,
         config_jag: &inputs.config_jag,
+        server_loc_dat_377: inputs.server_loc_dat_377.as_deref(),
         require_all_door_configs: true,
     })
 }
