@@ -559,8 +559,11 @@ impl RouteSubmission {
         let basis_avoid_bytes =
             arc_slice_heap_bytes::<AvoidRect>(avoid_capacity).ok_or(RouteJobError::Budget)?;
 
-        let input_bytes =
-            route_capture_bytes(request, state, thread_name_bytes).ok_or(RouteJobError::Budget)?;
+        // Candidate storage is retained across stages. Reserve it once as
+        // input rather than again beside each search's scratch.
+        let input_bytes = route_capture_bytes(request, state, thread_name_bytes)
+            .and_then(|bytes| bytes.checked_add(candidate_bytes))
+            .ok_or(RouteJobError::Budget)?;
 
         let mut result_bytes = std::mem::size_of::<RouteJobOutput>()
             .checked_add(route_bytes.checked_mul(2).ok_or(RouteJobError::Budget)?)
@@ -618,9 +621,8 @@ impl RouteSubmission {
             .and_then(|bytes| bytes.checked_add(bank_undo_bytes))
             .ok_or(RouteJobError::Budget)?;
         include_peak(
-            candidate_bytes
-                .checked_add(arrival_heap_bytes)
-                .and_then(|bytes| bytes.checked_add(arrival_future_bytes))
+            arrival_heap_bytes
+                .checked_add(arrival_future_bytes)
                 .ok_or(RouteJobError::Budget)?,
         )?;
         for search in [
@@ -644,7 +646,6 @@ impl RouteSubmission {
                     .input_bytes()
                     .checked_add(search.reservation().peak_bytes)
                     .and_then(|bytes| bytes.checked_add(search.reservation().future_layout_bytes))
-                    .and_then(|bytes| bytes.checked_add(candidate_bytes))
                     .and_then(|bytes| bytes.checked_add(search_working_bytes))
                     .ok_or(RouteJobError::Budget)?,
             )?;
@@ -663,7 +664,6 @@ impl RouteSubmission {
                                 .future_layout_bytes,
                         )
                     })
-                    .and_then(|bytes| bytes.checked_add(candidate_bytes))
                     .and_then(|bytes| bytes.checked_add(search_working_bytes))
                     .and_then(|bytes| bytes.checked_add(bank_direct_bytes.max(bank_planned_bytes)))
                     .ok_or(RouteJobError::Budget)?,
@@ -688,7 +688,6 @@ impl RouteSubmission {
                 planned_rows_bytes
                     .checked_add(fetchable_state_bytes)
                     .and_then(|bytes| bytes.checked_add(fetchable_edge_bytes))
-                    .and_then(|bytes| bytes.checked_add(candidate_bytes))
                     .ok_or(RouteJobError::Budget)?,
             )?;
             include_peak(
@@ -1494,8 +1493,24 @@ impl RouteJob {
     }
 
     fn add_owned_input_to_submission(&mut self) -> Result<(), RouteJobError> {
+        let candidate_bytes = RouteTargetCursor::capacity(&self.request)?
+            .checked_mul(std::mem::size_of::<WorldTile>())
+            .ok_or(RouteJobError::Budget)?;
+        let target_bytes = route_vec_bytes(&self.targets).ok_or(RouteJobError::Budget)?;
+        let cursor_bytes = self
+            .target_cursor
+            .as_ref()
+            .map_or(Some(0), |cursor| route_vec_bytes(&cursor.targets))
+            .ok_or(RouteJobError::Budget)?;
+        let reserved_candidates = target_bytes
+            .checked_add(cursor_bytes)
+            .ok_or(RouteJobError::Budget)?
+            .min(candidate_bytes);
+        // Actual target storage consumes the candidate input reservation.
+        // Any storage beyond that reservation remains additional input.
         let extra = self
             .extra_retained_bytes()
+            .and_then(|bytes| bytes.checked_sub(reserved_candidates))
             .and_then(|bytes| bytes.checked_add(OwnerResultReservation::storage_bytes()))
             .ok_or(RouteJobError::Budget)?;
         self.submission.input_bytes = self
@@ -9186,7 +9201,7 @@ mod diagnostic_tests {
                 );
                 request
             };
-            let job = RouteJob::prepare(
+            let mut job = RouteJob::prepare(
                 "radius-104-admission",
                 request(),
                 RouteDemandKind::Walk { authority: None },
@@ -9223,6 +9238,18 @@ mod diagnostic_tests {
                         + expected.reservation().future_layout_bytes
                         + GOALS * std::mem::size_of::<WorldTile>(),
                 "host admission must retain its candidate buffer and the complete search charge",
+            );
+            let retained =
+                job.owned_retained_bytes().unwrap() + OwnerResultReservation::storage_bytes();
+            assert!(job.submission.input_bytes >= retained);
+            job.prepare_continuation()
+                .expect("retained full-radius candidates must fit the next admission");
+            assert!(job.submission.input_bytes >= retained);
+            assert_eq!(
+                <RouteWorkSpec as api::work::WorkFamilySpec>::charge(job.submission())
+                    .total_bytes()
+                    .unwrap(),
+                charge,
             );
 
             // Bank fetching stays disabled. This buffer adds only captured

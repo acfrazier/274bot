@@ -801,6 +801,8 @@ Only first-goal bank planning reserves the excluded-target table. Requests
 that cannot enter this transition allocate no table.
 Captured request buffers always remain input custody. Missing-carry,
 entrance, blocker and quest-gate diagnostics remain charged in both modes.
+Candidate capacity stays reserved once as input. The retained cursor or target
+buffer consumes that reservation instead of adding a second scratch charge.
 Bank buffers use the largest diagnosed requirement count admitted for the
 request, capped by the unchanged graph bound. Undo storage and post-bank
 inventory and worn reservations use this same count. A later, smaller
