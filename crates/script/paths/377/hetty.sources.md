@@ -4,8 +4,8 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 
 ## Quest state
 
-- Var values: `quests/quest_hetty/configs/quest_hetty.constant:1-3` (`0` not started, `1` started, `2` objects given). Complete is `3` (`scripts/general/configs/quest.constant:6`). Quest points are `1` (`quest.constant:100`).
-- Colour only distinguishes not-started, in-progress, and complete (`scripts/general/scripts/quests.rs2:300`). Stages `1` and `2` share the in-progress colour. The selected 377 journal button table does not admit `hetty` (`crates/script/src/quest_journal/native_377.rs:64-70`), so this Path has empty progress rules and does not open the journal. The in-progress sequence gathers, hands in, then drinks. A resumed objects-given account no longer holds the four items, so the hand-in talk is skipped and the cauldron drink still completes (`quests/quest_hetty/scripts/quest_hetty.rs2:1-4`).
+- Quest vars: `quests/quest_hetty/configs/quest_hetty.constant:1-3` (`0` not started, `1` started, `2` objects given). Complete is `3` (`scripts/general/configs/quest.constant:6`). Quest points are `1` (`quest.constant:100`).
+- The quest-list colour only distinguishes not-started, in-progress, and complete (`scripts/general/scripts/quests.rs2:300`), so stages `1` and `2` need the 377 journal. Its `questlist:hetty` button is ID 7348 (`pack/interface.pack:7234`). `journal:hetty` rules map the started, objects-given, and completed journal text to `hetty:1`, `hetty:2`, and `hetty:3`.
 - Completion writes `%hetty = 3`, advances Magic by 3,250 tenths, and sends the scroll (`quest_hetty.rs2:9-13`). The scroll text is `You have completed the\nWitches Potion Quest!` and `325 Magic XP`.
 
 ## Start dialogue
@@ -23,11 +23,11 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 
 ## Hand-in and drink
 
-- With all four items, Hetty deletes them, sets `%hetty = 2`, and says `Ok, now drink from the cauldron.` (`hetty.rs2:15-25`). At stage 2 she says `Well are you going to drink the potion or not?` (`:31-32`) and does not take items. The hand-in step settles on either line. There is no choice menu on those branches, so no prefer is required.
+- With all four items, Hetty deletes them and sets `%hetty = ^hetty_objects_given` (`areas/area_rimmington/scripts/hetty.rs2:15-24`), then emits `Ok, now drink from the cauldron.` through `~chatnpc` (`:25`). These dialogue lines are not the type-0 chat lines read by Path `message` facts; the supplied traces show the prompt only in dialogue. The durable stage-2 journal text is `I should drink from the cauldron and improve my magic!` (`quests/quest_hetty/scripts/hetty_journal.rs2:40-42`). The hand-in step now settles on `stage_in hetty:2`, which selects a separate cauldron sequence without re-acquiring the consumed ingredients.
 - The cauldron is LOC 2024 `hettycauldron` at `maps/m46_50.jm2:6025` (`0 23 5: 2024 10 2`), world `(2967,3205,0)`, shape 10. `all.loc:13953` is `op1=Drink From`. `quest_hetty.rs2:1-4` completes only when `%hetty = 2`. The live account could stand on `(2967,3206,0)` after the hand-in; the Path anchors the drink there.
 
 ## Not copied from 289
 
 - 289 targets loc `range` and cites a 225 unpack. 377 places `rimmington_poor_range` (9682) on that tile.
-- 289 journal rules quote different not-started wording (`speaking to hetty`). 377 journal text is not read by this Path.
+- 289 journal rules quote different not-started wording (`speaking to hetty`). 377 reads `questlist:hetty`: the journal text distinguishes its started and objects-given stages, which quest-tab colour cannot.
 - 289 buys raw beef from Wydin. 377 cows drop raw beef (`cow.rs2:11`); no shop stock file for Wydin is in this content tree.

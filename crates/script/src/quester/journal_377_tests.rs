@@ -1,9 +1,11 @@
 //! Canon 377 journal recovery: quest_{sheep,runemysteries,romeojuliet}/scripts/*_journal.rs2.
 use super::super::{compile, progress};
+use super::super::probe::{known_empty_bank, Choice, Probe};
 use super::bundled_path_for;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, JournalRead};
-use api::selected::{ClientRevision, Knowledge, RunKey, Truth};
+use api::selected::{ClientRevision, FactKey, Knowledge, RunKey, Truth};
+use api::snapshot::GameSnapshot;
 use std::sync::Arc;
 
 #[test]
@@ -92,6 +94,101 @@ fn selected_377_journal_paths_compile_and_recover_source_states() {
         }
     }).unwrap().join().unwrap();
 }
+
+#[test]
+fn hetty_377_journal_state_skips_consumed_items_and_selects_cauldron() {
+    api::selected::FamilyPreparation::run(|worker| {
+        let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+        let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let stamp = EvidenceStamp {
+            run: RunKey { slot: 1, run: 1, session: 1 },
+            tick: 10,
+            sequence: 10,
+        };
+        let bytes = bundled_path_for(ClientRevision::R377, "hetty").unwrap();
+        let path = compile::compile_path(
+            bytes,
+            &selected,
+            &quests,
+            worker,
+            &crate::local_state::OperatorLoadouts::absent(),
+            None,
+        )
+        .unwrap_or_else(|error| panic!("hetty: {error:?}"));
+        super::super::probe::assert_no_shadowed_rules(&path);
+
+        let read = |text: &str| JournalRead {
+            quest: path.id.clone(),
+            root: 8134,
+            lines: text.split('|').map(Arc::<str>::from).collect::<Vec<_>>().into(),
+            colour: None,
+            acquired: stamp,
+            closed: stamp,
+        };
+        let started = progress::resolve_journal(
+            &path,
+            &read("I spoke to Hetty in her house in Rimmington. Hetty told me|she could increase my magic power if I can bring her|certain ingredients for a potion."),
+            None,
+        );
+        assert!(matches!(&started.stage, Knowledge::Known(stage) if stage.0.as_ref() == "hetty:1"));
+        let objects_given = progress::resolve_journal(
+            &path,
+            &read("I brought her an onion, a rat's tail, a piece of burnt meat|and an eye of newt which she used to make a potion.||I should drink from the cauldron and improve my magic!"),
+            None,
+        );
+        assert!(matches!(&objects_given.stage, Knowledge::Known(stage) if stage.0.as_ref() == "hetty:2"));
+        let completed = progress::resolve_journal(
+            &path,
+            &read("I brought her an onion, a rat's tail, a piece of burnt meat|and an eye of newt which she used to make a potion.||I drank from the cauldron and my magic power increased!||QUEST COMPLETE!"),
+            None,
+        );
+        assert!(matches!(&completed.stage, Knowledge::Known(stage) if stage.0.as_ref() == "hetty:3"));
+
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(Vec::new(), 28);
+        let bank = known_empty_bank();
+        let started_probe = Probe {
+            path: &path,
+            selected: &selected,
+            quests: &quests,
+            progress: std::slice::from_ref(&started),
+            bank: &bank,
+        };
+        assert_eq!(
+            started_probe.choice("hetty:1", 0, &snapshot),
+            Choice::Step(FactKey::new("get-eye-of-newt")),
+            "missing chat lines must not block authored ingredient acquisition"
+        );
+        let objects_given_probe = Probe {
+            path: &path,
+            selected: &selected,
+            quests: &quests,
+            progress: std::slice::from_ref(&objects_given),
+            bank: &bank,
+        };
+        assert_eq!(
+            objects_given_probe.choice("hetty:2", 0, &snapshot),
+            Choice::Step(FactKey::new("drink-hetty-cauldron")),
+            "the journal's objects-given state must resume at the cauldron"
+        );
+        let ingredients: Vec<_> = path
+            .provisioning
+            .items
+            .iter()
+            .filter(|item| item.kind == compile::CompiledItemKind::Acquirable)
+            .collect();
+        assert_eq!(ingredients.len(), 4);
+        assert!(
+            ingredients.iter().all(|item| item.acquire.is_none()),
+            "stage-authored acquisition steps own these goals; provisioner must not restore ingredients consumed by hand-in"
+        );
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+}
+
 
 #[test]
 fn rune_377_lost_talisman_path_selects_dukes_quest_branch() {

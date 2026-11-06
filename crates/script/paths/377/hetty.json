@@ -11,10 +11,10 @@
     "quest_points": 1,
     "requirements": [],
     "items": [
-      { "obj": "eye_of_newt", "qty": 1, "kind": "acquirable", "acquire": "acquire:eye-of-newt", "from_stage": "hetty:1" },
-      { "obj": "onion", "qty": 1, "kind": "acquirable", "acquire": "acquire:onion", "from_stage": "hetty:1" },
-      { "obj": "rats_tail", "qty": 1, "kind": "acquirable", "acquire": "acquire:rat-tail", "from_stage": "hetty:1" },
-      { "obj": "burnt_meat", "qty": 1, "kind": "acquirable", "acquire": "acquire:burnt-meat", "from_stage": "hetty:1" }
+      { "obj": "eye_of_newt", "qty": 1, "kind": "acquirable", "from_stage": "hetty:1" },
+      { "obj": "onion", "qty": 1, "kind": "acquirable", "from_stage": "hetty:1" },
+      { "obj": "rats_tail", "qty": 1, "kind": "acquirable", "from_stage": "hetty:1" },
+      { "obj": "burnt_meat", "qty": 1, "kind": "acquirable", "from_stage": "hetty:1" }
     ],
     "acquire": {
       "acquire:eye-of-newt": [
@@ -282,7 +282,20 @@
       "progress_binding": "journal:hetty",
       "progress": {
         "colour": { "not_started": "hetty:0", "in_progress": "hetty:1", "complete": "hetty:3" },
-        "rules": [],
+        "rules": [
+          {
+            "stage": "hetty:3",
+            "all": ["I drank from the cauldron and my magic power increased!", "QUEST COMPLETE!"]
+          },
+          {
+            "stage": "hetty:2",
+            "all": ["I brought her an onion, a rat's tail, a piece of burnt meat", "I should drink from the cauldron and improve my magic!"]
+          },
+          {
+            "stage": "hetty:1",
+            "all": ["I spoke to Hetty in her house in Rimmington.", "certain ingredients for a potion."]
+          }
+        ],
         "flags": [],
         "monotonic": false
       },
@@ -350,10 +363,7 @@
               "kind": "acquire",
               "version": 1,
               "args": { "recipe": "acquire:eye-of-newt" },
-              "skip_if": { "Any": [
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
-                { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, now drink from the cauldron.", "well are you going to drink the potion or not?"] } } }
-              ] },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
               "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } }
             },
             {
@@ -361,10 +371,7 @@
               "kind": "acquire",
               "version": 1,
               "args": { "recipe": "acquire:onion" },
-              "skip_if": { "Any": [
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } },
-                { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, now drink from the cauldron.", "well are you going to drink the potion or not?"] } } }
-              ] },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } },
               "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "onion" } } }
             },
             {
@@ -372,10 +379,7 @@
               "kind": "acquire",
               "version": 1,
               "args": { "recipe": "acquire:rat-tail" },
-              "skip_if": { "Any": [
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } },
-                { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, now drink from the cauldron.", "well are you going to drink the potion or not?"] } } }
-              ] },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } },
               "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "rats_tail" } } }
             },
             {
@@ -383,17 +387,14 @@
               "kind": "acquire",
               "version": 1,
               "args": { "recipe": "acquire:burnt-meat" },
-              "skip_if": { "Any": [
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
-                { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, now drink from the cauldron.", "well are you going to drink the potion or not?"] } } }
-              ] },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } },
               "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
             },
             {
               "id": "hand-in-ingredients",
               "kind": "talk",
               "version": 1,
-              "advances": false,
+              "advances": true,
               "args": {
                 "npc": "hetty",
                 "anchor": {
@@ -409,8 +410,16 @@
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "eye_of_newt" } } },
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "burnt_meat" } } }
               ] } },
-              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, now drink from the cauldron.", "well are you going to drink the potion or not?"] } } }
-            },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "hetty", "any": ["hetty:2"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "hetty:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
             {
               "id": "drink-hetty-cauldron",
               "kind": "interact",
