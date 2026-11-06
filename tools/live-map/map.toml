@@ -94,7 +94,8 @@ globs = [
   "crates/host-play/src/bank_npc_live.rs",
   # Shared CPU replay fixture used only by the bank live-test modules.
   "crates/host-play/src/script_bank_harness.rs",
-  # `lib.rs` gates this shared fixture module with #[cfg(test)].
+  # Retired in this cut: the shared fixture module and cfg(test) declaration
+  # were removed after its callers were cut; it is not active test support.
   "crates/host-play/src/test_support.rs",
   # Synthetic planner fixture builders, not runtime planner code.
   "crates/nav-planner/src/test_support.rs",
@@ -657,7 +658,7 @@ cells = [
   "host.native-survival-cure-bite-after-drink|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 WORLD_GAME_PORT=47594 WORLD_HTTP_PORT=3080 BOT_ENGINE_DIR=${BOT_ENGINE_DIR:-/srv/dev/experiments/lostcity-289/engine} WORLD_ENGINE_DIR=${BOT_ENGINE_DIR:-/srv/dev/experiments/lostcity-289/engine} ENGINE_DIR=${BOT_ENGINE_DIR:-/srv/dev/experiments/lostcity-289/engine} BOT_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --test native_survival_cure_live -- --ignored --exact live_l_cure_bite_after_drink_waits_for_the_drink_and_the_next_food_clock --nocapture --test-threads=1",
 ]
 [[cover]]
-globs = ["crates/scenario/src/scenarios/gatherer.rs"]
+globs = ["crates/scenario/Cargo.toml", "crates/scenario/src/scenarios/gatherer.rs"]
 cells = [
   "scenario.gatherer-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_gatherer|--locked -p scenario --lib scenarios::gatherer::tests::start_stands_in_draynor_with_a_proved_tree_in_reach"
 ]
@@ -1477,3 +1478,117 @@ cells = [
   "host.quest-pair-coordinator-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib quest_pair::tests:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib quest_pair::tests::",
 ]
 
+
+# The build-stage integration test loads the canonical final-head payloads for
+# both supported resource layouts through ordinary Profile binding. This is a
+# staging/decoder proof, not a gameplay witness.
+[[cover]]
+globs = ["crates/host-play/build.rs", "crates/host-play/src/nav_assets.rs"]
+cells = [
+  "host.nav-bundle-274|BOT_NAV_BUILD=stage BOT_NAV_REVISION=274 BOT_NAV_RESOURCE_DIR=${LIVE_EVIDENCE_DIR:?}/nav-resources-274 ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test bundled_nav_build staged_bundle_uses_revision_layout_and_ordinary_decoders -- --ignored --exact --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test bundled_nav_build staged_bundle_uses_revision_layout_and_ordinary_decoders -- --ignored --exact",
+  "host.nav-bundle-289|BOT_NAV_BUILD=stage BOT_NAV_REVISION=289 BOT_NAV_RESOURCE_DIR=${LIVE_EVIDENCE_DIR:?}/nav-resources-289 ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test bundled_nav_build staged_bundle_uses_revision_layout_and_ordinary_decoders -- --ignored --exact --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test bundled_nav_build staged_bundle_uses_revision_layout_and_ordinary_decoders -- --ignored --exact",
+  "host.nav-assets-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib nav_assets::tests:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib nav_assets::tests:: --",
+]
+
+[[cover]]
+globs = ["crates/host-play/src/map_bind.rs"]
+cells = [
+  "host.map-bind-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib map_bind::tests:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib map_bind::tests:: --",
+]
+
+[[cover]]
+globs = ["crates/host-play/src/map_cache.rs"]
+cells = [
+  "host.map-cache-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib map_cache::tests:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib map_cache::tests:: --",
+]
+
+[[cover]]
+globs = ["crates/host-play/src/profile.rs", "crates/host-play/src/profile_options.rs", "crates/host-play/src/profile_selection.rs"]
+cells = [
+  "host.profile-config-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib profile -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib profile",
+  "host.session-profile-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test session_profile -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test session_profile",
+]
+
+[[cover]]
+globs = ["crates/host-play/src/public_worlds.rs"]
+cells = [
+  "host.public-worlds-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib public_worlds:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib public_worlds:: --",
+]
+
+# PairWatch's Rust proof is controlled; this paired TUI cell separately runs
+# the registered Duel Arena scenario with two real accounts and the pair gate.
+[[cover]]
+globs = ["crates/host-play/src/pair_duel.rs"]
+cells = [
+  "host.paired-core-watch-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test paired_core_watch -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test paired_core_watch",
+  "tui.live-duel-arena-pair-core|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --pair-core --live script_duel_arena|--locked -p tui --lib bin::tests::pair_gate_stashes_both_slots_with_complementary_role_bags --",
+]
+
+[[cover]]
+globs = ["crates/nav-planner/build.rs", "crates/nav-planner/src/canlight.rs"]
+cells = [
+  "nav.planner-canlight-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --lib canlight::tests:: -- --nocapture --test-threads=1|--locked -p nav-planner --lib canlight::tests:: --",
+]
+
+[[cover]]
+globs = ["crates/nav-planner/src/map.rs", "crates/nav-planner/src/map/formats.rs", "crates/nav-planner/src/map/identity.rs", "crates/nav-planner/src/map/poi.rs", "crates/nav-planner/src/map/producer.rs"]
+cells = [
+  "nav.map-contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --lib map:: -- --nocapture --test-threads=1|--locked -p nav-planner --lib map:: --",
+]
+
+[[cover]]
+globs = ["crates/nav-planner/src/producer.rs"]
+cells = [
+  "nav.planner-producer-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --lib producer::tests:: -- --nocapture --test-threads=1|--locked -p nav-planner --lib producer::tests:: --",
+]
+
+[[cover]]
+globs = ["crates/nav-planner/src/pack/sidecars.rs"]
+cells = [
+  "nav.planner-pack-sidecars-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --lib pack::tests:: -- --nocapture --test-threads=1|--locked -p nav-planner --lib pack::tests:: --",
+]
+
+[[cover]]
+globs = ["crates/panel/Cargo.toml", "crates/panel/src/walk_map.rs"]
+cells = [
+  "panel.walk-map-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib walk_map::tests:: -- --nocapture --test-threads=1|--locked -p panel --lib walk_map::tests:: --",
+]
+
+[[cover]]
+globs = ["crates/script/src/native/services.rs"]
+cells = [
+  "script.native-services-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib native::actions::tests::script_services_borrow_real_native_actions_and_recheck_owner_authority -- --exact --nocapture --test-threads=1|--locked -p script --lib native::actions::tests::script_services_borrow_real_native_actions_and_recheck_owner_authority -- --exact",
+]
+
+# Each ignored Engine L Play cell observes real native tick activity, or the
+# explicit no-gain Rune refusal, and writes an independent evidence receipt.
+[[cover]]
+globs = ["crates/script/src/native/tickcycle.rs"]
+cells = [
+  "host.gatherer-fly-tick|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${GATHERER_ENGINE_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} GATHERER_TICK_EVIDENCE=${LIVE_EVIDENCE_DIR:?}/gatherer-fly-tick ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_tick_live::gatherer_fly_tick --nocapture --test-threads=1",
+  "host.gatherer-net-tick|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${GATHERER_ENGINE_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} GATHERER_TICK_EVIDENCE=${LIVE_EVIDENCE_DIR:?}/gatherer-net-tick ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_tick_live::gatherer_net_tick --nocapture --test-threads=1",
+  "host.gatherer-mine-iron-tick|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${GATHERER_ENGINE_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} GATHERER_TICK_EVIDENCE=${LIVE_EVIDENCE_DIR:?}/gatherer-mine-iron-tick ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_tick_live::gatherer_mine_iron_tick --nocapture --test-threads=1",
+  "host.gatherer-oak-tick|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${GATHERER_ENGINE_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} GATHERER_TICK_EVIDENCE=${LIVE_EVIDENCE_DIR:?}/gatherer-oak-tick ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_tick_live::gatherer_oak_tick --nocapture --test-threads=1",
+  "host.gatherer-tick-refused-rune|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=47594 GATHERER_HTTP_PORT=3080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${GATHERER_ENGINE_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} GATHERER_TICK_EVIDENCE=${LIVE_EVIDENCE_DIR:?}/gatherer-tick-refused-rune ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_tick_live::gatherer_tick_refused_rune --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/src/native_equipment.rs"]
+cells = [
+  "script.native-equipment-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib native_equipment::tests:: -- --nocapture --test-threads=1|--locked -p script --lib native_equipment::tests:: --",
+  "host.quester-qualified-priest-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_PATH=priest QUESTER_SEEDS=${PWD}/crates/host-play/tests/fixtures/quester-path/priest-start.json WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/tui/Cargo.toml"]
+cells = [
+  "tui.live-duel-arena-pair-core|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --pair-core --live script_duel_arena|--locked -p tui --lib bin::tests::pair_gate_stashes_both_slots_with_complementary_role_bags --",
+]
+
+# This exact PCM job uses the DEPS-BATCH-025 corpus and frozen fixture set.
+# Captures are per-pass outputs; comparisons are bit-exact and use no tolerance.
+[[cover]]
+globs = ["vendor/fr-client-rust/crates/client/src/sound/midi.rs"]
+cells = [
+  "vendor.midi-pcm-differential|cd vendor/fr-client-rust && DEPS_BATCH_025_PCM_CORPUS=${DEPS_BATCH_025_PCM_CORPUS:?} DEPS_BATCH_025_PCM_CAPTURE_DIR=${LIVE_EVIDENCE_DIR:?}/midi-pcm-capture DEPS_BATCH_025_PCM_FIXTURE_DIR=${DEPS_BATCH_025_PCM_FIXTURE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p client --features audio,test-support --test midi_pcm_differential captures_production_pcm_and_compares_optional_baseline -- --ignored --exact --nocapture --test-threads=1|--locked --manifest-path vendor/fr-client-rust/Cargo.toml -p client --features audio,test-support --test midi_pcm_differential captures_production_pcm_and_compares_optional_baseline -- --ignored --exact",
+]

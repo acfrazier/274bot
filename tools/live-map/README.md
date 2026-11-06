@@ -75,7 +75,9 @@ All cells not listed below normally run on merlot. Engine A uses game port
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
 | `host.nav-zanaris-entrana` | Run on aubaine with Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`. Set `ENGINE_A_DIR` to the Engine L directory. Also set `BOT_CACHE_DIR`, `NAV_PACK_289`, `LIVE_EVIDENCE_DIR`, `CATALOG_ROOT`, and `QUESTER_PATH_DIR`. Use the composed head's pack and its merged Zanaris Path source. This cell proves entry to the Entrana dungeon, not completion of Lost City. |
 | `host.sherlock-entrana-walk-arrive`, `host.sherlock-entrana-content-categories` | Run on aubaine through Engine L's relay at `127.0.0.1:44594` and `127.0.0.1:1080`. Set the standard Engine A, pack, cache, catalog, and evidence variables. |
-| `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |
+| `host.gatherer-fly-tick`, `host.gatherer-net-tick`, `host.gatherer-mine-iron-tick`, `host.gatherer-oak-tick`, `host.gatherer-tick-refused-rune` | Run on aubaine against the 600 ms Engine L relay at game port `47594` and HTTP port `3080`. Set `GATHERER_ENGINE_DIR` to the read-only local Engine L client tree. Each cell uses a fresh account prefix and evidence path. Do not start, stop, or change Engine L. |
+| `tui.live-duel-arena-pair-core` | Run on merlot or chardonnay against Engine A at `44594/1080`. The registered `duel_arena` scenario drives two real accounts through TUI's `--pair-core` gate; both names use the unique `BOT_LIVE_NAME_PREFIX`. This cell does not use `BOT_LIVE_PARTNER_NAME_PREFIX`. |
+| `vendor.midi-pcm-differential` | Run on a build-enabled lab with the DEPS-BATCH-025 corpus and frozen PCM fixtures. It needs no game service and writes captures to a fresh per-cell/pass evidence directory. |
 
 **Focused Quester content**
 
@@ -347,8 +349,8 @@ same-toolchain and same-engine performance qualification.
 
 ## Input values
 
-The map has 23 named inputs, including the 19 reviewed in round 2. Five input
-values are fixed in the map.
+Input names vary with the selected cells; this table documents shared and
+task-specific values. Five values are fixed in the map.
 The caller must not replace the gather tile, Path, seeds file, or Engine L ports.
 
 | Name | Value or owner |
@@ -376,6 +378,12 @@ The caller must not replace the gather tile, Path, seeds file, or Engine L ports
 | `QUESTER_PATH_DIR` | Set to `${PWD}/crates/script/paths/289` from the composed repository root. The Zanaris Path source must be merged into the tested head. Do not substitute an unmerged external Path checkout. |
 | `NAV_PACK_274` | Use `274bot-274-v18.navpack` in the same reference-v18 directory as `NAV_PACK_289`. The orchestrator supplies this path to `nav.essence-follow` when it starts the 274 service. |
 | `BOT_UNPACK_DIR` | Use a fresh writable unpack directory at `<LIVE_EVIDENCE_DIR>/client-unpack`. This can be the same path as `CLIENT_UNPACK_DIR`. |
+| `GATHERER_ENGINE_DIR` | Use the absolute read-only client tree for the 600 ms Engine L service at `47594/3080`. Aubaine: `/Volumes/dev-scratch/engines/lostcity-289-l/engine`; on chardonnay, use the local Engine L tree supplied as `BOT_ENGINE_DIR`. |
+| `GATHERER_TICK_EVIDENCE` | Each of the five native tick cells writes to a fresh, nonexistent absolute path below its `LIVE_EVIDENCE_DIR`; the map assigns a distinct subdirectory per cell and pass. |
+| `DEPS_BATCH_025_PCM_CORPUS` | Required pinned corpus at `/Volumes/dev-scratch/274bot-evidence/DEPS-BATCH-025/impl/corpus/audio/289`. Do not substitute synthetic or alternate inputs. |
+| `DEPS_BATCH_025_PCM_FIXTURE_DIR` | Required frozen fixtures at `/Volumes/dev-scratch/274bot-evidence/DEPS-BATCH-025/impl/pcm-fixtures`. The parent runner hashes the fixture files before the version matrix. |
+| `DEPS_BATCH_025_PCM_CAPTURE_DIR` | Derived output `<LIVE_EVIDENCE_DIR>/midi-pcm-capture`, fresh for each cell/pass; the map sets it inline. |
+| `DEPS_BATCH_025_PCM_BASELINE_DIR` | Optional earlier capture directory. Leave unset unless an approved baseline is supplied; comparison is bit-exact and applies no tolerance or normalization. |
 
 Run commands from the repository root. Keep writable cache and unpack paths in
 fresh run directories. `AGENTS.md:149` requires a throwaway HOME for product
@@ -414,9 +422,43 @@ revision-274 gameplay.
 and final logout. It does not start or qualify the campaign quest. Its speed
 helpers have controlled tests; Engine Q speed changes remain forbidden.
 
-The navigation positive cells must use a pack with the matching nonempty
-quest-family identity. A stale or unbound pack cannot substitute for those
-positive runs.
+Navigation positives intended to prove the composed head must use its
+canonical local-data output and matching revision-keyed pack, flags and
+sidecars from `tools/local-data/build.py`. Retain the exact build receipt with
+each run; a stale or unbound artifact cannot substitute for that proof.
+Reference-v18 remains valid only for cells classified as ordinary or
+reference-contract in the input table. This is artifact provenance, not a
+quest-family identity claim. Keep the semantic quest gates and positive
+arrival/door cells below; pack identity does not replace their in-game evidence.
+
+## BATCH-029-INT release integration
+
+These rows supplement the existing runtime witnesses. They do not replace the
+real bank, Gatherer, Quest, GPU or navigation cells.
+
+| Cell(s) | Evidence and limit |
+|---|---|
+| `host.nav-assets-headless`, `host.nav-bundle-274`, `host.nav-bundle-289` | The module test covers resource-layout rules. The two ignored integration tests stage canonical final-head local-data outputs for each revision into a per-pass `BOT_NAV_RESOURCE_DIR`, decode pack, flags, reach, canlight and POI resources, then bind through the ordinary `Profile` path. These are staging/decoder proofs, not gameplay evidence. |
+| `host.map-bind-headless`, `host.map-cache-headless`, `host.profile-config-headless`, `host.session-profile-headless`, `host.public-worlds-headless` | Run the changed map binding/cache and profile selection/public-world tests. These controlled tests do not create game state. |
+| `nav.planner-canlight-headless`, `nav.map-contract-headless`, `nav.planner-producer-headless`, `nav.planner-pack-sidecars-headless` | Exercise the planner's map contracts, format/identity/POI producers, sidecars, canlight and producer modules. These are controlled Rust tests, not navigation runtime witnesses. |
+| `panel.walk-map-headless`, `frontend-core.map-walk-headless` | The panel cell exercises its walk-map module; the existing frontend-core cell remains the controlled real `Play`/map-arm flow. Keep the existing headed GPU and navigation runtime cells separate. |
+| `script.native-services-headless`, `script.native-equipment-headless`, `host.quester-qualified-priest-engine-q` | The service test borrows real native actions and checks owner authority; it is not synthetic JavaScript coverage. The equipment state-machine tests are paired with the real Priest Path, which executes its amulet equip step. |
+| `host.gatherer-fly-tick`, `host.gatherer-net-tick`, `host.gatherer-mine-iron-tick`, `host.gatherer-oak-tick`, `host.gatherer-tick-refused-rune` | Each ignored cell uses Engine L and the native tick-cycle driver. The four positive cases require observed gathering cycles; Rune is the explicit no-gain refusal. Use a distinct fresh evidence path per cell/pass. |
+| `scenario.gatherer-live` | The existing registered Gatherer scenario remains a separate real script/runtime witness and compiles the scenario manifest; the native tick cells do not replace it. |
+| `host.paired-core-watch-headless`, `tui.live-duel-arena-pair-core` | The watch suite is controlled evidence only. The TUI cell runs the registered two-account Duel Arena scenario with `--pair-core` and is a real paired runtime witness; it is distinct from the one-account `host.api-pvp-duel` cell. |
+| `vendor.midi-pcm-differential` | Runs the ignored production PCM capture against the pinned DEPS-BATCH-025 corpus and frozen fixtures, with an optional approved baseline. It records raw PCM and compares bits without tolerance, normalization or clipping. |
+
+The staged bundle cells require canonical `target/local-data/nav` assets for
+both revisions, generated from the final composed head with the local-data
+procedure above. `BOT_NAV_BUILD=skip` is not valid for these two cells.
+
+The PCM cell uses its shared frozen fixture directory as an input and a fresh
+capture directory per pass. A baseline is optional; do not invent corpus
+assets, fixture hashes or acceptance tolerances.
+
+The paired TUI scenario mints both account names from its unique
+`BOT_LIVE_NAME_PREFIX`; it is not a paired quest/trade cell and needs no
+partner-prefix input.
 
 ## Background work health
 
@@ -521,9 +563,11 @@ remote shell that invokes the runner (for example, partner `b2q` with
 assignment is not forwarded by the lab wrapper. It still sets the primary
 prefix from `--prefix`.
 
-Export the selected combined nav pack and matching flags for batch proofs.
-Do not substitute a discovered reference pack when its quest-family binding
-does not match the selected data.
+For batch proofs that require the composed head, export its canonical pack and
+matching flags/sidecars with the local-data build receipt. Do not substitute a
+discovered reference pack for those cells; the named reference pack remains
+valid only for ordinary and reference-contract cells. This identity requirement
+is artifact provenance, not quest-family binding.
 
 Use `--catalog-root <path>` for the local `rs2b0t` checkout root. The flag is
 required when any selected cell uses `${CATALOG_ROOT}`. The runner exports it as
