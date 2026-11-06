@@ -15,7 +15,8 @@ pub(crate) mod seat_transfer;
 
 pub use crate::native_bank::{
     AccessKind, BankPickReceipt, BankPickRequest, BankStandAccess, Close, Deposit, DepositArgs,
-    Open, OpenArgs, PickKind, Select, SelectArgs, SelectedBank, Withdraw, WithdrawArgs, Withdrawal,
+    Open, OpenArgs, PickKind, Select, SelectArgs, SelectOther, SelectOtherArgs, SelectedBank,
+    Withdraw, WithdrawArgs, Withdrawal,
 };
 
 /// One Rust-owned settings fact, shared by the V8 materializer and static

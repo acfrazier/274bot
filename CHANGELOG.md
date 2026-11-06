@@ -11,18 +11,24 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   way back to the resource area. It plans that return again once, as on a
   normal return trip, and stops only if the retry also fails, with the last
   failure's reason.
-- A lost connection during a bank trip no longer ends the Gatherer's run (for
-  example when the server restarts). Before, the Gatherer could stop with "bank
-  did not open" or "bank item table unavailable", or stand in the bank until
-  you pressed Start. After the new login, the Gatherer now starts that trip
+- This change addresses a lost connection during a bank trip (for example when
+  the server restarts). After the new login, the Gatherer now starts the trip
   again at the walk to the bank, with a new plan from the character's
-  position. It does this up to three times in one trip. It stops only after
-  that, and the message keeps the last reason.
+  position, when the connection was lost during the walk to the bank, the
+  opening of the bank, the deposit or the withdrawal. It does this up to three
+  times in one trip. This limit is a policy choice, not a game rule: after
+  three restarts the Gatherer stops, and the message keeps the last reason.
+  The report that led to this change was not reproduced.
 - A bank window that was still open after a reconnect, but had no item list,
   was waited on again and again. The Gatherer now clicks the booth once to open
-  the bank again.
-- The walk to the bank now plans once more after a stalled walk, as the walk
-  back to the resource area does.
+  the bank again. A teller bank (for example in the Mage Arena) with such a
+  window still stops after three tries, with the last reason.
+- The walk to the bank no longer stops on its first failure. When the walk
+  finds no route, fails, is blocked or stalls, the Gatherer plans again from
+  the character's position, first to the same bank, then to another bank when
+  there is one. After that it stops, and the message keeps the last walk
+  failure's detail. A walk you cancel by moving, and a refused walk, still
+  stop at once.
 - When the bank does not open after three tries, the stop message now includes
   the last reason instead of only "bank did not open".
 

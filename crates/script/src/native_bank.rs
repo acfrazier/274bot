@@ -2487,11 +2487,14 @@ struct SelectFallback {
     deadline: BankDeadline,
 }
 
-impl NativeMachine for Select {
-    type Args = SelectArgs;
-    type Output = SelectedBank;
-
-    fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+impl Select {
+    /// Begins a pick. `avoid` is a bank to leave out of the candidates
+    /// (see [`SelectOtherArgs::avoid`]).
+    fn start(
+        args: SelectArgs,
+        avoid: Option<u16>,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<Self, ActionError> {
         let snapshot = cx.snapshot();
         let stats = snapshot.stats().map_or(&[][..], |rows| rows.value);
         let quests = snapshot.quest_statuses().map_or(&[][..], |rows| rows.value);
@@ -2501,6 +2504,11 @@ impl NativeMachine for Select {
             .explicit
             .as_deref()
             .and_then(|name| selector.named(name, stats, quests));
+        if let Some(avoid) = avoid.filter(|_| explicit_bank.is_none()) {
+            if eligible.iter().any(|&index| index != avoid) {
+                eligible.retain(|&index| index != avoid);
+            }
+        }
         let explicit_unavailable = args.explicit.is_some() && explicit_bank.is_none();
         if args.allow_air_fallback {
             eligible.sort_by_key(|&index| {
@@ -2546,6 +2554,15 @@ impl NativeMachine for Select {
             fallback,
         })
     }
+}
+
+impl NativeMachine for Select {
+    type Args = SelectArgs;
+    type Output = SelectedBank;
+
+    fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Self::start(args, None, cx)
+    }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
         if let Some(selected) = self.immediate.take() {
@@ -2582,6 +2599,41 @@ impl NativeMachine for Select {
     }
 
     fn cancel(&mut self) {}
+}
+
+/// The arguments of a pick that leaves one bank out.
+pub struct SelectOtherArgs {
+    pub select: SelectArgs,
+    /// A bank whose access the owner could not walk to. The pick drops it
+    /// from its candidates when another bank is eligible and the owner named
+    /// no bank. Otherwise it keeps the bank, so the pick never ends empty
+    /// because of this request.
+    pub avoid: u16,
+}
+
+/// A [`Select`] that leaves out the bank whose access the owner could not
+/// reach (the Gatherer's second access recovery).
+pub struct SelectOther {
+    pick: Select,
+}
+
+impl NativeMachine for SelectOther {
+    type Args = SelectOtherArgs;
+    type Output = SelectedBank;
+
+    fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Ok(Self {
+            pick: Select::start(args.select, Some(args.avoid), cx)?,
+        })
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        self.pick.poll(cx)
+    }
+
+    fn cancel(&mut self) {
+        self.pick.cancel();
+    }
 }
 
 pub struct Open {
@@ -2840,6 +2892,83 @@ mod tests {
             frame.cx.wall_now = wall;
             frame.actions.poll(handle, &mut frame.cx)
         })
+    }
+
+    /// The banks a Select with these inputs lets the host choose from, and
+    /// the explicit bank, as the typed pick request names them.
+    fn pick_candidates(
+        banks: &[(&'static str, i32)],
+        explicit: Option<&str>,
+        avoid: Option<u16>,
+    ) -> (Vec<u16>, Option<u16>) {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let facts = Arc::new(NamedBankFacts::from_banks(
+            banks
+                .iter()
+                .map(|&(name, x)| NamedBank::new(name, WorldTile { x, z: 5, level: 0 }))
+                .collect(),
+        ));
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |frame| {
+            let args = SelectArgs {
+                facts,
+                from: WorldTile {
+                    x: 5,
+                    z: 5,
+                    level: 0,
+                },
+                preferences: BankPreferences {
+                    use_mage_bank: false,
+                    use_zanaris_bank: false,
+                },
+                options: WalkOptions::default(),
+                explicit: explicit.map(Arc::from),
+                allow_air_fallback: false,
+            };
+            if let Some(avoid) = avoid {
+                let handle = frame
+                    .actions
+                    .begin::<SelectOther>(
+                        SelectOtherArgs {
+                            select: args,
+                            avoid,
+                        },
+                        &mut frame.cx,
+                    )
+                    .unwrap();
+                assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+            } else {
+                let handle = frame.actions.begin::<Select>(args, &mut frame.cx).unwrap();
+                assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+            }
+        });
+        let pending = ledger.as_ref().unwrap();
+        let HostEffect::BankPick(request) = &pending.outbox[0].effect else {
+            panic!("Select must emit a real typed pick");
+        };
+        (request.eligible.to_vec(), request.explicit_bank)
+    }
+
+    /// A bank whose access walk failed is dropped from the next pick only
+    /// when another bank is eligible and the owner named no bank; a named
+    /// bank or the only bank stays, so the pick never ends empty because of it.
+    #[test]
+    fn select_avoid_drops_the_failed_bank_only_when_another_is_eligible() {
+        let three = [("far", 10), ("near", 6), ("nearer", 4)];
+        assert_eq!(pick_candidates(&three, None, None).0, [0, 1, 2]);
+        assert_eq!(pick_candidates(&three, None, Some(1)).0, [0, 2]);
+        assert_eq!(pick_candidates(&three, None, Some(0)).0, [1, 2]);
+        assert_eq!(
+            pick_candidates(&three, Some("far"), Some(0)),
+            (vec![0, 1, 2], Some(0)),
+            "a named bank is never dropped"
+        );
+        assert_eq!(
+            pick_candidates(&[("only", 6)], None, Some(0)).0,
+            [0],
+            "the only bank stays"
+        );
     }
 
     #[test]

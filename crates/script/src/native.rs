@@ -1074,7 +1074,28 @@ impl ReturnStallRecovery {
             WalkEnd::Stalled(stall)
                 if matches!(stall.why, WalkStallReason::Expired | WalkStallReason::Dropped)
         );
-        if transient && self.actions < MAX_RETURN_RECOVERY_ACTIONS && !self.pending {
+        transient && self.admit(MAX_RETURN_RECOVERY_ACTIONS)
+    }
+
+    /// Admits one more recovery action for an ordinary walk failure: no
+    /// route, a failed or blocked walk, a route that ended short, or any
+    /// stall. User input, cancellation, a safety or permission refusal, an
+    /// escape abort and a quest-gate need stay terminal at once; the owner
+    /// must not retry them. `budget` is the caller's own bound on actions.
+    pub(crate) fn observe_failure(&mut self, end: &WalkEnd, budget: u8) -> bool {
+        let ordinary = matches!(
+            end,
+            WalkEnd::NoPath
+                | WalkEnd::Failed
+                | WalkEnd::Blocked
+                | WalkEnd::RouteEnded
+                | WalkEnd::Stalled(_)
+        );
+        ordinary && self.admit(budget)
+    }
+
+    fn admit(&mut self, budget: u8) -> bool {
+        if self.actions < budget && !self.pending {
             self.pending = true;
             true
         } else {
@@ -1098,7 +1119,7 @@ impl ReturnStallRecovery {
         self.pending = false;
     }
 
-    #[cfg(test)]
+    /// Recovery actions already submitted; the owner picks the next kind.
     pub(crate) fn actions(&self) -> u8 {
         self.actions
     }
