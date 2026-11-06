@@ -145,11 +145,13 @@ fn ordered_tile_encoding_keeps_duplicates_and_signed_coordinates() {
 }
 
 fn pack_digest(path: &Path) -> String {
-    let mut file = std::fs::File::open(path).unwrap();
+    let mut file = std::fs::File::open(path).expect("open the real arrival-parity nav pack");
     let mut digest = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     loop {
-        let count = file.read(&mut buffer).unwrap();
+        let count = file
+            .read(&mut buffer)
+            .expect("read the real arrival-parity nav pack");
         if count == 0 {
             break;
         }
