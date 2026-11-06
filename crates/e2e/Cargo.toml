@@ -23,6 +23,7 @@ path = "src/bin/e2e-suite-fixture.rs"
 [dependencies]
 host = { path = "../host" }
 host-play = { path = "../host-play", default-features = false }
+nav-planner = { path = "../nav-planner" }
 vault = { path = "../vault" }
 api = { path = "../api" }
 scenario = { path = "../scenario" }

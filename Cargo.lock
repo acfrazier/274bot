@@ -1463,6 +1463,7 @@ dependencies = [
  "host-play",
  "image",
  "libc",
+ "nav-planner",
  "scenario",
  "serde",
  "serde_json",
