@@ -69,6 +69,7 @@ fn a_missing_door_config_fails_the_bake() {
         doors_dir: &doors,
         gates: &gates,
         config_jag: &config_jag,
+        server_loc_dat_377: None,
         require_all_door_configs: true,
     };
     let error = bake_world(&request)
@@ -87,6 +88,7 @@ fn a_missing_door_config_fails_the_bake() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
 
 fn collision_with_flags(
     width: usize,
