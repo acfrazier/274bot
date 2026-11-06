@@ -1388,10 +1388,22 @@ fs.writeFileSync(path.join(toolFlour, 'scripts/skill_runecraft/configs/runecraft
 fs.writeFileSync(path.join(toolFlour, 'maps/m45_75.jm2'), '==== LOC ====\n0 5 50: 2492 10\n');
 fs.writeFileSync(path.join(toolFlour, 'pack/npc.pack'), '594=nurmof\n553=aubury\n');
 fs.writeFileSync(path.join(toolFlour, 'pack/loc.pack'), '2492=blankrunestone_exit_portal\n');
+const toolPickaxes = [{ id: 1265, debugname: 'bronze_pickaxe', name: 'Bronze pickaxe', cost: 1, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 }];
+const toolNurmof = { id: 594, debugname: 'nurmof', name: 'Nurmof' };
 assert.throws(
-    () => extractNurmofEssenceFacts(toolFlour, [{ id: 1265, debugname: 'bronze_pickaxe', name: 'Bronze pickaxe', cost: 1, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 }], [{ id: 594, debugname: 'nurmof', name: 'Nurmof' }]),
-    /expected 6 stock rows/,
-    'partial pickaxeshop must fail closed',
+    () => extractNurmofEssenceFacts(toolFlour, toolPickaxes, [toolNurmof]),
+    /aubury: pack\/cache join mismatch 553\/undefined/,
+    'a missing decoded Aubury must fail the pack/cache join',
+);
+const singleStock = extractNurmofEssenceFacts(
+    toolFlour,
+    toolPickaxes,
+    [toolNurmof, { id: 553, debugname: 'aubury', name: 'Aubury' }],
+);
+assert.deepEqual(
+    singleStock.pickaxes,
+    [{ alias: 'bronze_pickaxe', id: 1265, name: 'Bronze pickaxe', base_cost: 1, shop_baseline_qty: 6 }],
+    'one valid extracted stock row is not rejected by a publication-count pin',
 );
 
 fs.mkdirSync(path.join(toolFlour, 'scripts/quests/quest_murder/configs'), { recursive: true });

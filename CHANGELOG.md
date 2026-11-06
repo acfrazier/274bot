@@ -57,6 +57,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   including updates that leave the NPC's index, type and tile unchanged.
 - Development checks now run the isolated script-value shape test under its
   current module name. They still refuse a child process that runs no test.
+- Game-data fixture tests accept valid stock rows without publication-count
+  pins. They still reject missing decoded NPC joins.
 
 ### Not in this release
 
