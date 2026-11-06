@@ -40,11 +40,12 @@ fn pack_counts(path: &Path, world: &NavWorld) -> Value {
 }
 
 #[test]
-#[ignore = "requires NAV_377_PACK, NAV_377_CACHE, NAV_377_CONTENT, NAV_377_SNAPSHOT_ROOT, NAV_289_PACK and NAV_377_REPORT"]
+#[ignore = "requires NAV_377_PACK, NAV_377_CACHE, NAV_377_CONTENT, NAV_377_SERVER_LOC_DAT, NAV_377_SNAPSHOT_ROOT, NAV_289_PACK and NAV_377_REPORT"]
 fn real_revision_377_pack_identity_routes_and_transports() {
     let path = required_path("NAV_377_PACK");
     let cache_dir = required_path("NAV_377_CACHE");
     let content = required_path("NAV_377_CONTENT");
+    let server_loc_dat = required_path("NAV_377_SERVER_LOC_DAT");
     let cache = CacheManifest::capture(377, &cache_dir).unwrap();
     let manifest: NavManifest =
         serde_json::from_slice(&std::fs::read(nav_manifest_path(&path)).unwrap()).unwrap();
@@ -58,9 +59,12 @@ fn real_revision_377_pack_identity_routes_and_transports() {
     assert_eq!(
         manifest.source_sha256.as_deref(),
         Some(
-            nav_bake::bundle::source_digest(&content, &[&cache_dir.join("config")])
-                .unwrap()
-                .as_str()
+            nav_bake::bundle::source_digest(
+                &content,
+                &[&cache_dir.join("config"), &server_loc_dat],
+            )
+            .unwrap()
+            .as_str()
         )
     );
     for (extension, expected) in [
