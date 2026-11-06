@@ -3,6 +3,37 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { bankCatalogJson, cookCatalogJson } from './generate.ts';
+import {
+    assertTrioGiverNpcJoins,
+    assertTalkKeyNpcJoins,
+    extractDropFacts,
+    extractFacts,
+    extractEquipmentNamesFacts,
+    extractFlourSixFacts,
+    extractTalkKeyFacts,
+    extractTrailFacts,
+    extractTrioGiversFacts,
+    extractHerbFacts,
+    extractMagicFacts,
+    extractAutocastControls,
+    extractDuelControls,
+    extractNurmofEssenceFacts,
+    extractPrayerFacts,
+    extractSpecialControls,
+    extractTeleportSpells,
+    herbKeyFromName,
+    identifiedHerbLevelDefault,
+    joinEquipmentName,
+    loadEquipmentNamesCurated,
+    parseIdentifyHerbPairs,
+    parseJm2LinkBelow,
+    parseJm2NpcPlacements,
+    parseTrioGiverHandlers,
+    parseInvShopStock,
+    parseObjSections,
+    parsePrayerInterface,
+    parseQuestEnumEntry,
+} from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
 import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, GATHERING_SCHEMA, isKnownGatherTarget, SITE_OVERRIDES, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
 import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
