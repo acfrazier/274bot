@@ -17,9 +17,26 @@ pub fn parse_door_config(text: &str) -> HashSet<i32> {
 /// `op1=Open`) join the door set under their own names. Numeric blocks
 /// behave exactly as in [`parse_door_config`].
 pub fn parse_door_config_ids(text: &str, ids: &HashMap<String, i32>) -> HashSet<i32> {
+    parse_door_configs(text, ids, true)
+}
+
+/// Revision-377 configured doors retain the numeric 289 declarations, but
+/// named blocks must declare a closed door/gate category. `op1=Open` alone
+/// also describes refused actions (notably Black Knights' Fortress 73/74).
+/// Other named doors still use the handler-proven transport derivations.
+pub fn parse_door_config_377(text: &str, ids: &HashMap<String, i32>) -> HashSet<i32> {
+    parse_door_configs(text, ids, false)
+}
+
+fn parse_door_configs(
+    text: &str,
+    ids: &HashMap<String, i32>,
+    named_op_is_door: bool,
+) -> HashSet<i32> {
     let mut door_ids = HashSet::new();
     let mut cur: Option<i32> = None;
     let mut openable = false;
+    let mut op_is_door = false;
     for raw in text.lines() {
         let line = raw.trim();
         let header =
@@ -32,8 +49,9 @@ pub fn parse_door_config_ids(text: &str, ids: &HashMap<String, i32>) -> HashSet<
             }
             cur = Some(n);
             openable = false;
+            op_is_door = named_op_is_door || loc_header(line).is_some();
         } else if cur.is_some()
-            && (line == "op1=Open"
+            && ((op_is_door && line == "op1=Open")
                 || line == "category=door_closed"
                 || line == "category=gate_main_closed"
                 || line == "category=gate_outer_closed")
