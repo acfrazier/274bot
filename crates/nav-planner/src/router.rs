@@ -2205,14 +2205,16 @@ fn search_worst_case_reservation(
                 | SearchRequestShape::ActionableQuestGates { .. }
                 | SearchRequestShape::EntranceRequirements { .. }
         ) {
-        // Each partition and its goal/index arrays reserve their exact input
-        // capacities once. A key can contain only IDs from one spatial bucket.
+        // First-family partitions use per-target indices and key offsets
+        // into one flat arena, with a terminal offset. Other shapes keep
+        // their existing rows; all charge zone IDs and grouped-goal copies.
+        // Index and key sorting are in place and need no second buffers.
         let row_bytes = match shape {
             SearchRequestShape::Many { .. } => std::mem::size_of::<IndexedZoneGoal>(),
             SearchRequestShape::BlockingZones { .. } => {
                 std::mem::size_of::<(Vec<u16>, usize, WorldTile)>()
             }
-            _ => std::mem::size_of::<FirstZoneGoal>(),
+            _ => std::mem::size_of::<usize>().checked_mul(2)?,
         };
         let goal_bytes = std::mem::size_of::<WorldTile>().checked_add(
             if matches!(shape, SearchRequestShape::Many { .. }) {
@@ -2222,11 +2224,19 @@ fn search_worst_case_reservation(
             },
         )?;
         let zone_ids = graph.zones.as_ref()?.max_zones_per_tile();
-        target_count.checked_mul(
+        let bytes = target_count.checked_mul(
             row_bytes
                 .checked_add(zone_ids.checked_mul(std::mem::size_of::<u16>())?)?
                 .checked_add(goal_bytes)?,
-        )?
+        )?;
+        if matches!(
+            shape,
+            SearchRequestShape::Many { .. } | SearchRequestShape::BlockingZones { .. }
+        ) {
+            bytes
+        } else {
+            bytes.checked_add(std::mem::size_of::<usize>())?
+        }
     } else {
         0
     };
@@ -3747,11 +3757,8 @@ async fn first_search_core_compact(
     })
 }
 
-struct FirstZoneGoal {
-    key: Box<[u16]>,
-    /// Index into preferred goals followed by fallback goals.
-    index: usize,
-}
+// First-zone partition indices address the source goal slices; their key
+// offsets and sorted IDs live in contiguous vectors owned by the search.
 
 #[expect(
     clippy::too_many_arguments,
@@ -3874,34 +3881,46 @@ async fn first_cursor_search_with_output(
         .len()
         .checked_add(fallback.len())
         .ok_or(SearchCursorError::ResultNotRepresentable)?;
+    let offset_capacity = partition_capacity
+        .checked_add(1)
+        .ok_or(SearchCursorError::ResultNotRepresentable)?;
+    let mut key_offsets = Vec::new();
+    key_offsets
+        .try_reserve_exact(offset_capacity)
+        .map_err(|_| SearchCursorError::Allocation)?;
+    key_offsets.push(0);
     let mut partitions = Vec::new();
     partitions
         .try_reserve_exact(partition_capacity)
         .map_err(|_| SearchCursorError::Allocation)?;
-    for (index, &target) in targets.iter().enumerate() {
+    let mut key_count = 0usize;
+    for (index, &target) in targets.iter().chain(fallback.iter()).enumerate() {
         work_unit().await;
-        let key = goal_zone_key_cooperative(graph, filter, target).await?;
-        if !key.is_empty() || options.zones != ZoneExempt::NONE {
-            partitions.push(FirstZoneGoal {
-                key: key.into_boxed_slice(),
-                index,
-            });
+        let key_len = goal_zone_key_len_cooperative(graph, filter, target).await?;
+        key_count = key_count
+            .checked_add(key_len)
+            .ok_or(SearchCursorError::ResultNotRepresentable)?;
+        key_offsets.push(key_count);
+        if key_len != 0 || options.zones != ZoneExempt::NONE {
+            partitions.push(index);
         }
     }
-    for (index, &target) in fallback.iter().enumerate() {
+    let mut zone_keys = Vec::new();
+    zone_keys
+        .try_reserve_exact(key_count)
+        .map_err(|_| SearchCursorError::Allocation)?;
+    zone_keys.resize(key_count, 0);
+    for (index, &target) in targets.iter().chain(fallback.iter()).enumerate() {
         work_unit().await;
-        let key = goal_zone_key_cooperative(graph, filter, target).await?;
-        if !key.is_empty() || options.zones != ZoneExempt::NONE {
-            partitions.push(FirstZoneGoal {
-                key: key.into_boxed_slice(),
-                index: targets.len() + index,
-            });
-        }
+        let start = key_offsets[index];
+        let end = key_offsets[index + 1];
+        fill_goal_zone_key_cooperative(graph, filter, target, &mut zone_keys[start..end])
+            .await?;
     }
     sort_unstable_by_cooperative(&mut partitions, |left, right| {
-        left.key
-            .cmp(&right.key)
-            .then_with(|| left.index.cmp(&right.index))
+        let left_key = &zone_keys[key_offsets[*left]..key_offsets[*left + 1]];
+        let right_key = &zone_keys[key_offsets[*right]..key_offsets[*right + 1]];
+        left_key.cmp(right_key).then_with(|| left.cmp(right))
     })
     .await;
     if partitions.is_empty() {
@@ -3961,20 +3980,27 @@ async fn first_cursor_search_with_output(
         let mut start = 0usize;
         while start < partitions.len() {
             work_unit().await;
+            let first_index = partitions[start];
+            let first_key = &zone_keys[key_offsets[first_index]..key_offsets[first_index + 1]];
             let mut end = start + 1;
-            while end < partitions.len() && partitions[end].key == partitions[start].key {
+            while end < partitions.len() {
                 work_unit().await;
+                let index = partitions[end];
+                let key = &zone_keys[key_offsets[index]..key_offsets[index + 1]];
+                if key != first_key {
+                    break;
+                }
                 end += 1;
             }
-            if partitions[start].key.is_empty() && granted == ZoneExempt::NONE {
+            if first_key.is_empty() && granted == ZoneExempt::NONE {
                 start = end;
                 continue;
             }
             let mut preferred_count = 0usize;
             let mut fallback_count = 0usize;
-            for goal in &partitions[start..end] {
+            for &index in &partitions[start..end] {
                 work_unit().await;
-                if goal.index < targets.len() {
+                if index < targets.len() {
                     preferred_count += 1;
                 } else {
                     fallback_count += 1;
@@ -3988,14 +4014,13 @@ async fn first_cursor_search_with_output(
             fallbacks
                 .try_reserve_exact(fallback_count)
                 .map_err(|_| SearchCursorError::Allocation)?;
-            for goal in &partitions[start..end] {
+            for &index in &partitions[start..end] {
                 work_unit().await;
-                if goal.index < targets.len() {
-                    preferred.push(targets[goal.index]);
+                if index < targets.len() {
+                    preferred.push(targets[index]);
                 } else {
-                    fallbacks.push(fallback[goal.index - targets.len()]);
+                    fallbacks.push(fallback[index - targets.len()]);
                 }
-            }
             let endpoint = preferred
                 .first()
                 .or_else(|| fallbacks.first())
@@ -4577,6 +4602,46 @@ async fn goal_zone_key_cooperative(
     }
     sort_unstable_by_cooperative(&mut key, |left, right| left.cmp(right)).await;
     Ok(key)
+}
+
+async fn goal_zone_key_len_cooperative(
+    graph: &TransportGraph,
+    filter: &ZoneFilter<'_>,
+    goal: WorldTile,
+) -> Result<usize, SearchCursorError> {
+    let mut key_len = 0usize;
+    for index in filter.blocking_at(&graph.wilderness, goal) {
+        work_unit().await;
+        if !filter.origin_active(&graph.wilderness, index) {
+            key_len = key_len
+                .checked_add(1)
+                .ok_or(SearchCursorError::ResultNotRepresentable)?;
+        }
+    }
+    Ok(key_len)
+}
+
+async fn fill_goal_zone_key_cooperative(
+    graph: &TransportGraph,
+    filter: &ZoneFilter<'_>,
+    goal: WorldTile,
+    key: &mut [u16],
+) -> Result<(), SearchCursorError> {
+    let mut key_len = 0usize;
+    for index in filter.blocking_at(&graph.wilderness, goal) {
+        work_unit().await;
+        if !filter.origin_active(&graph.wilderness, index) {
+            *key
+                .get_mut(key_len)
+                .ok_or(SearchCursorError::ResultNotRepresentable)? = index;
+            key_len += 1;
+        }
+    }
+    if key_len != key.len() {
+        return Err(SearchCursorError::ResultNotRepresentable);
+    }
+    sort_unstable_by_cooperative(key, |left, right| left.cmp(right)).await;
+    Ok(())
 }
 
 /// Bound the goal-side proof, not the safe route. Deep zone goals usually

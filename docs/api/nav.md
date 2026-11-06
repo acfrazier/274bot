@@ -808,6 +808,13 @@ Its production continuation must pass fresh admission or the host refuses
 it. Captured bank rows remain a separate dimension. Search budgets,
 runtime cursor limits and result bounds do not change.
 
+First-goal zone completion retains the full preferred and fallback targets.
+It stores partition indices and key offsets separately, with sorted zone IDs
+in one shared arena. Both sorts operate in place, so no duplicate key/index
+scratch is needed. Admission still charges both per-target vectors, the full
+per-tile zone-membership bound and the complete grouped-goal tile-copy bound;
+target and settle limits do not change.
+
 Consumptive hops debit a path's running inventory and credit script-proven
 replacement items. Walking nodes share interned balance IDs, without a
 per-node inventory allocation. A search tracks at most 64 resource IDs and

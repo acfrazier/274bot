@@ -6791,6 +6791,60 @@ fn ordered_first_compares_destination_zones_with_safe_arrivals_and_keeps_ties() 
 }
 
 #[test]
+fn ordered_first_preserves_input_order_for_goals_in_a_shared_zone() {
+    let collision = bake(5, 5, &[]);
+    let mut graph = TransportGraph::default();
+    install_zones(&collision, &mut graph, vec![rect_zone(2, 2, 1, 3)]);
+    let from = tile(0, 2, 0);
+    let first = tile(2, 1, 0);
+    let second = tile(2, 3, 0);
+    let state = WorldState::empty();
+    let options = FindOptions {
+        prefer_target_order: true,
+        ..FindOptions::default()
+    };
+    let world = Arc::new(crate::world::NavWorld::from_parts(
+        collision,
+        graph,
+        Vec::new(),
+    ));
+    let lease = crate::producer::lease(&world).expect("shared-zone fixture lease");
+    for targets in [[first, second], [second, first]] {
+        let synchronous = find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &targets,
+            options,
+            &state,
+        )
+        .into_route()
+        .expect("the shared-zone goal set has a route");
+        assert_eq!((synchronous.dest, synchronous.ticks), (targets[0], 1.5));
+
+        let completion = advance_real_route_completion(
+            super::SearchRequest::First {
+                from,
+                targets: Box::new(targets),
+                fallback: Box::new([]),
+                options,
+                avoid: Box::new([]),
+                max_settles: super::NODE_BUDGET,
+            },
+            &lease,
+            &state,
+        );
+        let super::SearchOutcome::First { search } = completion.into_parts().0 else {
+            panic!("shared-zone cursor returned the wrong result shape");
+        };
+        let (route, fallback) = search.into_routes();
+        let route = route.expect("the cooperative shared-zone goal set has a route");
+        assert_eq!((route.destination(), route.ticks()), (targets[0], 1.5));
+        assert!(fallback.is_none());
+    }
+}
+
+#[test]
 fn ordered_first_keeps_unrelated_zone_transit_grants_as_fallback_permissions() {
     let collision = bake(5, 7, &[]);
     let mut graph = TransportGraph::default();
@@ -8232,6 +8286,26 @@ fn real_289_radius_goal_sets_fit_the_full_budget_reservation() {
             }
         }
     }
+}
+
+#[test]
+fn first_goal_request_with_over_limit_inputs_stays_over_the_route_cap() {
+    const ROUTE_LIMIT_BYTES: usize = 192 * 1024 * 1024;
+    let per_set = ROUTE_LIMIT_BYTES / (2 * std::mem::size_of::<WorldTile>());
+    let exact_limit = per_set * 2 * std::mem::size_of::<WorldTile>();
+    assert_eq!(exact_limit, ROUTE_LIMIT_BYTES);
+    let shape = crate::router::SearchRequestShape::First {
+        target_capacity: per_set + 1,
+        fallback_capacity: per_set + 1,
+        options: FindOptions::default(),
+        avoid_capacity: 0,
+        max_settles: super::NODE_BUDGET,
+    };
+    assert_eq!(
+        shape.retained_input_bytes(),
+        Some(ROUTE_LIMIT_BYTES + 2 * std::mem::size_of::<WorldTile>()),
+        "the target buffers alone exceed the unchanged route cap"
+    );
 }
 
 #[path = "router/consumption_tests.rs"]
