@@ -6,8 +6,8 @@ use api::snapshot::{GameSnapshot, ItemContainer, ItemView};
 use client::util::JString;
 use scenario::quester::{quester_role_stage, QuesterSeed, QuesterStage, TestProfile};
 use scenario::{Proof, Scenario, StepKind};
-use script::quester::pair::Gang;
 use script::native::NativePhase;
+use script::quester::pair::Gang;
 use script::{RunState, ScriptTerminalState, StartOutcome, StartPoll};
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -19,7 +19,8 @@ const KEY_ALIAS: &str = "phoenixkey2";
 const KEY_SOURCE: &str = "GameSnapshot.inventory and GameSnapshot.trade.confirm";
 const CONFIRM_SOURCE: &str = "GameSnapshot.trade.confirm.mine/theirs";
 const CLOCK_SOURCE: &str = "GameSnapshot.tick";
-const NATIVE_SOURCE: &str = "Play::script_start_typed/script_poll_start/script_native_status/script_lifecycle_receipt";
+const NATIVE_SOURCE: &str =
+    "Play::script_start_typed/script_poll_start/script_native_status/script_lifecycle_receipt";
 const CONTINUING_FRESHNESS: Duration = Duration::from_secs(60);
 
 /// The guide's rendezvous for `p-key` and `b-key` (`maps/m50_52.jm2:8228`).
@@ -130,7 +131,9 @@ fn validate_names(names: &[String]) -> Result<Vec<String>, String> {
     let mut screen_names = Vec::with_capacity(names.len());
     for (index, name) in names.iter().enumerate() {
         if name.trim().is_empty() {
-            return Err(format!("native_partner_trade account {index} has an empty name"));
+            return Err(format!(
+                "native_partner_trade account {index} has an empty name"
+            ));
         }
         let screen_name = JString::to_screen_name(name);
         if screen_name.trim().is_empty()
@@ -168,12 +171,7 @@ fn gang_name(gang: Gang) -> &'static str {
 
 fn stage_for(gang: Gang) -> (&'static str, i32, i32, &'static [(&'static str, i32)]) {
     match gang {
-        Gang::Phoenix => (
-            "p:9",
-            PHOENIX_STAGE_VARP,
-            PHOENIX_STAGE,
-            PHOENIX_ITEMS,
-        ),
+        Gang::Phoenix => ("p:9", PHOENIX_STAGE_VARP, PHOENIX_STAGE, PHOENIX_ITEMS),
         Gang::BlackArm => (
             "b:2",
             BLACK_ARM_STAGE_VARP,
@@ -259,19 +257,16 @@ fn capture_snapshot(
     let trade = snapshot.trade();
     let confirm = if trade.confirm_open {
         trade.confirm.as_deref().map(|confirm| {
-            let mine = key_count(
-                &confirm.mine,
-                key_id,
-                Some(ItemContainer::TradeMyOffer),
-            );
+            let mine = key_count(&confirm.mine, key_id, Some(ItemContainer::TradeMyOffer));
             let theirs = key_count(
                 &confirm.theirs,
                 key_id,
                 Some(ItemContainer::TradeTheirOffer),
             );
-            let partner_matches = trade.partner.as_deref().is_some_and(|partner| {
-                partner.eq_ignore_ascii_case(partner_screen_name)
-            });
+            let partner_matches = trade
+                .partner
+                .as_deref()
+                .is_some_and(|partner| partner.eq_ignore_ascii_case(partner_screen_name));
             (mine, theirs, partner_matches)
         })
     } else {
@@ -293,8 +288,9 @@ fn capture_snapshot(
         slot_state.last_tick = Some(tick);
         if activated {
             if let Some(anchor) = slot_state.active_tick_anchor {
-                slot_state.active_tick_advances =
-                    slot_state.active_tick_advances.max(u64::from(tick.saturating_sub(anchor)));
+                slot_state.active_tick_advances = slot_state
+                    .active_tick_advances
+                    .max(u64::from(tick.saturating_sub(anchor)));
             }
         }
         if inventory_key_count.is_some() {
@@ -330,8 +326,7 @@ fn capture_snapshot(
             && slot_state
                 .confirm_tick
                 .is_some_and(|confirmed_at| tick > confirmed_at)
-            && inventory_key_count
-                == Some(if slot % 2 == 0 { 0 } else { 1 })
+            && inventory_key_count == Some(if slot % 2 == 0 { 0 } else { 1 })
         {
             slot_state.handoff = true;
             slot_state.handoff_tick.get_or_insert(tick);
@@ -386,13 +381,13 @@ impl NativeTradeCase {
             StartOutcome::Ready => unreachable!("Ready is not an error"),
         }
     }
-
 }
 
 pub(super) fn build(names: &[String]) -> Result<Box<dyn FeatureCase>, String> {
     let screen_names = validate_names(names)?;
-    let selected = api::game_data::for_revision(ClientRevision::R289)
-        .map_err(|error| format!("native_partner_trade selected R289 content unavailable: {error}"))?;
+    let selected = api::game_data::for_revision(ClientRevision::R289).map_err(|error| {
+        format!("native_partner_trade selected R289 content unavailable: {error}")
+    })?;
     let (path, path_source) = scenario::quester::load_quester_path_document(QUEST)?;
     if path.id.0.as_ref() != QUEST {
         return Err(format!(
@@ -481,7 +476,9 @@ impl FeatureCase for NativeTradeCase {
             .position(|step| matches!(&step.kind, StepKind::StartScript))
             .ok_or("native_partner_trade fixture has no typed-Start boundary")?;
         if start_index + 2 != scenario.steps.len() {
-            return Err("native_partner_trade fixture Start boundary moved from its final watch".into());
+            return Err(
+                "native_partner_trade fixture Start boundary moved from its final watch".into(),
+            );
         }
         scenario.steps.remove(start_index);
         let final_step = scenario
@@ -538,13 +535,18 @@ impl FeatureCase for NativeTradeCase {
                 return Err("native_partner_trade cannot prepare control after Stop".into());
             }
             if state.activation_attempted {
-                return Err("native_partner_trade control was requested after feature activation".into());
+                return Err(
+                    "native_partner_trade control was requested after feature activation".into(),
+                );
             }
             if state.control_prepared {
                 return Ok(true);
             }
             if state.slots.iter().any(|slot| !slot.seed_ready) {
-                return Err("native_partner_trade control requires every real role seed to be observed".into());
+                return Err(
+                    "native_partner_trade control requires every real role seed to be observed"
+                        .into(),
+                );
             }
         }
         for (slot, name) in names.iter().enumerate() {
@@ -592,7 +594,9 @@ impl FeatureCase for NativeTradeCase {
         {
             let mut state = lock_capture(&self.capture);
             if !state.control_prepared {
-                return Err("native_partner_trade cannot activate before its unused control setup".into());
+                return Err(
+                    "native_partner_trade cannot activate before its unused control setup".into(),
+                );
             }
             if state.stopped {
                 return Err("native_partner_trade cannot activate after Stop".into());
@@ -615,7 +619,9 @@ impl FeatureCase for NativeTradeCase {
                     script::quester::CARD.id,
                     self.start_settings(slot),
                 ) {
-                    Ok(()) => lock_capture(&self.capture).slots[slot].start = StartProgress::Submitted,
+                    Ok(()) => {
+                        lock_capture(&self.capture).slots[slot].start = StartProgress::Submitted
+                    }
                     Err(script::StartLoadError::Waiting(reason)) => {
                         let _ = reason;
                         lock_capture(&self.capture).slots[slot].start = StartProgress::Waiting;
@@ -752,6 +758,7 @@ impl FeatureCase for NativeTradeCase {
             active_count += usize::from(active);
             continuing_count += usize::from(continuing);
             let mut state = lock_capture(&self.capture);
+            let stop_requested = state.stop_requested;
             let captured = &mut state.slots[slot];
             captured.last_run_state = Some(run_state);
             if current_card {
@@ -768,7 +775,7 @@ impl FeatureCase for NativeTradeCase {
                 captured.lifecycle_reason = Some(receipt.reason);
             }
             captured.stop_confirmed = captured.stop_sent
-                && state.stop_requested
+                && stop_requested
                 && run_state == RunState::Idle
                 && matches!(
                     captured.lifecycle_state,
@@ -865,13 +872,14 @@ impl FeatureCase for NativeTradeCase {
                     ) =>
                 {
                     let mut state = lock_capture(&self.capture);
+                    let stop_requested = state.stop_requested;
                     let captured = &mut state.slots[slot];
                     captured.lifecycle_seen = true;
                     captured.lifecycle_state = Some(receipt.state);
                     captured.lifecycle_generation = Some(receipt.runtime_generation);
                     captured.lifecycle_tick = Some(receipt.tick);
                     captured.lifecycle_reason = Some(receipt.reason);
-                    captured.stop_confirmed = captured.stop_sent && state.stop_requested;
+                    captured.stop_confirmed = captured.stop_sent && stop_requested;
                 }
                 Some(receipt) => failures.push(format!(
                     "slot {slot} ({name}) ended with {:?}, not normal Stop/Cancelled",
@@ -893,11 +901,13 @@ impl FeatureCase for NativeTradeCase {
                 play.set_quest_accounts(previous.iter().map(String::as_str));
                 let roster = play.quest_accounts();
                 if roster.len() != previous.len()
-                    || previous.iter().any(|name| {
-                        !roster.iter().any(|account| account.0.as_ref() == name)
-                    })
+                    || previous
+                        .iter()
+                        .any(|name| !roster.iter().any(|account| account.0.as_ref() == name))
                 {
-                    failures.push("native_partner_trade could not restore the prior partner roster".into());
+                    failures.push(
+                        "native_partner_trade could not restore the prior partner roster".into(),
+                    );
                 } else {
                     lock_capture(&self.capture).roster_restored = true;
                 }
@@ -907,7 +917,10 @@ impl FeatureCase for NativeTradeCase {
             lock_capture(&self.capture).stopped = true;
             Ok(())
         } else {
-            Err(format!("native_partner_trade Stop incomplete: {}", failures.join("; ")))
+            Err(format!(
+                "native_partner_trade Stop incomplete: {}",
+                failures.join("; ")
+            ))
         }
     }
 

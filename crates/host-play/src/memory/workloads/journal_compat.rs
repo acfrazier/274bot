@@ -61,10 +61,14 @@ fn validate_names(names: &[String]) -> Result<(), String> {
     }
     for (index, name) in names.iter().enumerate() {
         if name.trim().is_empty() {
-            return Err(format!("memory feature case has an empty slot name at index {index}"));
+            return Err(format!(
+                "memory feature case has an empty slot name at index {index}"
+            ));
         }
         if names[..index].iter().any(|earlier| earlier == name) {
-            return Err(format!("memory feature case has duplicate slot name {name:?}"));
+            return Err(format!(
+                "memory feature case has duplicate slot name {name:?}"
+            ));
         }
     }
     Ok(())
@@ -77,7 +81,11 @@ fn validate_names_match(expected: &[String], actual: &[String]) -> Result<(), St
     Ok(())
 }
 
-fn truncate_before_start(mut scenario: Scenario, name: &'static str, proof: Proof) -> Result<Scenario, String> {
+fn truncate_before_start(
+    mut scenario: Scenario,
+    name: &'static str,
+    proof: Proof,
+) -> Result<Scenario, String> {
     let Some(start) = scenario
         .steps
         .iter()
@@ -103,7 +111,9 @@ fn object_seed() -> Result<Scenario, String> {
         .iter()
         .find(|step| step.name == "seed stats, food, and tele to the guard stand")
         .map(|step| step.wait.arm)
-        .ok_or_else(|| "existing sustained Thiever seed lost its guard-arrival proof".to_string())?;
+        .ok_or_else(|| {
+            "existing sustained Thiever seed lost its guard-arrival proof".to_string()
+        })?;
     truncate_before_start(scenario, OBJECT_SCENARIO, proof)
 }
 
@@ -179,11 +189,7 @@ fn advance_compiled_start(
         return Ok(true);
     }
     if *progress == StartProgress::NotStarted {
-        match play.script_start_typed(
-            name,
-            script::CompiledId("Quester"),
-            Map::new(),
-        ) {
+        match play.script_start_typed(name, script::CompiledId("Quester"), Map::new()) {
             Ok(()) => *progress = StartProgress::Pending,
             Err(script::StartLoadError::Waiting(_)) => return Ok(false),
             Err(error) => return Err(format!("{name}: Quester Start: {error}")),
@@ -198,9 +204,7 @@ fn advance_compiled_start(
         script::StartPoll::Settled(outcome) => {
             Err(format!("{name}: Quester Start settled as {outcome:?}"))
         }
-        script::StartPoll::NotOwed => Err(format!(
-            "{name}: Quester Start lost its typed poll"
-        )),
+        script::StartPoll::NotOwed => Err(format!("{name}: Quester Start lost its typed poll")),
     }
 }
 
@@ -212,7 +216,9 @@ fn active_script(play: &Play, name: &str) -> Result<bool, String> {
         }
         script::RunState::Idle => {
             if let Some(error) = play.script_last_error(name) {
-                Err(format!("{name}: script ended before workload evidence: {error}"))
+                Err(format!(
+                    "{name}: script ended before workload evidence: {error}"
+                ))
             } else {
                 Ok(false)
             }
@@ -264,7 +270,9 @@ fn receipt_flag(fields: &mut std::str::Split<'_, char>, field: &str) -> Result<b
     match receipt_number::<u8>(fields, field)? {
         0 => Ok(false),
         1 => Ok(true),
-        value => Err(format!("compatibility object receipt has non-boolean {field}={value}")),
+        value => Err(format!(
+            "compatibility object receipt has non-boolean {field}={value}"
+        )),
     }
 }
 
@@ -338,9 +346,11 @@ fn object_receipt(play: &Play, name: &str) -> Result<Option<ObjectReceipt>, Stri
     parse_object_receipt(line).map(Some)
 }
 
-fn validate_off_receipt(receipt: ObjectReceipt, name: &str) -> Result<(), String> {
+fn validate_off_receipt(receipt: ObjectReceipt, name: &str) -> Result<bool, String> {
     if receipt.failed {
-        return Err(format!("{name}: compatibility object control workload failed"));
+        return Err(format!(
+            "{name}: compatibility object control workload failed"
+        ));
     }
     if receipt.mode != Mode::Off
         || receipt.cache_reads != 0
@@ -350,19 +360,19 @@ fn validate_off_receipt(receipt: ObjectReceipt, name: &str) -> Result<(), String
         || receipt.by_id != 0
         || receipt.aliases != 0
         || receipt.retained_rows != 0
-        || receipt.walks == 0
-        || receipt.tick == 0
     {
         return Err(format!(
             "{name}: feature-off workload did not retain a live isolate without using the object caches"
         ));
     }
-    Ok(())
+    Ok(receipt.walks > 0 && receipt.tick > 0)
 }
 
 fn validate_active_receipt(receipt: ObjectReceipt, name: &str) -> Result<bool, String> {
     if receipt.failed {
-        return Err(format!("{name}: compatibility object-cache workload failed"));
+        return Err(format!(
+            "{name}: compatibility object-cache workload failed"
+        ));
     }
     if receipt.mode != Mode::Active {
         return Ok(false);
@@ -433,7 +443,10 @@ impl Objects {
     fn object_seed(&self, slot: usize, names: &[String]) -> Result<Scenario, String> {
         validate_names_match(&self.names, names)?;
         if slot >= names.len() {
-            return Err(format!("object-cache seed slot {slot} is outside {} names", names.len()));
+            return Err(format!(
+                "object-cache seed slot {slot} is outside {} names",
+                names.len()
+            ));
         }
         object_seed()
     }
@@ -462,7 +475,7 @@ impl FeatureCase for Objects {
                 all_ready = false;
                 continue;
             };
-            validate_off_receipt(receipt, name)?;
+            all_ready &= validate_off_receipt(receipt, name)?;
             slot.receipt = Some(receipt);
         }
         Ok(all_ready)
@@ -506,7 +519,9 @@ impl FeatureCase for Objects {
                 continue;
             }
             if receipt.failed {
-                return Err(format!("{name}: compatibility object-cache workload failed"));
+                return Err(format!(
+                    "{name}: compatibility object-cache workload failed"
+                ));
             }
             slot.proved = validate_active_receipt(receipt, name)?;
             slot.receipt = Some(receipt);
@@ -531,9 +546,6 @@ impl FeatureCase for Objects {
                 .get_mut(name)
                 .ok_or_else(|| format!("object-cache case lost slot {name:?}"))?;
             let running = active_script(play, name)?;
-            if running {
-                observation.active += 1;
-            }
             let expected_mode = if slot.active_start == StartProgress::Ready {
                 Mode::Active
             } else {
@@ -541,7 +553,9 @@ impl FeatureCase for Objects {
             };
             if let Some(receipt) = object_receipt(play, name)? {
                 if receipt.failed {
-                    return Err(format!("{name}: compatibility object workload reported failure"));
+                    return Err(format!(
+                        "{name}: compatibility object workload reported failure"
+                    ));
                 }
                 if receipt.mode == expected_mode && receipt.tick > 0 {
                     if expected_mode == Mode::Off {
@@ -556,18 +570,20 @@ impl FeatureCase for Objects {
                 && slot.receipt.is_some_and(|receipt| {
                     receipt.mode == expected_mode
                         && receipt.tick > 0
+                        && receipt.walks > 0
                         && (expected_mode == Mode::Off || receipt.cache_reads > 0)
                 });
             if ready {
                 observation.ready += 1;
+                if expected_mode == Mode::Active {
+                    observation.active += 1;
+                }
             }
             if slot.proved {
                 observation.proved += 1;
             }
             if ready
-                && slot
-                    .receipt
-                    .is_some_and(|receipt| receipt.walks > 0)
+                && slot.receipt.is_some_and(|receipt| receipt.walks > 0)
                 && recent_gameplay(play, name)
             {
                 observation.continuing += 1;
@@ -699,6 +715,7 @@ struct PriestSlot {
     baseline_checked: bool,
     fact: Option<PriestFact>,
     retained_after_switch: bool,
+    retained_after_stop: bool,
     receipt: Option<ObjectReceipt>,
 }
 
@@ -714,6 +731,7 @@ impl Default for PriestSlot {
             baseline_checked: false,
             fact: None,
             retained_after_switch: false,
+            retained_after_stop: false,
             receipt: None,
         }
     }
@@ -722,6 +740,7 @@ impl Default for PriestSlot {
 struct Priest {
     names: Vec<String>,
     slots: HashMap<String, PriestSlot>,
+    stopped: bool,
 }
 
 impl Priest {
@@ -733,6 +752,7 @@ impl Priest {
                 .cloned()
                 .map(|name| (name, PriestSlot::default()))
                 .collect(),
+            stopped: false,
         }
     }
 
@@ -749,16 +769,13 @@ impl Priest {
 }
 
 fn slot_prereq_snapshot(play: &Play, name: &str) -> Result<SessionMemory, String> {
-    let slot = crate::script_runtime::script_slot(&play.scripts, name)
-        .ok_or_else(|| {
-            format!("{name}: no accepted script slot for session prerequisite memory")
-        })?;
+    let slot = crate::script_runtime::script_slot(&play.scripts, name).ok_or_else(|| {
+        format!("{name}: no accepted script slot for session prerequisite memory")
+    })?;
     let state = {
-        let guard = slot
-            .lock()
-            .map_err(|_| {
-                format!("{name}: script slot lock poisoned while reading prerequisite state")
-            })?;
+        let guard = slot.lock().map_err(|_| {
+            format!("{name}: script slot lock poisoned while reading prerequisite state")
+        })?;
         guard
             .local_state()
             .cloned()
@@ -809,11 +826,9 @@ fn journal_page_fact(
     let gate_five = gate_window(&fact.quest, &fact.signal, 5, 61);
     let gate_eight = gate_window(&fact.quest, &fact.signal, 8, 61);
     let gate_exact = gate_window(&fact.quest, &fact.signal, 61, 61);
-    let (catalog_row, journal) = catalog
-        .for_journal(&gate_five)
-        .ok_or_else(|| {
-            "selected prerequisite catalog has no Priest journal for the ladder window".to_string()
-        })?;
+    let (catalog_row, journal) = catalog.for_journal(&gate_five).ok_or_else(|| {
+        "selected prerequisite catalog has no Priest journal for the ladder window".to_string()
+    })?;
     let established = StageWindow {
         quest: fact.quest.clone(),
         signal: fact.signal.clone(),
@@ -863,11 +878,7 @@ fn journal_page_fact(
     })
 }
 
-fn session_priest_fact(
-    play: &Play,
-    name: &str,
-    run: RunKey,
-) -> Result<Option<PriestFact>, String> {
+fn session_priest_fact(play: &Play, name: &str, run: RunKey) -> Result<Option<PriestFact>, String> {
     let data = play
         .game_data()
         .ok_or_else(|| "selected game data unavailable for Priest journal proof".to_string())?;
@@ -883,10 +894,12 @@ fn session_priest_fact(
 
 fn status_text<'a>(status: &'a script::native::ScriptStatus, key: &str) -> Option<&'a str> {
     status.fields.iter().find_map(|field| {
-        (field.key == key).then_some(&field.value).and_then(|value| match value {
-            script::native::StatusValue::Text(value) => Some(value.as_ref()),
-            _ => None,
-        })
+        (field.key == key)
+            .then_some(&field.value)
+            .and_then(|value| match value {
+                script::native::StatusValue::Text(value) => Some(value.as_ref()),
+                _ => None,
+            })
     })
 }
 
@@ -932,7 +945,10 @@ impl FeatureCase for Priest {
                 all_ready = false;
                 continue;
             };
-            validate_off_receipt(receipt, name)?;
+            if !validate_off_receipt(receipt, name)? {
+                all_ready = false;
+                continue;
+            }
             if !slot.baseline_checked {
                 let memory = slot_prereq_snapshot(play, name)?;
                 if priest_fact_in(&memory).is_some() {
@@ -1046,7 +1062,7 @@ impl FeatureCase for Priest {
             }
 
             let running = active_script(play, name)?;
-            if running {
+            if running && matches!(slot.phase, PriestPhase::Quester | PriestPhase::Walker) {
                 observation.active += 1;
             }
             if slot.phase == PriestPhase::Quester && running {
@@ -1069,7 +1085,9 @@ impl FeatureCase for Priest {
                     }
                 }
                 if running
-                    && slot.receipt.is_some_and(|receipt| receipt.mode == Mode::Off)
+                    && slot
+                        .receipt
+                        .is_some_and(|receipt| receipt.mode == Mode::Off)
                 {
                     observation.ready += 1;
                     if slot.receipt.is_some_and(|receipt| receipt.walks > 0)
@@ -1083,11 +1101,9 @@ impl FeatureCase for Priest {
                 && slot.fact.is_some()
                 && !slot.retained_after_switch
             {
-                let run = slot
-                    .quester_run
-                    .ok_or_else(|| {
-                        format!("{name}: retained Priest fact has no captured run key")
-                    })?;
+                let run = slot.quester_run.ok_or_else(|| {
+                    format!("{name}: retained Priest fact has no captured run key")
+                })?;
                 let current = session_priest_fact(play, name, run)?.ok_or_else(|| {
                     format!("{name}: Priest session Page fact was not retained after Quester Stop")
                 })?;
@@ -1098,7 +1114,28 @@ impl FeatureCase for Priest {
                 }
                 slot.retained_after_switch = true;
             }
-            if slot.fact.is_some() && slot.retained_after_switch {
+            if self.stopped
+                && slot.fact.is_some()
+                && !slot.retained_after_stop
+                && play.script_state(name) == script::RunState::Idle
+            {
+                let run = slot
+                    .quester_run
+                    .ok_or_else(|| format!("{name}: stopped Priest fact has no run key"))?;
+                let current = session_priest_fact(play, name, run)?.ok_or_else(|| {
+                    format!("{name}: Priest session Page fact was lost after final Stop")
+                })?;
+                if slot.fact.as_ref() != Some(&current) {
+                    return Err(format!("{name}: Priest Page fact changed after final Stop"));
+                }
+                slot.retained_after_stop = true;
+            }
+            let retained = if self.stopped {
+                slot.retained_after_stop
+            } else {
+                slot.retained_after_switch
+            };
+            if slot.fact.is_some() && retained {
                 observation.proved += 1;
             }
         }
@@ -1112,6 +1149,7 @@ impl FeatureCase for Priest {
                 play.script_stop(name);
             }
         }
+        self.stopped = true;
         Ok(())
     }
 
@@ -1130,6 +1168,8 @@ impl FeatureCase for Priest {
                     "walker_start": state.map(|state| start_progress_name(state.walker_start)),
                     "feature_fact_retained_after_script_switch": state
                         .is_some_and(|state| state.retained_after_switch),
+                    "feature_fact_retained_after_final_stop": state
+                        .is_some_and(|state| state.retained_after_stop),
                     "page_fact": fact.map(priest_fact_json),
                     "gameplay_receipt": receipt.map(object_receipt_json),
                 })
@@ -1137,6 +1177,7 @@ impl FeatureCase for Priest {
             .collect::<Vec<_>>();
         json!({
             "scenario": PRIEST_SCENARIO,
+            "post_stop": self.stopped,
             "page_fact_owner": "script::local_state::SlotState::prereq_snapshot",
             "page_source": "api::prereq_knowledge::FactSource::Page from the ordinary Quester journal reader",
             "required_interval": {"min": 9, "max": 61},

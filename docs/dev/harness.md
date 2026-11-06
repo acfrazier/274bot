@@ -1210,7 +1210,7 @@ load another copy.
 
 | Setting | Meaning |
 |---|---|
-| `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128; accepting a count is not a capacity guarantee. |
+| `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128. The two native-trade scenarios also accept the paired pilot N=2. Accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
 | `BOT_MEMORY_SCENARIO` | Scenario for `active`/`lifecycle`; default `thiever`. `gatherer` uses the Draynor tree fixture; its multi-slot cells start the native Gatherer. Catalog cells include `moss_giant_bank_start` and `duel_arena`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
@@ -1226,6 +1226,47 @@ without starting the catalog script. `active` starts the scenario's native or
 catalog script. `lifecycle` additionally alternates Stop and restart every 60
 observation seconds. After observation, scripts Stop and the harness remains
 open for `BOT_MEMORY_TEARDOWN_S`.
+
+### Candidate-only feature workloads
+
+The following `BOT_MEMORY_SCENARIO` values require
+`BOT_MEMORY_WORKLOAD=active`. Do not set `BOT_MEMORY_SUSTAIN` for them.
+Each name has a separate `_feature_off` value. Unknown names fail startup.
+
+| Active scenario | Feature-not-used control |
+|---|---|
+| `priest_journal` | `priest_journal_feature_off` |
+| `compatibility_object_cache` | `compatibility_object_cache_feature_off` |
+| `native_partner_trade` | `native_partner_trade_feature_off` |
+| `merged_native_api` | `merged_native_api_feature_off` |
+| `active_route_navigation` | `active_route_navigation_feature_off` |
+
+These lanes compare the same candidate binary on the same guest. They are not
+verdicts against a comparator that lacks the feature. Common sustained Thiever
+remains the A/B workload for the WorldState cache during continued gameplay.
+The existing cache tests separately check Arc reuse and unchanged-poll allocation.
+
+Only the benchmark accounts' state is seeded. Feature proof comes from ordinary
+content and production owners after setup. Priest proof uses the actual emitted
+journal Page interval. Object-cache proof retains real rows and shared identities.
+Trade proof uses paired native actors, decoded confirm lists and actual handoff.
+The native API case requires an accepted native owner and fresh resource yield.
+The route case requires repeated host routing and ordinary arrivals.
+
+The measured V8 runtime uses the shipped settings. The object-cache lane reports
+actual V8 heaps, cache reuse and shared identities. The existing internal V8 test
+separately checks fast properties and its used-heap bound. The measured binary
+does not enable native syntax or query intrinsics.
+
+Samples and boundary rows contain `feature_workload`, the exact scenario string,
+and `feature_not_used`, a boolean. `feature_ready`, `feature_active`,
+`feature_proved` and `feature_continuing` are integer bot counts. Unused features
+do not report active proof. Native-only cases do not invent V8 isolates.
+Boundary rows add the case's `feature_evidence`. A `post-stop` row records retained
+observations after the normal teardown window. Persistent observation steps are
+not relabelled as passed seeds.
+
+### Common workload phase gates
 
 Ingame readiness requires every slot to remain `ingame && scene_state == 2`
 for two seconds. A ready pulse before the mainland-hop reload does not latch.

@@ -2010,10 +2010,9 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v19_world() {
         },
     )
     .unwrap();
-    let error = overridden
-        .bind()
-        .err()
-        .expect("v10 is not a supported pack");
+    let Err(error) = overridden.bind() else {
+        panic!("v10 is not a supported pack");
+    };
     assert!(error.contains("unsupported pack version 10"), "{error}");
     assert!(home.old_pack_untouched());
 }

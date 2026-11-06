@@ -50,6 +50,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   not a ground-walk `MOVE_GAMECLICK`. Its packet count and owner checks stay
   unchanged.
 
+### Memory diagnostics
+
+- Opt-in memory scenarios now exercise the Priest journal, compatibility object
+  caches, native partner trade, the native API owner and repeated host routing.
+  Each has an explicit feature-not-used control. Counts and retained-state
+  evidence remain separate from the common Thiever A/B lane.
+
 ### Fixed during development
 
 - Gatherer Knife requests now refuse NPC references captured before a later
