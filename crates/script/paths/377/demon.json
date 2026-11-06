@@ -39,7 +39,13 @@
       "progress_binding": "journal:demon",
       "progress": {
         "colour": { "not_started": "demon:0", "in_progress": "demon:1", "complete": "demon:30" },
-        "rules": [],
+        "rules": [
+          { "stage": "demon:30", "all": ["quest complete!"], "varp": 30 },
+          { "stage": "demon:29", "all": ["now i should go to the stone circle"], "varp": 29 },
+          { "stage": "demon:2", "all": ["3 keys"], "varp": 2 },
+          { "stage": "demon:1", "all": ["i should ask sir prysin"], "varp": 1 },
+          { "stage": "demon:0", "all": ["i can start this quest"], "varp": 0 }
+        ],
         "flags": [],
         "monotonic": false
       },
@@ -53,23 +59,17 @@
           "steps": [
             {
               "id": "take-gypsy-coin",
-              "kind": "combat",
+              "kind": "interact",
               "version": 1,
               "advances": false,
               "args": {
-                "target": {
-                  "npc": ["goblin_unarmed_melee_1", "goblin_unarmed_melee_2", "goblin_unarmed_melee_3", "goblin_unarmed_melee_4", "goblin_unarmed_melee_5", "goblin_unarmed_melee_6", "goblin_unarmed_melee_7"],
-                  "not_targeting_others": true,
-                  "pick": "nearest"
-                },
-                "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true },
-                "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713; drop_tables/scripts/goblin.rs2. Palace coins m50_54.jm2:12022-12023 have no route from Lumbridge on 274bot-377-v17. gypsy.rs2:151-154 deletes 1 coin." },
-                "area": { "box": [3138, 3224, 3152, 3264, 0], "source": "maps/m49_50.jm2:6702-6713" },
-                "lost_radius": 16,
-                "kill_budget_ticks": 120,
-                "loadout": null,
-                "loot": [{ "obj": "coins", "qty": 1 }],
-                "until": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 1 } } }
+                "target": { "ground": "coins" },
+                "op": "Take",
+                "anchor": { "tile": [3232, 3500, 0], "source": "maps/m50_54.jm2:12022-12023 (OBJ 995 qty 3/4); maps/m50_154.jm2:7787 ladder_1755 and ladders.rs2:90-97 provide the alcove route; gypsy.rs2:151-154 deletes 1 coin" },
+                "radius": 6,
+                "wait_if_missing": true,
+                "until": { "obj": "coins", "qty": 1 },
+                "settle_ms": 300000
               },
               "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 1 } } },
               "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 1 } } }
@@ -104,10 +104,10 @@
               "id": "ask-prysin",
               "kind": "talk",
               "version": 1,
-              "advances": false,
+              "advances": true,
               "args": {
                 "npc": "sir_prysin",
-                "anchor": { "tile": [3204, 3473, 0], "source": "maps/m50_54.jm2:11979 (NPC 883); sir_prysin.rs2:111-121,248-250" },
+                "anchor": { "tile": [3204, 3473, 0], "source": "maps/m50_54.jm2:11979 (NPC 883); sir_prysin.rs2:119-124,248-250" },
                 "leash": 6,
                 "prefer": [
                   "Gypsy Aris said I should come and talk to you.",
@@ -120,28 +120,28 @@
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_2" } } },
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } }
               ] },
-              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["ok, goodbye.", "i managed to drop the key in the drain", "prysin hands you an impressive looking sword"] } } }
-            },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "demon", "any": ["demon:2"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "demon:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
             {
-              "id": "ask-traiborn",
-              "kind": "talk",
+              "id": "bank-for-bones",
+              "kind": "bank",
               "version": 1,
-              "advances": false,
-              "args": {
-                "npc": "traiborn",
-                "anchor": { "tile": [3112, 3162, 1], "source": "maps/m48_49.jm2:7001 (NPC 881); stairs.rs2:1175-1201 fai_wiztower_spiralstairs priced; traiborn.rs2:34-38,51-52,122-136" },
-                "leash": 8,
-                "prefer": [
-                  "I need to get a key given to you by Sir Prysin.",
-                  "Well, have you got any keys knocking around?",
-                  "I'll get the bones for you."
-                ]
-              },
+              "args": { "op": "deposit_all", "at": "nearest", "keep": ["coins", "bones", "silverlight_key_1", "silverlight_key_2", "silverlight_key_3", "silverlight"] },
+              "comment": "Traiborn requires 25 inventory slots for natural bones (traiborn.rs2:22-29,130-147); the established 289 recipe banks unrelated fixture supplies before the grind.",
               "skip_if": { "Any": [
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_1" } } },
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } }
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bones" } } }
               ] },
-              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["i'll speak to you when i've got some bones", "never mind. keep working on it", "you give traiborn a set of bones", "traiborn hands you a key"] } } }
+              "settle": { "All": [] }
             },
             {
               "id": "collect-25-bones",
@@ -182,6 +182,29 @@
               ] }
             },
             {
+              "id": "ask-traiborn",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "traiborn",
+                "anchor": { "tile": [3112, 3162, 1], "source": "maps/m48_49.jm2:7001 (NPC 881); stairs.rs2:1175-1201 fai_wiztower_spiralstairs priced; traiborn.rs2:34-38,51-52,130-147" },
+                "leash": 8,
+                "prefer": [
+                  "I need to get a key given to you by Sir Prysin.",
+                  "Well, have you got any keys knocking around?",
+                  "I'll get the bones for you."
+                ],
+                "gap_ticks": 3
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_1" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } }
+              ] },
+              "comment": "traiborn.rs2:130-147 starts the ritual; the native journal deliberately omits its bone counter (demon_journal.rs2:36-45). Claim only the completed conversation. A resumed hand-in may already give the key; :206-211 requires a three-tick closed-chat gap.",
+              "settle": { "All": [] }
+            },
+            {
               "id": "give-traiborn-bones",
               "kind": "talk",
               "version": 1,
@@ -190,7 +213,12 @@
                 "npc": "traiborn",
                 "anchor": { "tile": [3112, 3162, 1], "source": "traiborn.rs2:10-32,191-209" },
                 "leash": 8,
-                "prefer": ["I'll get the bones for you."]
+                "prefer": [
+                  "I need to get a key given to you by Sir Prysin.",
+                  "Well, have you got any keys knocking around?",
+                  "I'll get the bones for you."
+                ],
+                "gap_ticks": 3
               },
               "skip_if": { "Any": [
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_1" } } },
@@ -383,7 +411,7 @@
               "id": "receive-silverlight",
               "kind": "talk",
               "version": 1,
-              "advances": false,
+              "advances": true,
               "args": {
                 "npc": "sir_prysin",
                 "anchor": { "tile": [3204, 3473, 0], "source": "sir_prysin.rs2:35-36,64-76" },
@@ -391,8 +419,16 @@
                 "prefer": ["I'm still looking."]
               },
               "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
-              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } }
-            },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "demon", "any": ["demon:29"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "demon:29",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
             {
               "id": "wield-silverlight",
               "kind": "equip",
