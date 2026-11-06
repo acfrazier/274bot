@@ -48,8 +48,8 @@ use crate::script_runtime::{
 use crate::script_runtime::{
     hold_script_nav, nav_world_state_for_observe, observe_script_inv, publish_script_paint,
     reset_script_nav, script_active, script_frame, script_observe_cached_with_channels,
-    script_paint_of, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
-    take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
+    script_paint_of, script_slot, script_slot_or_insert, script_state_is_active,
+    slot_arrival_reach, step_nav_bot, take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
 };
 use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
@@ -1782,6 +1782,11 @@ fn spawn_slot_thread(
                             );
                             let frame = script_frame(&slot_scripts, name);
                             let script_state = frame.state;
+                            // A bot with no script behaves like the Java
+                            // client: its idle timer runs, and the server's
+                            // idle logout parks it. A running or paused
+                            // script keeps the host's suppression.
+                            c.set_host_idle_timer(!script_state_is_active(script_state));
                             let running = script_state == Some(script::RunState::Running);
                             host::set_service_class(capacity_service_class(
                                 c.ingame,
