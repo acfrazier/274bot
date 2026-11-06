@@ -385,6 +385,7 @@ fn intent_precedence_survives_an_outage_and_the_retry_is_refused_not_scheduled()
     let login = wanted.login_command(false).unwrap();
     wanted.observe(LifecycleFact::LoginSucceeded).unwrap();
     wanted.acknowledge_login(login);
+    wanted.post(Intent::ScriptNeedsSession(true)).unwrap();
     wanted
         .observe(LifecycleFact::SessionExited {
             clean: false,
@@ -494,6 +495,7 @@ fn a_live_session_losing_its_reactor_projects_the_condition_not_readiness() {
     let login = mailbox.login_command(false).unwrap();
     mailbox.observe(LifecycleFact::LoginSucceeded).unwrap();
     mailbox.acknowledge_login(login);
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
     mailbox
         .observe(LifecycleFact::SessionExited {
             clean: false,
@@ -558,12 +560,15 @@ fn diagnostics_are_bounded_on_char_boundaries_and_do_not_drive_behaviour() {
     assert!(!without.to_string().contains("diagnostic="));
 }
 
-/// A slot with a live session and auto-login on.
+/// A slot with a live session, auto-login on and a running script: the
+/// session need whose reconnect an outage refuses is the script's (a bot
+/// without a script parks after any unexpected exit).
 fn live_mailbox() -> IntentMailbox {
     let mut mailbox = IntentMailbox::new(true, WorldChoice::Automatic);
     let login = mailbox.login_command(false).unwrap();
     mailbox.observe(LifecycleFact::LoginSucceeded).unwrap();
     assert_eq!(mailbox.acknowledge_login(login), Acknowledgement::Applied);
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
     mailbox
 }
 
