@@ -42,7 +42,7 @@ fn local_data_unavailable() -> FactError {
 pub fn bank_catalog() -> Result<&'static [BankDefinition], FactError> {
     #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
     {
-        return Ok(generated::BANK_CATALOG);
+        Ok(generated::BANK_CATALOG)
     }
     #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
     {

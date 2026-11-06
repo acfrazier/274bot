@@ -77,7 +77,7 @@ fn unavailable() -> FactError {
 pub fn cook_camps() -> Result<&'static [CookCamp], FactError> {
     #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
     {
-        return Ok(generated::COOK_CAMPS);
+        Ok(generated::COOK_CAMPS)
     }
     #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
     {
@@ -88,7 +88,7 @@ pub fn cook_camps() -> Result<&'static [CookCamp], FactError> {
 pub fn default_obstacles() -> Result<&'static [&'static str], FactError> {
     #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
     {
-        return Ok(generated::DEFAULT_OBSTACLES);
+        Ok(generated::DEFAULT_OBSTACLES)
     }
     #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
     {
@@ -99,7 +99,7 @@ pub fn default_obstacles() -> Result<&'static [&'static str], FactError> {
 pub fn max_surface_cheb() -> Result<i32, FactError> {
     #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
     {
-        return Ok(generated::MAX_SURFACE_CHEB);
+        Ok(generated::MAX_SURFACE_CHEB)
     }
     #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
     {
@@ -110,7 +110,7 @@ pub fn max_surface_cheb() -> Result<i32, FactError> {
 pub fn derived_arrive_radius() -> Result<i32, FactError> {
     #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
     {
-        return Ok(generated::DERIVED_ARRIVE_RADIUS);
+        Ok(generated::DERIVED_ARRIVE_RADIUS)
     }
     #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
     {
