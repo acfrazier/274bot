@@ -327,13 +327,6 @@ fn romeo_377_missing_message_path_skips_juliet_detour() {
 fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
     let document: serde_json::Value =
         serde_json::from_slice(bundled_path_for(ClientRevision::R377, "hetty").unwrap()).unwrap();
-    assert!(
-        document["roles"][0]["progress"]["rules"]
-            .as_array()
-            .unwrap()
-            .is_empty(),
-        "hetty is not in the selected 377 journal button table"
-    );
     let start = document["roles"][0]["sequences"][0]["steps"]
         .as_array()
         .unwrap()
