@@ -55,6 +55,11 @@ Other quests need their own 377 Paths and a check of their selected family,
 progress and transport requirements. A 377 content script alone is not proof
 that its Path or every required host capability works.
 
+Native door traversal sends its one-tile step through the bound driver. On
+377, the driver uses the client's existing movement encoder through
+`Client::write_pending_door_step_377`. It does not reuse the 274/289 movement
+body or add another API-side encoder. Unbound 377 drivers refuse this step.
+
 `cargo test -p script revision_377_` covers bundle selection, Path compilation,
 folder validation and missing-table admission. The ignored host-play test
 `quester::quester_377_cook_native` starts the production Quester card. It records
