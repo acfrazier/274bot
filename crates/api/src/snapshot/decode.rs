@@ -1583,17 +1583,7 @@ fn loc_view(
             loc.mapscene,
             loc.forceapproach,
         ),
-        None => (
-            1,
-            1,
-            true,
-            true,
-            false,
-            -1,
-            -1,
-            -1,
-            0,
-        ),
+        None => (1, 1, true, true, false, -1, -1, -1, 0),
     };
     LocView {
         typecode,
