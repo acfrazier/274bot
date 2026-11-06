@@ -5,6 +5,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Content harness
+
+- Add the bespoke revision-377 `cook_377` scenario and a fresh-account live
+  witness. Ingredients come from world interactions. Completion, Cooking XP
+  and quest points must come from Fairy Ring's product scripts.
+- Revision-377 location snapshots now expose the current multiloc name,
+  actions and size, while retaining the placed interaction ID. Varp updates
+  refresh these forms. Revision-274/289 location views are unchanged.
+
 ### Game data
 
 - The API can select revision 377 data generated from the pinned Fairy Ring
