@@ -151,19 +151,20 @@ pub fn shops_for(data: &SelectedGameData) -> Result<&'static [ShopRecord], FactE
     Ok(&joined_shops(data)?.shops)
 }
 
-/// Posted shops object keyed by inventory alias.
+/// Posted shops object borrowed directly from the selected core, keyed by inventory alias.
 ///
+/// Publication needs no NPC keeper join or prepared-family cache.
 /// Serialization keeps the product's insertion order in every configuration.
 /// Shops follow the generated order, and each record keeps its declared field
 /// order. `serde_json::Map` cannot hold that order without the
 /// `preserve_order` feature, so this type writes the object directly.
 /// Default serializes an empty object when a host has no selected revision.
 #[derive(Debug, Default)]
-pub struct ContentShops {
-    shops: &'static [ShopRecord],
+pub struct ContentShops<'a> {
+    shops: &'a [ShopRecord],
 }
 
-impl Serialize for ContentShops {
+impl Serialize for ContentShops<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap as _;
         let mut map = serializer.serialize_map(Some(self.shops.len()))?;
@@ -175,9 +176,9 @@ impl Serialize for ContentShops {
 }
 
 /// `__rs2b0t_host.content.shops` object keyed by inv, in generated order.
-pub fn content_json_value(data: &SelectedGameData) -> Result<ContentShops, FactError> {
+pub fn content_json_value(data: &SelectedGameData) -> Result<ContentShops<'_>, FactError> {
     Ok(ContentShops {
-        shops: shops_for(data)?,
+        shops: data.shop_records()?,
     })
 }
 
@@ -371,7 +372,7 @@ mod tests {
         super::vendor_by_keeper_config(data, config, item_id).expect("generated shop facts")
     }
 
-    fn content_json_value(data: &SelectedGameData) -> ContentShops {
+    fn content_json_value(data: &SelectedGameData) -> ContentShops<'_> {
         super::content_json_value(data).expect("generated shop facts")
     }
 
@@ -890,6 +891,40 @@ mod tests {
         assert_eq!(plan[0].units, 5);
         assert_eq!(plan[2].units, 5);
         assert!(plan[0].est_cost > plan[2].est_cost);
+    }
+
+    #[test]
+    fn content_json_borrows_shop_records_without_vendor_joins() {
+        let data: SelectedGameData = serde_json::from_value(serde_json::json!({
+            "schema_version": 5,
+            "revision": 274,
+            "items": [],
+            "consumption": [],
+            "pickpocket": [],
+            "shops": [{
+                "inv": "fixture_shop",
+                "title": "Fixture shop",
+                "keepers": ["Fixture keeper"],
+                "keeper_configs": ["fixture_keeper"],
+                "sell": 100,
+                "buy": 50,
+                "delta": 2,
+                "scope": "shared",
+                "allstock": false,
+                "items": []
+            }]
+        }))
+        .expect("shop facts without unrelated NPC names or prepared families");
+        let posted = super::content_json_value(&data).expect("present shop records publish");
+        assert!(std::ptr::eq(
+            posted.shops,
+            data.shop_records().expect("present fixture shop records")
+        ));
+        let value = serde_json::to_value(posted).expect("posted shop JSON");
+        assert_eq!(value["fixture_shop"]["title"], "Fixture shop");
+        assert_eq!(value["fixture_shop"]["keepers"][0], "Fixture keeper");
+        assert!(value["fixture_shop"].get("keeper_configs").is_none());
+        assert_eq!(value.as_object().expect("shop object").len(), 1);
     }
 
     #[test]

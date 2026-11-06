@@ -65,6 +65,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   selected game-client revision during configuration preparation.
 - Compatibility content keeps an empty shop object before a game revision is
   selected. Selected-fact errors still propagate instead of becoming empty data.
+- Shop publication borrows the selected shop rows without requiring unrelated
+  NPC keeper joins. Missing shops still fail, and vendor joins stay unchanged.
 - Radius-104 routes use compact zone partitions. Preferred and fallback goal
   sets, the settle limit, and the memory limit remain unchanged.
 
