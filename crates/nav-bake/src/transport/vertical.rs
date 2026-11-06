@@ -1,6 +1,10 @@
 use super::rs2_syntax::{lex, parse_body, parse_expr, Expr, Stmt};
 use super::*;
 
+#[path = "vertical_377.rs"]
+mod revision_377;
+pub(super) use revision_377::supplemental_edges_377;
+
 // ---------------------------------------------------------------------------
 // Ladders and stairs (m8aq `resolvePlacements` port).
 // ---------------------------------------------------------------------------
