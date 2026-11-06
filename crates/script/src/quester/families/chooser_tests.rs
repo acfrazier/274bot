@@ -483,3 +483,64 @@ fn alternating_reachability_stops_after_the_bound_not_the_settle() {
         );
     });
 }
+
+#[test]
+fn use_on_npc_alternatives_rank_all_placed_types_and_keep_exact_identity() {
+    compile_context_test(|cx| {
+        let player = tile(3250, 3280);
+        let cow_id = resolve_npc(cx, "cow").unwrap();
+        let sheep_id = resolve_npc(cx, "sheepunsheered").unwrap();
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "bucket_empty",
+                "target": {"npc": ["cow", "sheepunsheered"]},
+                "anchor": {"tile": [player.x, player.z, 0], "source": "unit fixture"},
+                "radius": 4,
+                "product": "bucket_milk"
+            })),
+            cx,
+        )
+        .unwrap();
+        for (id, name) in [(cow_id, "Cow"), (sheep_id, "Sheep")] {
+            let (mut snapshot, _) = milk_fixture(cx, player);
+            let mut selected = cow(id, 2, tile(3251, 3280), player);
+            selected.name = Some(name.into());
+            selected.size = 1;
+            let mut decoy = selected.clone();
+            decoy.index = 1;
+            decoy.r#type = Some(usize::MAX);
+            snapshot.seed_npcs(vec![decoy, selected]);
+            let view = flood_view(tile(3238, 3268), 24, &[], player);
+            let mut ledger = None;
+            let mut run = with_tick_reach(&snapshot, &view, &mut ledger, 1, |tick| {
+                with_step(tick, |cx| plan.begin(cx).unwrap())
+            });
+            assert!(with_tick_reach(&snapshot, &view, &mut ledger, 2, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            })
+            .is_pending());
+            assert!(
+                matches!(
+                    last_effect(&ledger),
+                    HostEffect::Interaction(InteractReq::UseOn {
+                        index: Some(2), target_name: Some(target), ..
+                    }) if target == name
+                ),
+                "every authored type is eligible, but a same-name decoy is not: {}",
+                describe(&ledger)
+            );
+        }
+        for targets in [
+            serde_json::json!([]),
+            serde_json::json!(["cow", "unknown_npc"]),
+        ] {
+            assert!(compile_use_on(
+                test_args::<UseOnArgs>(serde_json::json!({
+                    "item": "bucket_empty", "target": {"npc": targets}
+                })),
+                cx,
+            )
+            .is_err());
+        }
+    });
+}
