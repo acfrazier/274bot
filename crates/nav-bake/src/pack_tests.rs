@@ -1742,6 +1742,42 @@ param=next_loc_stage,loc_1563
 }
 
 #[test]
+fn revision_377_named_door_admission_requires_a_closed_category() {
+    let text = "\
+[scenery_1551]
+op1=Open
+category=gate_main_closed
+param=next_loc_stage,scenery_1552
+[scenery_1553]
+op1=Open
+category=gate_outer_closed
+param=next_loc_stage,scenery_1556
+[inaclefayeunopenabledoorl]
+op1=Open
+[inaclefayeunopenabledoorr]
+op1=Open
+";
+    let names = HashMap::from([
+        ("scenery_1551".into(), 1551),
+        ("scenery_1553".into(), 1553),
+        ("inaclefayeunopenabledoorl".into(), 73),
+        ("inaclefayeunopenabledoorr".into(), 74),
+    ]);
+    let doors = super::parse_door_config_377(text, &names);
+    assert_eq!(doors, HashSet::from([1551, 1553]));
+    // The legacy named parser remains available to dedicated handler derivations.
+    assert_eq!(
+        parse_door_config_ids(text, &names),
+        HashSet::from([73, 74, 1551, 1553])
+    );
+    // Numeric 274/289 declarations retain their existing op-based admission.
+    assert_eq!(
+        super::parse_door_config_377("[loc_1513]\nop1=Open\n", &names),
+        parse_door_config("[loc_1513]\nop1=Open\n")
+    );
+}
+
+#[test]
 fn parse_door_config_collects_gate_closed_categories() {
     // Mirrors gates.loc: closed/open counterpart blocks carrying the
     // fence-gate categories. `gate_main_closed` / `gate_outer_closed`
