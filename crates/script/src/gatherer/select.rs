@@ -7018,15 +7018,6 @@ pub(crate) mod tests {
             markdown
         }
 
-        fn hex(bytes: &[u8]) -> String {
-            use std::fmt::Write as _;
-            let mut value = String::with_capacity(bytes.len() * 2);
-            for byte in bytes {
-                let _ = write!(value, "{byte:02x}");
-            }
-            value
-        }
-
         fn write_artifacts(output: &Path, report: &CensusReport<'_>) -> PathBuf {
             let markdown_path = output.with_extension("md");
             for path in [output, markdown_path.as_path()] {
