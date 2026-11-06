@@ -76,7 +76,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   guide. It uses the selected revision's Path roster and game data. Missing
   tables refuse explicitly; revision-289 guides do not fill revision-377 gaps.
 - The native Cook witness starts with no ingredients or quest progress and
-  checks the server's completion state, Cooking XP and quest points.
+  checks the server's completion state, Cooking XP and quest points. It requires
+  the native host's matching completed-run receipt, not a transient status row.
 - The 377 Cook guide targets the placed mill-base identity while using the
   current flour-bin face's Empty action; it does not target a morph leaf ID.
 
