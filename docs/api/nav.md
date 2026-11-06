@@ -349,6 +349,17 @@ content-derived absence gates `forbidden_held` (must not be carried) and
 `worn_all_req`; carried or banked pieces do not. `BankBudget` neither
 supplies nor equips these strict pieces; the Quester loadout handles
 equipping. A held `item_req` is never budgeted as spent.
+
+An explicitly selected revision-377 bake also runs `vertical_377.rs`.
+It prices the renamed `ladder_1755` from the canonical climb helper while
+preserving its coordinate-specific landing and relative fallback. That return
+connects the Varrock sewer to the otherwise walled-in palace coin alcove.
+Direct absolute climbs, including `trapdoor_9472`, use the strict source
+recognizer: presentation, suspension and one fixed move only, with a matching
+Climb operation. The ice-dungeon trapdoor lands at `(3007,9549,0)` in three
+ticks and has no invented open phase. This supplement does not run for
+revision 274, revision 289 or an unspecified revision.
+
 Spell runes and script-deleted fares or passes are consumptive requirements.
 Spell teleports have no fixed origin: they live on `TransportGraph::teleports`
 unless `FindOptions::allow_teleports`. Wilderness tiles stay out unless
