@@ -69,6 +69,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   NPC keeper joins. Missing shops still fail, and vendor joins stay unchanged.
 - Radius-104 routes use compact zone partitions. Preferred and fallback goal
   sets, the settle limit, and the memory limit remain unchanged.
+  Host requests also avoid the excluded-target table when bank planning cannot
+  use it. Captured inputs and reachable diagnostics remain charged.
 - Host route and bank diagnostics use the data-only quest-gate API. Their
   existing evidence, prerequisite handover and search-budget outcomes remain.
   Hosted regression tests keep explicit guards for absent local data.

@@ -797,6 +797,8 @@ worker) and arm the result.
 
 Host route admission retains its 192 MiB work limit. It reserves bank-plan,
 bank-fetch and post-bank custody only when `allow_bank_fetch` is true.
+Only first-goal bank planning reserves the excluded-target table. Requests
+that cannot enter this transition allocate no table.
 Captured request buffers always remain input custody. Missing-carry,
 entrance, blocker and quest-gate diagnostics remain charged in both modes.
 Bank buffers use the largest diagnosed requirement count admitted for the

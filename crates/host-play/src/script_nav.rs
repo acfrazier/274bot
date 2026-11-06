@@ -1293,11 +1293,14 @@ impl RouteJob {
         } else {
             RouteSearchMode::InOrder
         };
-        let excluded_capacity = RouteTargetCursor::capacity(&request)?;
         let mut excluded_targets = std::collections::HashSet::new();
-        excluded_targets
-            .try_reserve(excluded_capacity)
-            .map_err(|_| RouteJobError::Allocation)?;
+        // Only a failed first-goal bank plan can exclude a destination.
+        // Other requests never enter that transition and need no table.
+        if request.opts.allow_bank_fetch && search_mode == RouteSearchMode::First {
+            excluded_targets
+                .try_reserve(RouteTargetCursor::capacity(&request)?)
+                .map_err(|_| RouteJobError::Allocation)?;
+        }
         let first_preferred = Vec::new();
         let first_fallback_enabled = request.radius > 0
             && request.loc_id.is_none()
@@ -9190,6 +9193,7 @@ mod diagnostic_tests {
             )
             .expect("the full radius-104 host request must fit its unchanged limit");
             assert_eq!(RouteTargetCursor::capacity(&job.request).unwrap(), GOALS);
+            assert_eq!(job.excluded_targets.capacity(), 0);
             assert_eq!(job.request.opts.allow_teleports, allow_teleports);
             let expected = SearchCursor::preflight(
                 SearchRequestShape::First {
@@ -9235,6 +9239,36 @@ mod diagnostic_tests {
                 ),
                 Err(RouteJobError::Budget),
             ));
+        }
+    }
+
+    #[test]
+    fn route_target_exclusions_allocate_only_for_first_goal_bank_planning() {
+        for allow_bank_fetch in [false, true] {
+            for radius in [0, 1] {
+                let mut request = tiny_stage_request();
+                request.radius = radius;
+                request.arrival = ArrivalKind::Area;
+                request.opts.allow_bank_fetch = allow_bank_fetch;
+                let target_capacity = RouteTargetCursor::capacity(&request).unwrap();
+                let job = RouteJob::prepare(
+                    "target-exclusion-admission",
+                    request,
+                    RouteDemandKind::Walk { authority: None },
+                )
+                .unwrap();
+                if allow_bank_fetch && radius > 0 {
+                    assert!(matches!(job.search_mode, RouteSearchMode::First));
+                    assert!(job.excluded_targets.capacity() >= target_capacity);
+                    assert!(
+                        job.extra_retained_bytes().unwrap()
+                            >= route_excluded_target_bytes(job.excluded_targets.capacity())
+                                .unwrap(),
+                    );
+                } else {
+                    assert_eq!(job.excluded_targets.capacity(), 0);
+                }
+            }
         }
     }
 
