@@ -1246,6 +1246,16 @@ fn gatherer_config(revision: u64) -> Arc<PreparedConfig> {
     .unwrap()
 }
 
+#[test]
+fn prepared_settings_revision_is_independent_of_client_revision() {
+    assert_eq!(selected().revision(), 289);
+    for revision in [1, 37, 290] {
+        let prepared = gatherer_config(revision);
+        assert_eq!(prepared.revision(), revision);
+        assert_eq!(prepared.card(), crate::CompiledId("Gatherer"));
+    }
+}
+
 const PERMISSION_TEST_ID: crate::CompiledId = crate::CompiledId("SlotPermissionsTest");
 
 struct PermissionReceiver;

@@ -680,10 +680,10 @@ pub fn prepare_config(
 ) -> Result<Arc<PreparedConfig>, StartError> {
     let card = crate::compiled_card(id)
         .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
-    let revision = selected_revision(&selected)?;
+    let client_revision = selected_revision(&selected)?;
     let mut cx = PrepareContext {
         selected,
-        revision,
+        revision: client_revision,
         banks,
         families: worker,
         zones: None,

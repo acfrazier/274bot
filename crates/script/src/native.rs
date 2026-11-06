@@ -829,6 +829,8 @@ pub fn with_test_tick<R>(
             observed_walk_cancel_reason: WalkCancelReason::None,
             snapshot,
             revision,
+            retained: &mut retained,
+            action_id: 0,
             active_now: clock.0,
             wall_now: clock.1,
             ledger,

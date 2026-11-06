@@ -296,7 +296,7 @@ impl GathererSettings {
             self.bank = "Nearest".into();
         } else {
             let catalog = api::named_banks::bank_catalog().map_err(|error| {
-                ConfigError::new("bank", "catalog-unavailable", error.to_string())
+                ConfigError::new("bank", "catalog-unavailable", format!("{error:?}"))
             })?;
             if let Some(bank) = catalog
                 .iter()

@@ -61,6 +61,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   pins. They still reject missing decoded NPC joins.
 - Shop vendors join the content keeper config, not only the display name.
   An unrelated NPC named Bob no longer becomes a bronze-axe vendor.
+- Compiled scripts keep the requested settings revision separate from the
+  selected game-client revision during configuration preparation.
 
 ### Not in this release
 
