@@ -16,7 +16,16 @@ fn spawn(src: &str, data: &Data) -> LoadIsolate {
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::CompatClass, vec![], data.clone())
             .unwrap();
-    assert_eq!(iso.probe("1").unwrap(), json!(1));
+    assert_eq!(
+        iso.probe("1").unwrap_or_else(|error| {
+            panic!(
+                "isolate probe failed: {error}; readiness={:?}; logs={:?}",
+                iso.poll_ready(),
+                iso.drain_logs()
+            )
+        }),
+        json!(1)
+    );
     iso
 }
 
