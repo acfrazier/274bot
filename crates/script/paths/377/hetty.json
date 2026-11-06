@@ -319,7 +319,7 @@
                   "pick": "nearest"
                 },
                 "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true },
-                "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713. Palace coins at maps/m50_54.jm2:12022-12023 are unreachable on 274bot-377-v17 from Lumbridge (3220,3220) and from Draynor bank (3092,3243)." },
+                "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713; outdoor goblins east of x=3135, with the natural coin drops in drop_tables/scripts/goblin.rs2" },
                 "area": { "box": [3138, 3224, 3152, 3264, 0], "source": "maps/m49_50.jm2:6702-6713; east of x=3135" },
                 "lost_radius": 16,
                 "kill_budget_ticks": 120,
