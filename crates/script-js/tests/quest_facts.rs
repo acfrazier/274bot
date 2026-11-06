@@ -375,6 +375,7 @@ fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
         "schema_version": 5,
         "revision": 274,
         "shops": [],
+        "cook_surfaces": { "rows": [] },
         "items": [],
         "consumption": [],
         "pickpocket": []

@@ -540,12 +540,13 @@ fn probe_page(src: &str, revision: ClientRevision, page: &[(i32, i32)]) -> serde
     serde_json::from_str(value.as_str().unwrap()).unwrap()
 }
 
-/// Minimal selected data with empty shops and no trail family.
+/// Minimal selected data with valid empty bootstrap families and no trail family.
 fn data_without_trails() -> std::sync::Arc<api::game_data::SelectedGameData> {
     let raw = r#"{
         "schema_version": 5,
         "revision": 274,
         "shops": [],
+        "cook_surfaces": { "rows": [] },
         "items": [],
         "consumption": [],
         "pickpocket": []

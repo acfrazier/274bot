@@ -94,12 +94,13 @@ fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
     serde_json::from_str(value.as_str().unwrap()).unwrap()
 }
 
-/// Empty shops allow bootstrap while the gathering families remain absent.
+/// Empty bootstrap families leave the gathering families deliberately absent.
 fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
     let raw = r#"{
         "schema_version": 5,
         "revision": 274,
         "shops": [],
+        "cook_surfaces": { "rows": [] },
         "items": [],
         "consumption": [],
         "pickpocket": []
@@ -299,7 +300,7 @@ export function tick(api) {
   });
 }
 "#;
-    // Gathering is absent while unrelated shop bootstrap remains valid.
+    // Gathering is absent while unrelated bootstrap families remain valid.
     let iso = LoadIsolate::spawn_with_game_data(
         src.into(),
         LoadShape::NativeTick,

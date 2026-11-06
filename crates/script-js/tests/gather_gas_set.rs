@@ -305,6 +305,7 @@ fn selected_data_without_the_gas_slice_fails_closed_on_every_member() {
         "schema_version": 5,
         "revision": 274,
         "shops": [],
+        "cook_surfaces": { "rows": [] },
         "items": [],
         "consumption": [],
         "pickpocket": []
