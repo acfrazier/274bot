@@ -13,15 +13,15 @@ use {
     script_js::wire::encode_snapshot_with_native,
 };
 
+mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
-#[path = "common/local_game_data.rs"]
-mod local_game_data;
 #[path = "common/local_bank_catalog.rs"]
 mod local_bank_catalog;
 #[path = "common/local_fact_catalogs.rs"]
 mod local_fact_catalogs;
-mod common;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 const FROZEN_TESTS: &str = "upstream/2de6bb23";
 const TEST_MODULE_PREFIX: &str = "/rs2b0t/upstream/2de6bb23/test";
@@ -271,7 +271,9 @@ describe('outer', () => {
 
 #[test]
 fn upstream_tier1_runs_unmodified_sources_in_load() {
-    if !local_game_data::local_game_data_available(289) || !local_fact_catalogs::local_fact_catalogs_available() {
+    if !local_game_data::local_game_data_available(289)
+        || !local_fact_catalogs::local_fact_catalogs_available()
+    {
         return;
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -387,7 +389,9 @@ fn upstream_tier1_runs_unmodified_sources_in_load() {
 
 #[test]
 fn refrozen_runtime_members_load_and_refuse_by_name() {
-    if !local_game_data::local_game_data_available(289) || !local_fact_catalogs::local_fact_catalogs_available() {
+    if !local_game_data::local_game_data_available(289)
+        || !local_fact_catalogs::local_fact_catalogs_available()
+    {
         return;
     }
     let ts = r#"

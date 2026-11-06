@@ -7,11 +7,11 @@ use {
     script_js::wire::{IsolateBuf, SnapshotFingerprint},
 };
 
+mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
-mod common;
 use common::post_snapshot_input;
 
 fn post_snapshot_delta(
@@ -205,7 +205,9 @@ fn staff_not_attached_refuses_without_send() {
 
 #[test]
 fn initially_armed_reads_posted_varp_on_both_selected_caches() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let src = r#"

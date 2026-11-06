@@ -2460,33 +2460,6 @@ pub(super) fn queue_inspect_shared(
     );
 }
 
-#[cfg(test)]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "The test wrapper keeps existing fixture inputs while the production call shares an Arc."
-)]
-pub(super) fn queue_inspect(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-    name: &str,
-    world: &Option<Arc<NavWorld>>,
-    state: Option<&WorldState>,
-    bank: BankRows,
-    cache: Option<Arc<Cache>>,
-    obj_names: Option<Arc<ObjNames>>,
-    req: InspectRequest,
-) {
-    queue_inspect_captured(
-        navs,
-        name,
-        world,
-        state.map(|state| Arc::new(state.clone())),
-        bank,
-        cache,
-        obj_names,
-        req,
-    );
-}
-
 #[expect(
     clippy::too_many_arguments,
     reason = "The inspection queue keeps its separate owner inputs explicit."

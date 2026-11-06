@@ -142,7 +142,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn selected_revision_facts_cover_fire_giant_green_dragon_and_cake_shapes() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let src = r#"

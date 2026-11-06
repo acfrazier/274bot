@@ -8,12 +8,12 @@ use {script_js::LoadIsolate, script_js::LoadIsolateError, script_js::LoadShape};
 
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
-#[path = "common/local_game_data.rs"]
-mod local_game_data;
 #[path = "common/local_bank_catalog.rs"]
 mod local_bank_catalog;
 #[path = "common/local_fact_catalogs.rs"]
 mod local_fact_catalogs;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn data() -> Arc<SelectedGameData> {
     api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
@@ -362,7 +362,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn runtime_catalog_exports_keep_aliases_options_surfaces_and_boundaries() {
-    if !local_fact_catalogs::local_fact_catalogs_available() || !local_game_data::local_game_data_available(289) {
+    if !local_fact_catalogs::local_fact_catalogs_available()
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let iso = spawn(CATALOG_SOURCE);
@@ -434,7 +436,9 @@ fn runtime_catalog_exports_keep_aliases_options_surfaces_and_boundaries() {
 
 #[test]
 fn caller_row_lookup_preserves_coercion_order_identity_and_errors() {
-    if !local_fact_catalogs::local_fact_catalogs_available() || !local_game_data::local_game_data_available(289) {
+    if !local_fact_catalogs::local_fact_catalogs_available()
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let iso = spawn(FIND_SOURCE);
@@ -461,7 +465,9 @@ fn caller_row_lookup_preserves_coercion_order_identity_and_errors() {
 
 #[test]
 fn resolver_keeps_predicate_order_errors_and_default_unlocks() {
-    if !local_fact_catalogs::local_fact_catalogs_available() || !local_game_data::local_game_data_available(289) {
+    if !local_fact_catalogs::local_fact_catalogs_available()
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let iso = spawn(RESOLVE_SOURCE);

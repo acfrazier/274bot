@@ -20,11 +20,11 @@ use script_js::{JsLibrary, LoadIsolate, LoadShape};
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
+mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
-mod common;
 
 /// Spawn and wait (bounded) for setup to finish. `spawn` returns before V8
 /// setup, so tests that time JS against the wall clock start from Ready.

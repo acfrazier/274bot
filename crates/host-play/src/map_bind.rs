@@ -2,13 +2,13 @@
 //!
 //! The [`MapDemandManager`] is created on first map open, never at boot.
 
+use crate::install_resource_root;
 use crate::map_cache::{
     MapCacheError, MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus,
     MapProfileDescriptor, PreparedMapInput, ReadyCatalogue, ReadyImages, ReadyMap, ShippedMap,
     ShippedMapBundle,
 };
 use crate::map_producer::{map_artifact_policies, NativeMapProducer};
-use crate::nav_assets::install_resource_root;
 use crate::ServerProfile;
 use api::work::{
     Checkpoint, CooperativeJob, RetainedState, StepContext, StepOutcome, WalkMapDecodePhase,

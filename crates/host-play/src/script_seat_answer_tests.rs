@@ -210,17 +210,39 @@ impl Frames {
 
     /// A frame whose chat family also changed: an evidence wake candidate.
     fn frame_with_evidence(&self, tick: u64, edge: bool) -> bool {
-        crate::script_runtime::script_observe::script_observe_evidence(
+        crate::script_runtime::script_observe::script_observe_cached_with_channels(
             &mut HeldDriver,
             "test",
+            true,
             edge,
+            true,
             tick,
             Some(HERE),
+            None,
+            None,
             Some(&self.snapshot),
+            None,
+            None,
+            None,
             &self.scripts,
             &self.cheats,
             &self.navs,
+            &None,
+            false,
+            false,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            crate::script_channels::BrokerWorld::Unavailable,
+            None,
+            None,
+            None,
+            None,
         )
+        .wrote
     }
 
     /// Evaluate on the isolate thread. It is a round trip, so it also waits

@@ -237,11 +237,11 @@ fn wait_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>) {
 
 fn fill_three_id0(navs: &Arc<Mutex<HashMap<String, NavBot>>>, world: &Arc<NavWorld>) {
     for _ in 0..3 {
-        queue_inspect(
+        queue_inspect_shared(
             navs,
             "p",
             &Some(Arc::clone(world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -783,11 +783,11 @@ fn cooperative_hint_overlay_adds_missing_carry_before_planning() {
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let mut request = req(from, destination, 58);
     request.allow_bank_fetch = true;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&*state),
+        Some(&state),
         bank,
         Some(cache),
         None,
@@ -807,11 +807,11 @@ fn cooperative_hint_overlay_adds_missing_carry_before_planning() {
 fn cooperative_work_service_publishes_inspection() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -834,11 +834,11 @@ fn inspection_publication_retries_when_owner_ledger_is_full() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let request_id = 93;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -929,11 +929,11 @@ fn oversized_route_result_publishes_typed_refusal_not_nopath() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let request_id = 94;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1004,11 +1004,11 @@ fn oversized_route_result_publishes_typed_refusal_not_nopath() {
 fn reset_abandons_accepted_inspection_and_fences_generation() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1024,11 +1024,11 @@ fn reset_abandons_accepted_inspection_and_fences_generation() {
         assert!(bot.inspect.latest.is_none());
         bot.inspect.generation
     };
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1071,11 +1071,11 @@ fn reset_releases_inspection_charge_once_and_preserves_replacement() {
     let _service_override = InspectionWorkServiceOverride::install(Arc::clone(&service));
     let baseline = service.lock().capacity();
 
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1142,11 +1142,11 @@ fn reset_releases_inspection_charge_once_and_preserves_replacement() {
     }
 
     const REPLACEMENT_ID: u64 = 24;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1186,32 +1186,32 @@ fn reset_releases_inspection_charge_once_and_preserves_replacement() {
 fn pending_replace_publishes_stale_for_replaced_request() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
         req(tile(0, 0, 0), tile(1, 1, 0), 41),
     );
     wait_running(&navs, 41);
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
         req(tile(0, 0, 0), tile(2, 2, 0), 42),
     );
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1287,7 +1287,7 @@ fn invalid_args_and_missing_graph() {
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let mut bad = req(tile(0, 0, 9), tile(1, 1, 0), 51);
     bad.invalid_args = true;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &None,
@@ -1309,7 +1309,7 @@ fn invalid_args_and_missing_graph() {
             .reason,
         "invalid-args"
     );
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &None,
@@ -1337,11 +1337,11 @@ fn invalid_args_and_missing_graph() {
 fn abort_script_walk_does_not_cancel_inspection() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1902,11 +1902,11 @@ fn admission_refuses_fourth_when_ring_and_held_full() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
     for id in 1..=3 {
-        queue_inspect(
+        queue_inspect_shared(
             &navs,
             "p",
             &Some(Arc::clone(&world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -1922,11 +1922,11 @@ fn admission_refuses_fourth_when_ring_and_held_full() {
         assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, 3);
         assert_eq!(bot.inspect.accepted_id, 3);
     }
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -1962,11 +1962,11 @@ fn apply_ack_rejects_future_and_wrong_generation() {
 fn request_id_zero_publishes_preview() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2006,11 +2006,11 @@ fn admission_refuse_does_not_accept_when_unobserved_full() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
     for id in 1..=3 {
-        queue_inspect(
+        queue_inspect_shared(
             &navs,
             "p",
             &Some(Arc::clone(&world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -2018,11 +2018,11 @@ fn admission_refuse_does_not_accept_when_unobserved_full() {
         );
         let _ = wait_latest(&navs, id);
     }
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2043,11 +2043,11 @@ fn admission_refuse_does_not_accept_when_unobserved_full() {
         let latest = bot.inspect.latest.as_ref().unwrap().seq;
         bot.inspect.apply_ack(latest, bot.inspect.generation);
     }
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2071,11 +2071,11 @@ fn snapshot_only_overload_does_not_mailbox_or_clobber_latest() {
             bot.inspect.refused,
         )
     };
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2096,22 +2096,22 @@ fn snapshot_only_overload_does_not_mailbox_or_clobber_latest() {
 fn duplicate_running_id_does_not_double_reserve() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
         req(tile(0, 0, 0), tile(1, 1, 0), 81),
     );
     wait_running(&navs, 81);
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2424,33 +2424,33 @@ export function tick() {}
 
     let a = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 1, 0));
     let b = inspect_begin_at(&iso, tile(0, 0, 0), tile(2, 2, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
         req(tile(0, 0, 0), tile(1, 1, 0), a),
     );
     wait_running(&navs, a);
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
         req(tile(0, 0, 0), tile(2, 2, 0), b),
     );
     let c = inspect_begin_at(&iso, tile(0, 0, 0), tile(3, 3, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2507,11 +2507,11 @@ export function tick() {}
     assert!(!navs.lock().unwrap().get("p").unwrap().inspect.executing);
 
     let d = inspect_begin_at(&iso, tile(0, 0, 0), tile(4, 4, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2519,11 +2519,11 @@ export function tick() {}
     );
     wait_running(&navs, d);
     let e = inspect_begin_at(&iso, tile(0, 0, 0), tile(5, 5, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2546,11 +2546,11 @@ export function tick() {}
     assert!(inspect_settled(&iso, e));
 
     let f = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 2, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2558,11 +2558,11 @@ export function tick() {}
     );
     let _ = wait_latest(&navs, f);
     let g = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 3, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2570,11 +2570,11 @@ export function tick() {}
     );
     let _ = wait_latest(&navs, g);
     let h = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 4, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2624,11 +2624,11 @@ export function tick() {}
         .latest
         .as_ref()
         .map(|t| t.request_id);
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(Arc::clone(&world)),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2670,11 +2670,11 @@ export function tick() {}
     assert!(!inspect_settled(&iso, hold_tok));
 
     let live = inspect_begin_at(&iso, tile(0, 0, 0), tile(7, 7, 0));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2735,11 +2735,11 @@ fn integrated_id0_full_then_authorized_registered_refuses_not_timeout() {
     let dest = tile(2, 3, 1);
     let token = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 1)
         .expect("authorize must succeed when isolate has not seen host fullness");
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2780,11 +2780,11 @@ fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
     {
         let token = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 10 + i as u64)
             .expect("registered begin while isolate unsettled < 3");
-        queue_inspect(
+        queue_inspect_shared(
             &navs,
             "p",
             &Some(Arc::clone(&world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -2806,11 +2806,11 @@ fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
     let dest = tile(2, 5, 1);
     let next = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 20)
         .expect("new begin after timeout; isolate has not observed host fullness");
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2843,11 +2843,11 @@ fn integrated_mixed_id0_registered_ack_progress_does_not_starve() {
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
     for i in 0..6u64 {
-        queue_inspect(
+        queue_inspect_shared(
             &navs,
             "p",
             &Some(Arc::clone(&world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -2869,11 +2869,11 @@ fn integrated_mixed_id0_registered_ack_progress_does_not_starve() {
         let dest = tile(2, 6 + i as i32, 1);
         let token = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 30 + i)
             .expect("ACK progress must keep registered begin authorizable");
-        queue_inspect(
+        queue_inspect_shared(
             &navs,
             "p",
             &Some(Arc::clone(&world)),
-            Some(&WorldState::empty()),
+            Some(&Arc::new(WorldState::empty())),
             BankRows::default(),
             None,
             None,
@@ -2892,11 +2892,11 @@ fn integrated_mixed_id0_registered_ack_progress_does_not_starve() {
     let dest = tile(2, 20, 1);
     let after = isolate_begin_and_authorize(&iso, tile(0, 0, 0), dest, 51)
         .expect("ACK after id0 fill must admit registered traffic");
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &Some(world),
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -2994,11 +2994,11 @@ fn native_observation_without_compat_harvests_completed_inspection() {
         assert!(!slot.surface_active(), "there is no active compat isolate");
     }
     let request_id = 94;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &world,
-        Some(&WorldState::empty()),
+        Some(&Arc::new(WorldState::empty())),
         BankRows::default(),
         None,
         None,
@@ -3180,11 +3180,11 @@ fn real_content_inspection_capture_bytes() {
         .expect("native observation slot starts");
     let cheats = Arc::new(Mutex::new(HashMap::new()));
     let world_arg = Some(Arc::clone(&world));
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &world_arg,
-        Some(&*capture.state),
+        Some(&capture.state),
         BankRows::default(),
         Some(Arc::clone(&cache)),
         Some(Arc::clone(&obj_names)),
@@ -3263,7 +3263,7 @@ fn real_content_inspection_capture_bytes() {
     // captured snapshot covers both terminal payloads and custody metadata.
     let missing_id = REQUEST_ID + 1;
     let missing_world: Option<Arc<NavWorld>> = None;
-    queue_inspect(
+    queue_inspect_shared(
         &navs,
         "p",
         &missing_world,

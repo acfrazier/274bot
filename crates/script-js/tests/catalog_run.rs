@@ -3,11 +3,11 @@
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
+mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
-mod common;
 
 #[test]
 fn bank_picker_import_links_and_awaits_host_selection() {

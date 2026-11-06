@@ -1,6 +1,5 @@
 //! Stage previously generated local navigation payloads for the host binary.
 
-#[allow(dead_code)]
 #[path = "src/nav_assets.rs"]
 mod nav_assets;
 use std::path::PathBuf;

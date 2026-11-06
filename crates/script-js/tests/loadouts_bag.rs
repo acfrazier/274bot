@@ -5,11 +5,11 @@ use {script::SettingDef, script_js::LoadIsolate, script_js::LoadShape};
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
+mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
-mod common;
 
 const LOADOUT_PROBE: &str = r#"
 export default class T extends LoopingBot {

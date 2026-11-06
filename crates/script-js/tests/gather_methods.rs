@@ -128,7 +128,9 @@ fn helper_ok(value: serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn v2_methods_are_sync_helper_results_with_locked_errors() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let src = r#"
@@ -402,7 +404,9 @@ export function tick(api) {
 
 #[test]
 fn v2_placements_are_sync_helper_results_with_locked_errors() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let src = r#"
@@ -609,7 +613,9 @@ fn example_gather_placements_v2_is_one_read_only_fact_call() {
 
 #[test]
 fn frozen_gas_rock_set_skips_gas_variants_on_the_coal_query_path() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let src = r#"

@@ -59,7 +59,7 @@ fn resource_root() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             let exe = std::env::current_exe().expect("test binary path");
-            nav_assets::install_resource_root(&exe)
+            host_play::install_resource_root(&exe)
         })
 }
 

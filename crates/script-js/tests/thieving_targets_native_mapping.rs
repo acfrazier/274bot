@@ -13,11 +13,11 @@ use {
     script_js::wire::{encode_snapshot, encode_snapshot_delta, SnapshotFingerprint},
 };
 
+mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
-mod common;
 
 const SRC: &str = r#"
 import { chooseTarget } from '../../api/thieving/targets.js';

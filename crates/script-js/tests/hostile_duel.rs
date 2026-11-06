@@ -4,11 +4,11 @@ use script::native::snapshot_source::{
 };
 use script_js::{LoadIsolate, LoadShape};
 
+mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
-mod common;
 use common::post_snapshot_input;
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -359,7 +359,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn duel_controls_match_both_selected_caches() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let src = r#"

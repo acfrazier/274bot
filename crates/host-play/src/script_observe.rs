@@ -2582,56 +2582,6 @@ pub(crate) fn deliver_channel_events(
     }
 }
 
-/// [`script_observe`] for a frame whose wait families (iface, inv, stat or
-/// chat) changed: an evidence wake candidate.
-#[cfg(all(test, feature = "js"))]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn script_observe_evidence(
-    driver: &mut dyn Driver,
-    name: &str,
-    tick_edge: bool,
-    tick: u64,
-    here: Option<(i32, i32, i32)>,
-    snapshot: Option<&GameSnapshot>,
-    scripts: &ScriptWall,
-    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-) -> bool {
-    script_observe_cached_with_channels(
-        driver,
-        name,
-        true,
-        tick_edge,
-        true,
-        tick,
-        here,
-        None,
-        None,
-        snapshot,
-        None,
-        None,
-        None,
-        scripts,
-        cheats,
-        navs,
-        &None,
-        false,
-        false,
-        false,
-        None,
-        None,
-        None,
-        None,
-        None,
-        super::script_channels::BrokerWorld::Unavailable,
-        None,
-        None,
-        None,
-        None,
-    )
-    .wrote
-}
-
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn script_observe(

@@ -8,10 +8,10 @@ use {script_js::LoadIsolate, script_js::LoadShape};
 
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
-#[path = "common/local_game_data.rs"]
-mod local_game_data;
 #[path = "common/local_bank_catalog.rs"]
 mod local_bank_catalog;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 const COW_MODULE: &str = r#"
 import Tile from '../../geometry/Tile.js';
@@ -283,7 +283,9 @@ fn toll_helpers_honor_enablement_coin_and_distance_boundaries() {
 
 #[test]
 fn bound_named_bank_facts_override_fallbacks_and_keep_destination_identity() {
-    if !local_bank_catalog::local_bank_catalog_available() || !local_game_data::local_game_data_available(289) {
+    if !local_bank_catalog::local_bank_catalog_available()
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let data = selected_data();

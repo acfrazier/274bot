@@ -4,11 +4,11 @@ use script::native::snapshot_source::{
 };
 use script_js::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
 
+mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
-mod common;
 use common::post_snapshot_input;
 
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
@@ -153,7 +153,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn v1_queries_trim_case_and_stats_on_both_caches() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     for game_data in both_data() {
@@ -357,7 +359,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     for game_data in both_data() {

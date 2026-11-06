@@ -280,6 +280,12 @@ const FEATURE_SCENARIOS: &[(&str, workloads::Kind, bool)] = &[
         workloads::Kind::MergedNativeApi,
         true,
     ),
+    ("native_npc_combat", workloads::Kind::NativeNpcCombat, false),
+    (
+        "native_npc_combat_feature_off",
+        workloads::Kind::NativeNpcCombat,
+        true,
+    ),
     (
         "active_route_navigation",
         workloads::Kind::ActiveRouteNavigation,
@@ -2908,7 +2914,7 @@ mod tests {
 
     #[test]
     fn feature_names_have_explicit_controls_without_foreign_alias_fallbacks() {
-        assert_eq!(FEATURE_SCENARIOS.len(), 10);
+        assert_eq!(FEATURE_SCENARIOS.len(), 12);
         for &(name, kind, unused) in FEATURE_SCENARIOS {
             assert_eq!(feature_scenario(name), Some((kind, unused)));
             assert_eq!(name.ends_with("_feature_off"), unused);
@@ -2918,6 +2924,7 @@ mod tests {
             "native_trade",
             "native-api",
             "priest-journal",
+            "npc-combat",
             "unknown",
         ] {
             assert_eq!(feature_scenario(name), None, "{name}");
@@ -2933,6 +2940,8 @@ mod tests {
             None,
             Some("thiever"),
             Some("merged_native_api"),
+            Some("native_npc_combat"),
+            Some("native_npc_combat_feature_off"),
             Some("native_trade"),
         ] {
             assert!(parse_scenario_n("2", name).is_err(), "{name:?}");

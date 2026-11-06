@@ -1239,6 +1239,7 @@ Each name has a separate `_feature_off` value. Unknown names fail startup.
 | `compatibility_object_cache` | `compatibility_object_cache_feature_off` |
 | `native_partner_trade` | `native_partner_trade_feature_off` |
 | `merged_native_api` | `merged_native_api_feature_off` |
+| `native_npc_combat` | `native_npc_combat_feature_off` |
 | `active_route_navigation` | `active_route_navigation_feature_off` |
 
 These lanes compare the same candidate binary on the same guest. They are not
@@ -1251,6 +1252,7 @@ content and production owners after setup. Priest proof uses the actual emitted
 journal Page interval. Object-cache proof retains real rows and shared identities.
 Trade proof uses paired native actors, decoded confirm lists and actual handoff.
 The native API case requires an accepted native owner and fresh resource yield.
+NPC Combat proof requires accepted native Combat ownership and fresh combat XP.
 The route case requires repeated host routing and ordinary arrivals.
 
 The native API fleet uses ten separate real normal-tree neighbourhoods.
@@ -1258,6 +1260,17 @@ Its radius-12 resource areas do not overlap. Each seed proves a nearby live
 normal tree before starting. Only account positions change. The bronze axe,
 Woodcutting level, native Gatherer request and 240-game-tick yield deadline stay
 unchanged. Every active bot must still produce fresh XP and yield.
+The independent-site fixture supports the single-account pilot and ten-account
+fleet. Other counts are refused instead of silently reusing a tree patch.
+
+The native NPC Combat case uses ten separate real Cow areas. It supports only
+the single-account pilot and ten-account fleet. Both phases prepare the same
+accounts and accepted API v2 NativeTick isolates. The active consumer repeatedly
+requests real NPC fights; the control never requests Combat. Every active account
+must show native ownership, fresh post-activation combat XP and current work.
+Normal Stop observations retain the actual owner and Idle state. This lane
+measures real V8 heaps separately from Rust and process memory. It is not a
+process-memory A/B verdict against a comparator without this scenario.
 
 The measured V8 runtime uses the shipped settings. The object-cache lane reports
 actual V8 heaps, cache reuse and shared identities. The existing internal V8 test

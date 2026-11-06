@@ -191,7 +191,9 @@ export default class T extends LoopingBot {
         slot: 3,
     }];
     let tabs = [SideTabIfaceInput { index: 0, id: 2276 }];
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     for (rev, selected) in [(274, data()), (289, data_289())] {

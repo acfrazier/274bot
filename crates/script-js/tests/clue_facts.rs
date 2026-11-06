@@ -49,7 +49,9 @@ fn missing_family_is_the_method_token_before_the_key() {
 
 #[test]
 fn every_landed_row_is_copied_without_invented_fields() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -95,7 +97,9 @@ fn every_landed_row_is_copied_without_invented_fields() {
 
 #[test]
 fn the_bounded_row_is_access_constrained_and_not_playable() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -136,7 +140,9 @@ fn the_bounded_row_is_access_constrained_and_not_playable() {
 
 #[test]
 fn params_stay_raw_strings_in_file_order_and_empty_arrays_stay() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -169,7 +175,9 @@ fn params_stay_raw_strings_in_file_order_and_empty_arrays_stay() {
 
 #[test]
 fn non_members_and_challenge_rows_are_unknown_id() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -559,7 +567,9 @@ fn data_without_trails() -> std::sync::Arc<api::game_data::SelectedGameData> {
 
 #[test]
 fn v2_clue_row_is_a_sync_helper_result() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let src = r#"
@@ -710,7 +720,9 @@ export function tick(api) {
 
 #[test]
 fn v2_clue_held_step_is_a_sync_helper_result_over_the_posted_page() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let src = r#"

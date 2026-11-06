@@ -75,38 +75,10 @@ pub fn resource_root_for_build(
     })
 }
 
-/// Install resource root for an executable: macOS app `Contents/Resources`,
-/// otherwise the executable's containing directory.
-pub fn install_resource_root(exe: &Path) -> PathBuf {
-    let Some(parent) = exe.parent() else {
-        return PathBuf::from(".");
-    };
-    if parent.file_name().is_some_and(|name| name == "MacOS") {
-        if let Some(contents) = parent.parent() {
-            if contents.file_name().is_some_and(|name| name == "Contents") {
-                return contents.join("Resources");
-            }
-        }
-    }
-    parent.to_path_buf()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{artifact_layout, install_resource_root, local_asset_root, ArtifactLayout};
+    use super::{artifact_layout, local_asset_root, ArtifactLayout};
     use std::path::{Path, PathBuf};
-
-    #[test]
-    fn install_root_handles_mac_app_and_plain_binary() {
-        assert_eq!(
-            install_resource_root(Path::new("/Applications/274bot.app/Contents/MacOS/274bot")),
-            PathBuf::from("/Applications/274bot.app/Contents/Resources")
-        );
-        assert_eq!(
-            install_resource_root(Path::new("/opt/274bot/274bot")),
-            PathBuf::from("/opt/274bot")
-        );
-    }
 
     #[test]
     fn layout_and_local_source_root_are_revision_keyed() {

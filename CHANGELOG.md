@@ -53,11 +53,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 ### Memory diagnostics
 
 - Opt-in memory scenarios now exercise the Priest journal, compatibility object
-  caches, native partner trade, the native API owner and repeated host routing.
+  caches, native partner trade, the native API owner, native NPC Combat and
+  repeated host routing.
   Each has an explicit feature-not-used control. Counts and retained-state
   evidence remain separate from the common Thiever A/B lane.
   The native API fleet uses separate real tree sites instead of competing for
   one resource patch. Every active account still needs fresh XP and yield.
+  Native NPC Combat uses separate real Cow areas and accepted API v2 consumers
+  in both phases. Every active account needs native ownership and fresh combat
+  XP. Both finite-site workloads accept only the single-account pilot and
+  ten-account fleet.
 
 ### Fixed during development
 
@@ -86,6 +91,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Host route and bank diagnostics use the data-only quest-gate API. Their
   existing evidence, prerequisite handover and search-budget outcomes remain.
   Hosted regression tests keep explicit guards for absent local data.
+- Runtime resource-root setup no longer compiles into the navigation build
+  module. Test helpers compile only where used, without new dead-code allowances.
+  Tick-cycle tests retain their module and protocol in a separate test file;
+  the lint baseline records the approved production and test expectations.
 - Vault commands, panel preferences and walk-map fixtures use their current
   shared interfaces.
   Saved-settings fixtures keep current envelopes and explicit malformed-format

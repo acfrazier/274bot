@@ -54,7 +54,9 @@ fn missing_family_is_the_method_token_before_the_key() {
 
 #[test]
 fn id_matches_seed_id_only_and_name_matches_display_only() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -157,7 +159,9 @@ fn id_matches_seed_id_only_and_name_matches_display_only() {
 
 #[test]
 fn identity_value_is_the_landed_row_on_both_pins() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let points = [
@@ -216,7 +220,9 @@ fn identity_value_is_the_landed_row_on_both_pins() {
 
 #[test]
 fn prereqs_value_is_the_requirements_object_only() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
@@ -388,7 +394,9 @@ fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
 
 #[test]
 fn v2_identity_and_prereqs_are_sync_helper_results() {
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     let src = r#"

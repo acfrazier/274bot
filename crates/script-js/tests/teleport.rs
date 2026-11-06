@@ -278,7 +278,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !local_game_data::local_game_data_available(274) || !local_game_data::local_game_data_available(289) {
+    if !local_game_data::local_game_data_available(274)
+        || !local_game_data::local_game_data_available(289)
+    {
         return;
     }
     for selected in [data(), data_289()] {

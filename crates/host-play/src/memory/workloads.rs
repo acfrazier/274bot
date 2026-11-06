@@ -4,6 +4,7 @@
 mod active_route;
 mod journal_compat;
 mod native_api;
+mod native_combat;
 mod native_trade;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,6 +13,7 @@ pub(super) enum Kind {
     CompatibilityObjectCache,
     NativePartnerTrade,
     MergedNativeApi,
+    NativeNpcCombat,
     ActiveRouteNavigation,
 }
 
@@ -19,6 +21,7 @@ impl Kind {
     pub(super) fn supports_count(self, n: usize) -> bool {
         match self {
             Self::NativePartnerTrade => matches!(n, 2 | 10 | 16 | 32 | 50 | 128),
+            Self::MergedNativeApi | Self::NativeNpcCombat => matches!(n, 1 | 10),
             _ => matches!(n, 1 | 10 | 16 | 32 | 50 | 128),
         }
     }
@@ -35,6 +38,7 @@ impl Kind {
             Self::CompatibilityObjectCache => journal_compat::objects(names),
             Self::NativePartnerTrade => native_trade::build(names),
             Self::MergedNativeApi => native_api::build(names),
+            Self::NativeNpcCombat => native_combat::build(names),
             Self::ActiveRouteNavigation => active_route::build(names),
         }
     }
@@ -78,7 +82,6 @@ mod tests {
         for kind in [
             Kind::PriestJournal,
             Kind::CompatibilityObjectCache,
-            Kind::MergedNativeApi,
             Kind::ActiveRouteNavigation,
         ] {
             for n in [1, 10, 16, 32, 50, 128] {
@@ -87,6 +90,26 @@ mod tests {
             for n in [0, 2, 3, 9] {
                 assert!(!kind.supports_count(n));
             }
+        }
+    }
+
+    #[test]
+    fn native_api_accepts_only_its_independent_tree_fixture_counts() {
+        for n in [1, 10] {
+            assert!(Kind::MergedNativeApi.supports_count(n));
+        }
+        for n in [0, 2, 3, 9, 16, 32, 50, 128] {
+            assert!(!Kind::MergedNativeApi.supports_count(n));
+        }
+    }
+
+    #[test]
+    fn native_npc_combat_accepts_only_its_independent_npc_fixture_counts() {
+        for n in [1, 10] {
+            assert!(Kind::NativeNpcCombat.supports_count(n));
+        }
+        for n in [0, 2, 3, 9, 16, 32, 50, 128] {
+            assert!(!Kind::NativeNpcCombat.supports_count(n));
         }
     }
 }

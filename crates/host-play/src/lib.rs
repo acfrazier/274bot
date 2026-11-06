@@ -32,11 +32,10 @@ pub mod servers;
 pub mod tick_engine_test_support;
 pub mod walk_map;
 pub use client::Transport;
-pub use nav_assets::install_resource_root;
 pub use profile::{
-    parse_profile_args, parse_revision, GameDataStatus, NavLoadCounters, ProfileClass,
-    ProfileOptions, ProfileSelection, ServerProfile, TemplatePreparation, TemplateStep,
-    WorldMembersFact, WorldMembersSource, TEMPLATE_STEP_WAIT,
+    install_resource_root, parse_profile_args, parse_revision, GameDataStatus, NavLoadCounters,
+    ProfileClass, ProfileOptions, ProfileSelection, ServerProfile, TemplatePreparation,
+    TemplateStep, WorldMembersFact, WorldMembersSource, TEMPLATE_STEP_WAIT,
 };
 pub use servers::{
     proposed_vault, LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Servers, ServersError,

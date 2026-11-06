@@ -13,7 +13,7 @@ use client::Transport;
 use nav_planner::world::NavWorld;
 
 use crate::cache::CacheAvailability;
-use crate::nav_assets::{artifact_layout, install_resource_root};
+use crate::nav_assets::artifact_layout;
 use crate::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 use crate::public_worlds::PublicWorlds;
 use crate::servers::{LaunchProfile, LoginKey};
@@ -29,6 +29,22 @@ mod binding;
 pub use binding::{DeferredReach, TemplatePreparation, TemplateStep, TEMPLATE_STEP_WAIT};
 #[path = "profile_selection.rs"]
 mod selection;
+
+/// Install resource root for an executable: macOS app `Contents/Resources`,
+/// otherwise the executable's containing directory.
+pub fn install_resource_root(exe: &Path) -> PathBuf {
+    let Some(parent) = exe.parent() else {
+        return PathBuf::from(".");
+    };
+    if parent.file_name().is_some_and(|name| name == "MacOS") {
+        if let Some(contents) = parent.parent() {
+            if contents.file_name().is_some_and(|name| name == "Contents") {
+                return contents.join("Resources");
+            }
+        }
+    }
+    parent.to_path_buf()
+}
 
 /// Launch selection, still changeable before a session is bound. It contains
 /// paths and captured key inputs, but loads no cache and opens no socket.
@@ -283,5 +299,23 @@ fn require_bot_operation(revision: ClientRevision) -> Result<(), String> {
         // bank-return and Guardian proof. Retain exhaustive revision dispatch:
         // a future client revision must make an explicit qualification choice.
         ClientRevision::R274 | ClientRevision::R289 => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod resource_root_tests {
+    use super::install_resource_root;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn install_root_handles_mac_app_and_plain_binary() {
+        assert_eq!(
+            install_resource_root(Path::new("/Applications/274bot.app/Contents/MacOS/274bot")),
+            PathBuf::from("/Applications/274bot.app/Contents/Resources")
+        );
+        assert_eq!(
+            install_resource_root(Path::new("/opt/274bot/274bot")),
+            PathBuf::from("/opt/274bot")
+        );
     }
 }

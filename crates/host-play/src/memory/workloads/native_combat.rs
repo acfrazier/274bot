@@ -157,10 +157,9 @@ fn combat_xp(snapshot: &api::snapshot::GameSnapshot) -> [Option<i32>; 4] {
 
 #[cfg(feature = "js")]
 fn xp_advanced(before: [Option<i32>; 4], after: [Option<i32>; 4]) -> bool {
-    before
-        .into_iter()
-        .zip(after)
-        .any(|(before, after)| matches!((before, after), (Some(before), Some(after)) if after > before))
+    before.into_iter().zip(after).any(
+        |(before, after)| matches!((before, after), (Some(before), Some(after)) if after > before),
+    )
 }
 
 #[cfg(feature = "js")]
@@ -529,7 +528,9 @@ impl FeatureCase for NativeNpcCombat {
 
             if member.active_started && !self.stopped {
                 if !running {
-                    return Err(format!("native_npc_combat isolate stopped before Stop: {name}"));
+                    return Err(format!(
+                        "native_npc_combat isolate stopped before Stop: {name}"
+                    ));
                 }
                 let fresh_xp = member
                     .baseline_xp
@@ -556,9 +557,9 @@ impl FeatureCase for NativeNpcCombat {
                     member.owned
                         && running
                         && member.proof_tick.is_some()
-                        && facts
-                            .progress_tick
-                            .is_some_and(|tick| facts.tick.saturating_sub(tick) <= PROGRESS_BUDGET_TICKS),
+                        && facts.progress_tick.is_some_and(|tick| {
+                            facts.tick.saturating_sub(tick) <= PROGRESS_BUDGET_TICKS
+                        }),
                 );
             }
             observation.proved += usize::from(member.proof_tick.is_some());
@@ -662,7 +663,9 @@ mod tests {
             .iter()
             .all(|step| !matches!(step.kind, scenario::StepKind::StartScript)));
 
-        let names: Vec<_> = (0..SITES.len()).map(|index| format!("bot{index}")).collect();
+        let names: Vec<_> = (0..SITES.len())
+            .map(|index| format!("bot{index}"))
+            .collect();
         let fleet = build(&names).unwrap();
         for (index, site) in SITES.iter().enumerate() {
             assert!(!site.spawns.is_empty());
@@ -678,10 +681,12 @@ mod tests {
                 let [other_min_x, other_min_z, other_max_x, other_max_z, 0] = other.area() else {
                     unreachable!()
                 };
-                assert!(max_x < other_min_x
-                    || other_max_x < min_x
-                    || max_z < other_min_z
-                    || other_max_z < min_z);
+                assert!(
+                    max_x < other_min_x
+                        || other_max_x < min_x
+                        || max_z < other_min_z
+                        || other_max_z < min_z
+                );
             }
             let seed = fleet.seed(index, &names).unwrap();
             assert!(seed.steps.iter().any(|step| matches!(
@@ -716,7 +721,10 @@ mod tests {
             assert_eq!(request.area.as_ref(), &[site.area()]);
             assert_eq!(request.radius, 30);
             assert_eq!(request.budget_ticks, FIGHT_BUDGET_TICKS);
-            assert_eq!(request.melee_mode, Some(script::combat::MeleeMode::Aggressive));
+            assert_eq!(
+                request.melee_mode,
+                Some(script::combat::MeleeMode::Aggressive)
+            );
             assert!(!request.prayer && !request.food && !request.potions);
         }
     }
@@ -725,7 +733,10 @@ mod tests {
     fn proof_accounting_requires_fresh_post_activation_xp_and_bounds_continuation() {
         let baseline = [Some(100), Some(100), Some(100), Some(100)];
         assert!(!xp_advanced(baseline, baseline));
-        assert!(xp_advanced(baseline, [Some(100), Some(100), Some(101), Some(100)]));
+        assert!(xp_advanced(
+            baseline,
+            [Some(100), Some(100), Some(101), Some(100)]
+        ));
         assert!(!xp_advanced([None; 4], [Some(100); 4]));
 
         let activation_tick = 50;
