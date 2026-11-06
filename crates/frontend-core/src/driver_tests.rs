@@ -1365,11 +1365,24 @@ fn walk_to_without_a_confirmed_destination_is_refused_and_arms_nothing() {
     );
     // A staged walk over a map with no picked destination: the map
     // refuses it the same way, and no route is armed.
-    let context = crate::walk_map::WalkMapContext::browsing(
-        nav_planner::map::identity::Digest([0; 32]),
-        None,
-        1,
-    );
+    let world = std::sync::Arc::new(nav_planner::world::NavWorld::from_parts(
+        nav_planner::collision::WorldCollision {
+            origin: api::snapshot::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 1,
+            height: 1,
+            walk: vec![0; 4],
+            blocked: vec![0],
+            flags: None,
+        },
+        nav_planner::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+    let lease = nav_planner::producer::lease(&world).expect("test navigation lease");
+    let context = crate::walk_map::WalkMapContext::browsing(lease.identity().pack(), None, 1);
     let mut map = crate::walk_map::WalkMap::new();
     d.models_mut().map_mut().stage_walk_to(
         &mut map,

@@ -809,11 +809,6 @@ impl WalkMapCacheError {
     pub(crate) fn map_error(error: MapError) -> Self {
         Self(Box::new(host_play::map_cache::MapCacheError::Map(error)))
     }
-    pub(crate) fn message(message: &'static str) -> Self {
-        Self(Box::new(host_play::map_cache::MapCacheError::Message(
-            message.into(),
-        )))
-    }
 }
 
 impl fmt::Display for WalkMapCacheError {

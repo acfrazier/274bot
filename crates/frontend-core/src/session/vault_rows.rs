@@ -206,7 +206,7 @@ mod tests {
             path: path.clone(),
         });
         let request = RequestId::isolate(1).unwrap();
-        let mut session = OperatorSession::<()>::new(crate::launch::InstancePermit::skip());
+        let mut session = OperatorSession::<()>::open(crate::launch::InstancePermit::skip());
 
         remember_vault_refusal(&mut session, request, &error);
 
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn unrelated_vault_errors_do_not_create_saved_format_refusals() {
         let request = RequestId::isolate(2).unwrap();
-        let mut session = OperatorSession::<()>::new(crate::launch::InstancePermit::skip());
+        let mut session = OperatorSession::<()>::open(crate::launch::InstancePermit::skip());
         let error = UnlockError::from_vault(vault::VaultError::WrongPassphrase);
 
         remember_vault_refusal(&mut session, request, &error);
