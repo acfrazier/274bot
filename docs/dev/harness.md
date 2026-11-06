@@ -1276,6 +1276,9 @@ the single-account pilot and ten-account fleet. Both phases prepare the same
 accounts and accepted API v2 NativeTick isolates. The active consumer repeatedly
 requests real NPC fights; the control never requests Combat. Every active account
 must show native ownership, fresh post-activation combat XP and current work.
+An accepted isolate's `Starting` state stays pending within the same proof
+budget. It earns no active, continuing or fresh-XP proof credit. Idle, Paused,
+Stopping and Error still fail before normal Stop.
 Engagement evidence accepts only non-negative integer target indices from the
 named Combat status field.
 Normal Stop observations retain the actual owner and Idle state. This lane

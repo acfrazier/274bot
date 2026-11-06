@@ -492,7 +492,6 @@ impl FeatureCase for NativeNpcCombat {
             let slot = slot
                 .lock()
                 .map_err(|_| "native NPC Combat slot unavailable")?;
-            let running = slot.state() == script::RunState::Running;
             let status = slot.native_status();
             let is_combat_status = status.as_ref().is_some_and(|status| {
                 status.card.0 == "CombatSession"
@@ -530,11 +529,7 @@ impl FeatureCase for NativeNpcCombat {
             });
 
             if member.active_started && !self.stopped {
-                if !running {
-                    return Err(format!(
-                        "native_npc_combat isolate stopped before Stop: {name}"
-                    ));
-                }
+                let running = active_isolate_running(slot.state(), name)?;
                 let fresh_xp = member
                     .baseline_xp
                     .zip(Some(facts.combat_xp))
@@ -543,7 +538,12 @@ impl FeatureCase for NativeNpcCombat {
                     .activation_tick
                     .zip(facts.progress_tick)
                     .is_some_and(|(activation, progress)| progress > activation);
-                if member.proof_tick.is_none() && member.owned && fresh_xp && fresh_progress {
+                if member.proof_tick.is_none()
+                    && running
+                    && member.owned
+                    && fresh_xp
+                    && fresh_progress
+                {
                     member.proof_tick = facts.progress_tick;
                 }
                 if member.proof_tick.is_none()
@@ -623,6 +623,17 @@ impl FeatureCase for NativeNpcCombat {
                 })
             }).collect::<Vec<_>>()
         })
+    }
+}
+
+#[cfg(feature = "js")]
+fn active_isolate_running(state: script::RunState, name: &str) -> Result<bool, String> {
+    match state {
+        script::RunState::Running => Ok(true),
+        script::RunState::Starting => Ok(false),
+        _ => Err(format!(
+            "native_npc_combat isolate stopped before Stop: {name}"
+        )),
     }
 }
 
@@ -729,6 +740,20 @@ mod tests {
                 Some(script::combat::MeleeMode::Aggressive)
             );
             assert!(!request.prayer && !request.food && !request.potions);
+        }
+    }
+
+    #[test]
+    fn starting_is_pending_and_other_nonrunning_states_fail_closed() {
+        assert!(!active_isolate_running(script::RunState::Starting, "bot").unwrap());
+        assert!(active_isolate_running(script::RunState::Running, "bot").unwrap());
+        for state in [
+            script::RunState::Idle,
+            script::RunState::Paused,
+            script::RunState::Stopping,
+            script::RunState::Error,
+        ] {
+            assert!(active_isolate_running(state, "bot").is_err());
         }
     }
 
