@@ -172,6 +172,14 @@ fn real_revision_377_routes_and_transports() {
 #[ignore = "requires an explicitly baked revision-377 NAV_377_PACK"]
 fn real_revision_377_wheat_gates_connect_lumbridge() {
     let world = NavWorld::load_pack(&required_path("NAV_377_PACK")).unwrap();
+    for (id, at) in [(73, tile(3007, 3516, 0)), (74, tile(3007, 3515, 0))] {
+        assert!(
+            !world.graph.edges.iter().any(|edge| {
+                edge.kind == TransportKind::Door && edge.loc_id == id && edge.at == at
+            }),
+            "Black Knights' Fortress refuses door {id} at {at:?}"
+        );
+    }
     for (id, at, open_id) in [
         (1551, tile(3163, 3290, 0), 1552),
         (1553, tile(3162, 3290, 0), 1556),
