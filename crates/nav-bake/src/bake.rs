@@ -1332,6 +1332,13 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
     )?;
     let mut notes = Vec::new();
 
+    // Revision 377 names these configs through loc.pack. Empty name lookup
+    // preserves the numeric-only 274/289 parser, including open-stage ids.
+    let door_names = if request.revision == Some(377) {
+        crate::transport::loc_ids_by_name(content_root)
+    } else {
+        HashMap::new()
+    };
     // Openable wall door loc ids from the Server door configs.
     let mut door_ids = HashSet::new();
     // Closed door id -> the id it becomes when opened, from the same configs.
@@ -1342,8 +1349,8 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
         let path = request.doors_dir.join(name);
         match std::fs::read_to_string(&path) {
             Ok(text) => {
-                door_ids.extend(crate::pack::parse_door_config(&text));
-                door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &HashMap::new()));
+                door_ids.extend(crate::pack::parse_door_config_ids(&text, &door_names));
+                door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &door_names));
                 parsed_door_configs.push(path);
             }
             Err(e) => {
@@ -1366,8 +1373,8 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
     // and source paths are passed to `door_edges` to avoid deriving them twice.
     match std::fs::read_to_string(request.gates) {
         Ok(text) => {
-            door_ids.extend(crate::pack::parse_door_config(&text));
-            door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &HashMap::new()));
+            door_ids.extend(crate::pack::parse_door_config_ids(&text, &door_names));
+            door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &door_names));
             parsed_door_configs.push(request.gates.to_path_buf());
         }
         Err(e) => {
