@@ -1256,8 +1256,9 @@ NPC Combat proof requires accepted native Combat ownership and fresh combat XP.
 The route case requires repeated host routing and ordinary arrivals.
 
 The native API fleet uses ten separate real normal-tree neighbourhoods.
-Its radius-12 resource areas do not overlap. Each seed proves a nearby live
-normal tree before starting. Only account positions change. The bronze axe,
+Its radius-12 resource areas do not overlap. The canonical collision pack checks
+every stand. Each seed proves a nearby live normal tree before starting.
+Only account positions change. The bronze axe,
 Woodcutting level, native Gatherer request and 240-game-tick yield deadline stay
 unchanged. Every active bot must still produce fresh XP and yield.
 The independent-site fixture supports the single-account pilot and ten-account
