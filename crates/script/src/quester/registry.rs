@@ -1644,11 +1644,11 @@ fn document_uses_gathering(document: &PathDocument) -> bool {
 }
 
 #[cfg(test)]
-#[path = "journal_377_tests.rs"]
-mod journal_377_tests;
-#[cfg(test)]
 #[path = "batch2_377_tests.rs"]
 mod batch2_377_tests;
+#[cfg(test)]
+#[path = "journal_377_tests.rs"]
+mod journal_377_tests;
 
 #[cfg(test)]
 mod tests {
