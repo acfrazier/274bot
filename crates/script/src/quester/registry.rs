@@ -1759,6 +1759,19 @@ mod tests {
             assert_eq!(registry.path_source("cook"), PathSource::Bundled);
             let bytes = registry.bytes("cook").unwrap();
             assert_ne!(bytes.as_ref(), bundled_path("cook").unwrap());
+            let document: serde_json::Value = serde_json::from_slice(bytes.as_ref()).unwrap();
+            let bin = document["quest"]["acquire"]["acquire:flour"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|step| step["id"] == "empty-millbase")
+                .unwrap();
+            let config = bin["args"]["target"]["loc"].as_str().unwrap();
+            assert_eq!(
+                selected.loc_by_config(config).unwrap().id,
+                1781,
+                "target the placed millbase, not its visible morph leaf"
+            );
             let compiled = compile::compile_path(
                 bytes.as_ref(),
                 &selected,
