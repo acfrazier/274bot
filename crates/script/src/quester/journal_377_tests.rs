@@ -204,10 +204,9 @@ fn sheep_377_path_targets_shearable_forms_and_prefers_freds_hand_in() {
 
 #[test]
 fn romeo_377_missing_message_path_skips_juliet_detour() {
-    let document: serde_json::Value = serde_json::from_slice(
-        bundled_path_for(ClientRevision::R377, "romeojuliet").unwrap(),
-    )
-    .unwrap();
+    let document: serde_json::Value =
+        serde_json::from_slice(bundled_path_for(ClientRevision::R377, "romeojuliet").unwrap())
+            .unwrap();
     let sequence = document["roles"][0]["sequences"]
         .as_array()
         .unwrap()
