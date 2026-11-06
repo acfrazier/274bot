@@ -56,6 +56,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   caches, native partner trade, the native API owner and repeated host routing.
   Each has an explicit feature-not-used control. Counts and retained-state
   evidence remain separate from the common Thiever A/B lane.
+  The native API fleet uses separate real tree sites instead of competing for
+  one resource patch. Every active account still needs fresh XP and yield.
 
 ### Fixed during development
 

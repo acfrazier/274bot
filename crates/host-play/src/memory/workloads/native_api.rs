@@ -38,6 +38,24 @@ export function tick(api) {
 }
 "#;
 
+// Real normal-tree clusters from selected-289 gathering placements in maps
+// m45_52, m46_49, m46_50, m47_51, m47_52, m48_50, m49_50, m49_54 and m51_53.
+// Radius-12 resource neighbourhoods do not overlap. Normal trees deplete after
+// one log for 60..=199 game ticks, so a shared stand cannot prove all ten owners.
+#[cfg(feature = "js")]
+const STANDS: [(i32, i32); 10] = [
+    (3109, 3228),
+    (3175, 3220),
+    (3190, 3253),
+    (3015, 3269),
+    (2993, 3240),
+    (2994, 3201),
+    (3046, 3328),
+    (2906, 3375),
+    (3294, 3438),
+    (3163, 3471),
+];
+
 #[cfg(feature = "js")]
 #[derive(Clone, Copy, Default)]
 struct Facts {
@@ -101,6 +119,30 @@ impl FeatureCase for NativeApi {
             .position(|step| matches!(step.kind, scenario::StepKind::StartScript))
             .ok_or("Gatherer seed lacks its Start boundary")?;
         seed.steps.truncate(start);
+        let &(x, z) = STANDS.get(slot).ok_or("native API seed has no tree site")?;
+        let tree = seed
+            .steps
+            .iter()
+            .position(|step| matches!(step.wait.arm, scenario::Proof::LocIdNear { id: 1276, .. }))
+            .ok_or("Gatherer seed lacks its real normal-tree proof")?;
+        let stand = tree
+            .checked_sub(1)
+            .filter(|&index| matches!(seed.steps[index].wait.arm, scenario::Proof::Arrived { .. }))
+            .ok_or("Gatherer tree proof lacks its preceding stand")?;
+        seed.steps[stand].name = "stand in this member's independent normal-tree neighbourhood";
+        seed.steps[stand].kind = scenario::StepKind::Perform {
+            send: Box::new(move |client, _| {
+                api::interact::cheat(client, &api::interact::tele_args(0, x, z)).is_sent()
+            }),
+        };
+        seed.steps[stand].wait.arm = scenario::Proof::Arrived { x, z, level: 0 };
+        seed.steps[tree].wait.arm = scenario::Proof::LocIdNear {
+            id: 1276,
+            x,
+            z,
+            level: 0,
+            radius: 6,
+        };
         let facts = Arc::clone(&self.slots[slot].facts);
         seed.steps.push(scenario::Step {
             name: "observe the real native API workload without sending actions",
@@ -275,5 +317,123 @@ impl FeatureCase for NativeApi {
                     "last_progress_tick": member.progress_tick})
             }).collect::<Vec<_>>()
         })
+    }
+}
+
+#[cfg(all(test, feature = "js"))]
+mod tests {
+    use super::*;
+    use api::selected::{EntityId, Knowledge};
+    use api::snapshot::WorldTile;
+
+    #[test]
+    fn fleet_seeds_keep_disjoint_tree_proofs_and_original_budgets() {
+        let names: Vec<_> = (0..STANDS.len())
+            .map(|index| format!("tree{index}"))
+            .collect();
+        let case = build(&names).unwrap();
+        for (index, &(x, z)) in STANDS.iter().enumerate() {
+            let seed = case.seed(index, &names).unwrap();
+            let tree = seed
+                .steps
+                .iter()
+                .position(|step| {
+                    matches!(step.wait.arm, scenario::Proof::LocIdNear { id: 1276, .. })
+                })
+                .unwrap();
+            assert!(matches!(
+                seed.steps[tree - 1].wait.arm,
+                scenario::Proof::Arrived { x: sx, z: sz, level: 0 } if (sx, sz) == (x, z)
+            ));
+            assert!(matches!(
+                seed.steps[tree].wait.arm,
+                scenario::Proof::LocIdNear { id: 1276, x: sx, z: sz, level: 0, radius: 6 }
+                    if (sx, sz) == (x, z)
+            ));
+            assert_eq!(seed.steps[tree - 1].wait.budget_ticks, 120);
+            assert_eq!(seed.steps[tree].wait.budget_ticks, 120);
+            assert!(seed.settings.start_script.is_none());
+            assert!(seed
+                .steps
+                .iter()
+                .all(|step| !matches!(step.kind, scenario::StepKind::StartScript)));
+            for &(other_x, other_z) in &STANDS[index + 1..] {
+                assert!(
+                    (x - other_x).abs().max((z - other_z).abs()) > 24,
+                    "radius-12 resource neighbourhoods must not overlap"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fleet_stands_are_walkable_with_multiple_real_normal_trees() {
+        let Some(pack) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "canonical R289 pack for independent native API tree stands",
+        ) else {
+            return;
+        };
+        if api::test_support::local_asset_path(
+            "",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../api/data/game-data/289/gathering.json"
+            ),
+            "R289 gathering facts for independent native API tree stands",
+        )
+        .is_none()
+        {
+            return;
+        }
+        let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let input = script::preparation::PreparationInput::new(
+            289,
+            std::mem::size_of::<Arc<api::game_data::SelectedGameData>>(),
+            2 * 1024 * 1024,
+            2 * 1024 * 1024,
+        )
+        .unwrap()
+        .with_gathering_family_decode();
+        let catalog = script::preparation::submit(
+            script::preparation::PreparationKind::Profile,
+            api::identity::Scope::Process,
+            input,
+            move |worker| selected.prepare_gathering(worker),
+        )
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let method = catalog.method("woodcutting.normal").unwrap();
+        let Knowledge::Known(spots) = &method.spots else {
+            panic!("normal-tree placements must be known");
+        };
+        let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
+        for &(x, z) in &STANDS {
+            let tile = WorldTile { x, z, level: 0 };
+            assert!(world.collision.standable(tile), "tree stand {tile:?}");
+            assert!(
+                spots.iter().any(|spot| {
+                    spot.entity == EntityId::Loc(1276)
+                        && spot.origin.level == 0
+                        && (spot.origin.x - x).abs().max((spot.origin.z - z).abs()) <= 6
+                }),
+                "stand {tile:?} needs its original live-tree proof"
+            );
+            let trees = spots
+                .iter()
+                .filter(|spot| {
+                    spot.origin.level == 0
+                        && (spot.origin.x - x).abs().max((spot.origin.z - z).abs()) <= 12
+                })
+                .count();
+            assert!(
+                trees >= 2,
+                "stand {tile:?} needs multiple real normal trees"
+            );
+            eprintln!("native API tree stand {tile:?}: {trees} real normal trees in radius 12");
+        }
     }
 }

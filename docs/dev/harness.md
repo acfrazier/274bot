@@ -1253,6 +1253,12 @@ Trade proof uses paired native actors, decoded confirm lists and actual handoff.
 The native API case requires an accepted native owner and fresh resource yield.
 The route case requires repeated host routing and ordinary arrivals.
 
+The native API fleet uses ten separate real normal-tree neighbourhoods.
+Its radius-12 resource areas do not overlap. Each seed proves a nearby live
+normal tree before starting. Only account positions change. The bronze axe,
+Woodcutting level, native Gatherer request and 240-game-tick yield deadline stay
+unchanged. Every active bot must still produce fresh XP and yield.
+
 The measured V8 runtime uses the shipped settings. The object-cache lane reports
 actual V8 heaps, cache reuse and shared identities. The existing internal V8 test
 separately checks fast properties and its used-heap bound. The measured binary
