@@ -15,7 +15,7 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 - **Empty bucket:** the same OBJ section has ID 1925 at plane 0, local `(25,30)` (`m50_51.jm2:7984`); `pack/obj.pack:1926` maps it to `bucket_empty`, world tile `(3225,3294,0)`.
 - **Empty pot:** `maps/m50_50.jm2:10731` places OBJ 1931 at plane 0, local `(9,14)`; `pack/obj.pack:1932` maps it to `pot_empty`, world tile `(3209,3214,0)`. The Path takes this ground spawn; it does not assume a purchase.
 - **Milk:** the milkable target is the `fat_cow` location, not a generic cow NPC. `maps/m50_51.jm2:7329` places LOC 8689 at plane 0, local `(52,11)`; `pack/loc.pack:8690` maps 8689 to `fat_cow`; `all.loc:53381-53394` names it “Dairy Cow” and gives it `op1=Milk`. Chunk `(50,51)` resolves to `(3252,3275,0)`. `general_use/cow_milking.rs2:19-50` implements the location and its use-on handler: an empty bucket is consumed and `bucket_milk` is produced.
-- **Wheat:** `maps/m49_51.jm2:5323` places LOC 5583 at plane 0, local `(22,36)`; `pack/loc.pack:5584` maps it to `wheat_tall`. `all.loc:39416-39427` labels it Wheat and defines Pick; `general_use/scripts/pickables.rs2:13-29` produces `grain`. The world tile is `(3158,3300,0)`.
+- **Wheat:** `maps/m49_51.jm2:5275` places LOC 5584 at plane 0, local `(21,35)`; `pack/loc.pack:5585` maps it to `wheat_small`. `all.loc:39429-39441` labels it Wheat and defines Pick; `general_use/scripts/pickables.rs2:14-29` produces `grain` through the explicit `wheat_small` trigger. The world tile is `(3157,3299,0)`. The nearby `wheat_tall` (5583) advertises Pick but has no trigger in this source; the Path does not target it.
 
 ## Windmill flour sequence
 
@@ -29,4 +29,4 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 
 The full direct-call inventory and explicit partial-surface notes are in `/Volumes/dev-scratch/fairy-ring-evidence/QUESTER-377-1106/quest-candidates.md`. A `send_quest_complete` occurrence is only a static terminal marker, not proof of a full path or runtime capability.
 
-Cook's Assistant completion is source-backed end to end through the three items, windmill, positive dialogue branch, and quest-colour transition. The separate Lumbridge range handler is still explicitly TODO (`quest_cook.rs2:93-101`); range cooking is not part of this Path and is not claimed implemented. No cargo, test, lint, formatting, smoke, or live check was run here; the parent owns validation and the live witness.
+Cook's Assistant completion is source-backed end to end through the three items, windmill, positive dialogue branch, and quest-colour transition. The separate Lumbridge range handler is still explicitly TODO (`quest_cook.rs2:93-101`); range cooking is not part of this Path and is not claimed implemented.
