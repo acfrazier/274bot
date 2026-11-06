@@ -5000,6 +5000,50 @@ fn revision_289_pending_door_step_matches_primary_bytes() {
 }
 
 #[test]
+fn selected_pending_door_step_matches_client_movement_bytes() {
+    let seed = [1, 2, 3, 4];
+    for revision in [ClientRevision::R289, ClientRevision::R377] {
+        let mut s = scene_revision(revision);
+        s.client.local_player = Some(ClientPlayer::at(5, 5));
+        s.client.gens.player += 1;
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&s.client);
+        let tile = WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0,
+        };
+        let mut control = configured_client_revision(revision);
+        control.local_player = Some(ClientPlayer::at(5, 5));
+        control.out.random = Some(Isaac::new(&seed));
+        assert!(walk(&mut control, tile.x, tile.z));
+        let mut driver = configured_client_revision(revision);
+        driver.out.random = Some(Isaac::new(&seed));
+        let result = Interactions::new(&snap, &mut driver).pending_door_step(tile);
+        assert!(
+            matches!(result, SendResult::Sent { .. }),
+            "{revision:?} door step must not be DriverRejected: {result:?}"
+        );
+        assert_eq!(
+            &driver.out.data()[..driver.out.pos],
+            &control.out.data()[..control.out.pos],
+            "{revision:?} door step must match the native one-tile movement codec"
+        );
+        assert_eq!(driver.out.pos, 7, "one opcode, one length and five body bytes");
+    }
+}
+
+#[test]
+fn unbound_377_driver_refuses_pending_door_step_without_writing() {
+    let mut driver = Recorder {
+        revision: ClientRevision::R377,
+        ..Recorder::default()
+    };
+    assert!(!driver.send_pending_door_step(3205, 3206));
+    assert!(driver.out.0.is_empty());
+}
+
+#[test]
 fn pending_door_packet_matches_client_one_tile_walk() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let mut c = Client::new_with_revision(cfg(), revision);
