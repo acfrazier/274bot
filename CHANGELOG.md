@@ -80,6 +80,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Quester
 
+- Revision-377 Doric's Quest mines its clay and copper at Rimmington rather
+  than waiting for roaming imps to drop clay. Iron still comes from dwarves,
+  without requiring Mining level 15. Imp Catcher's hunting area now includes
+  the source-defined imp wandering and teleport range.
+
 - Adds revision-377 Quester admission and a source-backed Cook's Assistant
   guide. It uses the selected revision's Path roster and game data. Missing
   tables refuse explicitly; revision-289 guides do not fill revision-377 gaps.
