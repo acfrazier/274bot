@@ -1598,7 +1598,6 @@ impl FollowRun {
         }
         let unresolved = match evidence {
             None => gates.gates().into(),
-            Some(evidence) if evidence.family() != gates.family() => Vec::new().into(),
             Some(evidence) => gates
                 .gates()
                 .iter()

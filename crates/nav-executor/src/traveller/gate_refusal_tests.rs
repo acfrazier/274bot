@@ -4,7 +4,6 @@ use client::config::if_type::{ButtonType, ComponentType};
 use client::config::{IfType, IfTypeMut};
 use client::io::ServerProt;
 use nav_planner::quest_gates::QuestGates;
-use nav_planner::test_support::family;
 use std::sync::Arc;
 
 use crate::traveller::CrossingPass;
@@ -15,13 +14,10 @@ const PASS: &str = "You pass through the barrier.";
 fn gated_shantay_edge() -> TransportEdge {
     let mut edge = shantay_edge();
     edge.quest_gates = Some(
-        QuestGates::new(
-            family(7),
-            [
-                QuestGate::Complete(FactKey::new("druidspirit")),
-                QuestGate::Complete(FactKey::new("priestperil")),
-            ],
-        )
+        QuestGates::new([
+            QuestGate::Complete(FactKey::new("druidspirit")),
+            QuestGate::Complete(FactKey::new("priestperil")),
+        ])
         .expect("valid gates"),
     );
     edge

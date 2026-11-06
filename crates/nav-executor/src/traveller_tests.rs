@@ -1339,7 +1339,7 @@ fn follow_blocks_transport_when_worn_all_item_is_only_carried() {
 fn gated_transport_rechecks_evidence_after_approach_before_send() {
     use api::selected::Truth;
     use nav_planner::quest_gates::QuestGates;
-    use nav_planner::test_support::{family, range, tbwt_evidence, window};
+    use nav_planner::test_support::{range, tbwt_evidence, window};
 
     let proven = tbwt_evidence(range(Some(3), Some(3)));
     let blocked = tbwt_evidence(range(Some(4), Some(4)));
@@ -1361,7 +1361,7 @@ fn gated_transport_rechecks_evidence_after_approach_before_send() {
             ..FollowRec::default()
         };
         let mut edge = ladder_edge();
-        edge.quest_gates = Some(QuestGates::new(family(1), [gate.clone()]).unwrap());
+        edge.quest_gates = Some(QuestGates::new([gate.clone()]).unwrap());
         assert_eq!(
             edge.quest_gates.as_ref().unwrap().test(Some(&proven)),
             Truth::True
