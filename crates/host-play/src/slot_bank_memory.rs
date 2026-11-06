@@ -739,6 +739,8 @@ mod tests {
             "schema_version": super::super::local_state::HINT_SCHEMA_VERSION,
             "profile": PROFILE,
             "account": account,
+            "revision": 289,
+            "content": CONTENT,
             "observed_at_unix": at,
             "rows": rows,
         }))
