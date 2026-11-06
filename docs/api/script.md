@@ -789,6 +789,13 @@ bound can avoid that exact ID/tile/plane for ten ticks. The third true failure
 excludes the key for the run. Capacity and duplicate refusals remain typed.
 Exact-ground reach refusals never enter the legacy door fallback.
 
+`use_on.target.npc` accepts one symbolic config name or a nonempty array of
+fungible alternatives, for example `["sheepunsheered", "sheepunsheered3"]`.
+All names resolve in the selected revision. The same reachable-target chooser
+ranks every authored type together and keeps the placed NPC index on dispatch;
+a same-name NPC outside the selected types is not eligible. A string keeps
+its existing single-type behavior.
+
 `use_on` accepts `target: {"ground": "blackcog", "tile": [2613,9639,0],
 "source": "content provenance"}`. The optional tile selects an exact ground
 stack; source and target item ids remain explicit. Inventory-item targets
