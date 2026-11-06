@@ -970,7 +970,7 @@ export async function tick(api) {
   catch (e) { globalThis.__if = String(e); }
 }
 "#;
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1017,7 +1017,7 @@ export function tick(api) {
   };
 }
 "#;
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1273,7 +1273,7 @@ export function tick(api) {
   };
 }
 "#;
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1339,7 +1339,7 @@ export function tick(api) {
   };
 }
 "#;
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1400,7 +1400,7 @@ export async function tick(api) {
   };
 }
 "#;
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();

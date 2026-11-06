@@ -33,7 +33,7 @@ fn start(
 
 #[test]
 fn idle_isolates_never_acquire_the_family_and_consumers_release_it() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();

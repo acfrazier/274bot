@@ -600,7 +600,7 @@ fn begin_allocates_a_new_token_and_pause_emits_wait() {
 
 #[test]
 fn v2_bank_run_calls_the_leave_hook_and_stops_when_it_fails() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -657,7 +657,7 @@ export async function tick(api) {
 
 #[test]
 fn v2_bank_run_uses_the_native_bank_open_child_and_bounds_a_rejected_dispatch() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 

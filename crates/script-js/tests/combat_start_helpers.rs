@@ -81,7 +81,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn ranged_loadout_distinguishes_dart_custom_thrown_and_bow() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -174,7 +174,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn food_forms_are_generated_aliases_and_count_slots() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
@@ -220,7 +220,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn food_options_come_from_selected_289_fixed_heal_facts() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();

@@ -160,7 +160,7 @@ fn missing_controls_throw_and_do_not_send() {
 
 #[test]
 fn unknown_spell_refuses_without_send() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -189,7 +189,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn staff_not_attached_refuses_without_send() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -205,8 +205,8 @@ fn staff_not_attached_refuses_without_send() {
 
 #[test]
 fn initially_armed_reads_posted_varp_on_both_selected_caches() {
-    if !local_game_data::local_game_data_available(274)
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -245,7 +245,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn native_autocast_does_not_roundtrip_js_snapshot_observations() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -278,7 +278,7 @@ fn native_autocast_does_not_roundtrip_js_snapshot_observations() {
 
 #[test]
 fn arm_three_presses_across_delta_omissions_then_posted_armed_state() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -335,7 +335,7 @@ fn arm_three_presses_across_delta_omissions_then_posted_armed_state() {
 
 #[test]
 fn stale_chooser_times_out_after_choose() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -360,7 +360,7 @@ fn stale_chooser_times_out_after_choose() {
 
 #[test]
 fn pause_and_hold_freeze_mid_arm_without_late_press() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);
@@ -413,7 +413,7 @@ fn pause_and_hold_freeze_mid_arm_without_late_press() {
 // settled `message` and is what the caller's `log` receives.
 #[test]
 fn a_timed_out_press_logs_the_frozen_line_from_rust() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = spawn(ARM);

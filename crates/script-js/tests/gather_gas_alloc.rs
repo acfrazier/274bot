@@ -62,7 +62,7 @@ fn tick_events(iso: &LoadIsolate, tick: u64, checks: u32) -> (usize, serde_json:
 
 #[test]
 fn repeated_membership_checks_allocate_nothing_after_the_first_touch() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();

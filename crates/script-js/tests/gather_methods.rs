@@ -128,8 +128,8 @@ fn helper_ok(value: serde_json::Value) -> serde_json::Value {
 
 #[test]
 fn v2_methods_are_sync_helper_results_with_locked_errors() {
-    if !local_game_data::local_game_data_available(274)
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -254,7 +254,7 @@ export function tick(api) {
 
 #[test]
 fn v2_install_is_typed_not_a_json_op_or_interact() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let value = probe(
@@ -404,8 +404,8 @@ export function tick(api) {
 
 #[test]
 fn v2_placements_are_sync_helper_results_with_locked_errors() {
-    if !local_game_data::local_game_data_available(274)
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -532,7 +532,7 @@ export function tick(api) {
 
 #[test]
 fn example_gather_methods_v2_is_one_read_only_fact_call() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -567,7 +567,7 @@ fn example_gather_methods_v2_is_one_read_only_fact_call() {
 
 #[test]
 fn example_gather_placements_v2_is_one_read_only_fact_call() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -613,8 +613,8 @@ fn example_gather_placements_v2_is_one_read_only_fact_call() {
 
 #[test]
 fn frozen_gas_rock_set_skips_gas_variants_on_the_coal_query_path() {
-    if !local_game_data::local_game_data_available(274)
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }

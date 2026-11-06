@@ -112,7 +112,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn a_bank_walk_across_a_reconnect_goes_on_to_open_the_bank() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -276,7 +276,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn kept_bank_transfer_steps_take_the_closed_bank_path_without_replay() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -402,7 +402,7 @@ export default class T extends LoopingBot {{
 
 #[test]
 fn non_kept_reset_aborts_bank_opening_and_settles_its_promise_once() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 

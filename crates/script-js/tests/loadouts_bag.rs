@@ -66,7 +66,7 @@ fn loadout_combo_resolves_from_store_names_in_script_crate() {
 
 #[test]
 fn isolate_accessors_read_slots_quantities_and_food() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     use api::loadout::Loadout;
@@ -169,10 +169,10 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_provision_composes_fresh_bank_withdraw_and_wear() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 

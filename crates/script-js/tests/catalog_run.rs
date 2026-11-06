@@ -11,7 +11,7 @@ mod local_game_data;
 
 #[test]
 fn bank_picker_import_links_and_awaits_host_selection() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     use api::named_banks::{NamedBank, NamedBankFacts};
@@ -120,7 +120,7 @@ export default class Probe extends LoopingBot {
 
 #[test]
 fn bank_v2_selection_publishes_the_typed_seat_result() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     use api::named_banks::{NamedBank, NamedBankFacts};
@@ -241,7 +241,7 @@ export function tick(api) {
 
 #[test]
 fn bank_v2_replacement_supersedes_the_waiter_and_rejects_its_late_publication() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     use api::named_banks::{NamedBank, NamedBankFacts};

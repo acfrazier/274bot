@@ -669,7 +669,7 @@ fn expected_npc_op(name: &str, action: &str) -> InteractReq {
 
 #[test]
 fn npc_pickpocket_clicks_through_open_chat_modal() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = thieving_data();
@@ -692,7 +692,7 @@ fn npc_pickpocket_clicks_through_open_chat_modal() {
 
 #[test]
 fn npc_pickpocket_rowless_zealot_defaults_to_level_one() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = thieving_data();
@@ -719,7 +719,7 @@ fn npc_pickpocket_rowless_zealot_defaults_to_level_one() {
 
 #[test]
 fn npc_pickpocket_does_not_gate_on_unobserved_inventory() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = thieving_data();
@@ -742,7 +742,7 @@ fn npc_pickpocket_does_not_gate_on_unobserved_inventory() {
 
 #[test]
 fn npc_steal_from_clicks_through_unknown_chat_state() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = thieving_data();
@@ -765,7 +765,7 @@ fn npc_steal_from_clicks_through_unknown_chat_state() {
 
 #[test]
 fn npc_pickpocket_gate_uses_effective_not_base_thieving() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = thieving_data();

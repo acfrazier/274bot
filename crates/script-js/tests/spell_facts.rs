@@ -98,7 +98,7 @@ fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
 
 #[test]
 fn posted_spell_db_and_staff_runes_construct_later_superheater_fire_staves() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -154,7 +154,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn casts_available_and_withdraw_list_use_rust_staff_substitution() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -201,7 +201,7 @@ export default class T extends LoopingBot {
 /// `runeWithdrawList` converts `casts` once per cost (`c.count * casts`).
 #[test]
 fn casts_available_calls_held_per_remaining_cost_in_order() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"

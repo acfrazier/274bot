@@ -74,7 +74,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let iso = spawn(PLAN_SRC);
@@ -125,7 +125,7 @@ fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
 
 #[test]
 fn aubury_selection_ranks_by_base_cost() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let src = r#"

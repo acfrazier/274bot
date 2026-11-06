@@ -50,7 +50,7 @@ fn spawn_from_card_folder(
 
 #[test]
 fn card_folder_evaluates_herbs_import_with_selected_facts() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let dir = scratch("autofighter-shaped");
@@ -85,7 +85,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn logic_sibling_evaluates_transitive_herbs_with_selected_facts() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let dir = scratch("herb-cleaner-shaped");

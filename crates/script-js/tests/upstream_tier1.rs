@@ -271,8 +271,8 @@ describe('outer', () => {
 
 #[test]
 fn upstream_tier1_runs_unmodified_sources_in_load() {
-    if !local_game_data::local_game_data_available(289)
-        || !local_fact_catalogs::local_fact_catalogs_available()
+    if !crate::local_game_data::local_game_data_available(289)
+        || !crate::local_fact_catalogs::local_fact_catalogs_available()
     {
         return;
     }
@@ -389,8 +389,8 @@ fn upstream_tier1_runs_unmodified_sources_in_load() {
 
 #[test]
 fn refrozen_runtime_members_load_and_refuse_by_name() {
-    if !local_game_data::local_game_data_available(289)
-        || !local_fact_catalogs::local_fact_catalogs_available()
+    if !crate::local_game_data::local_game_data_available(289)
+        || !crate::local_fact_catalogs::local_fact_catalogs_available()
     {
         return;
     }

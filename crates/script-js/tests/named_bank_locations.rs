@@ -146,8 +146,8 @@ fn post(iso: &mut BankSlot, fishing_base: i32, quests: &[QuestStatusInput<'_>]) 
 
 #[test]
 fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
-    if !local_bank_catalog::local_bank_catalog_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_bank_catalog::local_bank_catalog_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -193,8 +193,8 @@ fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
 
 #[test]
 fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
-    if !local_bank_catalog::local_bank_catalog_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_bank_catalog::local_bank_catalog_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -213,7 +213,7 @@ fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
 
 #[test]
 fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -264,8 +264,8 @@ fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
 /// A selected bank controls opening until native facts prove loaded stock.
 #[test]
 fn reachable_bank_continuations_open_npc_access_and_wait_for_loaded_stock() {
-    if !local_bank_catalog::local_bank_catalog_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_bank_catalog::local_bank_catalog_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }

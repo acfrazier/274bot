@@ -99,7 +99,7 @@ fn snapshot<'a>(
 
 #[test]
 fn snapshot_loot_and_equipment_are_not_implicitly_kept() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -142,8 +142,8 @@ export default class T extends LoopingBot {
 
 #[test]
 fn selected_revision_facts_cover_fire_giant_green_dragon_and_cake_shapes() {
-    if !local_game_data::local_game_data_available(274)
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }

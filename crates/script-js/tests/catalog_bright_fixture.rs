@@ -123,7 +123,7 @@ fn synthetic_bright_catalog_cards_stay_unloadable_clean() {
 
 #[test]
 fn synthetic_bright_catalog_cards_start_without_not_impl() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)

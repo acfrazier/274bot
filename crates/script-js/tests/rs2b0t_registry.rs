@@ -1253,8 +1253,8 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    if !local_game_data::local_game_data_available(274)
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -1379,7 +1379,7 @@ export default class T extends LoopingBot {
     );
     offline.join();
 
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let iso = LoadIsolate::spawn_with_game_data(

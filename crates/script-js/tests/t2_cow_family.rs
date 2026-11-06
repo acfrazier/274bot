@@ -283,8 +283,8 @@ fn toll_helpers_honor_enablement_coin_and_distance_boundaries() {
 
 #[test]
 fn bound_named_bank_facts_override_fallbacks_and_keep_destination_identity() {
-    if !local_bank_catalog::local_bank_catalog_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_bank_catalog::local_bank_catalog_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }

@@ -493,7 +493,7 @@ export default class ChickenShaped extends TaskBot {
 
 #[test]
 fn off_periodic_bank_validates_false_and_sends_nothing() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let mut iso = spawn(CHICKEN);
@@ -519,7 +519,7 @@ fn off_periodic_bank_validates_false_and_sends_nothing() {
 
 #[test]
 fn combat_suppresses_loot_count_trigger() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -546,7 +546,7 @@ fn combat_suppresses_loot_count_trigger() {
 
 #[test]
 fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -658,7 +658,7 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
 
 #[test]
 fn either_label_and_loot_count_label_both_trigger() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -702,7 +702,7 @@ export default class T extends TaskBot {
 /// status, destination, commonJunk and returnTo, then banks.
 #[test]
 fn validate_and_execute_call_the_options_in_frozen_order() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -761,7 +761,7 @@ export default class T extends TaskBot {
 /// PeriodicBank.ts:46–53 forwards that destination without changing priority.
 #[test]
 fn supplied_destination_is_a_fallback_and_local_access_still_wins() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -880,7 +880,7 @@ export default class T extends TaskBot {
 
 #[test]
 fn common_junk_true_deposits_gem_false_skips_it() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -936,7 +936,7 @@ export default class T extends TaskBot {
 
 #[test]
 fn missing_access_backs_off_without_retry_spam() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -964,13 +964,13 @@ fn missing_access_backs_off_without_retry_spam() {
 
 #[test]
 fn needs_step_refusal_backs_off_without_retry_spam() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
     // Cover both unsupported evidence at resolution and a supported owner
     // refusing its conversation before it can emit without consent.
-    let supported_data_available = local_game_data::local_game_data_available(289);
+    let supported_data_available = crate::local_game_data::local_game_data_available(289);
     for supported in [false, true] {
         if supported && !supported_data_available {
             continue;
@@ -1003,11 +1003,11 @@ fn needs_step_refusal_backs_off_without_retry_spam() {
 
 #[test]
 fn needs_step_refusal_still_tries_the_default_nearest_booth() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
-    let supported_data_available = local_game_data::local_game_data_available(289);
+    let supported_data_available = crate::local_game_data::local_game_data_available(289);
     for supported in [false, true] {
         if supported && !supported_data_available {
             continue;
@@ -1054,7 +1054,7 @@ fn needs_step_refusal_still_tries_the_default_nearest_booth() {
 
 #[test]
 fn pause_and_session_reset_drop_late_callback_and_sends() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -1124,7 +1124,7 @@ fn pause_and_session_reset_drop_late_callback_and_sends() {
 
 #[test]
 fn chicken_killer_closed_face_walks_approach_before_opening_the_same_booth() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -1184,7 +1184,7 @@ fn chicken_killer_closed_face_walks_approach_before_opening_the_same_booth() {
 
 #[test]
 fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -1254,7 +1254,7 @@ fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
 /// deposits through the caller's matcher once the list posts.
 #[test]
 fn bank_nearest_chest_destination_opens_through_the_access_row() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -1349,7 +1349,7 @@ export default class T extends LoopingBot {
 /// matcher's Promise is truthy, so the first backpack row is deposited.
 #[test]
 fn synchronous_options_are_not_awaited() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -1429,7 +1429,7 @@ export default class T extends TaskBot {
 /// the run fails closed and backs off with the frozen log line.
 #[test]
 fn an_adjacent_booth_without_an_approach_fact_fails_closed() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 
@@ -1460,7 +1460,7 @@ fn an_adjacent_booth_without_an_approach_fact_fails_closed() {
 
 #[test]
 fn nearby_scene_booth_beats_a_distant_preset_unless_disabled() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
 

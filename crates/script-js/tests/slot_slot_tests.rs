@@ -860,7 +860,7 @@ fn start_sherlock(incarnation: u64, data: Arc<api::game_data::SelectedGameData>)
 
 #[test]
 fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R274).expect("selected data");
@@ -933,7 +933,7 @@ fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
 
 #[test]
 fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R274).expect("selected data");
@@ -1046,7 +1046,7 @@ fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
 
 #[test]
 fn js_traversal_walk_remains_parked_across_reconnect() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).expect("selected data");
@@ -1148,7 +1148,7 @@ fn consume_surface_batches(
 
 #[test]
 fn js_traversal_emits_walk_batch_for_slot_custody() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).expect("selected data");
@@ -1188,7 +1188,7 @@ fn js_traversal_emits_walk_batch_for_slot_custody() {
 
 #[test]
 fn js_stop_ends_traversal_held_script_after_reconnect() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).expect("selected data");
@@ -1227,7 +1227,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let mut slot = js_slot(1);
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let data = api::game_data::for_revision(ClientRevision::R289).expect("selected data");

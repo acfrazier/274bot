@@ -10,7 +10,7 @@ mod local_api_asset;
 mod local_game_data;
 #[test]
 fn melee_weapon_and_partner_trade_exports_answer_from_rust() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let src = r#"

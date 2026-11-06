@@ -261,8 +261,8 @@ export default class T extends LoopingBot {
 
 #[test]
 fn life_ticks_are_revision_independent_on_selected_caches() {
-    if !local_game_data::local_game_data_available(274)
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }

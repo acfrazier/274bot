@@ -362,8 +362,8 @@ export default class T extends LoopingBot {
 
 #[test]
 fn runtime_catalog_exports_keep_aliases_options_surfaces_and_boundaries() {
-    if !local_fact_catalogs::local_fact_catalogs_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_fact_catalogs::local_fact_catalogs_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -436,8 +436,8 @@ fn runtime_catalog_exports_keep_aliases_options_surfaces_and_boundaries() {
 
 #[test]
 fn caller_row_lookup_preserves_coercion_order_identity_and_errors() {
-    if !local_fact_catalogs::local_fact_catalogs_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_fact_catalogs::local_fact_catalogs_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -465,8 +465,8 @@ fn caller_row_lookup_preserves_coercion_order_identity_and_errors() {
 
 #[test]
 fn resolver_keeps_predicate_order_errors_and_default_unlocks() {
-    if !local_fact_catalogs::local_fact_catalogs_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_fact_catalogs::local_fact_catalogs_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }

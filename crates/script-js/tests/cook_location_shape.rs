@@ -122,8 +122,8 @@ fn probe(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
 
 #[test]
 fn every_bank_is_a_location_between_auto_and_custom() {
-    if !local_fact_catalogs::local_fact_catalogs_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_fact_catalogs::local_fact_catalogs_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -139,8 +139,8 @@ fn every_bank_is_a_location_between_auto_and_custom() {
 
 #[test]
 fn a_curated_bank_keeps_its_hand_walked_surface() {
-    if !local_fact_catalogs::local_fact_catalogs_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_fact_catalogs::local_fact_catalogs_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -167,8 +167,8 @@ fn a_curated_bank_keeps_its_hand_walked_surface() {
 
 #[test]
 fn auto_takes_the_nearest_unlocked_bank_and_its_nearest_oven() {
-    if !local_fact_catalogs::local_fact_catalogs_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_fact_catalogs::local_fact_catalogs_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -201,8 +201,8 @@ fn auto_takes_the_nearest_unlocked_bank_and_its_nearest_oven() {
 
 #[test]
 fn a_locked_location_is_null_by_name_and_for_auto() {
-    if !local_fact_catalogs::local_fact_catalogs_available()
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_fact_catalogs::local_fact_catalogs_available()
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }

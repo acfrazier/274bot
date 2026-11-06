@@ -64,8 +64,8 @@ fn gas_ids() -> Vec<i32> {
 /// ordered set, and the exports of the relative shim module and of `@rs2b0t/api` are that one object.
 #[test]
 fn every_first_operation_sees_the_full_ordered_set() {
-    if !local_game_data::local_game_data_available(274)
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -126,8 +126,8 @@ export default class T extends LoopingBot {{
 /// concerns object properties, never the set's entries.
 #[test]
 fn freezing_or_sealing_first_leaves_the_full_set_readable() {
-    if !local_game_data::local_game_data_available(274)
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -152,8 +152,8 @@ fn freezing_or_sealing_first_leaves_the_full_set_readable() {
 /// Clearing the set and then defining, redefining or deleting same-named own members never brings ids back.
 #[test]
 fn a_cleared_set_stays_cleared_whatever_members_are_redefined() {
-    if !local_game_data::local_game_data_available(274)
-        || !local_game_data::local_game_data_available(289)
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
     {
         return;
     }
@@ -200,7 +200,7 @@ export default class T extends LoopingBot {
 /// a second isolate.
 #[test]
 fn mutations_persist_within_the_isolate_and_stay_local_to_it() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let src = r#"

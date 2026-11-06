@@ -320,7 +320,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn posted_herbs_match_selected_revision_facts() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -377,7 +377,7 @@ export default class T extends LoopingBot { loop() { globalThis.__probe = HERBS.
 
 #[test]
 fn empty_herbs_with_selected_facts_fail_at_use_not_import() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -417,7 +417,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn item_db_reads_selected_alcher_gold_row() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -445,7 +445,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn selected_game_data_is_published_before_modules_and_offline_stays_empty() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let source = r#"
@@ -516,7 +516,7 @@ export default class T extends LoopingBot {
 /// Guard fallback. ArdyThiever checks it at Start and on a paint switch.
 #[test]
 fn required_thieving_is_the_selected_level_of_the_named_target() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let source = r#"
@@ -551,7 +551,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn thiever_resolves_food_from_host_loadout_and_queues_eat() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let src = r#"
@@ -592,7 +592,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn selected_game_data_composes_with_handwritten_alcher_logic() {
-    if !local_game_data::local_game_data_available(289) {
+    if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
     let dir = temp_dir("selected-alcher-handwritten");

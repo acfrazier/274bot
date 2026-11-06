@@ -1002,7 +1002,7 @@ export default class T extends LoopingBot {
 
 #[test]
 fn teleport_out_reports_escape_shortfall() {
-    if !local_game_data::local_game_data_available(274) {
+    if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
