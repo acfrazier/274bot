@@ -5,7 +5,7 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 ## Quest state
 
 - Varp `vampire`: 0 not started, 1 started, 2 spoke to Harlow, 3 complete. Quest points 3.
-- Colour only (`native_377.rs` does not admit this button). Rules are empty. The in-progress sequence covers varp 1 and 2.
+- The admitted native button and `quests/quest_vampire/scripts/vampire_journal.rs2:7-55` recover stages 0, 1, 2 and 3. Harlow's first talk settles on the durable stage-2 line `I have spoken to Dr Harlow`, not his transient dialogue.
 - Completion: `stat_advance(attack, 48250)` and the scroll `You have completed the\nVampire Slayer Quest!` / `4,825 Attack XP` (`quest_vampire.rs2:41-45`).
 
 ## Start and stake
@@ -16,6 +16,7 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 - First talk (`harlow.rs2:11-22`) prefer `Morgan needs your help` (last is also that line). It sets varp 2 and does not take a beer or give the stake.
 - Second talk (`harlow.rs2:25-50`) consumes one beer and adds `stake` unless one is already held. Prefer `Ok mate.` so the stake-held menu does not pick `No, you've had enough.`
 - Beer: bartender NPC 734 `(3045,3257,0)` `maps/m47_50.jm2:11918`. `bartender.rs2:39-40` sells one beer for 2 coins. The first option is `Could I buy a beer please?`; the last option does not buy. Coins: OBJ 995 qty 4 at `maps/m50_54.jm2:12023` `(3232,3500,0)`.
+- The repeated ground pickup targets that natural coin spawn; the nav route uses the source-derived `ladder_1755` return into the palace alcove. No goblin-coin workaround or item seed bypasses that route.
 
 ## Tools and the crypt
 
