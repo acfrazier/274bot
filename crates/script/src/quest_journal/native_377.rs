@@ -1,5 +1,5 @@
 //! Selected 377 journal facts, isolated from the production 289 layout.
-//! Sources: canon content/pack/interface.pack:7219-7230,8020-8081,12060-12109;
+//! Sources: canon content/pack/interface.pack:7219-7234,8020-8081,12060-12109;
 //! scripts/player/scripts/quest_journal.rs2:1-105. Java 377 Client.java:
 //! 9890-9893 (IF_BUTTON), 8540-8549 (IF_SETTEXT), 7973-8008 (IF_OPENMAIN),
 //! 4567-4595 (CLOSE_MODAL). The existing host transaction owns those actions.
@@ -36,6 +36,11 @@ pub(super) fn admit(quest: &QuestFacts) -> Result<i32, ActionError> {
         "runemysteries" => Ok(7335),
         "romeojuliet" => Ok(7343),
         "sheep" => Ok(7344),
+        "demon" => Ok(7334),
+        "gobdip" => Ok(7338),
+        "squire" => Ok(7346),
+        "vampire" => Ok(7347),
+        "hetty" => Ok(7348),
         _ => Err(unavailable(
             "selected 377 journal quest button table unavailable",
         )),
