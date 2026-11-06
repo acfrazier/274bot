@@ -1417,9 +1417,9 @@ fn guide_inputs(
     selected: &api::game_data::SelectedGameData,
 ) -> Result<Vec<CorpusInput>, String> {
     let mut out = Vec::new();
-    let (identities, _) = selected
-        .quest_identity_for_bake()
-        .map_err(|error| format!("load selected seed quest identities: {error:?}"))?;
+    let identities = selected
+        .quest_identity()
+        .ok_or_else(|| "selected seed quest identities are unavailable".to_owned())?;
     for set in ["guide_25", "guide_67"] {
         let root = PathBuf::from(roots[set]["root"].as_str().unwrap_or_default());
         let index_path = root.join("crates/script/paths/289/index.json");
@@ -1481,7 +1481,7 @@ fn guide_inputs(
                 let fixture = match fixtures.entry(role_index) {
                     std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::hash_map::Entry::Vacant(entry) => entry.insert(
-                        GuideQualificationFixture::load(&id, &role, selected, &identities)?,
+                        GuideQualificationFixture::load(&id, &role, selected, identities)?,
                     ),
                 };
                 let sequence = (role_index, sequence_index);
