@@ -31,8 +31,9 @@ export function tick(api) {
   if (!run && api.snapshot.ingame && api.snapshot.here) {
     run = api.gather.run({ skill: 'Woodcutting', woodcuttingResources: ['normal'], location: 'Start', disposition: 'Power', radius: 12 });
     run.then(result => {
-      api.log('memory-native-api-terminal:' + JSON.stringify(result));
-      api.stop('native Gatherer ended before benchmark Stop');
+      const terminal = JSON.stringify(result);
+      api.log('memory-native-api-terminal:' + terminal);
+      api.stop('native Gatherer ended before benchmark Stop: ' + terminal);
     });
   }
 }
