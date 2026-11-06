@@ -3083,7 +3083,7 @@ fn a_script_stop_cancels_the_handshake_of_the_relog_it_was_running_through() {
             .start_test_script("alice", Box::new(IdleTestScript), None)
             .expect("start the idle script");
         // The slot thread's own step, before it connects.
-        sync_script_login(&arm, &play.scripts, "alice");
+        crate::play_slots::sync_script_login(&arm, &play.scripts, "alice");
         on_login_success(&arm, arm.login_command(false).unwrap());
         let mut client = client_after_connection_loss();
         tick_flags(&mut client, &[], &arm);
@@ -3132,7 +3132,7 @@ fn starting_and_stopping_a_script_on_a_parked_bot_leaves_it_parked() {
     assert!(!should_handshake(&arm, false), "parked");
 
     start_idle_script(&play, "alice");
-    sync_script_login(&arm, &play.scripts, "alice");
+    crate::play_slots::sync_script_login(&arm, &play.scripts, "alice");
     assert!(should_handshake(&arm, false), "the script logs the bot in");
 
     play.script_stop("alice");
