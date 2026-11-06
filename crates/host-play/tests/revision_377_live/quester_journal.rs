@@ -594,7 +594,7 @@ impl Witness {
             );
         }
         if self.quest.key == "squire" {
-            seeds.push("labelled own-account quest requirement: setstat mining 10 (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12; content/scripts/skill_mining/configs/mine.dbrow:169-178)");
+            seeds.push("labelled own-account quest/acquisition minima: setstat mining 15 (quest Mining 10: content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12; iron Mining 15: content/scripts/skill_mining/configs/mine.dbrow:62-76), setstat smithing 15 (content/scripts/skill_smithing/configs/smelting/smelting.struct:15-23), setstat cooking 10 (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17)");
         }
         let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"quest_state_seeds":0,"quest_item_seeds":0,"reward_xp_seeds":0,"quest_point_seeds":0});
         self.record(receipt.clone())?;
