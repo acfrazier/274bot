@@ -597,7 +597,7 @@
           "recovery_entry": null,
           "steps": [
             {
-              "id": "hand-in",
+              "id": "hand-in-enough",
               "kind": "talk",
               "version": 1,
               "advances": true,
