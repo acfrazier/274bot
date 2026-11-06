@@ -7256,10 +7256,7 @@ pub fn find_unresolved_quest_gates(
         .into_route()
         .ok()
     };
-    let Some(route) = search(Relax::UnknownQuest).or_else(|| search(Relax::CarryWornUnknownQuest))
-    else {
-        return None;
-    };
+    let route = search(Relax::UnknownQuest).or_else(|| search(Relax::CarryWornUnknownQuest))?;
     let mut unresolved: Vec<QuestGate> = Vec::new();
     let evidence = state.quest_evidence.as_ref();
     for leg in &route.legs {
@@ -7290,7 +7287,7 @@ pub fn find_actionable_quest_gates(
     state: &WorldState,
     avoid: &[AvoidRect],
 ) -> Option<Arc<[ActionableGate]>> {
-    let Some(route) = first_search(
+    let route = first_search(
         collision,
         graph,
         from,
@@ -7304,9 +7301,7 @@ pub fn find_actionable_quest_gates(
         NODE_BUDGET,
     )
     .into_route()
-    .ok() else {
-        return None;
-    };
+    .ok()?;
 
     let mut actionable = Vec::new();
     let evidence = state.quest_evidence.as_ref();
@@ -7322,12 +7317,8 @@ pub fn find_actionable_quest_gates(
             if truth == Truth::True || !state.gate_actionable(gate) {
                 continue;
             }
-            let Some(leg) = u16::try_from(leg_index).ok() else {
-                return None;
-            };
-            let Some(crossing) = crossing_id(edge) else {
-                return None;
-            };
+            let leg = u16::try_from(leg_index).ok()?;
+            let crossing = crossing_id(edge)?;
             actionable.push(ActionableGate {
                 gate: gate.clone(),
                 truth,
