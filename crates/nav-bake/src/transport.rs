@@ -296,6 +296,16 @@ fn derive_transports_with_audit(
         &mut graph,
         &mut skipped,
     );
+    if revision == Some(377) {
+        supplemental_edges_377(
+            content_root,
+            &ids,
+            &positions,
+            loc_defs,
+            &mut graph,
+            &mut skipped,
+        );
+    }
     teleport_edges(content_root, &mut graph, &mut skipped);
     // After every producer: the members gate each edge's source handler
     // declares, read once for every kind.
