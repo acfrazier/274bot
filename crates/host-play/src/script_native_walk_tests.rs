@@ -6268,8 +6268,7 @@ fn s2b_admission_per_bot_layouts() {
         target_arch = "aarch64",
         not(feature = "memory-profile")
     ))]
-    // Typed bank receipt: macOS NavBot +8 B in BankPickState.native_receipt.
-    // Passing measurement: BATCH-029-INT/r2-bank-navbot-mac-4/receipt.json.
+    // ADR 0019 provenance removal: two contained NavLease owners shrink 32 B each, plus 40 B inline quest evidence (-104 B), matching Linux.
     assert_eq!(
         (
             std::mem::size_of::<NavBot>(),
@@ -6277,7 +6276,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4160, 1576, 552, 264)
+        (4056, 1576, 552, 264)
     );
     #[cfg(all(
         target_os = "linux",
