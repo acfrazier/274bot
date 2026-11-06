@@ -142,8 +142,7 @@ fn main() {
         Ok(path) => path,
         Err(e) => fail(&format!("{e} ({inputs_origin})")),
     };
-    let server_loc_dat_377 =
-        (revision == 377).then(|| engine_dir.join("data/pack/server/loc.dat"));
+    let server_loc_dat_377 = (revision == 377).then(|| engine_dir.join("data/pack/server/loc.dat"));
 
     // Canonical inputs are required: a build that cannot produce the artifact
     // fails here instead of shipping an apparently ready app without nav.
