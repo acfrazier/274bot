@@ -2853,14 +2853,23 @@ impl StepRun for InteractRun {
     }
 }
 
+/// One placed NPC identity or fungible alternatives, as in combat targets.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+enum UseOnNpc {
+    One(String),
+    Many(Vec<String>),
+}
+
 /// Exactly one selected target for a held-item operation.
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 struct UseOnTarget {
-    /// Symbolic NPC config name; exactly one target selector is required.
+    /// Symbolic NPC config name or alternatives; exactly one selector is required.
     #[serde(default)]
-    npc: Option<String>,
+    npc: Option<UseOnNpc>,
     /// Symbolic location config name; exactly one target selector is required.
     #[serde(default)]
     loc: Option<String>,
@@ -3139,7 +3148,23 @@ pub(super) fn compile_use_on(
         .item_by_alias(&arg.item)
         .and_then(|row| row.name.as_deref())
         .ok_or_else(|| CompileError::code("unresolved-obj").with_detail(arg.item.as_str()))?;
-    let (kind, target_id, target_name) = if let Some(npc) = &arg.target.npc {
+    let npc_names = arg.target.npc.as_ref().map(|npc| match npc {
+        UseOnNpc::One(name) => std::slice::from_ref(name),
+        UseOnNpc::Many(names) => names.as_slice(),
+    });
+    if npc_names.is_some_and(|names| names.is_empty()) {
+        return Err(CompileError::code("invalid-args"));
+    }
+    let npc_ids = npc_names
+        .filter(|names| names.len() > 1)
+        .map(|names| {
+            names
+                .iter()
+                .map(|name| resolve_npc(cx, name))
+                .collect::<Result<Arc<[i32]>, _>>()
+        })
+        .transpose()?;
+    let (kind, target_id, target_name) = if let Some(npc) = npc_names.map(|names| &names[0]) {
         let id = resolve_npc(cx, npc)?;
         let name = cx
             .selected
@@ -3191,6 +3216,7 @@ pub(super) fn compile_use_on(
         item_id,
         kind: Arc::from(kind),
         target_id,
+        npc_ids,
         target_name: Some(target_name),
         product,
         until,
@@ -3208,6 +3234,7 @@ struct UseOnPlan {
     item: Arc<str>,
     item_id: i32,
     target_id: i32,
+    npc_ids: Option<Arc<[i32]>>,
     product: Option<i32>,
     until: Option<(i32, s2::QuantityPlan)>,
     no_product: Option<Arc<dyn PredicatePlan>>,
@@ -3230,6 +3257,7 @@ impl StepPlan for UseOnPlan {
             item: Arc::clone(&self.item),
             item_id: self.item_id,
             target_id: self.target_id,
+            npc_ids: self.npc_ids.clone(),
             product: self.product,
             until,
             no_product: self.no_product.clone(),
@@ -3275,6 +3303,7 @@ struct UseOnRun {
     item: Arc<str>,
     item_id: i32,
     target_id: i32,
+    npc_ids: Option<Arc<[i32]>>,
     product: Option<i32>,
     until: Option<(i32, i32)>,
     no_product: Option<Arc<dyn PredicatePlan>>,
@@ -3322,6 +3351,24 @@ struct UseOnRun {
 const CHASE_REWALKS: u8 = 6;
 
 impl UseOnRun {
+    fn matches_npc(&self, npc: &api::snapshot::NpcView) -> bool {
+        npc.r#type.is_some_and(|id| {
+            self.npc_ids
+                .as_ref()
+                .map_or(id == self.target_id as usize, |ids| {
+                    ids.contains(&(id as i32))
+                })
+        })
+    }
+
+    fn choose_npc<'a>(
+        &self,
+        cx: &'a crate::native::ActionContext<'_>,
+        avoid: &reach::Avoid,
+    ) -> reach::Pick<&'a api::snapshot::NpcView> {
+        reach::choose_npc_matching(cx, self.area(), avoid, |npc| self.matches_npc(npc))
+    }
+
     fn clear_round(&mut self) {
         self.interaction = None;
         self.wall_fallback_tile = None;
@@ -3358,7 +3405,7 @@ impl UseOnRun {
         let Some(npc) = npcs
             .value
             .iter()
-            .find(|npc| npc.index == index && npc.r#type == Some(self.target_id as usize))
+            .find(|npc| npc.index == index && self.matches_npc(npc))
         else {
             if self.chase_rewalks == 0 {
                 return false;
@@ -3387,7 +3434,8 @@ impl UseOnRun {
         }
         let avoid = self.avoid.at(cx.evidence().tick);
         let steps = match self.kind.as_ref() {
-            "npc" => reach::choose_npc(cx, self.target_id, None, self.area(), &avoid)
+            "npc" => self
+                .choose_npc(cx, &avoid)
                 .reachable()
                 .and_then(|npc| reach::npc_route_steps(cx, npc)),
             "obj" => reach::choose_ground(cx, self.target_id, None, self.area(), &avoid)
@@ -3616,15 +3664,7 @@ impl StepRun for UseOnRun {
                         )
                         .any()
                         .is_some(),
-                        "npc" => reach::choose_npc(
-                            &cx.tick.cx,
-                            self.target_id,
-                            None,
-                            self.area(),
-                            &avoid,
-                        )
-                        .usable()
-                        .is_some(),
+                        "npc" => self.choose_npc(&cx.tick.cx, &avoid).usable().is_some(),
                         "obj" => reach::choose_ground(
                             &cx.tick.cx,
                             self.target_id,
@@ -3698,6 +3738,7 @@ impl StepRun for UseOnRun {
                 };
                 let avoid = self.avoid.at(cx.tick.cx.evidence().tick);
                 let mut dispatched = None;
+                let mut target_name = self.target_name.as_deref();
                 let (tile, index, target_item_slot) = match self.kind.as_ref() {
                     "loc" => {
                         let Some(loc) = reach::choose_loc(
@@ -3745,19 +3786,18 @@ impl StepRun for UseOnRun {
                         (loc.tile, None, None)
                     }
                     "npc" => {
-                        let (npc_tile, npc_index, adjacent) = match reach::choose_npc(
-                            &cx.tick.cx,
-                            self.target_id,
-                            None,
-                            self.area(),
-                            &avoid,
-                        ) {
+                        let (npc, reachable) = match self.choose_npc(&cx.tick.cx, &avoid) {
                             reach::Pick::Reachable(npc) | reach::Pick::Unverified(npc) => {
-                                (npc.tile, npc.index, reach::npc_adjacent(&cx.tick.cx, npc))
+                                (npc, true)
                             }
-                            reach::Pick::Unreachable(npc) => (npc.tile, npc.index, false),
+                            reach::Pick::Unreachable(npc) => (npc, false),
                             reach::Pick::None => return Poll::Pending,
                         };
+                        let (npc_tile, npc_index, adjacent) = (
+                            npc.tile,
+                            npc.index,
+                            reachable && reach::npc_adjacent(&cx.tick.cx, npc),
+                        );
                         if !adjacent {
                             // Chase the live NPC; the walk is re-checked every
                             // tick and ends as soon as the NPC is beside us.
@@ -3768,6 +3808,9 @@ impl StepRun for UseOnRun {
                             ))?);
                             self.chase = Some((npc_index, npc_tile));
                             return Poll::Pending;
+                        }
+                        if self.npc_ids.is_some() {
+                            target_name = npc.name.as_deref();
                         }
                         dispatched = Some(reach::AvoidKey::Npc(npc_index));
                         (npc_tile, Some(npc_index as i32), None)
@@ -3826,7 +3869,7 @@ impl StepRun for UseOnRun {
                         kind => kind,
                     }
                     .to_string(),
-                    target_name: self.target_name.as_ref().map(|n| n.to_string()),
+                    target_name: target_name.map(str::to_owned),
                     x: tile.x,
                     z: tile.z,
                     level: tile.level,
@@ -3885,13 +3928,36 @@ impl StepRun for UseOnRun {
                     Poll::Ready(Ok(UseOnDispatch::Accepted { chat_since })) => {
                         self.accepted = true;
                         self.accepted_tick = Some(cx.tick.cx.evidence().tick);
-                        self.scene_in_range_at_acceptance = use_on_target_within_interaction_range(
-                            &cx.tick.cx,
-                            &self.kind,
-                            self.target_id,
-                            self.radius,
-                            self.target_tile,
-                        );
+                        self.scene_in_range_at_acceptance = if self.kind.as_ref() == "npc" {
+                            self.npc_ids.as_ref().map_or_else(
+                                || {
+                                    npc_within_interaction_range(
+                                        &cx.tick.cx,
+                                        self.target_id,
+                                        None,
+                                        self.radius,
+                                    )
+                                },
+                                |ids| {
+                                    ids.iter().any(|id| {
+                                        npc_within_interaction_range(
+                                            &cx.tick.cx,
+                                            *id,
+                                            None,
+                                            self.radius,
+                                        )
+                                    })
+                                },
+                            )
+                        } else {
+                            use_on_target_within_interaction_range(
+                                &cx.tick.cx,
+                                &self.kind,
+                                self.target_id,
+                                self.radius,
+                                self.target_tile,
+                            )
+                        };
                         self.chat_since = chat_since;
                         if self.until.is_some() && self.round_before.is_some() {
                             self.round_deadline = Some(
