@@ -1,0 +1,38 @@
+# Sheep Shearer — revision 377 source map
+
+Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`. This sidecar records the exact content surfaces behind `sheep.json`; map entity IDs are the values in the `.jm2` files and are resolved through the corresponding `pack/*.pack` tables. The 289 `sheep.json` was a structural lead only; no 289 fact is cited below.
+
+## Quest state and hand-in
+
+- Fred's start branch writes `%sheep = 1` and sends the progress colour at `areas/area_lumbridge/scripts/fred_the_farmer.rs2:81-86`. The start choices “I'm looking for a quest.” and “Yes okay. I can do that.” are `:28-34`; the alternate routes (not exciting, The Thing, don't-know-how) all rejoin through `fred_yes_okay` at `:54-55,67,86`.
+- While `%sheep` is 1–20 the progress branch at `fred_the_farmer.rs2:19` runs `fred_progressed` (`:160-166`): with balls in inventory Fred takes them one per loop iteration (`fred_give_wool`, `:211-222`), incrementing `%sheep` each ball; with only wool he sends the player to the Lumbridge Castle wheel (`:180-182`); with neither he states the remaining count from `calc(21 - %sheep)` (`:186-192`).
+- The last ball is consumed inside the same loop: when `%sheep` reaches 20 (`^sheep_last_wool`, `quest_sheep.constant:1-3`) with a ball held, `:225-234` queues completion. The queue (`quests/quest_sheep/scripts/quest_sheep.rs2:1-7`) writes `%sheep = 22` (`^sheep_complete`, `general/configs/quest.constant:12`), deletes one ball, adds 60 coins and 1,500 Crafting XP, and sends `send_quest_complete` with one quest point (`general/configs/quest.constant:110`). The value 21 is never stored, so the remaining count after a partial hand-in is always `21 - %sheep - balls held`, which is exactly what the journal computes.
+- Post-quest Fred (`fred_the_farmer.rs2:236-239`) offers no quest dialogue. The Path therefore uses the colour bindings `sheep:0`, `sheep:1`, `sheep:22`; progress rules/flags name journal lines only. A `send_quest_complete` occurrence is a static terminal marker, not proof of a live run.
+
+## Journal rules and the remaining-count flag
+
+All strings below are from `quests/quest_sheep/scripts/sheep_journal.rs2`; rules are listed most-complete first because every later journal state repeats the earlier paragraphs.
+
+- `sheep:22` ← “I brought Farmer Fred 20 balls of wool, and he paid me for it!” (`sheep_journal.rs2:4-10`). Rule: `all ["i brought farmer fred 20 balls of wool"]`.
+- `sheep:1` ← “I asked Farmer Fred, near Lumbridge, for a quest. Fred said he'd pay me for shearing his sheep for him!” plus “I need to collect N more balls of wool.” (`sheep_journal.rs2:12-27`). Rule: `all ["i asked farmer fred", "i need to collect"]`. The have-enough line “I have enough balls of wool to give Fred and get my reward money!” (`:15-18`) matches no rule and falls back to the in-progress colour, which is also `sheep:1`.
+- `sheep:0` ← “I can start this quest by speaking to Farmer Fred at his farm …” (`sheep_journal.rs2:30-33`). Rule: `all ["i can start this quest by speaking to"]`.
+- Flag `sheep:balls_to_go` ← the “I need to collect …” line (`:20-26`), count `(\d+)`, gives the exact remaining count after a partial hand-in: journal remaining is `calc(calc(21 - %sheep) - inv_total(inv, ball_of_wool))` (`:20`). The shear `until` spins this down by held balls (`minus_item ball_of_wool`) and the spin `qty` targets it directly.
+- `monotonic` is false: the count rises and falls as balls are handed in and re-earned.
+
+## NPC and placements
+
+- Fred the farmer is NPC 758 (`pack/npc.pack:759`), placed at map `m49_51.jm2:7408` (`0 53 9: 758`), plane 0. Chunk (49,51) resolves this to `(3189,3273,0)`. Both talk anchors cite that tile.
+- Sheep to shear are NPC 43 (`pack/npc.pack:44`, `sheepunsheered`), placed at `m49_51.jm2:7417-7418` (`0 62 1: 43` and `0 62 8: 43`), world `(3198,3265,0)` and `(3198,3272,0)`, inside Fred's field. The shear anchor `(3198,3268,0)` sits between the two placements. Further `sheepunsheered` pens exist at `m49_50.jm2:6768` (`(3198,3261,0)`) and `m50_51.jm2:7924` (`(3205,3266,0)`); they are evidence of the pen area, not Path targets. Colour variants `sheepunsheered2/3` share the same use handler (`general_use/scripts/shear_sheep.rs2:26-64`) but no placed pen near Fred was found, so the Path targets only `sheepunsheered`.
+
+## Items, shearing, spinning
+
+- **Shears:** OBJ 1735 (`pack/obj.pack:1736`) spawns at `m49_51.jm2:7424` (`0 56 8: 1735`), world `(3192,3272,0)` — Fred's house by his field — and at `m49_51.jm2:7423` (`0 16 42: 1735`), world `(3152,3306,0)`. The Path takes the house spawn; a banked pair is withdrawn first. Fred's dialogue also mentions buying from the Lumbridge general store (`fred_the_farmer.rs2:116-118`), but no 377 shop-stock source was found, so no buy step is modelled.
+- **Shearing:** `general_use/scripts/shear_sheep.rs2:5-24` consumes nothing and adds one `wool` with “You get some wool.” (`:22-23`); on a 1-in-4 roll the sheep escapes with “The sheep manages to get away from you!” (`:12-15`); an already-shorn sheep says “This sheep has already been shorn.” (`:66-70`). The escape and shorn lines are the `no_product` predicate. No shears are consumed.
+- **Spinning:** the Lumbridge Castle wheel is LOC 2644 (`pack/loc.pack:2645`, `spinningwheel`) at `m50_50.jm2:9464` (`1 9 12: 2644`), world `(3209,3212,1)` — the first floor Fred points at (`fred_the_farmer.rs2:152-154`). `skill_crafting/scripts/spinning/spinning.rs2:1-2,13-22` implements use-wool-on-wheel; the wool struct (`skill_crafting/configs/spinning/spinning.struct:8-12`) maps wool to `ball_of_wool` (“You spin the wool into a nice ball of wool.”) with no level requirement, so `tested_stats` is null and the spin is a `use_on` step, not a menu make.
+- **Targets:** 20 balls is Fred's price (`fred_the_farmer.rs2:33`); the 20-wool / 20-ball ceilings in the skip predicates are that number, not 289 values.
+- **Hand-in recovery:** the talk step runs whenever at least one ball is held, so a partial hand-in simply returns to `sheep:1` with a smaller journal count; the loop re-shears, re-spins and re-hands-in. `gap_ticks: 2` mirrors the close-chat plus `p_delay(1)` inside the take loop (`fred_the_farmer.rs2:214-221`).
+
+## Candidate classification and limits
+
+- Fred's pre-start dialogue is hijacked by One Small Favour once `%onesmallfavour >= 6` (`fred_the_farmer.rs2:1-16`); the Path assumes a fresh account, like the other 377 quest paths.
+- The Thing (`%the_thing_sheared`, `shear_sheep.rs2:73-96`, `fred_the_farmer.rs2:161-166,195-209`) changes Fred's greeting but never blocks shearing or the hand-in; it is not modelled.
