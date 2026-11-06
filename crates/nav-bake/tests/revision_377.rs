@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use api::snapshot::WorldTile;
 use nav_planner::router::{find_with, FindOptions, Leg};
-use nav_planner::transport::TransportKind;
+use nav_planner::transport::{DoorDir, TransportKind};
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
 use serde_json::{json, Value};
@@ -166,4 +166,66 @@ fn real_revision_377_routes_and_transports() {
         serde_json::to_vec_pretty(&report).unwrap(),
     )
     .unwrap();
+}
+
+#[test]
+#[ignore = "requires an explicitly baked revision-377 NAV_377_PACK"]
+fn real_revision_377_wheat_gates_connect_lumbridge() {
+    let world = NavWorld::load_pack(&required_path("NAV_377_PACK")).unwrap();
+    for (id, at, open_id) in [
+        (1551, tile(3163, 3290, 0), 1552),
+        (1553, tile(3162, 3290, 0), 1556),
+    ] {
+        let crossings: Vec<_> = world
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == TransportKind::Door && edge.loc_id == id && edge.at == at)
+            .collect();
+        assert_eq!(crossings.len(), 2, "wheat-field gate {id} at {at:?}");
+        for dir in [DoorDir::N, DoorDir::S] {
+            let edge = crossings.iter().find(|edge| edge.dir == Some(dir)).unwrap();
+            assert_eq!(edge.open_loc_id, Some(open_id), "{edge:?}");
+            assert_eq!(edge.option, 1, "{edge:?}");
+        }
+    }
+    let wheat = tile(3157, 3299, 0);
+    let goals: Vec<_> = (-2..=2)
+        .flat_map(|dx| (-2..=2).map(move |dz| tile(wheat.x + dx, wheat.z + dz, 0)))
+        .filter(|at| world.collision.standable(*at))
+        .collect();
+    let state = WorldState {
+        combat_level: Some(3),
+        map_members: true,
+        ..WorldState::empty()
+    };
+    for from in [tile(3222, 3218, 0), tile(3209, 3213, 0)] {
+        let result = nav_planner::router::find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &goals,
+            FindOptions::default(),
+            &state,
+        );
+        let route = result
+            .route()
+            .unwrap_or_else(|error| panic!("Lumbridge {from:?} to wheat: {error:?}"));
+        assert!(
+            route.legs.iter().any(|leg| matches!(
+                leg,
+                Leg::Transport { edge }
+                    if edge.kind == TransportKind::Door
+                        && matches!(edge.loc_id, 1551 | 1553)
+                        && edge.at.z == 3290
+            )),
+            "the field is entered through its authored gate: {route:?}"
+        );
+        eprintln!(
+            "377 wheat route from={from:?} dest={:?} ticks={} legs={}",
+            route.dest,
+            route.ticks,
+            route.legs.len()
+        );
+    }
 }
