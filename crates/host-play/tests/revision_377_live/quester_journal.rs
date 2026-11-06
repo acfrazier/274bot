@@ -22,7 +22,36 @@ struct Sample {
     main_root: i32,
     dialogue: Vec<String>,
     chat: Vec<(i32, String)>,
+    combat_level: i32,
+    combat_stats: [i32; 4],
+    hitpoints: i32,
+    in_combat: bool,
+    local_index: Option<usize>,
+    nearby_npcs: Vec<NpcSample>,
 }
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct NpcSample {
+    index: usize,
+    npc_type: Option<usize>,
+    name: Option<String>,
+    tile: WorldTile,
+    level: i32,
+    in_combat: bool,
+    target: Option<api::snapshot::ActorTargetView>,
+    overhead: Option<String>,
+}
+
+// Combat-only area fixture, not quest requirements or rewards. The Varrock
+// approach has level-6 Mugger and level-20 dark-wizard aggression. Npc.ts:1017
+// excludes players above twice the NPC level outside the Wilderness.
+const RUNE_FIXTURE: &[&str] = &[
+    "setstat attack 40",
+    "setstat strength 40",
+    "setstat defence 40",
+    "setstat hitpoints 40",
+    "give trout 5",
+];
 
 #[derive(Clone, Copy)]
 struct Quest {
@@ -100,10 +129,62 @@ impl Sample {
                 .iter()
                 .map(|row| (row.sequence, row.text.clone()))
                 .collect(),
+            combat_level: snapshot.local_player().map_or(0, |p| p.player.combat_level),
+            combat_stats: ["attack", "strength", "defence", "hitpoints"].map(|name| {
+                snapshot
+                    .stats()
+                    .iter()
+                    .find(|s| s.name == name)
+                    .map_or(0, |s| s.base)
+            }),
+            hitpoints: snapshot
+                .stats()
+                .iter()
+                .find(|s| s.name == "hitpoints")
+                .map_or(0, |s| s.effective),
+            in_combat: snapshot
+                .local_player()
+                .is_some_and(|p| p.player.actor.in_combat),
+            local_index: snapshot.local_player().map(|p| p.player.index),
+            nearby_npcs: snapshot
+                .npcs()
+                .iter()
+                .filter(|n| n.distance <= 18)
+                .map(|n| NpcSample {
+                    index: n.index,
+                    npc_type: n.r#type,
+                    name: n.name.clone(),
+                    tile: n.tile,
+                    level: n.level,
+                    in_combat: n.in_combat,
+                    target: n.target,
+                    overhead: n.overhead_text.clone(),
+                })
+                .collect(),
         }
     }
     fn fresh(&self) -> bool {
         self.xp == 0 && self.qp == 0 && self.quest_colour == Some(0xF80000)
+    }
+    fn rune_fixture_ready(&self) -> bool {
+        self.combat_level > 40
+            && self.combat_stats.iter().all(|level| *level == 40)
+            && self.hitpoints == 40
+            && !self.in_combat
+            && !self.nearby_npcs.iter().any(|npc| {
+                npc.in_combat
+                    && npc.target.is_some_and(|target| {
+                        target.kind == api::snapshot::ActorKind::Player
+                            && Some(target.index) == self.local_index
+                    })
+            })
+            && self
+                .inventory
+                .iter()
+                .filter(|(id, _)| *id == 333)
+                .map(|(_, count)| count)
+                .sum::<i32>()
+                == 5
     }
     fn complete(&self, q: Quest, base_xp: i32) -> bool {
         let completion = if q.key == "romeojuliet" {
@@ -148,7 +229,9 @@ fn native_run_completed(receipt: Option<&ScriptLifecycleReceipt>, generation: Op
 
 fn witness_predicate(sample: &Sample, quest: Quest, base_xp: i32, baseline: bool) -> bool {
     if baseline {
-        sample.fresh() && base_xp == 0
+        sample.fresh()
+            && base_xp == 0
+            && (quest.key != "runemysteries" || sample.rune_fixture_ready())
     } else {
         sample.complete(quest, base_xp)
     }
@@ -168,8 +251,34 @@ fn journal_witness_rejects_stale_or_partial_product_evidence() {
         main_text: vec![],
         dialogue: vec![],
         chat: vec![],
+        combat_level: 3,
+        combat_stats: [1, 1, 1, 10],
+        hitpoints: 10,
+        in_combat: false,
+        local_index: Some(1),
+        nearby_npcs: vec![],
     };
     assert!(witness_predicate(&fresh, SHEEP, 0, true));
+    assert!(
+        !witness_predicate(&fresh, RUNE, 0, true),
+        "Rune Mysteries must reject the original unprepared combat fixture"
+    );
+    let mut prepared = fresh.clone();
+    prepared.combat_level = 49;
+    prepared.combat_stats = [40; 4];
+    prepared.hitpoints = 40;
+    prepared.inventory = vec![(333, 5)];
+    assert!(witness_predicate(&prepared, RUNE, 0, true));
+    for invalid in 0..4 {
+        let mut sample = prepared.clone();
+        match invalid {
+            0 => sample.combat_level = 12,
+            1 => sample.inventory.clear(),
+            2 => sample.hitpoints = 10,
+            _ => sample.in_combat = true,
+        }
+        assert!(!witness_predicate(&sample, RUNE, 0, true));
+    }
     for quest in [SHEEP, RUNE, ROMEO] {
         let mut completed = Sample {
             tick: 2,
@@ -183,6 +292,12 @@ fn journal_witness_rejects_stale_or_partial_product_evidence() {
             main_text: vec![],
             dialogue: vec![],
             chat: vec![],
+            combat_level: 3,
+            combat_stats: [1, 1, 1, 10],
+            hitpoints: 10,
+            in_combat: false,
+            local_index: Some(1),
+            nearby_npcs: vec![],
         };
         completed.main_text = match quest.key {
             "sheep" => vec![
@@ -254,6 +369,7 @@ struct Witness {
     jobs: Vec<EvidenceJob>,
     quest: Quest,
     relog_requested: bool,
+    fixture_seeded: bool,
     relog_detached: bool,
     relogged: bool,
     baseline: Option<Sample>,
@@ -281,7 +397,12 @@ impl Witness {
         let client::render::backend::FrameOutput::PixMap(pixels) = out else {
             return Err("377 Quester capture did not return CPU framebuffer".into());
         };
-        let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":["own-account tutorial bypass and mainland position, then clean relog"],"quest_state_seeds":0,"quest_item_seeds":0,"reward_xp_seeds":0,"quest_point_seeds":0});
+        let seeds = if self.quest.key == "runemysteries" {
+            vec!["own-account tutorial bypass and mainland position, then clean relog", "labelled combat-only area fixture: Attack/Strength/Defence/Hitpoints 40, five trout"]
+        } else {
+            vec!["own-account tutorial bypass and mainland position, then clean relog"]
+        };
+        let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"quest_state_seeds":0,"quest_item_seeds":0,"reward_xp_seeds":0,"quest_point_seeds":0});
         self.record(receipt.clone())?;
         self.jobs.push(self.writer.submit(EvidenceRequest {
             png_path: self.directory.join(format!("{phase}.png")),
@@ -331,6 +452,24 @@ impl Witness {
                     && s.tile
                         .is_some_and(|(x, z, l)| lumbridge(WorldTile { x, z, level: l }))
                 {
+                    if self.quest.key == "runemysteries" {
+                        if !self.fixture_seeded {
+                            for command in RUNE_FIXTURE {
+                                if !interact::cheat(client, command).is_sent() {
+                                    return Err(format!(
+                                        "combat fixture command refused: {command}"
+                                    ));
+                                }
+                                self.record(json!({"phase":"SEED own-account combat-only area fixture","command":command}))?;
+                            }
+                            self.fixture_seeded = true;
+                            return Ok(());
+                        }
+                        if !s.rune_fixture_ready() {
+                            return Ok(());
+                        }
+                        self.record(json!({"phase":"combat-only area fixture observed before clean relog","sample":s}))?;
+                    }
                     let ifaces = Arc::clone(&client.ifaces);
                     if !interact::logout(client, &ifaces) {
                         return Err("could not cleanly logout mainland fixture".into());
@@ -342,7 +481,7 @@ impl Witness {
             }
         }
         if self.baseline.is_none() {
-            if !s.fresh() {
+            if !witness_predicate(&s, self.quest, 0, true) {
                 return Err(format!("fresh-account quest conditions failed: {s:?}"));
             }
             self.base_xp = Some(s.xp);
@@ -413,6 +552,7 @@ fn run_quest(q: Quest) -> Result<(), String> {
         relog_requested: false,
         relog_detached: false,
         relogged: false,
+        fixture_seeded: false,
         baseline: None,
         latest: None,
         base_xp: None,
@@ -542,7 +682,7 @@ fn quester_377_sheep_native() -> Result<(), String> {
     run_quest(SHEEP)
 }
 #[test]
-#[ignore = "requires LIVE=1, owned qj3 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+#[ignore = "requires LIVE=1, owned qm3 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_runemysteries_native() -> Result<(), String> {
     run_quest(RUNE)
 }
