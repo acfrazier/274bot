@@ -353,7 +353,7 @@ fn allows_requires_every_req_kind() {
 #[test]
 fn stage_gates_open_on_evidence_never_on_snapshot_facts() {
     use crate::quest_gates::QuestGates;
-    use crate::test_support::{family, range, tbwt_evidence, window};
+    use crate::test_support::{range, tbwt_evidence, window};
 
     let mut e = gated_edge();
     e.quest_gates = Some(QuestGates::new([window("tbwt", "tbwt_main", Some(3), Some(3))]).unwrap());

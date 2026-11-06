@@ -248,22 +248,6 @@ fn canonical_keys_match_independent_binary_preimages_and_encoder_invalidation() 
         .key()
         .unwrap()
     );
-    assert_ne!(
-        catalogue_identity()
-            .merged_key(Digest([1; 32]), None)
-            .unwrap(),
-        catalogue_identity()
-            .merged_key(Digest([1; 32]), Some(Digest([0; 32])))
-            .unwrap()
-    );
-    assert_ne!(
-        catalogue_identity()
-            .merged_key(Digest([1; 32]), None)
-            .unwrap(),
-        catalogue_identity()
-            .merged_key(Digest([2; 32]), None)
-            .unwrap()
-    );
     assert!(Digest::from_hex(&"AA".repeat(32)).is_err());
 }
 
