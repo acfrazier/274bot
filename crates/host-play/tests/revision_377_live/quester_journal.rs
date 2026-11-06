@@ -15,6 +15,8 @@ struct Sample {
     tile: Option<(i32, i32, i32)>,
     xp: i32,
     level: i32,
+    mining_level: i32,
+    cooking_level: i32,
     qp: i32,
     quest_colour: Option<i32>,
     inventory: Vec<(i32, i32)>,
@@ -42,15 +44,36 @@ struct NpcSample {
     overhead: Option<String>,
 }
 
-// Combat-only area fixture, not quest requirements or rewards. The Varrock
-// approach has level-6 Mugger and level-20 dark-wizard aggression. Npc.ts:1017
-// excludes players above twice the NPC level outside the Wilderness.
-const RUNE_FIXTURE: &[&str] = &[
+// Forty-level stats clear Varrock's low-level aggression checks. Five trout
+// and those stats support Squire's aggressive cave. Npc.ts:1017 defines the check.
+const COMBAT_FIXTURE: &[&str] = &[
     "setstat attack 40",
     "setstat strength 40",
     "setstat defence 40",
     "setstat hitpoints 40",
     "give trout 5",
+];
+
+// The quest start requires Mining 10; the no-bank route mines iron at 15 and smelts
+// it at Smithing 15. Its fresh-account pie fallback requires Cooking 10.
+// Sources: quest_squire/scripts/squire_journal.rs2:7-12; skill_mining/configs/mine.dbrow:62-76;
+// skill_smithing/configs/smelting/smelting.struct:15-23;
+// skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17.
+const SQUIRE_MINING_LEVEL: i32 = 15;
+const SQUIRE_SMITHING_LEVEL: i32 = 15;
+const SQUIRE_COOKING_LEVEL: i32 = 10;
+// setLevel(15) yields 2,411 client-visible XP; see engine Player.ts:78-100, 2014-20,
+// and UpdateStatEncoder.ts:9-13 (internal XP is divided by ten in the stat packet).
+const SQUIRE_SMITHING_15_XP: i32 = 2_411;
+// The quest consumes two bars (quest_squire.rs2:190-195); productexp is tenths,
+// and iron smelting awards it only after a successful bar is made.
+const SQUIRE_IRON_BAR_COUNT: i32 = 2;
+const SQUIRE_IRON_BAR_XP_TENTHS: i32 = 125;
+const XP_TENTHS_PER_REPORTED_XP: i32 = 10;
+const SQUIRE_REQUIREMENT_FIXTURE: &[&str] = &[
+    "setstat mining 15",
+    "setstat smithing 15",
+    "setstat cooking 10",
 ];
 
 #[derive(Clone, Copy)]
@@ -148,16 +171,31 @@ const DEMON: Quest = Quest {
     qp_delta: 3,
     qp_reward: "3 Quest Points",
 };
+// The 377 journal row is "The Knight's Sword" (content/scripts/interfaces/questlist.if:231-244).
+// The completion reward and terminal var come from content/scripts/quests/quest_squire/scripts/quest_squire.rs2:219-223.
+// Smithing is stat index 13, the reward skill.
+const SQUIRE: Quest = Quest {
+    key: "squire",
+    label: "Knight's Sword",
+    row_label: "The Knight's Sword",
+    var: "squire",
+    terminal: "7",
+    skill: 13,
+    xp_delta: 12_725,
+    qp_delta: 1,
+    qp_reward: "1 Quest Point",
+};
 
 fn needs_combat_fixture(key: &str) -> bool {
     matches!(
         key,
-        "runemysteries" | "hetty" | "gobdip" | "vampire" | "demon"
+        "runemysteries" | "hetty" | "gobdip" | "vampire" | "demon" | "squire"
     )
 }
 
 fn split_completion(key: &str) -> Option<&'static str> {
     match key {
+        "squire" => Some("Knight's Sword Quest!"),
         "romeojuliet" => Some("Romeo & Juliet Quest!"),
         "hetty" => Some("Witches Potion Quest!"),
         "gobdip" => Some("Goblin Diplomacy Quest!"),
@@ -175,6 +213,16 @@ impl Sample {
             tile: snapshot.tile(),
             xp: stat.map_or(0, |row| row.xp),
             level: stat.map_or(1, |row| row.base),
+            mining_level: snapshot
+                .stats()
+                .iter()
+                .find(|row| row.name == "mining")
+                .map_or(1, |row| row.base),
+            cooking_level: snapshot
+                .stats()
+                .iter()
+                .find(|row| row.name == "cooking")
+                .map_or(1, |row| row.base),
             qp: client.var.get(101).copied().unwrap_or(-1),
             quest_colour: snapshot
                 .quest_statuses()
@@ -228,14 +276,16 @@ impl Sample {
                 .collect(),
         }
     }
-    fn fresh(&self) -> bool {
-        self.xp == 0 && self.qp == 0 && self.quest_colour == Some(0xF80000)
+    fn fresh(&self, quest: Quest) -> bool {
+        let expected_xp = if quest.key == "squire" {
+            SQUIRE_SMITHING_15_XP
+        } else {
+            0
+        };
+        self.xp == expected_xp && self.qp == 0 && self.quest_colour == Some(0xF80000)
     }
-    fn rune_can_relog(&self) -> bool {
-        self.combat_level > 40
-            && self.combat_stats.iter().all(|level| *level == 40)
-            && self.hitpoints == 40
-            && !self.in_combat
+    fn safe_to_relog(&self) -> bool {
+        !self.in_combat
             && !self.nearby_npcs.iter().any(|npc| {
                 npc.in_combat
                     && npc.target.is_some_and(|target| {
@@ -244,8 +294,14 @@ impl Sample {
                     })
             })
     }
-    fn rune_fixture_ready(&self) -> bool {
-        self.rune_can_relog()
+    fn combat_can_relog(&self) -> bool {
+        self.combat_level > 40
+            && self.combat_stats.iter().all(|level| *level == 40)
+            && self.hitpoints == 40
+            && self.safe_to_relog()
+    }
+    fn combat_fixture_ready(&self) -> bool {
+        self.combat_can_relog()
             && self
                 .inventory
                 .iter()
@@ -253,6 +309,27 @@ impl Sample {
                 .map(|(_, count)| count)
                 .sum::<i32>()
                 == 5
+    }
+    fn quest_fixture_ready(&self, quest: Quest) -> bool {
+        match quest.key {
+            "squire" => {
+                self.combat_fixture_ready()
+                    && self.mining_level == SQUIRE_MINING_LEVEL
+                    && self.level == SQUIRE_SMITHING_LEVEL
+                    && self.cooking_level == SQUIRE_COOKING_LEVEL
+            }
+            key if needs_combat_fixture(key) => self.combat_fixture_ready(),
+            _ => true,
+        }
+    }
+    fn quest_pre_relog_ready(&self, quest: Quest) -> bool {
+        if quest.key == "squire" {
+            // setstat skill rows are verified after the clean relog, when the
+            // server publishes them. Before it, wait only for the visible combat fixture.
+            self.combat_level > 40 && self.safe_to_relog()
+        } else {
+            self.combat_can_relog()
+        }
     }
     fn complete(&self, q: Quest, base_xp: i32) -> bool {
         let completion = if let Some(second) = split_completion(q.key) {
@@ -292,14 +369,21 @@ impl Sample {
                 self.main_text.iter().any(|s| s == "Silverlight")
                     && self.main_text.iter().any(|s| s == q.qp_reward)
             }
+            "squire" => {
+                self.main_text.iter().any(|s| s == "12,725 Smithing XP")
+                    && self.main_text.iter().any(|s| s == q.qp_reward)
+            }
             "romeojuliet" => self.main_text.iter().any(|s| s == q.qp_reward),
             _ => false,
         };
-        // Count Draynor grants variable Attack XP before the 4,825 reward.
-        let xp_ok = if q.key == "vampire" {
-            self.xp - base_xp >= q.xp_delta
-        } else {
-            self.xp - base_xp == q.xp_delta
+        // Draynor adds variable Attack XP before Vampire's reward. Squire's natural
+        // iron-bar acquisition also adds Smithing XP; the exact reward text above
+        // remains an independent check of the quest's 12,725-XP reward.
+        let xp_delta = self.xp.checked_sub(base_xp);
+        let xp_ok = match q.key {
+            "vampire" => xp_delta.is_some_and(|gained| gained >= q.xp_delta),
+            "squire" => xp_delta.is_some_and(squire_xp_delta_matches),
+            _ => xp_delta == Some(q.xp_delta),
         };
         xp_ok
             && self.qp == q.qp_delta
@@ -314,16 +398,19 @@ fn native_run_completed(receipt: Option<&ScriptLifecycleReceipt>, generation: Op
         Some(r.runtime_generation) == generation && r.state == ScriptTerminalState::Completed
     })
 }
+fn squire_xp_delta_matches(delta: i32) -> bool {
+    (0..=SQUIRE_IRON_BAR_COUNT).any(|bars| {
+        delta == SQUIRE.xp_delta + bars * SQUIRE_IRON_BAR_XP_TENTHS / XP_TENTHS_PER_REPORTED_XP
+    })
+}
 
 fn witness_predicate(sample: &Sample, quest: Quest, base_xp: i32, baseline: bool) -> bool {
     if baseline {
         if quest.key == "vampire" {
             // The labelled combat fixture raises Attack, the reward skill.
-            sample.qp == 0 && sample.quest_colour == Some(0xF80000) && sample.rune_fixture_ready()
+            sample.qp == 0 && sample.quest_colour == Some(0xF80000) && sample.combat_fixture_ready()
         } else {
-            sample.fresh()
-                && base_xp == 0
-                && (!needs_combat_fixture(quest.key) || sample.rune_fixture_ready())
+            sample.fresh(quest) && base_xp == sample.xp && sample.quest_fixture_ready(quest)
         }
     } else {
         sample.complete(quest, base_xp)
@@ -337,6 +424,8 @@ fn journal_witness_rejects_stale_or_partial_product_evidence() {
         tile: Some((3200, 3200, 0)),
         xp: 0,
         level: 1,
+        mining_level: 1,
+        cooking_level: 1,
         qp: 0,
         quest_colour: Some(0xF80000),
         inventory: vec![],
@@ -373,7 +462,7 @@ fn journal_witness_rejects_stale_or_partial_product_evidence() {
         assert!(!witness_predicate(&sample, RUNE, 0, true));
         if invalid == 1 {
             assert!(
-                sample.rune_can_relog(),
+                sample.combat_can_relog(),
                 "mainland inventory is published only after the clean relog"
             );
         }
@@ -384,6 +473,8 @@ fn journal_witness_rejects_stale_or_partial_product_evidence() {
             tile: fresh.tile,
             xp: quest.xp_delta,
             level: 1,
+            mining_level: 1,
+            cooking_level: 1,
             qp: quest.qp_delta,
             quest_colour: Some(0x00F800),
             inventory: vec![],
@@ -496,11 +587,15 @@ impl Witness {
         let client::render::backend::FrameOutput::PixMap(pixels) = out else {
             return Err("377 Quester capture did not return CPU framebuffer".into());
         };
-        let seeds = if needs_combat_fixture(self.quest.key) {
-            vec!["own-account tutorial bypass and mainland position, then clean relog", "labelled combat-only area fixture: Attack/Strength/Defence/Hitpoints 40, five trout"]
-        } else {
-            vec!["own-account tutorial bypass and mainland position, then clean relog"]
-        };
+        let mut seeds = vec!["own-account tutorial bypass and mainland position, then clean relog"];
+        if needs_combat_fixture(self.quest.key) {
+            seeds.push(
+                "labelled combat-only area fixture: Attack/Strength/Defence/Hitpoints 40, five trout",
+            );
+        }
+        if self.quest.key == "squire" {
+            seeds.push("labelled own-account quest requirement: setstat mining 10 (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12; content/scripts/skill_mining/configs/mine.dbrow:169-178)");
+        }
         let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"quest_state_seeds":0,"quest_item_seeds":0,"reward_xp_seeds":0,"quest_point_seeds":0});
         self.record(receipt.clone())?;
         self.jobs.push(self.writer.submit(EvidenceRequest {
@@ -553,23 +648,41 @@ impl Witness {
                 {
                     if needs_combat_fixture(self.quest.key) {
                         if !self.fixture_seeded {
-                            for command in RUNE_FIXTURE {
+                            let requirement_fixture = if self.quest.key == "squire" {
+                                SQUIRE_REQUIREMENT_FIXTURE
+                            } else {
+                                &[]
+                            };
+                            for command in COMBAT_FIXTURE.iter().chain(requirement_fixture.iter()) {
+                                let command = *command;
                                 if !interact::cheat(client, command).is_sent() {
                                     return Err(format!(
                                         "combat fixture command refused: {command}"
                                     ));
                                 }
-                                self.record(json!({"phase":"SEED own-account combat-only area fixture","command":command}))?;
+                                let phase = match command {
+                                    "setstat mining 15" => {
+                                        "SEED quest Mining 10 and iron-ore Mining 15 minima (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12; content/scripts/skill_mining/configs/mine.dbrow:62-76)"
+                                    }
+                                    "setstat smithing 15" => {
+                                        "SEED iron-bar smelting Smithing 15 minimum (content/scripts/skill_smithing/configs/smelting/smelting.struct:15-23)"
+                                    }
+                                    "setstat cooking 10" => {
+                                        "SEED redberry-pie Cooking 10 minimum (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:201-212)"
+                                    }
+                                    _ => "SEED own-account combat-only area fixture",
+                                };
+                                self.record(json!({"phase":phase,"command":command}))?;
                             }
                             self.fixture_seeded = true;
                             return Ok(());
                         }
-                        // Tutorial login has no inventory side tab yet. The
-                        // food seed is observed after clean relog, before Start.
-                        if !s.rune_can_relog() {
+                        // Tutorial login has no inventory side tab yet. Squire's
+                        // skill minima and the food fixture are verified after relog.
+                        if !s.quest_pre_relog_ready(self.quest) {
                             return Ok(());
                         }
-                        self.record(json!({"phase":"combat-only area fixture observed before clean relog","sample":s}))?;
+                        self.record(json!({"phase":"combat fixture visible; skill minima will be verified after clean relog","sample":s}))?;
                     }
                     let ifaces = Arc::clone(&client.ifaces);
                     if !interact::logout(client, &ifaces) {
@@ -584,10 +697,10 @@ impl Witness {
         if self.baseline.is_none() {
             // The first post-relog frame can publish combat level and food
             // before named stat rows. Do not fail that partial frame.
-            if needs_combat_fixture(self.quest.key) && !s.rune_fixture_ready() {
+            if !s.quest_fixture_ready(self.quest) {
                 return Ok(());
             }
-            if !witness_predicate(&s, self.quest, 0, true) {
+            if !witness_predicate(&s, self.quest, s.xp, true) {
                 return Err(format!("fresh-account quest conditions failed: {s:?}"));
             }
             self.base_xp = Some(s.xp);
@@ -808,6 +921,8 @@ fn batch2_product(quest: Quest, extra: &[&str]) -> Sample {
         tile: Some((3200, 3200, 0)),
         xp: quest.xp_delta,
         level: 1,
+        mining_level: 1,
+        cooking_level: 1,
         qp: quest.qp_delta,
         quest_colour: Some(0x00F800),
         inventory: vec![],
@@ -839,11 +954,17 @@ fn batch2_witness_accepts_the_377_scroll_and_rejects_a_red_row() {
         (GOBDIP, &["200 Crafting XP", "A Gold Bar"][..]),
         (VAMPIRE, &["4,825 Attack XP"][..]),
         (DEMON, &["Silverlight"][..]),
+        (SQUIRE, &["12,725 Smithing XP"][..]),
     ] {
-        let base = if quest.key == "vampire" { 1154 } else { 0 };
+        let base = match quest.key {
+            "vampire" => 1154,
+            "squire" => SQUIRE_SMITHING_15_XP,
+            _ => 0,
+        };
         let mut sample = batch2_product(quest, extra);
+        sample.xp = base + quest.xp_delta;
         if quest.key == "vampire" {
-            sample.xp = base + quest.xp_delta + 40;
+            sample.xp += 40;
         }
         assert!(
             witness_predicate(&sample, quest, base, false),
@@ -860,22 +981,179 @@ fn batch2_witness_accepts_the_377_scroll_and_rejects_a_red_row() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, owned qb4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
+    let baseline = Sample {
+        tick: 1,
+        tile: Some((3000, 3150, 0)),
+        xp: SQUIRE_SMITHING_15_XP,
+        level: SQUIRE_SMITHING_LEVEL,
+        mining_level: SQUIRE_MINING_LEVEL,
+        cooking_level: SQUIRE_COOKING_LEVEL,
+        qp: 0,
+        quest_colour: Some(0xF80000),
+        inventory: vec![(333, 5)],
+        main_root: 0,
+        main_text: vec![],
+        dialogue: vec![],
+        chat: vec![],
+        combat_level: 49,
+        combat_stats: [40; 4],
+        hitpoints: 40,
+        in_combat: false,
+        local_index: Some(1),
+        nearby_npcs: vec![],
+    };
+    assert!(witness_predicate(&baseline, SQUIRE, baseline.xp, true));
+    let mut pre_relog = baseline.clone();
+    pre_relog.level = 1;
+    pre_relog.mining_level = 1;
+    pre_relog.cooking_level = 1;
+    assert!(pre_relog.quest_pre_relog_ready(SQUIRE));
+    pre_relog.in_combat = true;
+    assert!(!pre_relog.quest_pre_relog_ready(SQUIRE));
+
+    let mut invalid_baseline = baseline.clone();
+    invalid_baseline.mining_level = SQUIRE_MINING_LEVEL - 1;
+    assert!(!witness_predicate(
+        &invalid_baseline,
+        SQUIRE,
+        baseline.xp,
+        true
+    ));
+    invalid_baseline.mining_level = SQUIRE_MINING_LEVEL + 1;
+    assert!(!witness_predicate(
+        &invalid_baseline,
+        SQUIRE,
+        baseline.xp,
+        true
+    ));
+    invalid_baseline.mining_level = SQUIRE_MINING_LEVEL;
+    invalid_baseline.level = SQUIRE_SMITHING_LEVEL - 1;
+    assert!(!witness_predicate(
+        &invalid_baseline,
+        SQUIRE,
+        baseline.xp,
+        true
+    ));
+    invalid_baseline.level = SQUIRE_SMITHING_LEVEL + 1;
+    assert!(!witness_predicate(
+        &invalid_baseline,
+        SQUIRE,
+        baseline.xp,
+        true
+    ));
+    invalid_baseline.level = SQUIRE_SMITHING_LEVEL;
+    invalid_baseline.cooking_level = SQUIRE_COOKING_LEVEL - 1;
+    assert!(!witness_predicate(
+        &invalid_baseline,
+        SQUIRE,
+        baseline.xp,
+        true
+    ));
+    invalid_baseline.cooking_level = SQUIRE_COOKING_LEVEL + 1;
+    assert!(!witness_predicate(
+        &invalid_baseline,
+        SQUIRE,
+        baseline.xp,
+        true
+    ));
+    invalid_baseline.cooking_level = SQUIRE_COOKING_LEVEL;
+    invalid_baseline.xp = SQUIRE_SMITHING_15_XP + 1;
+    assert!(!witness_predicate(
+        &invalid_baseline,
+        SQUIRE,
+        baseline.xp,
+        true
+    ));
+    invalid_baseline.xp = SQUIRE_SMITHING_15_XP;
+    assert!(!witness_predicate(&baseline, SQUIRE, baseline.xp + 1, true));
+    invalid_baseline.qp = 1;
+    assert!(!witness_predicate(
+        &invalid_baseline,
+        SQUIRE,
+        baseline.xp,
+        true
+    ));
+    invalid_baseline.qp = 0;
+    invalid_baseline.quest_colour = Some(0x00F800);
+    assert!(!witness_predicate(
+        &invalid_baseline,
+        SQUIRE,
+        baseline.xp,
+        true
+    ));
+
+    for acquisition_xp in [0, 12, 25] {
+        let mut product = batch2_product(SQUIRE, &["12,725 Smithing XP"]);
+        product.xp = baseline.xp + SQUIRE.xp_delta + acquisition_xp;
+        assert!(
+            witness_predicate(&product, SQUIRE, baseline.xp, false),
+            "valid iron-bar acquisition XP delta: {acquisition_xp}"
+        );
+    }
+    for acquisition_xp in [1, 13, 26] {
+        let mut product = batch2_product(SQUIRE, &["12,725 Smithing XP"]);
+        product.xp = baseline.xp + SQUIRE.xp_delta + acquisition_xp;
+        assert!(
+            !witness_predicate(&product, SQUIRE, baseline.xp, false),
+            "invalid iron-bar acquisition XP delta: {acquisition_xp}"
+        );
+    }
+    let mut product = batch2_product(SQUIRE, &["12,725 Smithing XP"]);
+    product.xp = baseline.xp + SQUIRE.xp_delta + 25;
+    product.qp += 1;
+    assert!(!witness_predicate(&product, SQUIRE, baseline.xp, false));
+    product.qp = SQUIRE.qp_delta;
+    product.quest_colour = Some(0xF80000);
+    assert!(!witness_predicate(&product, SQUIRE, baseline.xp, false));
+    product.quest_colour = Some(0x00F800);
+    product
+        .main_text
+        .retain(|line| line != "Knight's Sword Quest!");
+    assert!(!witness_predicate(&product, SQUIRE, baseline.xp, false));
+
+    let mut wrong_reward_text = batch2_product(SQUIRE, &["12,750 Smithing XP"]);
+    wrong_reward_text.xp = baseline.xp + SQUIRE.xp_delta + 25;
+    assert!(!witness_predicate(
+        &wrong_reward_text,
+        SQUIRE,
+        baseline.xp,
+        false
+    ));
+
+    let mut product_without_xp = batch2_product(SQUIRE, &[]);
+    product_without_xp.xp = baseline.xp + SQUIRE.xp_delta + 25;
+    assert!(!witness_predicate(
+        &product_without_xp,
+        SQUIRE,
+        baseline.xp,
+        false
+    ));
+}
+
+#[test]
+#[ignore = "requires LIVE=1, owned qc4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_hetty_native() -> Result<(), String> {
     run_quest(HETTY)
 }
 #[test]
-#[ignore = "requires LIVE=1, owned qb4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+#[ignore = "requires LIVE=1, owned qc4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_gobdip_native() -> Result<(), String> {
     run_quest(GOBDIP)
 }
 #[test]
-#[ignore = "requires LIVE=1, owned qb4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+#[ignore = "requires LIVE=1, owned qc4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_vampire_native() -> Result<(), String> {
     run_quest(VAMPIRE)
 }
 #[test]
-#[ignore = "requires LIVE=1, owned qb4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+#[ignore = "requires LIVE=1, owned qc4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_demon_native() -> Result<(), String> {
     run_quest(DEMON)
+}
+
+#[test]
+#[ignore = "requires LIVE=1, owned qc4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+fn quester_377_squire_native() -> Result<(), String> {
+    run_quest(SQUIRE)
 }
