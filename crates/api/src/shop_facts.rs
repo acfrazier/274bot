@@ -31,6 +31,9 @@ pub struct ShopRecord {
     pub inv: String,
     pub title: String,
     pub keepers: Vec<String>,
+    /// Content keeper configs used for NPC joins, not a posted JavaScript field.
+    #[serde(skip_serializing)]
+    keeper_configs: Vec<String>,
     pub sell: i32,
     pub buy: i32,
     pub delta: i32,
@@ -123,17 +126,22 @@ fn join_vendor_keepers(
 ) -> Vec<JoinedKeeper> {
     let mut joined = Vec::new();
     for (shop_index, shop) in shops.iter().enumerate() {
-        for name in &shop.keepers {
-            for npc in &npc_names.rows {
-                if npc.display.as_deref() == Some(name.as_str()) {
-                    joined.push(JoinedKeeper {
-                        shop_index,
-                        config: npc.config.clone(),
-                        name: name.clone(),
-                        id: npc.id,
-                    });
-                }
+        for config in &shop.keeper_configs {
+            let Some(npc) = npc_names.rows.iter().find(|npc| &npc.config == config) else {
+                continue;
+            };
+            let Some(name) = npc.display.as_ref() else {
+                continue;
+            };
+            if !shop.keepers.contains(name) {
+                continue;
             }
+            joined.push(JoinedKeeper {
+                shop_index,
+                config: config.clone(),
+                name: name.clone(),
+                id: npc.id,
+            });
         }
     }
     joined
@@ -897,6 +905,11 @@ mod tests {
         assert_eq!(obj["adventurershop"]["items"][0]["name"], "Vial of water");
         assert_eq!(obj["adventurershop"]["items"][0]["restockTicks"], 30);
         assert_eq!(obj["fishingshop"]["keepers"][0], "Gerrant");
+        assert!(
+            obj.values()
+                .all(|shop| shop.get("keeper_configs").is_none()),
+            "keeper config joins must not change the posted ShopRecord shape"
+        );
         assert!(!obj.contains_key("generalshop1"));
         assert!(!obj.contains_key("magearena_staffshop"));
     }

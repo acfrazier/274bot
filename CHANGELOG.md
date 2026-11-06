@@ -59,8 +59,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   current module name. They still refuse a child process that runs no test.
 - Game-data fixture tests accept valid stock rows without publication-count
   pins. They still reject missing decoded NPC joins.
+- Shop vendors join the content keeper config, not only the display name.
+  An unrelated NPC named Bob no longer becomes a bronze-axe vendor.
 
 ### Not in this release
+
+- Legends Guild bank gate is conservative (completion instead of the door's
+  stage-50 threshold). This is a navigation correctness follow-up for work
+  after 0.2.9.
 
 - Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
   purging at a bank (`purgePackAtBank`) and coin withdrawal (`withdrawCoins`)

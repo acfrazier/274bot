@@ -922,6 +922,7 @@ type ShopRecordFact = {
     inv: string;
     title: string;
     keepers: string[];
+    keeper_configs: string[];
     sell: number;
     buy: number;
     delta: number;
@@ -996,6 +997,7 @@ function extractShopFacts(content: string, items: readonly ShopItemSource[]) {
             inv,
             title: first.title,
             keepers: owners.map((keeper) => keeper.name),
+            keeper_configs: owners.map((keeper) => keeper.config),
             sell: first.sell,
             buy: first.buy,
             delta: first.delta,
