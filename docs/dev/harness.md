@@ -49,7 +49,7 @@ separate menu/Examine and placement/routing paths; 274/289 are unchanged.
 The ignored `cook::cook_377_route_a` test in `revision_377_live` runs this
 registered scenario through the host pump and selected 377 client. Supply
 the resource variables listed in that test's parent module, `LIVE=1`,
-`BOT_LIVE_NAME_PREFIX=ra3`, and an absolute `ROUTE_A_EVIDENCE_DIR`. Run it
+`BOT_LIVE_NAME_PREFIX` (1–4 characters), and an absolute `ROUTE_A_EVIDENCE_DIR`. Run it
 through `isohome` with
 `cargo test -p host-play --features live-harness,test-support,debug-catalog --test revision_377_live -- --ignored --exact cook::cook_377_route_a --nocapture --test-threads=1`.
 Each fresh account produces a JSONL trace with seed labels, server
