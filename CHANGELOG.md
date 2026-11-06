@@ -34,6 +34,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 - The navigation baker accepts explicit revision 377 inputs and uses the
   revision-377 config decoder. It writes the current v19 pack and local sidecars.
+- Price revision-377 Wizard's Tower stairs from their direct teleport
+  handlers, retaining all four up/down links and excluding the choice menu.
+  Revision-274/289 transport names and costs are unchanged.
 - Revision 377's packed-name door admission now requires a closed category
   for named configs. The refused Black Knights' Fortress doors no longer
   create crossings. Numeric 274/289 declarations remain unchanged.
