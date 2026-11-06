@@ -42,18 +42,13 @@ const BLACK_ARM_ITEMS: &[(&str, i32)] = &[];
 const PHOENIX_SEED: &[(&str, i32)] = &[("phoenixgang", PHOENIX_STAGE)];
 const BLACK_ARM_SEED: &[(&str, i32)] = &[("blackarmgang", BLACK_ARM_STAGE)];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum StartProgress {
+    #[default]
     NotRequested,
     Waiting,
     Submitted,
     Admitted,
-}
-
-impl Default for StartProgress {
-    fn default() -> Self {
-        Self::NotRequested
-    }
 }
 
 #[derive(Default)]
@@ -125,7 +120,7 @@ fn lock_capture(capture: &Mutex<SharedCapture>) -> MutexGuard<'_, SharedCapture>
 }
 
 fn validate_names(names: &[String]) -> Result<Vec<String>, String> {
-    if names.len() < 2 || names.len() % 2 != 0 {
+    if names.len() < 2 || !names.len().is_multiple_of(2) {
         return Err("native_partner_trade requires an even fleet of at least two accounts".into());
     }
     let mut screen_names = Vec::with_capacity(names.len());
@@ -155,7 +150,7 @@ fn partner_slot(slot: usize) -> usize {
 }
 
 fn gang_for(slot: usize) -> Gang {
-    if slot % 2 == 0 {
+    if slot.is_multiple_of(2) {
         Gang::Phoenix
     } else {
         Gang::BlackArm
@@ -187,7 +182,7 @@ fn key_count(items: &[ItemView], key_id: i32, container: Option<ItemContainer>) 
         .filter(|item| {
             item.def.id == key_id
                 && !item.def.noted
-                && container.map_or(true, |expected| item.container == expected)
+                && container.is_none_or(|expected| item.container == expected)
         })
         .fold(0, |total, item| total.saturating_add(item.count.max(0)))
 }
@@ -228,12 +223,12 @@ fn capture_snapshot(
     capture: &Mutex<SharedCapture>,
     slot: usize,
     seed: &QuesterSeed,
-    stage_varp: i32,
-    stage_value: i32,
+    stage: (i32, i32),
     key_id: i32,
     partner_screen_name: &str,
     snapshot: &GameSnapshot,
 ) -> bool {
+    let (stage_varp, stage_value) = stage;
     let need_seed_readiness = {
         let state = lock_capture(capture);
         !state.slots[slot].seed_ready
@@ -246,7 +241,7 @@ fn capture_snapshot(
     let inventory_key_count = snapshot
         .ingame()
         .then(|| key_count(snapshot.inventory(), key_id, Some(ItemContainer::Inventory)));
-    let expected_initial_key_count = if slot % 2 == 0 { 1 } else { 0 };
+    let expected_initial_key_count = if slot.is_multiple_of(2) { 1 } else { 0 };
     let seed_ready = need_seed_readiness
         && snapshot.ingame()
         && snapshot.scene_state() == 2
@@ -326,7 +321,7 @@ fn capture_snapshot(
             && slot_state
                 .confirm_tick
                 .is_some_and(|confirmed_at| tick > confirmed_at)
-            && inventory_key_count == Some(if slot % 2 == 0 { 0 } else { 1 })
+            && inventory_key_count == Some(if slot.is_multiple_of(2) { 0 } else { 1 })
         {
             slot_state.handoff = true;
             slot_state.handoff_tick.get_or_insert(tick);
@@ -491,7 +486,6 @@ impl FeatureCase for NativeTradeCase {
             ready: Box::new({
                 let capture = Arc::clone(&self.capture);
                 let seed = fixture.seed;
-                let slot = slot;
                 let key_id = self.key_id;
                 let partner_screen_name = self.screen_names[partner_slot(slot)].clone();
                 move |snapshot| {
@@ -499,8 +493,7 @@ impl FeatureCase for NativeTradeCase {
                         &capture,
                         slot,
                         &seed,
-                        stage_varp,
-                        stage_value,
+                        (stage_varp, stage_value),
                         key_id,
                         &partner_screen_name,
                         snapshot,
