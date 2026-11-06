@@ -67,31 +67,29 @@ impl MapFixture {
         let bytes = nav_bake::pack::encode(collision, &world.graph, world.banks()).unwrap();
         let pack = root.join("selected.navpack");
         std::fs::write(&pack, &bytes).unwrap();
-        let profile = ProfileOptions {
+        let mut options = ProfileOptions {
             profile: Some(profile.into()),
             revision: Some("289".into()),
             cache_dir: Some(root.clone()),
             nav_pack: Some(pack),
-            // The synthetic fixture has no world.json. Mark its endpoint
-            // explicit so this navigation-only test does not request local
-            // API game-data assets.
-            asset_host: Some("127.0.0.1".into()),
-            http_port: Some(9),
             ..Default::default()
+        };
+        let environment = ProfileEnvironment {
+            home: Some(root.clone()),
+            engine_dir: Some(root.join("engine")),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..Default::default()
+        };
+        let mut selected = options.resolve_with_env(None, &environment).unwrap();
+        if selected.transport() == client::Transport::Tcp {
+            // Local fixtures have no guarded world.json, so keep their asset
+            // endpoint explicit. WSS profiles retain the selected roster pair.
+            options.asset_host = Some("127.0.0.1".into());
+            options.http_port = Some(9);
+            selected = options.resolve_with_env(None, &environment).unwrap();
         }
-        .resolve_with_env(
-            None,
-            &ProfileEnvironment {
-                home: Some(root.clone()),
-                engine_dir: Some(root.join("engine")),
-                rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-                rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .bind()
-        .unwrap();
+        let profile = selected.bind().unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();
         Self { root, template }
     }

@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use client::io::{ClientRevision, Packet};
 use host_play::profile::{NavAvailability, ProfileEnvironment};
-use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
+use host_play::progress::{
+    ProfileProgress, ProfileProgressObserver, ProfileProgressStage, ProfileProgressUnit,
+};
 use host_play::{parse_profile_args, LoginKey, ProfileOptions, Servers, SharedClientTemplate};
 
 #[path = "support/upgrade_home.rs"]
@@ -534,18 +536,27 @@ fn observed_preparation_reports_only_completed_game_file_steps() {
         .iter()
         .filter(|progress| progress.stage == ProfileProgressStage::CheckingGameFiles)
         .collect();
-    assert!(game_checks.len() > ARCHIVES.len());
+    assert_eq!(game_checks.len(), ARCHIVES.len() + 1);
     assert_eq!(game_checks.first().unwrap().completed, 0);
     assert_eq!(game_checks.first().unwrap().total, ARCHIVES.len() as u64);
+    assert!(
+        game_checks.iter().enumerate().all(|(completed, progress)| {
+            progress.completed == completed as u64
+                && progress.total == ARCHIVES.len() as u64
+                && progress.unit == ProfileProgressUnit::Files
+        }),
+        "game-file progress advances once for each archive read"
+    );
     assert!(game_checks
         .windows(2)
         .all(|pair| pair[1].completed == 0 || pair[1].completed >= pair[0].completed));
-    assert!(
+    assert_eq!(
         game_checks
             .iter()
             .filter(|progress| progress.completed == progress.total)
-            .count()
-            >= 2
+            .count(),
+        1,
+        "one terminal event follows the completed archive reads"
     );
     let archive_reads: Vec<_> = updates
         .iter()
@@ -1883,6 +1894,8 @@ fn operator_listed_custom_endpoint_remains_unsupported() {
     }]);
     let mut options = fixture.options(289);
     options.rs2b2t = true;
+    // Preserve the selected WSS roster world's paired asset endpoint.
+    options.asset_host = None;
     let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
     assert!(!selected.supported_server());
     let profile = selected.bind().unwrap();
