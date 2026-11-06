@@ -19,6 +19,39 @@ ownership, prefer the tracked suite entrypoint
 record — not automatic script qualification. Captures that require human
 readback stay `pending_visual_review`; raw failures stay preserved.
 
+## Revision 377 Cook's Assistant (Route A)
+
+The `cook_377` scenario is a bespoke Fairy Ring content check. It does not
+establish historical accuracy and does not change the production revision.
+It starts with an untouched quest, zero quest points and zero Cooking XP.
+The only seeds bypass this account's tutorial and teleport its position for
+commutes. Each commute has a `SEED position:` step label. No ingredient,
+mill variable, quest stage, XP or quest point is seeded.
+
+The cell talks to the Cook, takes the kitchen pot, farm egg and bucket,
+uses the bucket on the dairy cow, picks wheat, climbs both mill ladders,
+fills and operates the hopper, descends and empties the flour bin. It
+hands in through the Cook's dialogue. Read-only `getvar` replies prove
+server `cookquest=0→1→2`, `qp=0→1` and the mill writes. These steps are
+labelled `SERVER READBACK`; the Cook quest variable is not transmitted
+as a client varp. Client-visible checks require the red→yellow→green
+quest-list row, the quest-point display, completion interface, exactly
+300 Cooking XP gained from zero, and consumed ingredients.
+A refused or unavailable interaction fails its named step. The cell does
+not replace an unavailable action with a state seed.
+
+The ignored `cook::cook_377_route_a` test in `revision_377_live` runs this
+registered scenario through the host pump and selected 377 client. Supply
+the resource variables listed in that test's parent module, `LIVE=1`,
+`BOT_LIVE_NAME_PREFIX=ra3`, and an absolute `ROUTE_A_EVIDENCE_DIR`. Run it
+through `isohome` with
+`cargo test -p host-play --features live-harness,test-support,debug-catalog --test revision_377_live -- --ignored --exact cook::cook_377_route_a --nocapture --test-threads=1`.
+Each fresh account produces a JSONL trace with seed labels, server
+readbacks, step names, dialogue, inventory, quest-list colours,
+transmitted quest-point total, completion-interface reward text and Cooking XP.
+The mainland fixture includes a clean relog to unlock the quest tab,
+as in the TS runner. Neither the cell nor the fixture changes world speed.
+
 ## Live entry points
 
 Live cells need a local engine and cache, run one at a time

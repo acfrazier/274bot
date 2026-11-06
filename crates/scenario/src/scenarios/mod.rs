@@ -4,6 +4,7 @@ pub(crate) mod bank;
 pub(crate) mod cell;
 pub(crate) mod client_377;
 pub(crate) mod clue;
+pub(crate) mod cook_377;
 
 pub(crate) mod boat_fare;
 pub(crate) mod combat;
