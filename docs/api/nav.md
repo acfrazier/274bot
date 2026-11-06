@@ -22,7 +22,7 @@ python tools/local-data/build.py
 ```
 
 `BOT_NAV_BUILD=skip` stages nothing. `BOT_NAV_REVISION` selects revision 289
-by default or 274. `BOT_NAV_RESOURCE_DIR` selects another staging root.
+by default, or 274 or 377 explicitly. `BOT_NAV_RESOURCE_DIR` selects another staging root.
 `NAV_PACK` overrides runtime pack selection only; it does not select build
 inputs.
 
@@ -40,11 +40,36 @@ cargo run --locked -p nav-bake --bin nav-pack -- \
   --out target/local-data/nav/289/274bot.navpack
 ```
 
-The cache path supplies the local revision's `data/pack/client` directory.
-Nav-pack reads its `config` and the generated `<revision>.json` and
+`--cache` supplies the local client-cache directory. Revisions 289 and 377 read
+its `config`. Revision 274 reads the server `config` beside that directory.
+Nav-pack also reads the generated `<revision>.json` and
 `<revision>/quests.json` files. It writes all five payloads beside `--out`.
 Use `--flags-out`, `--reach-out`, `--canlight-out`, and `--pois-out` only to
 select different sidecar paths.
+
+Revision 377 requires `--server-loc-dat` naming the selected local engine's
+packed `server/loc.dat`. A published client cache need not live below
+`data/pack/client`, so the bake does not infer this server path from `--cache`.
+The collision decoder applies engine defaults, the server record, the client
+record and the active-field postpass in that order.
+It does not apply the client's `breakroutefinding` postpass, which clears
+collision flags that the server retains.
+
+Use the explicit server table when you rebake revision 377:
+
+```bash
+cargo run --locked -p nav-bake --bin nav-pack -- \
+  --revision 377 \
+  --content "$GAME_DATA_377_CONTENT" \
+  --cache "$GAME_DATA_377_ENGINE/data/pack/client" \
+  --game-data-dir crates/api/data/game-data \
+  --server-loc-dat "$GAME_DATA_377_ENGINE/data/pack/server/loc.dat" \
+  --out target/local-data/nav/377/274bot.navpack
+```
+
+Revisions 274 and 289 reject `--server-loc-dat` and retain their existing
+collision behavior. Product builds only stage the generated local payloads.
+They do not read the server table or check source provenance.
 
 Each edge's `members_req` comes from the content handler that edge's op runs,
 resolved as the engine does: type `[<op>,<name>]`, then category
@@ -206,6 +231,7 @@ file-identity bindings.
 
 The TUI `r` layer tints walkable-but-unreached cells from the reach words. It
 shows `reach unavailable` when those words are not available.
+
 
 
 ## Collision (`nav_planner::collision`)
