@@ -1572,11 +1572,20 @@ pub(crate) fn compile_talk(
     let target = if let Some(npc) = arg.npc {
         let id = resolve_npc(cx, &npc)?;
         let row = cx.selected.npc_by_config(&npc).unwrap();
-        offered(&row.ops, "Talk-to")?;
-        let display = row
-            .display
-            .as_deref()
-            .ok_or_else(|| CompileError::code("unresolved-npc").with_detail(npc.as_str()))?;
+        // 377 multinpc roots have no static name or operations. Their
+        // current menu form is observed in the snapshot; nearest_talk
+        // still requires this placed type and an actual Talk-to action.
+        // Do not borrow a leaf's capabilities: the current form can be null.
+        let observed_menu =
+            cx.selected.revision() == 377 && row.display.is_none() && row.ops.is_empty();
+        if !observed_menu {
+            offered(&row.ops, "Talk-to")?;
+        }
+        let display = match row.display.as_deref() {
+            Some(display) => display,
+            None if observed_menu => npc.as_str(),
+            None => return Err(CompileError::code("unresolved-npc").with_detail(npc.as_str())),
+        };
         dialogue::DialogueTarget::Npc {
             id,
             name: Arc::from(display),
