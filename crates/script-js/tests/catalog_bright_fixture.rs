@@ -1,5 +1,6 @@
 //! Synthetic mini-catalog regressions: bright Start, module-graph load, and
 //! import-remap stamping (no `$RS2B0T` / persisted rs2b0t-path).
+//! Bright Start supplies selected local R289 facts to native callbacks.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -118,6 +119,11 @@ fn synthetic_bright_catalog_cards_stay_unloadable_clean() {
 
 #[test]
 fn synthetic_bright_catalog_cards_start_without_not_impl() {
+    if !common::local_game_data_available(289) {
+        return;
+    }
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("selected R289 game data for bright Start");
     let dir = scratch("start");
     let mut lib = register_fixture(&dir);
     let names: Vec<String> = lib
@@ -182,7 +188,7 @@ fn synthetic_bright_catalog_cards_start_without_not_impl() {
                 card.js.clone(),
                 card.shape,
                 siblings.clone(),
-                None,
+                Some(Arc::clone(&selected)),
                 Arc::new(api::named_banks::NamedBankFacts::empty()),
             ) {
                 Ok(iso) => iso,
