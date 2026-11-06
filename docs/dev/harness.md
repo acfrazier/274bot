@@ -713,6 +713,10 @@ Enable `debug-catalog,live-harness,test-support`. Clue cells also require `js`.
 Each cell uses a fresh account and the normal mainland logout/login.
 All account fixtures finish before the native machine starts:
 
+- Route admission receives five cooked chompy foods and Hitpoints 40.
+  Capture must retain all five foods without missing facts.
+  A native walk must arrive at (3218,3245,0) and retain a known assessment.
+  This food is absent from the legacy revision-289 combat table.
 - Cow combat receives Attack, Strength, Defence and Hitpoints 40, one bronze
   sword, and five lobsters. It starts inside the real Lumbridge cow pasture.
   The native Combat action must report a kill and a swing.

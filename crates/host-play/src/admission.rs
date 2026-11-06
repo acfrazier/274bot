@@ -323,11 +323,14 @@ pub fn unavailable(map_members: bool) -> RiskInput {
 
 /// Capture one admission from the host's current condition, never a retained
 /// assessment's poison input. Missing or stale conditions fail closed.
+/// Use the world's selected facts when present. An unavailable binding stays
+/// unavailable; callers without a world retain the legacy table selection.
 pub fn capture(
     snapshot: &GameSnapshot,
     map_members: bool,
     condition: Option<&api::condition::BotCondition>,
     off_debt: bool,
+    world: Option<&NavWorld>,
 ) -> RiskInput {
     let poison = condition
         .filter(|fact| {
@@ -344,7 +347,11 @@ pub fn capture(
         off_debt,
         ..unavailable(map_members)
     };
-    if let Ok(tables) = script::combat::guard::shared_tables() {
+    let combat = match world {
+        Some(world) => condition_tables(world).map(|(combat, _)| combat),
+        None => script::combat::guard::shared_tables().ok(),
+    };
+    if let Some(tables) = combat {
         let stamp = EvidenceStamp {
             run: api::selected::RunKey {
                 slot: 0,
@@ -670,6 +677,7 @@ pub(crate) fn publish(
         map_members,
         bot.condition.current(),
         bot.walk_guard_off.is_some(),
+        Some(world),
     );
     if !fresh(assessment, input) {
         admission.input = input;

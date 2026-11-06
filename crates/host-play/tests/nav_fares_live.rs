@@ -209,7 +209,13 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
         let arms = WalkArms::default();
         let admission = host_play::admission::Admission::manual(
             command.options(),
-            host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
+            host_play::admission::capture(
+                &snapshot,
+                state.map_members,
+                Default::default(),
+                false,
+                None,
+            ),
             0,
             host_play::WalkGlobals::default(),
         );
@@ -469,7 +475,13 @@ fn live_shilo_cart_ten_coins_to_zero() {
     let arms = WalkArms::default();
     let admission = host_play::admission::Admission::manual(
         command.options(),
-        host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
+        host_play::admission::capture(
+            &snapshot,
+            state.map_members,
+            Default::default(),
+            false,
+            None,
+        ),
         1,
         host_play::WalkGlobals::default(),
     );

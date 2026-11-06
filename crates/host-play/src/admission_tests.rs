@@ -1801,7 +1801,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     });
 
     let snapshot = api::snapshot::GameSnapshot::new();
-    let _ = capture(&snapshot, false, None, false);
+    let _ = capture(&snapshot, false, None, false, None);
     let publish_world = empty_corridor();
     let publish_from = tile(0, 1);
     let publish_to = tile(8, 1);
@@ -2835,7 +2835,7 @@ mod compact_final_route_tests {
         assert_eq!(bot.admission.as_deref().unwrap().input, after.input);
         assert_eq!(
             after.input,
-            capture(&snapshot, false, bot.condition.current(), false)
+            capture(&snapshot, false, bot.condition.current(), false, None)
         );
         assert_eq!(after.input.hp, 70);
         assert!(after.input.food_ids.contains(&379));
@@ -2864,7 +2864,7 @@ mod compact_final_route_tests {
         assert!(!Arc::ptr_eq(&before, after));
         assert_eq!(
             after.input,
-            capture(&snapshot, false, bot.condition.current(), false)
+            capture(&snapshot, false, bot.condition.current(), false, None)
         );
         assert!(
             after.input.missing_facts,

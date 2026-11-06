@@ -23,6 +23,7 @@ enum Case {
     Cow,
     Eat,
     Cure,
+    Admission,
     #[cfg(feature = "js")]
     HansClue,
     #[cfg(feature = "js")]
@@ -35,6 +36,7 @@ impl Case {
             Self::Cow => "cow-food-loot",
             Self::Eat => "survival-eat",
             Self::Cure => "survival-cure",
+            Self::Admission => "route-admission",
             #[cfg(feature = "js")]
             Self::HansClue => "clue-hans",
             #[cfg(feature = "js")]
@@ -46,6 +48,7 @@ impl Case {
         let (x, z) = match self {
             Self::Cow => (3255, 3278),
             Self::Eat | Self::Cure => (3190, 3245),
+            Self::Admission => (3190, 3245),
             #[cfg(feature = "js")]
             Self::HansClue => (3222, 3222),
             #[cfg(feature = "js")]
@@ -86,7 +89,14 @@ impl Case {
             if matches!(self, Self::Cow) {
                 commands.push("give bronze_sword 1".into());
             }
-            commands.push("give lobster 5".into());
+            commands.push(format!(
+                "give {} 5",
+                if matches!(self, Self::Admission) {
+                    "cooked_chompy"
+                } else {
+                    "lobster"
+                }
+            ));
             if matches!(self, Self::Cure) {
                 commands.push("give 1doseantipoison 1".into());
             }
@@ -138,7 +148,11 @@ impl Facts {
             })
             .transpose()?;
         Ok(Self {
-            food: item("lobster")?,
+            food: item(if matches!(case, Case::Admission) {
+                "cooked_chompy"
+            } else {
+                "lobster"
+            })?,
             cure: item("1doseantipoison")?,
             vial: item("vial_empty")?,
             weapon: item("bronze_sword")?,
@@ -247,6 +261,7 @@ impl Sample {
                     && self.ground_loot == 0
             }
             Case::Eat => self.food == 5 && self.hp == 3 && self.hp_max == 15 && self.poison_line,
+            Case::Admission => self.food == 5 && self.hp == 40 && self.hp_max == 40,
             Case::Cure => {
                 self.food == 5
                     && self.cure == 1
@@ -541,6 +556,17 @@ fn proved(case: Case, baseline: &Sample, sample: &Sample, outcome: &Outcome, imm
                 && immune
                 && sample.tile != baseline.tile
         }
+        Case::Admission => {
+            outcome.walk.as_ref().is_some_and(|receipt| {
+                receipt.refusal.is_none()
+                    && receipt.end == script::native::WalkEnd::Arrived
+                    && receipt.assessment.as_ref().is_some_and(|assessment| {
+                        !assessment.input.missing_facts
+                            && assessment.input.food_iter().any(|(_, count)| count == 5)
+                    })
+            }) && sample.tile == Some((3218, 3245, 0))
+                && sample.food == baseline.food
+        }
         #[cfg(feature = "js")]
         Case::HansClue | Case::HansHardClue => {
             sample.clue == 0 && sample.replacement && !baseline.replacement
@@ -671,7 +697,7 @@ fn run(case: Case) -> Result<(), String> {
             loot_args: Some(loot_args),
             outcome: Arc::clone(&outcome),
         })),
-        Case::Eat | Case::Cure => Some(Box::new(SurvivalScript {
+        Case::Eat | Case::Cure | Case::Admission => Some(Box::new(SurvivalScript {
             started: false,
             walk: None,
             outcome: Arc::clone(&outcome),
@@ -696,6 +722,31 @@ fn run(case: Case) -> Result<(), String> {
             return Err(error.clone());
         }
         if !started && state.baseline.is_some() {
+            if matches!(case, Case::Admission) {
+                let world = play.world().ok_or("377 admission world unavailable")?;
+                let input = host_play::admission::capture(
+                    &state.snapshot,
+                    true,
+                    condition.as_ref(),
+                    false,
+                    Some(&world),
+                );
+                if input.missing_facts
+                    || !input
+                        .food_iter()
+                        .any(|(id, count)| id == state.facts.food && count == 5)
+                {
+                    return Err(format!(
+                        "377 route admission did not retain selected food: {input:?}"
+                    ));
+                }
+                println!(
+                    "{}",
+                    json!({"phase":"route-admission-input", "account":account,
+                    "food":input.food_iter().collect::<Vec<_>>(), "missing_facts":input.missing_facts,
+                    "hp":input.hp})
+                );
+            }
             drop(state);
             if let Some(script) = script.take() {
                 play.script_start_handle().start_test_script(
@@ -792,6 +843,11 @@ fn machines_377_cow_with_food_and_loot() -> Result<(), String> {
 #[ignore = "requires canonical 377 resources, LIVE=1, f377 prefix and MACHINES_377_EVIDENCE_DIR"]
 fn machines_377_survival_eats_on_poison_line() -> Result<(), String> {
     run(Case::Eat)
+}
+#[test]
+#[ignore = "requires canonical 377 resources, LIVE=1, f377 prefix and MACHINES_377_EVIDENCE_DIR"]
+fn machines_377_route_admission_with_selected_food() -> Result<(), String> {
+    run(Case::Admission)
 }
 #[test]
 #[ignore = "requires canonical 377 resources, LIVE=1, f377 prefix and MACHINES_377_EVIDENCE_DIR"]
