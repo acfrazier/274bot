@@ -60,8 +60,10 @@ impl Sample {
     }
 
     fn product_complete(&self) -> bool {
-        self.mining_xp == 1300
-            && self.mining_level == 10
+        // Six clay (5 XP each) and four copper ore (17.5 XP each) are
+        // mined by this Path before Doric grants the 1,300 XP reward.
+        self.mining_xp == 1400
+            && self.mining_level == 11
             && self.quest_points == 1
             && self.doric_colour == Some(0x00F800)
             && self.main_text.iter().any(|text| text == "1 Quest Point")
@@ -146,8 +148,8 @@ impl Witness {
             "sample": sample, "baseline": self.baseline,
             "driver": "production Play.script_start(Quester), bundled 377 Doric's Quest Path",
             "renderer": "real Client CpuPix3D framebuffer",
-            "seeds": ["own account tutorial bypass and mainland position, then clean relog", "own account combat stats 40 and 6 cooked meat; see labelled commands"],
-            "quest_state_seeds": 0, "food_seed": 6, "quest_item_seeds": 0, "reward_xp_seeds": 0, "quest_point_seeds": 0,
+            "seeds": ["own account tutorial bypass and mainland position, then clean relog", "own account combat stats 40, bronze pickaxe and 6 cooked meat; see labelled commands"],
+            "quest_state_seeds": 0, "food_seed": 6, "tool_seed": "bronze_pickaxe", "quest_item_seeds": 0, "reward_xp_seeds": 0, "quest_point_seeds": 0,
         });
         self.record(receipt.clone())?;
         self.jobs.push(self.writer.submit(EvidenceRequest {
@@ -212,6 +214,7 @@ impl Witness {
             "setstat strength 40",
             "setstat defence 40",
             "setstat hitpoints 40",
+            "give bronze_pickaxe 1",
             "give cooked_meat 6",
         ];
         if self.fixture_index < fixture.len() {
@@ -220,7 +223,7 @@ impl Witness {
                 if !interact::cheat(client, command).is_sent() {
                     return Err(format!("combat fixture command refused: {command}"));
                 }
-                self.record(json!({"phase":"SEED own-account combat stats and food", "command":command, "tick":sample.tick}))?;
+                self.record(json!({"phase":"SEED own-account combat stats, pickaxe and food", "command":command, "tick":sample.tick}))?;
                 self.fixture_index += 1;
                 self.fixture_tick = Some(sample.tick);
             }
@@ -284,7 +287,7 @@ impl Witness {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, owned qp3 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+#[ignore = "requires LIVE=1, owned qd3 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_doric_native() -> Result<(), String> {
     let bound = load_bound_377()?;
     identity_record(&bound);

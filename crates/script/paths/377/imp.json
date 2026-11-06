@@ -325,16 +325,16 @@
               "not_targeting_others": true,
               "pick": "random"
             },
-            "lost_radius": 12,
+            "lost_radius": 74,
             "area": {
               "box": [
-                3003,
-                3300,
-                3021,
-                3321,
+                2962,
+                3260,
+                3062,
+                3361,
                 0
               ],
-              "source": "maps/m47_51.jm2:7556-7564"
+              "source": "maps/m47_51.jm2:7556-7564; scripts/_unpack/377/all.npc:18530 (wander 27); scripts/npc/scripts/imp.rs2:21 (teleport 20)"
             },
             "stand": {
               "tile": [
@@ -347,7 +347,7 @@
             "tactic": {
               "kind": "open",
               "style": "melee",
-              "engage_radius": 6,
+              "engage_radius": 54,
               "auto_retaliate": true
             },
             "loadout": null,

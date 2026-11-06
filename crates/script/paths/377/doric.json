@@ -110,83 +110,52 @@
           "recovery_entry": null,
           "steps": [
             {
-              "id": "gather-clay-from-imps",
-              "kind": "combat",
+              "id": "mine-doric-clay",
+              "kind": "gather",
               "version": 1,
               "advances": false,
               "args": {
-                "target": {
-                  "npc": "imp",
-                  "not_targeting_others": true,
-                  "pick": "random"
+                "skill": "mining",
+                "resource": "clay",
+                "until": { "obj": "clay", "qty": 6 },
+                "anchor": {
+                  "tile": [2986, 3239, 0],
+                  "source": "maps/m46_50.jm2; scripts/skill_mining/configs/mine.dbrow:10-25"
                 },
-                "lost_radius": 12,
-                "area": {
-                  "box": [
-                    3003,
-                    3300,
-                    3021,
-                    3321,
-                    0
-                  ],
-                  "source": "maps/m47_51.jm2:7556-7564"
-                },
-                "stand": {
-                  "tile": [
-                    3011,
-                    3314,
-                    0
-                  ],
-                  "source": "maps/m47_51.jm2:7557"
-                },
-                "tactic": {
-                  "kind": "open",
-                  "style": "melee",
-                  "engage_radius": 6,
-                  "auto_retaliate": true
-                },
-                "loadout": null,
-                "kill_budget_ticks": 50,
-                "loot": [
-                  {
-                    "obj": "clay",
-                    "qty": 6
-                  }
-                ],
-                "until": {
-                  "Fact": {
-                    "kind": "item_count_at_least",
-                    "version": 1,
-                    "args": {
-                      "obj": "clay",
-                      "qty": 6
-                    }
-                  }
-                }
+                "radius": 3,
+                "settle_ms": 300000
               },
               "skip_if": {
-                "Fact": {
-                  "kind": "item_count_at_least",
-                  "version": 1,
-                  "args": {
-                    "obj": "clay",
-                    "qty": 6
-                  }
-                }
+                "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } }
               },
               "settle": {
-                "Fact": {
-                  "kind": "item_count_at_least",
-                  "version": 1,
-                  "args": {
-                    "obj": "clay",
-                    "qty": 6
-                  }
-                }
+                "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "clay", "qty": 6 } }
               }
             },
             {
-              "id": "gather-ores-from-dwarves",
+              "id": "mine-doric-copper",
+              "kind": "gather",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "skill": "mining",
+                "resource": "copper",
+                "until": { "obj": "copper_ore", "qty": 4 },
+                "anchor": {
+                  "tile": [2976, 3247, 0],
+                  "source": "maps/m46_50.jm2; scripts/skill_mining/configs/mine.dbrow:28-41"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } }
+              },
+              "settle": {
+                "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "copper_ore", "qty": 4 } }
+              }
+            },
+            {
+              "id": "gather-iron-from-dwarves",
               "kind": "combat",
               "version": 1,
               "advances": false,
@@ -196,38 +165,34 @@
                   "not_targeting_others": true,
                   "pick": "random"
                 },
-                "lost_radius": 12,
+                "lost_radius": 34,
                 "area": {
                   "box": [
-                    2992,
-                    3439,
-                    3006,
-                    3459,
+                    2985,
+                    3422,
+                    3042,
+                    3466,
                     0
                   ],
-                  "source": "maps/m46_53.jm2:8088-8089"
+                  "source": "maps/m46_53.jm2:8088-8089; maps/m47_53.jm2:7692-7709; scripts/_unpack/377/all.npc:3420 (wander 13)"
                 },
                 "stand": {
                   "tile": [
-                    2998,
-                    3445,
+                    3008,
+                    3436,
                     0
                   ],
-                  "source": "maps/m46_53.jm2:8088"
+                  "source": "maps/m47_53.jm2:7692"
                 },
                 "tactic": {
                   "kind": "open",
                   "style": "melee",
-                  "engage_radius": 6,
+                  "engage_radius": 34,
                   "auto_retaliate": true
                 },
                 "loadout": null,
                 "kill_budget_ticks": 50,
                 "loot": [
-                  {
-                    "obj": "copper_ore",
-                    "qty": 4
-                  },
                   {
                     "obj": "iron_ore",
                     "qty": 2
