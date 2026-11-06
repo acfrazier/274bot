@@ -6,8 +6,8 @@
 //! `blockrange` values are not collision authority.
 
 use api::obj_names::LocDefs;
-use client::config::LocType;
 use client::config::config_377::{DecodeError377, DecodeErrorKind377, Reader377};
+use client::config::LocType;
 
 /// Build collision definitions with the exact engine field defaults, opcode
 /// order, field values, and active postpass; leave client `loc_types` intact
@@ -356,7 +356,10 @@ mod tests {
         assert_eq!(overridden.ops.len(), 1);
         assert_eq!(overridden.ops[0], "Examine");
         assert_eq!(overridden.force_approach, 2);
-        assert!(loc_defs.loc(6955).unwrap().active, "model shape 10 defaults active");
+        assert!(
+            loc_defs.loc(6955).unwrap().active,
+            "model shape 10 defaults active"
+        );
 
         // The separately returned client table still carries its client-decoded
         // collision values; only LocDefs receives the engine's source composition.
@@ -387,9 +390,18 @@ mod tests {
             assert_ne!(flag & CollisionFlag::WALK_SCENERY as u32, 0);
             assert_ne!(flag & CollisionFlag::VIS_SCENERY as u32, 0);
         }
-        assert_ne!(collision.flag(30, 10, 0) & CollisionFlag::WALK_SCENERY as u32, 0);
-        assert_ne!(collision.flag(32, 13, 0) & CollisionFlag::WALK_SCENERY as u32, 0);
-        assert_eq!(collision.flag(33, 13, 0) & CollisionFlag::WALK_SCENERY as u32, 0);
+        assert_ne!(
+            collision.flag(30, 10, 0) & CollisionFlag::WALK_SCENERY as u32,
+            0
+        );
+        assert_ne!(
+            collision.flag(32, 13, 0) & CollisionFlag::WALK_SCENERY as u32,
+            0
+        );
+        assert_eq!(
+            collision.flag(33, 13, 0) & CollisionFlag::WALK_SCENERY as u32,
+            0
+        );
         assert_ne!(collision.flag(40, 10, 0) & CollisionFlag::WR_GRND as u32, 0);
     }
 
@@ -401,12 +413,12 @@ mod tests {
                 (
                     0,
                     &[
-                        1, 1, 0, 1, 10, 2, b'n', 10, 3, b'd', 10, 5, 1, 0, 2, 14, 2, 15, 3,
-                        17, 18, 19, 1, 21, 22, 23, 24, 0, 1, 25, 28, 16, 29, 255, 39, 255, 30,
-                        b'h', 10, 40, 1, 0, 1, 0, 2, 60, 0, 1, 61, 0, 2, 62, 64, 65, 0, 128,
-                        66, 0, 128, 67, 0, 128, 68, 0, 3, 69, 4, 70, 0, 1, 71, 0, 2, 72, 0,
-                        3, 73, 74, 75, 1, 77, 0, 1, 0, 2, 1, 0, 1, 0, 3, 249, 2, 0, 0, 1, 1,
-                        b's', 10, 0, 0, 2, 0, 0, 0, 0, 42, 250, b'n', 10,
+                        1, 1, 0, 1, 10, 2, b'n', 10, 3, b'd', 10, 5, 1, 0, 2, 14, 2, 15, 3, 17, 18,
+                        19, 1, 21, 22, 23, 24, 0, 1, 25, 28, 16, 29, 255, 39, 255, 30, b'h', 10,
+                        40, 1, 0, 1, 0, 2, 60, 0, 1, 61, 0, 2, 62, 64, 65, 0, 128, 66, 0, 128, 67,
+                        0, 128, 68, 0, 3, 69, 4, 70, 0, 1, 71, 0, 2, 72, 0, 3, 73, 74, 75, 1, 77,
+                        0, 1, 0, 2, 1, 0, 1, 0, 3, 249, 2, 0, 0, 1, 1, b's', 10, 0, 0, 2, 0, 0, 0,
+                        0, 42, 250, b'n', 10,
                     ],
                 ),
                 (1, &[14, 6, 18]),
