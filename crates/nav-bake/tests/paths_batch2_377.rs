@@ -23,12 +23,13 @@ fn server_only_wall_3550_blocks_the_real_map_boundary() {
     let world = NavWorld::load_pack(&path("NAV_377_PACK")).unwrap();
     // Canon m34_49.jm2:4968 places 3550 at (25,33), wall shape 0,
     // angle 0. Opcode 74 must not remove its engine-side west/east wall.
+    // The pack retains wall faces; load_pack does not attach the raw flags sidecar.
     assert_ne!(
-        world.collision.flag(2201, 3169, 0) & client::dash3d::CollisionFlag::W_W as u32,
+        world.collision.walkable_word(2201, 3169, 0) & client::dash3d::CollisionFlag::W_W as u32,
         0
     );
     assert_ne!(
-        world.collision.flag(2200, 3169, 0) & client::dash3d::CollisionFlag::W_E as u32,
+        world.collision.walkable_word(2200, 3169, 0) & client::dash3d::CollisionFlag::W_E as u32,
         0
     );
 }
