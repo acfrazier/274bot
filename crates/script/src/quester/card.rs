@@ -397,6 +397,12 @@ fn prepare_from(
     bag: Arc<SettingsBag>,
     source: impl FnOnce(&mut PrepareContext<'_>) -> Result<QuesterRegistryReady, StartError>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
+    // 377 needs its table-specific refusal before selected_pin can read them.
+    // Legacy revisions retain the original pin-before-revision precedence.
+    let revision_377 = cx.selected.revision() == 377;
+    if revision_377 {
+        admit_revision(&cx.selected)?;
+    }
     if cx
         .selected
         .selected_pin()
@@ -406,7 +412,9 @@ fn prepare_from(
     {
         return Err(StartError::Facts(api::selected::FactError::PinMismatch));
     }
-    admit_revision(&cx.selected)?;
+    if !revision_377 {
+        admit_revision(&cx.selected)?;
+    }
     let settings = decode_settings(&bag).map_err(StartError::Config)?;
     let gang = match settings
         .gang
