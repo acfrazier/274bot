@@ -1,0 +1,94 @@
+//! Canon 377 journal recovery: quest_{sheep,runemysteries,romeojuliet}/scripts/*_journal.rs2.
+use super::super::{compile, progress};
+use super::bundled_path_for;
+use api::quest_facts::QuestCatalog;
+use api::quest_progress::{EvidenceStamp, JournalRead};
+use api::selected::{ClientRevision, Knowledge, RunKey, Truth};
+use std::sync::Arc;
+
+#[test]
+fn selected_377_journal_paths_compile_and_recover_source_states() {
+    api::selected::FamilyPreparation::run(|worker| {
+        let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+        let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let stamp = EvidenceStamp {
+            run: RunKey { slot: 1, run: 1, session: 1 },
+            tick: 10,
+            sequence: 10,
+        };
+        for (id, cases) in [
+            ("sheep", vec![
+                ("sheep:0", "I can start this quest by speaking to Farmer Fred at his|farm just a little way North West of Lumbridge"),
+                ("sheep:1", "I asked Farmer Fred, near Lumbridge, for a quest. Fred|said he'd pay me for shearing his sheep for him!|I need to collect 20 more balls of wool."),
+                ("sheep:1", "I asked Farmer Fred, near Lumbridge, for a quest. Fred|said he'd pay me for shearing his sheep for him!|I need to collect 1 more ball of wool."),
+                ("sheep:enough", "I asked Farmer Fred, near Lumbridge, for a quest. Fred|said he'd pay me for shearing his sheep for him!|I have enough balls of wool to give Fred and get my reward|money!"),
+                ("sheep:22", "I brought Farmer Fred 20 balls of wool, and he paid me for|it!|QUEST COMPLETE!"),
+            ]),
+            ("runemysteries", vec![
+                ("runemysteries:0", "I can start this quest by speaking to Duke Horacio of|Lumbridge, upstairs in Lumbridge Castle"),
+                ("runemysteries:1", "I spoke to Duke Horacio and he showed me a strange|talisman that had been found by one of his subjects.|I need to find the Head Wizard and give him the Talisman"),
+                ("runemysteries:2", "I spoke to Duke Horacio and he showed me a strange|talisman that had been found by one of his subjects.|I gave the Talisman to the Head Wizard of the Tower and|agreed to help him with his research into rune stones.|I should talk to the Head Wizard again"),
+                ("runemysteries:3", "I gave the Talisman to the Head Wizard of the Tower and|agreed to help him with his research into rune stones.|I should take this Research Package to Aubury in Varrock"),
+                ("runemysteries:4", "I took the research package to Varrock and delivered it.|I should speak to Aubury again when he has finished|examining the research package I have delivered him."),
+                ("runemysteries:5", "I took the research package to Varrock and delivered it.|Aubury was interested in the research package and gave|me his own research notes to deliver to Sedridor.|I should take the notes to Sedridor and see what he says"),
+                ("runemysteries:6", "Aubury was interested in the research package and gave|me his own research notes to deliver to Sedridor.|I delivered the notes to Sedridor. As a thank you|for my help, he granted me permission to use the Rune|Essence Mine whenever I please.|QUEST COMPLETE!"),
+            ]),
+            ("romeojuliet", vec![
+                ("romeojuliet:0", "I can start this quest by talking to Romeo in Varrock|Square."),
+                ("romeojuliet:10", "I have agreed to find Juliet for Romeo and tell her how he|feels. For some reason he can't just do this himself.|I should go and speak to Juliet. I can find her west of|Varrock."),
+                ("romeojuliet:20", "I found Juliet on the Western edge of Varrock, and told her|about Romeo. She gave me a message to take back.|I should take the message from Juliet to Romeo in Varrock|central square."),
+                ("romeojuliet:30", "I delivered the message to Romeo, and he was sad to hear|that Juliet's father opposed their marriage. However, he|said that Father Lawrence might be able to overcome this.|I should find Father Lawrence and see how we can help"),
+                ("romeojuliet:40", "I found Father Lawrence and he suggested the use of a|potion to fool Juliet's father that she is dead so that|Romeo and Juliet can be together in peace.|I need to find the Apothecary to make a cadava potion."),
+                ("romeojuliet:50", "I went to the Apothecary regarding making this cadava|potion, and he told me to bring him some cadava berries.|I will have to find some cadava berries."),
+                ("romeojuliet:50", "I went to the Apothecary regarding making this cadava|potion, and he told me to bring him some cadava berries.|I should take these cadava berries to the Apothecary."),
+                ("romeojuliet:50", "I went to the Apothecary regarding making this cadava|potion, and he told me to bring him some cadava berries.|I should take this cadava potion to Juliet."),
+                ("romeojuliet:60", "I went to the Apothecary regarding making this cadava|potion, and he told me to bring him some cadava berries.|After the Apothecary made me the potion, I delivered it to|Juliet. She asked me to tell Romeo the plan.|I have to find Romeo and tell him what's happened."),
+                ("romeojuliet:100", "I went to the Apothecary regarding making this cadava|potion, and he told me to bring him some cadava berries.|I told Romeo what was going to happen, but I'm not exactly|sure he understood what was happening. Ah well, I was|rewarded for all of my help regardless.|QUEST COMPLETE!"),
+            ]),
+        ] {
+            let bytes = bundled_path_for(ClientRevision::R377, id).unwrap();
+            let path = compile::compile_path(bytes, &selected, &quests, worker, &crate::local_state::OperatorLoadouts::absent(), None)
+                .unwrap_or_else(|error| panic!("{id}: {error:?}"));
+            for (stage, text) in cases {
+                let read = JournalRead {
+                    quest: path.id.clone(), root: 8134,
+                    lines: text.split('|').map(Arc::<str>::from).collect::<Vec<_>>().into(),
+                    colour: None, acquired: stamp, closed: stamp,
+                };
+                let recovered = progress::resolve_journal(&path, &read, None);
+                assert!(matches!(&recovered.stage, Knowledge::Known(value) if value.0.as_ref() == stage), "{id} expected {stage}, got {:?}", recovered.stage);
+                if id == "sheep" && stage == "sheep:1" {
+                    let flag = recovered.flags.iter().find(|flag| flag.flag.0.as_ref() == "sheep:balls_to_go").unwrap();
+                    assert_eq!(flag.truth, Truth::True);
+                    assert_eq!(flag.count, Some(if text.contains("20 more") { 20 } else { 1 }));
+                }
+            }
+            if id == "sheep" {
+                // sheep_journal.rs2:15-25 prints the additional count, not
+                // the total obligation. Every possible partial hand-in
+                // must remain numeric, including its singular branch.
+                for remaining in 1..=20 {
+                    let text = format!("I asked Farmer Fred, near Lumbridge, for a quest.|I need to collect {remaining} more {} of wool.", if remaining == 1 { "ball" } else { "balls" });
+                    let read = JournalRead {
+                        quest: path.id.clone(), root: 8134,
+                        lines: text.split('|').map(Arc::<str>::from).collect::<Vec<_>>().into(),
+                        colour: None, acquired: stamp, closed: stamp,
+                    };
+                    let recovered = progress::resolve_journal(&path, &read, None);
+                    assert!(matches!(&recovered.stage, Knowledge::Known(value) if value.0.as_ref() == "sheep:1"));
+                    assert_eq!(recovered.flags[0].count, Some(remaining));
+                }
+                let document: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+                assert!(!document.to_string().contains("minus_item"), "377's count already excludes held balls");
+                let sequences = document["roles"][0]["sequences"].as_array().unwrap();
+                let collecting = sequences.iter().find(|sequence| sequence["stage"] == "sheep:1").unwrap();
+                assert_eq!(collecting["steps"][0]["id"], "hand-held");
+                assert_eq!(collecting["steps"][0]["advances"], true, "partial hand-in must reread the journal before producing");
+                let enough = sequences.iter().find(|sequence| sequence["stage"] == "sheep:enough").unwrap();
+                assert_eq!(enough["steps"].as_array().unwrap().len(), 1, "enough balls must go straight to Fred");
+                assert_eq!(enough["steps"][0]["kind"], "talk");
+                assert_eq!(document["quest"]["items"].as_array().unwrap().len(), 1, "do not pre-provision fixed twenty-item needs after a partial hand-in");
+            }
+        }
+    }).unwrap().join().unwrap();
+}
