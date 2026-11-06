@@ -4113,6 +4113,38 @@ fn pump_route_work_on_service(
     }
 }
 
+/// Drain bounded test work by terminal and capacity publication, not elapsed
+/// wall time. The admitted-stage bound matches the existing route-work fixture.
+#[cfg(test)]
+pub(crate) fn drain_route_work_for_test(
+    shared: &Arc<parking_lot::Mutex<WorkService>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    ledger: &OwnerResultLedger,
+) {
+    for _ in 0..64 {
+        let capacity = shared.lock().publications().capacity().sequence();
+        pump_route_work_on_service(shared, navs, name, ledger);
+        let (ticket, pending) = {
+            let navs = navs.lock().unwrap();
+            let bot = &navs[name];
+            (
+                bot.route_ticket.as_ref().map(|owner| owner.ticket()),
+                bot.route_work_pending(),
+            )
+        };
+        if !pending {
+            return;
+        }
+        if let Some(ticket) = ticket {
+            WorkService::wait_terminal(shared, &ticket).expect("bounded route-work terminal");
+        } else {
+            WorkService::wait_for_capacity_change(shared, capacity);
+        }
+    }
+    panic!("route work for {name} did not drain within 64 bounded stages");
+}
+
 fn take_route_ticket_owner(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,

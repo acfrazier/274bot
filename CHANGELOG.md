@@ -57,6 +57,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Fixed during development
 
+- The native Quester route-budget regression drains bounded worker stages
+  before checking exact request outcomes. Debug-test wall time is not a search
+  limit; production node, memory and goal budgets are unchanged.
 - Gatherer Knife requests now refuse NPC references captured before a later
   `NPC_INFO` packet. Published snapshots carry the current packet generation,
   including updates that leave the NPC's index, type and tile unchanged.

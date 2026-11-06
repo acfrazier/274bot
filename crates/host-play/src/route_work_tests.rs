@@ -192,7 +192,7 @@ fn route_admission_full_retains_demand_and_retries_only_after_capacity_changes()
     for ticket in &held[1..] {
         shared.lock().consume(ticket).unwrap();
     }
-    finish(&shared, &navs, &ledger);
+    drain_route_work_for_test(&shared, &navs, "alice", &ledger);
     assert_eq!(navs.lock().unwrap()["alice"].route_destination(), Some(to));
     wait_for_capacity(&shared, api::work::WorkCapacity::EMPTY);
     assert_eq!(shared.lock().capacity(), api::work::WorkCapacity::EMPTY);
@@ -202,27 +202,6 @@ fn route_admission_full_retains_demand_and_retries_only_after_capacity_changes()
         "route Full frames=1000 allocations={} request_ids=0",
         allocations.count_total
     );
-}
-
-fn finish(
-    shared: &Arc<parking_lot::Mutex<WorkService>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-    ledger: &OwnerResultLedger,
-) {
-    for _ in 0..64 {
-        pump_route_work_on_service(shared, navs, "alice", ledger);
-        let ticket = navs.lock().unwrap()["alice"]
-            .route_ticket
-            .as_ref()
-            .map(|owner| owner.ticket());
-        if let Some(ticket) = ticket {
-            WorkService::wait_terminal(shared, &ticket).unwrap();
-        }
-        if !navs.lock().unwrap()["alice"].route_work_pending() {
-            return;
-        }
-    }
-    panic!("tiny route did not finish within 64 admitted stages");
 }
 
 #[test]
@@ -254,7 +233,7 @@ fn route_owner_ledger_full_retains_terminal_until_result_capacity_returns() {
     );
     assert!(!navs.lock().unwrap()["alice"].walk_outcome_failed);
     drop(blocker);
-    finish(&shared, &navs, &ledger);
+    drain_route_work_for_test(&shared, &navs, "alice", &ledger);
     assert_eq!(navs.lock().unwrap()["alice"].route_destination(), Some(to));
     wait_for_capacity(&shared, api::work::WorkCapacity::EMPTY);
     assert_eq!(shared.lock().capacity(), api::work::WorkCapacity::EMPTY);
@@ -385,7 +364,7 @@ fn a_completed_search_starts_its_continuation_in_the_harvesting_pump_pass() {
     };
     wait_for_capacity(&shared, continuation_capacity);
     assert_eq!(shared.lock().capacity().jobs(), 1);
-    finish(&shared, &navs, &ledger);
+    drain_route_work_for_test(&shared, &navs, "alice", &ledger);
     assert_eq!(navs.lock().unwrap()["alice"].route_destination(), Some(to));
     navs.lock().unwrap().clear();
     assert_eq!(ledger.used_bytes(), 0);

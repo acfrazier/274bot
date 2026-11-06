@@ -32878,6 +32878,9 @@ export default class T extends LoopingBot {
             },
         );
         let rig = nav_rig_with(Some(incomplete_budget_world(start)));
+        let route_service =
+            script::work_admission::WorkService::shared().expect("shared route work service");
+        let route_ledger = nav_planner::producer::OwnerResultLedger::shared();
         let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
         let mut snapshot = quester_snapshot_at(&selected, &quest, start);
         snapshot.seed_locs(vec![api::snapshot::LocView {
@@ -32942,15 +32945,20 @@ export default class T extends LoopingBot {
         });
         let requested_at = requested_at.expect("native Quester must request the wall walk");
         let first_request = rig.navs.lock().unwrap()["alice"].walk_request_id;
-        assert!(
-            wait_for_route_work(&rig.navs, "alice", |bot| {
-                bot.walk_outcome_request_id == first_request && !bot.route_work_pending()
-            }),
-            "native Quester wall route must finish its real budget-bounded search"
+        crate::script_runtime::drain_route_work_for_test(
+            &route_service,
+            &rig.navs,
+            "alice",
+            route_ledger,
         );
         {
             let navs = rig.navs.lock().unwrap();
             let bot = &navs["alice"];
+            assert_eq!(
+                bot.walk_outcome_request_id, first_request,
+                "native Quester wall route must finish its real budget-bounded search"
+            );
+            assert!(!bot.route_work_pending());
             assert!(matches!(
                 bot.native_walk_failure.as_ref(),
                 Some((request, script::native::WalkEnd::Refused)) if *request == first_request
@@ -32985,10 +32993,19 @@ export default class T extends LoopingBot {
         let retry_request = retry_request
             .expect("typed incomplete route must start the Quester's bounded wall fallback walk");
         assert!(retry_request > first_request);
+        crate::script_runtime::drain_route_work_for_test(
+            &route_service,
+            &rig.navs,
+            "alice",
+            route_ledger,
+        );
+        let fallback_settled = {
+            let navs = rig.navs.lock().unwrap();
+            let bot = &navs["alice"];
+            bot.walk_outcome_request_id == retry_request && !bot.route_work_pending()
+        };
         assert!(
-            wait_for_route_work(&rig.navs, "alice", |bot| {
-                bot.walk_outcome_request_id == retry_request && !bot.route_work_pending()
-            }),
+            fallback_settled,
             "the bounded Quester fallback route must also settle its real search; first_request={first_request}; expected_retry={retry_request}; state={:?}",
             rig.navs.lock().unwrap().get("alice").map(|bot| (
                 ("current_request", bot.walk_request_id),
