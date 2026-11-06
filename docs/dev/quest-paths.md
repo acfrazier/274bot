@@ -70,6 +70,10 @@ field disconnected. Revision-274/289 config parsing remains numeric-only.
 folder validation and missing-table admission. The ignored host-play test
 `quester::quester_377_cook_native` starts the production Quester card. It records
 fresh read-only server replies, XP, quest points and a client completion capture.
+It also requires the native host's `Completed` lifecycle receipt for that Start's
+runtime generation. A `Complete` status is not durable: the host drops the
+compiled instance and its status in the same completion poll. Final server
+readbacks follow that receipt and do not drive or interrupt the native run.
 
 ## Folder loading pipeline
 
