@@ -14,10 +14,6 @@ use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
 
 /// One route without expanding compact plans into legacy leg vectors.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "The compact branch shares existing backing and avoids another per-route heap allocation."
-)]
 #[derive(Clone)]
 pub(crate) enum RoutePath {
     Legacy(Arc<Route>),

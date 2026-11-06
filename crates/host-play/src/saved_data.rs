@@ -568,7 +568,7 @@ mod tests {
             path: path.clone(),
         })
         .unwrap();
-        assert_eq!(refusal.paths(), &[path.clone()]);
+        assert_eq!(refusal.paths(), std::slice::from_ref(&path));
         assert!(refusal
             .to_string()
             .contains("saved data is in a format from before 0.2.8"));
