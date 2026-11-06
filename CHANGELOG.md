@@ -11,6 +11,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   way back to the resource area. It plans that return again once, as on a
   normal return trip, and stops only if the retry also fails, with the last
   failure's reason.
+- A lost connection during a bank trip no longer ends the Gatherer's run (for
+  example when the server restarts). Before, the Gatherer could stop with "bank
+  did not open" or "bank item table unavailable", or stand in the bank until
+  you pressed Start. After the new login, the Gatherer now starts that trip
+  again at the walk to the bank, with a new plan from the character's
+  position. It does this up to three times in one trip. It stops only after
+  that, and the message keeps the last reason.
+- A bank window that was still open after a reconnect, but had no item list,
+  was waited on again and again. The Gatherer now clicks the booth once to open
+  the bank again.
+- The walk to the bank now plans once more after a stalled walk, as the walk
+  back to the resource area does.
+- When the bank does not open after three tries, the stop message now includes
+  the last reason instead of only "bank did not open".
 
 ### Music
 

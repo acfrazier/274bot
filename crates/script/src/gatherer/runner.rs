@@ -39,6 +39,15 @@ mod recover;
 const MAX_AVOID: usize = 8;
 const MAX_BANK_OPEN_ATTEMPTS: u8 = 3;
 const MAX_BANK_CLOSE_ATTEMPTS: u8 = 3;
+/// Session changes (relogs) one bank trip restarts across before it reports a
+/// failure. Equal to `MAX_BANK_OPEN_ATTEMPTS`, the count the trip already
+/// allows a bank that does not settle. The engine refuses logins from 50 ticks
+/// before a scheduled shutdown (`World.ts:202-203,873`), so a trip meets at
+/// most one disconnect per shutdown cycle; three allow three cycles inside one
+/// trip, more than the "several times that day" the operator saw. A fourth
+/// change inside the same trip means the server is not stable, and the run
+/// stops with the last reason.
+const MAX_TRIP_SESSION_RESTARTS: u8 = 3;
 // Fishing's maximum movement timer is 529 ticks (280 + random(250)):
 // skill_fishing/scripts/fishing_movement.rs2:8-12. Add a 60-tick whirlpool
 // (macro events/scripts/fishing/macro_event_whirlpool.rs2:7); 800 exceeds both.
@@ -251,6 +260,14 @@ struct GatherScratch {
     withdrew_supplies: bool,
     /// Only the in-flight observation request needs its selected-goal receipt.
     observation_walk: bool,
+    /// Restarts of the current bank trip after a session change.
+    session_restarts: u8,
+    /// The access walk's own bounded replan after a transient stall; the
+    /// same one-action bound as the return walk (`MAX_RETURN_RECOVERY_ACTIONS`).
+    access_stall_recovery: ReturnStallRecovery,
+    /// The last reason a step of this trip recorded before retrying; kept for
+    /// the terminal message when the retries are spent.
+    trip_reason: Option<Arc<str>>,
 }
 
 pub struct Gatherer {
@@ -403,9 +420,65 @@ impl Gatherer {
         self.scratch.kept_unbankable = false;
         self.scratch.withdrew_supplies = false;
         self.scratch.return_stall_recovery.reset();
+        self.scratch.access_stall_recovery.reset();
+        self.scratch.session_restarts = 0;
+        self.scratch.trip_reason = None;
         self.supply_missing = None;
         self.advance_trip(TripStep::Select);
         self.set_event("bank trip due");
+    }
+
+    /// A new session inside a bank trip is information, not a failure
+    /// (AGENTS.md: a walk failure is never terminal until its bounded
+    /// retries are spent). The old session's child is gone with its walk,
+    /// modal and item table, and the reasons it recorded say nothing about
+    /// the new session. The trip restarts at Access with a fresh walk from
+    /// the observed position, against the bank it already selected. Deposit
+    /// and withdrawal are planned again from the new session's inventory and
+    /// table, so a withdrawal the old session half applied is not repeated
+    /// from a stale plan. Bounded by [`MAX_TRIP_SESSION_RESTARTS`]; once
+    /// spent, the failure keeps the last reason the trip recorded.
+    fn restart_trip_after_session(&mut self, session: u64) {
+        let step = self.trip;
+        if !matches!(
+            step,
+            TripStep::Access | TripStep::Open | TripStep::Deposit | TripStep::Withdraw
+        ) {
+            return;
+        }
+        if self.scratch.session_restarts >= MAX_TRIP_SESSION_RESTARTS {
+            let reason = self
+                .scratch
+                .trip_reason
+                .as_deref()
+                .unwrap_or("none recorded");
+            self.fail(
+                "bank-unavailable",
+                format!(
+                    "bank-unavailable: the session changed again at {step:?} after \
+                     {MAX_TRIP_SESSION_RESTARTS} restarts of the bank trip; last reason: {reason}"
+                ),
+            );
+            return;
+        }
+        self.scratch.session_restarts += 1;
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Info,
+            "gatherer-bank-trip-restart session={session} step={step:?} attempt={}/{MAX_TRIP_SESSION_RESTARTS}",
+            self.scratch.session_restarts,
+        );
+        self.target = None;
+        self.wait_until = None;
+        self.scratch.bank_open_attempts = 0;
+        self.scratch.bank_close_attempts = 0;
+        self.scratch.withdrawals = None;
+        self.scratch.kept_unbankable = false;
+        self.scratch.return_stall_recovery.reset();
+        self.scratch.access_stall_recovery.reset();
+        self.supply_missing = None;
+        self.advance_trip(TripStep::Access);
+        self.set_event("session changed; restarting bank trip");
     }
 
     /// The packed stand the current trip opened, for the transfer verbs'
@@ -614,7 +687,12 @@ impl Gatherer {
             }
             TripStep::Access => {
                 if let Some(selected) = &self.selected_bank {
-                    self.trip_walk(selected.access_tile, 1, ArrivalKind::Reach, None, tick);
+                    let access_tile = selected.access_tile;
+                    let recovery = self.scratch.access_stall_recovery.pending();
+                    let submitted = self.trip_walk(access_tile, 1, ArrivalKind::Reach, None, tick);
+                    if recovery && submitted {
+                        self.scratch.access_stall_recovery.action_submitted();
+                    }
                 }
             }
             TripStep::Open => {
@@ -636,10 +714,15 @@ impl Gatherer {
                     return;
                 };
                 if self.scratch.bank_open_attempts >= MAX_BANK_OPEN_ATTEMPTS {
+                    let reason = self
+                        .scratch
+                        .trip_reason
+                        .as_deref()
+                        .unwrap_or("none recorded");
                     self.fail(
                         "bank-unavailable",
                         format!(
-                            "bank-unavailable: bank did not open after {MAX_BANK_OPEN_ATTEMPTS} attempts"
+                            "bank-unavailable: bank did not open after {MAX_BANK_OPEN_ATTEMPTS} attempts; last reason: {reason}"
                         ),
                     );
                     return;
@@ -1571,6 +1654,23 @@ impl Gatherer {
             self.replan_return_after_stall(tick);
             return;
         }
+        if self.trip == TripStep::Access && self.scratch.access_stall_recovery.observe(&result.end)
+        {
+            // The access walk gets the return walk's one bounded replan from
+            // the observed position before its failure is terminal.
+            self.scratch.trip_reason = Some(Arc::from(walk_failure_message(&result)));
+            api::host_log!(
+                api::hostlog::Category::BankOp,
+                api::hostlog::Level::Info,
+                "gatherer-bank-access-replan session={} step={:?} attempt=1/1 reason={}",
+                self.run.session,
+                self.trip,
+                walk_failure_message(&result),
+            );
+            self.target = None;
+            self.begin_trip(tick);
+            return;
+        }
         if result.end == WalkEnd::RouteEnded && self.trip == TripStep::Idle {
             let snapshot = tick.cx.snapshot();
             if let Some(target) = self.target.as_ref().filter(|target| {
@@ -1758,6 +1858,15 @@ impl Gatherer {
                         "bank did not open" | "bank item table unavailable"
                     ) =>
                 {
+                    api::host_log!(
+                        api::hostlog::Category::BankOp,
+                        api::hostlog::Level::Info,
+                        "gatherer-bank-open-retry session={} step={:?} attempt={}/{MAX_BANK_OPEN_ATTEMPTS} reason={message}",
+                        self.run.session,
+                        self.trip,
+                        self.scratch.bank_open_attempts,
+                    );
+                    self.scratch.trip_reason = Some(message);
                     self.begin_trip(tick);
                 }
                 Poll::Ready(Err(error)) => {
@@ -2444,6 +2553,7 @@ impl Script for Gatherer {
         }
         self.fence.observe(tick.cx.evidence().tick);
         if self.run != tick.cx.run() {
+            let session_changed = self.run.session != tick.cx.run().session;
             self.run = tick.cx.run();
             self.observed_progress = None;
             self.cancel_active();
@@ -2451,6 +2561,9 @@ impl Script for Gatherer {
             self.rebaseline_gameplay = true;
             self.death = crate::native::death::DeathLatch::from_watermark(self.retained.death_seq);
             self.set_event("run key changed; revalidating");
+            if session_changed {
+                self.restart_trip_after_session(self.run.session);
+            }
         }
         if !tick.cx.eligible {
             // The host posts guardian holds through eligibility, including
@@ -3314,8 +3427,346 @@ mod tests {
         assert_eq!(failure.code.as_ref(), "bank-unavailable");
         assert_eq!(
             failure.message.as_ref(),
-            "bank-unavailable: bank did not open after 3 attempts"
+            "bank-unavailable: bank did not open after 3 attempts; \
+             last reason: bank did not open"
         );
+    }
+
+    const RELOG_BANK_TILE: WorldTile = WorldTile {
+        x: 3245,
+        z: 3423,
+        level: 0,
+    };
+
+    /// The Draynor booth the relog tests stand at, as the scene lists it.
+    fn relog_booth_locs() -> Vec<api::snapshot::LocView> {
+        vec![api::snapshot::LocView {
+            typecode: 2213,
+            info: 0,
+            id: 2213,
+            name: Some("Bank booth".to_owned()),
+            description: None,
+            actions: vec![Some("Use-quickly".to_owned())],
+            tile: RELOG_BANK_TILE,
+            distance: 0,
+            layer: api::snapshot::LocLayer::GroundDecoration,
+            shape: 0,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: false,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }]
+    }
+    /// A Gatherer that was in `step` of a bank trip when its session ended.
+    /// It still holds the old session's run key; the tick context of every
+    /// test carries session 1, so its next tick is the first of a new session.
+    /// The old session left an Open attempt count and a latched withdrawal
+    /// plan behind.
+    fn trip_after_relog(fixture: &BaitFixture, step: TripStep) -> Gatherer {
+        let access = Arc::new(crate::bank::BankStandAccess {
+            bank: api::named_banks::NamedBank::new("Draynor", RELOG_BANK_TILE),
+            stand_tile: RELOG_BANK_TILE,
+            kind: crate::bank::AccessKind::Booth,
+            stand_op: 2,
+            name: Some(Arc::from("Bank booth")),
+            choose: None,
+        });
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.run.session = 0;
+        gatherer.needs_validate = false;
+        gatherer.tool = ToolState {
+            id: 307,
+            worn: false,
+        };
+        gatherer.selected_bank = Some(SelectedBank {
+            bank_index: 0,
+            access_tile: RELOG_BANK_TILE,
+            kind: PickKind::Reachable,
+            access: Some(access),
+        });
+        gatherer.trip = step;
+        gatherer.scratch.bank_open_attempts = 2;
+        gatherer.scratch.withdrawals = Some(Arc::<[bank::Withdrawal]>::from([]));
+        gatherer
+    }
+
+    /// Ticks the Gatherer once in the new session; it must still be running.
+    fn first_tick_of_new_session(
+        gatherer: &mut Gatherer,
+        snapshot: &api::snapshot::GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        tick_number: u64,
+    ) {
+        use crate::quester::families::tests::with_tick;
+        with_tick(snapshot, ledger, tick_number, |tick| {
+            gatherer.tick(tick).unwrap()
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+    }
+
+    fn arrived(
+        gatherer: &mut Gatherer,
+        snapshot: &api::snapshot::GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        tick_number: u64,
+    ) {
+        use crate::quester::families::tests::with_tick;
+        gatherer.cancel_active();
+        with_tick(snapshot, ledger, tick_number, |tick| {
+            gatherer.handle_walk(
+                WalkReceipt {
+                    goal: None,
+                    request_id: 1,
+                    evidence: tick.cx.evidence(),
+                    end: WalkEnd::Arrived,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+                tick,
+            );
+        });
+    }
+
+    fn open_stand_clicks(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
+        ledger.as_ref().map_or(0, |ledger| {
+            ledger
+                .outbox
+                .iter()
+                .filter(|action| {
+                    matches!(
+                        action.effect,
+                        crate::native::HostEffect::Interaction(
+                            crate::shim::InteractReq::OpenStand { .. }
+                        )
+                    )
+                })
+                .count()
+        })
+    }
+
+    /// A relog inside the Access, Open or Deposit step of a bank trip is
+    /// information: the trip restarts at Access with a fresh walk from the
+    /// observed position, the old session's attempt count and withdrawal plan
+    /// are dropped, and the trip goes on to the withdrawal with a plan made
+    /// from the new session's bank. 0.2.8 kept the cursor and the old plan,
+    /// and an Open that adopted a modal without a table waited on it again.
+    fn relog_restarts_the_trip_and_it_finishes(step: TripStep, modal_without_table: bool) {
+        use crate::quester::families::tests::{def, with_tick};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+        let fixture = BaitFixture::new();
+        let mut gatherer = trip_after_relog(&fixture, step);
+        let bait = fixture.prepared.supply.bait.clone().unwrap();
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_locs(relog_booth_locs());
+        let mut ledger = None;
+        if modal_without_table {
+            // The relog kept the client's modal fields and dropped the table.
+            snapshot.seed_bank_observation(10, 1, None, Vec::new());
+        }
+
+        first_tick_of_new_session(&mut gatherer, &snapshot, &mut ledger, 1);
+        assert_eq!(
+            gatherer.trip,
+            TripStep::Access,
+            "{step:?} restarts at Access"
+        );
+        assert_eq!(gatherer.scratch.bank_open_attempts, 0);
+        assert!(
+            gatherer.scratch.withdrawals.is_none(),
+            "the old plan is dropped"
+        );
+        let (target, radius) = ledger
+            .as_ref()
+            .and_then(|ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .find_map(|action| match &action.effect {
+                        crate::native::HostEffect::Walk(request) => {
+                            Some((request.target, request.radius))
+                        }
+                        _ => None,
+                    })
+            })
+            .expect("a fresh access walk starts from the observed position");
+        assert_eq!(target, RELOG_BANK_TILE);
+        assert_eq!(radius, 1);
+
+        arrived(&mut gatherer, &snapshot, &mut ledger, 2);
+        assert_eq!(gatherer.trip, TripStep::Open);
+        with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.begin_trip(tick));
+        assert!(matches!(gatherer.active, Active::Open(_)));
+        with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
+        if modal_without_table {
+            with_tick(&snapshot, &mut ledger, 7, |tick| gatherer.poll_active(tick));
+            assert_eq!(
+                open_stand_clicks(&ledger),
+                0,
+                "no click inside the table bound"
+            );
+            with_tick(&snapshot, &mut ledger, 11, |tick| {
+                gatherer.poll_active(tick)
+            });
+        }
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert_eq!(
+            open_stand_clicks(&ledger),
+            1,
+            "the new session's open accesses the stand for real"
+        );
+
+        // The engine's open delivers a new session with the bank's table.
+        let banked_bait = ItemView {
+            def: def(bait.id, &bait.name),
+            container: ItemContainer::Bank,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 20,
+            actions: vec![Some("Withdraw-1".into())],
+            component_id: 3214,
+        };
+        snapshot.seed_bank_observation(10, 2, Some(vec![banked_bait]), Vec::new());
+        with_tick(&snapshot, &mut ledger, 12, |tick| {
+            gatherer.poll_active(tick)
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert_eq!(gatherer.trip, TripStep::Deposit);
+
+        with_tick(&snapshot, &mut ledger, 13, |tick| gatherer.begin_trip(tick));
+        with_tick(&snapshot, &mut ledger, 14, |tick| {
+            gatherer.poll_active(tick)
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert_eq!(gatherer.trip, TripStep::Withdraw);
+        with_tick(&snapshot, &mut ledger, 15, |tick| gatherer.begin_trip(tick));
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert!(matches!(gatherer.active, Active::Withdraw(_)));
+        let withdrawals = gatherer.scratch.withdrawals.as_ref().unwrap();
+        assert!(
+            withdrawals.iter().any(|row| row.id == bait.id),
+            "the withdrawal is planned again from the new session's bank: {withdrawals:?}"
+        );
+    }
+
+    #[test]
+    fn relog_during_access_restarts_the_trip_and_it_finishes() {
+        relog_restarts_the_trip_and_it_finishes(TripStep::Access, false);
+    }
+
+    #[test]
+    fn relog_during_open_restarts_the_trip_and_it_finishes() {
+        relog_restarts_the_trip_and_it_finishes(TripStep::Open, true);
+    }
+
+    #[test]
+    fn relog_during_deposit_restarts_the_trip_and_it_finishes() {
+        relog_restarts_the_trip_and_it_finishes(TripStep::Deposit, false);
+    }
+
+    /// Each session change inside the trip restarts it, within the budget. A
+    /// change after the budget is spent ends the run, and the failure keeps
+    /// the last reason the trip recorded.
+    #[test]
+    fn spent_session_restart_budget_ends_in_a_terminal_failure_with_the_last_reason() {
+        use crate::quester::families::tests::with_tick;
+        let fixture = BaitFixture::new();
+        let mut gatherer = trip_after_relog(&fixture, TripStep::Open);
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_locs(relog_booth_locs());
+        let mut ledger = None;
+        let mut tick_number = 0;
+        for restart in 1..=MAX_TRIP_SESSION_RESTARTS {
+            tick_number += 1;
+            first_tick_of_new_session(&mut gatherer, &snapshot, &mut ledger, tick_number);
+            assert_eq!(gatherer.trip, TripStep::Access, "restart {restart}");
+            tick_number += 1;
+            arrived(&mut gatherer, &snapshot, &mut ledger, tick_number);
+            assert_eq!(gatherer.trip, TripStep::Open);
+            // This session's open never settles: its stand is accessed and
+            // the table does not arrive, so the open reports its reason.
+            tick_number += 1;
+            with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                gatherer.begin_trip(tick);
+                gatherer.poll_active(tick);
+            });
+            tick_number += 9;
+            with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                gatherer.poll_active(tick)
+            });
+            assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+            // The next session change arrives mid-Open.
+            gatherer.run.session = 0;
+        }
+        tick_number += 1;
+        with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+            gatherer.tick(tick).unwrap()
+        });
+        let failure = gatherer
+            .failure
+            .as_ref()
+            .expect("the budget is spent, so the trip fails");
+        assert_eq!(failure.code.as_ref(), "bank-unavailable");
+        assert!(
+            failure.message.contains("bank item table unavailable"),
+            "the last reason is kept: {}",
+            failure.message
+        );
+        assert_eq!(gatherer.phase(), ("blocked", NativePhase::Blocked));
+    }
+
+    /// The access walk gets the return walk's one bounded replan from the
+    /// observed position before a transient stall is terminal, and the
+    /// terminal failure keeps the stall's detail.
+    #[test]
+    fn access_walk_replans_once_after_a_transient_stall() {
+        use crate::native::{WalkStall, WalkStallReason};
+        use crate::quester::families::tests::with_tick;
+        let fixture = BaitFixture::new();
+        let mut gatherer = trip_after_relog(&fixture, TripStep::Access);
+        gatherer.run.session = 1;
+        let snapshot = fixture.snapshot;
+        let mut ledger = None;
+        let stalled = |tick: &mut NativeTick<'_>| WalkReceipt {
+            goal: None,
+            request_id: 1,
+            evidence: tick.cx.evidence(),
+            end: WalkEnd::Stalled(Arc::new(WalkStall {
+                at: RELOG_BANK_TILE,
+                aiming: RELOG_BANK_TILE,
+                why: WalkStallReason::Expired,
+                tries: 60,
+            })),
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
+        };
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let receipt = stalled(tick);
+            gatherer.handle_walk(receipt, tick);
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert!(matches!(gatherer.active, Active::Walk(_)), "a fresh walk");
+        gatherer.cancel_active();
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            let receipt = stalled(tick);
+            gatherer.handle_walk(receipt, tick);
+        });
+        let failure = gatherer.failure.as_ref().expect("the replan is spent");
+        assert_eq!(failure.code.as_ref(), "bank-unavailable");
+        assert!(failure.message.contains("Expired"), "{}", failure.message);
     }
     #[test]
     fn gatherer_caps_timed_out_close_attempts() {
