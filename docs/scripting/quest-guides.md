@@ -20,13 +20,22 @@ A guide is one JSON file with schema 3. It names the quest, the checks the Quest
   `bank` is `"nearest"` or an authored tile with a `source`, plus `required: true` only when that bank is necessary. `loadouts` entries map `worn` slots to item aliases and list carried item-alias rows with quantities. `areas` are named walk boxes with a `source`.
 
   The compiler requires this header. A guide with `members: true` blocks Start on a free-to-play world with `quest requires a members world`.
+
+### Roles and steps
+
 - `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `Miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
 - `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `cross` declarations, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`), and `steps[]`.
-- `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and `x:*`); Default kinds compile as `false` when it is omitted.
-  Optional `max_attempts` sets a per-step limit from 1 to 32. Pair it with a nonblank `stop` name. Choose and justify the limit from quest content. Use this pair only in `prelude[]` and `sequences[].steps[]`. The compiler rejects the pair on `quest.acquire` recipe steps and `progress_reader` steps.
-  The runner counts failed begins, soft poll failures, and settle timeouts. It also parks after 32 consecutive counted failures across budgeted steps, even if another step runs after a failure. A successful settle resets this run-wide count.
-  Hard poll failures (`Blocked`, `CombatInterrupted`, or `NeedsEvidence`) and user input still stop the guide at once. User input does not spend an attempt. If the per-step limit is spent, the runner reports its named stop. Without the pair, the existing five-failure park limit applies.
-  After a settle timeout, an advancing step rereads progress before it retries.
+- `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and `x:*`). Default kinds compile as `false` when it is omitted.
+
+### Retry limits
+
+Optional `max_attempts` sets a per-step limit from 1 to 32. Pair it with a nonblank `stop` name. Choose and justify the limit from quest content. Use this pair only in `prelude[]` and `sequences[].steps[]`. The compiler rejects the pair on `quest.acquire` recipe steps and `progress_reader` steps.
+
+The runner counts failed begins, soft poll failures, and settle timeouts. It also parks after 32 consecutive counted failures across budgeted steps, even if another step runs after a failure. A successful settle resets this run-wide count.
+
+Hard poll failures (`Blocked`, `CombatInterrupted`, or `NeedsEvidence`) and user input still stop the guide at once. User input does not spend an attempt. If the per-step limit is spent, the runner reports its named stop. Without the pair, the existing five-failure park limit applies.
+
+After a settle timeout, an advancing step rereads progress before it retries.
 
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 
@@ -64,6 +73,7 @@ Walk and combat steps can also declare an `args.cross` array of stable zone ids.
 Those grants apply only to that step's routes, including a combat step's first approach.
 A prelude step keeps its own grants.
 Each route accepts the union of its step and current stage declarations, without duplicates.
+
 The compiler rejects unknown ids and a route whose combined set exceeds eight zones.
 Stage declarations also require unique ids and nonempty names and reasons.
 A navigation pack must be available when a guide declares zones.
@@ -71,12 +81,15 @@ A navigation pack must be available when a guide declares zones.
 A Quester walk step cannot use `args.allow_danger_zones`. The compiler rejects
 that field. Declare stage grants in the sequence's `cross` array. Use
 `args.cross` only for a step-scoped grant.
+
 Panel and TUI list stage and step declarations before Start, with their scopes.
 The next stage does not retain the previous stage's declarations.
 Other zones remain avoided, even when the global danger setting is on.
+
 An empty `cross` set on an active Quester stage is still a scope. It grants no
 danger zones. A global setting or an old saved Quester card value does not
 change that rule.
+
 A route whose only path crosses an undeclared danger zone is refused. Unscoped
 walks outside a Quester stage are unchanged.
 
@@ -159,17 +172,53 @@ Shield of Arrav and Hero's Quest declare `partner` in guide authoring: a two-rol
 
      A failed step is retried in place until the failure streak parks. The cursor is not persisted. It starts over whenever the run starts or restarts (Start, Resume, a new session, death) or the stage changes.
 
-     A restart replays the sequence from its first step ("safe replay"). The reset is taken on the first progress read after the restart even if that read is still unresolved. A random event is not a restart. The engine spawns one beside the player about 500 ticks after login (`content/scripts/login_logout/login.rs2:40`, `content/scripts/macro events/scripts/macro_events.rs2:2-12`), so it arrives in the middle of whatever step runs. The Quester keeps the step, the progress and the cursor through it, and a quest journal read of the same stage keeps the step too. The Quester does not judge by the event's name. While the random-event guardian holds the script it answers the event with its own interactions, and the host drops the script's queued requests (`script_observe.rs:1335-1344`). Two things follow the hold, both by observation:
+### Restarts and random events
 
-     - An action that was interrupted (Talk, Use-on, Thieve, a walk) sends its request again at most once. It waits one observed tick for an in-flight server effect to land, checks its own goal first (the dialogue page is open, the item count rose, the player stands at the goal), and sends only if the goal is not met and the request was lost or taken over. A Use-on request that the host dropped unsent goes back to its step, which checks its `until` count or its product first and then chooses the target again from the current snapshot. The log has one `info` line for each resume. A Talk whose Talk-to the server accepted but whose dialogue never opened re-issues instead of failing at its first-page deadline. A Talk still walking to its NPC keeps a route that the host still follows; a route that the host dropped unsent, or whose observed-tick budget ran out during the hold, is planned again once, unless the NPC is already in reach.
-     - If the player was teleported while the hold lasted, the step in flight is dropped. A teleport is a plane change, or a jump between two observed frames of the hold that running cannot cover in the ticks between them (two tiles a tick, plus one tick of slack). The Maze and Mime events do this and return the player to the tile they left, so the jump shows between frames of the hold and not between its ends (`macro_event_maze.rs2:15-18`, `macro_event_mime.rs2:9-11`). So does the teleport of an ignored Genie or Mysterious Old Man (`macro_events.rs2:120-137`) and the return to Lumbridge when the tile the player left is blocked (`macro_events.rs2:235-241`). A guardian walk of a few tiles away from a hostile event is not one. Then the step is dropped, the progress and the cursor stay, and the sequence goes on from the same step. A step that had already finished keeps waiting for its own settle check. Paired work (partner admission, a partner begin, or an active partner step) keeps its step through every event.
-     - The host reports the player's position on every frame, also while the hold lasts, so a jump out and back inside one observed tick still counts. A trip that begins and ends between two frames that show the same position cannot be seen; then the step stays, and the action's own resume above recovers a lost request.
+A restart replays the sequence from its first step ("safe replay"). The first progress read after the restart resets the sequence, even if that read remains unresolved.
 
-     With `settings.random_events` off the guardian neither holds nor acts, so the guardian does not interrupt the step: the Quester keeps the step, the progress and the cursor, logs the event, and does not classify a teleport that no hold surrounds. What the ignored event itself does (an attack, a content teleport, a trapped square) is for the step's own checks.
+A random event is not a restart. The engine spawns one beside the player about 500 ticks after login. The sources are `content/scripts/login_logout/login.rs2:40` and `content/scripts/macro events/scripts/macro_events.rs2:2-12`. It can therefore arrive during any step.
 
-     Write every ordered step so repeating it is harmless, and let the last step advance the stage. A sequence that runs off its end without a stage change parks with `no step for stage` after a confirming progress read.
+The Quester keeps its step, progress, and cursor through the event. A journal read of the same stage also keeps the step. The Quester does not classify the event by name.
 
-     Use it for the stages whose steps leave nothing observable behind (Hazeel's five valves, Plague City's clerk → door → Bravek), where `authored` order would select the first step forever.
+During a script hold, the random-event handler answers the event with its own interactions. The host drops the script's queued requests. The runner then uses observations to resume an action or detect a teleport.
+
+### Resume interrupted actions
+
+An interrupted Talk, Use-on, Thieve, or walk sends its request again at most once. It first waits one observed tick for an in-flight server effect to arrive.
+
+The action checks its own goal: an open dialogue page, a higher item count, or arrival at the destination. It sends again only if the goal remains unmet and the request was lost or taken over.
+
+A Use-on request dropped before dispatch returns to its step. The step checks its `until` count or product first, then chooses the target again from the current snapshot. The log records one `info` line for each resume.
+
+A Talk whose accepted Talk-to opened no dialogue sends again instead of failing at its first-page deadline. A Talk still approaching its NPC keeps a route that the host still follows.
+
+A dropped, unsent route or a route whose observed-tick budget expired during the hold is planned again once. No new route is needed when the NPC is already in reach.
+
+### Teleports during a hold
+
+A teleport during the hold drops the step in flight. A plane change counts as a teleport. So does a jump between observed frames that running cannot cover at two tiles per tick, plus one tick of slack.
+
+Maze and Mime events teleport the player away and back. The jump therefore appears between frames of the hold, not necessarily between its ends. See `macro_event_maze.rs2:15-18` and `macro_event_mime.rs2:9-11`.
+
+The same rule covers ignored Genie or Mysterious Old Man teleports (`macro_events.rs2:120-137`). It also covers a return to Lumbridge when the original tile is blocked (`macro_events.rs2:235-241`). A short walk away from a hostile event is not a teleport.
+
+After a teleport, progress and the cursor stay. The sequence continues from the same step after dropping its in-flight action. A finished step keeps waiting for its own settle check.
+
+Paired work keeps its step through every event. This includes partner admission, a partner begin, and an active partner step.
+
+The host reports position on every frame, including during the hold. A jump away and back inside one observed tick still counts when those frames show it.
+
+A trip entirely between two frames with the same position cannot be observed. The step then stays, and its action resumes a lost request as described above.
+
+With `settings.random_events` off, the handler neither holds the script nor acts. The Quester keeps its step, progress, and cursor, and logs the event. It does not classify a teleport without a surrounding hold.
+
+The step's own checks handle effects from ignored events, such as attacks, content teleports, or trapped squares.
+
+### Author safe ordered steps
+
+Write every ordered step so repeating it is harmless, and let the last step advance the stage. A sequence that runs off its end without a stage change parks with `no step for stage` after a confirming progress read.
+
+Use `ordered` for stages whose steps leave nothing observable behind, such as Hazeel's five valves or Plague City's clerk → door → Bravek. Authored order would select the first step forever.
 
 ## Finish, recipes, and watchdog
 
@@ -192,16 +241,25 @@ For a gather step, the Provisioner withdraws one method-usable tool only when no
 
 An observed bank without a compatible tool does not block provisioning; the gather family reports its normal missing-tool failure. `quest.tools` remain preservation hints only, not withdrawal hints or extra requirements: absent entries alone never cause a bank visit. The initial scan and ingredient/tool withdrawals share the open bank session.
 
+### Close only an owned bank
+
 Closing the bank:
 
 - A bank session ends when provisioning is ready, is blocked, or is about to start a recipe. Then the Provisioner closes the bank, and waits in observed game ticks until the bank window is gone. A Path step does not act before that.
 - The Provisioner closes only a bank that its own trip opened. It records this only when the bank kernel sent its own open request, and a game frame then shows a bank session that appeared after that request. A bank that was already open when the first trip began stays open.
 - The kernel counts a request only after it emitted the request: the stand or booth click, the bank-object click, or the first teller talk or dialogue press. A chest-lid click is not an open request. A teller trip that waits for a banker in the scene, or whose click the tick's input budget refused, has emitted nothing. A bank that opens then is the player's.
-- The record names the login session and the bank session. After a relog, or when the bank was closed and opened again by someone else, the record is void and nothing is closed. This holds also while a close is running and between two trips of one session. A new bank session joins the record only when the bank kernel of the same account opened it with its own request, for example when a trip opens the bank again after the session ended.
+
+### Track the bank session
+
+- The record names the login session and bank session. A relog, or a bank closed and reopened by someone else, voids the record. Nothing is then closed. This also applies during a close and between two trips of one session.
+
+  A new bank session joins the record only when the same account's bank kernel opened it with its own request. This includes a trip that opens the bank again after the earlier session ended.
 - If a trip fails, or the run is paused and resumed, the open bank is closed as soon as the host allows input again, and before the journal is read. A restart by the watchdog keeps the record, so the new instance does the same.
 - A bank that does not close after the bounded retries is logged and left. Provisioning does not retry without limit.
 - An operator Stop sends no close and discards the record.
 - An authored `bank` step opens the bank again when it needs it.
+
+### Bank memory and inventory space
 
 Bank memory has three states. A bank never seen (`Unknown`) costs one scan trip. A shortage known only from an earlier login (`Hint`) costs one verifying trip. Only a shortage in a bank seen open this login (`Session`) blocks in place. The Quester keeps no other bank record.
 
@@ -252,9 +310,18 @@ Provisioner's bank scan, capacity deposit and withdrawal boundaries are included
 
   Use `"continue"` when content requires a page. Use the object form with `prefer`/`choose`/`line_rules` when content can open a menu. `"none"` never touches dialogue. A `talk` step that adopts an already-open page (no Talk-to sent) answers only through its own `prefer`/`choose`/`line_rules`, never the default last option.
 - **Chat-to-scroll transitions.** An owned conversation can finish on the selected scroll (including the source-proven quest-completion scroll) or book interface after its chat closes. The shared dialogue driver requires a witnessed owned page or an accepted, fresh Continue/Answer receipt; an in-flight advance waits within the existing page bound. An unrelated interface, a refused answer, or a scroll without an owned conversation does not prove dialogue success.
-- **A repeated menu (`answer_once`).** Some NPCs reopen the identical menu after every question. By default `prefer` checks the same entries on every page, so the first matching entry answers the reopened menu again and again. Set `answer_once: true` to skip a `prefer` entry that already answered a page in that conversation and fall through to the next entry in order. It is accepted on `talk` args, in an `interact`/`use_on` `dialogue` object, and on a combat `finish`. `line_rules` and `choose` work as before and do not use up a `prefer` entry. If every `prefer` entry that matches the page has already answered, `strict` fails as it does for a missing answer; without `strict` the usual fallback applies. Author at most 32 entries when `answer_once` is set; more fails to compile with `invalid-dialogue-options`.
 
-  Filliman Tarlock reopens the same four-option menu after each of his three questions, and "Ok, thanks." ends the conversation (`filliman.rs2:14,255-269,233-234`); the next step, using the mirror on him, needs stage `spoken_filliman` (`:276-279`). Answer the repeated menu once and leave:
+### Repeated menus
+
+Some NPCs reopen the identical menu after every question. By default, `prefer` checks the same entries on every page. Its first matching entry therefore answers the reopened menu repeatedly.
+
+Set `answer_once: true` to skip a `prefer` entry that already answered a page in that conversation. Selection then continues with the next entry. This option works on `talk` args, an `interact`/`use_on` `dialogue` object, and a combat `finish`.
+
+`line_rules` and `choose` do not consume a `prefer` entry. If every matching `prefer` entry already answered, `strict` fails as it does for a missing answer. Without `strict`, the usual fallback applies.
+
+With `answer_once`, author at most 32 entries. A larger list fails compilation with `invalid-dialogue-options`.
+
+Filliman Tarlock reopens the same four-option menu after each of his three questions. "Ok, thanks." ends the conversation (`filliman.rs2:14,255-269,233-234`). The mirror step needs stage `spoken_filliman` (`:276-279`). Answer the repeated menu once and leave:
 
   ```jsonc
   "args": {
