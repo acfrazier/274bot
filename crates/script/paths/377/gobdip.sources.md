@@ -5,14 +5,14 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 ## Quest state
 
 - `quests/quest_gobdip/configs/quest_gobdip.constant`: not started `0`, complete `6`. Quest points `5`.
-- Colour only. `crates/script/src/quest_journal/native_377.rs` does not admit this button, so progress rules are empty.
+- The native quest-list button is admitted through `quest_journal/native_377.rs`. `quests/quest_gobdip/scripts/gobdip_journal.rs2:7-56` distinguishes stages 0–6: investigate, bring orange, gave orange, gave blue, gave brown, complete. Later pages retain earlier history, so the progress rules match the latest milestone first.
 - Completion: `%goblinquest = 6`, Crafting `stat_advance` 2000 tenths, one `gold_bar` (`quest_gobdip.rs2:61-65`). Scroll: `You have completed the\nGoblin Diplomacy Quest!` and `200 Crafting XP|A Gold Bar`.
 
 ## Start
 
 - Bartender NPC 734 at `maps/m47_50.jm2:11918`, world `(3045,3257,0)`.
 - `areas/area_port_sarim/scripts/bartender.rs2:9-10`: last option does not start when the barcrawl is absent. Prefer `Not very busy in here today, is it?`
-- That branch sets the quest started (`bartender.rs2` goblin-diplomacy start). The in-progress colour is shared by every later varp, so later talks are skipped once orange armour or a later message is already held.
+- That branch sets the quest started (`bartender.rs2` goblin-diplomacy start). Every stage-changing talk rereads the native journal; NPC dialogue is not a game-chat `message` receipt.
 
 ## Armour and dyes
 
@@ -24,12 +24,12 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 - Costs: 5 coins + 3 redberries / 2 onions / 2 woad (`aggie.rs2:143-151,186-196`).
 - Dye application is armour used on the dye (`goblin_mail.rs2:1-12`), message `You dye the goblin armour <colour>.` Orange is red dye used on yellow dye.
 - Wyson NPC 36 `(3027,3379,0)` `maps/m47_52.jm2:12428`. First menu last `Not right now` does not sell. Prefer `I'm looking for woad leaves.` The price menu last `How about 20 coins?` gives 2 leaves (`wyson_the_gardener.rs2:1-35`).
-- Coins: `maps/m50_54.jm2:12022-12023`, `maps/m50_55.jm2:5096`, `maps/m48_55.jm2:5791-5796`.
+- Coins: OBJ 995 qty 3 at `(3228,3504,0)` and qty 4 at `(3232,3500,0)`, `maps/m50_54.jm2:12022-12023`. The Path collects 35 through repeated natural pickups. The enclosed alcove is reached through the sewer ladder at `(3230,9904,0)`, `maps/m50_154.jm2:7787`, `ladders.rs2:90-97`; it is not a missing palace gate.
 - Redberries OBJ 1951 at `maps/m51_52.jm2:6650,6651,6654`, anchor `(3271,3366,0)`.
 - Onions: `maps/m46_50.jm2:5084-5089`, anchor `(2950,3251,0)`, `pickables.rs2:35-43`.
 - Mail farm stand `(2958,3507,0)` from `maps/m46_54.jm2:6196-6218`.
 
 ## Not copied from 289
 
-- 289 journal rules are not used. 377 colour does not separate the armour stages.
+- Journal rules are grounded in the 377 journal source above. Colour alone does not separate the armour stages.
 - Dye `use_on` order is armour onto dye so `goblin_mail.rs2` matches. Orange dye is mixed in 377; it is not a shop item.
