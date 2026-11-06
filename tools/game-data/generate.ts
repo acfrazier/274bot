@@ -2467,7 +2467,7 @@ export function runtimeNpcOperations(
                         || row.operation_fingerprint !== action.operation_fingerprint))) {
                 throw new Error('server_ordered: positive NPC proof disagrees with its action closure');
             }
-            return { npc_type_id: action.npc_type_id, slot: action.slot };
+            return { npc_type_id: action.npc_type_id, slot: action.slot, operation_fingerprint: action.operation_fingerprint };
         }),
         builtin_gatherer_fishing_operations: runtimeBuiltinGathererFishingOperations(evidence, methods, hazardNpcs),
     };
@@ -2482,7 +2482,7 @@ export function runtimeBuiltinGathererFishingOperations(
     const excludedNpcTypes = new Set([390, 403, ...hazardNpcs]);
     const npcTypes = new Map(evidence.npc_types.map(row => [row.npc_type_id, row] as const));
     const actions = new Map(evidence.actions.map(row => [`${row.npc_type_id}:${row.slot}`, row] as const));
-    const accepted = new Map<string, { npc_type_id: number; slot: number }>();
+    const accepted = new Map<string, { npc_type_id: number; slot: number; operation_fingerprint: string }>();
     for (const method of methods) {
         const op = method.op;
         const targets = method.targets;
@@ -2497,6 +2497,7 @@ export function runtimeBuiltinGathererFishingOperations(
             accepted.set(`${target.id}:${target.op}`, {
                 npc_type_id: target.id,
                 slot: target.op,
+                operation_fingerprint: action.operation_fingerprint,
             });
         }
     }
