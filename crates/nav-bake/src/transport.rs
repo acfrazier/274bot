@@ -592,6 +592,11 @@ const EXTRA_TICKS: &[(&str, i32)] = &[
     ("scenery_1738", 0),
     ("scenery_1739", 0),
     ("scenery_1740", 0),
+    // Revision 377 stairs.rs2:1175-1201: Wizard's Tower's direct
+    // p_telejump handlers have no arrival delay or p_delay.
+    ("fai_wiztower_spiralstairs", 0),
+    ("fai_wiztower_spiralstairs_middle", 0),
+    ("fai_wiztower_spiralstairstop", 0),
     // Miscellania castle: the same `p_arrivedelay; p_telejump(movecoord(
     // coord, 0, ±1, 0))` Climb-up/-down bodies as `spiralstairsmiddle`.
     ("spiralstairsmiddle_wooden", 0),
