@@ -232,10 +232,13 @@ Native door traversal sends its one-tile step through the bound driver. On
 body or add another API-side encoder. Unbound 377 drivers refuse this step.
 
 Revision-377 navigation resolves the door and gate config names, including
-`next_loc_stage`, through the selected content's `pack/loc.pack`. This includes
-the wheat-field gates 1551 and 1553 south of the Lumbridge mill. Rebuild the
-377 pack with this parser before running Cook; an older pack can leave the
-field disconnected. Revision-274/289 config parsing remains numeric-only.
+`next_loc_stage`, through the selected content's `pack/loc.pack`. Named configs
+must declare `door_closed`, `gate_main_closed` or `gate_outer_closed` to join
+the configured door set. An `Open` menu action alone does not prove passage.
+Other named doors use the existing handler-proven derivations. This preserves
+the 289 numeric-declaration/category rule without admitting named refusals.
+It includes wheat-field gates 1551/1553, but not refused fortress doors 73/74.
+Rebuild the 377 pack before running Cook. Revision-274/289 parsing is unchanged.
 
 `cargo test -p script revision_377_` covers bundle selection, Path compilation,
 folder validation and missing-table admission. The ignored host-play test
