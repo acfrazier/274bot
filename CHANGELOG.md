@@ -13,15 +13,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Add source-mapped revision-377 Paths for Sheep Shearer, Rune Mysteries and
   Romeo & Juliet, including journal-based intermediate-state recovery.
 - Revision-377 NPC snapshots use the current varbit/varp-selected form's
-  name and menu actions, while retaining the placed type. Null forms expose
-  no menu. Quester can defer unnamed 377 talk roots to that observed menu;
-  it never substitutes a static leaf target. Revision 274/289 is unchanged.
+  name, menu actions and combat level, while retaining the placed type and
+  size. Null forms expose no menu or level. Quester can defer unnamed 377
+  talk roots to that observed menu; it never substitutes a static leaf target.
+  Revision 274/289 is unchanged.
 - Prepare the revision-377 Rune Mysteries live witness with a labelled,
   observed combat-only area fixture and food before Start. Retain combat
   stats and nearby NPC targets in its evidence; leave quest state, items,
   Runecrafting XP and quest points to the native Path and content.
 - Revision-377 Rune Mysteries lost-talisman recovery selects the Duke's
   quest branch instead of the default money dialogue.
+- Revision-377 Sheep Shearer uses all five shearable sheep in Fred's field
+  and selects the wool hand-in even after the account has seen The Thing.
+  Romeo & Juliet delivers Juliet's message without an unnecessary recovery
+  trip when the message has been lost.
 - Add the bespoke revision-377 `cook_377` scenario and a fresh-account live
   witness. Ingredients come from world interactions. Completion, Cooking XP
   and quest points must come from Fairy Ring's product scripts.
