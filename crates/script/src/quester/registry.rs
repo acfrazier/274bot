@@ -187,6 +187,8 @@ fn bundled_path_for(revision: ClientRevision, id: &str) -> Option<&'static [u8]>
         })
         .then(|| match id {
             "cook" => Some(include_bytes!("../../paths/377/cook.json").as_slice()),
+            "imp" => Some(include_bytes!("../../paths/377/imp.json").as_slice()),
+            "doric" => Some(include_bytes!("../../paths/377/doric.json").as_slice()),
             _ => None,
         })
         .flatten()
@@ -1751,7 +1753,7 @@ mod tests {
             )
             .unwrap();
             let registry = preparation.step(worker).unwrap().unwrap().registry;
-            assert_eq!(registry.ids(), ["cook"]);
+            assert_eq!(registry.ids(), ["cook", "imp", "doric"]);
             assert!(
                 registry.bytes("sheep").is_none(),
                 "never substitute a 289 Path"
@@ -1795,6 +1797,80 @@ mod tests {
     }
 
     #[test]
+    fn revision_377_imp_bundle_loads_and_compiles() {
+        FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+            let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            let mut preparation = RegistryPreparation::from_refs(
+                FolderSource {
+                    enabled: false,
+                    folder: PathBuf::new(),
+                },
+                &selected,
+                &quests,
+                None,
+            )
+            .unwrap();
+            let registry = preparation.step(worker).unwrap().unwrap().registry;
+            assert_eq!(registry.path_source("imp"), PathSource::Bundled);
+            let bytes = registry.bytes("imp").unwrap();
+            assert_ne!(bytes.as_ref(), bundled_path("imp").unwrap());
+            let compiled = compile::compile_path(
+                bytes.as_ref(),
+                &selected,
+                &quests,
+                worker,
+                &crate::local_state::OperatorLoadouts::absent(),
+                None,
+            )
+            .unwrap_or_else(|error| panic!("377 Imp Catcher failed to compile: {error:?}"));
+            assert_eq!(compiled.id.0.as_ref(), "imp");
+            assert_eq!(compiled.colour_complete.0.as_ref(), "imp:2");
+            assert!(compiled.progress.rules.is_empty());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn revision_377_doric_bundle_loads_and_compiles() {
+        FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+            let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            let mut preparation = RegistryPreparation::from_refs(
+                FolderSource {
+                    enabled: false,
+                    folder: PathBuf::new(),
+                },
+                &selected,
+                &quests,
+                None,
+            )
+            .unwrap();
+            let registry = preparation.step(worker).unwrap().unwrap().registry;
+            assert_eq!(registry.path_source("doric"), PathSource::Bundled);
+            let bytes = registry.bytes("doric").unwrap();
+            assert_ne!(bytes.as_ref(), bundled_path("doric").unwrap());
+            let compiled = compile::compile_path(
+                bytes.as_ref(),
+                &selected,
+                &quests,
+                worker,
+                &crate::local_state::OperatorLoadouts::absent(),
+                None,
+            )
+            .unwrap_or_else(|error| panic!("377 Doric failed to compile: {error:?}"));
+            assert_eq!(compiled.id.0.as_ref(), "doric");
+            assert_eq!(compiled.colour_complete.0.as_ref(), "doric:100");
+            assert!(compiled.progress.rules.is_empty());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
     fn revision_377_folder_validates_without_adding_289_bundles() {
         FamilyPreparation::run(|worker| {
             let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
@@ -1807,7 +1883,7 @@ mod tests {
             .unwrap();
             let registry =
                 PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
-            assert_eq!(registry.ids(), ["cook"]);
+            assert_eq!(registry.ids(), ["cook", "imp", "doric"]);
             assert!(
                 registry.diagnostics().is_empty(),
                 "{:?}",
