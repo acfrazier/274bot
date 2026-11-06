@@ -179,7 +179,7 @@ function loadAuthoredTemplates(): AuthoredPrereqTemplates {
 // ---------------------------------------------------------------------------
 
 /** CLI crossing projection schema; the family wire has its own schema. */
-export const PREREQ_CROSSING_PROJECTION_SCHEMA = 2;
+export const PREREQ_CROSSING_PROJECTION_SCHEMA = 3;
 /** Lower-case CrossingKind serde representation, matching the Rust decoder. */
 const KNOWN_CROSSING_KINDS = new Set([
     'door', 'ladder', 'stairs', 'boat', 'teleport',
@@ -206,7 +206,10 @@ export type ProjectionEntry = {
      * unconditional alternative. Arrays are preserved exactly, never unioned. */
     quest_gate_alternatives: unknown[][];
 };
-export type ValidatedProjection = { entries: ProjectionEntry[] };
+export type ValidatedProjection = {
+    entries: ProjectionEntry[];
+    identical_edge_groups: string[][];
+};
 
 function projectionTile(value: unknown, label: string): ProjectionTile {
     if (!isRecord(value) || Object.keys(value).sort().join(',') !== 'level,x,z') {
@@ -308,8 +311,14 @@ export function loadPrereqCrossingProjection(
         throw new Error(`prereq_steps: cannot read GAME_DATA_289_PREREQ_CROSSINGS ${projectionPath}: ${error instanceof Error ? error.message : error}`);
     }
     if (!isRecord(parsed) || parsed.schema !== PREREQ_CROSSING_PROJECTION_SCHEMA
-        || !Array.isArray(parsed.crossings) || Object.keys(parsed).sort().join(',') !== 'crossings,schema') {
-        throw new Error('prereq_steps: projection must be exactly {schema:2,crossings}');
+        || !Array.isArray(parsed.crossings)
+        || Object.keys(parsed).sort().join(',') !== 'crossings,identical_edge_groups,schema') {
+        throw new Error('prereq_steps: projection must be exactly {schema:3,crossings,identical_edge_groups}');
+    }
+    if (!Array.isArray(parsed.identical_edge_groups) || parsed.identical_edge_groups.some((group: unknown) =>
+        !Array.isArray(group) || group.length < 2
+        || group.some((source: unknown) => typeof source !== 'string' || source.length === 0))) {
+        throw new Error('prereq_steps: identical_edge_groups must contain source-row string groups');
     }
     const entries: ProjectionEntry[] = [];
     const seen = new Set<string>();
@@ -352,7 +361,7 @@ export function loadPrereqCrossingProjection(
         seen.add(key);
         entries.push(entry);
     });
-    return { entries };
+    return { entries, identical_edge_groups: parsed.identical_edge_groups as string[][] };
 }
 
 function toCrossingWire(template: CrossingTemplate, entry: ProjectionEntry): CrossingWire {

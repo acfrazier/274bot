@@ -173,14 +173,14 @@ function baseEntries() {
         packEntry(3506, tile(51, 60), tile(51, 59), tile(51, 60)),
     ];
 }
-function writeProjection(entries: unknown[]) {
+function writeProjection(entries: unknown[], identical_edge_groups: unknown = []) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prereq-projection-'));
     const file = path.join(dir, 'crossings.json');
-    fs.writeFileSync(file, JSON.stringify({ schema: 2, crossings: entries }));
+    fs.writeFileSync(file, JSON.stringify({ schema: 3, crossings: entries, identical_edge_groups }));
     return { dir, file };
 }
-function withProjection(entries: unknown[], run: (overrides: { projectionPath: string }) => void) {
-    const { dir, file } = writeProjection(entries);
+function withProjection(entries: unknown[], run: (overrides: { projectionPath: string }) => void, identical_edge_groups: unknown = []) {
+    const { dir, file } = writeProjection(entries, identical_edge_groups);
     try {
         run({ projectionPath: file });
     } finally {
@@ -195,6 +195,24 @@ withProjection(baseEntries(), (overrides) => {
     assert.equal(joined.rows[1].crossings.length, 4);
     assert.ok(joined.rows.flatMap((row) => row.crossings).every((entry) => JSON.stringify(entry.pass.landing) === JSON.stringify(entry.crossing.to)));
 });
+const identicalEdges = [['graph.edges[1]', 'graph.edges[2]']];
+withProjection(baseEntries(), (overrides) => {
+    assert.deepEqual(loadPrereqCrossingProjection(289, overrides)!.identical_edge_groups, identicalEdges);
+}, identicalEdges);
+withProjection(baseEntries(), (overrides) => {
+    assert.throws(() => loadPrereqCrossingProjection(289, overrides), /identical_edge_groups/);
+}, [[1, 'graph.edges[2]']]);
+{
+    const { dir, file } = writeProjection(baseEntries());
+    try {
+        const older = JSON.parse(fs.readFileSync(file, 'utf8'));
+        older.schema = 2;
+        fs.writeFileSync(file, JSON.stringify(older));
+        assert.throws(() => loadPrereqCrossingProjection(289, { projectionPath: file }), /schema:3/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
 withProjection([], (overrides) => {
     assert.throws(() => extractPrereqStepsFacts(289, overrides), /no legal pack crossing/);
 });
@@ -220,7 +238,7 @@ withProjection([...baseEntries(), packEntry(3507, tile(50, 60), tile(50, 60), ti
     }
 }
 
-// Schema-2 condition groups: two stage-window alternatives for one physical
+// Schema-3 condition groups: two stage-window alternatives for one physical
 // crossing share that crossing's identity and keep both condition arrays —
 // the loader never unions them into one conjunction, and the join still
 // yields one catalog identity per physical crossing.
