@@ -5182,7 +5182,10 @@ fn selected_pending_door_step_matches_client_movement_bytes() {
             &control.out.data()[..control.out.pos],
             "{revision:?} door step must match the native one-tile movement codec"
         );
-        assert_eq!(driver.out.pos, 7, "one opcode, one length and five body bytes");
+        assert_eq!(
+            driver.out.pos, 7,
+            "one opcode, one length and five body bytes"
+        );
     }
 }
 
