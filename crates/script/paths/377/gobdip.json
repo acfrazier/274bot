@@ -19,24 +19,18 @@
     "acquire": {
       "acquire:coins": [
         {
-          "id": "coins-from-draynor-goblins",
-          "kind": "combat",
+          "id": "coins-from-palace-alcove",
+          "kind": "interact",
           "version": 1,
           "advances": false,
           "args": {
-            "target": {
-              "npc": ["goblin_unarmed_melee_1", "goblin_unarmed_melee_2", "goblin_unarmed_melee_3", "goblin_unarmed_melee_4", "goblin_unarmed_melee_5", "goblin_unarmed_melee_6", "goblin_unarmed_melee_7"],
-              "not_targeting_others": true,
-              "pick": "nearest"
-            },
-            "tactic": { "kind": "open", "style": "melee", "engage_radius": 12, "auto_retaliate": true },
-            "stand": { "tile": [3146, 3232, 0], "source": "maps/m49_50.jm2:6702-6713; drop_tables/scripts/goblin.rs2. Palace and Edgeville coin spawns have no proven route from Lumbridge on 274bot-377-v17." },
-            "area": { "box": [3138, 3224, 3152, 3264, 0], "source": "maps/m49_50.jm2:6702-6713" },
-            "lost_radius": 16,
-            "kill_budget_ticks": 120,
-            "loadout": null,
-            "loot": [{ "obj": "coins", "qty": 35 }],
-            "until": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } }
+            "target": { "ground": "coins" },
+            "op": "Take",
+            "anchor": { "tile": [3232, 3500, 0], "source": "maps/m50_54.jm2:12022-12023 (OBJ 995 qty 3/4); maps/m50_154.jm2:7787 ladder_1755 and ladders.rs2:90-97 provide the alcove route" },
+            "radius": 6,
+            "wait_if_missing": true,
+            "until": { "obj": "coins", "qty": 35 },
+            "settle_ms": 300000
           },
           "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } },
           "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } }
@@ -67,19 +61,10 @@
             "kill_budget_ticks": 2400,
             "loadout": null,
             "loot": ["goblin_armour", "coins"],
-            "until": { "All": [
-              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
-              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } }
-            ] }
+            "until": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } }
           },
-          "skip_if": { "All": [
-            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
-            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } }
-          ] },
-          "settle": { "All": [
-            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
-            { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } }
-          ] }
+          "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } }
         }
       ],
       "acquire:redberries": [
@@ -197,7 +182,15 @@
       "progress_binding": "journal:gobdip",
       "progress": {
         "colour": { "not_started": "gobdip:0", "in_progress": "gobdip:1", "complete": "gobdip:6" },
-        "rules": [],
+        "rules": [
+          { "stage": "gobdip:6", "all": ["quest complete!"], "varp": 6 },
+          { "stage": "gobdip:5", "all": ["i should see if they liked the brown goblin armour"], "varp": 5 },
+          { "stage": "gobdip:4", "all": ["they asked me to bring them some of their original brown goblin armour"], "varp": 4 },
+          { "stage": "gobdip:3", "all": ["they asked me to bring them some blue goblin armour"], "varp": 3 },
+          { "stage": "gobdip:2", "all": ["i should bring the goblins some orange goblin armour"], "varp": 2 },
+          { "stage": "gobdip:1", "all": ["i should investigate before it turns into a full blown war"], "varp": 1 },
+          { "stage": "gobdip:0", "all": ["i can start this quest by talking to the bartender", "port sarim"], "varp": 0 }
+        ],
         "flags": [],
         "monotonic": false
       },
@@ -245,7 +238,7 @@
               "version": 1,
               "args": { "recipe": "acquire:coins" },
               "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } },
-              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 24 } } }
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } }
             },
             {
               "id": "get-mail",
@@ -253,10 +246,7 @@
               "version": 1,
               "args": { "recipe": "acquire:mail" },
               "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
-              "settle": { "All": [
-                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },
-                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } }
-              ] }
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } }
             },
             {
               "id": "get-redberries",
@@ -326,7 +316,7 @@
               "id": "offer-colour",
               "kind": "talk",
               "version": 1,
-              "advances": false,
+              "advances": true,
               "args": {
                 "npc": "general_wartface",
                 "anchor": { "tile": [2957, 3511, 0], "source": "maps/m46_54.jm2:6212; quest_gobdip.rs2 greet stage 1 option 3" },
@@ -334,8 +324,16 @@
                 "prefer": ["Do you want me to pick an armour colour for you?"]
               },
               "skip_if": { "Any": [] },
-              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["bring us orange armour.", "orange might be good.", "have you got some orange", "try bringing us blue"] } } }
-            },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "gobdip", "any": ["gobdip:2"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "gobdip:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
             {
               "id": "dye-orange",
               "kind": "use_on",
@@ -349,7 +347,7 @@
               "id": "hand-orange",
               "kind": "talk",
               "version": 1,
-              "advances": false,
+              "advances": true,
               "args": {
                 "npc": "general_wartface",
                 "anchor": { "tile": [2957, 3511, 0], "source": "quest_gobdip.rs2:30-37" },
@@ -357,8 +355,16 @@
                 "prefer": []
               },
               "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_orange" } } } },
-              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["try bringing us blue armour.", "you give some goblin armour"] } } }
-            },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "gobdip", "any": ["gobdip:3"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "gobdip:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
             {
               "id": "dye-blue",
               "kind": "use_on",
@@ -372,7 +378,7 @@
               "id": "hand-blue",
               "kind": "talk",
               "version": 1,
-              "advances": false,
+              "advances": true,
               "args": {
                 "npc": "general_wartface",
                 "anchor": { "tile": [2957, 3511, 0], "source": "quest_gobdip.rs2:39-46" },
@@ -380,8 +386,16 @@
                 "prefer": []
               },
               "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour_darkblue" } } } },
-              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["yeah try brown.", "you give some goblin armour"] } } }
-            },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "gobdip", "any": ["gobdip:4"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "gobdip:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
             {
               "id": "hand-brown",
               "kind": "talk",
@@ -396,9 +410,17 @@
               "skip_if": { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "goblin_armour" } } } },
               "settle": { "Any": [
                 { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "gobdip", "is": "complete" } } },
-                { "Fact": { "kind": "message", "version": 1, "args": { "any": ["this is rather nice.", "brown armour it is."] } } }
+                { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "gobdip", "any": ["gobdip:5"] } } }
               ] }
-            },
+            }
+          ]
+        },
+        {
+          "stage": "gobdip:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
             {
               "id": "finish-queue",
               "kind": "talk",
