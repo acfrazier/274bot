@@ -273,6 +273,11 @@ An explicitly selected revision-377 bake also runs `vertical_377.rs`.
 It prices the renamed `ladder_1755` from the canonical climb helper while
 preserving its coordinate-specific landing and relative fallback. That return
 connects the Varrock sewer to the otherwise walled-in palace coin alcove.
+Renamed `scenery_*` stairs are priced from canonical coordinate-switch
+handlers. Each admitted arm must make one fixed jump; only the optional
+`p_arrivedelay` contributes an extra tick. This retains Morgan's downstairs
+route and explicit middle-stair up/down options without admitting the
+dialogue-bearing first option, gates or additional side effects.
 The surface entrance is the canonical `manholeclosed` Open followed by
 `manholeopen` Climb down. Its edge retains the opened loc ID and the player's
 z+6400 landing, at three ticks for the pair. Already-open placements take
