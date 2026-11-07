@@ -533,18 +533,32 @@ fn start_fixture_at(
         asset_host: Some("127.0.0.1".into()),
         port: Some(port),
         http_port: Some(http_port),
-        cache_dir: Some(PathBuf::from(
-            std::env::var_os("BOT_CACHE_DIR").expect("copied BOT_CACHE_DIR"),
-        )),
+        cache_dir: Some(
+            api::test_support::local_asset_path(
+                "BOT_CACHE_DIR",
+                "",
+                "copied local R289 cache snapshot for Script API live proof",
+            )
+            .expect("Script API cache should be preflighted"),
+        ),
         unpack_dir: Some(home.join(".274bot/unpack-289")),
         vault_path: Some(home.join("vault")),
-        nav_pack: Some(PathBuf::from(
-            std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK"),
-        )),
-        engine_dir: Some(PathBuf::from(
-            std::env::var_os("WORLD_ENGINE_DIR").expect("WORLD_ENGINE_DIR"),
-        )),
-        ..ProfileOptions::default()
+        nav_pack: Some(
+            api::test_support::local_asset_path(
+                "WORLD_NAV_PACK",
+                "",
+                "local R289 navigation pack for Script API live proof",
+            )
+            .expect("Script API navigation pack should be preflighted"),
+        ),
+        engine_dir: Some(
+            api::test_support::local_asset_path(
+                "WORLD_ENGINE_DIR",
+                "",
+                "local R289 engine content for Script API live proof",
+            )
+            .expect("Script API engine content should be preflighted"),
+        ),
     };
     let template = options
         .resolve(None)
@@ -1211,6 +1225,27 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
         Ok("1"),
         "ignored live cells require LIVE=1"
     );
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for (name, description) in [
+        (
+            "BOT_CACHE_DIR",
+            "copied local R289 cache snapshot for Script API live proof",
+        ),
+        (
+            "WORLD_NAV_PACK",
+            "local R289 navigation pack for Script API live proof",
+        ),
+        (
+            "WORLD_ENGINE_DIR",
+            "local R289 engine content for Script API live proof",
+        ),
+    ] {
+        if api::test_support::local_asset_path(name, "", description).is_none() {
+            return;
+        }
+    }
     if std::env::var("SCRIPT_API_CHILD").as_deref() == Ok(cell) {
         body();
         return;
