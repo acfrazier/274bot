@@ -65,7 +65,7 @@ use api::selected::{Knowledge, RunKey};
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot, WorldTile};
 use host::Pump;
 use host_play::evidence_writer::{EvidenceJob, EvidenceRequest, EvidenceWriter, PngColor};
-use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
+use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate, SlotArm};
 use scenario::{RunnerStatus, Scenario, ScenarioRunner};
 use script::native::{NativePhase, ScriptStatus, StatusValue};
 use script::ScriptLifecycleReceipt;
@@ -1739,8 +1739,26 @@ fn run_cells(
         inventory_last_counts: None,
         inventory_violation: None,
     }));
+    // Each slot's arm is owned here, not by `try_spawn_slot`'s default: the
+    // fixture's own pre-Start relogs log the scriptless bot out, and the
+    // approved idle-park policy keeps it logged out until an explicit Login.
+    // Building the profiles first lets the frame below post that Login on the
+    // same arm the spawned slot runs with.
+    let mut live_profiles = Vec::with_capacity(entries.len());
+    let mut slot_arms = Vec::with_capacity(entries.len());
+    for (index, (account, password)) in entries.iter().enumerate() {
+        let mut profile = mint_profile(account, password)?;
+        if index == 0 {
+            if let Some(control) = profile_control.as_ref() {
+                profile.settings.survival.cure_poison = control.initial_cure_poison;
+            }
+        }
+        slot_arms.push(SlotArm::new(profile.uid, true));
+        live_profiles.push(profile);
+    }
     let frame_shared = Arc::clone(&shared);
     let frame_accounts = names.clone();
+    let frame_arms = slot_arms.clone();
     let mut play = host_play::run_with_template(
         Arc::clone(&template),
         true,
@@ -1882,6 +1900,13 @@ fn run_cells(
                 )
             {
                 actor.runner.tick_with_hold(client, hold.hold);
+                if actor.runner.take_relog_login() {
+                    // The Relog step logged the scriptless bot out; post the
+                    // operator Login for this slot, as every fixture-owned
+                    // preparation logout does. This runs inside the slot's own
+                    // frame, so the arm post needs no extra wake.
+                    frame_arms[index].arm_explicit_login();
+                }
             }
             if let Some(plan) = actor.macro_event.as_mut() {
                 // The engine cheat `::macro_event <n>` runs the same
@@ -2156,17 +2181,14 @@ fn run_cells(
     if mode.is_pair() {
         play.set_quest_accounts(names.iter().map(String::as_str));
     }
-    let mut live_profiles = Vec::with_capacity(entries.len());
-    for (index, (account, password)) in entries.iter().enumerate() {
-        let mut profile = mint_profile(account, password)?;
-        if index == 0 {
-            if let Some(control) = profile_control.as_ref() {
-                profile.settings.survival.cure_poison = control.initial_cure_poison;
-            }
-        }
-        play.try_spawn_slot(profile.clone(), None, None, None)
-            .map_err(|error| format!("spawn role {index} ({account}): {error}"))?;
-        live_profiles.push(profile);
+    for (index, profile) in live_profiles.iter().enumerate() {
+        play.try_spawn_slot(
+            profile.clone(),
+            None,
+            None,
+            Some(Arc::clone(&slot_arms[index])),
+        )
+        .map_err(|error| format!("spawn role {index} ({}): {error}", profile.username))?;
     }
     {
         let mut state = shared.lock().map_err(|_| "live state poisoned")?;
