@@ -210,10 +210,11 @@ Unavailable content rows retain their existing reasons.
 ### Revision 377
 
 Quester uses the selected revision's bundle. Revision 289 keeps its existing
-roster. Revision 274 remains unavailable. Revision 377 currently bundles only
-`crates/script/paths/377/cook.json`, indexed by `377/index.json` and embedded in
-`quester/registry.rs`. Its `cook.sources.md` sidecar cites the Fairy Ring content
-for dialogue, state, messages and targets.
+roster. Revision 274 remains unavailable. Revision 377 bundles the
+source-backed Cook's Assistant and Knight's Sword Paths, indexed by
+`crates/script/paths/377/index.json` and embedded in `quester/registry.rs`.
+Their `*.sources.md` sidecars cite Fairy Ring content for dialogue, state,
+messages, targets, placements, and resources.
 
 Revision-377 admission requires selected item, quest identity/progress, NPC and
 loc tables. Missing tables give an explicit unavailable reason. Step-specific
