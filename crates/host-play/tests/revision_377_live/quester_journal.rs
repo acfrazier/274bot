@@ -55,27 +55,15 @@ const COMBAT_FIXTURE: &[&str] = &[
     "give trout 5",
 ];
 
-// The quest start requires Mining 10; the no-bank route mines iron at 15 and smelts
-// it at Smithing 15. Its fresh-account pie fallback requires Cooking 10.
-// Sources: quest_squire/scripts/squire_journal.rs2:7-12; skill_mining/configs/mine.dbrow:62-76;
-// skill_smithing/configs/smelting/smelting.struct:15-23;
-// skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17.
-const SQUIRE_MINING_LEVEL: i32 = 15;
-const SQUIRE_SMITHING_LEVEL: i32 = 15;
+// The journal requires Mining 10, and the fresh pie recipe needs Cooking 10.
+// Iron bars are natural dwarf drops, so Smithing remains at its fresh level.
+// Sources: quest_squire/scripts/squire_journal.rs2:7-12;
+// skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17;
+// drop_tables/scripts/dwarf.rs2:13,47-48.
+const SQUIRE_MINING_LEVEL: i32 = 10;
+const SQUIRE_SMITHING_LEVEL: i32 = 1;
 const SQUIRE_COOKING_LEVEL: i32 = 10;
-// setLevel(15) yields 2,411 client-visible XP; see engine Player.ts:78-100, 2014-20,
-// and UpdateStatEncoder.ts:9-13 (internal XP is divided by ten in the stat packet).
-const SQUIRE_SMITHING_15_XP: i32 = 2_411;
-// The quest consumes two bars (quest_squire.rs2:190-195); productexp is tenths,
-// and iron smelting awards it only after a successful bar is made.
-const SQUIRE_IRON_BAR_COUNT: i32 = 2;
-const SQUIRE_IRON_BAR_XP_TENTHS: i32 = 125;
-const XP_TENTHS_PER_REPORTED_XP: i32 = 10;
-const SQUIRE_REQUIREMENT_FIXTURE: &[&str] = &[
-    "setstat mining 15",
-    "setstat smithing 15",
-    "setstat cooking 10",
-];
+const SQUIRE_REQUIREMENT_FIXTURE: &[&str] = &["setstat mining 10", "setstat cooking 10"];
 
 #[derive(Clone, Copy)]
 struct Quest {
@@ -277,13 +265,8 @@ impl Sample {
                 .collect(),
         }
     }
-    fn fresh(&self, quest: Quest) -> bool {
-        let expected_xp = if quest.key == "squire" {
-            SQUIRE_SMITHING_15_XP
-        } else {
-            0
-        };
-        self.xp == expected_xp && self.qp == 0 && self.quest_colour == Some(0xF80000)
+    fn fresh(&self) -> bool {
+        self.xp == 0 && self.qp == 0 && self.quest_colour == Some(0xF80000)
     }
     fn safe_to_relog(&self) -> bool {
         !self.in_combat
@@ -377,14 +360,13 @@ impl Sample {
             "romeojuliet" => self.main_text.iter().any(|s| s == q.qp_reward),
             _ => false,
         };
-        // Draynor adds variable Attack XP before Vampire's reward. Squire's natural
-        // iron-bar acquisition also adds Smithing XP; the exact reward text above
-        // remains an independent check of the quest's 12,725-XP reward.
+        // Draynor adds variable Attack XP before Vampire's reward. Squire's
+        // dwarf drops add no Smithing XP, so its reward delta remains exact.
         let xp_delta = self.xp.checked_sub(base_xp);
-        let xp_ok = match q.key {
-            "vampire" => xp_delta.is_some_and(|gained| gained >= q.xp_delta),
-            "squire" => xp_delta.is_some_and(squire_xp_delta_matches),
-            _ => xp_delta == Some(q.xp_delta),
+        let xp_ok = if q.key == "vampire" {
+            xp_delta.is_some_and(|gained| gained >= q.xp_delta)
+        } else {
+            xp_delta == Some(q.xp_delta)
         };
         xp_ok
             && self.qp == q.qp_delta
@@ -399,11 +381,6 @@ fn native_run_completed(receipt: Option<&ScriptLifecycleReceipt>, generation: Op
         Some(r.runtime_generation) == generation && r.state == ScriptTerminalState::Completed
     })
 }
-fn squire_xp_delta_matches(delta: i32) -> bool {
-    (0..=SQUIRE_IRON_BAR_COUNT).any(|bars| {
-        delta == SQUIRE.xp_delta + bars * SQUIRE_IRON_BAR_XP_TENTHS / XP_TENTHS_PER_REPORTED_XP
-    })
-}
 
 fn witness_predicate(sample: &Sample, quest: Quest, base_xp: i32, baseline: bool) -> bool {
     if baseline {
@@ -411,7 +388,7 @@ fn witness_predicate(sample: &Sample, quest: Quest, base_xp: i32, baseline: bool
             // The labelled combat fixture raises Attack, the reward skill.
             sample.qp == 0 && sample.quest_colour == Some(0xF80000) && sample.combat_fixture_ready()
         } else {
-            sample.fresh(quest) && base_xp == sample.xp && sample.quest_fixture_ready(quest)
+            sample.fresh() && base_xp == sample.xp && sample.quest_fixture_ready(quest)
         }
     } else {
         sample.complete(quest, base_xp)
@@ -603,7 +580,7 @@ impl Witness {
             );
         }
         if self.quest.key == "squire" {
-            seeds.push("labelled own-account quest/acquisition minima: setstat mining 15 (quest Mining 10: content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12; iron Mining 15: content/scripts/skill_mining/configs/mine.dbrow:62-76), setstat smithing 15 (content/scripts/skill_smithing/configs/smelting/smelting.struct:15-23), setstat cooking 10 (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17)");
+            seeds.push("labelled own-account quest/acquisition minima: setstat mining 10 (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12), setstat cooking 10 (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17); Smithing remains fresh at level 1 / 0 XP because iron bars are natural dwarf drops (content/scripts/drop_tables/scripts/dwarf.rs2:13,47-48)");
         }
         let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"quest_state_seeds":0,"quest_item_seeds":0,"reward_xp_seeds":0,"quest_point_seeds":0});
         self.record(receipt.clone())?;
@@ -670,11 +647,8 @@ impl Witness {
                                     ));
                                 }
                                 let phase = match command {
-                                    "setstat mining 15" => {
-                                        "SEED quest Mining 10 and iron-ore Mining 15 minima (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12; content/scripts/skill_mining/configs/mine.dbrow:62-76)"
-                                    }
-                                    "setstat smithing 15" => {
-                                        "SEED iron-bar smelting Smithing 15 minimum (content/scripts/skill_smithing/configs/smelting/smelting.struct:15-23)"
+                                    "setstat mining 10" => {
+                                        "SEED quest Mining 10 minimum (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12)"
                                     }
                                     "setstat cooking 10" => {
                                         "SEED redberry-pie Cooking 10 minimum (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:201-212)"
@@ -821,10 +795,7 @@ fn run_quest(q: Quest) -> Result<(), String> {
         None,
         None,
     )?;
-    let budget = if matches!(
-        q.key,
-        "hetty" | "gobdip" | "vampire" | "demon" | "squire"
-    ) {
+    let budget = if matches!(q.key, "hetty" | "gobdip" | "vampire" | "demon" | "squire") {
         3600
     } else {
         1500
@@ -968,11 +939,7 @@ fn batch2_witness_accepts_the_377_scroll_and_rejects_a_red_row() {
         (DEMON, &["Silverlight"][..]),
         (SQUIRE, &["12,725 Smithing XP"][..]),
     ] {
-        let base = match quest.key {
-            "vampire" => 1154,
-            "squire" => SQUIRE_SMITHING_15_XP,
-            _ => 0,
-        };
+        let base = if quest.key == "vampire" { 1154 } else { 0 };
         let mut sample = batch2_product(quest, extra);
         sample.xp = base + quest.xp_delta;
         if quest.key == "vampire" {
@@ -997,7 +964,7 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
     let baseline = Sample {
         tick: 1,
         tile: Some((3000, 3150, 0)),
-        xp: SQUIRE_SMITHING_15_XP,
+        xp: 0,
         level: SQUIRE_SMITHING_LEVEL,
         mining_level: SQUIRE_MINING_LEVEL,
         cooking_level: SQUIRE_COOKING_LEVEL,
@@ -1070,14 +1037,14 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
         true
     ));
     invalid_baseline.cooking_level = SQUIRE_COOKING_LEVEL;
-    invalid_baseline.xp = SQUIRE_SMITHING_15_XP + 1;
+    invalid_baseline.xp = 1;
     assert!(!witness_predicate(
         &invalid_baseline,
         SQUIRE,
         baseline.xp,
         true
     ));
-    invalid_baseline.xp = SQUIRE_SMITHING_15_XP;
+    invalid_baseline.xp = 0;
     assert!(!witness_predicate(&baseline, SQUIRE, baseline.xp + 1, true));
     invalid_baseline.qp = 1;
     assert!(!witness_predicate(
@@ -1095,24 +1062,17 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
         true
     ));
 
-    for acquisition_xp in [0, 12, 25] {
-        let mut product = batch2_product(SQUIRE, &["12,725 Smithing XP"]);
-        product.xp = baseline.xp + SQUIRE.xp_delta + acquisition_xp;
-        assert!(
-            witness_predicate(&product, SQUIRE, baseline.xp, false),
-            "valid iron-bar acquisition XP delta: {acquisition_xp}"
-        );
-    }
-    for acquisition_xp in [1, 13, 26] {
-        let mut product = batch2_product(SQUIRE, &["12,725 Smithing XP"]);
-        product.xp = baseline.xp + SQUIRE.xp_delta + acquisition_xp;
-        assert!(
-            !witness_predicate(&product, SQUIRE, baseline.xp, false),
-            "invalid iron-bar acquisition XP delta: {acquisition_xp}"
-        );
-    }
     let mut product = batch2_product(SQUIRE, &["12,725 Smithing XP"]);
-    product.xp = baseline.xp + SQUIRE.xp_delta + 25;
+    product.xp = baseline.xp + SQUIRE.xp_delta;
+    assert!(witness_predicate(&product, SQUIRE, baseline.xp, false));
+    for unexpected_xp in [-1, 1, 12, 13, 25, 26] {
+        let mut invalid_product = product.clone();
+        invalid_product.xp += unexpected_xp;
+        assert!(
+            !witness_predicate(&invalid_product, SQUIRE, baseline.xp, false),
+            "unexpected Smithing XP delta: {unexpected_xp}"
+        );
+    }
     product.qp += 1;
     assert!(!witness_predicate(&product, SQUIRE, baseline.xp, false));
     product.qp = SQUIRE.qp_delta;
@@ -1125,7 +1085,7 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
     assert!(!witness_predicate(&product, SQUIRE, baseline.xp, false));
 
     let mut wrong_reward_text = batch2_product(SQUIRE, &["12,750 Smithing XP"]);
-    wrong_reward_text.xp = baseline.xp + SQUIRE.xp_delta + 25;
+    wrong_reward_text.xp = baseline.xp + SQUIRE.xp_delta;
     assert!(!witness_predicate(
         &wrong_reward_text,
         SQUIRE,
@@ -1134,7 +1094,7 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
     ));
 
     let mut product_without_xp = batch2_product(SQUIRE, &[]);
-    product_without_xp.xp = baseline.xp + SQUIRE.xp_delta + 25;
+    product_without_xp.xp = baseline.xp + SQUIRE.xp_delta;
     assert!(!witness_predicate(
         &product_without_xp,
         SQUIRE,
