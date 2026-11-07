@@ -908,6 +908,7 @@ impl LoadIsolate {
     pub fn queue_noop_for_test(&self) {
         self.send(IsolateCmd::TestNoop);
     }
+
     /// Collect V8 garbage on the isolate thread and return its used heap.
     #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
