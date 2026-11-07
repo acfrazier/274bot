@@ -391,7 +391,11 @@ fn env_path(name: &str) -> PathBuf {
 }
 fn asset_path(name: &str, description: &str) -> Option<PathBuf> {
     let path = api::test_support::local_asset_path(name, "", description)?;
-    assert!(path.is_absolute(), "{name} must be absolute: {}", path.display());
+    assert!(
+        path.is_absolute(),
+        "{name} must be absolute: {}",
+        path.display()
+    );
     Some(path)
 }
 
