@@ -10619,24 +10619,24 @@ p_telejump(0_46_149_63_13);
         },
     ]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
-    let derive = |revision: Option<api::selected::ClientRevision>| {
-        let data = revision.map(|revision| {
-            api::game_data::for_revision(revision).expect("selected revision game data")
-        });
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data.as_deref()).0
+    let derive = |data: Option<&api::game_data::SelectedGameData>| {
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
     };
     let baseline = derive(None);
     for revision in [
-        Some(api::selected::ClientRevision::R274),
-        Some(api::selected::ClientRevision::R289),
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
     ] {
+        let data = api::game_data::for_revision(revision).expect("selected revision game data");
         assert_eq!(
-            derive(revision).edges,
+            derive(Some(&data)).edges,
             baseline.edges,
             "legacy extraction stays unchanged"
         );
     }
-    let graph = derive(Some(api::selected::ClientRevision::R377));
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 game data");
+    let graph = derive(Some(&data));
     let entry = graph
         .edges
         .iter()
@@ -10711,24 +10711,24 @@ p_telejump($coord);
         ..Default::default()
     }]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
-    let derive = |revision: Option<api::selected::ClientRevision>| {
-        let data = revision.map(|revision| {
-            api::game_data::for_revision(revision).expect("selected revision game data")
-        });
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data.as_deref()).0
+    let derive = |data: Option<&api::game_data::SelectedGameData>| {
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
     };
     let baseline = derive(None);
     for revision in [
-        Some(api::selected::ClientRevision::R274),
-        Some(api::selected::ClientRevision::R289),
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
     ] {
+        let data = api::game_data::for_revision(revision).expect("selected revision game data");
         assert_eq!(
-            derive(revision).edges,
+            derive(Some(&data)).edges,
             baseline.edges,
             "legacy extraction stays unchanged"
         );
     }
-    let graph = derive(Some(api::selected::ClientRevision::R377));
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 game data");
+    let graph = derive(Some(&data));
     let edge = graph
         .edges
         .iter()
@@ -10841,20 +10841,20 @@ switch_coord (loc_coord) {
         },
     ]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
-    let derive = |revision: Option<api::selected::ClientRevision>| {
-        let data = revision.map(|revision| {
-            api::game_data::for_revision(revision).expect("selected revision game data")
-        });
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data.as_deref()).0
+    let derive = |data: Option<&api::game_data::SelectedGameData>| {
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
     };
     let baseline = derive(None);
     for revision in [
-        Some(api::selected::ClientRevision::R274),
-        Some(api::selected::ClientRevision::R289),
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
     ] {
-        assert_eq!(derive(revision).edges, baseline.edges);
+        let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        assert_eq!(derive(Some(&data)).edges, baseline.edges);
     }
-    let graph = derive(Some(api::selected::ClientRevision::R377));
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 game data");
+    let graph = derive(Some(&data));
     let down = graph
         .edges
         .iter()
@@ -10971,24 +10971,24 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
         },
     ]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
-    let derive = |revision: Option<api::selected::ClientRevision>| {
-        let data = revision.map(|revision| {
-            api::game_data::for_revision(revision).expect("selected revision game data")
-        });
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data.as_deref()).0
+    let derive = |data: Option<&api::game_data::SelectedGameData>| {
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
     };
     let baseline = derive(None);
     for revision in [
-        Some(api::selected::ClientRevision::R274),
-        Some(api::selected::ClientRevision::R289),
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
     ] {
+        let data = api::game_data::for_revision(revision).expect("selected revision game data");
         assert_eq!(
-            derive(revision).edges,
+            derive(Some(&data)).edges,
             baseline.edges,
             "legacy extraction stays unchanged"
         );
     }
-    let graph = derive(Some(api::selected::ClientRevision::R377));
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 game data");
+    let graph = derive(Some(&data));
     let closed = graph
         .edges
         .iter()
