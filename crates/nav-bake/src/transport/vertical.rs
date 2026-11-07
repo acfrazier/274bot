@@ -10,14 +10,14 @@ pub(super) use revision_377::supplemental_edges_377;
 // ---------------------------------------------------------------------------
 
 /// Per-placement outcome resolution, m8aq-style: a landing, or a skip reason.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum Outcome {
     Landing(Landing),
     Skipped(&'static str),
 }
 
 /// How the script moves the player (m8aq `Landing`).
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum Landing {
     Abs { level: i32, x: i32, z: i32 },
     LocDelta { dx: i32, d_level: i32, dz: i32 },
