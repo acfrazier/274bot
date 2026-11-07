@@ -83,6 +83,10 @@ the legacy tier-0 fallback. Their alias/ID-specific reasons are in `coverage`.
 Duel rules retain their selected bit positions: an unproved button stays at
 the existing unavailable sentinel 0, which `rule_button` returns as `None`.
 
+Shared extraction retains the 0.2.9 source-join rules. It does not require
+frozen corpus row counts, item IDs, prayer button ranges or display names.
+Missing definitions, duplicate joins and malformed source shapes still fail.
+
 A generated result proves consistency with the selected Fairy Ring scripts.
 It does not prove historical RuneScape accuracy.
 
