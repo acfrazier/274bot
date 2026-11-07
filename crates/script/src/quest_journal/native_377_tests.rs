@@ -262,4 +262,3 @@ fn selected_377_missing_body_pin_and_button_tables_fail_closed() {
         )
     });
 }
-
