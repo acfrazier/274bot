@@ -209,6 +209,43 @@ product or XP. Inputs: `LIVE=1`, `BOT_LIVE_NAME_PREFIX`, `GATHERER_NAV_PACK`,
 `GATHERER_WC_BANK_TILE` pins the fixture tile. Run it on Engine L (aubaine or
 its 44594/1080 relay).
 
+## Bank trip relog
+
+`host.gatherer-bank-relog-access`, `-open`, `-deposit` and `-deposit-dead-server` run
+the `gatherer_bank_trip_relog` test in
+`crates/host-play/tests/gatherer_live.rs`. The test starts the compiled
+Gatherer on the oak fixture of the reconnect cell, with the bank holding only
+the account's own bronze axe. It cuts the connection on the first frame where
+the published trip step is the planned step. `GATHERER_RELOG_STEP` selects
+`Access` (the walk to the bank is under way), `Open` (the table is not
+loaded) or `Deposit` (the table is loaded). `GATHERER_RELOG_FAULT=protocol-error` dispatches an unknown opcode
+through the client, as `host.transport-relog` does, and a fresh login
+follows. `GATHERER_RELOG_FAULT=dead-server` starts a relay in front of the
+engine and stops the server-to-client bytes of the game connection (the one
+whose first byte is the login opcode), as `host.transport-dead-server`
+does, and a soft reconnect follows.
+
+The Access cut waits until the character has walked 20 tiles from where the
+walk to the bank began (the oak fixture is 75 tiles from the bank), so the
+new session restarts a walk that was under way. The cell turns off the
+product's mainland hop for the run: the product re-sends that hop (a
+teleport to 3220,3220 and `setvar tutorial 1000`) at every new session of a
+`--mainland` run (`crates/host-play/src/play_slots.rs:1461,1801-1804`), and
+the first Access cells logged `mainland hop queued` after the cut and then
+failed `OffScene` at 3220,3220. The cell's own preparation sends the hop once,
+before the cut, and the cut is never followed by one.
+
+The cell passes only when all of these hold: the client's session counter
+rose, the Gatherer logged `gatherer-bank-trip-restart` at the planned step,
+the published steps after the new session include Access, Open and Deposit in
+that order, the bank closed, the trip count reached 1, and the run produced
+fresh products and XP. The test never presses Start again and never injects
+bank rows or receipts. Inputs are the death-recovery inputs, plus
+`GATHERER_RELOG_STEP` and `GATHERER_RELOG_FAULT`. The fixture tile and level
+come from `GATHERER_RECONNECT_RETURN_TILE` and
+`GATHERER_RECONNECT_RETURN_LEVEL`. Run it on Engine L (aubaine or its
+44594/1080 relay).
+
 ## State-gap and refusal paths
 
 `panel.state-gap-stop-live` runs

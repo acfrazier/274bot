@@ -1118,16 +1118,29 @@ impl NativeMachine for BankMachine {
                     // wait resumes on its bound; a transfer that sent no click
                     // lost its session and re-opens.
                     if !bank_open {
-                        if matches!(self.request.action, BankAction::OpenStand { .. })
-                            || self.opened_from.is_some()
-                        {
+                        if self.opened_from.is_some() {
                             self.phase = Phase::AwaitOpen { first_target: None };
                             return Poll::Pending;
                         }
+                        // No access of this request is behind the gone modal
+                        // (a transfer, or an open that adopted a modal left
+                        // by an earlier session): access the stand now.
                         self.session_lost(cx, "bank closed before the item table loaded")?;
                         continue;
                     }
                     if self.deadline_reached(cx.evidence().tick) {
+                        // A banker's dialogue is not driven while a bank modal
+                        // is up (`bank/npc.rs:122`), so a teller open that
+                        // adopted a modal cannot access its stand again until
+                        // the modal is gone: it stays terminal for its caller.
+                        let teller = self
+                            .stand_access()
+                            .is_some_and(|access| access.kind == AccessKind::Teller);
+                        if teller && self.adopted_open_without_access() {
+                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                                "bank item table unavailable",
+                            ))));
+                        }
                         self.session_lost(cx, "bank item table unavailable")?;
                         continue;
                     }
@@ -1997,6 +2010,17 @@ impl BankMachine {
         }
     }
 
+    /// An open request that adopted an already-open modal and has sent no
+    /// stand access of its own (every access it emits sets `opened_from`).
+    /// That modal belongs to an earlier session or to another request, so
+    /// its missing table says nothing about this request's access, and
+    /// waiting on it again cannot recover: a soft reconnect (login response
+    /// 15) keeps the client's modal fields but drops the item table
+    /// (`client.rs:3735-3758`, `reset_packet_observations`).
+    fn adopted_open_without_access(&self) -> bool {
+        matches!(self.request.action, BankAction::OpenStand { .. }) && self.opened_from.is_none()
+    }
+
     /// The open session is gone (closed, or replaced by a newer one) before
     /// this request settled. The engine closes the bank on any further
     /// client action packet or a strong-queued script (`Player.ts:760-814`,
@@ -2007,7 +2031,9 @@ impl BankMachine {
     /// their meaning. A deposit click still in flight is kept as
     /// [`InFlightDeposit`] and credited from the new session's pack
     /// ([`Self::reconcile_in_flight`]) before any further click. An open
-    /// request keeps its own semantics (its caller retries the stand).
+    /// request that sent its own access keeps its own semantics (its caller
+    /// retries the stand); one that adopted a modal without sending an access
+    /// clicks its stand once. That click sets `opened_from`, which bounds it.
     fn session_lost(
         &mut self,
         cx: &mut ActionContext<'_>,
@@ -2023,8 +2049,8 @@ impl BankMachine {
                 | BankAction::DepositProducts { .. }
                 | BankAction::DepositCapacity { .. }
         );
-        let stand = if transfer {
-            self.request.access.as_ref()
+        let stand = if transfer || self.adopted_open_without_access() {
+            self.stand_access().cloned()
         } else {
             None
         };
@@ -2554,11 +2580,14 @@ struct SelectFallback {
     deadline: Option<BankDeadline>,
 }
 
-impl NativeMachine for Select {
-    type Args = SelectArgs;
-    type Output = SelectedBank;
-
-    fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+impl Select {
+    /// Begins a pick. `avoid` is a bank to leave out of the candidates
+    /// (see [`SelectOtherArgs::avoid`]).
+    fn start(
+        args: SelectArgs,
+        avoid: Option<u16>,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<Self, ActionError> {
         let snapshot = cx.snapshot();
         let stats = snapshot.stats().map_or(&[][..], |rows| rows.value);
         let quests = snapshot.quest_statuses().map_or(&[][..], |rows| rows.value);
@@ -2568,6 +2597,11 @@ impl NativeMachine for Select {
             .explicit
             .as_deref()
             .and_then(|name| selector.named(name, stats, quests));
+        if let Some(avoid) = avoid.filter(|_| explicit_bank.is_none()) {
+            if eligible.iter().any(|&index| index != avoid) {
+                eligible.retain(|&index| index != avoid);
+            }
+        }
         let explicit_unavailable = args.explicit.is_some() && explicit_bank.is_none();
         if args.allow_air_fallback {
             eligible.sort_by_key(|&index| {
@@ -2613,6 +2647,15 @@ impl NativeMachine for Select {
             fallback,
         })
     }
+}
+
+impl NativeMachine for Select {
+    type Args = SelectArgs;
+    type Output = SelectedBank;
+
+    fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Self::start(args, None, cx)
+    }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
         self.poll_outcome(cx).map(|result| {
@@ -2625,6 +2668,51 @@ impl NativeMachine for Select {
     }
 
     fn cancel(&mut self) {}
+}
+
+/// The arguments of a pick that leaves one bank out.
+#[derive(Debug, Clone)]
+pub struct SelectOtherArgs {
+    pub select: SelectArgs,
+    /// A bank whose access the owner could not walk to. The pick drops it
+    /// from its candidates when another bank is eligible and the owner named
+    /// no bank. Otherwise it keeps the bank, so the pick never ends empty
+    /// because of this request.
+    pub avoid: u16,
+}
+
+/// A [`Select`] that leaves out the bank whose access the owner could not
+/// reach (the Gatherer's second access recovery).
+pub struct SelectOther {
+    pick: Select,
+}
+
+impl SelectOther {
+    pub(crate) fn prereq_allow(
+        &self,
+        cx: &ActionContext<'_>,
+    ) -> Option<crate::native::PrereqAllow> {
+        self.pick.prereq_allow(cx)
+    }
+}
+
+impl NativeMachine for SelectOther {
+    type Args = SelectOtherArgs;
+    type Output = SelectedBank;
+
+    fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Ok(Self {
+            pick: Select::start(args.select, Some(args.avoid), cx)?,
+        })
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        self.pick.poll(cx)
+    }
+
+    fn cancel(&mut self) {
+        self.pick.cancel();
+    }
 }
 
 pub struct Open {
@@ -2922,6 +3010,83 @@ mod tests {
             frame.cx.active_now = active;
             frame.actions.poll(handle, &mut frame.cx)
         })
+    }
+
+    /// The banks a Select with these inputs lets the host choose from, and
+    /// the explicit bank, as the typed pick request names them.
+    fn pick_candidates(
+        banks: &[(&'static str, i32)],
+        explicit: Option<&str>,
+        avoid: Option<u16>,
+    ) -> (Vec<u16>, Option<u16>) {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let facts = Arc::new(NamedBankFacts::from_banks(
+            banks
+                .iter()
+                .map(|&(name, x)| NamedBank::new(name, WorldTile { x, z: 5, level: 0 }))
+                .collect(),
+        ));
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |frame| {
+            let args = SelectArgs {
+                facts,
+                from: WorldTile {
+                    x: 5,
+                    z: 5,
+                    level: 0,
+                },
+                preferences: BankPreferences {
+                    use_mage_bank: false,
+                    use_zanaris_bank: false,
+                },
+                options: WalkOptions::default(),
+                explicit: explicit.map(Arc::from),
+                allow_air_fallback: false,
+            };
+            if let Some(avoid) = avoid {
+                let handle = frame
+                    .actions
+                    .begin::<SelectOther>(
+                        SelectOtherArgs {
+                            select: args,
+                            avoid,
+                        },
+                        &mut frame.cx,
+                    )
+                    .unwrap();
+                assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+            } else {
+                let handle = frame.actions.begin::<Select>(args, &mut frame.cx).unwrap();
+                assert!(frame.actions.poll(&handle, &mut frame.cx).is_pending());
+            }
+        });
+        let pending = ledger.as_ref().unwrap();
+        let HostEffect::BankPick(request) = &pending.outbox[0].effect else {
+            panic!("Select must emit a real typed pick");
+        };
+        (request.eligible.to_vec(), request.explicit_bank)
+    }
+
+    /// A bank whose access walk failed is dropped from the next pick only
+    /// when another bank is eligible and the owner named no bank; a named
+    /// bank or the only bank stays, so the pick never ends empty because of it.
+    #[test]
+    fn select_avoid_drops_the_failed_bank_only_when_another_is_eligible() {
+        let three = [("far", 10), ("near", 6), ("nearer", 4)];
+        assert_eq!(pick_candidates(&three, None, None).0, [0, 1, 2]);
+        assert_eq!(pick_candidates(&three, None, Some(1)).0, [0, 2]);
+        assert_eq!(pick_candidates(&three, None, Some(0)).0, [1, 2]);
+        assert_eq!(
+            pick_candidates(&three, Some("far"), Some(0)),
+            (vec![0, 1, 2], Some(0)),
+            "a named bank is never dropped"
+        );
+        assert_eq!(
+            pick_candidates(&[("only", 6)], None, Some(0)).0,
+            [0],
+            "the only bank stays"
+        );
     }
 
     /// The waiter's request was dispatched at observed tick 1, so its
@@ -4290,6 +4455,8 @@ mod tests {
         ));
     }
 
+    /// A banker's dialogue is not driven while a bank modal is up, so the open
+    /// that adopted this modal stays terminal at the table bound.
     #[test]
     fn native_teller_access_fails_when_open_session_never_loads_stock() {
         let mut snapshot = GameSnapshot::new();
@@ -7126,6 +7293,153 @@ mod tests {
             "{bound:?}"
         );
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// A soft reconnect keeps the client's modal fields and drops the item
+    /// table (`client.rs:3735-3758`): the new session's open request finds a modal
+    /// that is up with no table and no access of its own behind it. It waits
+    /// the existing table bound, then accesses the stand once (the engine
+    /// closes and re-opens on that click, `OpLocHandler.ts:53`) instead of
+    /// failing, and the fresh table settles it. 0.2.8 failed at the bound.
+    #[test]
+    fn open_stand_adopting_a_tableless_modal_accesses_the_stand_at_the_bound() {
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(Vec::new(), 28);
+        // The new session's observation: interface up, table not loaded.
+        snapshot.seed_bank_observation(10, 1, None, Vec::new());
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, open_request(access));
+        assert!(poll.is_pending());
+        for tick in 2..=8 {
+            let waiting = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            assert!(waiting.is_pending(), "tick {tick}: {waiting:?}");
+            assert!(
+                ledger.as_ref().unwrap().outbox.is_empty(),
+                "no click inside the table bound (tick {tick})"
+            );
+        }
+        let bound = with_tick(&snapshot, &mut ledger, 9, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            bound.is_pending(),
+            "an adopted modal without a table is recovered, not failed: {bound:?}"
+        );
+        assert!(
+            matches!(
+                acknowledge(&mut ledger, 9),
+                HostEffect::Interaction(InteractReq::OpenStand { x, z, stand_op: Some(2), .. })
+                    if x == stand.x && z == stand.z
+            ),
+            "the stand is accessed for real at the bound"
+        );
+
+        // The engine's close-then-open delivers a new session with its table.
+        snapshot.seed_bank_observation(10, 2, Some(Vec::new()), Vec::new());
+        let settled = with_tick(&snapshot, &mut ledger, 11, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(
+            matches!(settled, Poll::Ready(Ok(BankReceipt { complete: true, .. }))),
+            "{settled:?}"
+        );
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+    }
+
+    /// The same adopted modal, but the modal is gone before the bound (the
+    /// login grant clears every modal id, `client.rs:3639-3674`): no access
+    /// of this request is behind it, so the stand is accessed at once
+    /// instead of waiting out the bound for a click nobody sent.
+    #[test]
+    fn open_stand_adopting_a_modal_that_closes_accesses_the_stand_at_once() {
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(10, 1, None, Vec::new());
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, open_request(access));
+        assert!(poll.is_pending());
+        snapshot.seed_bank_observation(-1, 1, None, Vec::new());
+        let closed = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(closed.is_pending(), "{closed:?}");
+        assert!(
+            matches!(
+                acknowledge(&mut ledger, 2),
+                HostEffect::Interaction(InteractReq::OpenStand { x, z, .. })
+                    if x == stand.x && z == stand.z
+            ),
+            "the stand is accessed as soon as the adopted modal is gone"
+        );
+    }
+
+    /// The recovery is one access, not a loop: after the real access the
+    /// open keeps its own contract, waits its bound and fails for its
+    /// caller's bounded retry. Exactly one `OpenStand` effect is emitted.
+    #[test]
+    fn open_stand_adopting_a_tableless_modal_accesses_the_stand_once() {
+        let stand = WorldTile {
+            x: 2809,
+            z: 3441,
+            level: 0,
+        };
+        let (access, locs) = booth_trip(stand);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(stand));
+        snapshot.seed_locs(locs);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(10, 1, None, Vec::new());
+        let mut ledger = None;
+        let (handle, poll) = begin_bank(&snapshot, &mut ledger, open_request(access));
+        assert!(poll.is_pending());
+        let mut clicks = 0;
+        let mut outcome = None;
+        for tick in 2..=40 {
+            let polled = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                tick.actions.poll(&handle, &mut tick.cx)
+            });
+            if !ledger.as_ref().unwrap().outbox.is_empty() {
+                assert!(matches!(
+                    acknowledge(&mut ledger, tick),
+                    HostEffect::Interaction(InteractReq::OpenStand { .. })
+                ));
+                clicks += 1;
+                continue;
+            }
+            if !polled.is_pending() {
+                outcome = Some(polled);
+                break;
+            }
+        }
+        assert_eq!(clicks, 1, "one real access, then the bound");
+        assert!(
+            failed_with(
+                outcome.as_ref().expect("the open fails on its bound"),
+                "bank item table unavailable"
+            ),
+            "{outcome:?}"
+        );
     }
 
     fn begin_deposit(

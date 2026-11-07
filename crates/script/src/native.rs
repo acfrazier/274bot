@@ -1464,7 +1464,28 @@ impl ReturnStallRecovery {
 
     /// Dialogue also retries expired assessments, which have no walk receipt.
     pub(crate) fn observe_retryable(&mut self, retryable: bool) -> bool {
-        if retryable && self.actions.saturating_add(1) < self.max_attempts && !self.pending {
+        retryable && self.admit(self.max_attempts.saturating_sub(1))
+    }
+
+    /// Admits one more recovery action for an ordinary walk failure: no
+    /// route, a failed or blocked walk, a route that ended short, or any
+    /// stall. User input, cancellation, a safety or permission refusal, an
+    /// escape abort and a quest-gate need stay terminal at once; the owner
+    /// must not retry them. `budget` is the caller's own bound on actions.
+    pub(crate) fn observe_failure(&mut self, end: &WalkEnd, budget: u8) -> bool {
+        let ordinary = matches!(
+            end,
+            WalkEnd::NoPath
+                | WalkEnd::Failed
+                | WalkEnd::Blocked
+                | WalkEnd::RouteEnded
+                | WalkEnd::Stalled(_)
+        );
+        ordinary && self.admit(budget)
+    }
+
+    fn admit(&mut self, budget: u8) -> bool {
+        if self.actions < budget && !self.pending {
             self.pending = true;
             true
         } else {
@@ -1493,7 +1514,7 @@ impl ReturnStallRecovery {
         self.actions.saturating_add(2)
     }
 
-    #[cfg(test)]
+    /// Recovery actions already submitted; the owner picks the next kind.
     pub(crate) fn actions(&self) -> u8 {
         self.actions
     }

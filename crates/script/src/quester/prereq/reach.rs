@@ -6,7 +6,7 @@ use crate::native::{
     ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, PrereqAllow,
     PrereqRefusal,
 };
-use crate::native_bank::{Select, SelectArgs};
+use crate::native_bank::{Select, SelectArgs, SelectOther, SelectOtherArgs};
 use crate::quester::families::reach::{GroundTake, Reach, ReachArgs};
 use std::sync::Arc;
 use std::task::Poll;
@@ -48,6 +48,14 @@ impl PrereqMachine for Select {
         self.prereq_allow(cx)
     }
 }
+impl PrereqMachine for SelectOther {
+    fn clone_args(args: &SelectOtherArgs) -> SelectOtherArgs {
+        args.clone()
+    }
+    fn grants(&self, cx: &ActionContext<'_>) -> Option<PrereqAllow> {
+        self.prereq_allow(cx)
+    }
+}
 impl PrereqMachine for Opening {
     fn clone_args(args: &OpeningArgs) -> OpeningArgs {
         args.clone()
@@ -58,6 +66,7 @@ impl PrereqMachine for Opening {
 }
 
 pub(crate) type PrereqSelect = PrereqAction<Select>;
+pub(crate) type PrereqSelectOther = PrereqAction<SelectOther>;
 pub(crate) type PrereqOpening = PrereqAction<Opening>;
 pub(crate) type PrereqReach = PrereqAction<Reach>;
 pub(crate) type PrereqGroundTake = PrereqAction<GroundTake>;
