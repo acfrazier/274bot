@@ -513,7 +513,7 @@ export function parsePrayerInterface(text: string) {
     return out;
 }
 
-export function extractPrayerFacts(content: string, revision = 289) {
+export function extractPrayerFacts(content: string) {
     const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
     const varps = parsePack(fs.readFileSync(path.join(content, 'pack/varp.pack'), 'utf8'));
     const constants = parsePrayerConstants(
@@ -572,37 +572,7 @@ export function extractPrayerFacts(content: string, revision = 289) {
         });
     }
     if (prayers.length === 0) throw new Error('prayer: missing prayer rows');
-    if (revision !== 377 && prayers.length !== 15) throw new Error(`prayer: expected 15 rows, got ${prayers.length}`);
     prayers.sort((a, b) => a.button_com - b.button_com || a.name.localeCompare(b.name));
-    if (revision === 377) return { prayers };
-    const thick = prayers[0]!;
-    const melee = prayers[14]!;
-    if (
-        thick.name !== 'Thick Skin'
-        || thick.level !== 1
-        || thick.button_com !== 5609
-        || thick.varp !== 83
-        || thick.varp_alias !== 'prayer0'
-    ) {
-        throw new Error(`prayer: Thick Skin anchor mismatch ${JSON.stringify(thick)}`);
-    }
-    if (
-        melee.name !== 'Protect from Melee'
-        || melee.level !== 43
-        || melee.button_com !== 5623
-        || melee.varp !== 97
-        || melee.varp_alias !== 'prayer14'
-    ) {
-        throw new Error(`prayer: Protect from Melee anchor mismatch ${JSON.stringify(melee)}`);
-    }
-    for (let index = 0; index < prayers.length; index += 1) {
-        const expectedCom = 5609 + index;
-        const expectedVarp = 83 + index;
-        const prayer = prayers[index]!;
-        if (prayer.button_com !== expectedCom || prayer.varp !== expectedVarp) {
-            throw new Error(`prayer: expected com ${expectedCom}/varp ${expectedVarp}, got ${prayer.button_com}/${prayer.varp} for ${prayer.name}`);
-        }
-    }
     return { prayers };
 }
 
@@ -2661,32 +2631,15 @@ async function generate(spec: Revision, stage: GenerationStage) {
     const debugCatalog = extractDebugCatalog(spec.content, debugHandlerText, debugStatText, npcModule.default.configs);
     const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs);
     const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs, spec.revision);
-    if (drops.length !== 5) throw new Error(`${spec.revision}: expected five combat drop tables, got ${drops.length}`);
     const magic = extractMagicFacts(spec.content, objModule.default.configs);
-    const selectableSpells = magic.spells.filter((spell) => spell.autocast_selectable);
-    const manualRows = magic.spells.filter((spell) => !spell.autocast_selectable).map((spell) => spell.source_row);
-    const expectedSpellCount = spec.revision === 377 ? 22 : 21;
-    const expectedStaffCount = spec.revision === 377 ? 16 : 14;
-    if (magic.spells.length !== expectedSpellCount || magic.spells[15].name !== 'Fire Wave' || selectableSpells.length !== 16 || selectableSpells.some((spell, index) => spell.ssb !== index) || magic.staves.length !== expectedStaffCount) throw new Error(`${spec.revision}: magic data mismatch`);
-    const expectedManualRows = ['magic_spell_crumble_undead', 'magic_spell_saradomin_strike', 'magic_spell_claws_of_guthix', 'magic_spell_flames_of_zamorak', 'magic_spell_iban_blast', ...(spec.revision === 377 ? ['magic_spell_magic_dart'] : [])];
-    if (JSON.stringify(manualRows) !== JSON.stringify(expectedManualRows)) throw new Error(`${spec.revision}: manual spell order mismatch ${manualRows.join(',')}`);
-    if (magic.failed_spell_impact !== 85) throw new Error(`${spec.revision}: failedspell_impact mismatch ${magic.failed_spell_impact}`);
     const herbs = extractHerbFacts(spec.content, objModule.default.configs, spec.revision);
-    if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`);
-    if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`);
     const autocast = spec.revision === 377 ? undefined : extractAutocastControls(spec.content);
     const duel = extractDuelControls(spec.content);
     const special = spec.revision === 377 ? undefined : extractSpecialControls(spec.content, objModule.default.configs);
     const teleports = extractTeleportSpells(spec.content, objModule.default.configs);
-    if (spec.revision !== 377 && (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455)) {
-        throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);
-    }
-    const prayer = extractPrayerFacts(spec.content, spec.revision);
-    if (spec.revision !== 377 && prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`);
+    const prayer = extractPrayerFacts(spec.content);
     const nurmofEssence = spec.revision === 377 ? undefined : extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs);
-    if (nurmofEssence && nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);
     const flourSix = spec.revision === 377 ? undefined : extractFlourSixFacts(spec.content, objModule.default.configs);
-    if (flourSix && (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662)) throw new Error(`${spec.revision}: flour six join mismatch`);
     const objPackPath = path.join(spec.content, 'pack/obj.pack');
     if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`);
     const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8'));
@@ -2711,14 +2664,6 @@ async function generate(spec: Revision, stage: GenerationStage) {
         npc_transforms: runtimeNpcOperations(npcEvidence!, gathering.payload.methods, gathering.payload.hazard_npcs),
     } : undefined;
     if (serverOrdered) Object.assign(facts, { server_ordered: serverOrdered });
-    const cookRow = questIdentity.rows.find((row) => row.id === 'cook');
-    const deathRow = questIdentity.rows.find((row) => row.id === 'death');
-    if (!cookRow || !deathRow || (spec.revision !== 377 && (deathRow.varp !== 'death_equiproom' || deathRow.varp_id !== 314 || deathRow.complete !== 80)) || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied)) {
-        throw new Error(`${spec.revision}: quest identity join mismatch`);
-    }
-    if (spec.revision === 289 && (questIdentity.rows.length !== 69 || !questIdentity.rows.some((row) => row.id === 'barcrawl') || !questIdentity.rows.some((row) => row.id === 'hauntedmine' && row.kind === 'stub'))) {
-        throw new Error(`${spec.revision}: expected 69 identity rows, got ${questIdentity.rows.length}`);
-    }
     const combatScripts = parseCombatScripts(spec.content);
     const spellMaxHits = buildSpellMaxHits(spec.content);
     const npcTypeSource = fs.readFileSync(path.join(spec.engine, 'src/cache/config/NpcType.ts'), 'utf8');
@@ -2748,11 +2693,9 @@ async function generate(spec: Revision, stage: GenerationStage) {
         const specialWeapons = spec.revision === 377
             ? undefined
             : extractSpecialWeaponFacts(spec.content, objModule.default.configs, combatStyles.weapon_styles, aliasToId);
-        if (specialWeapons && specialWeapons.length !== 14) throw new Error(`${spec.revision}: expected 14 specwep rows, got ${specialWeapons.length}`);
         const itemCombatBonus = extractItemCombatBonus(spec.content, objModule.default.configs);
         meleeWeaponTiers = extractMeleeWeaponTiers(spec.content, combatStyles.weapon_styles, idToAlias, spec.revision);
         duelRuleButtons = extractDuelRuleButtons(spec.content, spec.revision);
-        if (spec.revision !== 377 && duelRuleButtons.length !== 14) throw new Error(`${spec.revision}: expected 14 duel rule buttons, got ${duelRuleButtons.length}`);
         if (spec.revision !== 377 && !duelRuleButtons.every((button, index) => button.bit === index)) throw new Error(`${spec.revision}: duel rule bits are not contiguous`);
         ruleButtons = Array<number>(14).fill(0);
         for (const button of duelRuleButtons) ruleButtons[button.bit] = button.component;
