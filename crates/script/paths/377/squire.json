@@ -625,19 +625,20 @@
           "args": {
             "item": "bucket_empty",
             "target": {
-              "loc": "rimmington_sink"
+              "loc": "well"
             },
             "anchor": {
               "tile": [
-                2967,
-                3210,
+                2958,
+                3212,
                 0
               ],
-              "source": "C maps/m46_50.jm2:5983 (LOC 9684 rimmington_sink at [2966,3209,0]; floor tile north-east); scripts/_unpack/377/all.loc:63155-63160; scripts/general_use/scripts/water_sources.rs2:63-84"
+              "source": "C maps/m46_50.jm2:5416 (LOC 884 well at [2956,3212,0], 2x2; floor tile east); scripts/_unpack/377/all.loc:6868-6880 (category=well); pack/loc.pack:885; scripts/general_use/scripts/water_sources.rs2:74-78,91-98"
             },
             "radius": 3,
             "product": "bucket_water"
           },
+          "comment": "Fill at the Rimmington well. The 377 rimmington_sink (LOC 9684) has no category and no oplocu handler, so a bucket used on it does nothing. The well's category=well admits bucket_empty through [oplocu,_well] and gives bucket_water.",
           "advances": false,
           "skip_if": {
             "Any": [
@@ -889,7 +890,7 @@
             "radius": 3,
             "settle_ms": 15000
           },
-          "comment": "Use the 377 Rimmington range (rimmington_poor_range) rather than a fire; the nearby sink supplies water for the dough. Fires refuse the pie-cooking action. Cook-o-Matic is gated before Cook's Assistant completion (quest_cook.rs2 oplocu cooksquestrange), so this Path does not rely on it.",
+          "comment": "Use the 377 Rimmington range (rimmington_poor_range) rather than a fire; the nearby Rimmington well supplies water for the dough. Fires refuse the pie-cooking action. Cook-o-Matic is gated before Cook's Assistant completion (quest_cook.rs2 oplocu cooksquestrange), so this Path does not rely on it.",
           "advances": false,
           "skip_if": {
             "Fact": {
