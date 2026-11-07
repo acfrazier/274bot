@@ -11,10 +11,12 @@ use std::sync::Arc;
 /// Exercise authored preferences through the dialogue machine and return its
 /// one-based answer without duplicating option-selection logic.
 fn answer_for(choices: &[&str], prefer: &[Arc<str>]) -> i32 {
-    use crate::quester::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
-    use crate::quester::families::tests::{seed_dialogue_combat, with_tick};
     use crate::interact::InteractReq;
     use crate::native::HostEffect;
+    use crate::quester::families::dialogue::{
+        Dialogue, DialogueArgs, DialogueOptions, DialogueTarget,
+    };
+    use crate::quester::families::tests::{seed_dialogue_combat, with_tick};
 
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
@@ -100,7 +102,7 @@ fn selected_377_journal_paths_compile_and_recover_source_states() {
             ]),
         ] {
             let bytes = bundled_path_for(ClientRevision::R377, id).unwrap();
-            let path = compile::compile_path(bytes, &selected, &quests, worker, &crate::local_state::OperatorLoadouts::absent(), None)
+            let path = compile::compile_path(bytes, &selected, &quests, worker, &crate::local_state::OperatorLoadouts::absent(), compile::real_377_nav_lease().zones())
                 .unwrap_or_else(|error| panic!("{id}: {error:?}"));
             for (stage, text) in cases {
                 let read = JournalRead {
@@ -163,7 +165,7 @@ fn hetty_377_journal_state_skips_consumed_items_and_selects_cauldron() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
-            None,
+            compile::real_377_nav_lease().zones(),
         )
         .unwrap_or_else(|error| panic!("hetty: {error:?}"));
         super::super::probe::assert_no_shadowed_rules(&path);
@@ -411,7 +413,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
-            None,
+            compile::real_377_nav_lease().zones(),
         )
         .unwrap_or_else(|error| panic!("377 Witch's Potion failed to compile: {error:?}"));
         let gobdip = bundled_path_for(ClientRevision::R377, "gobdip").unwrap();
@@ -421,7 +423,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
-            None,
+            compile::real_377_nav_lease().zones(),
         )
         .unwrap_or_else(|error| panic!("377 Goblin Diplomacy failed to compile: {error:?}"));
         let vampire = bundled_path_for(ClientRevision::R377, "vampire").unwrap();
@@ -431,7 +433,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
-            None,
+            compile::real_377_nav_lease().zones(),
         )
         .unwrap_or_else(|error| panic!("377 Vampire Slayer failed to compile: {error:?}"));
         let demon = bundled_path_for(ClientRevision::R377, "demon").unwrap();
@@ -441,7 +443,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
-            None,
+            compile::real_377_nav_lease().zones(),
         )
         .unwrap_or_else(|error| panic!("377 Demon Slayer failed to compile: {error:?}"));
         assert_eq!(
