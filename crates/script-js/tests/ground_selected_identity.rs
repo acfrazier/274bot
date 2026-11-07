@@ -247,6 +247,11 @@ export default class T extends LoopingBot {
     for tick in 1..=REQUESTS as u64 {
         iso.on_game_tick(tick);
         assert_eq!(
+            iso.probe("__probe").unwrap(),
+            serde_json::json!(tick),
+            "the script retained one request on each tick"
+        );
+        assert_eq!(
             iso.drain_interacts().len(),
             1,
             "the host receives one Input.takeObj request per tick"
