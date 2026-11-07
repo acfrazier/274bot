@@ -20,10 +20,10 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 
 ## Tools and the crypt
 
-- Stairs LOC 1722 at `maps/m48_51.jm2:5291` `(3099,3266,0)`, `op1=Climb-up`, `forceapproach=south` (`stairs.loc:131-138`). Priced as `stairs`.
+- Stairs LOC 1722 at `maps/m48_51.jm2:5291` `(3099,3266,0)`, `op1=Climb-up`, `forceapproach=south` (`stairs.loc:131-138`). `ladders+stairs/scripts/stairs.rs2:7` lands at `(3102,3266,1)`. As in the existing 289 Path, a walk targets that landing so navigation owns both the transport and arrival; an interaction anchored downstairs can fail its approach arrival after the climb has already moved the player upstairs.
 - Garlic cupboard LOC 2612 `garliccupboardshut` at `maps/m48_51.jm2:7074` `(3096,3269,1)`, `op1=Open`, `forceapproach=east`. Open is a `loc_change` to `garliccupboardopen` (`cupboards.rs2:34`), not a varp morph. Search that open id (`cupboards.rs2:18,24,71-76`) for `garlic`.
 - Hammer OBJ 2347 at `maps/m45_51.jm2:7018` `(2934,3286,0)`.
-- Crypt stairs LOC 2616 `cryptstairsdown` at `maps/m48_52.jm2:8258` `(3115,3357,0)`. `stairs.loc:415-420` `op1=Walk-Down` (not Climb-down). `stairs.rs2:366-370` teleports to `0_48_152_5_43` `(3077,9771,0)`. Priced in `EXTRA_TICKS`.
+- Crypt stairs LOC 2616 `cryptstairsdown` at `maps/m48_52.jm2:8258` `(3115,3357,0)`. `stairs.loc:415-420` offers `Walk-Down` (not Climb-down). `stairs.rs2:366-370` teleports to `0_48_152_5_43` `(3077,9771,0)`. The Path walks to that landing through the priced transport rather than owning a second explicit click.
 - Coffin LOC 2614 at `maps/m48_152.jm2:6754` `(3077,9775,0)`, `op1=Open`. `quest_vampire.rs2:1,9-27` spawns `count_draynor` at `0_48_152_6_46` `(3078,9774,0)`. There is no placed count; the open step settles on `npc_present`.
 - Kill requires `stake` and `hammer` held (`count_draynor.rs2:57-73`). The stake is consumed. Garlic is optional damage reduction, still collected.
 

@@ -92,20 +92,19 @@
           "steps": [
             {
               "id": "climb-morgan-stairs",
-              "kind": "interact",
+              "kind": "walk",
               "version": 1,
               "advances": false,
               "args": {
-                "target": { "loc": "stairs" },
-                "op": "Climb-up",
-                "anchor": { "tile": [3099, 3266, 0], "source": "maps/m48_51.jm2:5291 (LOC 1722); stairs.loc:131-138 op1=Climb-up forceapproach=south" },
-                "radius": 3
+                "tile": [3102, 3266, 1],
+                "source": "ladders+stairs/scripts/stairs.rs2:7: stairs LOC 1722 at maps/m48_51.jm2:5291 telejumps to 1_48_51_30_2; navigation owns the climb and its upstairs arrival",
+                "radius": 1
               },
               "skip_if": { "Any": [
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "garlic" } } },
                 { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3096, 3269, 1], "radius": 4 } } }
               ] },
-              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3096, 3269, 1], "radius": 6 } } }
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3102, 3266, 1], "radius": 1 } } }
             },
             {
               "id": "open-garlic-cupboard",
@@ -115,7 +114,7 @@
               "args": {
                 "target": { "loc": "garliccupboardshut" },
                 "op": "Open",
-                "anchor": { "tile": [3097, 3269, 1], "source": "maps/m48_51.jm2:7074 (LOC 2612 at 1 24 5); all.loc forceapproach=east; cupboards.rs2:34" },
+                "anchor": { "tile": [3096, 3269, 1], "source": "maps/m48_51.jm2:7074 (LOC 2612 at 1 24 5); all.loc forceapproach=east; cupboards.rs2:34" },
                 "radius": 3,
                 "settle_ms": 20000
               },
@@ -130,7 +129,7 @@
               "args": {
                 "target": { "loc": "garliccupboardopen" },
                 "op": "Search",
-                "anchor": { "tile": [3097, 3269, 1], "source": "cupboards.rs2:18,24,34,71-76" },
+                "anchor": { "tile": [3096, 3269, 1], "source": "cupboards.rs2:18,24,34,71-76" },
                 "radius": 3,
                 "settle_ms": 20000
               },
@@ -206,15 +205,13 @@
             },
             {
               "id": "enter-crypt",
-              "kind": "interact",
+              "kind": "walk",
               "version": 1,
               "advances": false,
               "args": {
-                "target": { "loc": "cryptstairsdown" },
-                "op": "Walk-Down",
-                "anchor": { "tile": [3115, 3357, 0], "source": "maps/m48_52.jm2:8258 (LOC 2616); stairs.rs2:366-370; stairs.loc:415-420 op1=Walk-Down" },
-                "radius": 3,
-                "settle_ms": 20000
+                "tile": [3077, 9771, 0],
+                "source": "ladders+stairs/scripts/stairs.rs2:366-370: cryptstairsdown LOC 2616 at maps/m48_52.jm2:8258 telejumps to 0_48_152_5_43; navigation owns the descent and its crypt arrival",
+                "radius": 1
               },
               "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3077, 9771, 0], "radius": 8 } } },
               "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3077, 9771, 0], "radius": 4 } } }
