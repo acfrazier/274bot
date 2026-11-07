@@ -880,6 +880,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   paint run. Developer and CI test packs use the same current-format local
   payloads. They do not need a published reference bake.
 
+### Client (`FR-client-bothost` `r274-bh-modular`)
+
+- After the server restarts, the "System update in" countdown no longer
+  stays on screen once the bot logs back in. The client clears the countdown
+  on a successful login, as the Java 289 client does.
+
 ## [0.2.8] — 2026-10-29 — Beta 2
 
 ### Panel and terminal app
