@@ -16,6 +16,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   name, menu actions and combat level, while retaining the placed type and
   size. Null forms expose no menu or level. Quester can defer unnamed 377
   talk roots to that observed menu; it never substitutes a static leaf target.
+  Roots with declared operations must still offer Talk-to; Reldo's missing
+  static name does not force a leaf substitution.
   Revision 274/289 is unchanged.
 - Prepare the revision-377 Rune Mysteries live witness with a labelled,
   observed combat-only area fixture and food before Start. Retain combat
@@ -969,8 +971,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   exits in ten minutes.
 - Adds a source-backed revision-377 Knight's Sword Path with palace pie
   acquisition, a naturally dropped iron-bar fallback, and documented cave
-  resources. It uses Mining 10 and Cooking 10 instead of the removed Mining 15/
-  Smithing 15 smelting fallback; the revision-289 Path remains unchanged.
+  resources. Its fresh-account witness seeds only Mining 10 and Cooking 10
+  beyond the common combat fixture; Smithing starts at level 1 / 0 XP and
+  must gain exactly 12,725 XP. The revision-289 Path remains unchanged.
 
 ### Gatherer
 
