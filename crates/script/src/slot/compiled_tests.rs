@@ -15,9 +15,8 @@ fn compiled_runs_select_each_supported_game_data_revision() {
         ClientRevision::R289,
         ClientRevision::R377,
     ] {
-        let Some(selected) = api::game_data::test_data(revision) else {
-            return;
-        };
+        let selected =
+            api::game_data::for_revision(revision).expect("selected revision game data");
         assert_eq!(compiled::selected_revision(&selected).unwrap(), revision);
     }
 }
