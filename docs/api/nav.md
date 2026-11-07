@@ -278,6 +278,8 @@ handlers. Each admitted arm must make one fixed jump; only the optional
 `p_arrivedelay` contributes an extra tick. This retains Morgan's downstairs
 route and explicit middle-stair up/down options without admitting the
 dialogue-bearing first option, gates or additional side effects.
+Repeated coordinate arms are accepted only when their resolved movement is
+identical; conflicting duplicates reject the handler.
 The surface entrance is the canonical `manholeclosed` Open followed by
 `manholeopen` Climb down. Its edge retains the opened loc ID and the player's
 z+6400 landing, at three ticks for the pair. Already-open placements take
