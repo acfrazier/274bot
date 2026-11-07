@@ -198,7 +198,7 @@ fn vampire_377_authored_stairs_advance_at_the_canonical_landing() {
         &quests,
     )
     .unwrap();
-    let progress = [progress_for_stage(&path, &selected, "vampire:2", &[])];
+    let progress = [progress_for_stage(&path, "vampire:2", &[])];
     let bank = known_empty_bank();
     let probe = Probe {
         path: &path,
@@ -261,7 +261,7 @@ fn demon_377_authored_bone_preparation_advances_after_deposit() {
         &quests,
     )
     .unwrap();
-    let progress = [progress_for_stage(&path, &selected, "demon:2", &[])];
+    let progress = [progress_for_stage(&path, "demon:2", &[])];
     let bank = known_empty_bank();
     let probe = Probe {
         path: &path,
@@ -300,7 +300,7 @@ fn demon_377_authored_drain_sequence_advances_after_the_observed_pour() {
         &quests,
     )
     .unwrap();
-    let progress = [progress_for_stage(&path, &selected, "demon:2", &[])];
+    let progress = [progress_for_stage(&path, "demon:2", &[])];
     let bank = known_empty_bank();
     let probe = Probe {
         path: &path,
@@ -358,7 +358,7 @@ fn gobdip_377_authored_funding_tracks_the_remaining_dye_cost() {
         &quests,
     )
     .unwrap();
-    let progress = [progress_for_stage(&path, &selected, "gobdip:1", &[])];
+    let progress = [progress_for_stage(&path, "gobdip:1", &[])];
     let bank = known_empty_bank();
     let probe = Probe {
         path: &path,
