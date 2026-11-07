@@ -12,7 +12,7 @@
 //!   LIVE=1 BOT_LIVE_NAME_PREFIX=f377 ENGINE_DIR=<377-engine> \
 //!   CLIENT_377_CACHE_DIR=<377-raw-cache> CLIENT_UNPACK_DIR=<377-decoded-snapshot> \
 //!   NAV_PACK=<377-nav-pack> NAV_FLAGS=<377-nav-flags> \
-//!   cargo test --locked -p host-play --test revision_377_live \
+//!   cargo test --locked -p host-play --features test-support --test revision_377_live \
 //!   -- --ignored --nocapture --test-threads=1
 //! ```
 
