@@ -5,10 +5,38 @@ import path from 'node:path';
 
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 
+const engineNpcTypeSource = `export default class NpcType {
+    stats = [1, 1, 1, 1, 1, 1];
+}`;
+
 const combatParams = `[strengthbonus]
 type=int
 default=0
 [rangebonus]
+type=int
+default=0
+[attackbonus]
+type=int
+default=0
+[rangeattack]
+type=int
+default=0
+[magicattack]
+type=int
+default=0
+[stabdefence]
+type=int
+default=0
+[slashdefence]
+type=int
+default=0
+[crushdefence]
+type=int
+default=0
+[magicdefence]
+type=int
+default=0
+[rangedefence]
 type=int
 default=0
 [attackrate]
@@ -20,6 +48,9 @@ default=0
 [npc_forcemulti]
 type=int
 default=0
+[max_dealt]
+type=int
+default=1000
 `;
 
 const npcConfig = `[plain_attacker]
@@ -85,11 +116,13 @@ writeFixtureFiles(content, new Map([
         '',
     ].join('\n')],
     ['scripts/skill_combat/configs/combat.param', combatParams],
+    ['scripts/skill_combat/configs/npc_combat.param', '[damagetype]\ntype=int\ndefault=2\n'],
+    ['scripts/skill_combat/configs/combat_damagetypes.constant', '^stab_style=0\n^slash_style=1\n^crush_style=2\n'],
     ['scripts/npc/configs/combat-test.npc', npcConfig],
     ['scripts/npc/scripts/combat-test.rs2', combatScript],
 ]));
 
-const facts377 = extractNpcNamesFacts(content, 377);
+const facts377 = extractNpcNamesFacts(content, 377, engineNpcTypeSource);
 const row377 = (config: string) => {
     const row = facts377.rows.find((candidate) => candidate.config === config);
     assert.ok(row, `377: missing ${config}`);
@@ -113,7 +146,7 @@ assert.equal(row377('queue_retaliator').bespoke, false, 'retaliation queue code 
 assert.equal(row377('khazard_warlord').maxrange, 7, 'a missing NPC block uses the 377 default wander range and postDecode maxrange');
 assert.equal(row377('khazard_warlord').strength, null, 'a missing NPC block is not assigned decoder stat defaults');
 
-const facts289 = extractNpcNamesFacts(content, 289);
+const facts289 = extractNpcNamesFacts(content, 289, engineNpcTypeSource);
 const row289 = (config: string) => {
     const row = facts289.rows.find((candidate) => candidate.config === config);
     assert.ok(row, `289: missing ${config}`);
@@ -123,3 +156,4 @@ assert.equal(row289('partial_attacker').attack_kind, 'mixed', 'the 289 unknown-s
 assert.equal(row289('queue_retaliator').ap_attack, true, 'legacy queue retaliation detection remains unchanged');
 assert.equal(row289('queue_retaliator').bespoke, false, 'legacy shared queue retaliation remains non-bespoke');
 assert.equal(row289('plain_attacker').attackrate, 4, 'the content-derived attackrate default preserves 289 output');
+fs.rmSync(content, { recursive: true, force: true });
