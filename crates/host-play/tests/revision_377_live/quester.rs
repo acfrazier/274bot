@@ -271,7 +271,7 @@ impl Witness {
 #[ignore = "requires LIVE=1, owned qb3 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_cook_native() -> Result<(), String> {
     let bound = load_bound_377()?;
-    identity_record(&bound);
+    resource_record(&bound);
     let account = host_play::mint_live_names(1).remove(0);
     let directory = required_path("QUESTER_377_EVIDENCE_DIR")?.join(&account);
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
