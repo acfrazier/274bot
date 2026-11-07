@@ -1240,7 +1240,11 @@ fn folded_walk_hops_are_bounded_for_every_revision() {
         z: 3200,
         level: 0,
     };
-    for revision in [ClientRevision::R274, ClientRevision::R289, ClientRevision::R377] {
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
         let mut c = scene_client();
         let snap = snap_at(&mut c, 0, 0);
         let mut rec = FollowRec {
