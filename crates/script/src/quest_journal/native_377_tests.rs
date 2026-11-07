@@ -237,4 +237,3 @@ fn selected_377_missing_body_and_button_tables_fail_closed() {
         matches!(revision_377::admit(catalog.quest("imp").unwrap()), Err(ActionError::Unavailable(reason)) if reason.contains("button table unavailable"))
     );
 }
-
