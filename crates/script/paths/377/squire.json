@@ -1,0 +1,3382 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "squire",
+  "display_name": "The Knight's Sword",
+  "required": [
+    "cooking-10",
+    "mining-10"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [
+      {
+        "id": "cooking-10",
+        "kind": {
+          "Skill": {
+            "skill": "cooking",
+            "level": 10
+          }
+        },
+        "at": "start",
+        "source": "C scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17; scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:201-212 (the fresh-acquisition redberry pie needs Cooking 10)"
+      },
+      {
+        "id": "mining-10",
+        "kind": {
+          "Skill": {
+            "skill": "mining",
+            "level": 10
+          }
+        },
+        "at": "start",
+        "source": "C scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12 (Mining 10 is required; Combat 20 is only an advantage); skill_mining/configs/mine.dbrow:143-152 (blurite rock also requires Mining 10)"
+      }
+    ],
+    "items": [],
+    "acquire": {
+      "acquire:pie": [
+        {
+          "id": "empty-burnt-pie",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "held": "burnt_pie"
+            },
+            "op": "Empty Dish",
+            "radius": 1
+          },
+          "comment": "A burnt pie gives the dish back (skill_cooking/.../pies/pies.rs2:31-34; pies.obj:139-142 iop1 'Empty Dish'); the rest of the recipe then rebuilds the pie.",
+          "advances": false,
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "burnt_pie"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "piedish"
+              }
+            }
+          }
+        },
+        {
+          "id": "withdraw-redberry-pie",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "redberry_pie", "qty": 1 }], "partial_ok": true },
+          "comment": "A banked pie is the shortcut. Otherwise the fresh-account path gathers the palace dish and redberries, buys three flour at Wydin and a bucket at the Rimmington General Store, then fills and cooks. The 377 shop stock and pricing are sourced from the packed inventories in squire.sources.md.",
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "redberry_pie" } } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+        },
+        {
+          "id": "take-pie-dish",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "ground": "piedish"
+            },
+            "op": "Take",
+            "anchor": {
+              "tile": [
+                3222,
+                3494,
+                0
+              ],
+              "source": "C maps/m50_54.jm2:12021 (OBJ 2313 piedish ground spawn in the Varrock palace kitchen beside Reldo's library)"
+            },
+            "radius": 3,
+            "wait_if_missing": true
+          },
+          "comment": "The fallback takes the Varrock palace kitchen pie-dish spawn beside Reldo (maps/m50_54.jm2:12021 has OBJ 2313; pack/obj.pack:2314 names it piedish; pies.obj:198-213).",
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "piedish"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pie_shell"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "uncooked_redberry_pie"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redberry_pie"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "piedish"
+              }
+            }
+          }
+        },
+        {
+          "id": "bank-full-pie-budget",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "coins",
+                "qty": 32
+              }
+            ],
+            "partial_ok": true
+          },
+          "comment": "Withdraw the full 32-GP first-batch target only while no flour, dough/shell/pie, or bucket is held.",
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 32 } } },
+              { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pastry_dough" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pie_shell" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
+              ] },
+              { "All": [
+                { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+                { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "coins" } } } }
+              ] }
+            ]
+          },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "bank-flour-only-budget",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "coins",
+                "qty": 30
+              }
+            ],
+            "partial_ok": true
+          },
+          "comment": "When a bucket is already held and no flour, dough/shell/pie is held, withdraw only the 30-GP flour target.",
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 30 } } },
+              { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pastry_dough" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pie_shell" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+              ] },
+              { "Not": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
+              ] } },
+              { "All": [
+                { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+                { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "coins" } } } }
+              ] }
+            ]
+          },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "bank-bucket-only-budget",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "coins",
+                "qty": 2
+              }
+            ],
+            "partial_ok": true
+          },
+          "comment": "When flour is already held and no bucket or downstream dough/shell/pie is held, withdraw only the 2-GP bucket target.",
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 2 } } },
+              { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pastry_dough" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pie_shell" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+              ] },
+              { "Not": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pastry_dough" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pie_shell" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+              ] } },
+              { "All": [
+                { "Fact": { "kind": "bank_known", "version": 1, "args": {} } },
+                { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "coins" } } } }
+              ] }
+            ]
+          },
+          "settle": { "All": [] }
+        },
+        {
+          "id": "take-palace-coins-full",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "coins" },
+            "op": "Take",
+            "anchor": {
+              "tile": [3232, 3500, 0],
+              "source": "C maps/m50_54.jm2:12022-12023 (OBJ 995 piles at [3228,3504,0] qty 3 and [3232,3500,0] qty 4); pack/obj.pack:996 names coins"
+            },
+            "radius": 6,
+            "wait_if_missing": true,
+            "until": { "obj": "coins", "qty": 32 },
+            "settle_ms": 360000
+          },
+          "comment": "Collect the full-stock 32-GP first-batch budget only when no flour, dough/shell/pie, or bucket is held; five 7-coin palace waves fit the 360000ms wait.",
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 32 } } },
+              { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pastry_dough" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pie_shell" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
+              ] }
+            ]
+          },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 32 } } }
+        },
+        {
+          "id": "take-palace-coins-for-flour",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "coins" },
+            "op": "Take",
+            "anchor": {
+              "tile": [3232, 3500, 0],
+              "source": "C maps/m50_54.jm2:12022-12023 (OBJ 995 piles at [3228,3504,0] qty 3 and [3232,3500,0] qty 4); pack/obj.pack:996 names coins"
+            },
+            "radius": 6,
+            "wait_if_missing": true,
+            "until": { "obj": "coins", "qty": 30 },
+            "settle_ms": 360000
+          },
+          "comment": "When a bucket is already held and no flour/dough/shell/pie is held, collect only the full-stock 30-GP flour cost.",
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 30 } } },
+              { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pastry_dough" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pie_shell" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+              ] },
+              { "Not": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
+              ] } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 30 } } }
+        },
+        {
+          "id": "take-palace-coins-for-bucket",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "coins" },
+            "op": "Take",
+            "anchor": {
+              "tile": [3232, 3500, 0],
+              "source": "C maps/m50_54.jm2:12022-12023 (OBJ 995 piles at [3228,3504,0] qty 3 and [3232,3500,0] qty 4); pack/obj.pack:996 names coins"
+            },
+            "radius": 6,
+            "wait_if_missing": true,
+            "until": { "obj": "coins", "qty": 2 },
+            "settle_ms": 360000
+          },
+          "comment": "When flour is already held and no bucket or downstream dough/shell/pie is held, collect only the full-stock 2-GP bucket cost.",
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 2 } } },
+              { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pastry_dough" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pie_shell" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+              ] },
+              { "Not": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pastry_dough" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pie_shell" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+              ] } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 2 } } }
+        },
+        {
+          "id": "buy-flour",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "wydin",
+              "anchor": {
+                "tile": [
+                  3015,
+                  3204,
+                  0
+                ],
+                "source": "C maps/m47_50.jm2:11897 (Wydin at [3014,3204,0]; shop floor tile east); scripts/_unpack/377/all.npc:14470-14502 (op3=Trade; Food Store)"
+              }
+            },
+            "obj": "pot_flour",
+            "qty": 3,
+            "est_gp": 30
+          },
+          "comment": "Batch three to cover burnt-pie retries: each pie uses one flour, and redberry pie burns about half the time at Cooking 10 (cooking_generic.dbrow:201-212; cooking.rs2:150). At full Wydin stock the three bags cost 30 GP (squire.sources.md). Held flour or dough skips this step.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pot_flour"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pastry_dough"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pie_shell"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "uncooked_redberry_pie"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redberry_pie"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pot_flour"
+              }
+            }
+          }
+        },
+        {
+          "id": "withdraw-redberries-from-bank",
+          "kind": "bank",
+          "version": 1,
+          "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "redberries", "qty": 1 }], "partial_ok": true },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } },
+              { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "redberries" } } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } }
+        },
+        {
+          "id": "walk-to-redberry-patch",
+          "kind": "walk",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "tile": [3271, 3366, 0],
+            "source": "content/maps/m51_52.jm2:6650,6651,6654 (three OBJ 1951 redberry spawns; this anchor is the spawn at [3271,3366,0])",
+            "radius": 3
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3271, 3366, 0], "radius": 3 } } }
+        },
+        {
+          "id": "take-redberries-from-patch",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "redberries" },
+            "op": "Take",
+            "anchor": {
+              "tile": [3271, 3366, 0],
+              "source": "content/maps/m51_52.jm2:6650,6651,6654 (OBJ 1951 redberry spawns; pack/obj.pack:1952 names redberries)"
+            },
+            "radius": 12,
+            "wait_if_missing": true,
+            "until": { "obj": "redberries", "qty": 3 },
+            "settle_ms": 300000
+          },
+          "comment": "Batch three for burnt-pie retries from the three canonical 377 redberry ground spawns (m51_52.jm2:6650,6651,6654; pack/obj.pack:1952), not a shop-stock assumption. At Cooking 10 a pie burns about half the time (cooking_generic.dbrow:201-212; cooking.rs2:150); three berries cover at least one success in three cooks about 88% of the time. Failed baking returns the dish (pies.rs2:31-34; pies.obj:139-142), and Cooking 10 gates filling and cooking (pies.struct:13-17).",
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "redberries", "qty": 3 } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "uncooked_redberry_pie" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberry_pie" } } },
+              { "All": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } },
+                { "Not": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3271, 3366, 0], "radius": 12 } } } }
+              ] }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "redberries" } } }
+        },
+        {
+          "id": "buy-bucket",
+          "kind": "buy",
+          "version": 1,
+          "args": {
+            "shop": {
+              "npc": "generalshopkeeper6",
+              "anchor": {
+                "tile": [
+                  2947,
+                  3216,
+                  0
+                ],
+                "source": "C maps/m46_50.jm2:8514 (NPC 530 generalshopkeeper6 at [2947,3217,0]); scripts/_unpack/377/all.npc:13562-13599 (Rimmington General Store, op3=Trade)"
+              }
+            },
+            "obj": "bucket_empty",
+            "qty": 1,
+            "est_gp": 2
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_empty"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_water"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pastry_dough"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pie_shell"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "uncooked_redberry_pie"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redberry_pie"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "bucket_empty"
+              }
+            }
+          }
+        },
+        {
+          "id": "fill-bucket-rimmington",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "bucket_empty",
+            "target": {
+              "loc": "rimmington_sink"
+            },
+            "anchor": {
+              "tile": [
+                2967,
+                3210,
+                0
+              ],
+              "source": "C maps/m46_50.jm2:5983 (LOC 9684 rimmington_sink at [2966,3209,0]; floor tile north-east); scripts/_unpack/377/all.loc:63155-63160; scripts/general_use/scripts/water_sources.rs2:63-84"
+            },
+            "radius": 3,
+            "product": "bucket_water"
+          },
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "bucket_water"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pastry_dough"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pie_shell"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "uncooked_redberry_pie"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redberry_pie"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "bucket_water"
+              }
+            }
+          }
+        },
+        {
+          "id": "make-pastry-dough",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "pot_flour",
+            "target": {
+              "item": "bucket_water"
+            },
+            "radius": 1,
+            "product": "pastry_dough",
+            "dialogue": {
+              "prefer": [
+                "Pastry dough."
+              ],
+              "strict": true
+            }
+          },
+          "comment": "Flour on water opens the four-way dough menu; 'Pastry dough.' is option 2 (skill_cooking/.../dough/dough.rs2:18-51). Leaves an empty pot and bucket behind.",
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pastry_dough"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pie_shell"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "uncooked_redberry_pie"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redberry_pie"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pastry_dough"
+              }
+            }
+          }
+        },
+        {
+          "id": "make-pie-shell",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "pastry_dough",
+            "target": {
+              "item": "piedish"
+            },
+            "radius": 1,
+            "product": "pie_shell"
+          },
+          "comment": "pies.rs2:1-11,36-43",
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "pie_shell"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "uncooked_redberry_pie"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redberry_pie"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "pie_shell"
+              }
+            }
+          }
+        },
+        {
+          "id": "fill-pie",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "redberries",
+            "target": {
+              "item": "pie_shell"
+            },
+            "radius": 1,
+            "product": "uncooked_redberry_pie"
+          },
+          "comment": "Needs Cooking 10 (pies.struct:13-17); pies.rs2:25-29,45-57.",
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "uncooked_redberry_pie"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redberry_pie"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "uncooked_redberry_pie"
+              }
+            }
+          }
+        },
+        {
+          "id": "cook-pie",
+          "kind": "use_on",
+          "version": 1,
+          "args": {
+            "item": "uncooked_redberry_pie",
+            "target": {
+              "loc": "rimmington_poor_range"
+            },
+            "anchor": {
+              "tile": [
+              2972,
+              3209,
+                0
+              ],
+              "source": "C maps/m46_50.jm2:6174 (LOC 9682 rimmington_poor_range at [2970,3209,0]); scripts/_unpack/377/all.loc:63141-63147 (forceapproach=east; stand at [2972,3209,0]); scripts/skill_cooking/scripts/cooking.rs2:1,17-135; scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:201-212"
+            },
+            "radius": 3,
+            "settle_ms": 15000
+          },
+          "comment": "Use the 377 Rimmington range (rimmington_poor_range) rather than a fire; the nearby sink supplies water for the dough. Fires refuse the pie-cooking action. Cook-o-Matic is gated before Cook's Assistant completion (quest_cook.rs2 oplocu cooksquestrange), so this Path does not rely on it.",
+          "advances": false,
+          "skip_if": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "redberry_pie"
+              }
+            }
+          },
+          "settle": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redberry_pie"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "burnt_pie"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "acquire:iron_bars": [
+        {
+          "id": "withdraw-iron-bars",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "iron_bar",
+                "qty": 2
+              }
+            ],
+            "partial_ok": true
+          },
+          "comment": "Banked iron bars remain the fast path.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "iron_bar",
+                    "qty": 2
+                  }
+                }
+              },
+              {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "bank_known",
+                      "version": 1,
+                      "args": {}
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "bank_has",
+                        "version": 1,
+                        "args": {
+                          "obj": "iron_bar"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "settle": {
+            "All": []
+          }
+        },
+        {
+          "id": "dwarf-iron-bar-drops",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "npc": "dwarf_normal",
+              "not_targeting_others": true,
+              "pick": "random"
+            },
+            "lost_radius": 34,
+            "area": {
+              "box": [
+                2985,
+                3422,
+                3042,
+                3466,
+                0
+              ],
+              "source": "C maps/m46_53.jm2:8088-8089; maps/m47_53.jm2:7692-7710; scripts/_unpack/377/all.npc:3420 (NPC118 wander range 13)"
+            },
+            "stand": {
+              "tile": [
+                3008,
+                3436,
+                0
+              ],
+              "source": "C maps/m47_53.jm2:7692 (NPC118 at [3008,3436,0])"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 34,
+              "auto_retaliate": true
+            },
+            "loadout": null,
+            "kill_budget_ticks": 50,
+            "loot": [
+              {
+                "obj": "iron_bar",
+                "qty": 2
+              }
+            ],
+            "until": {
+              "Fact": {
+                "kind": "item_count_at_least",
+                "version": 1,
+                "args": {
+                  "obj": "iron_bar",
+                  "qty": 2
+                }
+              }
+            }
+          },
+          "comment": "If the bank has fewer than two bars, fight mapped dwarf_normal NPC118 for real iron_bar drops (3/128; scripts/drop_tables/scripts/dwarf.rs2:13,47-48). This avoids an unrequired Mining 15 / Smithing 15 smelting branch.",
+          "skip_if": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "iron_bar",
+                "qty": 2
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "iron_bar",
+                "qty": 2
+              }
+            }
+          }
+        }
+      ],
+      "acquire:best-pickaxe": [
+        {
+          "id": "pickaxe-bank-scan",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "scan", "at": "nearest"},
+          "skip_if": {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+          "settle": {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+          "comment": "Scan before choosing one banked tool, from the gather family's best-first pickaxe order."
+        },
+        {
+          "id": "withdraw-rune-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "rune_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 41}}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "rune_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+          "comment": "Withdraw only the best available owned tier the Mining level can use (rune 41, adamant 31, mithril 21, steel 6: skill_mining/configs/pickaxes.obj:92,127,162,197); once a pickaxe is held or worn, lower-tier withdrawals skip."
+        },
+        {
+          "id": "withdraw-adamant-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "adamant_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 31}}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "adamant_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-mithril-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "mithril_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 21}}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "mithril_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-steel-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "steel_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Not": {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 6}}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "steel_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-iron-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "iron_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "iron_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}}
+        },
+        {
+          "id": "withdraw-bronze-pickaxe",
+          "kind": "bank",
+          "version": 1,
+          "args": {"op": "withdraw", "at": "nearest", "items": [{"obj": "bronze_pickaxe", "qty": 1}], "partial_ok": false},
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"All": [
+              {"Fact": {"kind": "bank_known", "version": 1, "args": {}}},
+              {"Not": {"Fact": {"kind": "bank_has", "version": 1, "args": {"obj": "bronze_pickaxe"}}}}
+            ]}
+          ]},
+          "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+        }
+      ],
+      "acquire:blurite": [
+        {
+          "id": "ensure-pickaxe-for-blurite",
+          "kind": "acquire",
+          "version": 1,
+          "args": {"recipe": "acquire:best-pickaxe"},
+          "comment": "Withdraw the best banked pickaxe only when no pickaxe is already held or worn.",
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+            {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+            {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+          ]},
+          "settle": {"All": []}
+        },
+        {
+          "id": "ice-dungeon-kit",
+          "kind": "loadout",
+          "version": 1,
+          "args": {
+            "loadout": "ice",
+            "at": "nearest"
+          },
+          "comment": "Rune kit plus six lobsters for the ice-warrior corridor. Nothing in this recipe eats them: the walk guard holds a prayer only (docs/api/script.md:893-894), so they are the operator's food after a Stop, not an automatic sustain. Skipped once underground so a restart never tries to walk back to a bank through the zones.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blurite_ore"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "loadout_ready",
+                  "version": 1,
+                  "args": {
+                    "loadout": "ice"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "ice_dungeon"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "loadout_ready",
+              "version": 1,
+              "args": {
+                "loadout": "ice"
+              }
+            }
+          }
+        },
+        {
+          "id": "retaliate-off",
+          "kind": "setting",
+          "version": 1,
+          "args": {
+            "retaliate": false
+          },
+          "comment": "Keep auto-retaliate off through the corridor so a retaliatory attack cannot replace an authored exit walk. The static 377 map/NPC census records placements, not a live route or safety proof; see squire.sources.md.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blurite_ore"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "retaliate",
+                  "version": 1,
+                  "args": {
+                    "retaliate": false
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "retaliate",
+              "version": 1,
+              "args": {
+                "retaliate": false
+              }
+            }
+          }
+        },
+        {
+          "id": "walk-to-ice-dungeon-entrance",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3008, 3149, 0],
+            "source": "C maps/m47_49.jm2:4830 (LOC9472 trapdoor_9472 at [3008,3150,0], forceapproach north); exterior stand [3008,3149,0]",
+            "radius": 2
+          },
+          "comment": "Stop at the north stand outside the exterior trapdoor before entry.",
+          "skip_if": {"Any": [
+            {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3008, 3149, 0], "radius": 2}}},
+            {"Fact": {"kind": "in_area", "version": 1, "args": {"area": "ice_dungeon"}}}
+          ]},
+          "settle": {"Fact": {"kind": "near", "version": 1, "args": {"tile": [3008, 3149, 0], "radius": 2}}}
+        },
+        {
+          "id": "check-blurite-mining-prerequisites",
+          "kind": "wait",
+          "version": 1,
+          "args": {
+            "until": {"All": [
+              {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 10}}},
+              {"Any": [
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+                {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+                {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+              ]}
+            ]},
+            "max_ticks": 1
+          },
+          "comment": "Fail closed at the exterior dungeon entrance: Mining 10 and a supported pickaxe held or worn are required before entry, so a failed check parks here instead of walking into the ice-warrior corridor.",
+          "skip_if": {"All": [
+            {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 10}}},
+            {"Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+            ]}
+          ]},
+          "settle": {"All": [
+            {"Fact": {"kind": "skill_at_least", "version": 1, "args": {"skill": "mining", "level": 10}}},
+            {"Any": [
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "rune_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "adamant_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "mithril_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "steel_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "iron_pickaxe"}}},
+              {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "bronze_pickaxe"}}},
+              {"Fact": {"kind": "worn", "version": 1, "args": {"obj": "bronze_pickaxe"}}}
+            ]}
+          ]}
+        },
+        {
+          "id": "enter-ice-dungeon",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "trapdoor_9472"
+            },
+            "op": "Climb-down",
+            "anchor": {
+              "tile": [
+                3008,
+                3149,
+                0
+              ],
+              "source": "C maps/m47_49.jm2:4830 (LOC9472 trapdoor_9472, north force-approach); scripts/general_use/scripts/trapdoors.rs2:25-29 (telejumps to [3007,9549,0])"
+            },
+            "radius": 3,
+            "wait_if_missing": true,
+            "settle_ms": 10000
+          },
+          "advances": false,
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blurite_ore"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "ice_dungeon"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "in_area",
+              "version": 1,
+              "args": {
+                "area": "ice_dungeon"
+              }
+            }
+          }
+        },
+        {
+          "id": "ice-walk-1-entry",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              2993,
+              9564,
+              0
+            ],
+            "source": "C maps/m47_149.jm2:4294 (LOC1755 ladder_1755 at [3008,9550,0]); maps/m46_149.jm2:8262-8274 (pirate and mugger spawn placements)",
+            "radius": 1,
+            "cross": [
+              "pirate_aggressive@2997,9569,0"
+            ]
+          },
+          "comment": "This is a static waypoint and named-crossing set only; it does not establish which route the planner selects or guarantee survival near nearby spawns.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blurite_ore"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "ice_pirates"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "ice_hobgoblins"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "ice_warriors"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2993,
+                      9564,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2993,
+                  9564,
+                  0
+                ],
+                "radius": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "ice-walk-2-pirates",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              2993,
+              9570,
+              0
+            ],
+            "source": "C maps/m46_149.jm2:8262-8274 (pirate spawn placements)",
+            "radius": 1,
+            "cross": [
+              "pirate_aggressive@2997,9569,0",
+              "pirate_aggressive@2990,9571,0",
+              "pirate_aggressive@2998,9572,0",
+              "pirate_aggressive@2995,9576,0"
+            ]
+          },
+          "comment": "This is a static waypoint and named-crossing set only; it does not establish which route the planner selects or guarantee survival near nearby spawns.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blurite_ore"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "ice_hobgoblins"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "ice_warriors"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2993,
+                      9570,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2993,
+                  9570,
+                  0
+                ],
+                "radius": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "ice-walk-3-to-hobgoblins",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3009,
+              9580,
+              0
+            ],
+            "source": "C maps/m46_149.jm2:8262-8274 (pirate/mugger placements); maps/m47_149.jm2:7859-7865 (hobgoblin placements)",
+            "radius": 1,
+            "cross": [
+              "pirate_aggressive@2997,9569,0",
+              "pirate_aggressive@2990,9571,0",
+              "pirate_aggressive@2998,9572,0",
+              "pirate_aggressive@2995,9576,0",
+              "pirate_aggressive@3000,9579,0",
+              "pirate_aggressive@2999,9584,0",
+              "hobgoblin_unarmed@3010,9578,0",
+              "hobgoblin_unarmed@3011,9579,0"
+            ]
+          },
+          "comment": "The selected pirate and unarmed-hobgoblin spawn names come from the static 377 map census. This allow-list does not prove the planner's route or safe passage.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blurite_ore"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "ice_hobgoblins"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "ice_warriors"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3009,
+                  9580,
+                  0
+                ],
+                "radius": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "ice-walk-4-hobgoblins",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3031,
+              9582,
+              0
+            ],
+            "source": "C maps/m47_149.jm2:7859-7865 (hobgoblin spawns); east end of the cave before the ice-warrior area",
+            "radius": 1,
+            "cross": [
+              "hobgoblin_unarmed@3010,9578,0",
+              "hobgoblin_unarmed@3011,9579,0",
+              "hobgoblin_unarmed@3016,9578,0",
+              "hobgoblin_unarmed@3010,9593,0",
+              "hobgoblin_unarmed@3010,9595,0",
+              "hobgoblin_unarmed@3016,9594,0",
+              "hobgoblin_armed@3019,9591,0"
+            ],
+            "guard": "protect"
+          },
+          "comment": "Protect from Melee requires Prayer 43; the best-effort guard does not prove protection or survival at lower Prayer (combat/guard.rs:130-150,295-304; docs/api/script.md:889-899). Named hobgoblin coordinates are static placements only.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blurite_ore"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "ice_warriors"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3031,
+                      9582,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3031,
+                  9582,
+                  0
+                ],
+                "radius": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "ice-walk-5-blurite-rock",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [
+              3058,
+              9564,
+              0
+            ],
+            "source": "C maps/m47_149.jm2:6322 (bluriterock LOC2110 at [3059,9564,0]); west stand [3058,9564,0]",
+            "radius": 1,
+            "cross": [
+              "hobgoblin_unarmed@3016,9578,0",
+              "hobgoblin_unarmed@3016,9594,0",
+              "icewarrior@3044,9581,0",
+              "icewarrior@3046,9575,0",
+              "icewarrior@3053,9576,0"
+            ],
+            "guard": "protect"
+          },
+          "comment": "The ice-warrior coordinates are static spawn placements from the 377 map; the optional prayer guard is not a route or survival guarantee.",
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "blurite_ore"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3058,
+                      9564,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "near",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3058,
+                  9564,
+                  0
+                ],
+                "radius": 2
+              }
+            }
+          }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 32,
+    "loadouts": {
+      "ice": {
+        "worn": {
+          "hat": "rune_full_helm",
+          "torso": "rune_chainbody",
+          "legs": "rune_platelegs",
+          "lefthand": "rune_kiteshield",
+          "righthand": "rune_scimitar"
+        },
+        "carry": [
+          {
+            "item": "lobster",
+            "qty": 6
+          }
+        ]
+      }
+    },
+    "areas": {
+      "ice_dungeon": {
+        "boxes": [
+          [
+            2985,
+            9536,
+            3071,
+            9599,
+            0
+          ]
+        ],
+        "source": "C maps/m46_149.jm2:8262-8274; maps/m47_149.jm2:4294,6322,7859-7865,7870-7878,7884-7885 (mugger/pirate, ladder, blurite rock, hobgoblin and ice-warrior placements)"
+      },
+      "ice_entry": {
+        "boxes": [
+          [
+            2985,
+            9536,
+            3015,
+            9566,
+            0
+          ]
+        ],
+        "source": "C maps/m47_149.jm2:4294 (LOC1755 ladder_1755 at [3008,9550,0]); maps/m46_149.jm2:8262-8274 (mugger corridor spawns)"
+      },
+      "ice_pirates": {
+        "boxes": [
+          [
+            2984,
+            9567,
+            3005,
+            9590,
+            0
+          ]
+        ],
+        "source": "C maps/m46_149.jm2:8262-8274 (nine pirate_aggressive and four mugger placements)"
+      },
+      "ice_hobgoblins": {
+        "boxes": [
+          [
+            3006,
+            9566,
+            3036,
+            9600,
+            0
+          ]
+        ],
+        "source": "C maps/m47_149.jm2:7859-7865 (six NPC122 hobgoblin_unarmed and one NPC123 hobgoblin_armed)"
+      },
+      "ice_warriors": {
+        "boxes": [
+          [
+            3037,
+            9556,
+            3071,
+            9600,
+            0
+          ]
+        ],
+        "source": "C maps/m47_149.jm2:6322 (bluriterock LOC2110) and 7870-7878,7884-7885 (icewarrior NPC125 placements)"
+      }
+    },
+    "tools": [
+      "obj:coins",
+      "obj:piedish",
+      "obj:bucket_empty",
+      "obj:bucket_water",
+      "obj:pot_flour",
+      "obj:redberries",
+      "obj:pastry_dough",
+      "obj:pie_shell",
+      "obj:uncooked_redberry_pie",
+      "obj:redberry_pie",
+      "obj:burnt_pie",
+      "obj:knights_portrait",
+      "obj:iron_bar",
+      "obj:blurite_ore",
+      "obj:rune_pickaxe",
+      "obj:adamant_pickaxe",
+      "obj:mithril_pickaxe",
+      "obj:steel_pickaxe",
+      "obj:iron_pickaxe",
+      "obj:bronze_pickaxe",
+      "obj:faladian_sword",
+      "obj:lobster"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:squire",
+      "progress": {
+        "colour": {
+          "not_started": "squire:0",
+          "in_progress": "squire:1",
+          "complete": "squire:7"
+        },
+        "rules": [
+          {
+            "stage": "squire:7",
+            "all": [
+              "quest complete!"
+            ],
+            "varp": 7
+          },
+          {
+            "stage": "squire:6",
+            "any": [
+              "according to thurgo to make a replica sword",
+              "thurgo has now smithed me a replica"
+            ],
+            "varp": 6
+          },
+          {
+            "stage": "squire:5",
+            "all": [
+              "the squire told me about a portrait"
+            ],
+            "varp": 5
+          },
+          {
+            "stage": "squire:4",
+            "all": [
+              "thurgo needs a picture of the sword before he can help"
+            ],
+            "varp": 4
+          },
+          {
+            "stage": "squire:3",
+            "all": [
+              "gained his trust through pie"
+            ],
+            "varp": 3
+          },
+          {
+            "stage": "squire:2",
+            "all": [
+              "reldo couldn't give me much information"
+            ],
+            "varp": 2
+          },
+          {
+            "stage": "squire:1",
+            "all": [
+              "the squire suggests i speak to reldo"
+            ],
+            "varp": 1
+          },
+          {
+            "stage": "squire:0",
+            "all": [
+              "i can start this quest by talking to the squire"
+            ],
+            "varp": 0
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "squire:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "squire",
+                "anchor": {
+                  "tile": [
+                    2977,
+                    3342,
+                    0
+                  ],
+                  "source": "C maps/m46_52.jm2:14302 (squire NPC606 at [2977,3342,0]); areas/area_falador/scripts/squire.rs2:1-12; quests/quest_squire/scripts/quest_squire.rs2:1-67"
+                },
+                "leash": 6,
+                "prefer": [
+                  "And how is life as a squire?",
+                  "I can make a new sword if you like...",
+                  "So would these dwarves make another one?",
+                  "Ok, I'll give it a go."
+                ]
+              },
+              "comment": "Every other branch ends the chat without starting (quest_squire.rs2:17-20,27-29,61-64), so all four answers are preferred explicitly.",
+              "advances": true,
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "squire",
+                    "any": [
+                      "squire:1"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "squire:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "reldo",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "reldo",
+                "anchor": {
+                  "tile": [
+                    3209,
+                    3495,
+                    0
+                  ],
+                  "source": "C maps/m50_54.jm2:11983 (Reldo NPC647 at [3209,3495,0]); areas/area_varrock/scripts/reldo.rs2:5-9; quests/quest_squire/scripts/quest_squire.rs2:113-123"
+                },
+                "leash": 6,
+                "prefer": [
+                  "What do you know about the Imcando dwarves?"
+                ]
+              },
+              "comment": "The Imcando option only exists at this stage (reldo.rs2:6-9). An account with Shield of Arrav at its 'read the book' stage gets a different Reldo (reldo.rs2:2-4).",
+              "advances": true,
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "squire",
+                    "any": [
+                      "squire:2"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "squire:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "pie",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:pie"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redberry_pie"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "redberry_pie"
+                  }
+                }
+              }
+            },
+            {
+              "id": "give-pie",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "thurgo",
+                "anchor": {
+                  "tile": [
+                    3001,
+                    3144,
+                    0
+                  ],
+                  "source": "C maps/m46_49.jm2:6092 (Thurgo NPC604 at [3001,3144,0]); areas/area_port_sarim/scripts/thurgo.rs2:1-7; quests/quest_squire/scripts/quest_squire.rs2:125-152"
+                },
+                "leash": 5,
+                "prefer": [
+                  "Would you like a redberry pie?",
+                  "Would you like some redberry pie?"
+                ]
+              },
+              "comment": "Thurgo takes the pie and sets stage 3 (quest_squire.rs2:145-151).",
+              "advances": true,
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "squire",
+                    "any": [
+                      "squire:3"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "squire:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "thurgo-sword",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "thurgo",
+                "anchor": {
+                  "tile": [
+                    3001,
+                    3144,
+                    0
+                  ],
+                  "source": "C maps/m46_49.jm2:6092 (Thurgo NPC604 at [3001,3144,0]); areas/area_port_sarim/scripts/thurgo.rs2:1-7; quests/quest_squire/scripts/quest_squire.rs2:154-161"
+                },
+                "leash": 5,
+                "prefer": []
+              },
+              "comment": "Linear: Thurgo asks for a picture and sets stage 4.",
+              "advances": true,
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "squire",
+                    "any": [
+                      "squire:4"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "squire:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-squire-picture",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "squire",
+                "anchor": {
+                  "tile": [
+                    2977,
+                    3342,
+                    0
+                  ],
+                  "source": "C maps/m46_52.jm2:14302 (squire NPC606 at [2977,3342,0]); areas/area_falador/scripts/squire.rs2:1-12; quests/quest_squire/scripts/quest_squire.rs2:69-77"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "comment": "Linear: the Squire names Sir Vyvin's cupboard and sets stage 5.",
+              "advances": true,
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "squire",
+                    "any": [
+                      "squire:5"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "squire:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "withdraw-portrait",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [
+                  {
+                    "obj": "knights_portrait",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "comment": "The cupboard gives nothing while a portrait is banked (general_use/scripts/cupboards.rs2:26).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "knights_portrait"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "knights_portrait"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "walk-vyvin-room",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2985,
+                  3335,
+                  2
+                ],
+                "source": "C maps/m46_52.jm2:13715 (LOC2271 cupboard at [2984,3336,2]); all.loc:16004-16021 (shut/open aliases; east force-approach rotates south); maps/m46_52.jm2:14348 (Sir Vyvin NPC605 at [2983,3335,2]); [2985,3335,2] is a south stand",
+                "radius": 0
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "knights_portrait"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2985,
+                          3335,
+                          2
+                        ],
+                        "radius": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2985,
+                      3335,
+                      2
+                    ],
+                    "radius": 0
+                  }
+                }
+              }
+            },
+            {
+              "id": "open-vyvin-cupboard",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "vyvincupboardshut"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2985,
+                    3335,
+                    2
+                  ],
+                  "source": "C maps/m46_52.jm2:13715 (LOC2271 at [2984,3336,2]); all.loc:16004-16021 (shut/open aliases; east force-approach rotates south); maps/m46_52.jm2:14348 (Sir Vyvin at [2983,3335,2]); valid south stand [2985,3335,2]"
+                },
+                "radius": 3,
+                "wait_if_missing": true
+              },
+              "advances": false,
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "knights_portrait"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "vyvincupboardopen"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "vyvincupboardopen"
+                  }
+                }
+              }
+            },
+            {
+              "id": "wait-vyvin-clear",
+              "kind": "wait",
+              "version": 1,
+              "args": {
+                "until": {
+                  "Not": {
+                    "Fact": {
+                      "kind": "npc_near",
+                      "version": 1,
+                      "args": {
+                        "npc": "sir_vyvin",
+                        "radius": 1
+                      }
+                    }
+                  }
+                },
+                "max_ticks": 200,
+                "park_on_timeout": true
+              },
+              "comment": "Do not search while Sir Vyvin is within the one-tile refusal radius; park if he does not clear within 200 ticks.",
+              "advances": false,
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "knights_portrait"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "npc_near",
+                        "version": 1,
+                        "args": {
+                          "npc": "sir_vyvin",
+                          "radius": 1
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "npc_near",
+                    "version": 1,
+                    "args": {
+                      "npc": "sir_vyvin",
+                      "radius": 1
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "search-vyvin-cupboard",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "vyvincupboardopen"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2985,
+                    3335,
+                    2
+                  ],
+                  "source": "C maps/m46_52.jm2:13715 (LOC2271 at [2984,3336,2]); all.loc:16004-16021 (open alias); general_use/configs/cupboards.loc:76-85; maps/m46_52.jm2:14348 (Sir Vyvin at [2983,3335,2]); quests/quest_squire/scripts/quest_squire.rs2:209-217; cupboards.rs2:17-31"
+                },
+                "radius": 3,
+                "wait_if_missing": true,
+                "until": {
+                  "obj": "knights_portrait",
+                  "qty": 1
+                },
+                "wait_until": {
+                  "Not": {
+                    "Fact": {
+                      "kind": "npc_near",
+                      "version": 1,
+                      "args": {
+                        "npc": "sir_vyvin",
+                        "radius": 1
+                      }
+                    }
+                  }
+                },
+                "settle_ms": 120000
+              },
+              "comment": "Search only while Sir Vyvin is clear of the one-tile refusal radius. The per-round gate avoids futile retries after a refusal; the bounded settle allows time for him to wander away before the cupboard shuts again after 300 ticks.",
+              "advances": false,
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "knights_portrait"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "knights_portrait"
+                  }
+                }
+              }
+            },
+            {
+              "id": "give-portrait",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "thurgo",
+                "anchor": {
+                  "tile": [
+                    3001,
+                    3144,
+                    0
+                  ],
+                  "source": "C maps/m46_49.jm2:6092 (Thurgo NPC604 at [3001,3144,0]); areas/area_port_sarim/scripts/thurgo.rs2:1-7; quests/quest_squire/scripts/quest_squire.rs2:163-183"
+                },
+                "leash": 5,
+                "prefer": []
+              },
+              "comment": "Linear: Thurgo takes the portrait, names two iron bars and blurite ore, and sets stage 6.",
+              "advances": true,
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "squire",
+                    "any": [
+                      "squire:6"
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "squire:6",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "withdraw-sword",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [
+                  {
+                    "obj": "faladian_sword",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "comment": "The Squire only accepts the sword from the pack (quest_squire.rs2:86-104).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "faladian_sword"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "worn",
+                      "version": 1,
+                      "args": {
+                        "obj": "faladian_sword"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "faladian_sword"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "unequip-sword",
+              "kind": "unequip",
+              "version": 1,
+              "args": {
+                "obj": "faladian_sword"
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "worn",
+                    "version": 1,
+                    "args": {
+                      "obj": "faladian_sword"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "faladian_sword"
+                  }
+                }
+              }
+            },
+            {
+              "id": "hand-in",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "squire",
+                "anchor": {
+                  "tile": [
+                    2977,
+                    3342,
+                    0
+                  ],
+                  "source": "C maps/m46_52.jm2:14302 (squire NPC606 at [2977,3342,0]); areas/area_falador/scripts/squire.rs2:1-12; quests/quest_squire/scripts/quest_squire.rs2:86-101,219-223"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "comment": "Linear hand-in; quest complete is queued immediately.",
+              "advances": true,
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "faladian_sword"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "squire",
+                    "is": "complete"
+                  }
+                }
+              }
+            },
+            {
+              "id": "iron-bars",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:iron_bars"
+              },
+              "comment": "Withdraw banked bars first; otherwise collect actual iron_bar drops from the mapped dwarves until the quest hand-in quantity is held.",
+              "skip_if": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "iron_bar",
+                    "qty": 2
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "iron_bar",
+                    "qty": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "withdraw-blurite",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [
+                  {
+                    "obj": "blurite_ore",
+                    "qty": 1
+                  }
+                ],
+                "partial_ok": true
+              },
+              "comment": "Safe route first: blurite the operator banked. Only when none is banked does the dungeon recipe below run.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blurite_ore"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "blurite_ore"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "blurite",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:blurite"
+              },
+              "comment": "Walks into the Asgarnian Ice Dungeon to the nearest blurite rock using the existing cross-enabled walks. After the bank-first checks, the following gather step mines one blurite ore; this recipe itself settles on arrival.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "blurite_ore"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3058,
+                          9564,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3058,
+                      9564,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "mine-blurite-ore",
+              "kind": "gather",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "skill": "mining",
+                "resource": "blurite",
+                "until": {"obj": "blurite_ore", "qty": 1},
+                "anchor": {
+                  "tile": [3058, 9564, 0],
+                  "source": "maps/m47_149.jm2:6322 (bluriterock LOC2110 at [3059,9564,0]); pack/loc.pack:2111; scripts/skill_mining/configs/mine.dbrow:143-152"
+                },
+                "radius": 2,
+                "settle_ms": 300000
+              },
+              "comment": "Gather the single blurite ore needed for Thurgo's hand-in from the mapped LOC2110 rock, using its adjacent west stand.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "blurite_ore", "qty": 1}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "blurite_ore", "qty": 1}}}
+            },
+            {
+              "id": "leave-ice-5",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3031,
+                  9582,
+                  0
+                ],
+                "source": "C maps/m47_149.jm2:7859-7865; east end of the hobgoblin cave",
+                "radius": 1,
+                "cross": [
+                  "hobgoblin_unarmed@3016,9578,0",
+                  "hobgoblin_unarmed@3016,9594,0",
+                  "icewarrior@3044,9581,0",
+                  "icewarrior@3046,9575,0",
+                  "icewarrior@3053,9576,0"
+                ],
+                "guard": "protect"
+              },
+              "comment": "Return leg with the ore; mirrors ice-walk-5, same best-effort guard.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "ice_dungeon"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "ice_warriors"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3031,
+                      9582,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "leave-ice-4",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3009,
+                  9580,
+                  0
+                ],
+                "source": "C maps/m47_149.jm2:7859-7865; corridor into the hobgoblin cave",
+                "radius": 1,
+                "cross": [
+                  "hobgoblin_unarmed@3010,9578,0",
+                  "hobgoblin_unarmed@3011,9579,0",
+                  "hobgoblin_unarmed@3016,9578,0",
+                  "hobgoblin_unarmed@3010,9593,0",
+                  "hobgoblin_unarmed@3010,9595,0",
+                  "hobgoblin_unarmed@3016,9594,0",
+                  "hobgoblin_armed@3019,9591,0"
+                ],
+                "guard": "protect"
+              },
+              "comment": "Mirrors ice-walk-4, same best-effort guard.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "ice_dungeon"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_warriors"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_pirates"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_entry"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3009,
+                          9580,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3009,
+                      9580,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "leave-ice-3",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2993,
+                  9570,
+                  0
+                ],
+                "source": "C maps/m46_149.jm2:8262-8274; pirate corridor waypoint",
+                "radius": 1,
+                "cross": [
+                  "pirate_aggressive@2997,9569,0",
+                  "pirate_aggressive@2990,9571,0",
+                  "pirate_aggressive@2998,9572,0",
+                  "pirate_aggressive@2995,9576,0",
+                  "pirate_aggressive@3000,9579,0",
+                  "pirate_aggressive@2999,9584,0",
+                  "hobgoblin_unarmed@3010,9578,0",
+                  "hobgoblin_unarmed@3011,9579,0"
+                ]
+              },
+              "comment": "Return waypoint and named crossings are based on static 377 spawn placements only; no live route or safe passage is asserted.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "ice_dungeon"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_warriors"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_pirates"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_entry"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2993,
+                      9570,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "leave-ice-2",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2993,
+                  9564,
+                  0
+                ],
+                "source": "C maps/m46_149.jm2:8262-8274; north end of the mugger corridor",
+                "radius": 1,
+                "cross": [
+                  "pirate_aggressive@2997,9569,0",
+                  "pirate_aggressive@2990,9571,0",
+                  "pirate_aggressive@2998,9572,0",
+                  "pirate_aggressive@2995,9576,0"
+                ]
+              },
+              "comment": "Mirrors ice-walk-2.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "ice_dungeon"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_warriors"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_hobgoblins"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_entry"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2993,
+                      9564,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "leave-ice-1",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3009,
+                  9550,
+                  0
+                ],
+                "source": "C maps/m47_149.jm2:4294 (LOC1755 ladder_1755 at [3008,9550,0]); stand east at [3009,9550,0]",
+                "radius": 1,
+                "cross": [
+                  "pirate_aggressive@2997,9569,0"
+                ]
+              },
+              "comment": "Mirrors ice-walk-1.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "in_area",
+                        "version": 1,
+                        "args": {
+                          "area": "ice_dungeon"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_warriors"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_hobgoblins"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "ice_pirates"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          3009,
+                          9550,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3009,
+                      9550,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "exit-ice-dungeon",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "ladder_1755"
+                },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [
+                    3009,
+                    9550,
+                    0
+                  ],
+                  "source": "C maps/m47_149.jm2:4294 (LOC1755 ladder_1755 at [3008,9550,0]); ladders+stairs/scripts/ladders.rs2:90-97 (z-6400)"
+                },
+                "radius": 3,
+                "wait_if_missing": true,
+                "settle_ms": 10000
+              },
+              "advances": false,
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "ice_dungeon"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "in_area",
+                    "version": 1,
+                    "args": {
+                      "area": "ice_dungeon"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "thurgo-materials",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "thurgo",
+                "anchor": {
+                  "tile": [
+                    3001,
+                    3144,
+                    0
+                  ],
+                  "source": "C maps/m46_49.jm2:6092 (Thurgo NPC604 at [3001,3144,0]); areas/area_port_sarim/scripts/thurgo.rs2:1-7; quests/quest_squire/scripts/quest_squire.rs2:163-167,184-197"
+                },
+                "leash": 5,
+                "prefer": []
+              },
+              "comment": "Thurgo takes the ore and both bars and hands over the Blurite sword without changing the varp (quest_squire.rs2:188-197).",
+              "advances": false,
+              "skip_if": {
+                "Not": {
+                  "All": [
+                    {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "blurite_ore"
+                        }
+                      }
+                    },
+                    {
+                      "Fact": {
+                        "kind": "item_count_at_least",
+                        "version": 1,
+                        "args": {
+                          "obj": "iron_bar",
+                          "qty": 2
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "faladian_sword"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "squire:7",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}
