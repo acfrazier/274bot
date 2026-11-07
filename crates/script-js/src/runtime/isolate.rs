@@ -219,6 +219,7 @@ enum IsolateCmd {
     /// Test seam: collect V8 garbage and return the isolate's used heap.
     #[cfg(feature = "test-hooks")]
     TestCollectHeap(std::sync::mpsc::Sender<usize>),
+    /// Isolate teardown. `invoke_hook` is true for operator join and
     /// self-stop; raw Drop sends false so a dying isolate never runs
     /// `onStop` into a dropped rx.
     Stop {

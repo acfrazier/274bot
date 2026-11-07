@@ -208,25 +208,24 @@ export default class T extends LoopingBot {
 
 fn input_take_obj_requests_bound_collected_v8_heap_growth() {
     const REQUESTS: usize = 256;
-    const MAX_GROWTH: usize = 128 * 1024;
-    // 256 is the host queue cap; 512 B/request scales the existing ground-request bound.
+    const WARM_TICKS: usize = 256;
+    // The warmed run measured 89,408 B; 1.5x allows 44,704 B of headroom.
+    const MAX_GROWTH: usize = 134_112;
     let src = r#"
 import { Input } from '../../input/Input.js';
 export default class T extends LoopingBot {
     loop() {
         const count = globalThis.__request_count;
         const kept = globalThis.__kept || (globalThis.__kept = []);
-        if (kept.length < count) {
-            if (!Input.takeObj(2737, 3440, 1053, 1)) {
-                throw new Error('Input.takeObj refused the posted ground row');
-            }
-            const row = __rs2b0t_host.interact[__rs2b0t_host.interact.length - 1];
-            if (!row || row.op !== 'obj' || row.id !== 1053) {
-                throw new Error('Input.takeObj did not retain its queued ground row');
-            }
-            kept.push(row);
+        if (!Input.takeObj(2737, 3440, 1053, 1)) {
+            throw new Error('Input.takeObj refused the posted ground row');
         }
-        globalThis.__probe = kept.length;
+        const row = __rs2b0t_host.interact[__rs2b0t_host.interact.length - 1];
+        if (!row || row.op !== 'obj' || row.id !== 1053) {
+            throw new Error('Input.takeObj did not retain its queued ground row');
+        }
+        if (kept.length < count) kept.push(row);
+        globalThis.__probe = (globalThis.__probe | 0) + 1;
     }
 }
 "#;
@@ -237,19 +236,47 @@ export default class T extends LoopingBot {
     snap.ground = &ground;
     iso.post_snapshot(script_js::wire::encode_snapshot(&snap));
     assert_eq!(
-        iso.probe(&format!("globalThis.__request_count = {REQUESTS}"))
-            .unwrap(),
-        serde_json::json!(REQUESTS)
+        iso.probe("globalThis.__request_count = 1").unwrap(),
+        serde_json::json!(1)
     );
-    let baseline = iso
-        .collected_heap_bytes_for_test()
-        .expect("collect the isolate heap before materializing requests");
-    for tick in 1..=REQUESTS as u64 {
+    for tick in 1..=WARM_TICKS as u64 {
         iso.on_game_tick(tick);
         assert_eq!(
             iso.probe("__probe").unwrap(),
             serde_json::json!(tick),
-            "the script retained one request on each tick"
+            "the warm-up completes each request tick"
+        );
+        assert_eq!(
+            iso.drain_interacts().len(),
+            1,
+            "the host receives one warm-up Input.takeObj request per tick"
+        );
+    }
+    assert_eq!(
+        iso.probe("__kept.length").unwrap(),
+        serde_json::json!(1),
+        "warm-up exercises the retained-request path"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__kept.length = 0").unwrap(),
+        serde_json::json!(0),
+        "discard the warm-up request before the baseline"
+    );
+    let baseline = iso
+        .collected_heap_bytes_for_test()
+        .expect("collect the warmed isolate heap before materializing requests");
+    assert_eq!(
+        iso.probe(&format!("globalThis.__request_count = {REQUESTS}"))
+            .unwrap(),
+        serde_json::json!(REQUESTS)
+    );
+    for request in 1..=REQUESTS as u64 {
+        let tick = WARM_TICKS as u64 + request;
+        iso.on_game_tick(tick);
+        assert_eq!(
+            iso.probe("__probe").unwrap(),
+            serde_json::json!(tick),
+            "the script completes one request tick"
         );
         assert_eq!(
             iso.drain_interacts().len(),
@@ -258,7 +285,7 @@ export default class T extends LoopingBot {
         );
     }
     assert_eq!(
-        iso.probe("__probe").unwrap(),
+        iso.probe("__kept.length").unwrap(),
         serde_json::json!(REQUESTS),
         "Input.takeObj retains every materialized request"
     );
