@@ -324,7 +324,11 @@ fn demon_377_authored_drain_sequence_advances_after_the_observed_pour() {
                 z: tile.1,
                 level: 0,
             },
-            &[("silverlight_key_1", 1), ("silverlight_key_2", 1), (bucket, 1)],
+            &[
+                ("silverlight_key_1", 1),
+                ("silverlight_key_2", 1),
+                (bucket, 1),
+            ],
         );
         snapshot.seed_chat_lines(
             poured
@@ -341,6 +345,101 @@ fn demon_377_authored_drain_sequence_advances_after_the_observed_pour() {
             probe.choice("demon:2", 0, &snapshot),
             Choice::Step(api::selected::FactKey::new(expected)),
             "completed pouring must not reselect bucket preparation at {tile:?}"
+        );
+    }
+}
+
+#[test]
+fn gobdip_377_authored_funding_tracks_the_remaining_dye_cost() {
+    let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+    let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+    let path = compile::compile_uncached_for_test(
+        &serde_json::from_value(document("gobdip")).unwrap(),
+        &selected,
+        &quests,
+    )
+    .unwrap();
+    let progress = [progress_for_stage(&path, &selected, "gobdip:1", &[])];
+    let bank = known_empty_bank();
+    let probe = Probe {
+        path: &path,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+    for (items, expected) in [
+        (
+            &[
+                ("goblin_armour", 3),
+                ("redberries", 3),
+                ("onion", 2),
+                ("coins", 34),
+            ][..],
+            "get-coins",
+        ),
+        (
+            &[
+                ("goblin_armour", 3),
+                ("redberries", 3),
+                ("onion", 2),
+                ("coins", 35),
+            ][..],
+            "get-dyes",
+        ),
+        (
+            &[("goblin_armour", 3), ("orangedye", 1), ("coins", 24)][..],
+            "get-coins",
+        ),
+        (
+            &[("goblin_armour", 3), ("orangedye", 1), ("coins", 25)][..],
+            "get-woad",
+        ),
+        (
+            &[
+                ("goblin_armour", 3),
+                ("orangedye", 1),
+                ("woadleaf", 2),
+                ("coins", 4),
+            ][..],
+            "get-coins",
+        ),
+        (
+            &[
+                ("goblin_armour", 3),
+                ("orangedye", 1),
+                ("woadleaf", 2),
+                ("coins", 5),
+            ][..],
+            "buy-blue-dye",
+        ),
+        (
+            &[
+                ("goblin_armour", 3),
+                ("orangedye", 1),
+                ("woadleaf", 1),
+                ("coins", 5),
+            ][..],
+            "get-coins",
+        ),
+        (
+            &[("goblin_armour", 3), ("orangedye", 1), ("bluedye", 1)][..],
+            "offer-colour",
+        ),
+    ] {
+        let snapshot = selection_snapshot(
+            &selected,
+            api::WorldTile {
+                x: 3086,
+                z: 3259,
+                level: 0,
+            },
+            items,
+        );
+        assert_eq!(
+            probe.choice("gobdip:1", 0, &snapshot),
+            Choice::Step(api::selected::FactKey::new(expected)),
+            "spent dye coins must not restart fully funded acquisition, but short funds must: {items:?}"
         );
     }
 }
