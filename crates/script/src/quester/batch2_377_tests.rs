@@ -213,7 +213,35 @@ fn vampire_377_authored_stairs_advance_at_the_canonical_landing() {
         (3102, 3266, 1, &[][..], "open-garlic-cupboard"),
         (3101, 3266, 1, &[][..], "open-garlic-cupboard"),
         (3097, 3269, 1, &[][..], "open-garlic-cupboard"),
-        (3102, 3266, 1, &[("garlic", 1)][..], "take-hammer"),
+        (3102, 3266, 1, &[("garlic", 1)][..], "take-hammer-coins"),
+        (
+            3102,
+            3266,
+            1,
+            &[("garlic", 1), ("beer", 1)][..],
+            "take-hammer-coins",
+        ),
+        (
+            3102,
+            3266,
+            1,
+            &[("garlic", 1), ("coins", 1)][..],
+            "buy-hammer",
+        ),
+        (
+            3102,
+            3266,
+            1,
+            &[("garlic", 1), ("stake", 1), ("coins", 1)][..],
+            "buy-hammer",
+        ),
+        (
+            3102,
+            3266,
+            1,
+            &[("garlic", 1), ("hammer", 1)][..],
+            "take-beer-coins",
+        ),
     ] {
         let snapshot = selection_snapshot(&selected, api::WorldTile { x, z, level }, items);
         assert_eq!(
