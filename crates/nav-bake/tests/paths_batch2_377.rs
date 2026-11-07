@@ -99,6 +99,61 @@ fn palace_sewer_default_danger_policy_observes_zombie_level_boundary() {
 }
 
 #[test]
+#[ignore = "requires NAV_377_PACK and PATHS_377_MORGAN_REPORT"]
+fn morgan_cupboard_route_returns_to_ground_floor() {
+    let world = NavWorld::load_pack(&path("NAV_377_PACK")).unwrap();
+    let state = WorldState {
+        combat_level: Some(49),
+        map_members: true,
+        ..WorldState::empty()
+    };
+    let mut rows = Vec::new();
+    let mut failed = false;
+    for from in [tile(3102, 3266, 1), tile(3097, 3270, 1)] {
+        let to = tile(2934, 3286, 0);
+        rows.push(
+            match find_with(
+                &world.collision,
+                &world.graph,
+                from,
+                to,
+                FindOptions::default(),
+                &state,
+            ) {
+                Ok(route) => {
+                    json!({"from":from,"to":to,"ticks":route.ticks,"legs":format!("{:?}",route.legs)})
+                }
+                Err(error) => {
+                    failed = true;
+                    json!({"from":from,"to":to,"error":format!("{error:?}")})
+                }
+            },
+        );
+    }
+    let edges: Vec<_> = world
+        .graph
+        .edges
+        .iter()
+        .filter(|edge| (3090..=3110).contains(&edge.at.x) && (3260..=3280).contains(&edge.at.z))
+        .map(|edge| json!({"loc":edge.loc_id,"at":edge.at,"to":edge.to,"ticks":edge.ticks}))
+        .collect();
+    std::fs::write(
+        path("PATHS_377_MORGAN_REPORT"),
+        serde_json::to_vec_pretty(&json!({
+            "verdict": if failed {"FAIL"} else {"PASS"},
+            "routes": rows,
+            "edges": edges,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !failed,
+        "Morgan upstairs return; see PATHS_377_MORGAN_REPORT"
+    );
+}
+
+#[test]
 #[ignore = "requires NAV_377_PACK and PATHS_377_ROUTE_REPORT"]
 fn palace_coin_and_blurite_routes_follow_real_content() {
     let world = NavWorld::load_pack(&path("NAV_377_PACK")).unwrap();
