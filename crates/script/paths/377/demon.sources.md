@@ -30,6 +30,7 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 
 - NPC 879 at `maps/m50_52.jm2:8272` `(3229,3370,0)`. 289's cited spawn tile is `(3229,3369)`; this Path uses the 377 row.
 - Attack is refused unless Silverlight is worn (`npc_combat.rs2:172-181`). The Path equips it. At 0 hp he becomes `delrith_weakened` for 100 ticks and opens four incantation options (`delrith.rs2:9,21`). The last option is the correct phrase; it is still preferred with `strict` so a restored demon is not accepted. Options 1–3 restore him (`:32-45`).
+- The correct incantation closes its message box, removes the weakened demon, then queues completion with delay 1 (`delrith.rs2:47-55`). A progress click issued in that gap can be overtaken by the genuine completion scroll. The 377 Quester runner cancels that obsolete read only for the same selected pin and the active quest's green row, then uses its existing terminal-colour resolver. It neither closes the scroll nor weakens journal root/title validation.
 
 ## Not copied from 289
 
