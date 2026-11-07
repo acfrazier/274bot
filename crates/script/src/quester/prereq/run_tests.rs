@@ -1388,6 +1388,9 @@ fn prerequisite_state_layout_and_ten_repeated_walks_stay_bounded() {
     assert!(size_of::<PrereqBudget>() <= 12);
     assert!(size_of::<PrereqRun>() <= 1024);
     assert!(size_of::<super::super::walk::PrereqWalk>() <= 1536);
+    // Per-bot slot state that had only a printed size. Measured 184 B on the
+    // 64-bit CI targets; pinned at the reading plus 8 B.
+    assert!(size_of::<SlotState>() <= 192);
     let state = state();
     let snapshot = snapshot(WorldTile {
         x: 1,
