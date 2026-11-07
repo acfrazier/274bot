@@ -35,6 +35,70 @@ fn server_only_wall_3550_blocks_the_real_map_boundary() {
 }
 
 #[test]
+#[ignore = "requires NAV_377_PACK and PATHS_377_POLICY_REPORT"]
+fn palace_sewer_default_danger_policy_observes_zombie_level_boundary() {
+    let world = NavWorld::load_pack(&path("NAV_377_PACK")).unwrap();
+    let zones = world.graph.zones.as_ref().unwrap();
+    let zombies: Vec<_> = zones
+        .zones()
+        .iter()
+        .filter_map(|zone| {
+            let kind = &zones.kinds()[usize::from(zone.kind)];
+            if kind.npc_id != 75
+                || !(3220..=3235).contains(&zone.spawn_x)
+                || !(9890..=9915).contains(&zone.spawn_z)
+            {
+                return None;
+            }
+            Some(json!({
+                "npc_id": kind.npc_id, "vislevel": kind.vislevel,
+                "cap": zone.cap, "class": format!("{:?}", zone.class),
+                "spawn": [zone.spawn_x, zone.spawn_z]
+            }))
+        })
+        .collect();
+    let mut rows = Vec::new();
+    let mut matched = !zombies.is_empty();
+    // Canon Npc.ts:1017 suppresses this hunt only above twice vislevel:
+    // all.npc:2289 gives 24, so 46/48 remain aggressive and 49 is exempt.
+    for (combat_level, expected) in [(46, false), (48, false), (49, true)] {
+        let state = WorldState {
+            combat_level: Some(combat_level),
+            map_members: true,
+            ..WorldState::empty()
+        };
+        let route = find_with(
+            &world.collision,
+            &world.graph,
+            tile(3220, 3220, 0),
+            tile(3232, 3500, 0),
+            FindOptions::default(),
+            &state,
+        );
+        matched &= route.is_ok() == expected;
+        rows.push(json!({
+            "combat_level": combat_level, "expected_route": expected,
+            "route": route.as_ref().ok().map(|route| json!({"ticks": route.ticks, "legs": route.legs.len()})),
+            "error": route.as_ref().err().map(|error| format!("{error:?}"))
+        }));
+    }
+    std::fs::write(
+        path("PATHS_377_POLICY_REPORT"),
+        serde_json::to_vec_pretty(&json!({
+            "verdict": if matched {"PASS"} else {"FAIL"},
+            "zombies": zombies,
+            "routes": rows,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        matched,
+        "default danger-policy boundary; see PATHS_377_POLICY_REPORT"
+    );
+}
+
+#[test]
 #[ignore = "requires NAV_377_PACK and PATHS_377_ROUTE_REPORT"]
 fn palace_coin_and_blurite_routes_follow_real_content() {
     let world = NavWorld::load_pack(&path("NAV_377_PACK")).unwrap();
