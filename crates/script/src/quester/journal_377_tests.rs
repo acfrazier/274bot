@@ -11,8 +11,8 @@ use std::sync::Arc;
 /// Exercise authored preferences through the dialogue machine and return its
 /// one-based answer without duplicating option-selection logic.
 fn answer_for(choices: &[&str], prefer: &[Arc<str>]) -> i32 {
-    use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
-    use super::families::tests::{seed_dialogue_combat, with_tick};
+    use crate::quester::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
+    use crate::quester::families::tests::{seed_dialogue_combat, with_tick};
     use crate::interact::InteractReq;
     use crate::native::HostEffect;
 
