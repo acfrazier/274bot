@@ -3826,6 +3826,7 @@ if (process.env.GAME_DATA_377_CONTENT) {
     const selectedObjectModule: { default: { load(dir: string): void; configs: Parameters<typeof extractTrailFacts>[1] } } = await import(pathToFileURL(path.join(spec377.engine, 'src/cache/config/ObjType.ts')).href);
     selectedObjectModule.default.load(path.join(spec377.engine, 'data/pack'));
     const decoded377Items = selectedObjectModule.default.configs;
+    const selectedObjectIds = new Map(decoded377Items.map((item) => [item.debugname, item.id]));
     // The engine checkout is selected by GAME_DATA_377_ENGINE at runtime.
     const selectedInventoryModule: {
         default: {
@@ -3835,12 +3836,13 @@ if (process.env.GAME_DATA_377_CONTENT) {
     } = await import(pathToFileURL(path.join(spec377.engine, 'src/cache/config/InvType.ts')).href);
     selectedInventoryModule.default.load(path.join(spec377.engine, 'data/pack'));
     for (const shop of payload.shops) {
-        const packed = selectedInventoryModule.default.getByName(shop.key);
-        assert.ok(packed?.stockobj && packed.stockcount && packed.stockrate, `${shop.key}: selected packed inventory is required`);
+        const packed = selectedInventoryModule.default.getByName(shop.inv);
+        assert.ok(packed?.stockobj && packed.stockcount && packed.stockrate, `${shop.inv}: selected packed inventory is required`);
         assert.deepEqual(
-            shop.stock.map((row: { id: number; qty: number; restock_ticks: number }) => [row.id, row.qty, row.restock_ticks]),
+            shop.items.map((row: { obj: string; baseline: number; restockTicks: number }) =>
+                [selectedObjectIds.get(row.obj), row.baseline, row.restockTicks]),
             Array.from(packed.stockobj, (id, index) => [id, packed.stockcount![index], packed.stockrate![index]]),
-            `${shop.key}: source stock must match the selected server inventory`,
+            `${shop.inv}: source stock must match the selected server inventory`,
         );
     }
     assert.deepEqual(payload.trails, extractTrailFacts(spec377.content, decoded377Items, 377));
