@@ -139,9 +139,9 @@
               "skip_if": { "Any": [
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_1" } } },
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bones" } } }
+                { "Fact": { "kind": "pack_only", "version": 1, "args": { "objs": ["coins", "bones", "silverlight_key_1", "silverlight_key_2", "silverlight_key_3", "silverlight"] } } }
               ] },
-              "settle": { "All": [] }
+              "settle": { "Fact": { "kind": "pack_only", "version": 1, "args": { "objs": ["coins", "bones", "silverlight_key_1", "silverlight_key_2", "silverlight_key_3", "silverlight"] } } }
             },
             {
               "id": "collect-25-bones",
