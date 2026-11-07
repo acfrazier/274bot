@@ -609,7 +609,7 @@ impl LiveRun {
         let engine_dir = absolute_path("GATHERER_ENGINE_DIR")?;
         let catalog_root = absolute_path("GATHERER_CATALOG_ROOT")?;
         let (server_profile, template) =
-            selected_profile(nav_pack, engine_dir, catalog_root, _temp.path())?;
+            selected_profile(nav_pack, engine_dir, catalog_root, _temp.path(), None)?;
         if server_profile.profile_class() != host_play::ProfileClass::Local
             || server_profile.client().game_host() != ENGINE_HOST
             || server_profile.client().asset_host() != ENGINE_HOST

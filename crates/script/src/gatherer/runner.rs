@@ -639,7 +639,8 @@ impl Gatherer {
             self.scratch.access_avoid = self
                 .scratch
                 .selected_bank
-                .as_ref().map(|bank| bank.bank_index);
+                .as_ref()
+                .map(|bank| bank.bank_index);
             self.advance_trip(TripStep::Select);
         }
         self.begin_trip(tick);
@@ -4230,6 +4231,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -4245,7 +4247,7 @@ mod tests {
                     matches!(
                         action.effect,
                         crate::native::HostEffect::Interaction(
-                            crate::shim::InteractReq::OpenStand { .. }
+                            crate::interact::InteractReq::OpenStand { .. }
                         )
                     )
                 })
@@ -4391,7 +4393,7 @@ mod tests {
             };
         let acknowledged = |ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
                             tick: u64|
-         -> Vec<crate::shim::InteractReq> {
+         -> Vec<crate::interact::InteractReq> {
             let Some(ledger) = ledger.as_mut() else {
                 return Vec::new();
             };
@@ -4435,7 +4437,7 @@ mod tests {
             });
             assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
             for request in acknowledged(ledger, tick_number) {
-                if let crate::shim::InteractReq::WithdrawX { count, .. } = request {
+                if let crate::interact::InteractReq::WithdrawX { count, .. } = request {
                     held += count;
                     snapshot.seed_inventory(
                         vec![
@@ -4481,7 +4483,7 @@ mod tests {
             });
             assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
             for request in acknowledged(ledger, tick_number) {
-                if matches!(request, crate::shim::InteractReq::Close) {
+                if matches!(request, crate::interact::InteractReq::Close) {
                     snapshot.seed_bank_observation(-1, 2, None, Vec::new());
                     snapshot.seed_side_modal(-1);
                 }
@@ -4548,6 +4550,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -4639,6 +4642,7 @@ mod tests {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         }
     }
 
@@ -4831,7 +4835,10 @@ mod tests {
                 gatherer.failure
             );
             assert_eq!(gatherer.trip, TripStep::Access);
-            assert_eq!(gatherer.scratch.selected_bank.as_ref().unwrap().bank_index, 1);
+            assert_eq!(
+                gatherer.scratch.selected_bank.as_ref().unwrap().bank_index,
+                1
+            );
             assert_eq!(
                 take_walks(&mut ledger),
                 [(ALTERNATE_BANK_TILE, 1)],
