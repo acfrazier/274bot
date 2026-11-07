@@ -1572,13 +1572,12 @@ pub(crate) fn compile_talk(
     let target = if let Some(npc) = arg.npc {
         let id = resolve_npc(cx, &npc)?;
         let row = cx.selected.npc_by_config(&npc).unwrap();
-        // 377 multinpc roots have no static name or operations. Their
-        // current menu form is observed in the snapshot; nearest_talk
-        // still requires this placed type and an actual Talk-to action.
+        // 377 multinpc roots have no static name; some, such as Reldo,
+        // still declare operations. Require Talk-to when operations are
+        // declared, and always observe the current form in nearest_talk.
         // Do not borrow a leaf's capabilities: the current form can be null.
-        let observed_menu =
-            cx.selected.revision() == 377 && row.display.is_none() && row.ops.is_empty();
-        if !observed_menu {
+        let observed_menu = cx.selected.revision() == 377 && row.display.is_none();
+        if !observed_menu || !row.ops.is_empty() {
             offered(&row.ops, "Talk-to")?;
         }
         let display = match row.display.as_deref() {
