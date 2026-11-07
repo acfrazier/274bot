@@ -5066,11 +5066,13 @@ mod tests {
             gatherer.handle_walk(receipt, tick);
         });
         assert!(gatherer.scratch.access_avoid.is_some());
+        gatherer.cancel_active();
         with_tick(&snapshot, &mut ledger, 3, |tick| {
             gatherer.handle_pick(sentinel(), tick);
         });
         assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
         assert!(matches!(gatherer.active, Active::Select(_)), "picks again");
+        gatherer.cancel_active();
         with_tick(&snapshot, &mut ledger, 4, |tick| {
             gatherer.handle_pick(sentinel(), tick);
         });
