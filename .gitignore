@@ -28,3 +28,6 @@ __pycache__/
 # Derived game data is generated locally from your own engine checkout and never committed (ADR 0019).
 /crates/api/data/game-data/
 /crates/api/data/shops/
+
+# Request evidence belongs in the evidence tree, never in the repository.
+/QUEST-DANGER-CONSENT/
