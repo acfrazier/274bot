@@ -58,7 +58,6 @@ fn observed_hitmarks(client: &Client) -> Value {
     })
 }
 
-
 fn mainland_relog_runner() -> ScenarioRunner {
     // A real clean relog posts the mainland inventory/side-tab observations.
     // It neither walks nor supplies poison-clear evidence.
@@ -150,7 +149,6 @@ fn selected_template() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTempla
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("load real content");
     (profile, template)
 }
-
 
 #[cfg(feature = "js")]
 fn compat_corridor_fixture(

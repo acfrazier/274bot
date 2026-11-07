@@ -73,19 +73,22 @@ pub(crate) fn requires_pairs(
         api::selected::ClientRevision::R289
     };
     let allow_unqualified = cfg!(feature = "test-hooks");
-    Ok(registry::bundled_index_for(revision).paths.iter().any(|entry| {
-        let qualified = entry.status == Some(ReleasePathStatus::Qualified);
-        let default_selected = settings.quests.is_empty()
-            && (qualified
-                || (allow_unqualified
-                    && (settings.include_draft_guides
-                        || settings.order_override.contains(&entry.id))));
-        super::pair::PairQuest::from_path(&entry.id).is_some()
-            && entry.unavailable.is_none()
-            && (qualified || allow_unqualified)
-            && !settings.skip.contains(&entry.id)
-            && (settings.quests.contains(&entry.id) || default_selected)
-    }))
+    Ok(registry::bundled_index_for(revision)
+        .paths
+        .iter()
+        .any(|entry| {
+            let qualified = entry.status == Some(ReleasePathStatus::Qualified);
+            let default_selected = settings.quests.is_empty()
+                && (qualified
+                    || (allow_unqualified
+                        && (settings.include_draft_guides
+                            || settings.order_override.contains(&entry.id))));
+            super::pair::PairQuest::from_path(&entry.id).is_some()
+                && entry.unavailable.is_none()
+                && (qualified || allow_unqualified)
+                && !settings.skip.contains(&entry.id)
+                && (settings.quests.contains(&entry.id) || default_selected)
+        }))
 }
 
 fn settings_schema() -> &'static [SettingDef] {

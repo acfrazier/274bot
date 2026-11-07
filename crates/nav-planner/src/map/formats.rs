@@ -523,7 +523,6 @@ impl ShippedCatalogue {
     }
 }
 
-
 /// Data-only service supplement. Binary framing deliberately wraps the same
 /// typed POI JSON records, not Rust enum discriminants or imagery.
 /// Wire: "274P" (4), version:u8 (1), JSON bytes:u32le (4), count:u32le (4),

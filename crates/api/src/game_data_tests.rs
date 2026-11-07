@@ -48,7 +48,11 @@ fn revision_377_game_data_is_explicitly_unavailable() {
 
 #[test]
 fn generated_game_data_gzip_preserves_every_source_byte() {
-    for revision in [ClientRevision::R274, ClientRevision::R289, ClientRevision::R377] {
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
         let Some(source) = raw_game_data(revision) else {
             return;
         };

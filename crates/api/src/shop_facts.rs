@@ -459,7 +459,9 @@ mod tests {
         let Some(selected_377) = data(ClientRevision::R377) else {
             return;
         };
-        let source_377 = selected_377.shop_records().expect("selected 377 shop facts");
+        let source_377 = selected_377
+            .shop_records()
+            .expect("selected 377 shop facts");
         assert_eq!(shops_for(&selected_377), source_377);
         let posted = super::content_json_value(&selected_377).expect("selected 377 shop JSON");
         assert!(std::ptr::eq(posted.shops, source_377));
@@ -482,15 +484,21 @@ mod tests {
         }
 
         assert_eq!(shops_for(&selected_377), source_377);
-        let harpoon_377 = selected_377.item_by_alias("harpoon").expect("selected harpoon");
-        let gerrant_377 = selected_377.npc_by_config("gerrant").expect("selected keeper");
+        let harpoon_377 = selected_377
+            .item_by_alias("harpoon")
+            .expect("selected harpoon");
+        let gerrant_377 = selected_377
+            .npc_by_config("gerrant")
+            .expect("selected keeper");
         let vendor = vendor_by_keeper_config(&selected_377, "gerrant", harpoon_377.id)
             .expect("selected 377 harpoon vendor");
         assert_eq!(vendor.keeper_id, gerrant_377.id);
         assert_eq!(vendor.item.cost, harpoon_377.cost);
 
         let selected_289 = data(ClientRevision::R289).unwrap();
-        let harpoon_289 = selected_289.item_by_alias("harpoon").expect("legacy harpoon");
+        let harpoon_289 = selected_289
+            .item_by_alias("harpoon")
+            .expect("legacy harpoon");
         assert_eq!(vendors_for(&selected_289, harpoon_289.id).count(), 2);
         assert_eq!(shops_for(&selected_377), source_377);
     }
@@ -507,8 +515,14 @@ mod tests {
         .expect("selected core with no shop extraction");
         let expected = local_data_unavailable();
         assert_eq!(super::shops_for(&selected).unwrap_err(), expected);
-        assert_eq!(super::shop_by_inv(&selected, "adventurershop").unwrap_err(), expected);
-        assert_eq!(super::shop_by_keeper(&selected, "Aemad").unwrap_err(), expected);
+        assert_eq!(
+            super::shop_by_inv(&selected, "adventurershop").unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            super::shop_by_keeper(&selected, "Aemad").unwrap_err(),
+            expected
+        );
         assert!(matches!(
             super::vendors_for(&selected, 0),
             Err(error) if error == expected

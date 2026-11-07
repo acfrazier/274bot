@@ -89,7 +89,6 @@ fn a_missing_door_config_fails_the_bake() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-
 fn collision_with_flags(
     width: usize,
     height: usize,

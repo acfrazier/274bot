@@ -64,7 +64,6 @@ fn main() {
             ))
         });
     }
-
 }
 
 fn selected_revision() -> u16 {

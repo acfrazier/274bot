@@ -329,11 +329,14 @@ mod tests {
             )
             .unwrap(),
         );
-        for revision in [ClientRevision::R274, ClientRevision::R289, ClientRevision::R377] {
+        for revision in [
+            ClientRevision::R274,
+            ClientRevision::R289,
+            ClientRevision::R377,
+        ] {
             let catalog = super::DebugCatalog::decode(bytes, revision, items.clone())
                 .expect("debug facts decode under the caller-selected revision");
             assert_eq!(catalog.revision(), revision);
-
         }
     }
 

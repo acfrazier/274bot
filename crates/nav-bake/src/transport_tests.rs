@@ -10580,11 +10580,16 @@ fn real_content_atlas_stands_match_the_client_reach_strategy() {
 #[test]
 fn revision_377_direct_trapdoor_keeps_content_landing_and_source_delay() {
     let fx = Fixture::new();
-    fx.write("pack/loc.pack", "9472=trapdoor_9472\n9002=guarded_trapdoor\n9003=open_only\n");
+    fx.write(
+        "pack/loc.pack",
+        "9472=trapdoor_9472\n9002=guarded_trapdoor\n9003=open_only\n",
+    );
     fx.write("maps/m47_49.jm2", "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 0 14: 9472 10\n0 1 14: 9002 10\n0 2 14: 9003 10\n");
     // Canon 377 general_use/scripts/trapdoors.rs2:25-29. This handler climbs
     // directly: it does not open/change to the standard trapdoor_open loc.
-    fx.write("scripts/general_use/scripts/trapdoors.rs2", "\
+    fx.write(
+        "scripts/general_use/scripts/trapdoors.rs2",
+        "\
 [oploc1,trapdoor_9472]
 mes(\"You climb down through the trapdoor...\");
 anim(human_pickupfloor, 0);
@@ -10594,11 +10599,24 @@ p_telejump(0_46_149_63_13);
 if (%quest = 2) { p_telejump(0_46_149_63_13); }
 [oploc1,open_only]
 p_telejump(0_46_149_63_13);
-");
+",
+    );
     let defs = LocDefs::from_locs(&[
-        LocType { id: 9472, op: vec![Some("Climb-down".into())], ..Default::default() },
-        LocType { id: 9002, op: vec![Some("Climb-down".into())], ..Default::default() },
-        LocType { id: 9003, op: vec![Some("Open".into())], ..Default::default() },
+        LocType {
+            id: 9472,
+            op: vec![Some("Climb-down".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 9002,
+            op: vec![Some("Climb-down".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 9003,
+            op: vec![Some("Open".into())],
+            ..Default::default()
+        },
     ]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     let derive = |revision: Option<api::selected::ClientRevision>| {
@@ -10612,28 +10630,67 @@ p_telejump(0_46_149_63_13);
         Some(api::selected::ClientRevision::R274),
         Some(api::selected::ClientRevision::R289),
     ] {
-        assert_eq!(derive(revision).edges, baseline.edges, "legacy extraction stays unchanged");
+        assert_eq!(
+            derive(revision).edges,
+            baseline.edges,
+            "legacy extraction stays unchanged"
+        );
     }
     let graph = derive(Some(api::selected::ClientRevision::R377));
-    let entry = graph.edges.iter().find(|edge| edge.loc_id == 9472).expect("377 direct trapdoor");
+    let entry = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 9472)
+        .expect("377 direct trapdoor");
     assert_eq!(entry.kind, TransportKind::Ladder);
-    assert_eq!(entry.at, WorldTile { x: 3008, z: 3150, level: 0 });
-    assert_eq!(entry.to, WorldTile { x: 3007, z: 9549, level: 0 });
+    assert_eq!(
+        entry.at,
+        WorldTile {
+            x: 3008,
+            z: 3150,
+            level: 0
+        }
+    );
+    assert_eq!(
+        entry.to,
+        WorldTile {
+            x: 3007,
+            z: 9549,
+            level: 0
+        }
+    );
     assert_eq!(entry.option, 1);
     assert_eq!(entry.open_loc_id, None, "no invented open phase");
     assert_eq!(entry.player_delta, None, "absolute content landing");
-    assert_eq!(entry.ticks, 3, "one operation, arrival, and p_delay(0) suspension");
-    assert!(!graph.edges.iter().any(|edge| matches!(edge.loc_id, 9002 | 9003)), "never erase a gate or admit a non-climb operation");
+    assert_eq!(
+        entry.ticks, 3,
+        "one operation, arrival, and p_delay(0) suspension"
+    );
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| matches!(edge.loc_id, 9002 | 9003)),
+        "never erase a gate or admit a non-climb operation"
+    );
 }
 
 #[test]
 fn revision_377_palace_coin_sewer_ladder_return_is_priced() {
     let fx = Fixture::new();
     fx.write("pack/loc.pack", "1755=ladder_1755\n");
-    fx.write("maps/m50_154.jm2", "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 30 48: 1755 10 3\n");
-    fx.write("maps/m50_149.jm2", "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 22 52: 1755 10\n");
+    fx.write(
+        "maps/m50_154.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 30 48: 1755 10 3\n",
+    );
+    fx.write(
+        "maps/m50_149.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 22 52: 1755 10\n",
+    );
     // Canon 377 ladders.rs2:90-97,178-185 and m50_154.jm2:7787.
-    fx.write("scripts/ladders+stairs/scripts/ladders.rs2", "\
+    fx.write(
+        "scripts/ladders+stairs/scripts/ladders.rs2",
+        "\
 [oploc1,ladder_1755]
 def_coord $coord = loc_coord;
 p_arrivedelay;
@@ -10646,9 +10703,12 @@ if(loc_coord = 0_50_149_22_52) {
 if ($up = true) { anim(human_reachforladder, 0); } else { anim(human_pickupfloor, 0); }
 p_delay(0);
 p_telejump($coord);
-");
+",
+    );
     let defs = LocDefs::from_locs(&[LocType {
-        id: 1755, op: vec![Some("Climb-up".into())], ..Default::default()
+        id: 1755,
+        op: vec![Some("Climb-up".into())],
+        ..Default::default()
     }]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     let derive = |revision: Option<api::selected::ClientRevision>| {
@@ -10662,17 +10722,63 @@ p_telejump($coord);
         Some(api::selected::ClientRevision::R274),
         Some(api::selected::ClientRevision::R289),
     ] {
-        assert_eq!(derive(revision).edges, baseline.edges, "legacy extraction stays unchanged");
+        assert_eq!(
+            derive(revision).edges,
+            baseline.edges,
+            "legacy extraction stays unchanged"
+        );
     }
     let graph = derive(Some(api::selected::ClientRevision::R377));
-    let edge = graph.edges.iter().find(|edge| edge.loc_id == 1755 && edge.at.z == 9904).expect("377 palace coin alcove return");
-    assert_eq!(edge.at, WorldTile { x: 3230, z: 9904, level: 0 });
-    assert_eq!(edge.to, WorldTile { x: 3230, z: 3504, level: 0 });
-    assert_eq!(edge.player_delta, Some(WorldTile { x: 0, z: -6400, level: 0 }));
-    assert_eq!(edge.ticks, 3, "arrival plus the canonical climb helper's p_delay(0)");
-    let zanaris = graph.edges.iter().find(|edge| edge.loc_id == 1755 && edge.at.z == 9588).expect("coordinate-specific ladder rule remains intact");
-    assert_eq!(zanaris.to, WorldTile { x: 3201, z: 3169, level: 0 });
-    assert_eq!(zanaris.player_delta, None, "special branch is absolute, not the fallback");
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 1755 && edge.at.z == 9904)
+        .expect("377 palace coin alcove return");
+    assert_eq!(
+        edge.at,
+        WorldTile {
+            x: 3230,
+            z: 9904,
+            level: 0
+        }
+    );
+    assert_eq!(
+        edge.to,
+        WorldTile {
+            x: 3230,
+            z: 3504,
+            level: 0
+        }
+    );
+    assert_eq!(
+        edge.player_delta,
+        Some(WorldTile {
+            x: 0,
+            z: -6400,
+            level: 0
+        })
+    );
+    assert_eq!(
+        edge.ticks, 3,
+        "arrival plus the canonical climb helper's p_delay(0)"
+    );
+    let zanaris = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 1755 && edge.at.z == 9588)
+        .expect("coordinate-specific ladder rule remains intact");
+    assert_eq!(
+        zanaris.to,
+        WorldTile {
+            x: 3201,
+            z: 3169,
+            level: 0
+        }
+    );
+    assert_eq!(
+        zanaris.player_delta, None,
+        "special branch is absolute, not the fallback"
+    );
 }
 
 #[test]
@@ -10819,8 +10925,14 @@ switch_coord (loc_coord) {
 #[test]
 fn revision_377_palace_manhole_opens_before_player_relative_descent() {
     let fx = Fixture::new();
-    fx.write("pack/loc.pack", "881=manholeclosed\n882=manholeopen\n883=manhole_cover\n");
-    fx.write("maps/m50_54.jm2", "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 37 2: 881 10\n0 40 2: 882 10\n");
+    fx.write(
+        "pack/loc.pack",
+        "881=manholeclosed\n882=manholeopen\n883=manhole_cover\n",
+    );
+    fx.write(
+        "maps/m50_54.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 37 2: 881 10\n0 40 2: 882 10\n",
+    );
     // Canon general_use/scripts/manholes.rs2:1-10 and m50_54.jm2:8588.
     let source = "\
 [oploc1,manholeclosed]
@@ -10834,41 +10946,126 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
 ";
     fx.write("scripts/general_use/scripts/manholes.rs2", source);
     let defs = LocDefs::from_locs(&[
-        LocType { id: 881, op: vec![Some("Open".into())], ..Default::default() },
-        LocType { id: 882, op: vec![Some("Climb down".into())], ..Default::default() },
-        LocType { id: 883, op: vec![Some("Close".into())], ..Default::default() },
+        LocType {
+            id: 881,
+            op: vec![Some("Open".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 882,
+            op: vec![Some("Climb down".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 883,
+            op: vec![Some("Close".into())],
+            ..Default::default()
+        },
     ]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
-    let derive = |revision| derive_transports_with_audit(fx.path(), &defs, &collision, None, None, revision).0;
+    let derive = |revision| {
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, revision).0
+    };
     let baseline = derive(None);
     for revision in [Some(274), Some(289)] {
-        assert_eq!(derive(revision).edges, baseline.edges, "legacy extraction stays unchanged");
+        assert_eq!(
+            derive(revision).edges,
+            baseline.edges,
+            "legacy extraction stays unchanged"
+        );
     }
     let graph = derive(Some(377));
-    let closed = graph.edges.iter().find(|edge| edge.loc_id == 881).expect("377 surface-to-sewer entrance");
+    let closed = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 881)
+        .expect("377 surface-to-sewer entrance");
     assert_eq!(closed.kind, TransportKind::Ladder);
-    assert_eq!(closed.at, WorldTile { x: 3237, z: 3458, level: 0 });
-    assert_eq!(closed.to, WorldTile { x: 3237, z: 9858, level: 0 });
-    assert_eq!(closed.player_delta, Some(WorldTile { x: 0, z: 6400, level: 0 }));
+    assert_eq!(
+        closed.at,
+        WorldTile {
+            x: 3237,
+            z: 3458,
+            level: 0
+        }
+    );
+    assert_eq!(
+        closed.to,
+        WorldTile {
+            x: 3237,
+            z: 9858,
+            level: 0
+        }
+    );
+    assert_eq!(
+        closed.player_delta,
+        Some(WorldTile {
+            x: 0,
+            z: 6400,
+            level: 0
+        })
+    );
     assert_eq!(closed.open_loc_id, Some(882));
     assert_eq!(closed.option, 1);
-    assert_eq!(closed.ticks, 3, "two source operations plus the arrival tick");
-    let open = graph.edges.iter().find(|edge| edge.loc_id == 882).expect("already-open manhole");
-    assert_eq!(open.at, WorldTile { x: 3240, z: 3458, level: 0 });
-    assert_eq!(open.to, WorldTile { x: 3240, z: 9858, level: 0 });
+    assert_eq!(
+        closed.ticks, 3,
+        "two source operations plus the arrival tick"
+    );
+    let open = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 882)
+        .expect("already-open manhole");
+    assert_eq!(
+        open.at,
+        WorldTile {
+            x: 3240,
+            z: 3458,
+            level: 0
+        }
+    );
+    assert_eq!(
+        open.to,
+        WorldTile {
+            x: 3240,
+            z: 9858,
+            level: 0
+        }
+    );
     assert_eq!(open.open_loc_id, None);
     assert_eq!(open.ticks, 2);
 
     for mutation in [
-        source.replace("loc_change(manholeopen, 400);", "if (%quest = 2) { loc_change(manholeopen, 400); }"),
-        source.replace("loc_change(manholeopen, 400);", "loc_change(manholeopen, 400); inv_del(inv, coins, 1);"),
+        source.replace(
+            "loc_change(manholeopen, 400);",
+            "if (%quest = 2) { loc_change(manholeopen, 400); }",
+        ),
+        source.replace(
+            "loc_change(manholeopen, 400);",
+            "loc_change(manholeopen, 400); inv_del(inv, coins, 1);",
+        ),
     ] {
         fx.write("scripts/general_use/scripts/manholes.rs2", &mutation);
-        assert!(!derive(Some(377)).edges.iter().any(|edge| edge.loc_id == 881), "never erase an opener gate or side effect");
+        assert!(
+            !derive(Some(377))
+                .edges
+                .iter()
+                .any(|edge| edge.loc_id == 881),
+            "never erase an opener gate or side effect"
+        );
     }
-    fx.write("scripts/general_use/scripts/manholes.rs2", &source.replace(
-        "p_telejump(movecoord(coord(), 0, 0, 6400));",
-        "if (%quest = 2) { p_telejump(movecoord(coord(), 0, 0, 6400)); }",
-    ));
-    assert!(!derive(Some(377)).edges.iter().any(|edge| matches!(edge.loc_id, 881 | 882)), "a gated descent certifies neither entry state");
+    fx.write(
+        "scripts/general_use/scripts/manholes.rs2",
+        &source.replace(
+            "p_telejump(movecoord(coord(), 0, 0, 6400));",
+            "if (%quest = 2) { p_telejump(movecoord(coord(), 0, 0, 6400)); }",
+        ),
+    );
+    assert!(
+        !derive(Some(377))
+            .edges
+            .iter()
+            .any(|edge| matches!(edge.loc_id, 881 | 882)),
+        "a gated descent certifies neither entry state"
+    );
 }
