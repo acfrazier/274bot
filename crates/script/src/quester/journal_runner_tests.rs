@@ -1587,6 +1587,108 @@ fn a_persistent_foreign_main_modal_uses_the_existing_read_cap_without_clicks() {
 }
 
 #[test]
+fn completion_row_overtakes_377_journal_without_closing_the_scroll() {
+    use api::selected::ClientRevision;
+
+    for (revision, completed) in [
+        (ClientRevision::R289, true),
+        (ClientRevision::R377, false),
+        (ClientRevision::R377, true),
+    ] {
+        let (mut script, mut snapshot, component, name) = if revision == ClientRevision::R289 {
+            let (script, snapshot) = fixture(true);
+            (script, snapshot, 42, "Cook's Assistant")
+        } else {
+            let data = api::game_data::for_revision(revision).unwrap();
+            let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+            let document =
+                serde_json::from_slice(include_bytes!("../../paths/377/demon.json")).unwrap();
+            let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests)
+                .unwrap();
+            let script = Quester::new(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                path,
+                data,
+                quests,
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
+            );
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            (script, snapshot, 7334, "Demon Slayer")
+        };
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: name.into(),
+                component_id: component,
+                colour: 0xf8f800,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.revision = revision;
+            assert!(!script.read_stage(tick, false));
+        });
+        assert!(matches!(
+            ack(&mut ledger, 1),
+            HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+                if component_id == component
+        ));
+        assert!(script.journal.is_some());
+
+        // Delrith queues completion one tick after the last message closes.
+        // The selected green row and scroll can therefore overtake the click.
+        let root = 12140; // Observed 377 quest-completion scroll.
+        snapshot.seed_main_modal(root, vec![]);
+        snapshot.seed_quest_statuses(
+            vec![
+                QuestStatusView {
+                    name: name.into(),
+                    component_id: component,
+                    colour: if completed { 0x00f800 } else { 0xf8f800 },
+                },
+                QuestStatusView {
+                    name: "Another quest".into(),
+                    component_id: 9999,
+                    colour: 0x00f800,
+                },
+            ],
+            true,
+        );
+        let adopted = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.revision = revision;
+            script.read_stage(tick, false)
+        });
+        let terminal = revision == ClientRevision::R377 && completed;
+        assert_eq!(adopted, terminal);
+        if terminal {
+            assert_eq!(script.progress().unwrap().complete, Truth::True);
+            assert_eq!(script.stage().unwrap().0.as_ref(), "demon:30");
+            assert!(!script.parked);
+            assert!(
+                script.last_journal().is_none(),
+                "no journal read was fabricated"
+            );
+        } else {
+            assert!(script.parked);
+            assert!(script.progress().is_none());
+        }
+        assert!(script.journal.is_none());
+        assert_eq!(snapshot.modals().main, root, "never close the scroll");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        assert!(ledger
+            .as_mut()
+            .unwrap()
+            .quiet_read(std::time::Instant::now())
+            .is_none());
+    }
+}
+
+#[test]
 fn a_foreign_quest_journal_title_still_fails_instead_of_waiting() {
     if !api::test_support::game_data_available() {
         return;
