@@ -10676,6 +10676,144 @@ p_telejump($coord);
 }
 
 #[test]
+fn revision_377_coordinate_stairs_keep_downstairs_and_explicit_middle_options() {
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1723=scenery_1723\n1739=scenery_1739\n");
+    fx.write(
+        "maps/m48_51.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n1 28 2: 1723 10 1\n",
+    );
+    fx.write(
+        "maps/m50_54.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n1 2 41: 1739 10\n",
+    );
+    // Canon stairs.rs2:43-49,232-270: the middle stair's first option
+    // opens a choice; only its explicit up/down operations are direct moves.
+    fx.write(
+        "scripts/ladders+stairs/scripts/stairs.rs2",
+        "\
+[oploc1,scenery_1723]
+p_arrivedelay;
+switch_coord (loc_coord) {
+    case 1_48_51_28_2 : p_telejump(0_48_51_26_2);
+    case default : @unhandled_stairs(loc_coord);
+}
+[oploc1,scenery_1739]
+switch_coord (loc_coord) {
+    case 1_50_54_2_41 : @stair_options(2_50_54_4_41, 0_50_54_3_40);
+    case default : @unhandled_stairs(loc_coord);
+}
+[oploc2,scenery_1739]
+switch_coord (loc_coord) {
+    case 1_50_54_2_41 : p_telejump(2_50_54_4_41);
+    case default : @unhandled_stairs(loc_coord);
+}
+[oploc3,scenery_1739]
+switch_coord (loc_coord) {
+    case 1_50_54_2_41 : p_telejump(0_50_54_3_40);
+    case default : @unhandled_stairs(loc_coord);
+}
+",
+    );
+    let defs = LocDefs::from_locs(&[
+        LocType {
+            id: 1723,
+            op: vec![Some("Climb-down".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 1739,
+            op: vec![
+                Some("Climb".into()),
+                Some("Climb-up".into()),
+                Some("Climb-down".into()),
+            ],
+            ..Default::default()
+        },
+    ]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let derive = |revision| {
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, revision).0
+    };
+    let baseline = derive(None);
+    for revision in [Some(274), Some(289)] {
+        assert_eq!(derive(revision).edges, baseline.edges);
+    }
+    let graph = derive(Some(377));
+    let down = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 1723)
+        .expect("Morgan's renamed downstairs stair must remain routable");
+    assert_eq!(
+        down.to,
+        WorldTile {
+            x: 3098,
+            z: 3266,
+            level: 0
+        }
+    );
+    assert_eq!(down.ticks, 2);
+    assert!(!graph
+        .edges
+        .iter()
+        .any(|edge| edge.loc_id == 1739 && edge.option == 1));
+    for (option, x, z, level) in [(2, 3204, 3497, 2), (3, 3203, 3496, 0)] {
+        let edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.loc_id == 1739 && edge.option == option)
+            .expect("the palace middle stair's explicit direction is routable");
+        assert_eq!(edge.to, WorldTile { x, z, level });
+        assert_eq!(edge.ticks, 1, "this handler has no arrival delay");
+    }
+}
+
+#[test]
+fn revision_377_coordinate_stairs_reject_unproved_handlers() {
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1723=scenery_1723\n");
+    fx.write(
+        "maps/m48_51.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n1 28 2: 1723 10 1\n",
+    );
+    let safe = "\
+p_arrivedelay;
+switch_coord (loc_coord) {
+    case 1_48_51_28_2 : p_telejump(0_48_51_26_2);
+    case default : @unhandled_stairs(loc_coord);
+}";
+    for body in [
+        format!("if (%quest = 2) {{ {safe} }}"),
+        format!("{safe}\nobj_add(0_48_51_26_2, coins, 1, 10);"),
+        safe.replace("p_telejump", "~random_teleport"),
+        safe.replace("@unhandled_stairs(loc_coord)", "@other_handler(loc_coord)"),
+        safe.replace(
+            "case default",
+            "case 1_48_51_28_2 : p_telejump(0_48_51_25_2);\ncase default",
+        ),
+        safe.replace("switch_coord (loc_coord)", "switch_coord (coord)"),
+    ] {
+        fx.write(
+            "scripts/ladders+stairs/scripts/stairs.rs2",
+            &format!("[oploc1,scenery_1723]\n{body}\n"),
+        );
+        let defs = LocDefs::from_locs(&[LocType {
+            id: 1723,
+            op: vec![Some("Climb-down".into())],
+            ..Default::default()
+        }]);
+        let collision = bake_collision(&fx, &defs, &HashSet::new());
+        let graph =
+            derive_transports_with_audit(fx.path(), &defs, &collision, None, None, Some(377)).0;
+        assert!(
+            graph.edges.iter().all(|edge| edge.loc_id != 1723),
+            "unsupported stair body must not gain an unconditional edge: {body}"
+        );
+    }
+}
+
+#[test]
 fn revision_377_palace_manhole_opens_before_player_relative_descent() {
     let fx = Fixture::new();
     fx.write("pack/loc.pack", "881=manholeclosed\n882=manholeopen\n883=manhole_cover\n");
