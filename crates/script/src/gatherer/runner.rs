@@ -646,28 +646,14 @@ impl Gatherer {
         self.begin_trip(tick);
     }
 
-    /// The bank pick settled. A pick that left a bank out and found none
-    /// picks again with that bank allowed. A pick that finds none ends the
-    /// run, and during an access recovery it keeps the last walk failure's
-    /// detail.
+    /// The bank pick settled. A pick that found none ends the run through
+    /// [`Self::pick_found_none`], whether it settled as the selection's
+    /// no-candidate sentinel or as the host's typed negative receipt.
     fn handle_pick(&mut self, selected: SelectedBank, tick: &mut NativeTick<'_>) {
         let no_candidate =
             selected.kind == PickKind::NoCandidate || selected.bank_index == u16::MAX;
-        if no_candidate && self.scratch.access_avoid.take().is_some() {
-            // The banks left after dropping the one that refused the walk
-            // have no route from here: pick again with that bank allowed,
-            // as the first recovery would.
-            self.begin_trip(tick);
-        } else if no_candidate {
-            self.bank_label = Arc::from(format!("{}; NoCandidate", self.settings().bank));
-            let mut message = format!("bank-unavailable:{}", self.settings().bank);
-            if self.scratch.access_stall_recovery.pending() {
-                if let Some(reason) = self.scratch.trip_reason.as_deref() {
-                    message.push_str("; last reason: ");
-                    message.push_str(reason);
-                }
-            }
-            self.fail("bank-unavailable", message);
+        if no_candidate {
+            self.pick_found_none(None, tick);
         } else {
             self.scratch.access_avoid = None;
             self.scratch.selected_bank = Some(selected);
@@ -676,9 +662,37 @@ impl Gatherer {
         }
     }
 
-    fn pick_failure(&mut self, error: ActionError) {
+    /// A pick that left a bank out and found none picks again with that bank
+    /// allowed, as the first recovery would. A pick that finds none otherwise
+    /// ends the run; during an access recovery it keeps the last walk
+    /// failure's detail. `detail` is the typed receipt's reason, when the
+    /// host gave one.
+    fn pick_found_none(&mut self, detail: Option<Arc<str>>, tick: &mut NativeTick<'_>) {
+        if self.scratch.access_avoid.take().is_some() {
+            // The banks left after dropping the one that refused the walk
+            // have no route from here.
+            self.begin_trip(tick);
+            return;
+        }
+        self.bank_label = Arc::from(format!("{}; NoCandidate", self.settings().bank));
+        let mut message = detail.map_or_else(
+            || format!("bank-unavailable:{}", self.settings().bank),
+            |detail| detail.to_string(),
+        );
+        if self.scratch.access_stall_recovery.pending() {
+            if let Some(reason) = self.scratch.trip_reason.as_deref() {
+                message.push_str("; last reason: ");
+                message.push_str(reason);
+            }
+        }
+        self.fail("bank-unavailable", message);
+    }
+
+    fn pick_failure(&mut self, error: ActionError, tick: &mut NativeTick<'_>) {
         match error {
-            ActionError::Failed(detail) => self.fail("bank-unavailable", detail),
+            // The pick's only `Failed` is the host's typed negative receipt
+            // (`Select::poll`).
+            ActionError::Failed(detail) => self.pick_found_none(Some(detail), tick),
             error => self.fail(
                 "bank-unavailable",
                 format!("bank selection failed: {error:?}"),
@@ -2014,14 +2028,14 @@ impl Gatherer {
                 match select.poll(tick.actions, &mut tick.cx, tick.state) {
                     Poll::Pending => self.active = Active::Select(select),
                     Poll::Ready(Ok(selected)) => self.handle_pick(selected, tick),
-                    Poll::Ready(Err(error)) => self.pick_failure(error),
+                    Poll::Ready(Err(error)) => self.pick_failure(error, tick),
                 }
             }
             Active::SelectOther(mut select) => {
                 match select.poll(tick.actions, &mut tick.cx, tick.state) {
                     Poll::Pending => self.active = Active::SelectOther(select),
                     Poll::Ready(Ok(selected)) => self.handle_pick(selected, tick),
-                    Poll::Ready(Err(error)) => self.pick_failure(error),
+                    Poll::Ready(Err(error)) => self.pick_failure(error, tick),
                 }
             }
             Active::Open(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
@@ -4731,7 +4745,15 @@ mod tests {
                     tick,
                     sequence: tick,
                 },
-                outcome: bank::BankPickOutcome::Selected(selected),
+                // The host answers a pick that found no bank with the typed
+                // negative receipt, never a selection.
+                outcome: if selected.kind == PickKind::NoCandidate {
+                    bank::BankPickOutcome::NoCandidate {
+                        detail: Arc::from("bank selection failed: NoPath"),
+                    }
+                } else {
+                    bank::BankPickOutcome::Selected(selected)
+                },
             },
         );
         eligible
@@ -5009,6 +5031,54 @@ mod tests {
         assert!(
             failure.message.contains("second receipt"),
             "the last reason is kept: {}",
+            failure.message
+        );
+        assert!(
+            failure.message.contains("bank selection failed: NoPath"),
+            "the typed receipt's detail is kept: {}",
+            failure.message
+        );
+    }
+
+    /// The selection's own no-candidate sentinel (no bank eligible at all)
+    /// takes the same recovery and last-reason handling as the typed receipt.
+    #[test]
+    fn access_recovery_sentinel_pick_widens_then_keeps_the_last_reason() {
+        use crate::quester::families::tests::with_tick;
+        let fixture = roster_fixture();
+        let mut gatherer = access_walker(&fixture);
+        let snapshot = fixture.snapshot;
+        let mut ledger = None;
+        let sentinel = || SelectedBank {
+            bank_index: u16::MAX,
+            access_tile: RELOG_BANK_TILE,
+            kind: PickKind::NoCandidate,
+            access: None,
+        };
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let receipt = failed_walk(tick, WalkEnd::Failed, "first receipt");
+            gatherer.handle_walk(receipt, tick);
+        });
+        take_walks(&mut ledger);
+        gatherer.cancel_active();
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            let receipt = failed_walk(tick, WalkEnd::Failed, "second receipt");
+            gatherer.handle_walk(receipt, tick);
+        });
+        assert!(gatherer.scratch.access_avoid.is_some());
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            gatherer.handle_pick(sentinel(), tick);
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert!(matches!(gatherer.active, Active::Select(_)), "picks again");
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            gatherer.handle_pick(sentinel(), tick);
+        });
+        let failure = gatherer.failure.as_ref().expect("no bank is left");
+        assert_eq!(failure.code.as_ref(), "bank-unavailable");
+        assert!(
+            failure.message.contains("second receipt"),
+            "{}",
             failure.message
         );
     }
