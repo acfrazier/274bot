@@ -3849,7 +3849,8 @@ pub struct PathCell<'a> {
 
 pub fn path_cell(spec: PathCell<'_>) -> Result<Cell, String> {
     let (path, _) = scenario::quester::load_quester_path_document(spec.quest)?;
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .map_err(|error| error.to_string())?;
     let fixture =
         scenario::quester::build_quester_path_fixture(scenario::quester::QuesterPathFixture {
             name: spec.quest,

@@ -1,7 +1,6 @@
 //! Immutable generated game facts selected by the caller's client revision.
 
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 use std::io::{BufReader, Read};
 use std::sync::Arc;
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
@@ -19,37 +18,47 @@ const SCHEMA_VERSION: u16 = 5;
 pub const NPC_COMBAT_FACTS_VERSION: u32 = 2;
 
 /// An error while loading or validating selected game data.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GameDataError {
+    /// The NPC combat-fact family predates this API's expected version.
+    #[error("combat facts are missing or outdated; regenerate the selected game data")]
     CombatFacts,
+    /// This build embeds no local selected game data.
+    #[error("embedded game data is unavailable; generate local assets before building")]
     LocalDataUnavailable,
+    /// A caller-supplied payload is internally inconsistent.
+    #[error("{0}")]
     InvalidData(Arc<str>),
+    /// A revision's selected-data JSON failed to decode.
+    #[error("{message}")]
+    Decode {
+        /// The revision whose payload failed.
+        revision: ClientRevision,
+        /// The exact decoder message.
+        message: Arc<str>,
+    },
+    /// A revision's prayer rows do not fit this API's prayer layout.
+    #[error("{detail}")]
+    PrayerLayout {
+        /// The revision whose prayer rows failed validation.
+        revision: ClientRevision,
+        /// The number of prayer rows the payload carries.
+        rows: usize,
+        /// The number of rows this API supports.
+        supported: usize,
+        /// The exact mismatch, naming the row when one varp is out of sequence.
+        detail: Arc<str>,
+    },
 }
-
-impl fmt::Display for GameDataError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::CombatFacts => formatter.write_str(
-                "combat facts are missing or outdated; regenerate the selected game data",
-            ),
-            Self::LocalDataUnavailable => formatter.write_str(
-                "embedded game data is unavailable; generate local assets before building",
-            ),
-            Self::InvalidData(reason) => formatter.write_str(reason),
-        }
-    }
-}
-
-impl std::error::Error for GameDataError {}
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 const REVISION_274: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/game-data-274.json.gz"));
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 const REVISION_289: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/game-data-289.json.gz"));
 
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
-static DATA_274: OnceLock<Result<Arc<SelectedGameData>, String>> = OnceLock::new();
+static DATA_274: OnceLock<Result<Arc<SelectedGameData>, GameDataError>> = OnceLock::new();
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
-static DATA_289: OnceLock<Result<Arc<SelectedGameData>, String>> = OnceLock::new();
+static DATA_289: OnceLock<Result<Arc<SelectedGameData>, GameDataError>> = OnceLock::new();
 
 /// Whether this build embeds the local selected game-data assets.
 pub const fn local_game_data_available() -> bool {
@@ -3041,9 +3050,8 @@ pub fn decode_game_data(
 ) -> Result<Arc<SelectedGameData>, GameDataError> {
     preflight_combat_facts_version(bytes)?;
     let data = SelectedGameData::decode(bytes, revision)
-        .map_err(|error| GameDataError::InvalidData(Arc::from(error)))?;
-    validate_prayer_layout(&data, revision)
-        .map_err(|error| GameDataError::InvalidData(Arc::from(error)))?;
+        .map_err(|message| decode_error(revision, message))?;
+    validate_prayer_layout(&data, revision)?;
     Ok(data)
 }
 #[cfg(test)]
@@ -3072,14 +3080,15 @@ pub fn decode_quest_identity(bytes: &[u8]) -> Result<(QuestIdentityFacts, u16), 
 
 /// Load one revision exactly once and share it for the process lifetime.
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
-pub fn for_revision(revision: ClientRevision) -> Result<Arc<SelectedGameData>, String> {
+pub fn for_revision(revision: ClientRevision) -> Result<Arc<SelectedGameData>, GameDataError> {
     let (cell, bytes) = match revision {
         ClientRevision::R274 => (&DATA_274, REVISION_274),
         ClientRevision::R289 => (&DATA_289, REVISION_289),
     };
     match cell.get_or_init(|| {
-        preflight_combat_facts_version(GzDecoder::new(bytes)).map_err(|error| error.to_string())?;
-        let data = SelectedGameData::decode(GzDecoder::new(bytes), revision)?;
+        preflight_combat_facts_version(GzDecoder::new(bytes))?;
+        let data = SelectedGameData::decode(GzDecoder::new(bytes), revision)
+            .map_err(|message| decode_error(revision, message))?;
         validate_prayer_layout(&data, revision)?;
         Ok(data)
     }) {
@@ -3090,27 +3099,49 @@ pub fn for_revision(revision: ClientRevision) -> Result<Arc<SelectedGameData>, S
 
 /// Local game data is absent in tool-only or toy-scale builds.
 #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
-pub fn for_revision(_revision: ClientRevision) -> Result<Arc<SelectedGameData>, String> {
-    Err(GameDataError::LocalDataUnavailable.to_string())
+pub fn for_revision(_revision: ClientRevision) -> Result<Arc<SelectedGameData>, GameDataError> {
+    Err(GameDataError::LocalDataUnavailable)
 }
 
-fn validate_prayer_layout(data: &SelectedGameData, revision: ClientRevision) -> Result<(), String> {
-    if data.prayers.len() > crate::prayer::PRAYER_COUNT {
-        return Err(format!(
-            "generated game data prayer layout mismatch for revision {}: {} rows exceed the supported count {}",
-            revision.as_i32(),
-            data.prayers.len(),
-            crate::prayer::PRAYER_COUNT,
-        ));
+fn decode_error(revision: ClientRevision, message: String) -> GameDataError {
+    GameDataError::Decode {
+        revision,
+        message: Arc::from(message),
+    }
+}
+
+fn validate_prayer_layout(
+    data: &SelectedGameData,
+    revision: ClientRevision,
+) -> Result<(), GameDataError> {
+    let rows = data.prayers.len();
+    let supported = crate::prayer::PRAYER_COUNT;
+    if rows > supported {
+        return Err(GameDataError::PrayerLayout {
+            revision,
+            rows,
+            supported,
+            detail: Arc::from(format!(
+                "generated game data prayer layout mismatch for revision {}: {} rows exceed the supported count {}",
+                revision.as_i32(),
+                rows,
+                supported,
+            )),
+        });
     }
     for (index, prayer) in data.prayers.iter().enumerate() {
         let expected = crate::prayer::PRAYER_VARP0 + index as i32;
         if prayer.varp != expected {
-            return Err(format!(
-                "generated game data prayer layout mismatch for revision {}: row {index} has varp {}, expected {expected}",
-                revision.as_i32(),
-                prayer.varp,
-            ));
+            return Err(GameDataError::PrayerLayout {
+                revision,
+                rows,
+                supported,
+                detail: Arc::from(format!(
+                    "generated game data prayer layout mismatch for revision {}: row {index} has varp {}, expected {expected}",
+                    revision.as_i32(),
+                    prayer.varp,
+                )),
+            });
         }
     }
     Ok(())
@@ -3130,7 +3161,7 @@ mod missing_data_tests {
         assert!(!local_game_data_available());
         assert!(matches!(
             for_revision(ClientRevision::R289),
-            Err(error) if error == GameDataError::LocalDataUnavailable.to_string()
+            Err(GameDataError::LocalDataUnavailable)
         ));
     }
 }

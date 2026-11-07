@@ -43,7 +43,8 @@ impl ServerProfile {
                 self.game_data_status().detail()
             )
         })?;
-        let catalog = api::debug_commands::DebugCatalog::load(self.revision(), data)?;
+        let catalog = api::debug_commands::DebugCatalog::load(self.revision(), data)
+            .map_err(|error| error.to_string())?;
         Ok(Arc::new(catalog))
     }
 }
@@ -440,7 +441,7 @@ impl ProfileSelection {
             ));
         }
         Ok((
-            Some(api::game_data::for_revision(self.revision())?),
+            Some(api::game_data::for_revision(self.revision()).map_err(|error| error.to_string())?),
             GameDataStatus::Attached,
         ))
     }
@@ -509,7 +510,8 @@ impl ProfileSelection {
         let mut profile = self.bind()?;
         Arc::get_mut(&mut profile)
             .expect("the fixture profile is not shared yet")
-            .game_data = Some(api::game_data::for_revision(self.revision())?);
+            .game_data =
+            Some(api::game_data::for_revision(self.revision()).map_err(|error| error.to_string())?);
         let mut preparation = self.begin_template_preparation();
         preparation.stage = TemplateStage::Load(profile);
         Ok(preparation)

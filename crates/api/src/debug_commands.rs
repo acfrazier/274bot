@@ -5,6 +5,25 @@ use serde::Deserialize;
 
 const MAX_COMMAND_BYTES: usize = 80;
 
+/// An error while loading or decoding the opt-in debug catalog.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DebugCatalogError {
+    /// This build embeds no local debug catalog.
+    #[error("Debug catalog local data is unavailable")]
+    LocalDataUnavailable,
+    /// The catalog bytes failed to decode as JSON.
+    #[error("{message}")]
+    Decode {
+        /// The revision whose catalog failed.
+        revision: ClientRevision,
+        /// The exact decoder message.
+        message: std::sync::Arc<str>,
+    },
+    /// The decoded catalog declares an unsupported schema version.
+    #[error("Debug catalog schema mismatch")]
+    SchemaMismatch,
+}
+
 const DEBUG_ARGUMENT_KINDS: &[&str] = &[
     "int",
     "string",
@@ -69,7 +88,7 @@ impl DebugCatalog {
     pub fn load(
         revision: ClientRevision,
         items: std::sync::Arc<crate::game_data::SelectedGameData>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, DebugCatalogError> {
         let bytes: &[u8] = match revision {
             ClientRevision::R274 => include_bytes!("../data/game-data/274/debug.json"),
             ClientRevision::R289 => include_bytes!("../data/game-data/289/debug.json"),
@@ -84,15 +103,15 @@ impl DebugCatalog {
     pub fn load(
         _revision: ClientRevision,
         _items: std::sync::Arc<crate::game_data::SelectedGameData>,
-    ) -> Result<Self, String> {
-        Err("Debug catalog local data is unavailable".into())
+    ) -> Result<Self, DebugCatalogError> {
+        Err(DebugCatalogError::LocalDataUnavailable)
     }
 
     pub fn decode(
         bytes: &[u8],
         revision: ClientRevision,
         items: std::sync::Arc<crate::game_data::SelectedGameData>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, DebugCatalogError> {
         #[derive(Deserialize)]
         struct WireCatalog {
             schema_version: u16,
@@ -102,9 +121,13 @@ impl DebugCatalog {
             debug_names: std::collections::HashMap<String, Vec<DebugName>>,
         }
 
-        let catalog: WireCatalog = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        let catalog: WireCatalog =
+            serde_json::from_slice(bytes).map_err(|error| DebugCatalogError::Decode {
+                revision,
+                message: std::sync::Arc::from(error.to_string()),
+            })?;
         if catalog.schema_version != 1 {
-            return Err("Debug catalog schema mismatch".into());
+            return Err(DebugCatalogError::SchemaMismatch);
         }
         Ok(Self {
             revision,
@@ -419,5 +442,28 @@ mod tests {
         assert!(debug.format_command(&[short]).is_ok());
         let multibyte = "é".repeat(40);
         assert!(debug.format_command(&[multibyte]).is_err());
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "debug-catalog",
+    not(all(feature = "embedded-game-data", not(no_local_game_data)))
+))]
+mod missing_data_tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_build_reports_missing_local_catalog_data() {
+        let items = std::sync::Arc::new(
+            serde_json::from_slice::<crate::game_data::SelectedGameData>(
+                br#"{"schema_version":5,"revision":274,"items":[],"consumption":[],"pickpocket":[]}"#,
+            )
+            .unwrap(),
+        );
+        assert!(matches!(
+            DebugCatalog::load(ClientRevision::R289, items),
+            Err(DebugCatalogError::LocalDataUnavailable)
+        ));
     }
 }

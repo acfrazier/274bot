@@ -957,7 +957,8 @@ fn weapon_id(revision: u16) -> Result<i32, String> {
     let data = game_data::for_revision(match revision {
         289 => ClientRevision::R289,
         _ => ClientRevision::R274,
-    })?;
+    })
+    .map_err(|error| error.to_string())?;
     let item = data
         .item_by_alias("bronze_scimitar")
         .ok_or_else(|| "selected cache has no bronze_scimitar".to_string())?;
@@ -1055,7 +1056,8 @@ fn run_cell(case: PairCase) -> Result<(), String> {
     let data = game_data::for_revision(match revision {
         289 => ClientRevision::R289,
         _ => ClientRevision::R274,
-    })?;
+    })
+    .map_err(|error| error.to_string())?;
     if case == PairCase::Duel {
         verify_generated_duel_controls(&data)?;
     }

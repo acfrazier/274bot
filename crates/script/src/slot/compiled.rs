@@ -1655,7 +1655,8 @@ impl SlotScript {
         }
         let selected = match selected {
             Some(selected) => selected,
-            None => api::game_data::for_revision(api::selected::ClientRevision::R289)?,
+            None => api::game_data::for_revision(api::selected::ClientRevision::R289)
+                .map_err(|error| error.to_string())?,
         };
         let revision = selected_revision(&selected).map_err(|error| error.to_string())?;
         self.control_generation = self

@@ -655,16 +655,38 @@ fn selected_prayer_layout_rejects_noncontiguous_or_oversized_rows() {
     };
     let mut gap: SelectedGameData = serde_json::from_slice(&raw).unwrap();
     gap.prayers[0].varp += 1;
-    let error = validate_prayer_layout(&gap, ClientRevision::R289).unwrap_err();
-    assert!(error.contains("revision 289"));
-    assert!(error.contains("row 0"));
+    let rows = gap.prayers.len();
+    match validate_prayer_layout(&gap, ClientRevision::R289).unwrap_err() {
+        GameDataError::PrayerLayout {
+            revision,
+            rows: reported_rows,
+            supported,
+            detail,
+        } => {
+            assert_eq!(revision, ClientRevision::R289);
+            assert_eq!(reported_rows, rows);
+            assert_eq!(supported, crate::prayer::PRAYER_COUNT);
+            assert!(detail.contains("row 0"), "{detail}");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 
     let mut oversized: SelectedGameData = serde_json::from_slice(&raw).unwrap();
     let extra_rows = oversized.prayers.clone();
     oversized.prayers.extend(extra_rows);
-    let error = validate_prayer_layout(&oversized, ClientRevision::R289).unwrap_err();
-    assert!(error.contains("revision 289"));
-    assert!(error.contains("supported count"));
+    match validate_prayer_layout(&oversized, ClientRevision::R289).unwrap_err() {
+        GameDataError::PrayerLayout {
+            revision,
+            rows,
+            supported,
+            detail,
+        } => {
+            assert_eq!(revision, ClientRevision::R289);
+            assert!(rows > supported);
+            assert!(detail.contains("supported count"), "{detail}");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]

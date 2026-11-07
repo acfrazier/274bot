@@ -95,7 +95,8 @@ fn zanaris_navigation_cell() -> Result<Cell, String> {
     {
         return Err("Zanaris navigation cell needs one single-account quest Path".into());
     }
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .map_err(|error| error.to_string())?;
     let identity = selected
         .quest_identity()
         .and_then(|table| table.rows.iter().find(|row| row.id == QUEST))

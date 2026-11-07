@@ -146,7 +146,8 @@ fn arrav_role_smoke_cell(spec: PathCell<'_>, gang: Gang) -> Result<Cell, String>
         .stage
         .ok_or("blackarmgang smoke needs an explicit role stage")?;
     let (path, _) = scenario::quester::load_quester_path_document(spec.quest)?;
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .map_err(|error| error.to_string())?;
     let identity = selected
         .quest_identity()
         .and_then(|facts| facts.rows.iter().find(|identity| identity.id == spec.quest))
@@ -316,7 +317,8 @@ fn campaign_catalog() -> Result<&'static api::quest_facts::QuestCatalog, String>
         Result<std::sync::Arc<api::quest_facts::QuestCatalog>, String>,
     > = std::sync::LazyLock::new(|| {
         api::selected::FamilyPreparation::run(|worker| {
-            let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)?;
+            let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+                .map_err(|error| error.to_string())?;
             selected
                 .prepare_quests(worker)
                 .map_err(|error| format!("{error:?}"))

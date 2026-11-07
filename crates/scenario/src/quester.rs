@@ -1487,7 +1487,8 @@ pub fn quester_path_scenario_from_env() -> Result<Scenario, String> {
     let (path, _) = load_quester_path_document(&quest)?;
     let row = fixture_row(&quest)?;
     let start = quester_path_start_anchor(&path)?;
-    let selected = api::game_data::for_revision(ClientRevision::R289)?;
+    let selected =
+        api::game_data::for_revision(ClientRevision::R289).map_err(|error| error.to_string())?;
 
     let seeds = std::env::var_os("QUESTER_SEEDS")
         .map(|path| {

@@ -150,7 +150,8 @@ fn build_seed_scenario_with_mode(
     plan: SeedPlan,
     mode: SeedScenarioMode,
 ) -> Result<Scenario, String> {
-    let selected = api::game_data::for_revision(ClientRevision::R289)?;
+    let selected =
+        api::game_data::for_revision(ClientRevision::R289).map_err(|error| error.to_string())?;
     let stand = WorldTile {
         x: plan.start_tile[0],
         z: plan.start_tile[1],

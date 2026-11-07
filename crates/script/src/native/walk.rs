@@ -365,7 +365,9 @@ impl NativeMachine for Walk {
             let data = match api::game_data::for_revision(cx.revision()) {
                 Ok(data) => data,
                 Err(error) => {
-                    return Poll::Ready(Err(ActionError::Unavailable(Arc::from(error))));
+                    return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
+                        error.to_string(),
+                    ))));
                 }
             };
             let quests = data.try_quests();

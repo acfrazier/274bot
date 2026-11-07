@@ -325,7 +325,7 @@ impl AcquireRun {
                         return Poll::Pending;
                     }
                     let selected = api::game_data::for_revision(tick.cx.revision())
-                        .map_err(|error| ActionError::Unavailable(Arc::from(error)))?;
+                        .map_err(|error| ActionError::Unavailable(Arc::from(error.to_string())))?;
                     match self.request.deposit.as_ref().expect("checked deposit") {
                         DepositSpec::Ids { products, keep } => {
                             if let Some(rows) = tick.cx.snapshot().inventory() {
@@ -629,7 +629,7 @@ impl AcquireRun {
     fn replan(&self, tick: &NativeTick<'_>, live: bool) -> Result<AcquireVerdict, ActionError> {
         let snapshot = tick.cx.snapshot();
         let data = api::game_data::for_revision(tick.cx.revision())
-            .map_err(|error| ActionError::Unavailable(Arc::from(error)))?;
+            .map_err(|error| ActionError::Unavailable(Arc::from(error.to_string())))?;
         let world = WorldFacts {
             data: Some(&data),
             members: snapshot.world().is_some_and(|world| world.value.members),
