@@ -198,6 +198,7 @@ fn bundled_path_for(revision: ClientRevision, id: &str) -> Option<&'static [u8]>
             "gobdip" => Some(include_bytes!("../../paths/377/gobdip.json").as_slice()),
             "vampire" => Some(include_bytes!("../../paths/377/vampire.json").as_slice()),
             "demon" => Some(include_bytes!("../../paths/377/demon.json").as_slice()),
+            "squire" => Some(include_bytes!("../../paths/377/squire.json").as_slice()),
             _ => None,
         })
         .flatten()
