@@ -158,7 +158,8 @@ pub(crate) fn client_377_scenario() -> Scenario {
 mod tests {
     use super::*;
     use client::client::{ClientConfig, ClientNpc};
-    use client::config::{Cache, IfType, IfTypeMut, NpcType};
+    use client::config::runtime_377::{CacheFields377, InterfaceFields377, NpcFields377};
+    use client::config::{Cache, CacheRevision377, IfType, IfTypeMut, NpcType};
     use client::dash3d::ClientPlayer;
     use client::io::ClientStream;
     use std::sync::Arc;
@@ -220,6 +221,25 @@ mod tests {
         }
         cache.npcs[0].name = "Hans".into();
         cache.npcs[0].op = vec![Some("Talk-to".into()), None, None, None, None];
+        // A 377 menu exists only when its selected current form is interactive.
+        cache.revision_377 = Some(Box::new(CacheRevision377 {
+            config: CacheFields377 {
+                npcs: vec![NpcFields377 {
+                    field_1451: -1,
+                    field_1430: -1,
+                    field_1440: -1,
+                    field_1434: true,
+                    morph: None,
+                }],
+                ..Default::default()
+            },
+            interfaces: InterfaceFields377 {
+                client_code_layers: Default::default(),
+                type1_fields: Vec::new(),
+                null_string_masks: Vec::new(),
+                initial_overlays: Vec::new(),
+            },
+        }));
     }
 
     fn publish_hans(client: &mut Client, position: Option<(i32, i32)>) {
