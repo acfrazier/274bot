@@ -2449,6 +2449,22 @@ pub(crate) fn real_nav_lease() -> Option<&'static nav_planner::contract::NavLeas
 }
 
 #[cfg(test)]
+pub(crate) fn real_377_nav_lease() -> &'static nav_planner::contract::NavLease {
+    static NAV: std::sync::LazyLock<nav_planner::contract::NavLease> =
+        std::sync::LazyLock::new(|| {
+            let pack = api::test_support::local_asset_path("NAV_377_PACK", "", "real 377 nav pack")
+                .expect("the 377 Path fixtures require NAV_377_PACK");
+            let bytes = std::fs::read(&pack)
+                .unwrap_or_else(|error| panic!("read real 377 pack {}: {error}", pack.display()));
+            let world = nav_planner::world::NavWorld::from_bytes(&bytes)
+                .unwrap_or_else(|error| panic!("load real 377 pack {}: {error}", pack.display()));
+            nav_planner::contract::NavLease::wrap(Arc::new(world))
+                .expect("create a lease for the real 377 zone catalog")
+        });
+    &NAV
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::quester::path::PredicateDocument;
