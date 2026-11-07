@@ -690,6 +690,12 @@ its own `prefer`/`choose`/`line_rules`, never the default last option.
 `continue_only: true` omits `npc` and drains an already-open conversation
 without talking or walking, under the same adopted-page rule.
 
+On revision 377, a nameless placed NPC config can use its observed current
+form. Declared static operations must include Talk-to; the current snapshot
+must also expose Talk-to for that exact placed type before interaction.
+Null or non-talkable current forms cannot be opened. Compilation never
+replaces the configured type with a static leaf. Revision 274/289 is unchanged.
+
 `interact` and `use_on` share one dialogue policy. `"continue"` drives strict
 Continue-only continuation and refuses an unconfigured menu. The options-object
 form uses its authored answer rules and `strict` value. Both forms expect a page
