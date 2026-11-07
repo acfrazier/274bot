@@ -144,7 +144,7 @@ assert.equal(row377('partial_attacker').attack_kind, null, 'an unknown branch pr
 assert.equal(row377('queue_retaliator').ap_attack, true, '377 ai_queue1 can invoke the AP retaliation helper');
 assert.equal(row377('queue_retaliator').bespoke, false, 'retaliation queue code is not itself an attack handler');
 assert.equal(row377('khazard_warlord').maxrange, 7, 'a missing NPC block uses the 377 default wander range and postDecode maxrange');
-assert.equal(row377('khazard_warlord').strength, null, 'a missing NPC block is not assigned decoder stat defaults');
+assert.equal(row377('khazard_warlord').strength, 1, 'a packed NPC without a source section retains the selected engine stat defaults');
 
 const facts289 = extractNpcNamesFacts(content, 289, engineNpcTypeSource);
 const row289 = (config: string) => {
