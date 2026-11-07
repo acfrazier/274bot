@@ -1816,7 +1816,7 @@ mod tests {
                     &quests,
                     worker,
                     &crate::local_state::OperatorLoadouts::absent(),
-                    None,
+                    compile::real_377_nav_lease().zones(),
                 )
                 .unwrap_or_else(|error| panic!("377 {id} failed to compile: {error:?}"));
                 assert_eq!(compiled.id.0.as_ref(), id.as_str());
@@ -1860,7 +1860,7 @@ mod tests {
                 &quests,
                 worker,
                 &crate::local_state::OperatorLoadouts::absent(),
-                None,
+                compile::real_377_nav_lease().zones(),
             )
             .unwrap_or_else(|error| panic!("377 Imp Catcher failed to compile: {error:?}"));
             assert_eq!(compiled.id.0.as_ref(), "imp");
@@ -1897,7 +1897,7 @@ mod tests {
                 &quests,
                 worker,
                 &crate::local_state::OperatorLoadouts::absent(),
-                None,
+                compile::real_377_nav_lease().zones(),
             )
             .unwrap_or_else(|error| panic!("377 Doric failed to compile: {error:?}"));
             assert_eq!(compiled.id.0.as_ref(), "doric");
