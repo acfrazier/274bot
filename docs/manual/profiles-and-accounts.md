@@ -129,11 +129,12 @@ in again, it stops trying and stays logged out.
 A bot with no script acts like a person at the game. The game's idle timer
 runs for it, so the game logs it out after about 90 seconds without input. A
 mouse or key press counts as input. A command you send to the bot also counts:
-a walk, a route step or a command you type. If the game drops the bot for any
-reason, or logs it out, it stays logged out. Its state says why. Click **Log
-in**, or start a script on it, to bring it back. If you stop that script before
-the bot is back, the bot stays logged out. A bot that runs a script has the idle
-timer switched off.
+a walk, a route step or a command you type.
+
+If the game drops the bot for any reason, or logs it out, it stays logged out.
+Its state says why. Click **Log in**, or start a script on it, to bring it
+back. If you stop that script before the bot is back, the bot stays logged out.
+A bot that runs a script has the idle timer switched off.
 
 ## Read the login messages
 
