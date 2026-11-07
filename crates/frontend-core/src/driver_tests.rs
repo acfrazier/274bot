@@ -2954,6 +2954,9 @@ fn a_rename_or_card_change_before_confirm_never_retargets_the_plan() {
 /// if a saved queue changes afterward, that bot is skipped before Start.
 #[test]
 fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = driver("f3-quester-disclosure", &["alice", "bob"]);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
     d.session_mut()
@@ -3077,6 +3080,9 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
 
 #[test]
 fn unplanned_bulk_start_refuses_quester_without_a_disclosure_plan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = driver("f3-quester-bulk-start-refused", &["alice", "bob"]);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
     d.session_mut()
@@ -3509,6 +3515,9 @@ fn a_copy_skips_a_target_whose_save_started_after_the_plan() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_copy_never_writes_a_recreated_profile_with_the_same_name() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = native_copy_plan("native-copy-recreate");
     let vault = d.session_mut().vault_mut().expect("vault");
     assert!(vault.remove("bob").expect("remove"));
@@ -3541,6 +3550,9 @@ fn native_copy_never_writes_a_recreated_profile_with_the_same_name() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_copy_skips_a_target_whose_save_started_after_the_plan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = native_copy_plan("native-copy-saving");
     let gate = d.session().write_gate();
     let held = gate.lock().expect("gate");
@@ -3664,6 +3676,9 @@ fn starts_held(d: &HeadlessDriver) -> bool {
 /// target; new Starts wait until the last save is accepted.
 #[test]
 fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for count in [67, 151] {
         let mut d = copy_to_many(&format!("f4-copy-{count}"), count);
         let command = d.session().fleet_plan().expect("plan").command();
@@ -3693,6 +3708,9 @@ fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
 /// already started settle, and new Starts are released.
 #[test]
 fn cancelling_a_queued_copy_writes_no_waiting_bot_and_releases_starts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = copy_to_many("f4-copy-cancel", 151);
     let command = d.session().fleet_plan().expect("plan").command();
     let run = d.submit(command, Targets::Plan).expect("run");
@@ -3819,6 +3837,9 @@ fn an_emptied_copy_plan_releases_its_scope() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn an_emptied_native_copy_plan_releases_its_scope_and_start_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = native_copy_plan("native-emptied-copy");
     assert!(d
         .session()
@@ -4259,6 +4280,10 @@ fn refused(d: &HeadlessDriver, submitted: &Submitted, name: &str) -> bool {
 
 #[test]
 fn paint_controls_pause_resume_and_stop_the_displayed_run_through_the_lifecycle_rows() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-controls", &["alice"]);
     let running = shown(&d, "alice");
     assert_eq!(
@@ -4319,6 +4344,10 @@ fn paint_controls_pause_resume_and_stop_the_displayed_run_through_the_lifecycle_
 
 #[test]
 fn paint_stop_from_running_reaches_idle_with_one_stop_report() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-stop-running", &["alice"]);
     let frame = shown(&d, "alice");
     let stop = activate(&mut d, &frame, STOP, "alice").expect("stop applies");
@@ -4335,6 +4364,10 @@ fn paint_stop_from_running_reaches_idle_with_one_stop_report() {
 
 #[test]
 fn a_double_pause_never_becomes_a_resume() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-double-pause", &["alice"]);
     let frame = shown(&d, "alice");
     let first = activate(&mut d, &frame, PAUSE, "alice").expect("pause");
@@ -4347,6 +4380,10 @@ fn a_double_pause_never_becomes_a_resume() {
 
 #[test]
 fn a_control_shown_for_one_profile_never_controls_the_newly_focused_one() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-focus", &["alice", "bob"]);
     let alice = shown(&d, "alice");
     for index in [PAUSE, STOP] {
@@ -4359,6 +4396,10 @@ fn a_control_shown_for_one_profile_never_controls_the_newly_focused_one() {
 
 #[test]
 fn a_control_from_an_ended_run_never_controls_its_replacement() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-replacement", &["alice"]);
     let old = shown(&d, "alice");
     let generation = old.view().generation();
@@ -4377,6 +4418,10 @@ fn a_control_from_an_ended_run_never_controls_its_replacement() {
 
 #[test]
 fn a_stale_frame_generation_is_refused_before_dispatch() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-stale-frame", &["alice"]);
     let old = shown(&d, "alice");
     helper_paint(old.view().generation() + 1).publish(d.session().play().expect("play"), "alice");
@@ -4388,6 +4433,10 @@ fn a_stale_frame_generation_is_refused_before_dispatch() {
 
 #[test]
 fn an_ordinary_paint_button_keeps_its_script_click_path() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-ordinary", &["alice"]);
     let frame = shown(&d, "alice");
     let click = activate(&mut d, &frame, 0, "alice").expect("script click");
@@ -4548,6 +4597,9 @@ fn compiled_paint_controls_case(
 #[cfg(not(feature = "js"))]
 #[test]
 fn compiled_gatherer_paint_controls_pause_resume_and_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::Arc;
     let data = script::gatherer::status::StatusData {
         skill: "Woodcutting",
@@ -5710,6 +5762,10 @@ fn nine_running_with_three_walks(test: &str) -> TestDriver {
 /// scripts and zero script walks.
 #[test]
 fn stopping_nine_marked_bots_retires_the_three_script_walks() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = nine_running_with_three_walks("psg-stop-nine");
     assert_eq!(row_labels(&d), all_labels("running"));
     let walking: Vec<_> = d
@@ -5775,6 +5831,10 @@ fn stopping_nine_marked_bots_retires_the_three_script_walks() {
 /// label back: a label is a fact about the bot, not about a view of it.
 #[test]
 fn old_walk_labels_do_not_return_after_focus_mark_filter_or_choice_changes() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::{MarkOp, MarkPredicate};
     let mut d = nine_running_with_three_walks("psg-views");
     assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
@@ -5862,6 +5922,10 @@ fn old_walk_labels_do_not_return_after_focus_mark_filter_or_choice_changes() {
 /// Stop decision and the status filters all read the same row facts.
 #[test]
 fn a_manual_walk_stays_visible_after_stop_and_the_decisions_read_the_same_facts() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::{MarkOp, MarkPredicate};
     let mut d = nine_running_with_three_walks("psg-manual");
     let arm = std::sync::Arc::new(std::sync::Mutex::new(host_play::WalkArm::default()));
@@ -5980,6 +6044,10 @@ fn a_manual_walk_stays_visible_after_stop_and_the_decisions_read_the_same_facts(
 /// process log is shared by every test.
 #[test]
 fn a_repeated_stop_logs_one_refusal_line() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::log::{global, LogScope, LogView};
     const BOTS: [&str; 3] = ["psg5-a", "psg5-b", "psg5-c"];
     let mut d = driver("psg-refusal", &BOTS);

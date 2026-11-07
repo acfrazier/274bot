@@ -2053,6 +2053,9 @@ fn ordered_observation_survives_real_client_socket_adoption_without_reset() {
 #[test]
 fn ordered_existing_compat_loop_keeps_twenty_eight_immediate_true_drops_without_host_rate_refusal()
 {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new();
     {
         let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
@@ -2077,14 +2080,14 @@ fn ordered_existing_compat_loop_keeps_twenty_eight_immediate_true_drops_without_
         r#"
 import { Input } from '../../input/Input.js';
 export default class T extends LoopingBot {
-    loop() {
-        if (globalThis.__sent) return;
-        globalThis.__sent = true;
-        globalThis.__returns = [];
-        for (let slot = 0; slot < 28; slot++) {
-            globalThis.__returns.push(Input.heldOp(1511 + slot, slot, 3214, 1));
-        }
+loop() {
+    if (globalThis.__sent) return;
+    globalThis.__sent = true;
+    globalThis.__returns = [];
+    for (let slot = 0; slot < 28; slot++) {
+        globalThis.__returns.push(Input.heldOp(1511 + slot, slot, 3214, 1));
     }
+}
 }
 "#,
     );

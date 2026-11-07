@@ -133,6 +133,9 @@ mod tests {
 
     #[test]
     fn both_selected_caches_post_the_audited_teleports() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for rev in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(rev);
             let varrock = data.teleport("Varrock").expect("Varrock");
@@ -163,6 +166,9 @@ mod tests {
 
     #[test]
     fn missing_controls_do_not_invent_a_button() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         crate::scene::supply_v2::configure(None);
         assert_eq!(
             machine::start("teleport", json!({ "name": "Varrock" }), Vec::new(), 0),

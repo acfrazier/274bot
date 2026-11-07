@@ -6343,6 +6343,8 @@ fn selected_profile(
     nav_pack: PathBuf,
     engine_dir: PathBuf,
     catalog_root: PathBuf,
+    cache_dir: Option<PathBuf>,
+    nav_flags: Option<PathBuf>,
     temp: &Path,
     game_port: Option<u16>,
 ) -> Result<(Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>), String> {
@@ -6363,9 +6365,9 @@ fn selected_profile(
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(2080),
         ),
-        cache_dir: std::env::var_os("BOT_CACHE_DIR").map(PathBuf::from),
+        cache_dir,
         nav_pack: Some(nav_pack),
-        nav_flags: std::env::var_os("GATHERER_NAV_FLAGS").map(PathBuf::from),
+        nav_flags,
         engine_dir: Some(engine_dir),
         vault_path: Some(temp.join("vault")),
         catalog_root: Some(catalog_root),
@@ -6386,6 +6388,9 @@ fn selected_profile(
 
 fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
+        return Ok(());
+    }
+    if !api::test_support::game_data_available() {
         return Ok(());
     }
     if case.is_named_site() && !cfg!(feature = "live-probe") {
@@ -6424,6 +6429,30 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         "real frozen script catalog for the Gatherer live proof",
     ) else {
         return Ok(());
+    };
+    let cache_dir = if std::env::var_os("BOT_CACHE_DIR").is_some() {
+        let Some(path) = api::test_support::local_asset_path(
+            "BOT_CACHE_DIR",
+            "",
+            "local Gatherer cache snapshot",
+        ) else {
+            return Ok(());
+        };
+        Some(path)
+    } else {
+        None
+    };
+    let nav_flags = if std::env::var_os("GATHERER_NAV_FLAGS").is_some() {
+        let Some(path) = api::test_support::local_asset_path(
+            "GATHERER_NAV_FLAGS",
+            "",
+            "local Gatherer navigation flags",
+        ) else {
+            return Ok(());
+        };
+        Some(path)
+    } else {
+        None
     };
     for (name, path) in [
         ("GATHERER_NAV_PACK", &nav_pack),
@@ -6471,6 +6500,8 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
         nav_pack,
         engine_dir,
         catalog_root,
+        cache_dir,
+        nav_flags,
         temp.path(),
         relay.as_ref().map(|relay| relay.port),
     )?;
@@ -8200,6 +8231,9 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
     }
+    if !api::test_support::game_data_available() {
+        return Ok(());
+    }
     const CELL: &str = "g3_quester_sheep_bank_shared_core";
     let _home = script::IsolatedEnv::enter(CELL);
     api::hostlog::set_debug(true);
@@ -8242,6 +8276,30 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
             return Err(format!("{name} is not a directory: {}", path.display()));
         }
     }
+    let cache_dir = if std::env::var_os("BOT_CACHE_DIR").is_some() {
+        let Some(path) = api::test_support::local_asset_path(
+            "BOT_CACHE_DIR",
+            "",
+            "local Gatherer cache snapshot",
+        ) else {
+            return Ok(());
+        };
+        Some(path)
+    } else {
+        None
+    };
+    let nav_flags = if std::env::var_os("GATHERER_NAV_FLAGS").is_some() {
+        let Some(path) = api::test_support::local_asset_path(
+            "GATHERER_NAV_FLAGS",
+            "",
+            "local Gatherer navigation flags",
+        ) else {
+            return Ok(());
+        };
+        Some(path)
+    } else {
+        None
+    };
     let mut scenario =
         scenario::get("quester_sheep").ok_or("scenario registry has no quester_sheep")?;
     if scenario.settings.start_script != Some("Quester") {
@@ -8261,8 +8319,15 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
     let mainland = scenario.seed.mainland;
     scenario.settings.nav.engine_speed_ms = None;
     let temp = TempRoot::new(CELL)?;
-    let (profile, template) =
-        selected_profile(nav_pack, engine_dir, catalog_root, temp.path(), None)?;
+    let (profile, template) = selected_profile(
+        nav_pack,
+        engine_dir,
+        catalog_root,
+        cache_dir,
+        nav_flags,
+        temp.path(),
+        None,
+    )?;
     let names = host_play::mint_live_names(1);
     let account = names
         .first()
@@ -8810,6 +8875,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn woodcutting_status_gate_rejects_kebab_left_after_deposit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
         let (config, snapshot) = bank_fixture(&[(LOG_ID, 4), (KEBAB_ID, 1)]);
         let mut slot = GatherSlot::new(
@@ -8868,6 +8936,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn tool_fetch_first_visit_is_not_a_deposit_trip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let empty = BTreeMap::new();
         let deposit_ids = native_deposit_ids(&[]);
         assert!(deposit_ids.is_empty());
@@ -8889,6 +8960,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn woodcutting_bank_conserves_products_and_incidental_kebab() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let inventory_before = counts(&[(LOG_ID, 4), (KEBAB_ID, 1)]);
         let deposit_ids = native_deposit_ids(&[(LOG_ID, 4), (KEBAB_ID, 1)]);
         let expected_items = bank_deposit_expectation(&inventory_before, &deposit_ids);
@@ -9271,6 +9345,9 @@ mod bank_conservation_tests {
     /// credited in the bank, tally 27, net kept) passes every gate.
     #[test]
     fn fish_bank_soak_oracle_accepts_a_banked_incidental_item() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         observe_pack_change(
             &mut slot,
@@ -9344,6 +9421,9 @@ mod bank_conservation_tests {
     /// frame oracle keeps it unsettled and the trip is not verified.
     #[test]
     fn fish_bank_soak_oracle_rejects_a_missing_bank_credit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         observe_pack_change(&mut slot, &[(NET_ID, 1)], &[(SHRIMP_ID, 26)]).unwrap();
         assert_eq!(
@@ -9388,6 +9468,9 @@ mod bank_conservation_tests {
     /// candidate, so no bank increase settles it.
     #[test]
     fn fish_bank_soak_oracle_rejects_a_lost_protected_net() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         observe_pack_change(&mut slot, &[], &[(SHRIMP_ID, 26), (STRANGE_FRUIT_ID, 1)]).unwrap();
         assert_eq!(
@@ -9410,6 +9493,9 @@ mod bank_conservation_tests {
     /// held, so the trip is not verified.
     #[test]
     fn fish_bank_soak_oracle_rejects_a_wrong_deposit_tally() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         observe_pack_change(
             &mut slot,
@@ -9440,6 +9526,9 @@ mod bank_conservation_tests {
     /// blocks instead of failing on the aborted trip's accounting.
     #[test]
     fn fish_bank_soak_block_abandons_the_pending_trip_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_at_deposit();
         observe_pack_change(&mut slot, &[(NET_ID, 1)], &[]).unwrap();
         assert_eq!(slot.unsettled_items.len(), 2);
@@ -9501,6 +9590,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn lamp_without_a_wish_fails_at_the_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_with_lamps(1);
         let (before, left) = lamp_leaves(&mut slot);
         slot.observe_running(Some(before), left.clone()).unwrap();
@@ -9512,6 +9604,9 @@ mod bank_conservation_tests {
     /// the earliest such stamp is the observation's own capture instant.
     #[test]
     fn lamp_settles_on_a_wish_in_the_observation_it_left_in() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_with_lamps(1);
         let (before, left) = lamp_leaves(&mut slot);
         slot.witness.last_wish_granted = Some(left.captured_at);
@@ -9528,6 +9623,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn lamp_settles_on_a_wish_after_it_left() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_with_lamps(1);
         let (before, left) = lamp_leaves(&mut slot);
         slot.observe_running(Some(before), left.clone()).unwrap();
@@ -9548,6 +9646,9 @@ mod bank_conservation_tests {
     /// accepted by the old two-second window).
     #[test]
     fn lamp_is_not_settled_by_a_recent_earlier_wish() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for earlier in [Duration::from_nanos(1), Duration::from_secs(1)] {
             let mut slot = soak_slot_with_lamps(1);
             let (before, left) = lamp_leaves(&mut slot);
@@ -9559,6 +9660,9 @@ mod bank_conservation_tests {
 
     #[test]
     fn lamp_is_not_settled_by_an_old_wish() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_with_lamps(1);
         let (before, left) = lamp_leaves(&mut slot);
         slot.witness.last_wish_granted = Some(
@@ -9575,6 +9679,9 @@ mod bank_conservation_tests {
     /// settle the second, although it belongs to the second's observation.
     #[test]
     fn lamp_is_not_settled_by_a_wish_another_lamp_consumed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut slot = soak_slot_with_lamps(2);
         let before = slot.capture();
         slot.snapshot

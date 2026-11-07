@@ -1029,15 +1029,6 @@ mod tests {
         dir
     }
 
-    fn local_game_data_asset(revision: &str) -> Option<std::path::PathBuf> {
-        let default_path = format!(
-            "{}/../api/data/game-data/{revision}.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let description = format!("revision {revision} game data");
-        api::test_support::local_asset_path("", &default_path, &description)
-    }
-
     fn bury_schema() -> TestSchema {
         TestSchema::setting(
             "buryBones",
@@ -1595,7 +1586,7 @@ mod tests {
 
     #[test]
     fn item_choices_paint_identity_label_and_persist_key() {
-        if local_game_data_asset("274").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 
@@ -1682,7 +1673,7 @@ mod tests {
 
     #[test]
     fn gatherer_dynamic_lists_keep_unknowns_and_allow_radius_edits() {
-        if local_game_data_asset("274").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 
@@ -1960,7 +1951,7 @@ mod tests {
 
     #[test]
     fn scalar_fishing_cycle_skips_refused_groups_and_wraps() {
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 
@@ -2041,7 +2032,7 @@ mod tests {
 
     #[test]
     fn gather_site_picker_filters_and_accepts_explicit_selection() {
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 
@@ -2184,7 +2175,7 @@ mod tests {
 
     #[test]
     fn invalid_gather_site_remains_disabled_and_explains_why() {
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 
@@ -2261,7 +2252,7 @@ mod tests {
 
     #[test]
     fn incompatible_saved_site_reason_is_visible_with_choices_at_80_columns() {
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 

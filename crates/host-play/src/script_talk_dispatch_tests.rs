@@ -227,6 +227,9 @@ impl TalkRig {
 /// in the same pass: the next poll finds it settled, stamped with that tick.
 #[test]
 fn a_talk_to_queued_before_a_pass_that_can_send_it_is_settled_in_that_pass() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = talk_rig();
     rig.pass(1, true, false, false);
     assert_eq!(rig.driver.npc_ops, 1, "the emit pass sends the click");
@@ -270,6 +273,9 @@ impl TalkRig {
 /// that can send it does.
 #[test]
 fn a_talk_to_waits_queued_while_no_pass_can_send_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = talk_rig();
     rig.emit_without_dispatch(1);
     for tick in 2..=20 {
@@ -308,6 +314,9 @@ fn a_talk_to_waits_queued_while_no_pass_can_send_it() {
 /// still queued; the probe queues it again, and that pass sends it.
 #[test]
 fn a_held_frame_drops_the_queued_talk_to_unsent() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = talk_rig();
     rig.emit_without_dispatch(1);
     rig.pass(2, true, true, false);
@@ -346,6 +355,9 @@ fn a_held_frame_drops_the_queued_talk_to_unsent() {
 /// after the hold, as with any other held frame.
 #[test]
 fn a_guardian_hold_drops_the_queued_talk_to_unsent() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = talk_rig();
     rig.emit_without_dispatch(1);
     rig.pass(2, true, true, true);

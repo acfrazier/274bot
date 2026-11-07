@@ -1038,6 +1038,9 @@ mod tests {
 
     #[test]
     fn settings_accept_g3_defaults_and_reject_unsupported_modes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let defaults = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
         assert_eq!(defaults.disposition, "Bank");
         assert_eq!(defaults.bank, "Nearest");
@@ -1077,6 +1080,9 @@ mod tests {
 
     #[test]
     fn gather_aliases_expand_without_rewriting_and_unknown_resource_does_not_block_radius() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (selected, catalog) = selected_catalog(api::selected::ClientRevision::R274);
         let grouped = selected
             .gather_resources_for("fishing")

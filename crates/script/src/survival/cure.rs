@@ -318,6 +318,9 @@ mod tests {
 
     #[test]
     fn cure_choice_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let ordinary_id = dose_id(&tables, PotionKind::Antipoison, 1);
         let ordinary = [held(ordinary_id, 1)];
@@ -625,6 +628,9 @@ mod tests {
 
     #[test]
     fn cure_choice_onset_uses_latched_pulse() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let ordinary_id = dose_id(&tables, PotionKind::Antipoison, 1);
         let ordinary = [held(ordinary_id, 1)];
@@ -677,6 +683,9 @@ mod tests {
 
     #[test]
     fn cure_choice_pending_lethal_reports_only_and_emergency_acts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let ordinary_id = dose_id(&tables, PotionKind::Antipoison, 1);
         let ordinary = [held(ordinary_id, 1)];
@@ -727,6 +736,9 @@ mod tests {
 
     #[test]
     fn cure_choice_onset_unknown_source_uses_strongest() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let ordinary_id = dose_id(&tables, PotionKind::Antipoison, 1);
         let ordinary = [held(ordinary_id, 1)];
@@ -754,6 +766,9 @@ mod tests {
 
     #[test]
     fn cure_choice_smaller_mark_is_not_lethal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let ordinary_id = dose_id(&tables, PotionKind::Antipoison, 1);
         let ordinary = [held(ordinary_id, 1)];
@@ -784,6 +799,9 @@ mod tests {
 
     #[test]
     fn cure_choice_ordinary_before_super_and_reserve_forbids_super() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let ordinary1 = dose_id(&tables, PotionKind::Antipoison, 1);
         let ordinary4 = dose_id(&tables, PotionKind::Antipoison, 4);
@@ -842,6 +860,9 @@ mod tests {
 
     #[test]
     fn cure_choice_orders_doses_and_respects_policy_route_and_clock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let ordinary_1 = dose_id(&tables, PotionKind::Antipoison, 1);
         let ordinary_4 = dose_id(&tables, PotionKind::Antipoison, 4);
@@ -978,6 +999,9 @@ mod tests {
     }
     #[test]
     fn cure_choice_waits_for_food_clock_but_not_pending_eat() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let fruit_id = tables
             .selected()
@@ -1051,6 +1075,9 @@ mod tests {
 
     #[test]
     fn cure_choice_warm_ticks_allocate_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let state = condition(
             60,

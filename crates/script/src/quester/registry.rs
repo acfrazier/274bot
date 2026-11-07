@@ -1719,6 +1719,9 @@ mod tests {
     /// slice policy; every filesystem read and parse still runs off-pump.
     #[test]
     fn quester_registry_policy_timing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let folder = Folder::new();
         folder.cook("cook", "release policy timing");
         let document = folder.0.join("cook.json");
@@ -1761,6 +1764,9 @@ mod tests {
 
     #[test]
     fn cooperative_reload_matches_filesystem_after_edit_and_keeps_diagnostics() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook", "before cooperative preparation");
@@ -1866,6 +1872,9 @@ mod tests {
 
     #[test]
     fn cooperative_reload_fails_closed_at_retained_document_limit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, _worker| {
             let folder = Folder::new();
             let mut preparation =
@@ -1903,6 +1912,9 @@ mod tests {
 
     #[test]
     fn cooperative_scan_fails_closed_after_bounded_directory_entries() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             for number in 0..=MAX_FOLDER_ENTRIES {
@@ -1929,6 +1941,9 @@ mod tests {
 
     #[test]
     fn folder_gather_progress_reader_prepares_catalog_during_validation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             let id = "gather-reader-draft";
@@ -1975,6 +1990,9 @@ mod tests {
 
     #[test]
     fn folder_override_replaces_bundled_document_on_start_load() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook", "edited folder comment");
@@ -1992,6 +2010,9 @@ mod tests {
 
     #[test]
     fn folder_draft_is_a_queue_candidate_and_compiles() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook-draft", "draft comment");
@@ -2023,6 +2044,9 @@ mod tests {
 
     #[test]
     fn invalid_override_reports_compile_error_and_keeps_other_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook", "invalid override");
@@ -2054,6 +2078,9 @@ mod tests {
 
     #[test]
     fn reload_observes_edited_document_without_restart() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook", "first edit");
@@ -2076,6 +2103,9 @@ mod tests {
 
     #[test]
     fn folder_off_ignores_files_and_keeps_bundled_bytes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("cook", "ignored comment");
@@ -2106,6 +2136,9 @@ mod tests {
 
     #[test]
     fn optional_index_orders_drafts_and_preserves_server_unavailable_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             folder.cook("draft-a", "A");
@@ -2136,6 +2169,9 @@ mod tests {
 
     #[test]
     fn invalid_draft_stays_unavailable_and_oversized_file_is_bounded() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             std::fs::write(folder.0.join("broken.json"), b"not JSON").unwrap();
@@ -2181,6 +2217,9 @@ mod tests {
 
     #[test]
     fn folder_diagnostics_are_capped_with_an_omission_summary() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         with_data(|selected, quests, worker| {
             let folder = Folder::new();
             for number in 0..300 {
@@ -2295,6 +2334,9 @@ mod tests {
     }
     #[test]
     fn stale_or_cancelled_work_preparation_never_publishes_a_path_snapshot() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::identity::{Cancellation, Scope};
         use std::sync::Barrier;
 

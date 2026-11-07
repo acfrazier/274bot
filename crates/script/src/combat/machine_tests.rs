@@ -768,6 +768,9 @@ fn stand_approach_fixture(
 
 #[test]
 fn combat_machine_cure_row_precedes_eat_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum EatingBranch {
         WindDown,
@@ -913,6 +916,9 @@ fn combat_machine_cure_row_precedes_eat_row() {
 
 #[test]
 fn combat_machine_never_policy_keeps_the_cure_and_eats() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     scene.face_us();
     scene.npcs[0].animation = scene.melee_seq();
@@ -970,6 +976,9 @@ fn combat_machine_never_policy_keeps_the_cure_and_eats() {
 
 #[test]
 fn combat_machine_drinks_antipoison_when_lethal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     scene.face_us();
     scene.stat(3, 200, 255);
@@ -1013,6 +1022,9 @@ fn combat_machine_drinks_antipoison_when_lethal() {
 
 #[test]
 fn combat_machine_uses_strange_fruit_and_settles_by_count_drop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     scene.face_us();
     scene.stat(3, 200, 255);
@@ -1063,6 +1075,9 @@ fn combat_machine_uses_strange_fruit_and_settles_by_count_drop() {
 }
 #[test]
 fn combat_machine_waits_for_shared_food_clock_before_cure_fruit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     scene.face_us();
     scene.npcs[0].animation = scene.melee_seq();
@@ -1162,6 +1177,9 @@ fn combat_machine_waits_for_shared_food_clock_before_cure_fruit() {
 
 #[test]
 fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let mut attacker = PlayerView {
         index: 8,
@@ -1227,6 +1245,9 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
 
 #[test]
 fn fail_closed_flick_mode_has_no_host_work() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scene = Scene::new("imp");
     let mut request = scene.request();
     request.prayer_mode = PrayerMode::Flick;
@@ -1243,6 +1264,9 @@ fn fail_closed_flick_mode_has_no_host_work() {
 
 #[test]
 fn case14_kill_proof_beats_plain_disappearance_but_not_our_death() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for dead in [false, true] {
         let mut scene = Scene::new("imp");
         let mut harness = fight(&mut scene);
@@ -1272,6 +1296,9 @@ fn case14_kill_proof_beats_plain_disappearance_but_not_our_death() {
 
 #[test]
 fn case40_missing_local_observations_do_not_latch_target_gone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let mut harness = fight(&mut scene);
     let missing = {
@@ -1297,6 +1324,9 @@ fn case40_missing_local_observations_do_not_latch_target_gone() {
 
 #[test]
 fn case35_listed_transform_is_not_a_kill_and_unlisted_transform_is_gone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let other = scene.data.npc_by_config("khazard_warlord").unwrap().id;
     let mut request = scene.request();
@@ -1325,6 +1355,9 @@ fn case35_listed_transform_is_not_a_kill_and_unlisted_transform_is_gone() {
 
 #[test]
 fn same_stamp_and_new_sequence_same_tick_cannot_duplicate_work() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scene = Scene::new("imp");
     let mut harness = Harness::new(&scene, scene.request());
     attack(harness.pending(&scene, 1));
@@ -1340,6 +1373,9 @@ fn same_stamp_and_new_sequence_same_tick_cannot_duplicate_work() {
 
 #[test]
 fn case27e_refused_drink_cannot_create_input_lock_or_restoration() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(5, 0, 43);
@@ -1358,6 +1394,9 @@ fn case27e_refused_drink_cannot_create_input_lock_or_restoration() {
 
 #[test]
 fn case27_recovery_food_and_drink_share_a_ready_plan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(3, 25, 40);
@@ -1402,6 +1441,9 @@ fn case27_recovery_food_and_drink_share_a_ready_plan() {
 
 #[test]
 fn case44_lone_karambwan_uses_the_reachable_danger_four_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let danger_four = scene
         .data
@@ -1441,6 +1483,9 @@ fn case44_lone_karambwan_uses_the_reachable_danger_four_gate() {
 
 #[test]
 fn unsafe_combo_only_food_does_not_hide_no_food_abort() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut request = scene.request();
     request.fallback = Fallback::Abort;
@@ -1473,6 +1518,9 @@ fn unsafe_combo_only_food_does_not_hide_no_food_abort() {
 
 #[test]
 fn held_food_on_cooldown_does_not_become_a_no_food_abort() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.face_us();
@@ -1501,6 +1549,9 @@ fn held_food_on_cooldown_does_not_become_a_no_food_abort() {
 
 #[test]
 fn case43_capped_recovery_gates_the_drink_strictly() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (hp, max, drink) in [(20, 30, true), (16, 30, false), (35, 40, true)] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
@@ -1548,6 +1599,9 @@ fn case43_capped_recovery_gates_the_drink_strictly() {
 
 #[test]
 fn case3_food_only_line_and_real_heal_choose_largest_fitting_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for hp in [20, 19] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
@@ -1573,6 +1627,9 @@ fn case3_food_only_line_and_real_heal_choose_largest_fitting_food() {
 
 #[test]
 fn case18_no_food_allowance_obeys_abort_or_fight_policy() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for fallback in [Fallback::Abort, Fallback::Fight] {
         let mut scene = Scene::new("khazard_warlord");
         let mut request = scene.request();
@@ -1599,6 +1656,9 @@ fn case18_no_food_allowance_obeys_abort_or_fight_policy() {
 
 #[test]
 fn case38_terminal_prayer_offs_are_unpaced_and_never_restore_attack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(5, 43, 43);
@@ -1646,6 +1706,9 @@ fn case38_terminal_prayer_offs_are_unpaced_and_never_restore_attack() {
 
 #[test]
 fn case20_steady_nonemitting_combat_ticks_allocate_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let mut harness = fight(&mut scene);
     scene.local.player.actor.animation = scene.melee_seq();
@@ -1682,6 +1745,9 @@ fn case20_steady_nonemitting_combat_ticks_allocate_nothing() {
 
 #[test]
 fn offensive_prayers_wait_for_live_combat_before_the_floor_sip() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     scene.stat(5, 26, 43);
     scene.inventory.push(scene.held("1doseprayerrestore", 0));
@@ -1738,6 +1804,9 @@ fn offensive_prayers_wait_for_live_combat_before_the_floor_sip() {
 
 #[test]
 fn combat_does_not_sip_above_the_native_c5_floor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     scene.stat(5, 27, 43);
     scene.inventory.push(scene.held("1doseprayerrestore", 0));
@@ -1776,6 +1845,9 @@ fn combat_does_not_sip_above_the_native_c5_floor() {
 
 #[test]
 fn combat_and_guard_share_projectile_first_protect_policy() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     scene.stat(5, 43, 43);
     scene.refresh();
@@ -1846,6 +1918,9 @@ fn combat_and_guard_share_projectile_first_protect_policy() {
 
 #[test]
 fn disagreeing_classified_projectiles_fall_back_to_the_saved_score() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     scene.face_us();
     scene.refresh();
@@ -1908,6 +1983,9 @@ fn disagreeing_classified_projectiles_fall_back_to_the_saved_score() {
 
 #[test]
 fn lock_end_swing_cannot_discharge_the_explicit_drink_restoration() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for onset_offset in 1..=3 {
         let mut scene = Scene::new("khazard_warlord");
         let protect = scene
@@ -1959,6 +2037,9 @@ fn lock_end_swing_cannot_discharge_the_explicit_drink_restoration() {
 
 #[test]
 fn case27_drink_lock_preserves_safety_and_coalesces_restoration() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for hits in [1, 2, 3] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
@@ -2010,6 +2091,9 @@ fn case27_drink_lock_preserves_safety_and_coalesces_restoration() {
 
 #[test]
 fn case27_recovery_food_is_narrow_and_uses_strict_heal_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for hp in [9, 18, 25] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
@@ -2049,6 +2133,9 @@ fn case27_recovery_food_is_narrow_and_uses_strict_heal_gate() {
 /// is the only row when no bite is due, and it follows the bite when one is.
 #[test]
 fn combat_prayer_rows_unchanged() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // No bite due: prayer recovery is the whole plan.
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
@@ -2103,6 +2190,9 @@ fn combat_prayer_rows_unchanged() {
 
 #[test]
 fn case28_food_extends_known_and_past_deadlines_without_delaying_restore() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for idle in [false, true] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
@@ -2155,6 +2245,9 @@ fn case28_food_extends_known_and_past_deadlines_without_delaying_restore() {
 
 #[test]
 fn case29_projected_protection_suppresses_nonemergency_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(5, 43, 43);
@@ -2193,6 +2286,9 @@ fn case29_projected_protection_suppresses_nonemergency_food() {
 
 #[test]
 fn case30_stale_attack_pacing_uses_the_worn_weapon_rate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (alias, rate) in [("bronze_2h_sword", 7), ("bronze_scimitar", 4)] {
         let mut scene = Scene::new("imp");
         let mut weapon = scene.held(alias, 3);
@@ -2209,6 +2305,9 @@ fn case30_stale_attack_pacing_uses_the_worn_weapon_rate() {
 
 #[test]
 fn case34_unattackable_rows_are_threats_not_targets_and_terminal_food_is_allowed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("nasty_tree");
     scene.npcs[0].actions.clear();
     scene.face_us();
@@ -2247,6 +2346,9 @@ fn case34_unattackable_rows_are_threats_not_targets_and_terminal_food_is_allowed
 
 #[test]
 fn counter_protect_saradomin_raises_magic_and_zamorak_is_magic() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let zamorak = Scene::new("trail_hard");
     let zamorak_row = zamorak
         .tables
@@ -2299,6 +2401,9 @@ fn counter_protect_saradomin_raises_magic_and_zamorak_is_magic() {
 
 #[test]
 fn case11_offensive_drop_batches_keep_protect_and_restore_last() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(5, 43, 43);
@@ -2390,6 +2495,9 @@ fn case11_offensive_drop_batches_keep_protect_and_restore_last() {
 
 #[test]
 fn case5_prayer_floor_requires_active_or_wanted_prayer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (base, current, drink) in [
         (43, 26, true),
         (43, 27, false),
@@ -2423,6 +2531,9 @@ fn case5_prayer_floor_requires_active_or_wanted_prayer() {
 
 #[test]
 fn case40_retreat_waits_through_drink_lock_and_observed_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let goal = tile(
         scene.local.player.actor.tile.x + 20,
@@ -2478,6 +2589,9 @@ fn case40_retreat_waits_through_drink_lock_and_observed_arrival() {
 
 #[test]
 fn case15_terminal_walk_receipt_without_arrival_is_retreat_failed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let goal = tile(
         scene.local.player.actor.tile.x + 20,
@@ -2536,6 +2650,9 @@ fn case15_terminal_walk_receipt_without_arrival_is_retreat_failed() {
 
 #[test]
 fn admitted_drink_lock_wraps_without_losing_observation_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     scene.stat(5, 0, 43);
     scene.face_us();
@@ -2565,6 +2682,9 @@ fn admitted_drink_lock_wraps_without_losing_observation_count() {
 
 #[test]
 fn case19_unsettled_food_waits_two_windows_and_eventually_aborts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.face_us();
@@ -2596,6 +2716,9 @@ fn case19_unsettled_food_waits_two_windows_and_eventually_aborts() {
 
 #[test]
 fn case1_and2_prep_distinguishes_essential_and_optional_wear() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (alias, slot, expected) in [
         ("bronze_scimitar", 3, Some(PrepItem::Weapon)),
         ("iron_platebody", 4, None),
@@ -2668,6 +2791,9 @@ fn case1_and2_prep_distinguishes_essential_and_optional_wear() {
 
 #[test]
 fn case12_prep_boosts_once_each_then_respects_cycle_and_target_quarter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     for (slot, alias) in ["1dose2attack", "1dose2strength", "1dose2defense"]
         .into_iter()
@@ -2708,6 +2834,9 @@ fn case12_prep_boosts_once_each_then_respects_cycle_and_target_quarter() {
 
 #[test]
 fn prep_wears_and_drinks_before_the_first_attack_when_the_target_starts_out_of_reach() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let stand = tile(2600, 3200);
     let in_reach = tile(2601, 3200);
     let out_of_reach = tile(2600, 3207);
@@ -2769,6 +2898,9 @@ fn prep_wears_and_drinks_before_the_first_attack_when_the_target_starts_out_of_r
 
 #[test]
 fn late_durable_target_reruns_prep_before_the_first_attack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     scene.stat(3, 99, 99);
     let weapon = scene.held("rune_scimitar", 0);
@@ -2823,6 +2955,9 @@ fn late_durable_target_reruns_prep_before_the_first_attack() {
 
 #[test]
 fn case6_imp_skips_offensive_upkeep_unless_the_kit_carries_boosts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for in_kit in [false, true] {
         let mut scene = Scene::new("imp");
         scene.stat(5, 43, 43);
@@ -2853,6 +2988,9 @@ fn case6_imp_skips_offensive_upkeep_unless_the_kit_carries_boosts() {
 
 #[test]
 fn case13_dragon_shield_overrides_kit_and_rejects_two_handed_weapon() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for two_handed in [false, true] {
         let mut scene = Scene::new("elvarg");
         let weapon = scene.held(
@@ -2925,6 +3063,9 @@ fn case13_dragon_shield_overrides_kit_and_rejects_two_handed_weapon() {
 
 #[test]
 fn case18_disallowed_potions_and_equipment_do_not_create_resource_intents() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for equipment in [false, true] {
         let mut scene = Scene::new("khazard_warlord");
         scene.inventory.push(scene.held("bronze_scimitar", 0));
@@ -2953,6 +3094,9 @@ fn case18_disallowed_potions_and_equipment_do_not_create_resource_intents() {
 
 #[test]
 fn case20_and26_live_mismatch_emits_only_two_owned_strings_without_cooldown_wait() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let mut harness = fight(&mut scene);
     let mut ignored = scene.npcs[0].clone();
@@ -2975,6 +3119,9 @@ fn case20_and26_live_mismatch_emits_only_two_owned_strings_without_cooldown_wait
 
 #[test]
 fn case39_synthetic_wire_cost_driver_bounds_fifty_fight_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.face_us();
@@ -3078,6 +3225,9 @@ fn case39_synthetic_wire_cost_driver_bounds_fifty_fight_ticks() {
 }
 #[test]
 fn case41_protect_on_ready_deadline_restores_swing_same_plan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     // Protection is available, while the current points stay below the
     // offensive-prayer floor so the ready-tick fixture has no unrelated upkeep.
@@ -3147,6 +3297,9 @@ fn case41_protect_on_ready_deadline_restores_swing_same_plan() {
 
 #[test]
 fn case42_offensives_fill_five_events_without_clearing_user_prayer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(5, 40, 43);
@@ -3214,6 +3367,9 @@ fn case42_offensives_fill_five_events_without_clearing_user_prayer() {
 
 #[test]
 fn case46_retaliate_turns_on_before_the_fight_attack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene
@@ -3249,6 +3405,9 @@ fn case46_retaliate_turns_on_before_the_fight_attack() {
 
 #[test]
 fn case47_winddown_preserves_six_unowned_prayers_after_a_drink_lock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.face_us();
@@ -3289,6 +3448,9 @@ fn case47_winddown_preserves_six_unowned_prayers_after_a_drink_lock() {
 
 #[test]
 fn case49_fail_stop_preserves_accepted_food_and_retries_the_restoration() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.face_us();
@@ -3343,6 +3505,9 @@ fn case49_fail_stop_preserves_accepted_food_and_retries_the_restoration() {
 
 #[test]
 fn case50_foreign_event_spills_attack_without_same_tick_reemission() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.face_us();
@@ -3465,6 +3630,9 @@ fn measured_weapon_rate(harness: &Harness, scene: &Scene) -> u8 {
 
 #[test]
 fn case45_wear_style_waits_for_the_exact_observed_combat_tab() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut same_tab = Scene::new("imp");
     let bronze = same_tab.held("bronze_scimitar", 3);
     let bronze_id = bronze.def.id;
@@ -3620,6 +3788,9 @@ fn case45_wear_style_waits_for_the_exact_observed_combat_tab() {
 
 #[test]
 fn case53_script_refused_recovery_food_never_enters_a_drink_lock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     scene.face_us();
     scene.stat(3, 25, 40);
@@ -3650,6 +3821,9 @@ fn case53_script_refused_recovery_food_never_enters_a_drink_lock() {
 
 #[test]
 fn case54_readiness_covers_first_poll_handoff_gap_and_spilled_eat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scene = Scene::new("imp");
     let mut first_owner = Harness::new_at(&scene, scene.request(), 0);
     let initial = first_owner.pending_batch(&scene, 1);
@@ -3741,6 +3915,9 @@ fn case54_readiness_covers_first_poll_handoff_gap_and_spilled_eat() {
 
 #[test]
 fn case44_ordinary_and_combo_food_share_only_a_proven_safe_lock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.face_us();
@@ -3812,6 +3989,9 @@ fn leash_fight(scene: &mut Scene, budget_ticks: u16) -> Harness {
 
 #[test]
 fn stand_leash_loss_walks_off_the_server_chase_before_target_gone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let stand = scene.local.player.actor.tile;
     let mut harness = leash_fight(&mut scene, 50);
@@ -3844,6 +4024,9 @@ fn stand_leash_loss_walks_off_the_server_chase_before_target_gone() {
 
 #[test]
 fn leash_cancellation_grace_kill_beats_the_exact_budget_boundary() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let stand = scene.local.player.actor.tile;
     let mut harness = leash_fight(&mut scene, 4);
@@ -3863,6 +4046,9 @@ fn leash_cancellation_grace_kill_beats_the_exact_budget_boundary() {
 
 #[test]
 fn quester_combat_approach_replans_after_no_path() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let here = scene.local.player.actor.tile;
     let stand = tile(here.x + 20, here.z);
@@ -3941,6 +4127,9 @@ fn quester_combat_approach_replans_after_no_path() {
 
 #[test]
 fn default_combat_stand_approach_bounds_each_retryable_class_and_keeps_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::{WalkEnd, WalkStall, WalkStallReason};
 
     let stalled = |why| {
@@ -4017,6 +4206,9 @@ fn default_combat_stand_approach_bounds_each_retryable_class_and_keeps_last_deta
 
 #[test]
 fn default_combat_stand_approach_stops_for_each_terminal_class() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::{WalkEnd, WalkRefusal};
 
     let gates = Arc::from([api::selected::QuestGate::Complete(
@@ -4093,6 +4285,9 @@ fn default_combat_stand_approach_stops_for_each_terminal_class() {
 
 #[test]
 fn user_input_ends_combat_approach_without_rewalk_or_attack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let here = scene.local.player.actor.tile;
     let stand = tile(here.x + 20, here.z);
@@ -4118,6 +4313,9 @@ fn user_input_ends_combat_approach_without_rewalk_or_attack() {
 
 #[test]
 fn configured_stand_150_tiles_away_does_not_time_out_while_walk_is_pending() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (scene, mut harness, stand) = stand_approach_fixture(150, None);
     assert_eq!(stand.x - scene.local.player.actor.tile.x, 150);
     for tick in 2..=80 {
@@ -4128,6 +4326,9 @@ fn configured_stand_150_tiles_away_does_not_time_out_while_walk_is_pending() {
 
 #[test]
 fn configured_stand_no_target_window_starts_at_observed_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, mut harness, stand) = stand_approach_fixture(150, None);
     for tick in 2..=4 {
         assert!(harness.pending(&scene, tick).is_none());
@@ -4145,6 +4346,9 @@ fn configured_stand_no_target_window_starts_at_observed_arrival() {
 
 #[test]
 fn configured_stand_walk_failure_returns_its_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (scene, mut harness, stand) = stand_approach_fixture(150, None);
     for (tick, detail) in [
         (2, "first stand route failure"),
@@ -4175,6 +4379,9 @@ fn configured_stand_walk_failure_returns_its_detail() {
 
 #[test]
 fn configured_stand_approach_still_obeys_the_callers_combat_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (scene, mut harness, _) = stand_approach_fixture(150, Some(20));
     for tick in 2..20 {
         assert!(harness.pending(&scene, tick).is_none());
@@ -4184,6 +4391,9 @@ fn configured_stand_approach_still_obeys_the_callers_combat_budget() {
 
 #[test]
 fn same_tick_combat_approach_defers_after_an_interaction_spends_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let here = scene.local.player.actor.tile;
     let stand = tile(here.x + 20, here.z);
@@ -4211,6 +4421,9 @@ fn same_tick_combat_approach_defers_after_an_interaction_spends_budget() {
 
 #[test]
 fn stand_is_reached_before_engagement_even_when_a_target_is_already_in_radius() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The QUEST-S2 sweep shape: the target stands on the authored stand
     // tile, inside engage radius of it, while the player is still three
     // tiles away on the other side of its fence. Picking it now would
@@ -4257,6 +4470,9 @@ fn stand_is_reached_before_engagement_even_when_a_target_is_already_in_radius() 
 
 #[test]
 fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // At the stand, the straight-line-nearest cow is inside a closed
     // pen. The posted flood has no wall-valid stand beside it, so the
     // reachable cow farther away is the only melee candidate.
@@ -4303,6 +4519,9 @@ fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
 
 #[test]
 fn melee_pick_does_not_fall_back_when_the_posted_reach_flood_is_stale() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     let here = scene.local.player.actor.tile;
     scene.refresh();
@@ -4321,6 +4540,9 @@ fn melee_pick_does_not_fall_back_when_the_posted_reach_flood_is_stale() {
 
 #[test]
 fn failed_stand_walks_retry_to_a_bound_then_block_with_the_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     let here = scene.local.player.actor.tile;
     let stand = tile(here.x + 10, here.z);
@@ -4361,6 +4583,9 @@ fn failed_stand_walks_retry_to_a_bound_then_block_with_the_last_detail() {
 
 #[test]
 fn stand_walk_route_ended_at_the_network_aim_is_arrival_not_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // At route end the host can report `RouteEnded` while the network
     // tile already stands beside the stand and only the rendered tile
     // lags behind. That receipt must not spend the failure bound.
@@ -4395,6 +4620,9 @@ fn stand_walk_route_ended_at_the_network_aim_is_arrival_not_failure() {
 
 #[test]
 fn user_input_ends_combat_retreat_without_relatching_failure_or_rewalking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     let here = scene.local.player.actor.tile;
     let goal = tile(here.x + 20, here.z);
@@ -4434,6 +4662,9 @@ fn user_input_ends_combat_retreat_without_relatching_failure_or_rewalking() {
 
 #[test]
 fn user_input_ends_combat_leash_walk_without_retarget_or_rewalk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let stand = scene.local.player.actor.tile;
     let mut harness = leash_fight(&mut scene, 50);
@@ -4490,6 +4721,9 @@ fn policy_s2_buttons(batch: &DrainedBatch) -> Vec<i32> {
 
 #[test]
 fn policy_s2_sweep_preserves_user_prayers_and_never_restores_displaced_protect() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for switch_back in [false, true] {
         let mut scene = Scene::new("imp");
         scene.stat(5, 43, 43);
@@ -4573,6 +4807,9 @@ fn policy_s2_sweep_preserves_user_prayers_and_never_restores_displaced_protect()
 
 #[test]
 fn policy_s2_incomplete_baseline_emits_no_toggle_before_delayed_user_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Imp's engine melee max hit is 0 (no `strength=` line, default 1,
     // `strengthbonus=-37`: `npc_combat_melee.rs2:1-7`, `combat.rs2:4-12`,
     // `DIVIDE` then `toInt32`). Cow is still 1 (`strengthbonus=-15`).
@@ -4621,6 +4858,9 @@ fn policy_s2_incomplete_baseline_emits_no_toggle_before_delayed_user_row() {
 
 #[test]
 fn policy_s2_offensive_tier_never_displaces_user_strength() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("khazard_warlord");
     scene.stat(5, 43, 43);
     let burst = scene
@@ -4660,6 +4900,9 @@ fn policy_s2_offensive_tier_never_displaces_user_strength() {
 
 #[test]
 fn policy_s2_refused_switch_leaves_baseline_unowned_at_winddown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     scene.stat(5, 43, 43);
     let original = scene
@@ -4695,6 +4938,9 @@ fn policy_s2_refused_switch_leaves_baseline_unowned_at_winddown() {
 
 #[test]
 fn policy_s2_prayer_disallowed_preserves_user_overlays() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("imp");
     let skin = scene.data.prayer_by_name("Thick Skin").unwrap().clone();
     scene.prayer(skin.varp, true);
@@ -4719,6 +4965,9 @@ fn policy_s2_prayer_disallowed_preserves_user_overlays() {
 
 #[test]
 fn policy_s2_missing_raise_observation_does_not_relinquish_accepted_ownership() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Same as the incomplete-baseline fixture: imp max hit is 0, cow is 1.
     let mut scene = Scene::new("cow");
     scene.stat(5, 43, 43);
@@ -4755,6 +5004,9 @@ fn policy_s2_missing_raise_observation_does_not_relinquish_accepted_ownership() 
 
 #[test]
 fn case_31_ranged_animation_advances_cycle_but_projectile_does_not() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     let mut bow = scene.held("maple_shortbow", 3);
     bow.container = ItemContainer::Equipment;
@@ -4820,6 +5072,9 @@ fn case_31_ranged_animation_advances_cycle_but_projectile_does_not() {
 
 #[test]
 fn ranged_wrong_ammo_aborts_prep_without_attack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     let bow = scene.held("maple_shortbow", 0);
     let mut bolts = scene.held("bolt", 1);
@@ -4892,12 +5147,18 @@ fn assert_readiness_aborts_after_eight(
 
 #[test]
 fn ranged_combat_root_missing_aborts_after_eight_observed_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (scene, request, _) = ranged_readiness_fixture(false);
     assert_readiness_aborts_after_eight(&scene, request, "prep-readiness:combat-root-missing");
 }
 
 #[test]
 fn ranged_combat_root_wrong_aborts_after_eight_observed_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, request, _) = ranged_readiness_fixture(false);
     scene.combat_tab(5855);
     assert_readiness_aborts_after_eight(&scene, request, "prep-readiness:combat-root-wrong");
@@ -4905,6 +5166,9 @@ fn ranged_combat_root_wrong_aborts_after_eight_observed_ticks() {
 
 #[test]
 fn ranged_style_echo_missing_aborts_after_eight_observed_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, request, root) = ranged_readiness_fixture(false);
     scene.combat_tab(root);
     assert_readiness_aborts_after_eight(&scene, request, "prep-readiness:style-echo-missing");
@@ -4912,6 +5176,9 @@ fn ranged_style_echo_missing_aborts_after_eight_observed_ticks() {
 
 #[test]
 fn ranged_root_arriving_on_seventh_observed_tick_still_fights() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, request, root) = ranged_readiness_fixture(true);
     let mut harness = Harness::new(&scene, request);
     for tick in 1..7 {
@@ -4932,6 +5199,9 @@ fn ranged_root_arriving_on_seventh_observed_tick_still_fights() {
 
 #[test]
 fn ranged_readiness_bound_ignores_same_tick_repolls() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (scene, request, _) = ranged_readiness_fixture(false);
     let mut harness = Harness::new(&scene, request);
     assert!(matches!(harness.poll(&scene.snapshot, 1), Poll::Pending));
@@ -4959,6 +5229,9 @@ fn ranged_readiness_bound_ignores_same_tick_repolls() {
 
 #[test]
 fn ranged_readiness_bound_does_not_outlive_request_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (scene, mut request, _) = ranged_readiness_fixture(false);
     request.budget_ticks = 4;
     let mut harness = Harness::new(&scene, request);
@@ -4971,6 +5244,9 @@ fn ranged_readiness_bound_does_not_outlive_request_budget() {
 
 #[test]
 fn ranged_prep_waits_for_style_observation_then_ammo_out_is_explicit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     let mut bow = scene.held("maple_shortbow", 3);
     bow.container = ItemContainer::Equipment;
@@ -5028,16 +5304,25 @@ fn ranged_prep_waits_for_style_observation_then_ammo_out_is_explicit() {
 
 #[test]
 fn ranged_winddown_caps_even_unobserved_pickups_at_four() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     ranged_winddown_fixture(false, false);
 }
 
 #[test]
 fn ranged_winddown_aborts_for_another_live_threat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     ranged_winddown_fixture(true, false);
 }
 
 #[test]
 fn ranged_winddown_does_not_ignore_a_respawned_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     ranged_winddown_fixture(false, true);
 }
 
@@ -5132,6 +5417,9 @@ fn ranged_winddown_fixture(other_threat: bool, respawned: bool) {
 
 #[test]
 fn ranged_thrown_uses_weapon_stack_without_ammo_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     let mut darts = scene.held("bronze_dart", 3);
     darts.container = ItemContainer::Equipment;
@@ -5231,6 +5519,9 @@ fn contains_wear(batch: &DrainedBatch, wanted: &str) -> bool {
 
 #[test]
 fn ranged_prep_waits_for_torn_thrown_weapon_wear_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     let mut darts = scene.held("bronze_dart", 0);
     darts.count = 50;
@@ -5266,6 +5557,9 @@ fn ranged_prep_waits_for_torn_thrown_weapon_wear_frame() {
 
 #[test]
 fn ranged_fight_waits_for_torn_bow_ammo_wear_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     let mut bow = scene.held("maple_shortbow", 3);
     bow.container = ItemContainer::Equipment;
@@ -5344,6 +5638,9 @@ fn ranged_fight_waits_for_torn_bow_ammo_wear_frame() {
 
 #[test]
 fn ranged_missing_bow_ammo_wear_times_out_as_prep_failed_ammo() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     let mut bow = scene.held("maple_shortbow", 3);
     bow.container = ItemContainer::Equipment;
@@ -5384,6 +5681,9 @@ fn ranged_missing_bow_ammo_wear_times_out_as_prep_failed_ammo() {
 
 #[test]
 fn ranged_missing_thrown_weapon_wear_times_out_as_prep_failed_weapon() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = Scene::new("cow");
     let mut darts = scene.held("bronze_dart", 0);
     darts.count = 50;
@@ -5550,6 +5850,9 @@ fn ranged_swing_replay(
 
 #[test]
 fn ranged_swings_follow_local_animation_onsets_only() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (stacked, stacked_last, stacked_deadline, rate) = ranged_swing_replay(true, false, false);
     assert_eq!(
         stacked, 3,
@@ -5655,6 +5958,9 @@ fn ranged_receipt_replay(
 
 #[test]
 fn ranged_receipt_r3_monotonic_and_expired_rendered_frames_count_every_instruction() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // R3-mpxrom5wgy_0: actual frames[] and launch_timing.launches[].
     let samples = [
         (46, 0, true),
@@ -5674,6 +5980,9 @@ fn ranged_receipt_r3_monotonic_and_expired_rendered_frames_count_every_instructi
 
 #[test]
 fn ranged_receipt_r3_equal_frames_across_launches_are_distinct() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The receipt samples both real launches at 100 and 102 as 929/frame 0.
     assert_eq!(
         ranged_receipt_replay("bronze_dart", 929, &[(100, 0, true), (102, 0, true)]),
@@ -5683,6 +5992,9 @@ fn ranged_receipt_r3_equal_frames_across_launches_are_distinct() {
 
 #[test]
 fn ranged_receipt_r1_rapid_monotonic_frame_launch_refreshes_three_tick_clock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // R1-mpjpregwxy_0: launch211 samples 426/frame9 after tick210 frame5.
     assert_eq!(
         ranged_receipt_replay(
@@ -5701,6 +6013,9 @@ fn ranged_receipt_r1_rapid_monotonic_frame_launch_refreshes_three_tick_clock() {
 
 #[test]
 fn ranged_receipt_r3_fresh_launch_does_not_retry_the_installed_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, mut harness, root) = ranged_receipt_fixture("bronze_dart");
     attack(harness.pending(&scene, 44));
     scene.install();
@@ -5732,6 +6047,9 @@ fn ranged_receipt_r3_fresh_launch_does_not_retry_the_installed_target() {
 
 #[test]
 fn ranged_instruction_validation_consumes_rejected_updates_and_handles_serial_wrap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, _, _) = ranged_receipt_fixture("bronze_dart");
     scene.install();
     let engaged = Some(ActorRef {
@@ -5788,6 +6106,9 @@ fn ranged_instruction_validation_consumes_rejected_updates_and_handles_serial_wr
 
 #[test]
 fn ranged_begin_does_not_count_a_previous_fights_instruction() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, _, _) = ranged_receipt_fixture("bronze_dart");
     scene.install();
     scene.animation_update(929);

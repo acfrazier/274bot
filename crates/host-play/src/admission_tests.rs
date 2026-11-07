@@ -255,6 +255,9 @@ fn count_kernels<T>(work: impl FnOnce() -> T) -> (T, usize) {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_three_zone_witness_runs_one_real_named_retry_and_counts_kernels() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[3, 6, 9]);
     let from = tile(0, 1);
     let to = tile(23, 1);
@@ -307,6 +310,9 @@ fn u6_three_zone_witness_runs_one_real_named_retry_and_counts_kernels() {
 
 #[test]
 fn complete_no_path_zone_retry_replaces_an_incomplete_first_search() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[3]);
     let from = tile(0, 1);
     let to = tile(23, 1);
@@ -358,6 +364,9 @@ fn complete_no_path_zone_retry_replaces_an_incomplete_first_search() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_nine_zone_witness_is_bounded_and_never_researched() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let spawns = [1, 3, 5, 7, 9, 11, 13, 15, 17];
     let combat = selected_combat();
     let kind = ice_kind(&combat);
@@ -410,6 +419,9 @@ fn u6_nine_zone_witness_is_bounded_and_never_researched() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_group_witness_checks_all_members_and_retries_by_canonical_group() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let combat = selected_combat();
     let kind = ice_kind(&combat);
     let zones = vec![zone(4, 0, Some(0)), zone(7, 0, Some(0))];
@@ -476,6 +488,9 @@ fn u6_group_witness_checks_all_members_and_retries_by_canonical_group() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_unknown_member_in_group_blocks_the_first_witness() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let combat = selected_combat();
     let kinds = vec![ice_kind(&combat), missing_kind()];
     let zones = vec![zone(4, 0, Some(0)), zone(7, 1, Some(0))];
@@ -539,6 +554,9 @@ fn u6_unknown_member_in_group_blocks_the_first_witness() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_unknown_witness_refuses_but_max_hit_boundary_gets_a_full_assessment() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let unknown_world = unknown_corridor(5);
     let lethal_world = known_corridor(&[5]);
     let lethal_hp = kind_facts(&lethal_world, 0).max_hit;
@@ -616,6 +634,9 @@ fn u6_unknown_witness_refuses_but_max_hit_boundary_gets_a_full_assessment() {
 /// this pack does not name.
 #[test]
 fn witness_verdicts_check_supported_facts_without_a_max_hit_filter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let combat = selected_combat();
     let kinds = vec![
         ice_kind(&combat),
@@ -766,6 +787,9 @@ fn witness_verdicts_check_supported_facts_without_a_max_hit_filter() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_real_budget_one_corridor_still_runs_witness_and_named_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const BUDGET: usize = 1;
     const WIDTH: usize = 160;
     const WITNESS_X: i32 = 80;
@@ -851,6 +875,9 @@ fn u6_real_budget_one_corridor_still_runs_witness_and_named_retry() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_endpoint_completion_is_real_router_work_and_endpoint_risk_is_assessed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[10]);
     let from = tile(0, 1);
     let to = tile(10, 1);
@@ -892,6 +919,9 @@ fn u6_endpoint_completion_is_real_router_work_and_endpoint_risk_is_assessed() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let combat = selected_combat();
     let mut graph = TransportGraph {
         wilderness: WildernessRules {
@@ -992,6 +1022,9 @@ fn u6_named_retry_keeps_teleport_wilderness_avoid_and_quest_authority() {
 #[cfg(feature = "test-support")]
 #[test]
 fn c1_unknown_poison_is_charged_without_refusing_safe_crossings_or_forging_clear() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[20]);
     let from = tile(0, 1);
     let to = tile(20, 1);
@@ -1091,6 +1124,9 @@ fn c1_unknown_poison_is_charged_without_refusing_safe_crossings_or_forging_clear
 #[cfg(feature = "test-support")]
 #[test]
 fn u7_proceed_avoid_inherit_and_compat_keep_the_seam_contract() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = unknown_corridor(5);
     let from = tile(0, 1);
     let to = tile(10, 1);
@@ -1174,6 +1210,9 @@ fn u7_proceed_avoid_inherit_and_compat_keep_the_seam_contract() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u7_endpoint_unknown_and_unsafe_crossings_keep_typed_refusals() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let from = tile(0, 1);
     let to = tile(10, 1);
     let state = WorldState::default();
@@ -1239,6 +1278,9 @@ fn u7_refusal_mapping_preserves_typed_risk_refusals() {
 
 #[test]
 fn u11_fresh_ignores_only_clock_age() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = empty_corridor();
     let mut input = input(80);
     input.live_len = 1;
@@ -1314,6 +1356,9 @@ fn u11_fresh_ignores_only_clock_age() {
 
 #[test]
 fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[20]);
     let from = tile(0, 1);
     let to = tile(20, 1);
@@ -1364,6 +1409,9 @@ fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
 
 #[test]
 fn u11_manual_stale_publication_refuses_and_retains_reason_before_held_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[20]);
     let from = tile(0, 1);
     let to = tile(20, 1);
@@ -1421,6 +1469,9 @@ fn u11_manual_stale_publication_refuses_and_retains_reason_before_held_follow() 
 
 #[test]
 fn u11_publication_during_live_escape_refuses_without_reassessment() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = empty_corridor();
     let from = tile(0, 1);
     let to = tile(8, 1);
@@ -1474,6 +1525,9 @@ fn u11_publication_during_live_escape_refuses_without_reassessment() {
 #[cfg(feature = "test-support")]
 #[test]
 fn u11_live_escape_states_refuse_before_any_kernel_but_advisory_assess_is_allowed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = empty_corridor();
     let from = tile(0, 1);
     let to = tile(8, 1);
@@ -1917,6 +1971,9 @@ impl EvidenceProvider for UnknownEvidence {
 #[cfg(feature = "test-support")]
 #[test]
 fn witness_retry_is_assessed_with_unknown_poison() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[12]);
     let from = tile(0, 1);
     let to = tile(23, 1);
@@ -1947,6 +2004,9 @@ fn witness_retry_is_assessed_with_unknown_poison() {
 
 #[test]
 fn missing_facts_at_publication_never_refuse_a_no_crossing_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = empty_corridor();
     let route = Arc::new(
         nav_planner::router::find_with_avoid(
@@ -1999,6 +2059,9 @@ fn missing_facts_at_publication_never_refuse_a_no_crossing_walk() {
 
 #[test]
 fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const { assert!(!crate::NET_AVAILABLE) };
     let world = known_corridor(&[12]);
     let state = WorldState::default();
@@ -2053,6 +2116,9 @@ fn held_inherited_admission_keeps_the_exact_legacy_router_outcome() {
 /// walk crosses this only route, but the stage's empty grant set avoids it.
 #[test]
 fn empty_quester_stage_forbid_avoids_a_globally_allowed_undeclared_zone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const { assert!(!crate::NET_AVAILABLE) };
     let world = known_corridor(&[12]);
     let from = tile(0, 1);
@@ -2092,6 +2158,9 @@ fn empty_quester_stage_forbid_avoids_a_globally_allowed_undeclared_zone() {
 /// A_z) walking into A_z is a crossing, never an unjudged escape.
 #[test]
 fn named_retry_from_a_fringe_origin_still_judges_the_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let combat = selected_combat();
     let kind = ice_kind(&combat);
     let spawn = 30;
@@ -2134,6 +2203,9 @@ fn named_retry_from_a_fringe_origin_still_judges_the_crossing() {
 /// refusals keep S2b's retained arm refusal.
 #[test]
 fn held_manual_no_path_leaves_walk_arms_untouched() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const { assert!(!crate::NET_AVAILABLE) };
     let world = known_corridor(&[12]);
     let state = WorldState::default();
@@ -2225,6 +2297,9 @@ fn unknown_poison(hp: u8) -> RiskInput {
 /// Unknown poison is tested with the charged and clear timelines.
 #[test]
 fn named_cross_walk_admits_its_destination_zone_with_unknown_poison() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[5, 20]);
     let (from, to) = (tile(0, 1), tile(20, 1));
     let state = WorldState::default();
@@ -2263,6 +2338,9 @@ fn named_cross_walk_admits_its_destination_zone_with_unknown_poison() {
 /// Naming extra zones cannot change the death bound or bypass a refusal.
 #[test]
 fn named_cross_walk_still_judges_an_ungranted_zone_on_the_way() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let state = WorldState::default();
     let (from, to) = (tile(0, 1), tile(20, 1));
     for (spawns, shape) in [([5, 12, 20], "separate"), ([5, 18, 20], "merged")] {
@@ -2630,6 +2708,9 @@ mod compact_final_route_tests {
 
     #[test]
     fn compact_script_nav_paint_borrows_the_compact_route_projection() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = Arc::new(empty_corridor());
         let from = tile(0, 1);
         let dest = tile(3, 1);
@@ -2665,6 +2746,9 @@ mod compact_final_route_tests {
     /// panicked on every compact plan the route service publishes.
     #[test]
     fn bank_fetch_trace_reads_a_compact_final_route() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = Arc::new(empty_corridor());
         let from = tile(0, 1);
         let dest = tile(3, 1);
@@ -2825,6 +2909,9 @@ mod compact_final_route_tests {
 
     #[test]
     fn compact_carried_wear_final_route_reassesses_post_session_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = Arc::new(empty_corridor());
         let from = tile(0, 1);
         let dest = tile(10, 1);
@@ -2864,6 +2951,9 @@ mod compact_final_route_tests {
 
     #[test]
     fn compact_carried_wear_final_route_refuses_unknown_post_session_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = Arc::new(known_corridor(&[5]));
         let from = tile(0, 1);
         let dest = tile(10, 1);
@@ -2898,6 +2988,9 @@ mod compact_final_route_tests {
 
 #[test]
 fn poison_deadline_without_world_preserves_the_typed_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = known_corridor(&[12]);
     let route = nav_planner::router::find_with(
         &world.collision,

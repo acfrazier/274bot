@@ -42,6 +42,9 @@ fn chapter_root(ids: DialogueUiIds) -> i32 {
 
 #[test]
 fn a_revision_without_chapter_pages_never_treats_a_root_as_a_chapter_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     let without_chapters = DialogueUiIds {
         chapter_root: None,
@@ -64,6 +67,9 @@ fn a_revision_without_chapter_pages_never_treats_a_root_as_a_chapter_page() {
 
 #[test]
 fn operation_page_gate_adopts_only_chat_and_selected_documents() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     let unsupported = chapter_root(ids).max(ids.scroll_root.max(ids.book_root)) + 100;
     for (root, expected) in [
@@ -444,6 +450,9 @@ impl NativeMachine for AdvancingPageProbe {
 
 #[test]
 fn continuation_closes_scroll_and_waits_for_observed_disappearance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     let mut snapshot = snapshot();
     snapshot.seed_main_modal(ids.scroll_root, vec![]);
@@ -475,6 +484,9 @@ fn continuation_closes_scroll_and_waits_for_observed_disappearance() {
 
 #[test]
 fn chapter_page_after_accepted_advance_is_closed_by_dialogue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = snapshot();
     let mut ledger = None;
     close_chapter_page_after_accepted_advance(&mut snapshot, &mut ledger);
@@ -483,6 +495,9 @@ fn chapter_page_after_accepted_advance_is_closed_by_dialogue() {
 
 #[test]
 fn journal_read_begins_after_chapter_page_closes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = snapshot();
     let mut ledger = None;
     let settle_tick = close_chapter_page_after_accepted_advance(&mut snapshot, &mut ledger);
@@ -516,6 +531,9 @@ fn journal_read_begins_after_chapter_page_closes() {
 
 #[test]
 fn continuation_advances_book_pages_then_closes_only_after_the_final_marker() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     let mut snapshot = snapshot();
     snapshot.seed_main_modal(ids.book_root, book_page(ids, "Page one", true));
@@ -581,6 +599,9 @@ fn continuation_advances_book_pages_then_closes_only_after_the_final_marker() {
 
 #[test]
 fn unsupported_or_ambiguous_main_dialogue_fails_without_clicking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     for (root, widgets) in [
         (ids.book_root + 1_000_000, vec![]),
@@ -611,6 +632,9 @@ fn unsupported_or_ambiguous_main_dialogue_fails_without_clicking() {
 
 #[test]
 fn an_owned_main_modal_still_open_at_close_timeout_is_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     let mut snapshot = snapshot();
     snapshot.seed_main_modal(ids.scroll_root, vec![]);
@@ -637,6 +661,9 @@ fn an_owned_main_modal_still_open_at_close_timeout_is_failure() {
 
 #[test]
 fn first_chat_page_requires_a_matching_accepted_talk_receipt_and_newer_evidence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (accepted, wrong_request, record_receipt) in [
         (true, true, true),
         (false, false, true),
@@ -684,6 +711,9 @@ fn first_chat_page_requires_a_matching_accepted_talk_receipt_and_newer_evidence(
 
 #[test]
 fn a_preexisting_chat_page_is_not_owned_by_a_new_npc_dialogue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = snapshot();
     snapshot.seed_chat_modal(4882, vec!["Already open".into()]);
     let mut ledger = None;
@@ -701,6 +731,9 @@ fn a_preexisting_chat_page_is_not_owned_by_a_new_npc_dialogue() {
 
 #[test]
 fn the_owned_first_chat_page_is_not_exposed_after_continue_is_emitted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = snapshot();
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -731,6 +764,9 @@ fn the_owned_first_chat_page_is_not_exposed_after_continue_is_emitted() {
 
 #[test]
 fn grandtree_foreman_cutscene_rearms_the_authored_closed_chat_gap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Sourced from content (quests/quest_grandtree/scripts/foreman.rs2:12-38):
     // `if_close` at T, `p_walk` at T+3, `p_teleport` at T+6, `forcewalk` at
     // T+8, and the next chat page at T+9. The player walks the first leg
@@ -834,6 +870,9 @@ fn grandtree_foreman_cutscene_rearms_the_authored_closed_chat_gap() {
 /// the gap starts, holds to it, and ends on it.
 #[test]
 fn a_thirty_tick_quiet_end_gap_lease_reports_the_gap_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = snapshot();
     snapshot.seed_local_player(super::tests::local_player(api::WorldTile {
         x: 2955,
@@ -937,6 +976,9 @@ fn assert_held_through_pause(
 /// their bound, then end at the remaining active time after Resume.
 #[test]
 fn a_paused_main_acknowledgement_holds_through_the_pause_and_its_own_clock_decides() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for book in [false, true] {
         let ids = dialogue_ui();
         let mut snapshot = snapshot();
@@ -1000,6 +1042,9 @@ fn a_paused_main_acknowledgement_holds_through_the_pause_and_its_own_clock_decid
 /// tick bound. Its three-second owner bound starts at the Answer send.
 #[test]
 fn a_paused_choice_acknowledgement_holds_through_the_pause_and_its_own_clock_decides() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = menu_page(100, &["Choose."], &["Buy", "Leave"], -1);
     let start = std::time::Instant::now();
     let mut runtime = ledger::Runtime::default();
@@ -1051,6 +1096,9 @@ fn a_paused_choice_acknowledgement_holds_through_the_pause_and_its_own_clock_dec
 /// expire that wait; excluding paused time is only an active-clock promise.
 #[test]
 fn tick_bound_open_and_continue_waits_keep_their_owner_deadline_during_pause() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for continuation in [false, true] {
         let mut snapshot = snapshot();
         if continuation {
@@ -1106,6 +1154,9 @@ fn tick_bound_open_and_continue_waits_keep_their_owner_deadline_during_pause() {
 
 #[test]
 fn a_queued_talk_keeps_its_wait_until_acceptance_then_uses_the_content_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = cook_beside_player();
     let start = std::time::Instant::now();
     let mut runtime = ledger::Runtime::default();
@@ -1157,6 +1208,9 @@ fn a_queued_talk_keeps_its_wait_until_acceptance_then_uses_the_content_deadline(
 
 #[test]
 fn a_content_first_page_allowance_extends_only_the_shorter_generic_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let generic_deadline = 3 + super::dialogue::DIALOGUE_OPEN_TICKS;
     for (allowance, deadline, expires) in [
         (None, generic_deadline, generic_deadline),
@@ -1202,6 +1256,9 @@ fn a_content_first_page_allowance_extends_only_the_shorter_generic_bound() {
 /// observed-tick page rule.
 #[test]
 fn a_guardian_reissued_talk_renews_its_lease_and_its_choice_wait_excludes_paused_time() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = cook_beside_player();
     let start = std::time::Instant::now();
     let mut runtime = ledger::Runtime::default();
@@ -1281,6 +1338,9 @@ fn a_guardian_reissued_talk_renews_its_lease_and_its_choice_wait_excludes_paused
 
 #[test]
 fn level_up_page_after_owned_scroll_close_is_drained_as_continuation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Cook's hand-in (DIAG-COOK-HEADED report section 1): chat pages, then
     // the quest-complete scroll on the Main surface, our `CloseModal`, then
     // a level-up chat page opens ("Congratulations, you just advanced a
@@ -1333,6 +1393,9 @@ fn level_up_page_after_owned_scroll_close_is_drained_as_continuation() {
 
 #[test]
 fn chat_page_while_main_scroll_still_open_stays_failed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The level-up adoption above only applies once the owned Main modal is
     // observed closed. A chat page that opens while the scroll is still
     // open is still a failure, before and after the fix.
@@ -1365,6 +1428,9 @@ fn chat_page_while_main_scroll_still_open_stays_failed() {
 
 #[test]
 fn unchanged_position_does_not_extend_closed_chat_completion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = snapshot();
     snapshot.seed_local_player(super::tests::local_player(api::WorldTile {
         x: 2954,
@@ -1401,6 +1467,9 @@ fn unchanged_position_does_not_extend_closed_chat_completion() {
 
 #[test]
 fn visible_continue_without_chat_root_is_not_a_combat_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = snapshot();
     // The host can retain a Continue-only mesbox alongside a health-bar window.
     // The Continue component is page evidence even without an open chat root.
@@ -1435,6 +1504,9 @@ fn visible_continue_without_chat_root_is_not_a_combat_close() {
 
 #[test]
 fn continuation_waits_for_content_page_after_post_fight_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::seed_dialogue_combat;
 
     let mut snapshot = snapshot();
@@ -1469,6 +1541,9 @@ fn continuation_waits_for_content_page_after_post_fight_close() {
 
 #[test]
 fn pending_first_continuation_requires_a_real_attacker_for_combat_interruption() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::{seed_dialogue_attacker, seed_dialogue_combat};
 
     for attacker in [
@@ -1504,6 +1579,9 @@ fn pending_first_continuation_requires_a_real_attacker_for_combat_interruption()
 
 #[test]
 fn spared_mordred_handover_is_not_a_combat_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::{seed_dialogue_attacker, seed_dialogue_combat, seed_dialogue_hit};
 
     // Sir Mordred's spare script (`sir_mordred.rs2:7-27`) closes the fight
@@ -1562,6 +1640,9 @@ fn spared_mordred_handover_is_not_a_combat_close() {
 
 #[test]
 fn the_close_after_morgans_last_page_is_not_a_combat_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::{seed_dialogue_attacker, seed_dialogue_combat, seed_dialogue_hit};
 
     // The dialogue began with Morgan's page already open (the failure at the
@@ -1687,6 +1768,9 @@ fn assert_attack_interrupts(attack: &str, marks: &[super::tests::DialogueAttackM
 
 #[test]
 fn a_magic_splash_without_a_hit_interrupts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::DialogueAttackMark::Spot;
 
     // `npc_spell_fail` (`npc_combat_magic.rs2:148-161`): `if_close`, the splash
@@ -1697,6 +1781,9 @@ fn a_magic_splash_without_a_hit_interrupts() {
 
 #[test]
 fn a_magic_cast_in_flight_interrupts_before_its_hit_lands() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::DialogueAttackMark::{Projectile, Spot};
 
     // `npc_spell_cast` and `npc_spell_success` (`npc_combat_magic.rs2:91-120`):
@@ -1710,6 +1797,9 @@ fn a_magic_cast_in_flight_interrupts_before_its_hit_lands() {
 
 #[test]
 fn a_melee_swing_at_zero_hitpoints_without_a_hit_interrupts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::DialogueAttackMark::Animation;
 
     // `npc_default_attack` plays the player's defend animation before the
@@ -1721,6 +1811,9 @@ fn a_melee_swing_at_zero_hitpoints_without_a_hit_interrupts() {
 
 #[test]
 fn a_melee_miss_and_a_melee_hit_interrupt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::DialogueAttackMark::{Animation, Hit};
 
     assert_attack_interrupts(
@@ -1747,6 +1840,9 @@ fn a_melee_miss_and_a_melee_hit_interrupt() {
 
 #[test]
 fn a_ranged_attack_in_flight_interrupts_before_its_hit_lands() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::DialogueAttackMark::{Animation, Projectile};
 
     // `playerhit_n_ranged` and `npc_rangeattack` (`npc_combat_ranged.rs2:32-
@@ -1760,6 +1856,9 @@ fn a_ranged_attack_in_flight_interrupts_before_its_hit_lands() {
 
 #[test]
 fn a_breath_from_range_interrupts_on_its_projectile_alone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::DialogueAttackMark::Projectile;
 
     // `metal_dragon_dragonfire_far` (`metal_dragon.rs2:36-70`): `if_close`, a
@@ -1770,6 +1869,9 @@ fn a_breath_from_range_interrupts_on_its_projectile_alone() {
 
 #[test]
 fn poison_interrupts_with_only_its_hitmark() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::DialogueAttackMark::Hit;
 
     // `poison_damage` (`poison.rs2:32-40`) runs `if_close` and then sends a
@@ -1799,6 +1901,9 @@ fn poison_interrupts_with_only_its_hitmark() {
 
 #[test]
 fn marks_that_are_not_new_never_interrupt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::tests::DialogueAttackMark::{Animation, Hit, Projectile, Spot};
 
     // The fight's old marks are in view from the begin tick. The same marks
@@ -1832,6 +1937,9 @@ fn marks_that_are_not_new_never_interrupt() {
 
 #[test]
 fn owned_chat_waits_for_a_fresh_acceptance_before_draining_a_selected_scroll() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     let mut snapshot = snapshot();
     let mut ledger = None;
@@ -1894,6 +2002,9 @@ fn owned_chat_waits_for_a_fresh_acceptance_before_draining_a_selected_scroll() {
 
 #[test]
 fn refused_chat_advance_does_not_adopt_a_main_scroll() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     let mut snapshot = snapshot();
     let mut ledger = None;
@@ -1929,6 +2040,9 @@ fn refused_chat_advance_does_not_adopt_a_main_scroll() {
 
 #[test]
 fn a_main_scroll_without_an_owned_chat_page_stays_fail_closed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     for root in [ids.scroll_root, ids.quest_scroll_root, chapter_root(ids)] {
         let mut snapshot = snapshot();
@@ -1959,6 +2073,9 @@ fn a_main_scroll_without_an_owned_chat_page_stays_fail_closed() {
 /// only the Talk-to, stays failed.
 #[test]
 fn a_main_modal_opened_by_our_accepted_advance_completes_the_dialogue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     let ship_journey = chapter_root(ids).max(ids.scroll_root.max(ids.book_root)) + 100;
     for (advance, accepted, expected) in [
@@ -2062,6 +2179,9 @@ fn dialogue_npc_at(distance: i32, tile: api::WorldTile) -> api::snapshot::NpcVie
 
 #[test]
 fn dialogue_continue_after_same_tick_talk_defers_and_retries() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut before = snapshot();
     before.seed_chat_modal(-1, vec![]);
     before.seed_chat_options(vec![], -1);
@@ -2095,6 +2215,9 @@ fn dialogue_continue_after_same_tick_talk_defers_and_retries() {
 
 #[test]
 fn dialogue_answer_after_same_tick_talk_defers_and_retries() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut before = snapshot();
     before.seed_chat_modal(-1, vec![]);
     before.seed_chat_options(vec![], -1);
@@ -2134,6 +2257,9 @@ fn dialogue_answer_after_same_tick_talk_defers_and_retries() {
 
 #[test]
 fn dialogue_open_accepts_first_page_within_tick_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut before = snapshot();
     before.seed_local_player(super::tests::local_player(api::WorldTile {
         x: 5,
@@ -2173,6 +2299,9 @@ fn dialogue_open_accepts_first_page_within_tick_budget() {
 
 #[test]
 fn dialogue_open_timeout_counts_observed_ticks_not_elapsed_time() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let before = snapshot();
     let mut ledger = None;
     let handle = with_tick(&before, &mut ledger, 1, |tick| {
@@ -2205,6 +2334,9 @@ fn dialogue_open_timeout_counts_observed_ticks_not_elapsed_time() {
 
 #[test]
 fn dialogue_stationary_cook_approach_uses_router_route_ticks_at_fixed_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let cook_id = content_npc_id("cook");
     assert_eq!(content_wander_range("cook"), 0);
     let cook_tile = api::WorldTile {
@@ -2318,6 +2450,9 @@ fn dialogue_stationary_cook_approach_uses_router_route_ticks_at_fixed_ticks() {
 
 #[test]
 fn dialogue_no_route_retries_the_bounded_approach_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let cook_id = content_npc_id("cook");
     let cook_tile = api::WorldTile {
         x: 0,
@@ -2424,6 +2559,9 @@ fn begin_far_cook() -> (
 /// The wait is 8 observed ticks per plan, up to the shared three-attempt limit.
 #[test]
 fn dialogue_unanswered_route_assessment_retries_until_the_budget_is_spent() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, handle, before, _) = begin_far_cook();
     let first = last_assessment_id(&ledger);
     for observed in 2..9 {
@@ -2483,6 +2621,9 @@ fn dialogue_unanswered_route_assessment_retries_until_the_budget_is_spent() {
 
 #[test]
 fn dialogue_route_assessment_answered_after_one_lost_request_sets_the_walk_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, handle, before, cook_tile) = begin_far_cook();
     for observed in 2..11 {
         assert!(with_tick(&before, &mut ledger, observed, |tick| {
@@ -2507,6 +2648,9 @@ fn dialogue_route_assessment_answered_after_one_lost_request_sets_the_walk_budge
 
 #[test]
 fn dialogue_route_ending_short_with_a_still_npc_is_a_walk_failure_not_a_replan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let brundt_id = content_npc_id("viking_brundt");
     assert_eq!(content_wander_range("viking_brundt"), 2);
     let player_tile = api::WorldTile {
@@ -2596,6 +2740,9 @@ fn dialogue_route_ending_short_with_a_still_npc_is_a_walk_failure_not_a_replan()
 
 #[test]
 fn dialogue_open_timeout_uses_four_ticks_after_accepted_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let cook_id = content_npc_id("cook");
     let mut before = snapshot();
     before.seed_local_player(super::tests::local_player(api::WorldTile {
@@ -2642,6 +2789,9 @@ fn dialogue_open_timeout_uses_four_ticks_after_accepted_receipt() {
 
 #[test]
 fn dialogue_siad_and_upass_pages_open_on_the_receipt_deadline_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     fn assert_page_at_deadline(config: &str, name: &str, first_message: &str) {
         let npc_id = content_npc_id(config);
         let mut before = snapshot();
@@ -2752,6 +2902,9 @@ fn dialogue_siad_and_upass_pages_open_on_the_receipt_deadline_tick() {
 
 #[test]
 fn dialogue_brundt_replan_cap_matches_24_nonhome_tiles_at_fixed_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let brundt_id = content_npc_id("viking_brundt");
     assert_eq!(content_wander_range("viking_brundt"), 2);
     let player_tile = api::WorldTile {
@@ -2864,6 +3017,9 @@ fn dialogue_brundt_replan_cap_matches_24_nonhome_tiles_at_fixed_ticks() {
 
 #[test]
 fn dialogue_stationary_cook_refusal_retries_once_at_fixed_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let cook_id = content_npc_id("cook");
     assert_eq!(content_wander_range("cook"), 0);
     let player_tile = api::WorldTile {
@@ -2950,6 +3106,9 @@ fn dialogue_stationary_cook_refusal_retries_once_at_fixed_ticks() {
 
 #[test]
 fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let brundt_id = content_npc_id("viking_brundt");
     assert_eq!(content_wander_range("viking_brundt"), 2);
     let player_tile = api::WorldTile {
@@ -3053,6 +3212,9 @@ fn dialogue_refusal_approach_failure_keeps_refusal_detail() {
 
 #[test]
 fn dialogue_terminal_walk_receipts_keep_typed_user_input_evidence_and_danger_errors() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
         FactKey::new("walk-gate"),
     )]);
@@ -3119,6 +3281,9 @@ fn dialogue_terminal_walk_receipts_keep_typed_user_input_evidence_and_danger_err
 
 #[test]
 fn dialogue_approach_exhaustion_keeps_the_last_walk_failure_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, handle, before, _) = begin_far_cook();
     super::tests::post_assess_receipt(&mut ledger, 1, 10, None);
     let mut walks = WalkTally::default();
@@ -3224,6 +3389,9 @@ fn refused_cook_before_recovery() -> (
 
 #[test]
 fn dialogue_refusal_recovery_walk_budget_is_the_routers_route_length() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, handle, refused, reach) = refused_cook_before_recovery();
     super::tests::post_assess_receipt(&mut ledger, 2, 15, None);
     let mut poll_at = |tick_number| {
@@ -3242,6 +3410,9 @@ fn dialogue_refusal_recovery_walk_budget_is_the_routers_route_length() {
 
 #[test]
 fn dialogue_refusal_recovery_keeps_the_refusal_when_the_router_finds_no_route() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, handle, refused, reach) = refused_cook_before_recovery();
     let no_route = Some(crate::native::WalkRefusal::NoRouteWithinBounds {
         tried: 0,
@@ -3270,6 +3441,9 @@ fn dialogue_refusal_recovery_keeps_the_refusal_when_the_router_finds_no_route() 
 
 #[test]
 fn dialogue_open_keeps_waiting_after_npc_content_message() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut before = snapshot();
     before.seed_local_player(super::tests::local_player(api::WorldTile {
         x: 5,
@@ -3317,6 +3491,9 @@ fn dialogue_open_keeps_waiting_after_npc_content_message() {
 
 #[test]
 fn dialogue_viking_refusal_replans_and_retries_talk_for_visible_npc() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let player_tile = api::WorldTile {
         x: 5,
         z: 5,
@@ -3436,6 +3613,9 @@ fn dialogue_viking_refusal_replans_and_retries_talk_for_visible_npc() {
 
 #[test]
 fn dialogue_approach_replans_when_npc_moves_then_talks_after_it_settles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let player_tile = api::WorldTile {
         x: 5,
         z: 5,
@@ -3584,6 +3764,9 @@ fn begin_far_aubury() -> (
 /// follows when the NPC is seen again.
 #[test]
 fn dialogue_approach_holds_the_route_while_the_npc_is_unseen_then_talks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, handle, _, npc_tile) = begin_far_aubury();
     let first = last_assessment_id(&ledger);
     // Unseen while the router assesses the route: the assessment stays.
@@ -3648,6 +3831,9 @@ fn dialogue_approach_holds_the_route_while_the_npc_is_unseen_then_talks() {
 /// final error names the NPC, last seen tile and last route detail.
 #[test]
 fn dialogue_approach_unseen_npc_fails_with_its_name_and_last_seen_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, handle, before, npc_tile) = begin_far_aubury();
     super::tests::post_assess_receipt(&mut ledger, 1, 10, None);
     assert!(with_tick(&before, &mut ledger, 2, |tick| {
@@ -3741,6 +3927,9 @@ fn dialogue_approach_unseen_npc_fails_with_its_name_and_last_seen_tile() {
 
 #[test]
 fn dialogue_approach_timeout_counts_observed_ticks_not_wall_time() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut before = snapshot();
     before.seed_local_player(super::tests::local_player(api::WorldTile {
         x: 5,
@@ -3792,6 +3981,9 @@ fn dialogue_approach_timeout_counts_observed_ticks_not_wall_time() {
 }
 #[test]
 fn dialogue_main_scroll_and_book_actions_retry_after_budget_exhaustion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = dialogue_ui();
     for book in [false, true] {
         let mut snapshot = snapshot();
@@ -3830,6 +4022,9 @@ fn dialogue_main_scroll_and_book_actions_retry_after_budget_exhaustion() {
 
 #[test]
 fn dialogue_gap_rearms_share_one_per_tick_marker_across_evidence_and_animation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = snapshot();
     let mut args = continuation_args();
     args.options.gap_ticks = Some(2);
@@ -4044,6 +4239,9 @@ fn drive_filliman(answer_once: bool) -> (Vec<i32>, bool) {
 
 #[test]
 fn answer_once_answers_a_repeated_menu_question_once_then_leaves() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (answers, completed) = drive_filliman(true);
     assert_eq!(answers, [2, 4]);
     assert!(completed, "the conversation leaves after Ok, thanks.");
@@ -4051,6 +4249,9 @@ fn answer_once_answers_a_repeated_menu_question_once_then_leaves() {
 
 #[test]
 fn answer_once_false_repeats_the_first_preferred_answer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (answers, completed) = drive_filliman(false);
     assert_eq!(
         answers,
@@ -4062,6 +4263,9 @@ fn answer_once_false_repeats_the_first_preferred_answer() {
 
 #[test]
 fn answer_once_refused_answer_does_not_consume_the_entry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let first = menu_page(100, &["Choose."], &["Buy", "Sell", "Leave"], -1);
     let mut ledger = None;
     let handle = with_tick(&first, &mut ledger, 1, |tick| {
@@ -4098,6 +4302,9 @@ fn answer_once_refused_answer_does_not_consume_the_entry() {
 
 #[test]
 fn answer_once_accepted_answer_consumes_the_entry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let first = menu_page(100, &["Choose."], &["Buy", "Sell", "Leave"], -1);
     let mut ledger = None;
     let handle = with_tick(&first, &mut ledger, 1, |tick| {
@@ -4159,6 +4366,9 @@ impl NativeMachine for AnswerMaskProbe {
 
 #[test]
 fn answer_once_timeout_without_acknowledgement_does_not_consume_the_entry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let page = menu_page(100, &["Choose."], &["Buy", "Leave"], -1);
     let mut ledger = None;
     let handle = with_tick(&page, &mut ledger, 1, |tick| {
@@ -4189,6 +4399,9 @@ fn answer_once_timeout_without_acknowledgement_does_not_consume_the_entry() {
 
 #[test]
 fn answer_once_marks_one_prefer_entry_per_page_even_for_one_option_text() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let first = menu_page(100, &["Choose."], &["Yes", "No"], -1);
     let mut ledger = None;
     let handle = with_tick(&first, &mut ledger, 1, |tick| {
@@ -4222,6 +4435,9 @@ fn answer_once_marks_one_prefer_entry_per_page_even_for_one_option_text() {
 
 #[test]
 fn answer_once_skips_a_used_entry_and_uses_an_unused_entry_on_a_changed_menu() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let first = menu_page(100, &["Choose."], &["Buy", "Leave"], -1);
     let mut ledger = None;
     let handle = with_tick(&first, &mut ledger, 1, |tick| {
@@ -4251,6 +4467,9 @@ fn answer_once_skips_a_used_entry_and_uses_an_unused_entry_on_a_changed_menu() {
 
 #[test]
 fn answer_once_strict_fails_when_every_matching_entry_was_used() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let first = menu_page(100, &["Choose."], &["Yes", "No"], -1);
     let mut ledger = None;
     let handle = with_tick(&first, &mut ledger, 1, |tick| {
@@ -4289,6 +4508,9 @@ fn answer_once_strict_fails_when_every_matching_entry_was_used() {
 
 #[test]
 fn answer_once_line_rules_take_precedence_without_consuming_a_prefer_entry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let first = menu_page(
         100,
         &["What is the correct incantation?"],
@@ -4414,6 +4636,9 @@ fn continue_sent_at_tick_two(
 /// the driver then presses Continue on page two instead of failing.
 #[test]
 fn two_identical_consecutive_continue_pages_are_both_acknowledged() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let wait = menu_page(100, &["And wait..."], &[], 101);
     let mut ledger = None;
     let handle = continue_sent_at_tick_two(&wait, &mut ledger);
@@ -4451,6 +4676,9 @@ fn two_identical_consecutive_continue_pages_are_both_acknowledged() {
 /// matures is acknowledged at once, as before.
 #[test]
 fn a_changed_page_still_acknowledges_a_continue_without_a_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let first = menu_page(100, &["You climb inside the crate."], &[], 101);
     let mut ledger = None;
     let handle = continue_sent_at_tick_two(&first, &mut ledger);
@@ -4467,6 +4695,9 @@ fn a_changed_page_still_acknowledges_a_continue_without_a_receipt() {
 /// (`PAGE_ACK_TICKS` = 10), whatever the wall clock says.
 #[test]
 fn continue_acknowledgement_bound_counts_observed_ticks_not_milliseconds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let wait = menu_page(100, &["And wait..."], &[], 101);
     let mut ledger = None;
     let handle = continue_sent_at_tick_two(&wait, &mut ledger);
@@ -4490,6 +4721,9 @@ fn continue_acknowledgement_bound_counts_observed_ticks_not_milliseconds() {
 /// A refused Continue was not dispatched, so its receipt acknowledges nothing.
 #[test]
 fn a_refused_continue_receipt_does_not_acknowledge_the_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let wait = menu_page(100, &["And wait..."], &[], 101);
     let mut ledger = None;
     let handle = continue_sent_at_tick_two(&wait, &mut ledger);
@@ -4519,6 +4753,9 @@ fn a_refused_continue_receipt_does_not_acknowledge_the_page() {
 /// (tick 2), not after `DRIVE_STEPS` presses.
 #[test]
 fn a_page_that_never_changes_ends_at_the_tick_bound_of_its_first_press() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let stuck = menu_page(100, &["A page that will not advance."], &[], 101);
     let mut ledger = None;
     let handle = continue_sent_at_tick_two(&stuck, &mut ledger);
@@ -4577,6 +4814,9 @@ fn repeated_press_with_receipt_outstanding(
 /// the receipt cannot renew the bound of a page that did not change.
 #[test]
 fn a_poll_that_jumps_over_the_bound_does_not_renew_it_for_an_unchanged_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let stuck = menu_page(100, &["A page that will not advance."], &[], 101);
     let mut ledger = None;
     let handle = repeated_press_with_receipt_outstanding(&stuck, &mut ledger);
@@ -4592,6 +4832,9 @@ fn a_poll_that_jumps_over_the_bound_does_not_renew_it_for_an_unchanged_page() {
 /// the new page is pressed and gets its own bound.
 #[test]
 fn a_poll_that_jumps_over_the_bound_still_acknowledges_a_changed_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let stuck = menu_page(100, &["A page that will not advance."], &[], 101);
     let mut ledger = None;
     let handle = repeated_press_with_receipt_outstanding(&stuck, &mut ledger);
@@ -4684,6 +4927,9 @@ fn begin_cook_talk(
 /// deadline is observed.
 #[test]
 fn a_talk_to_the_host_accepts_late_gets_the_page_budget_after_the_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let page = cook_beside_player();
     let mut ledger = None;
     let handle = begin_cook_talk(&page, &mut ledger);
@@ -4728,6 +4974,9 @@ fn a_talk_to_the_host_accepts_late_gets_the_page_budget_after_the_click() {
 /// click on tick 60 and the page budget then counts from that click.
 #[test]
 fn a_talk_to_the_host_still_holds_waits_without_a_tick_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let page = cook_beside_player();
     let mut ledger = None;
     let handle = begin_cook_talk(&page, &mut ledger);
@@ -4767,6 +5016,9 @@ fn a_talk_to_the_host_still_holds_waits_without_a_tick_bound() {
 /// again on its next poll, and the page budget counts from the new click.
 #[test]
 fn a_talk_to_the_host_dropped_unsent_is_sent_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let page = cook_beside_player();
     let mut ledger = None;
     let handle = begin_cook_talk(&page, &mut ledger);
@@ -4807,6 +5059,9 @@ fn a_talk_to_the_host_dropped_unsent_is_sent_again() {
 /// the NPC, the refusal tick and the last game message since the click.
 #[test]
 fn a_refused_talk_to_ends_the_wait_at_once_with_the_npc_and_last_message() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let page = cook_beside_player();
     let mut ledger = None;
     let handle = begin_cook_talk(&page, &mut ledger);
@@ -4858,6 +5113,9 @@ fn unchanged_page_pressed_up_to_the_bound(
 /// the first press's bound and sends nothing.
 #[test]
 fn a_repeat_deferred_at_the_bound_does_not_renew_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let stuck = menu_page(100, &["A page that will not advance."], &[], 101);
     let mut ledger = None;
     let handle = unchanged_page_pressed_up_to_the_bound(&stuck, &mut ledger);
@@ -4880,6 +5138,9 @@ fn a_repeat_deferred_at_the_bound_does_not_renew_it() {
 /// its own bound (tick 23), as any acknowledged page does.
 #[test]
 fn a_changed_page_after_a_deferred_repeat_gets_its_own_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let stuck = menu_page(100, &["A page that will not advance."], &[], 101);
     let mut ledger = None;
     let handle = unchanged_page_pressed_up_to_the_bound(&stuck, &mut ledger);

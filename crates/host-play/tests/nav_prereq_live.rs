@@ -1222,6 +1222,9 @@ export default class PrereqHolyCompat extends LoopingBot {{
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_manual_prereq_holy_barrier_denied() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = make_fixture(
         PREREQ_WEST,
         &[("priestperil", 60), ("druidspirit", 0)],
@@ -1290,6 +1293,9 @@ fn live_manual_prereq_holy_barrier_denied() {
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_compat_prereq_mort_myre_denied() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = make_fixture(
         PREREQ_EAST,
         &[("priestperil", 61), ("druidspirit", 0)],
@@ -1589,6 +1595,9 @@ fn live_prereq_fixture(pack_slots: usize, full_bank: bool) -> (LiveFixture, Vec<
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_manual_prereq_holy_barrier_allowed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = make_fixture(
         PREREQ_WEST,
         &[("priestperil", 60), ("druidspirit", 0)],
@@ -1640,6 +1649,9 @@ fn live_manual_prereq_holy_barrier_allowed() {
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_manual_prereq_holy_barrier_wrong_memory_retries() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = make_fixture_with_seed_commands(
         PREREQ_WEST,
         &[("priestperil", 60), ("druidspirit", 0)],
@@ -1704,6 +1716,9 @@ fn live_manual_prereq_holy_barrier_wrong_memory_retries() {
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_compat_prereq_holy_barrier_allowed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = make_fixture(
         PREREQ_WEST,
         &[("priestperil", 60), ("druidspirit", 0)],
@@ -1762,6 +1777,9 @@ fn live_compat_prereq_holy_barrier_allowed() {
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_compat_prereq_holy_barrier_global_on_script_inherit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = make_fixture(
         PREREQ_WEST,
         &[("priestperil", 60), ("druidspirit", 0)],
@@ -1819,6 +1837,9 @@ fn live_compat_prereq_holy_barrier_global_on_script_inherit() {
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_compat_prereq_holy_barrier_abort_approach() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = make_fixture(
         PREREQ_WEST,
         &[("priestperil", 60), ("druidspirit", 0)],
@@ -1888,6 +1909,9 @@ fn live_compat_prereq_holy_barrier_abort_approach() {
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_compat_prereq_holy_barrier_abort_advice_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = make_fixture_with_seed_commands(
         PREREQ_WEST,
         &[("priestperil", 60), ("druidspirit", 0)],
@@ -1978,6 +2002,9 @@ fn live_compat_prereq_holy_barrier_abort_advice_page() {
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_compat_prereq_holy_barrier_denied_second_walk_same_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fixture = make_fixture(
         PREREQ_WEST,
         &[("priestperil", 60), ("druidspirit", 0)],
@@ -2307,17 +2334,26 @@ fn run_mort_myre_gift(full_bank: bool, run_gatherer: bool) {
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_compat_prereq_mort_myre_started_and_gift() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_mort_myre_gift(false, false);
 }
 
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_gatherer_prereq_mort_myre_gift_room_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_mort_myre_gift(false, true);
 }
 
 #[test]
 #[ignore = "requires LIVE=1 and the explicitly configured local Engine L on 47594/3080"]
 fn live_gatherer_prereq_mort_myre_gift_full_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_mort_myre_gift(true, true);
 }

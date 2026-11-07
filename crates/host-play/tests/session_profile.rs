@@ -588,6 +588,9 @@ fn observed_preparation_reports_only_completed_game_file_steps() {
 
 #[test]
 fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _clients = CLIENTS.lock().unwrap();
     for revision in [274, 289] {
         let fixture = Fixture::new();
@@ -630,6 +633,9 @@ fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
 
 #[test]
 fn shared_template_client_members_follow_world_members_fact() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     for (uid, members) in [(740_101, false), (740_102, true)] {
@@ -650,6 +656,9 @@ fn shared_template_client_members_follow_world_members_fact() {
 }
 #[test]
 fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     let dead_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -715,6 +724,9 @@ fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
 
 #[test]
 fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     let (asset_port, served, server) = serve_fixture_crc(&fixture);
@@ -777,6 +789,9 @@ fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
 
 #[test]
 fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     let mut options = fixture.options(289);
@@ -1778,6 +1793,9 @@ fn named_local_matching_loopback_ports_attach_revision_facts() {
             source: host_play::WorldMembersSource::LocalWorldJson { .. }
         }
     ));
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let profile = selected.bind().unwrap();
     assert!(profile.game_data().is_some());
     assert!(matches!(
@@ -1800,6 +1818,9 @@ fn named_local_forwarded_ports_keep_facts_attached() {
             source: host_play::WorldMembersSource::LocalWorldJson { .. }
         }
     ));
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let profile = forwarded.bind().unwrap();
     assert!(profile.game_data().is_some());
     assert!(matches!(

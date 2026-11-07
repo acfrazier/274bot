@@ -252,6 +252,9 @@ impl Drop for SourceGuard {
 #[test]
 #[ignore = "requires LIVE=1 and the selected local 289 engine; uses a content-backed Path"]
 fn live_zanaris_entrana_dungeon_entry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let path_dir = PathBuf::from(std::env::var_os("QUESTER_PATH_DIR").expect("QUESTER_PATH_DIR"));
     let prior_source = registry::source();

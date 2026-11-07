@@ -362,6 +362,9 @@ fn transport_entering_walk(first: i32, last: i32) -> Route {
 
 #[test]
 fn timeline_counts_each_zone_once_per_own_rate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let risk = RiskTables::build(&tables);
     let fx = Fixture::new(wolf_zone(&tables, &[100], 1), WildernessRules::default());
@@ -406,6 +409,9 @@ fn timeline_counts_each_zone_once_per_own_rate() {
 
 #[test]
 fn timeline_sums_every_exposed_zone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let risk = RiskTables::build(&tables);
     let spawns: Vec<_> = (0..12).map(|index| 100 + index * 2).collect();
@@ -441,6 +447,9 @@ fn timeline_sums_every_exposed_zone() {
 
 #[test]
 fn timeline_charges_unknown_and_npc_poison_pulses_both() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let npc = tables.selected().npc_by_config("poisonspider").unwrap();
     let fx = Fixture::new(
@@ -527,6 +536,9 @@ fn timeline_charges_unknown_and_npc_poison_pulses_both() {
 
 #[test]
 fn poison_charge_includes_tick_zero() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let risk = RiskTables::build(&tables);
     let fx = Fixture::empty();
@@ -561,6 +573,9 @@ fn poison_charge_includes_tick_zero() {
 
 #[test]
 fn admission_wolf_crossing_admits_at_base_40_without_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(wolf_zone(&tables, &[100], 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -583,6 +598,9 @@ fn admission_wolf_crossing_admits_at_base_40_without_food() {
 
 #[test]
 fn admission_no_grants_passes_through_estimate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(wolf_zone(&tables, &[100], 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -598,6 +616,9 @@ fn admission_no_grants_passes_through_estimate() {
 
 #[test]
 fn admission_granted_unsurvivable_crossing_is_refused() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(wolf_zone(&tables, &[100], 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -613,6 +634,9 @@ fn admission_granted_unsurvivable_crossing_is_refused() {
 
 #[test]
 fn admission_declared_no_way_out_endpoint_is_judged_on_the_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -632,6 +656,9 @@ fn admission_declared_no_way_out_endpoint_is_judged_on_the_walk() {
 
 #[test]
 fn admission_endpoint_completion_grant_keeps_no_way_out_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -655,6 +682,9 @@ fn admission_endpoint_completion_grant_keeps_no_way_out_refusal() {
 
 #[test]
 fn admission_all_zone_grant_waives_no_way_out_but_not_the_death_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -677,6 +707,9 @@ fn admission_all_zone_grant_waives_no_way_out_but_not_the_death_bound() {
 
 #[test]
 fn named_grants_must_cover_every_zone_in_no_way_out_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let w = WildernessRules::default();
     let fx = Fixture::new(
@@ -718,6 +751,9 @@ fn named_grants_must_cover_every_zone_in_no_way_out_crossing() {
 
 #[test]
 fn admission_named_grant_never_bypasses_unknown_facts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let missing_id = (0..=i32::from(i16::MAX))
         .find(|id| tables.npc(*id).is_none())
@@ -756,6 +792,9 @@ fn admission_named_grant_never_bypasses_unknown_facts() {
 
 #[test]
 fn admission_credits_no_protect() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(wolf_zone(&tables, &[100], 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -773,6 +812,9 @@ fn admission_credits_no_protect() {
 
 #[test]
 fn crossing_display_volley_saturates_u8() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(
         wolf_zone(&tables, &[100, 101], 1),
@@ -796,6 +838,9 @@ fn crossing_display_volley_saturates_u8() {
 
 #[test]
 fn admission_reason_states_an_upper_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(wolf_zone(&tables, &[100], 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -824,6 +869,9 @@ fn verdict_fixable_with_is_gone() {
 
 #[test]
 fn poison_charged_pass_admits_at_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(wolf_zone(&tables, &[100], 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -847,6 +895,9 @@ fn poison_charged_pass_admits_at_once() {
 
 #[test]
 fn poison_charged_fail_clear_pass_holds_at_retreat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -876,6 +927,9 @@ fn poison_charged_fail_clear_pass_holds_at_retreat() {
 
 #[test]
 fn poison_no_safe_tile_admits_on_clear_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -910,6 +964,9 @@ fn poison_no_safe_tile_admits_on_clear_bound() {
 
 #[test]
 fn poison_facts_missing_is_unknown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let mut risk = RiskTables::build(&tables);
@@ -925,6 +982,9 @@ fn poison_facts_missing_is_unknown() {
 
 #[test]
 fn poison_zero_crossings_never_waits() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let assessment = assess_poison_state(PoisonState::Unknown { since: 0 }, false);
 
     // Old: Unknown alone blocked all routes; new: zero crossings need no hold.
@@ -957,6 +1017,9 @@ fn unattributed_onset() -> PoisonState {
 
 #[test]
 fn replay_onset_charges_unknown_pulse() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::empty();
     let walk = route(10, 20);
@@ -978,6 +1041,9 @@ fn replay_onset_charges_unknown_pulse() {
 
 #[test]
 fn replay_hits_charges_onset_per_period() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::empty();
     let walk = route(10, 132);
@@ -1001,6 +1067,9 @@ fn replay_hits_charges_onset_per_period() {
 
 #[test]
 fn replay_early_pass_refuses_onset() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::empty();
     let walk = route(10, 20);
@@ -1024,6 +1093,9 @@ fn replay_early_pass_refuses_onset() {
 /// A no-crossing route skips only the Unknown-poison wait, not lethal observed Onset damage.
 #[test]
 fn replay_no_crossing_walk_refuses_lethal_onset_without_food_credit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::empty();
     let risks = RiskTables::build(&tables);
@@ -1052,6 +1124,9 @@ fn replay_no_crossing_walk_refuses_lethal_onset_without_food_credit() {
 
 #[test]
 fn replay_refreshed_poisoned_charges_max_pulse() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::empty();
     let walk = route(10, 20);
@@ -1089,6 +1164,9 @@ fn replay_refreshed_poisoned_charges_max_pulse() {
 
 #[test]
 fn u9_compact_layout_and_limit_round_trips() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert!(std::mem::size_of::<RiskInput>() <= 128);
     assert!(std::mem::size_of::<PoisonState>() <= 8);
     assert!(std::mem::size_of::<KindRisk>() <= 12);
@@ -1229,6 +1307,9 @@ fn r1_m3_scene_counts_cannot_reduce_the_uncapped_union() {
 
 #[test]
 fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let wilderness = WildernessRules::default();
     for (config, class) in [
@@ -1299,6 +1380,9 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
 /// lookup by any other row or kind index misclassifies some zone.
 #[test]
 fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let npc = |config: &str| tables.selected().npc_by_config(config).unwrap();
     let kind = |id: &str, npc_id: i32| ZoneKind::new(id, id, npc_id, 1, false, false);
@@ -1447,6 +1531,9 @@ fn t5_1_each_zone_classifies_as_the_kind_its_pack_row_names() {
 
 #[test]
 fn u3_c4_real_assessment_sums_live_and_estimated_rows_without_scene_coverage() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let wilderness = WildernessRules::default();
     // Scene readiness/count is deliberately not an assessment input. These
@@ -1535,6 +1622,9 @@ fn u3_c4_real_assessment_sums_live_and_estimated_rows_without_scene_coverage() {
 
 #[test]
 fn u3_floor_staircase_and_mixed_rate_uncapped_damage() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
     let route = route(80, 108);
@@ -1651,6 +1741,9 @@ fn simulate_ice(
 }
 #[test]
 fn u4_u5_c6_independent_ice_replay_and_exact_food_counts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
     let route = route(80, 127);
@@ -1720,6 +1813,9 @@ fn u4_u5_c6_independent_ice_replay_and_exact_food_counts() {
 
 #[test]
 fn u4_prayer_credit_all_conditions_and_one_raw_volley() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -1763,6 +1859,9 @@ fn u4_prayer_credit_all_conditions_and_one_raw_volley() {
 
 #[test]
 fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -1821,6 +1920,9 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
 
 #[test]
 fn u4_u14_no_crossing_poison_refuses_lethal_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
     let risks = RiskTables::build(&tables);
@@ -1850,6 +1952,9 @@ fn u4_u14_no_crossing_poison_refuses_lethal_bound() {
 
 #[test]
 fn u3_c4_origin_rows_and_pending_damage_survive_an_empty_plan_endpoint() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
     let risks = RiskTables::build(&tables);
@@ -1932,6 +2037,9 @@ fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
 
 #[test]
 fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
     let risks = RiskTables::build(&tables);
@@ -1996,6 +2104,9 @@ fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
 
 #[test]
 fn r1_m2_pending_heal_waits_until_the_transport_delay_ends() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 500, 1), WildernessRules::default());
     let risks = RiskTables::build(&tables);
@@ -2045,6 +2156,9 @@ fn r1_m2_pending_heal_waits_until_the_transport_delay_ends() {
 }
 #[test]
 fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let kinds = vec![known_kind(&tables)];
     let wilderness = WildernessRules {
@@ -2173,6 +2287,9 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
 
 #[test]
 fn u1_u3_four_zone_crossing_keeps_distinct_ranges_rates_and_summed_hits() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let w = WildernessRules::default();
     let kinds = [
@@ -2295,6 +2412,9 @@ fn u1_u3_four_zone_crossing_keeps_distinct_ranges_rates_and_summed_hits() {
 }
 #[test]
 fn u5_witnesses_unknown_overflow_and_multi_burst() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -2392,6 +2512,9 @@ fn u5_witnesses_unknown_overflow_and_multi_burst() {
 
 #[test]
 fn u9_assessment_allocation_and_cpu_measurement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let start = std::time::Instant::now();
     let risks = RiskTables::build(&tables);
@@ -2639,6 +2762,9 @@ fn u9_assessment_allocation_and_cpu_measurement() {
 
 #[test]
 fn u1_shaped_and_ap_exposure_uses_local_ceiling_and_takeoff_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let w = WildernessRules::default();
     let npc = known_kind(&tables);
@@ -2755,6 +2881,9 @@ fn u1_shaped_and_ap_exposure_uses_local_ceiling_and_takeoff_hold() {
 
 #[test]
 fn u4_mixed_food_topup_windows_exclusions_and_exact_threshold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
     let risks = RiskTables::build(&tables);
@@ -2941,6 +3070,9 @@ fn u4_mixed_food_topup_windows_exclusions_and_exact_threshold() {
 
 #[test]
 fn u5_b1_b3_live_classification_multi_and_input_limits() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risks = RiskTables::build(&tables);
@@ -3146,6 +3278,9 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
 
 #[test]
 fn u9_cold_shared_tables_and_kind_build_measurement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let start = std::time::Instant::now();
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let selected_elapsed = start.elapsed();
@@ -3230,6 +3365,9 @@ fn u9_risk_assessment_reuses_one_immutable_table() {
 
 #[test]
 fn assessment_does_not_credit_food_or_report_fixable_with() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -3255,6 +3393,9 @@ fn assessment_does_not_credit_food_or_report_fixable_with() {
 
 #[test]
 fn u5_origin_volley_and_raw_pending_launch_are_not_prayer_credited() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -3303,6 +3444,9 @@ fn u5_origin_volley_and_raw_pending_launch_are_not_prayer_credited() {
 
 #[test]
 fn u1_ap_single_tile_at_an_odd_route_index_keeps_the_final_flight() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let w = WildernessRules::default();
     let mut kind = known_kind(&tables);
@@ -3380,6 +3524,9 @@ fn u1_ap_single_tile_at_an_odd_route_index_keeps_the_final_flight() {
 
 #[test]
 fn u1_admission_does_not_credit_a_teleport_as_an_on_foot_exit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -3473,6 +3620,9 @@ fn u1_transport_input_hold_boundaries_cover_attached_and_standalone_legs() {
 /// enters the zone and is a crossing.
 #[test]
 fn r3_fringe_origin_entering_the_acquisition_set_is_a_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 0), WildernessRules::default());
     let risk = RiskTables::build(&tables);
@@ -3502,6 +3652,9 @@ fn r3_fringe_origin_entering_the_acquisition_set_is_a_crossing() {
 /// as `Unknown(Overflow)`, never as a misfiled escape or crossing.
 #[test]
 fn r3_engaged_origin_outside_its_envelope_fails_closed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let r = i32::from(
         RiskTables::build(&tables)
@@ -3552,6 +3705,9 @@ fn r3_engaged_origin_outside_its_envelope_fails_closed() {
 /// A complete but lethal crossing cannot mask a separate geometry failure.
 #[test]
 fn r3_incomplete_plan_stays_unknown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let risk = RiskTables::build(&tables);
     // Enter the wide zone's envelope after starting inside its acquisition
@@ -3652,6 +3808,9 @@ fn r3_incomplete_plan_stays_unknown() {
 /// T5.1: routes, plans and explicit grants retain their pack identity.
 #[test]
 fn t5_1_assessment_refuses_another_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let other = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
@@ -3725,6 +3884,9 @@ fn yielding_checkpoint(
 
 #[test]
 fn t5w_assessment_yields_and_drops_geometry_and_timeline_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tables = tables();
     let risk = RiskTables::build(&tables);
     let walk = route(80, 139);

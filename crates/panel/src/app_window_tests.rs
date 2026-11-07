@@ -758,6 +758,9 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
 /// server allows Debug (a Local server profile), not on a public world.
 #[test]
 fn rail_mark_tooltip_follows_whether_the_server_allows_debug() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _guard = crate::test_support::imgui_context_guard();
     let world = nav_planner::world::NavWorld::from_parts(
         nav_planner::collision::WorldCollision {

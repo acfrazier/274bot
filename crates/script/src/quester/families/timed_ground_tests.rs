@@ -16,6 +16,9 @@ fn timed_plan(max_ticks: u32) -> Arc<dyn StepPlan> {
 
 #[test]
 fn timed_ground_compiler_rejects_bad_inputs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         for args in [
             json!({"target":{"ground":"egg"},"op":"Take","max_ticks":0}),
@@ -32,6 +35,9 @@ fn timed_ground_compiler_rejects_bad_inputs() {
 
 #[test]
 fn timed_ground_budget_uses_observed_ticks_not_host_time_or_poll_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = ready();
     let mut ledger = None;
     let plan = timed_plan(100);
@@ -73,6 +79,9 @@ fn hold_egg(snapshot: &mut GameSnapshot) {
 
 #[test]
 fn timed_ground_takes_late_spawn_and_receipts_inventory_gain() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(3229, 3302)));
     snapshot.seed_ground_items(vec![]);
@@ -112,6 +121,9 @@ fn timed_ground_takes_late_spawn_and_receipts_inventory_gain() {
 
 #[test]
 fn timed_ground_refuses_inventory_first_seen_after_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     let mut ledger = None;
     let plan = timed_plan(100);

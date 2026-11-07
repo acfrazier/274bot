@@ -1606,6 +1606,9 @@ fn stop_ends_stub_surface_after_reconnect() {
 }
 #[test]
 fn ignored_maze_trap_cleans_up_core_api_work() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::random::{DetectedRandom, RandomClaim, RandomKind};
 
     let selected =
@@ -1668,6 +1671,9 @@ fn ignored_maze_trap_cleans_up_core_api_work() {
 
 #[test]
 fn ignored_mime_trap_returns_core_terminal_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::random::{DetectedRandom, RandomClaim, RandomKind};
 
     let selected =
@@ -2102,6 +2108,9 @@ fn the_seat_page_dispatch_reaches_the_surface_with_its_floor_and_answers_its_acc
 /// request stays unstarted until a tick or an evidence wake polls it.
 #[test]
 fn seat_answer_wake_polls_only_the_answered_request() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::bank::request::{BankSeatArgs, BankSeatOperation};
     use crate::native::request::NativeKind;
     use crate::native::seat_rows::{DecodedSeatBatch, SeatStartArgs, SeatStartInput};

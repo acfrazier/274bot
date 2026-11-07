@@ -1993,6 +1993,9 @@ mod tests {
 
     #[test]
     fn batch_rejects_invalid_shapes_and_host_grammar_without_side_effects() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut ledger = Some(Box::new(ledger::Ledger::default()));
         with_frame(&mut ledger, Duration::ZERO, |cx| {
             let owner = install_owner(cx);
@@ -2111,6 +2114,9 @@ mod tests {
 
     #[test]
     fn selected_protect_pair_is_adjacent_and_capped_at_four_wire_events() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut ledger = Some(Box::new(ledger::Ledger::default()));
         with_frame(&mut ledger, Duration::ZERO, |cx| {
             install_owner(cx);

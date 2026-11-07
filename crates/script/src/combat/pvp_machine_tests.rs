@@ -178,6 +178,9 @@ pub(super) const BOB: &str = "bob";
 
 #[test]
 fn begin_global_only_authorises_initiation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = pen_scene();
     scene
         .players
@@ -192,6 +195,9 @@ fn begin_global_only_authorises_initiation() {
 
 #[test]
 fn begin_names_the_source_that_authorised_the_fight() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (request_pvp, global, expected) in [
         (true, false, PvpSource::Request),
         (false, true, PvpSource::Global),
@@ -213,6 +219,9 @@ fn begin_names_the_source_that_authorised_the_fight() {
 
 #[test]
 fn begin_refuses_a_fight_with_a_player_without_either_source() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = pen_scene();
     scene
         .players
@@ -239,6 +248,9 @@ fn begin_refuses_a_fight_with_a_player_without_either_source() {
 /// too, so this pins the line's level and text, not a global count.
 #[test]
 fn begin_logs_an_info_line_naming_both_sources_when_it_refuses() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     crate::slot::compiled::tests::install_status_line_sink();
     let mut scene = pen_scene();
     scene
@@ -267,6 +279,9 @@ fn begin_logs_an_info_line_naming_both_sources_when_it_refuses() {
 
 #[test]
 fn a_cold_store_fails_closed_for_starting_but_never_for_self_defence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The request field still opts in on its own.
     let mut scene = pen_scene();
     scene
@@ -288,6 +303,9 @@ fn a_cold_store_fails_closed_for_starting_but_never_for_self_defence() {
 
 #[test]
 fn a_global_flip_during_a_fight_changes_the_next_begin_only() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = pen_scene();
     scene
         .players
@@ -318,6 +336,9 @@ fn a_global_flip_during_a_fight_changes_the_next_begin_only() {
 
 #[test]
 fn engage_self_defence_never_reads_opt_in() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = wilderness_scene(tile(3100, 3600));
     scene
         .players
@@ -333,6 +354,9 @@ fn engage_self_defence_never_reads_opt_in() {
 
 #[test]
 fn case1b_intrusion_self_defence_engages_a_labelled_player_without_any_opt_in() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = wilderness_scene(tile(3100, 3600));
     let imp = Scene::new("imp");
     let mut npc = imp.npcs[0].clone();
@@ -365,6 +389,9 @@ fn case1b_intrusion_self_defence_engages_a_labelled_player_without_any_opt_in() 
 
 #[test]
 fn case1c_an_intruder_without_the_attack_label_stays_a_threat_and_is_not_engaged() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = wilderness_scene(tile(3100, 3600));
     let imp = Scene::new("imp");
     let mut npc = imp.npcs[0].clone();
@@ -407,6 +434,9 @@ fn case3_wilderness_levels_follow_the_dbrow_and_the_level_formula() {
 
 #[test]
 fn case4_level_range_is_a_typed_refusal_with_its_payload_at_begin() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = wilderness_scene(tile(3100, 3523));
     scene.local.player.combat_level = 40;
     scene
@@ -432,6 +462,9 @@ fn case4_level_range_is_a_typed_refusal_with_its_payload_at_begin() {
 
 #[test]
 fn case4_an_opponent_stepping_out_of_the_wilderness_aborts_within_one_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = wilderness_scene(tile(3100, 3521));
     scene
         .players
@@ -459,6 +492,9 @@ fn case4_an_opponent_stepping_out_of_the_wilderness_aborts_within_one_tick() {
 
 #[test]
 fn case4_outside_every_pvp_zone_the_zone_reason_is_reported() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // A tile in Lumbridge: neither the Wilderness nor a pen.
     let mut scene = wilderness_scene(tile(3222, 3218));
     scene
@@ -502,6 +538,9 @@ fn case4_outside_every_pvp_zone_the_zone_reason_is_reported() {
 
 #[test]
 fn case5_the_attack_verb_is_the_observed_label() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // A duel pen row carries "Fight": the verb is "Fight".
     let mut scene = pen_scene();
     scene
@@ -565,6 +604,9 @@ fn abort_on_line(line: &str) -> CombatEnd {
 
 #[test]
 fn case6_wilderness_and_arena_lines_end_the_fight_with_their_typed_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let aborted = |reason| CombatEnd::Aborted(AbortReason::PvpRefused(reason));
     assert_eq!(
         abort_on_line("You can't attack players who aren't in the wilderness."),
@@ -590,6 +632,9 @@ fn case6_wilderness_and_arena_lines_end_the_fight_with_their_typed_reason() {
 
 #[test]
 fn case6_a_line_is_matched_exactly_never_by_substring() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, mut harness) = installed_pen_fight(true);
     say(
         &mut scene,
@@ -602,6 +647,9 @@ fn case6_a_line_is_matched_exactly_never_by_substring() {
 
 #[test]
 fn case6_out_of_scope_refusal_lines_abort_unattackable_on_the_third() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, mut harness) = installed_pen_fight(true);
     for (tick, sequence) in [(3, 1), (4, 2)] {
         say(
@@ -627,6 +675,9 @@ fn case6_out_of_scope_refusal_lines_abort_unattackable_on_the_third() {
 
 #[test]
 fn case6_the_single_way_line_holds_the_attack_for_exactly_eight_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, mut harness) = installed_pen_fight(true);
     say(&mut scene, 1, "I'm already under attack.");
     // The line is read at tick 3: no Attack row on ticks 3..=10.
@@ -693,6 +744,9 @@ fn is_player_cast(effect: &Option<HostEffect>) -> bool {
 
 #[test]
 fn case6_the_single_way_line_holds_a_manual_cast_for_exactly_eight_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::magic_tests::refresh_magic;
     let (mut scene, mut harness) = installed_manual_cast_pen_fight();
     say(&mut scene, 1, "I'm already under attack.");
@@ -714,6 +768,9 @@ fn case6_the_single_way_line_holds_a_manual_cast_for_exactly_eight_ticks() {
 
 #[test]
 fn case6_the_duel_not_started_line_holds_a_manual_cast_for_one_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::magic_tests::refresh_magic;
     let (mut scene, mut harness) = installed_manual_cast_pen_fight();
     // Cast spacing has passed by tick 8, so only the hold can stop a cast.
@@ -733,6 +790,9 @@ fn case6_the_duel_not_started_line_holds_a_manual_cast_for_one_tick() {
 
 #[test]
 fn case6_someone_else_fighting_the_opponent_ends_the_run_after_three_lines() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, mut harness) = installed_pen_fight(true);
     // The server refused every attack: we are not in combat with the opponent.
     scene.local.player.actor.target = None;
@@ -762,6 +822,9 @@ fn case6_someone_else_fighting_the_opponent_ends_the_run_after_three_lines() {
 
 #[test]
 fn case6_the_duel_not_started_line_holds_one_tick_and_ends_on_the_third() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, mut harness) = installed_pen_fight(true);
     say(&mut scene, 1, "The duel has not started yet!");
     assert!(matches!(harness.poll(&scene.snapshot, 3), Poll::Pending));
@@ -784,6 +847,9 @@ fn case6_the_duel_not_started_line_holds_one_tick_and_ends_on_the_third() {
 
 #[test]
 fn case6_a_kill_line_is_recorded_and_never_ends_the_fight() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, mut harness) = installed_pen_fight(true);
     say(&mut scene, 1, "With a crushing blow you finish bob.");
     assert!(matches!(harness.poll(&scene.snapshot, 3), Poll::Pending));
@@ -833,6 +899,9 @@ fn case6_every_kill_statement_names_the_opponent() {
 
 #[test]
 fn case19_the_zero_bar_latches_killed_and_no_vanish_is_required() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The dying row stays present at zero health for several ticks; the kill
     // is latched on the first zero-bar frame, never TargetGone.
     for frames_present in [1u64, 6, 10] {
@@ -852,6 +921,9 @@ fn case19_the_zero_bar_latches_killed_and_no_vanish_is_required() {
 
 #[test]
 fn case22_a_pen_opponent_24_tiles_away_stays_engaged_with_lost_radius_32() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let at = |far: bool| {
         let mut scene = wilderness_scene(tile(3333, 3244));
         let target = if far {
@@ -926,6 +998,9 @@ fn has_prayer_row(batch: &DrainedBatch, button: i32) -> bool {
 
 #[test]
 fn protect_plan_on_first_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Alice fights us bare-handed (melee), then wears a shortbow and shoots in
     // the same tick (frame N). The plan of frame N already carries the switch
     // to Protect from Missiles: the product reacts on the first frame that
@@ -974,6 +1049,9 @@ fn protect_plan_on_first_frame() {
 
 #[test]
 fn protect_follows_a_weapon_change_before_the_first_swing_with_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Case 20 (b): the opponent wears a bow with swing clock left: no attack
     // animation yet. The plan of the first frame that shows the bow already
     // carries Protect from Missiles.
@@ -1015,6 +1093,9 @@ fn protect_follows_a_weapon_change_before_the_first_swing_with_it() {
 
 #[test]
 fn protect_follows_the_melee_event_of_a_staff_wielder() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Case 20 (d): a staff wielder who meleed us: the melee event overrides the
     // staff's magic hint on the frame of the onset.
     let mut scene = wilderness_scene(tile(3100, 3600));

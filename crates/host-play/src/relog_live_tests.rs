@@ -389,6 +389,11 @@ fn env_path(name: &str) -> PathBuf {
     assert!(path.is_absolute(), "{name} must be absolute");
     path
 }
+fn asset_path(name: &str, description: &str) -> Option<PathBuf> {
+    let path = api::test_support::local_asset_path(name, "", description)?;
+    assert!(path.is_absolute(), "{name} must be absolute: {}", path.display());
+    Some(path)
+}
 
 fn env_port(name: &str, default: u16) -> u16 {
     std::env::var(name)
@@ -399,6 +404,21 @@ fn env_port(name: &str, default: u16) -> u16 {
 
 fn run_live(fault: Fault, scripted: bool, label: &str) {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let Some(engine_dir) = asset_path("RELOG_ENGINE_DIR", "local R289 engine content") else {
+        return;
+    };
+    let Some(cache_dir) = asset_path("RELOG_CACHE_DIR", "copied local R289 cache snapshot") else {
+        return;
+    };
+    let Some(unpack_dir) = asset_path("RELOG_UNPACK_DIR", "local R289 cache snapshot") else {
+        return;
+    };
+    let Some(nav_pack) = asset_path("RELOG_NAV_PACK", "local R289 navigation pack") else {
+        return;
+    };
     assert!(
         api::hostlog::install_sink(&CAPTURE),
         "run this live proof in its own test process"
@@ -415,10 +435,10 @@ fn run_live(fault: Fault, scripted: bool, label: &str) {
         asset_host: Some("127.0.0.1".into()),
         port: Some(relay.as_ref().map_or(game_port, |relay| relay.port)),
         http_port: Some(env_port("RELOG_HTTP_PORT", 1080)),
-        engine_dir: Some(env_path("RELOG_ENGINE_DIR")),
-        cache_dir: Some(env_path("RELOG_CACHE_DIR")),
-        unpack_dir: Some(env_path("RELOG_UNPACK_DIR")),
-        nav_pack: Some(env_path("RELOG_NAV_PACK")),
+        engine_dir: Some(engine_dir),
+        cache_dir: Some(cache_dir),
+        unpack_dir: Some(unpack_dir),
+        nav_pack: Some(nav_pack),
         vault_path: Some(home.join(format!("vault-relog-{label}"))),
         ..ProfileOptions::default()
     };

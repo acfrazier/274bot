@@ -827,6 +827,10 @@ export function tick(api) {
         "game data unavailable: this server's content isn't verified (see profile/engine settings)",
         "{value:?}"
     );
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
 
     // A selected slot without the trail family: the family token, before
     // none-held, even with an empty page.
@@ -839,8 +843,13 @@ export function tick(api) {
     .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let value: serde_json::Value =
-        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let value: serde_json::Value = serde_json::from_str(
+        iso.probe("globalThis.__probe")
+            .unwrap_or_else(|error| panic!("{error}; isolate setup: {:?}", iso.poll_ready()))
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     iso.join();
     assert_eq!(
         value["step"]["error"], "family-unavailable:trails",
@@ -883,6 +892,10 @@ export function tick(api) {
             "{key} {empty:?}"
         );
     }
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
 
     let iso = LoadIsolate::spawn_with_game_data(
         src.into(),
@@ -893,8 +906,13 @@ export function tick(api) {
     .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let missing: serde_json::Value =
-        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let missing: serde_json::Value = serde_json::from_str(
+        iso.probe("globalThis.__probe")
+            .unwrap_or_else(|error| panic!("{error}; isolate setup: {:?}", iso.poll_ready()))
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     iso.join();
     assert_eq!(missing["omitted"]["error"], "invalid-args", "{missing:?}");
     assert_eq!(missing["stringId"]["error"], "invalid-args", "{missing:?}");

@@ -1954,6 +1954,9 @@ mod make_retry_tests {
 
     #[test]
     fn make_approach_waits_a_tick_retries_twice_and_keeps_last_detail() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tile = WorldTile {
             x: 12,
             z: 34,

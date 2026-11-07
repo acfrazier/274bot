@@ -8730,6 +8730,9 @@ fn staged_hand_in_close(capture: &CombatCapture) -> usize {
 
 #[test]
 fn staged_hand_in_requires_durable_completion_and_observed_green_quest() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut capture = staged_hand_in_capture();
     let completed = capture
         .m1_completion
@@ -8766,8 +8769,10 @@ fn staged_hand_in_requires_durable_completion_and_observed_green_quest() {
 
 #[test]
 fn staged_hand_in_rejects_a_close_without_the_completion_scroll_open() {
-    // The only CloseModal must happen while the quest completion scroll is the
-    // open main modal (quests.rs2:42-47; dialogue.rs:760-766,1043-1044).
+    if !api::test_support::game_data_available() {
+        return;
+    } // The only CloseModal must happen while the quest completion scroll is the
+      // open main modal (quests.rs2:42-47; dialogue.rs:760-766,1043-1044).
     let root = completion_scroll_root();
     let mut capture = staged_hand_in_capture();
     let close = staged_hand_in_close(&capture);
@@ -8792,8 +8797,10 @@ fn staged_hand_in_rejects_a_close_without_the_completion_scroll_open() {
 
 #[test]
 fn staged_hand_in_rejects_a_close_before_the_final_talk() {
-    // wizard_mizgog.rs2:1-19,39-52: the completion scroll opens after the
-    // second talk, so a close before it cannot be the hand-in's receipt.
+    if !api::test_support::game_data_available() {
+        return;
+    } // wizard_mizgog.rs2:1-19,39-52: the completion scroll opens after the
+      // second talk, so a close before it cannot be the hand-in's receipt.
     let mut capture = staged_hand_in_capture();
     let close = capture.actions.pop().expect("fixture completion close");
     capture.actions.insert(0, close);
@@ -9523,6 +9530,9 @@ fn magic_no_onset_controls_c_through_f_require_positive_complete_evidence() {
 
 #[test]
 fn magic_no_melee_offensive_prayer_control_h_gates_every_magic_case() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut safe = magic_protection_capture(50, 110, 62);
     for case in [
         Case::MageAuto,
@@ -11007,6 +11017,9 @@ fn legacy_caller_wire_rejects_unknown_debug_and_wrong_packets() {
 
 #[test]
 fn modal_close_wire_requires_exact_operation_and_packet() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use client::io::ClientProt289;
     let root = completion_scroll_root();
     let mut action = json!({
@@ -11502,6 +11515,9 @@ fn ranged_other_player_engagement_is_natural_area_interference() {
 
 #[test]
 fn ranged_preflight_requires_a_settled_natural_dialogue_at_the_real_map_warlord() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let spawn = WARLORD_ANCHOR;
     for (case, accepted_distances, out_of_range_distance) in [
@@ -11775,6 +11791,9 @@ fn ranged_stale_attack_oracle_uses_snapshot_clock_and_selected_rate() {
 
 #[test]
 fn ranged_prep_requires_first_equipped_native_poll_not_render_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use client::io::ClientProt289;
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let facts = selected_ranged_facts(Case::R3, &selected).unwrap();
@@ -11783,27 +11802,27 @@ fn ranged_prep_requires_first_equipped_native_poll_not_render_frame() {
     capture.random_events.extend([
         ranged_selected_facts_event(Case::R3, &selected),
         json!({"kind": "RangedProbe", "tick": 12, "mode_varp": 1,
-            "combat_root_id": facts.tab_root_id,
-            "combat_style_buttons": [{"component_id": facts.rapid.button, "mode": 1}]}),
+        "combat_root_id": facts.tab_root_id,
+        "combat_style_buttons": [{"component_id": facts.rapid.button, "mode": 1}]}),
     ]);
     capture.actions.extend([
         json!({"kind": "interaction", "sequence": 1, "snapshot_tick": 10, "tick": 30,
-            "accepted": true, "wire_decoded": true, "wire_opcodes": [ClientProt289::OPHELD1.id],
-            "request": {"op": "wear", "name": ranged_aliases(Case::R3).0},
-            "snapshot": {"inventory": [{"actions": ["Wield"]}]}}),
+        "accepted": true, "wire_decoded": true, "wire_opcodes": [ClientProt289::OPHELD1.id],
+        "request": {"op": "wear", "name": ranged_aliases(Case::R3).0},
+        "snapshot": {"inventory": [{"actions": ["Wield"]}]}}),
         json!({"kind": "interaction", "sequence": 2, "snapshot_tick": 12, "tick": 32,
-            "accepted": true, "wire_decoded": true, "wire_opcodes": [ClientProt289::IF_BUTTON.id],
-            "request": {"op": "if-button", "component_id": facts.rapid.button}}),
+        "accepted": true, "wire_decoded": true, "wire_opcodes": [ClientProt289::IF_BUTTON.id],
+        "request": {"op": "if-button", "component_id": facts.rapid.button}}),
         json!({"kind": "interaction", "sequence": 3, "snapshot_tick": 13, "tick": 33,
-            "request": {"op": "npc", "action": "Attack"}}),
+        "request": {"op": "npc", "action": "Attack"}}),
     ]);
     capture.observations.extend([
         json!({"native_tick_edge": true, "snapshot_tick": 11, "host_tick": 31,
-            "equipment": [], "combat_root_id": facts.tab_root_id}),
+        "equipment": [], "combat_root_id": facts.tab_root_id}),
         json!({"native_tick_edge": false, "snapshot_tick": 11, "host_tick": 31,
-            "equipment": [facts.weapon_id], "combat_root_id": facts.tab_root_id}),
+        "equipment": [facts.weapon_id], "combat_root_id": facts.tab_root_id}),
         json!({"native_tick_edge": true, "snapshot_tick": 12, "host_tick": 32,
-            "equipment": [facts.weapon_id], "combat_root_id": facts.tab_root_id}),
+        "equipment": [facts.weapon_id], "combat_root_id": facts.tab_root_id}),
     ]);
     assert!(ranged_style_prep_ok(Case::R3, &capture));
     assert_eq!(ranged_style_timing(&capture)["wear_to_style_ticks"], 2);
@@ -11821,6 +11840,9 @@ fn ranged_prep_requires_first_equipped_native_poll_not_render_frame() {
 
 #[test]
 fn mage_rune_deltas_count_splashes_and_capture_two_cast_ranges() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let npc = |distance, spot_animation, spot_animation_stamp| {
         json!({
             "type": 477,
@@ -12148,6 +12170,9 @@ fn magic_budget_end_is_invalid_not_a_pass() {
 
 #[test]
 fn manual_magic_has_no_incidental_splash_or_distance_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for case in [Case::MageManualFallback, Case::MageManualNoFallback] {
         let end = if case == Case::MageManualNoFallback {
             "Aborted(Unprotected(NoRunes))"

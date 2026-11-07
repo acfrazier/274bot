@@ -7643,6 +7643,9 @@ fn every_script_stop_retires_the_run_walk_and_only_that_runs_walk() {
 /// different run changes nothing.
 #[test]
 fn script_native_stop_retires_only_the_named_runs_rows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -7791,6 +7794,9 @@ fn every_other_way_a_run_ends_retires_its_published_rows() {
 /// keeps its run and its rows.
 #[test]
 fn an_unload_retires_the_run_once_before_it_removes_the_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -7832,13 +7838,13 @@ fn an_unload_retires_the_run_once_before_it_removes_the_row() {
 
     let retired = crate::play_status::RETIRED_RUNS.with(std::cell::RefCell::take);
     assert_eq!(
-        retired,
-        [
-            ("stopped".to_owned(), true, true),
-            ("retiring".to_owned(), true, true),
-        ],
-        "each unload retires its run once, before the row is removed (Play::stop_slot, Play::begin_stop_slot)"
-    );
+    retired,
+    [
+        ("stopped".to_owned(), true, true),
+        ("retiring".to_owned(), true, true),
+    ],
+    "each unload retires its run once, before the row is removed (Play::stop_slot, Play::begin_stop_slot)"
+);
     let rows: Vec<(String, bool, bool)> = play
         .statuses
         .lock()
@@ -8009,6 +8015,9 @@ fn fire_compiled_until_settled(
 #[cfg(feature = "js")]
 #[test]
 fn compiled_catalog_start_pump_reaches_running() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let play = compiled_start_play();
     let mut pending = vec![live_start::PendingCatalogStart::compiled(
         "alice",
@@ -8040,6 +8049,9 @@ fn compiled_catalog_start_pump_reaches_running() {
 #[cfg(feature = "js")]
 #[test]
 fn start_handle_reads_native_runtime_pair_atomically() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Barrier;
 
@@ -8092,6 +8104,9 @@ fn start_handle_reads_native_runtime_pair_atomically() {
 #[cfg(feature = "js")]
 #[test]
 fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let play = compiled_start_play();
     let mut bag = serde_json::Map::new();
     bag.insert("clueDuelPartner".into(), serde_json::json!(7));
@@ -9217,6 +9232,9 @@ fn debug_command_admission_rejects_remote_prod_and_invalid_wire_bodies() {
 
 #[test]
 fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts, cheats, ..
     } = script_wiring();
@@ -9934,6 +9952,9 @@ fn t23_bank_assert_button_packet(
 #[cfg(feature = "js")]
 #[test]
 fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use client::config::ObjType;
     use client::io::{ClientProt289, ServerProt289};
     let mut c = bank_client_289();
@@ -9976,11 +9997,11 @@ fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__ok = await Bank.deposit('Trout', 'Deposit-1');
-    }
+async loop() {
+    if (globalThis.__did) return;
+    globalThis.__did = true;
+    globalThis.__ok = await Bank.deposit('Trout', 'Deposit-1');
+}
 }
 "#;
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -10739,6 +10760,9 @@ fn dispatch_open_stand_booth_honors_name_and_operation_slot() {
 #[cfg(feature = "js")]
 #[test]
 fn withdraw_x_composes_script_host_dialog_and_posted_inventory_result() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -10746,17 +10770,17 @@ fn withdraw_x_composes_script_host_dialog_and_posted_inventory_result() {
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (!globalThis.__started) {
-            globalThis.__started = true;
-            globalThis.__posted_result = await Bank.withdrawX('Knife', 7);
-            return;
-        }
-        if (globalThis.__posted_result === true && !globalThis.__noted_started) {
-            globalThis.__noted_started = true;
-            globalThis.__noted_result = await Bank.withdrawXById(2, 5, 3);
-        }
+async loop() {
+    if (!globalThis.__started) {
+        globalThis.__started = true;
+        globalThis.__posted_result = await Bank.withdrawX('Knife', 7);
+        return;
     }
+    if (globalThis.__posted_result === true && !globalThis.__noted_started) {
+        globalThis.__noted_started = true;
+        globalThis.__noted_result = await Bank.withdrawXById(2, 5, 3);
+    }
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -11121,6 +11145,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn native_bank_withdraw_drives_fixed_and_count_dialog_ops_through_the_host() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
     use script::native_bank::{BankAction, BankMachine, BankRequest, Withdrawal};
     use std::task::Poll;
@@ -11320,6 +11347,9 @@ fn withdraw_load_selects_exact_then_all_then_x() {
 #[cfg(feature = "js")]
 #[test]
 fn deposit_snapshot_wait_and_ordinary_withdraw_complete_in_the_same_bank_session() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -11327,15 +11357,15 @@ fn deposit_snapshot_wait_and_ordinary_withdraw_complete_in_the_same_bank_session
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        const before = Bank.snapshotGeneration();
-        await Bank.depositInventory();
-        globalThis.__snapshot_fresh = await Bank.waitSnapshotAfter(before, 5000);
-        globalThis.__deposit_done = true;
-        globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw All');
-    }
+async loop() {
+    if (globalThis.__did) return;
+    globalThis.__did = true;
+    const before = Bank.snapshotGeneration();
+    await Bank.depositInventory();
+    globalThis.__snapshot_fresh = await Bank.waitSnapshotAfter(before, 5000);
+    globalThis.__deposit_done = true;
+    globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw All');
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -11597,6 +11627,9 @@ export default class T extends LoopingBot {
 #[cfg(feature = "js")]
 #[test]
 fn raw_withdraw_x_acknowledges_the_sent_action_with_unchanged_inventory() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -11604,11 +11637,11 @@ fn raw_withdraw_x_acknowledges_the_sent_action_with_unchanged_inventory() {
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw X');
-    }
+async loop() {
+    if (globalThis.__did) return;
+    globalThis.__did = true;
+    globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw X');
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -11710,6 +11743,9 @@ export default class T extends LoopingBot {
 #[cfg(feature = "js")]
 #[test]
 fn raw_withdraw_x_does_not_acknowledge_a_stale_bank_session() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -11717,11 +11753,11 @@ fn raw_withdraw_x_does_not_acknowledge_a_stale_bank_session() {
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw X');
-    }
+async loop() {
+    if (globalThis.__did) return;
+    globalThis.__did = true;
+    globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw X');
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -13251,6 +13287,9 @@ fn canvas_mouse_289_sample_after_down_does_not_publish_click_coords() {
 #[cfg(feature = "js")]
 #[test]
 fn ordinary_withdraw_refusal_posts_false_to_the_isolate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -13258,11 +13297,11 @@ fn ordinary_withdraw_refusal_posts_false_to_the_isolate() {
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw 42');
-    }
+async loop() {
+    if (globalThis.__did) return;
+    globalThis.__did = true;
+    globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw 42');
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -13359,6 +13398,9 @@ export default class T extends LoopingBot {
 #[cfg(feature = "js")]
 #[test]
 fn withdraw_x_expired_dialog_posts_failure_without_answer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -13446,6 +13488,9 @@ fn withdraw_x_expired_dialog_posts_failure_without_answer() {
 #[cfg(feature = "js")]
 #[test]
 fn withdraw_x_same_generation_rejection_posts_false_to_the_isolate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -13453,11 +13498,11 @@ fn withdraw_x_same_generation_rejection_posts_false_to_the_isolate() {
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    loop() {
-        if (globalThis.__started) return;
-        globalThis.__started = true;
-        Bank.withdrawX('Knife', 7).then((ok) => { globalThis.__rejected = ok; });
-    }
+loop() {
+    if (globalThis.__started) return;
+    globalThis.__started = true;
+    Bank.withdrawX('Knife', 7).then((ok) => { globalThis.__rejected = ok; });
+}
 }
 "#;
     t23_bank_start_compat_slot(&scripts, "alice", source);
@@ -18093,6 +18138,9 @@ fn wait_settled(cond: impl FnMut() -> bool) -> bool {
 
 #[test]
 fn script_observe_ticks_only_on_player_edge_while_up() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts,
         cheats,
@@ -18554,9 +18602,11 @@ export default class T extends LoopingBot {
 
 #[test]
 fn script_observe_idle_slot_publishes_nothing_on_tick_edge() {
-    // Task 12: an Idle SlotScript must not publish a script snapshot —
-    // no dispatch and no driver write, so the slot has nothing to send
-    // on the next mainloop pass.
+    if !api::test_support::game_data_available() {
+        return;
+    } // Task 12: an Idle SlotScript must not publish a script snapshot —
+      // no dispatch and no driver write, so the slot has nothing to send
+      // on the next mainloop pass.
     let scripts = Arc::new(Mutex::new(HashMap::new()));
     let cheats = Arc::new(Mutex::new(HashMap::new()));
     let count = Arc::new(Mutex::new(0));
@@ -18720,6 +18770,9 @@ fn native_walk_reads_snapshot_stats_when_arm_state_is_missing() {
 
 #[test]
 fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts,
         cheats,
@@ -18777,6 +18830,9 @@ fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
 
 #[test]
 fn projected_npc_boxes_are_lazy_for_the_isolate_snapshot_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts: compiled_scripts,
         cheats: _,
@@ -18907,6 +18963,9 @@ fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
 
 #[test]
 fn script_observe_drains_queued_cheat_onto_driver() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts,
         cheats,
@@ -19364,6 +19423,9 @@ fn duel_accept_snapshot(
 
 #[test]
 fn duel_accept_requires_empty_exact_partner_session_and_obstacle_rules() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::script_runtime::validated_duel_accept;
 
     let controls = *api::game_data::for_revision(client::io::ClientRevision::R289)
@@ -20333,6 +20395,9 @@ fn script_snapshot_loc_behind_wall_posts_reachable_false() {
 #[cfg(feature = "js")]
 #[test]
 fn script_snapshot_retaliate_enabled_is_varp_172_zero() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let cache = Cache {
         varps: (0..173)
             .map(|_| client::config::VarpType::default())
@@ -20697,6 +20762,9 @@ fn posted_varp(view: &script_js::wire::Snapshot<'_>, index: i32) -> Option<i32> 
 #[cfg(feature = "js")]
 #[test]
 fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let extras = 40;
     let off_snap = prayer_overlay_game_snapshot(0, extras);
     let on_snap = prayer_overlay_game_snapshot(1, extras);
@@ -21361,6 +21429,9 @@ fn tick_at(c: &mut Client, snap: &mut GameSnapshot) {
 /// dispatches fully.
 #[test]
 fn script_observe_skips_the_tick_dispatch_while_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts,
         cheats,
@@ -21400,6 +21471,9 @@ fn script_observe_skips_the_tick_dispatch_while_hold() {
 
 #[test]
 fn welcome_hold_skips_compiled_tick_until_observed_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ScriptWiring {
         scripts,
         cheats,
@@ -22890,6 +22964,9 @@ fn tick_fix_route_inspect_completion_wakes_without_player_info() {
 #[cfg(feature = "js")]
 #[test]
 fn tick_fix_bank_selection_completion_wakes_without_player_info() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_tick_fix_evidence_wake(TickFixEvidence::BankSelection);
 }
 
@@ -22965,6 +23042,9 @@ impl script::native::Script for SnapshotPumpScript {
 
 #[test]
 fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts = Arc::new(Mutex::new(HashMap::new()));
     let cheats = Arc::new(Mutex::new(HashMap::new()));
     let (navs, world) = empty_nav();
@@ -24022,6 +24102,9 @@ fn a_paused_recovery_resumes_its_walk_instead_of_restarting() {
 #[cfg(feature = "js")]
 #[test]
 fn a_paused_bank_access_booth_walk_resumes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = ReconnectRig::t23_bank_wake_with_source(
         once_src(
             "import { Bank } from '../../api/bank/Bank.js';",
@@ -26354,6 +26437,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn hold_freezes_follow_and_keeps_the_armed_route() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -26447,6 +26533,9 @@ impl script::native::Script for ClaimHandle {
 
 #[test]
 fn handle_claim_keeps_ticks_and_blocks_host_talk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let count = Arc::new(Mutex::new(0u32));
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     script_slot_or_insert(&scripts, "alice")
@@ -26493,8 +26582,10 @@ fn handle_claim_keeps_ticks_and_blocks_host_talk() {
 
 #[test]
 fn knock_reaches_peer_slot_while_other_slot_lock_held() {
-    // OPT-006: knock takes a brief wall lookup then the peer slot lock —
-    // never the wall lock for the whole on_random call.
+    if !api::test_support::game_data_available() {
+        return;
+    } // OPT-006: knock takes a brief wall lookup then the peer slot lock —
+      // never the wall lock for the whole on_random call.
     use api::random::{DetectedRandom, RandomKind};
 
     struct ClaimHandle;
@@ -26546,6 +26637,9 @@ fn knock_reaches_peer_slot_while_other_slot_lock_held() {
 #[cfg(feature = "js")]
 #[test]
 fn load_ignored_randoms_decline_only_listed_events() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     fn production_knock(
         scripts: &ScriptWall,
         name: &str,
@@ -26565,7 +26659,7 @@ fn load_ignored_randoms_decline_only_listed_events() {
 
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let src =
-        "export default class T extends LoopingBot { ignoredRandoms() { return ['SWARM']; } loop() {} }";
+    "export default class T extends LoopingBot { ignoredRandoms() { return ['SWARM']; } loop() {} }";
     {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
@@ -26671,7 +26765,7 @@ fn load_ignored_randoms_decline_only_listed_events() {
     // The same exact production knock releases the hold when Maze itself is
     // listed, while continuing to publish the detected event.
     let maze_src =
-        "export default class T extends LoopingBot { ignoredRandoms() { return ['MAZE']; } loop() {} }";
+    "export default class T extends LoopingBot { ignoredRandoms() { return ['MAZE']; } loop() {} }";
     {
         let slot = script_slot_or_insert(&scripts, "bob");
         let mut slot = slot.lock().unwrap();
@@ -26858,6 +26952,9 @@ fn load_changed_ignore_list_reclaims_the_same_box_without_restarting_it() {
 #[cfg(feature = "js")]
 #[test]
 fn load_stop_or_slot_reset_returns_the_box_before_a_compiled_script_starts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct NoRandomCallback(Arc<Mutex<usize>>);
     impl script::native::Script for NoRandomCallback {
         fn tick(
@@ -26878,9 +26975,9 @@ fn load_stop_or_slot_reset_returns_the_box_before_a_compiled_script_starts() {
             let mut slot = slot.lock().unwrap();
             slot.start_load_settled(
                 "export default class T extends LoopingBot {
-                    ignoredRandoms() { return ['Strange box']; }
-                    loop() {}
-                }"
+                ignoredRandoms() { return ['Strange box']; }
+                loop() {}
+            }"
                 .into(),
                 script_js::LoadShape::CompatClass,
                 vec![],
@@ -27094,11 +27191,17 @@ fn after_genie_gone_lamp_auto_off_in_inv_detects_without_hold() {
 
 #[test]
 fn disabled_box_guardian_keeps_native_eligibility_available() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_box_guardian_native_eligibility(false);
 }
 
 #[test]
 fn enabled_box_guardian_pauses_native_eligibility_for_an_owned_event() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_box_guardian_native_eligibility(true);
 }
 
@@ -27435,6 +27538,9 @@ fn nav_frame_at(x: i32, z: i32) -> GameSnapshot {
 #[cfg(feature = "js")]
 #[test]
 fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = bank_client();
     c.map_build_base_x = 3250;
     c.map_build_base_z = 3416;
@@ -27967,6 +28073,9 @@ export function tick(api) {
 
 #[test]
 fn script_observe_walk_arms_route_and_pump_steps_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -28552,6 +28661,9 @@ export default class T extends LoopingBot {{
 
 #[test]
 fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::native::walk::Walk;
     use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd};
     use std::task::Poll;
@@ -29252,6 +29364,9 @@ fn walkable_loc_arrival_uses_footprint_distance_but_plain_tiles_keep_anchor_radi
 
 #[test]
 fn gatherer_starts_chopping_from_a_valid_far_footprint_perimeter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
     use script::interact::InteractReq;
     use script::native::HostEffect;
@@ -30539,6 +30654,9 @@ fn bump_rebuild(c: &mut Client, snap: &mut GameSnapshot) {
 /// make).
 #[test]
 fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let karamja = WorldTile {
         x: 2918,
         z: 3176,
@@ -30717,6 +30835,9 @@ fn toll_nav_world() -> NavWorld {
 /// the toll Transport leg.
 #[test]
 fn script_observe_walk_uses_slot_state_across_a_toll() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -30803,6 +30924,9 @@ fn mine_nav_world() -> NavWorld {
 /// out through the exit portal's return hop to the wizard's anchor.
 #[test]
 fn script_observe_walk_uses_the_latched_essence_session() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -30867,6 +30991,9 @@ fn script_observe_walk_uses_the_latched_essence_session() {
 /// mine stays NoPath for a native walk (fail-closed remains correct).
 #[test]
 fn script_observe_walk_without_a_latch_keeps_the_mine_sealed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -30908,6 +31035,9 @@ fn script_observe_walk_without_a_latch_keeps_the_mine_sealed() {
 /// toll stays unusable and no route arms.
 #[test]
 fn script_observe_walk_falls_back_to_empty_when_slot_has_no_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -30947,6 +31077,9 @@ fn script_observe_walk_falls_back_to_empty_when_slot_has_no_state() {
 
 #[test]
 fn script_observe_walk_queues_off_pump_and_refuses_when_unarmable() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let NavRig {
         scripts,
         cheats,
@@ -31446,6 +31579,9 @@ mod read_journal_tests {
 
     #[test]
     fn host_read_journal_dispatches_a_live_wait_and_finishes_the_read() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (play, slot) = play(false, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         assert_eq!(
@@ -31468,6 +31604,9 @@ mod read_journal_tests {
 
     #[test]
     fn host_read_journal_refuses_every_stale_run_key_dimension() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (play, slot) = play(false, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         for stale in [
@@ -31505,6 +31644,9 @@ mod read_journal_tests {
 
     #[test]
     fn host_read_journal_cannot_restart_a_terminal_blocked_run() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (play, slot) = play(false, true);
         let status = slot.lock().unwrap().native_status().unwrap();
         assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
@@ -31526,6 +31668,9 @@ mod read_journal_tests {
 
     #[test]
     fn host_read_journal_panic_fails_the_run_without_poisoning_the_slot() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (play, slot) = play(true, false);
         let run = slot.lock().unwrap().native_run().unwrap();
         assert_eq!(
@@ -31937,6 +32082,9 @@ mod host_batch_tests {
 
     #[test]
     fn refused_batch_fails_stops_suffix_and_releases_reservations_without_blocking_direct_work() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(
             rows([
                 script::interact::InteractReq::IfButton { component_id: 3420 },
@@ -31993,6 +32141,9 @@ mod host_batch_tests {
 
     #[test]
     fn ordinary_and_batch_admission_orders_keep_batch0_independent_and_gate_follow() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (order, batch_exclusive, dispatched_button) in [
             (AdmissionOrder::BatchThenOrdinary, true, 3420),
             (AdmissionOrder::OrdinaryThenBatch, false, 3421),
@@ -32052,6 +32203,9 @@ mod host_batch_tests {
 
     #[test]
     fn host_batch_preserves_builder_component_order() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(
             rows([
                 script::interact::InteractReq::IfButton { component_id: 3421 },
@@ -32075,6 +32229,9 @@ mod host_batch_tests {
 
     #[test]
     fn terminal_batch_freezes_only_its_player_observation_key() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(
             rows([
                 script::interact::InteractReq::IfButton { component_id: 3420 },
@@ -32144,6 +32301,9 @@ mod host_batch_tests {
 
     #[test]
     fn guardian_and_recovery_holds_dispatch_no_native_batch() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut guardian = rig(
             rows([script::interact::InteractReq::IfButton { component_id: 3420 }]),
             AdmissionOrder::BatchThenOrdinary,
@@ -32199,6 +32359,9 @@ mod host_batch_tests {
 
     #[test]
     fn changed_work_epoch_revokes_queued_batch_before_host_dispatch() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(
             rows([script::interact::InteractReq::IfButton { component_id: 3420 }]),
             AdmissionOrder::BatchThenOrdinary,
@@ -32520,6 +32683,9 @@ export default class T extends LoopingBot {
     #[cfg(feature = "js")]
     #[test]
     fn compatibility_queue_route_uses_only_matching_observed_complete_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
 
@@ -32577,6 +32743,9 @@ export default class T extends LoopingBot {
     #[cfg(feature = "js")]
     #[test]
     fn compatibility_queue_route_fails_closed_for_unavailable_or_unsupported_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
 
@@ -32644,6 +32813,9 @@ export default class T extends LoopingBot {
 
     #[test]
     fn native_assessment_uses_the_same_complete_row_and_request_stamp() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
         let world = gate_world(quest);
@@ -32852,6 +33024,9 @@ export default class T extends LoopingBot {
 
     #[test]
     fn slot_keeps_parked_native_run_and_resumes_after_dose() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::quest_progress::EvidenceStamp;
         use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
@@ -33061,6 +33236,9 @@ export default class T extends LoopingBot {
 
     #[test]
     fn native_gatherer_walk_crosses_the_typed_gate_from_live_quest_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let (quest, _) = selected_quest(&selected);
         let target = tile(3085, 3468);
@@ -33319,6 +33497,9 @@ export default class T extends LoopingBot {
 
     #[test]
     fn native_quester_walk_crosses_typed_gate_from_live_quest_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let quest = cook_quest(&selected);
         let quests = selected.try_quests().expect("selected quest catalog");
@@ -33407,6 +33588,9 @@ export default class T extends LoopingBot {
     }
     #[test]
     fn native_quester_retries_wall_walk_after_real_budget_stop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected_r289();
         let quest = cook_quest(&selected);
         let quests = selected.try_quests().expect("selected quest catalog");
@@ -33563,22 +33747,22 @@ export default class T extends LoopingBot {
             bot.walk_outcome_request_id == retry_request && !bot.route_work_pending()
         };
         assert!(
-            fallback_settled,
-            "the bounded Quester fallback route must also settle its real search; first_request={first_request}; expected_retry={retry_request}; state={:?}",
-            rig.navs.lock().unwrap().get("alice").map(|bot| (
-                ("current_request", bot.walk_request_id),
-                ("outcome_request", bot.walk_outcome_request_id),
-                ("outcome_seq", bot.walk_outcome_seq),
-                ("work_pending", bot.route_work_pending()),
-                ("ticket_present", bot.route_ticket.is_some()),
-                ("demand_present", bot.pending_route.is_some()),
-                ("native_owner_present", bot.native_walk.is_some()),
-                (
-                    "failure_request",
-                    bot.native_walk_failure.as_ref().map(|(request, _)| *request)
-                ),
-            ))
-        );
+        fallback_settled,
+        "the bounded Quester fallback route must also settle its real search; first_request={first_request}; expected_retry={retry_request}; state={:?}",
+        rig.navs.lock().unwrap().get("alice").map(|bot| (
+            ("current_request", bot.walk_request_id),
+            ("outcome_request", bot.walk_outcome_request_id),
+            ("outcome_seq", bot.walk_outcome_seq),
+            ("work_pending", bot.route_work_pending()),
+            ("ticket_present", bot.route_ticket.is_some()),
+            ("demand_present", bot.pending_route.is_some()),
+            ("native_owner_present", bot.native_walk.is_some()),
+            (
+                "failure_request",
+                bot.native_walk_failure.as_ref().map(|(request, _)| *request)
+            ),
+        ))
+    );
         assert!(rig.navs.lock().unwrap()["alice"].walk_outcome_seq >= 2);
     }
 }

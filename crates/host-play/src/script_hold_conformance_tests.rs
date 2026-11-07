@@ -831,6 +831,9 @@ fn slow_trace_limit() -> usize {
 
 #[test]
 fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let bounds = conformance_bounds();
     let (_, releases) = release_traces(
         bounds,
@@ -871,9 +874,9 @@ fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
         );
     }
     eprintln!(
-        "conformance: {checked} traces over {} releases, {skipped} slow traces skipped (limit {slow_limit}); the model held the press on {held_frames} frames and pressed on {press_frames}",
-        releases.len()
-    );
+    "conformance: {checked} traces over {} releases, {skipped} slow traces skipped (limit {slow_limit}); the model held the press on {held_frames} frames and pressed on {press_frames}",
+    releases.len()
+);
     assert!(
         held_frames > 0 && press_frames > 0,
         "the traces exercise both decisions"
@@ -903,6 +906,9 @@ fn the_real_hold_matches_the_model_on_the_shortest_trace_of_each_release() {
 /// then presses where the head model holds.
 #[test]
 fn the_renewed_end_gap_is_held_on_the_real_code_where_the_earlier_host_pressed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let bounds = Bounds {
         quiet: false,
         ..conformance_bounds()
@@ -955,6 +961,9 @@ fn the_renewed_end_gap_is_held_on_the_real_code_where_the_earlier_host_pressed()
 /// design: the demonstration is in `arm-r/report.md`.
 #[test]
 fn the_counterexamples_of_the_earlier_designs_run_on_the_real_code_like_the_head_model() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let bounds = conformance_bounds();
     let head = Model::new(bounds, Mutation::None);
     let mut checked = 0;
@@ -1013,6 +1022,9 @@ fn the_counterexamples_of_the_earlier_designs_run_on_the_real_code_like_the_head
 /// the product's 10 s.
 #[test]
 fn the_journal_click_is_held_on_the_real_code_where_the_earlier_ledger_pressed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let bounds = Bounds {
         modal: false,
         ..conformance_bounds()
@@ -1068,6 +1080,9 @@ fn the_journal_click_is_held_on_the_real_code_where_the_earlier_ledger_pressed()
 /// click's receipt comes back. It runs in real seconds, about 11 s a trace.
 #[test]
 fn an_expired_hold_makes_the_queued_click_stale_on_the_real_code() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let bounds = Bounds {
         modal: false,
         stall: true,
@@ -1329,6 +1344,9 @@ fn a_compat_read_renewed_at_its_click_after_the_terminal_release_is_held_again()
 
 #[test]
 fn the_real_modal_lease_matches_each_owner_clock_and_queued_acceptance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let model = Model::new(
         Bounds {
             quiet: false,

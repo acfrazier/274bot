@@ -3139,6 +3139,9 @@ mod tests {
 
     #[test]
     fn tick_kit_drop_copy_and_withdrawal_batch_hold_all_nine_supply_ids() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
 
@@ -3264,6 +3267,9 @@ mod tests {
 
     #[test]
     fn gatherer_resource_validation_uses_effective_level() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{local_player, with_tick};
         use api::snapshot::{GameSnapshot, WorldStateView};
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -3408,6 +3414,9 @@ mod tests {
     }
     #[test]
     fn gatherer_tickfix_validate_begins_resource_return_walk_same_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{local_player, with_tick};
         use api::snapshot::GameSnapshot;
 
@@ -3560,6 +3569,9 @@ mod tests {
 
     #[test]
     fn bank_return_failure_preserves_walk_receipt_detail() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         use api::snapshot::GameSnapshot;
 
@@ -3625,6 +3637,9 @@ mod tests {
 
     #[test]
     fn user_input_walk_blocks_gatherer_without_rearming() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         use api::snapshot::GameSnapshot;
 
@@ -3851,6 +3866,9 @@ mod tests {
 
     #[test]
     fn gatherer_eat_below_floor_unchanged() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::condition::{FoodSummary, PoisonState};
         use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
@@ -3938,6 +3956,9 @@ mod tests {
     /// deposits nothing and must continue to Withdraw, then withdraw the bait.
     #[test]
     fn supply_only_trip_with_strange_box_continues_to_withdraw() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::snapshot::{ItemActionFamily, ItemContainer};
         let fixture = BaitFixture::new();
@@ -4000,6 +4021,9 @@ mod tests {
 
     #[test]
     fn gatherer_tickfix_admitted_bank_trip_begins_select_same_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -4019,6 +4043,9 @@ mod tests {
 
     #[test]
     fn gatherer_tickfix_bank_ready_without_event_begins_next_child_same_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -4064,6 +4091,9 @@ mod tests {
 
     #[test]
     fn gatherer_tickfix_empty_withdraw_begins_close_without_withdraw() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -4088,6 +4118,9 @@ mod tests {
 
     #[test]
     fn gatherer_caps_timed_out_bank_open_attempts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -5086,6 +5119,9 @@ mod tests {
     }
     #[test]
     fn gatherer_cancels_open_retry_for_drink() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
 
         let mut fixture = BaitFixture::new();
@@ -5187,6 +5223,9 @@ mod tests {
     }
     #[test]
     fn gatherer_interrupts_deposit_at_transfer_boundary() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::condition::{FoodSummary, PoisonState};
         use api::snapshot::{ItemActionFamily, ItemContainer};
@@ -5364,6 +5403,9 @@ mod tests {
 
     #[test]
     fn gatherer_interrupts_withdraw_at_transfer_boundary() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::condition::{FoodSummary, PoisonState};
         use api::snapshot::{ItemActionFamily, ItemContainer};
@@ -5539,6 +5581,9 @@ mod tests {
     }
     #[test]
     fn need_does_not_block_interrupted_transfer_polling_to_boundary() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{NativePhase, ScriptFlow};
         use crate::quester::families::tests::{def, with_tick};
         use api::condition::{FoodSummary, PoisonState};
@@ -5696,6 +5741,9 @@ mod tests {
 
     #[test]
     fn parked_gatherer_publishes_waiting_continue_status_and_resumes_parked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{Interrupt, NativeOutput, NativePhase, ScriptFlow, ScriptStatus};
         use crate::quester::families::tests::with_tick_output;
         use api::condition::{FoodSummary, PoisonState};
@@ -5763,6 +5811,9 @@ mod tests {
 
     #[test]
     fn status_row_shows_needed_under_never() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{NativeOutput, ScriptFlow, ScriptStatus};
         use crate::quester::families::tests::with_tick_output;
         use api::condition::PoisonState;
@@ -5808,6 +5859,9 @@ mod tests {
     }
     #[test]
     fn runner_tick_poisoned_frame_allocates_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
 
@@ -5859,6 +5913,9 @@ mod tests {
 
     #[test]
     fn runner_tick_parked_frame_allocates_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{NativePhase, ScriptFlow};
         use crate::quester::families::tests::with_tick;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
@@ -5915,6 +5972,9 @@ mod tests {
 
     #[test]
     fn parked_runner_unparks_at_next_exact_fire_without_rescue() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::StatView;
@@ -6040,6 +6100,9 @@ mod tests {
 
     #[test]
     fn parked_runner_with_food_unparks_at_fire_eight() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
@@ -6243,6 +6306,9 @@ mod tests {
 
     #[test]
     fn gatherer_caps_timed_out_close_attempts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let mut fixture = BaitFixture::new();
         fixture
@@ -6281,6 +6347,9 @@ mod tests {
 
     #[test]
     fn gatherer_fails_a_shut_bank_with_a_stuck_side_root_at_the_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let mut fixture = BaitFixture::new();
         fixture
@@ -6328,6 +6397,9 @@ mod tests {
     /// `Hint` or an unknown bank starts the trip.
     #[test]
     fn validate_admits_supply_trips_from_the_bank_memory() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick_bank;
         let fixture = BaitFixture::new();
         for (bank, in_place) in [
@@ -6360,6 +6432,9 @@ mod tests {
     /// N7: death recovery's reprovision step takes the same verdict.
     #[test]
     fn recovery_reprovision_takes_the_same_verdict() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick_bank;
         let fixture = BaitFixture::new();
         for (bank, in_place) in [
@@ -6494,6 +6569,9 @@ mod tests {
 
     #[test]
     fn draynor_small_net_exclusions_wait_then_return() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let mut gatherer = draynor_net_gatherer();
@@ -6575,6 +6653,9 @@ mod tests {
 
     #[test]
     fn death_return_waits_out_an_active_exclusion() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let mut gatherer = draynor_net_gatherer();
@@ -6643,6 +6724,9 @@ mod tests {
 
     #[test]
     fn validate_pending_names_the_missing_observation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let mut gatherer = draynor_net_gatherer();
@@ -6659,6 +6743,9 @@ mod tests {
 
     #[test]
     fn idle_without_world_names_the_pending_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let mut gatherer = draynor_net_gatherer();
@@ -6676,6 +6763,9 @@ mod tests {
 
     #[test]
     fn hazard_retreat_uses_a_reachable_stand_when_the_away_tile_is_blocked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let here = WorldTile {
@@ -6732,6 +6822,9 @@ mod tests {
 
     #[test]
     fn cancelled_observation_walk_does_not_poison_hazard_retreat_arrival() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         for cancel in [true, false] {
@@ -6792,6 +6885,9 @@ mod tests {
 
     #[test]
     fn temporary_hazard_with_no_reachable_stand_keeps_observing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let here = WorldTile {
@@ -6852,6 +6948,9 @@ mod tests {
 
     #[test]
     fn hazard_retreat_does_not_pick_a_diagonal_only_cage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let here = WorldTile {

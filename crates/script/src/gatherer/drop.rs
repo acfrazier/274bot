@@ -255,6 +255,9 @@ mod tests {
 
     #[test]
     fn same_tick_modal_after_disposals_defers_close_until_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(

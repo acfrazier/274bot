@@ -132,6 +132,9 @@ fn poll(
 
 #[test]
 fn exact_square_keeps_radius_and_plane_without_changing_loc_npc_floor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let mut other_plane = tile(3216, 3217);
     other_plane.level = 1;
@@ -169,6 +172,9 @@ fn exact_square_keeps_radius_and_plane_without_changing_loc_npc_floor() {
 
 #[test]
 fn selected_ids_rank_by_walk_depth_then_id_plane_x_z() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let far = tile(3222, 3216);
     let near = tile(3216, 3218);
@@ -228,6 +234,9 @@ fn selected_ids_rank_by_walk_depth_then_id_plane_x_z() {
 
 #[test]
 fn exact_ground_requires_live_access_and_uses_the_table_stand() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let table = tile(3219, 3216);
     let snapshot = snapshot(here, vec![row(1959, table, here)]);
@@ -307,6 +316,9 @@ fn exact_ground_requires_live_access_and_uses_the_table_stand() {
 
 #[test]
 fn exact_target_is_required_at_emission_availability_and_door_approach() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let exact = tile(3217, 3216);
     let other = tile(3216, 3217);
@@ -366,6 +378,9 @@ fn active_zone_clip_guarantees_sixteen_tiles_at_all_extreme_origin_offsets() {
 
 #[test]
 fn posted_stale_zone_row_is_not_a_candidate_even_inside_anchor_square() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3247, 3216);
     let anchor = tile(3231, 3216);
     let stale = tile(3215, 3216);
@@ -388,6 +403,9 @@ fn posted_stale_zone_row_is_not_a_candidate_even_inside_anchor_square() {
 
 #[test]
 fn unsent_take_has_no_deadline_and_actual_dispatch_gets_four_later_edges() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let snapshot = snapshot(here, vec![row(1959, here, here)]);
     let reach = flood(here, &[]);
@@ -407,6 +425,9 @@ fn unsent_take_has_no_deadline_and_actual_dispatch_gets_four_later_edges() {
 
 #[test]
 fn exact_cant_reach_never_enters_the_door_clock_or_resends() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let mut snapshot = snapshot(here, vec![row(1959, here, here)]);
     let reach = flood(here, &[]);
@@ -435,6 +456,9 @@ fn exact_cant_reach_never_enters_the_door_clock_or_resends() {
 
 #[test]
 fn removal_waits_one_edge_and_pack_delta_wins_the_split_drain() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let mut snapshot = snapshot(here, vec![row(1959, here, here)]);
     let reach = flood(here, &[]);
@@ -457,6 +481,9 @@ fn removal_waits_one_edge_and_pack_delta_wins_the_split_drain() {
 
 #[test]
 fn late_input_table_success_lands_before_fourth_edge_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let table = tile(3217, 3216);
     let mut snapshot = snapshot(here, vec![row(1959, table, here)]);
@@ -482,6 +509,9 @@ fn late_input_table_success_lands_before_fourth_edge_failure() {
 
 #[test]
 fn identical_bound_copy_loss_needs_a_fresh_take_and_unbound_copy_loss_can_land() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     for bound_copy_lost in [true, false] {
         let mut snapshot = snapshot(here, vec![row(1959, here, here), row(1959, here, here)]);
@@ -533,6 +563,9 @@ fn identical_bound_copy_loss_needs_a_fresh_take_and_unbound_copy_loss_can_land()
 
 #[test]
 fn only_new_server_refusals_match_and_yoyo_has_no_duplicate_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     for (id, text, expected) in [
         (
@@ -597,6 +630,9 @@ fn only_new_server_refusals_match_and_yoyo_has_no_duplicate_gate() {
 
 #[test]
 fn unavailable_scene_and_rebuild_cancel_without_lost_race_or_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     for rebuild in [true, false] {
         let mut snapshot = snapshot(here, vec![row(1959, here, here)]);
@@ -623,6 +659,9 @@ fn unavailable_scene_and_rebuild_cancel_without_lost_race_or_failure() {
 
 #[test]
 fn selected_ids_use_route_steps_instead_of_air_distance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let near = tile(3218, 3216);
     let farther = tile(3216, 3222);
@@ -651,6 +690,9 @@ fn selected_ids_use_route_steps_instead_of_air_distance() {
 
 #[test]
 fn selected_id_exclusions_cover_the_last_bit_and_reject_oversized_selections() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let reach = flood(here, &[]);
     let ids: Vec<_> = (1959..1992).collect();
@@ -686,6 +728,9 @@ fn selected_id_exclusions_cover_the_last_bit_and_reject_oversized_selections() {
 
 #[test]
 fn failed_exact_ground_retry_keeps_walk_detail_when_item_disappears() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let target = tile(3218, 3216);
     let mut snapshot = snapshot(here, vec![row(1959, target, here)]);
@@ -723,6 +768,9 @@ fn reach_retained_size_stays_within_reviewed_per_bot_budget() {
 
 #[test]
 fn borrowed_empty_and_crowded_ground_scans_allocate_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let reach = flood(here, &[]);
     for count in [0, 2048] {
@@ -761,6 +809,9 @@ fn borrowed_empty_and_crowded_ground_scans_allocate_nothing() {
 
 #[test]
 fn exact_sixteen_tile_boundary_and_borrowed_run_exclusions_apply() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let edge = tile(3232, 3216);
     let outside = tile(3233, 3216);
@@ -818,6 +869,9 @@ fn exact_sixteen_tile_boundary_and_borrowed_run_exclusions_apply() {
 
 #[test]
 fn reach_refusal_with_a_row_decrease_is_a_penalty_free_loss() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let mut snapshot = snapshot(here, vec![row(1959, here, here), row(1959, here, here)]);
     let reach = flood(here, &[]);
@@ -843,6 +897,9 @@ fn reach_refusal_with_a_row_decrease_is_a_penalty_free_loss() {
 
 #[test]
 fn two_yoyo_takes_count_two_pack_deltas_without_duplicate_exclusion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let here = tile(3216, 3216);
     let reach = flood(here, &[]);
     let mut snapshot = snapshot(here, vec![row(4079, here, here)]);
@@ -1042,6 +1099,9 @@ mod packets {
 
     #[test]
     fn floor_table_and_late_table_pickups_follow_real_split_packet_drains() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // Immediate floor; one-delay table; table delivery after one missed
         // server input phase. The final success batch precedes its PLAYER_INFO.
         for (table, unchanged_edges) in [(false, 0), (true, 1), (true, 3)] {
@@ -1086,6 +1146,9 @@ mod packets {
 
     #[test]
     fn unchanged_real_packet_edges_fail_only_at_the_fourth_dispatch_fence() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut wire = WireGround::new(false, 1);
         let mut ledger = None;
         let handle = wire.begin(&mut ledger);
@@ -1104,6 +1167,9 @@ mod packets {
 
     #[test]
     fn identical_copy_loss_uses_decoded_removals_and_requires_a_fresh_take() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for bound_copy_lost in [true, false] {
             let mut wire = WireGround::new(false, 2);
             let mut ledger = None;

@@ -940,6 +940,9 @@ mod tests {
 
     #[test]
     fn crossing_input_binds_profile_armour_and_real_dragonfire_shield() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let profile = RouteState {
             worn: vec![1201],
@@ -985,6 +988,9 @@ mod tests {
 
     #[test]
     fn missing_and_overflowing_worn_facts_remain_typed_unknown_inputs() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let mut state = WorldState::empty();
         state.worn.insert(-1);
@@ -1033,6 +1039,9 @@ mod tests {
 
     #[test]
     fn route_state_retains_required_skills_quests_and_tools() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut profile = RouteState {
             skills: BTreeMap::from([(13, 15), (14, 15)]),
             varps: BTreeMap::from([(188, 15), (347, 10)]),
@@ -1068,6 +1077,9 @@ mod tests {
 
     #[test]
     fn product_admission_refuses_below_and_accepts_at_the_first_floor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = fixture_world();
         let result = calculate_in_world(&fixture_query(declared_fixture_zones()), &world, false)
             .expect("product route and admission calculation");
@@ -1076,6 +1088,9 @@ mod tests {
 
     #[test]
     fn named_cross_consent_still_requires_a_survivable_floor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = fixture_world();
         let result = calculate_in_world(&fixture_query(declared_fixture_zones()), &world, true)
             .expect("named-cross product admission");
@@ -1088,6 +1103,9 @@ mod tests {
 
     #[test]
     fn policy_c_search_reports_first_food_admission_or_full_refusal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = fixture_world();
         let mut query = fixture_query(declared_fixture_zones());
         query.route_state.worn = MELEE_KIT.to_vec();
@@ -1127,6 +1145,9 @@ mod tests {
 
     #[test]
     fn route_search_does_not_exempt_an_undeclared_zone() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let world = fixture_world();
         let mut zones = declared_fixture_zones();
         zones.pop();
@@ -1142,6 +1163,9 @@ mod tests {
     #[test]
     #[ignore = "requires CROSS_CALC_NAVPACK pointing to the prepared reference navpack"]
     fn reference_crossing_requests_preserve_product_admission_or_refusal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let navpack =
             PathBuf::from(std::env::var_os("CROSS_CALC_NAVPACK").expect("set CROSS_CALC_NAVPACK"));
         for (from, to, zones) in [

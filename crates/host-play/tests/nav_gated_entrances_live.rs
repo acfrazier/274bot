@@ -1816,24 +1816,36 @@ fn run_case(case: EntranceCase) {
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned three-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
 fn live_grand_tree_mine_requires_quest_completion_and_reaches_resources() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_case(EntranceCase::GrandTreeMine);
 }
 
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned three-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
 fn live_desert_mining_camp_requires_metal_key_and_refuses_excluded_items() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_case(EntranceCase::DesertMiningCamp);
 }
 
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned three-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
 fn live_desert_mining_camp_lower_mine_requires_worn_slave_kit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_case(EntranceCase::DesertMiningCampUnderground);
 }
 
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, an owned three-character BOT_LIVE_NAME_PREFIX, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_NAV_BUILD=skip, and NAV_GATED_ENTRANCES_EVIDENCE"]
 fn live_taverley_lava_eels_requires_dusty_key() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_case(EntranceCase::TaverleyLavaEels);
 }
 

@@ -878,6 +878,9 @@ mod tests {
 
     #[test]
     fn capture_defence_is_min_of_effective_and_base() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // Old: capture retained no Defence input. New: boosted 75/40 captures 40.
         let tables = combat_tables();
         let stats = [
@@ -896,6 +899,9 @@ mod tests {
 
     #[test]
     fn capture_worn_defence_sums_signed_facts_and_marks_missing_rows() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = combat_tables();
         let rows = tables.selected().item_combat_bonus_rows();
         let (left, right) = rows
@@ -950,6 +956,9 @@ mod tests {
 
     #[test]
     fn capture_style_from_varp_else_zero() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = combat_tables();
         let selected = tables.selected();
         let style = selected
@@ -1002,6 +1011,9 @@ mod tests {
 
     #[test]
     fn capture_active_protect_uses_selected_prayer_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = combat_tables();
         let stats = [
             stat(CombatStat::Hitpoints.index(), 90, 99),

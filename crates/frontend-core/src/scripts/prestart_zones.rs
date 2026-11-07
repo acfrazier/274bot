@@ -664,6 +664,9 @@ mod tests {
 
     #[test]
     fn selected_guide_discloses_stage_step_and_prelude_declarations() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let fixture = registry_fixture();
         let zones = super::resolve_selected_zones(&fixture.registry, &bag(&["cook"]))
             .expect("selected Cook disclosure");

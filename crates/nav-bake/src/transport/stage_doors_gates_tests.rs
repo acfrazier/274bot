@@ -284,6 +284,9 @@ fn window_covers(edge: &TransportEdge, quest: &str, signal: &str, value: i32) ->
 
 #[test]
 fn grand_tree_gate_retains_stage_windows_without_colour_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let handler = paired_stage_handler("if (%grandtree < 80) { return; }");
     let (graph, collision) = stage_world(&handler);
     let complete = quest_complete("grandtree");
@@ -372,6 +375,9 @@ fn grand_tree_gate_retains_stage_windows_without_colour_authority() {
 
 #[test]
 fn monkey_madness_started_signal_preserves_every_authoritative_value_above_one() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // At7dac,289.json:129242-254 proves [0,10], not [2,infinity).
     // quest_mm.constant:1-11 defines0..10; mm_caranock.rs2:51 writes2,
     // quest_mm.rs2:1168 writes9, and mm_daero.rs2:293 writes10 after completion.
@@ -396,6 +402,9 @@ fn monkey_madness_started_signal_preserves_every_authoritative_value_above_one()
 
 #[test]
 fn varrock_style_gate_uses_its_reachable_scenery_label() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let handler = paired_stage_handler_with_tail_label("if (%grandtree < 80) { return; }");
     let (graph, _) = stage_world(&handler);
     assert_stage_values(&graph.edges, "grandtree", "grandtree", 80, 160);
@@ -407,6 +416,9 @@ fn varrock_style_gate_uses_its_reachable_scenery_label() {
 
 #[test]
 fn generic_stage_windows_keep_authority_and_dialogue_is_rejected() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let generic = stage_edges(
         r#"
 [oploc2,obstacle]
@@ -439,6 +451,9 @@ p_teleport(0_44_53_5_46);
 
 #[test]
 fn scenery_tail_requires_the_exact_loc_delta_and_final_delay() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let complete = quest_complete("grandtree");
     assert!(complete > 80);
     let edges = scenery_edges(-2, 0);
@@ -458,6 +473,9 @@ fn scenery_tail_requires_the_exact_loc_delta_and_final_delay() {
 
 #[test]
 fn absent_or_ambiguous_stage_signal_never_authorizes_a_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let handler = paired_stage_handler("if (%grandtree < 80) { return; }");
     let selected =
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
@@ -485,6 +503,9 @@ fn absent_or_ambiguous_stage_signal_never_authorizes_a_crossing() {
 
 #[test]
 fn unknown_progress_varp_does_not_create_a_passable_edge() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let edges = stage_edges(
         r#"
 [oploc2,obstacle]

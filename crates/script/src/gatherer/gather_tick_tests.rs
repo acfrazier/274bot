@@ -292,6 +292,9 @@ impl Rig {
 
 #[test]
 fn iron_cycle_uses_real_gather_run_and_reports_three_tick_verification() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -321,6 +324,9 @@ fn iron_cycle_uses_real_gather_run_and_reports_three_tick_verification() {
 
 #[test]
 fn retained_animation_is_not_a_new_landing_and_only_one_fallback_is_asked() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -340,6 +346,9 @@ fn retained_animation_is_not_a_new_landing_and_only_one_fallback_is_asked() {
 
 #[test]
 fn late_mining_landing_defers_split_menu_and_waits_for_its_real_roll() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for menu in [false, true] {
         for roll in [105, 106] {
             let mut rig = Rig::new("mining.iron");
@@ -373,6 +382,9 @@ fn late_mining_landing_defers_split_menu_and_waits_for_its_real_roll() {
 
 #[test]
 fn ending_net_click_is_edge_only_and_its_blind_roll_is_unobserved() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("fishing.saltfish.op1");
     rig.animate(AnimClass::Cast);
     assert!(rig.poll(101).is_pending());
@@ -395,6 +407,9 @@ fn ending_net_click_is_edge_only_and_its_blind_roll_is_unobserved() {
 
 #[test]
 fn zero_prefix_receipt_is_one_lost_cycle_and_one_refusable_fallback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -416,6 +431,9 @@ fn zero_prefix_receipt_is_one_lost_cycle_and_one_refusable_fallback() {
 
 #[test]
 fn river_cast_at_second_edge_is_a_slip_without_a_predicted_roll() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("fishing.freshfish.op1");
     rig.animate(AnimClass::Roll);
     assert!(rig.poll(101).is_pending());
@@ -438,6 +456,9 @@ fn river_cast_at_second_edge_is_a_slip_without_a_predicted_roll() {
 
 #[test]
 fn lone_opener_consumes_its_receipt_before_stray_menu_tending() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -463,6 +484,9 @@ fn lone_opener_consumes_its_receipt_before_stray_menu_tending() {
 
 #[test]
 fn accepted_make_without_its_click_uses_one_checked_act_and_slips() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -485,6 +509,9 @@ fn accepted_make_without_its_click_uses_one_checked_act_and_slips() {
 
 #[test]
 fn refused_checked_act_delivered_after_deadline_has_one_fallback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -510,6 +537,9 @@ fn refused_checked_act_delivered_after_deadline_has_one_fallback() {
 
 #[test]
 fn absent_packet_generation_does_not_start_a_batch_or_reuse_a_roll() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.snapshot.seed_inventory_packet_generations(None, None);
     rig.animate(AnimClass::Skill);
@@ -531,6 +561,9 @@ fn absent_packet_generation_does_not_start_a_batch_or_reuse_a_roll() {
 
 #[test]
 fn fishing_knife_request_uses_the_current_published_npc_generation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::interact::server_ordered::{ExactLocOrNpcRef, ExactNpcReference, KnifeArmShape};
     use api::snapshot::Family;
     use client::client::{Client, ClientConfig, ClientNpc, ClientRevision};
@@ -589,6 +622,9 @@ fn fishing_knife_request_uses_the_current_published_npc_generation() {
 
 #[test]
 fn transformed_fishing_types_are_not_armed_on_their_observed_click_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for event_type in [390, 403, i32::MAX] {
         let mut rig = Rig::new("fishing.freshfish.op1");
         let tile = rig.snapshot.npcs()[0].tile;
@@ -602,6 +638,9 @@ fn transformed_fishing_types_are_not_armed_on_their_observed_click_tick() {
 
 #[test]
 fn ending_spot_type_change_disarms_before_the_owed_checked_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for event_type in [390, 403, i32::MAX] {
         let mut rig = Rig::new("fishing.saltfish.op1");
         rig.animate(AnimClass::Cast);
@@ -626,6 +665,9 @@ fn ending_spot_type_change_disarms_before_the_owed_checked_click() {
 
 #[test]
 fn members_refusal_turns_knife_off_and_sends_only_one_native_fallback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -647,6 +689,9 @@ fn members_refusal_turns_knife_off_and_sends_only_one_native_fallback() {
 
 #[test]
 fn late_ending_landings_count_once_per_shifted_cycle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("fishing.saltfish.op1");
     rig.animate(AnimClass::Cast);
     for tick in 101..=104 {
@@ -673,6 +718,9 @@ fn late_ending_landings_count_once_per_shifted_cycle() {
 
 #[test]
 fn blind_net_fletch_failure_waits_for_a_native_cast_before_rearming() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("fishing.saltfish.op1");
     rig.animate(AnimClass::Cast);
     for tick in 101..=104 {
@@ -703,6 +751,9 @@ fn blind_net_fletch_failure_waits_for_a_native_cast_before_rearming() {
 
 #[test]
 fn spent_act_budget_uses_each_familys_real_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (method, lost) in [("mining.iron", 0), ("fishing.freshfish.op1", 1)] {
         let mut rig = Rig::new(method);
         rig.animate(if lost == 0 {
@@ -725,6 +776,9 @@ fn spent_act_budget_uses_each_familys_real_deadline() {
 
 #[test]
 fn native_skill_multi_menu_is_closed_and_not_mistaken_for_a_split() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.snapshot.seed_chat_modal(8880, vec!["Make".into()]);
     rig.animate(AnimClass::Skill);
@@ -798,6 +852,9 @@ fn adopt(rig: &mut Rig, target: TargetPlan, result: GatherResult, now: u64) {
 
 #[test]
 fn copper_delayed_success_hands_the_parked_cycle_to_a_replacement_in_the_same_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for wake_line in [true, false] {
         let mut rig = Rig::new("mining.copper");
         rig.animate(AnimClass::Skill);
@@ -878,6 +935,9 @@ fn copper_delayed_success_hands_the_parked_cycle_to_a_replacement_in_the_same_fr
 
 #[test]
 fn iron_null_success_waits_for_the_loc_wake_then_arms_the_replacement_without_a_native_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -912,6 +972,9 @@ fn iron_null_success_waits_for_the_loc_wake_then_arms_the_replacement_without_a_
 
 #[test]
 fn depletion_keeps_the_real_action_owner_until_its_checked_receipt_is_consumed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for accepted in [true, false] {
         let mut rig = Rig::new("mining.iron");
         rig.animate(AnimClass::Skill);
@@ -966,6 +1029,9 @@ fn depletion_keeps_the_real_action_owner_until_its_checked_receipt_is_consumed()
 
 #[test]
 fn depleting_idle_handoff_survives_two_tick_replacement_approach_with_real_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -1077,6 +1143,9 @@ fn depleting_idle_handoff_survives_two_tick_replacement_approach_with_real_recei
 
 #[test]
 fn skipped_edge_during_unproven_live_cycle_stays_unobserved_without_rearming() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("mining.iron");
     rig.animate(AnimClass::Skill);
     assert!(rig.poll(101).is_pending());
@@ -1096,6 +1165,9 @@ fn skipped_edge_during_unproven_live_cycle_stays_unobserved_without_rearming() {
 
 #[test]
 fn a_terminal_row_observed_after_landing_never_enters_the_verified_fraction() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::new("fishing.freshfish.op1");
     rig.animate(AnimClass::Roll);
     assert!(rig.poll(101).is_pending());

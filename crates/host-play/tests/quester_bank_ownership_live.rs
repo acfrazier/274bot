@@ -1320,6 +1320,9 @@ fn observe_player_open(cell: BankCell) -> Value {
 #[test]
 #[ignore = "requires LIVE=1, fixed-300ms Engine Q, and the real Shilo Village banker"]
 fn quester_bank_shilo_teller_owns_and_closes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let cell = build_bank_cell(
         "live-quester-bank-shilo-teller-owns-and-closes",
@@ -1341,6 +1344,9 @@ fn quester_bank_shilo_teller_owns_and_closes() {
 #[test]
 #[ignore = "requires LIVE=1, fixed-300ms Engine Q, and the shared Duel Arena chest to be naturally closed before Start"]
 fn quester_bank_duel_chest_owns_and_closes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let cell = build_bank_cell(
         "live-quester-bank-duel-chest-owns-and-closes",
@@ -1362,6 +1368,9 @@ fn quester_bank_duel_chest_owns_and_closes() {
 #[test]
 #[ignore = "requires LIVE=1, fixed-300ms Engine Q, and a fresh account at Gundai's Mage Arena teller"]
 fn quester_bank_preserves_player_open_gundai_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let cell = build_bank_cell(
         "live-quester-bank-preserves-player-open-gundai",
@@ -1386,6 +1395,9 @@ mod oracle_tests {
 
     #[test]
     fn all_bank_fixtures_construct_with_selected_item_aliases() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (selected, quests) = live_data();
         let law_rune = selected.item_by_alias(LAW_RUNE_ALIAS).unwrap();
         assert_eq!(law_rune.name.as_deref(), Some("Law rune"));
@@ -1505,6 +1517,9 @@ mod oracle_tests {
 
     #[test]
     fn two_real_chests_bind_either_exact_closed_lid_but_not_a_wrong_lid() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let rows = real_closed_duel_chests();
         assert_eq!(rows.len(), 2);
         assert_eq!(
@@ -1537,6 +1552,9 @@ mod oracle_tests {
 
     #[test]
     fn binding_refuses_a_preopened_two_chest_site_and_missing_lids() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rows = real_closed_duel_chests();
         rows[0] = chest_loc(rows[0].tile, true);
         assert_eq!(duel_chest_rows_state(&rows), ChestState::Open { count: 1 });
@@ -1620,6 +1638,9 @@ mod oracle_tests {
 
     #[test]
     fn gundai_seed_accepts_the_dialogue_walk_but_refuses_forced_or_wrong_stands() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (seed, mut snapshot) = gundai_seed_snapshot();
         let walked = WorldTile {
             x: 2537,
@@ -1654,6 +1675,9 @@ mod oracle_tests {
 
     #[test]
     fn gundai_seed_checks_before_talk_and_rejects_missing_proof_bank_or_stats() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (seed, mut snapshot) = gundai_seed_snapshot();
         let walked = WorldTile {
             x: 2537,
@@ -1764,6 +1788,9 @@ mod oracle_tests {
 
     #[test]
     fn owned_close_rejects_a_completed_session_without_a_transfer() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut trace = base_owned_trace();
         trace.bank_stock.truncate(1);
         trace.inventory_law_runes = Some(0);
@@ -1778,6 +1805,9 @@ mod oracle_tests {
 
     #[test]
     fn owned_close_selects_the_qualified_transfer_after_a_failed_preliminary_session() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut trace = base_owned_trace();
         trace.start_session.as_mut().unwrap().generation = 0;
         trace.sessions[0].generation = 0;
@@ -1819,6 +1849,9 @@ mod oracle_tests {
 
     #[test]
     fn owned_close_rejects_a_transfer_split_across_bank_generations() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut trace = base_owned_trace();
         trace.sessions.extend([
             SessionSample {
@@ -1845,6 +1878,9 @@ mod oracle_tests {
 
     #[test]
     fn owned_close_requires_a_qualified_observed_transfer() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut trace = base_owned_trace();
         trace.observations.clear();
         assert_eq!(qualified_owned_open_then_close(&trace), None);
@@ -1853,6 +1889,9 @@ mod oracle_tests {
 
     #[test]
     fn owned_close_rejects_inventory_arriving_only_after_the_bank_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut trace = base_owned_trace();
         trace.observations = vec![
             open_bank_observation(5, 1, 0, false),
@@ -1866,6 +1905,9 @@ mod oracle_tests {
 
     #[test]
     fn owned_close_requires_closing_after_transfer_and_before_close() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut trace = base_owned_trace();
         trace.observations[2].closing = false;
         assert!(!own_close_predicate(&trace, true));
@@ -1875,6 +1917,9 @@ mod oracle_tests {
 
     #[test]
     fn own_close_oracle_rejects_player_open_explicit_close_and_false_completion() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let good = base_owned_trace();
         assert!(own_close_predicate(&good, true));
 
@@ -1917,6 +1962,9 @@ mod oracle_tests {
 
     #[test]
     fn teller_oracle_requires_real_teller_and_ordered_stock_transfer() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut teller = base_owned_trace();
         teller.opened_closed_lid = None;
         assert!(!teller_close_predicate(&teller, true));
@@ -1933,6 +1981,9 @@ mod oracle_tests {
 
     #[test]
     fn player_open_oracle_rejects_generation_change_close_and_false_completion() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (seed, snapshot) = gundai_seed_snapshot();
         let walked = WorldTile {
             x: 2537,

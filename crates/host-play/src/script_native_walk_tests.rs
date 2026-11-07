@@ -270,6 +270,9 @@ fn open_rig(blocked: bool) -> Rig {
 }
 #[test]
 fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     let target = WorldTile {
         x: 20,
@@ -351,6 +354,9 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
 
 #[test]
 fn stale_route_terminal_cannot_complete_a_native_walk_with_the_same_request_id() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -386,6 +392,9 @@ fn stale_route_terminal_cannot_complete_a_native_walk_with_the_same_request_id()
 
 #[test]
 fn candidate_walk_returns_and_settles_the_chosen_goal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = rig(Some(Arc::new(open_world(40, 40))), false);
     // Client scene borders are blocked. Use an actual interior Area stand.
     let tile = |x| WorldTile { x, z: 4, level: 0 };
@@ -412,6 +421,9 @@ fn candidate_walk_returns_and_settles_the_chosen_goal() {
 
 #[test]
 fn candidate_walk_keeps_preferred_stand_and_reports_its_tier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let tile = |x| WorldTile { x, z: 4, level: 0 };
     for (preferred, goal, tier) in [
         (tile(8), tile(8), "candidate_goal_tier=preferred"),
@@ -453,6 +465,9 @@ fn candidate_walk_keeps_preferred_stand_and_reports_its_tier() {
 
 #[test]
 fn candidate_walk_rejects_a_radius_instead_of_changing_its_meaning() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     {
         let mut shared = rig.shared.lock();
@@ -483,6 +498,9 @@ fn candidate_walk_rejects_a_radius_instead_of_changing_its_meaning() {
 
 #[test]
 fn native_follow_failure_preserves_hop_detail_in_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (why, expected, name) in [
         (
             nav_executor::HopFailure::Expired,
@@ -548,6 +566,9 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
 
 #[test]
 fn native_follow_failure_names_the_last_crossing_refusal_in_the_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -599,6 +620,9 @@ fn native_follow_failure_names_the_last_crossing_refusal_in_the_receipt() {
 
 #[test]
 fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -642,6 +666,9 @@ fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
 
 #[test]
 fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let failure = || nav_executor::TravelOutcome::Stalled {
         at: WorldTile {
             x: 0,
@@ -1139,6 +1166,9 @@ impl Rig {
 
 #[test]
 fn route_published_after_an_unarmed_check_steps_the_same_player_key() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     let key = (rig.client.gens.player, rig.snapshot.tile());
     let mut last = None;
@@ -1213,6 +1243,9 @@ fn suppressed_unarmed_key_stays_suppressed_after_route_publication() {
 
 #[test]
 fn a_blocked_tick_dispatches_no_native_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(true);
     rig.observe(1);
     assert_eq!(rig.shared.lock().begun, 1, "the tick began a walk");
@@ -1235,6 +1268,9 @@ fn a_blocked_tick_dispatches_no_native_walk() {
 
 #[test]
 fn blocking_mid_walk_stops_the_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -1271,6 +1307,9 @@ fn blocking_mid_walk_stops_the_follow() {
 }
 #[test]
 fn terminal_blocked_resets_all_navigation_once_per_generation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     rig.shared.lock().blocked = true;
@@ -1355,6 +1394,9 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
 
 #[test]
 fn a_native_walk_refused_for_lack_of_a_world_gets_a_refused_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = rig(None, false);
     rig.observe(1);
     rig.observe(2);
@@ -1374,6 +1416,9 @@ fn seed_prayer(snapshot: &mut GameSnapshot, base: i32) {
 
 #[test]
 fn a_protected_walk_refuses_when_prayer_cannot_protect() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.shared.lock().protect = true;
     seed_prayer(&mut rig.snapshot, 36);
@@ -1392,6 +1437,9 @@ fn a_protected_walk_refuses_when_prayer_cannot_protect() {
 
 #[test]
 fn a_protected_walk_arms_the_hold_mode_driver() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.shared.lock().protect = true;
     seed_prayer(&mut rig.snapshot, 43);
@@ -1409,6 +1457,9 @@ fn a_protected_walk_arms_the_hold_mode_driver() {
 
 #[test]
 fn a_protected_walk_refuses_when_prayer_is_disallowed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.shared.lock().protect = true;
     rig.shared.lock().disallow_prayer = true;
@@ -1428,6 +1479,9 @@ fn a_protected_walk_refuses_when_prayer_is_disallowed() {
 
 #[test]
 fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (prayer, disallow_prayer) in [(1, false), (43, true)] {
         let mut rig = open_rig(false);
         rig.shared.lock().disallow_prayer = disallow_prayer;
@@ -1459,6 +1513,9 @@ fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
 
 #[test]
 fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.shared.lock().food_guard = true;
     seed_protect_frame(&mut rig.snapshot, 43);
@@ -1485,6 +1542,9 @@ fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {
 
 #[test]
 fn exhausted_escape_host_walk_neither_uses_nor_fetches_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for food_held in [false, true] {
         let mut rig = open_rig(false);
         {
@@ -1521,6 +1581,9 @@ fn exhausted_escape_host_walk_neither_uses_nor_fetches_food() {
 
 #[test]
 fn exhausted_escape_host_walk_drinks_a_needed_held_cure_without_eating() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     {
         let mut walker = rig.shared.lock();
@@ -1552,6 +1615,9 @@ fn exhausted_escape_host_walk_drinks_a_needed_held_cure_without_eating() {
 
 #[test]
 fn food_disallowed_without_an_explicit_guard_starts_no_host_guard() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.shared.lock().disallow_food = true;
     seed_protect_frame(&mut rig.snapshot, 1);
@@ -1607,6 +1673,9 @@ fn seed_guard_poison_onset(rig: &mut Rig, policy: script::survival::CurePoison) 
 
 #[test]
 fn a_default_walk_with_food_allowed_starts_no_host_guard() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for prayer in [1, 43] {
         let mut rig = open_rig(false);
         seed_protect_frame(&mut rig.snapshot, prayer);
@@ -1924,21 +1993,33 @@ fn check_guard_end(seam: GuardEndSeam) {
 
 #[test]
 fn stop_owes_exactly_one_protect_off_on_the_next_pump() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     check_guard_end(GuardEndSeam::Stop);
 }
 
 #[test]
 fn pause_owes_exactly_one_protect_off_on_the_next_pump() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     check_guard_end(GuardEndSeam::Pause);
 }
 
 #[test]
 fn cancel_owes_exactly_one_protect_off_on_the_next_pump() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     check_guard_end(GuardEndSeam::Cancel);
 }
 
 #[test]
 fn an_owed_off_is_suppressed_when_the_next_observation_is_already_off() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     rig.slot().lock().unwrap().stop();
@@ -1955,16 +2036,25 @@ fn an_owed_off_is_suppressed_when_the_next_observation_is_already_off() {
 
 #[test]
 fn manual_takeover_owes_exactly_one_protect_off_on_the_next_pump() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     check_guard_end(GuardEndSeam::Manual);
 }
 
 #[test]
 fn carry_hold_owes_exactly_one_protect_off_on_the_next_pump() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     check_guard_end(GuardEndSeam::CarryHold);
 }
 
 #[test]
 fn owner_revocation_owes_exactly_one_protect_off_on_the_next_pump() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     check_guard_end(GuardEndSeam::OwnerRevoked);
 }
 
@@ -2011,16 +2101,25 @@ fn check_pending_arrival(previous: Option<i32>) {
 
 #[test]
 fn arrival_before_protect_acknowledgement_owes_the_late_off() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     check_pending_arrival(None);
 }
 
 #[test]
 fn arrival_during_a_pending_protect_switch_does_not_double_toggle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     check_pending_arrival(Some(97));
 }
 
 #[test]
 fn a_missing_prayer_widget_does_not_admit_or_log_a_guard_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     seed_missile_launch(&mut rig.snapshot);
     rig.snapshot.seed_main_modal(-1, Vec::new());
@@ -2044,6 +2143,9 @@ fn a_missing_prayer_widget_does_not_admit_or_log_a_guard_click() {
 
 #[test]
 fn relog_discards_temporary_prayer_debt_without_a_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     crate::play_slots::reset_slot_session_work(
@@ -2061,6 +2163,9 @@ fn relog_discards_temporary_prayer_debt_without_a_click() {
 
 #[test]
 fn death_discards_protect_without_a_toggle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     abort_script_walk(&rig.navs, "alice");
@@ -2078,6 +2183,9 @@ fn death_discards_protect_without_a_toggle() {
 
 #[test]
 fn unprotectable_is_delivered_to_the_walk_owner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.shared.lock().protect = true;
     seed_prayer(&mut rig.snapshot, 37);
@@ -2129,6 +2237,9 @@ fn unprotectable_is_delivered_to_the_walk_owner() {
 
 #[test]
 fn exhausted_guard_reports_once_and_keeps_the_walk_following() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     let mut stats = rig.snapshot.stats().to_vec();
     stats
@@ -2163,6 +2274,9 @@ fn exhausted_guard_reports_once_and_keeps_the_walk_following() {
 
 #[test]
 fn unprotectable_leaves_a_preexisting_user_style_on_when_the_walk_ends() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.shared.lock().protect = true;
     seed_protect_frame(&mut rig.snapshot, 37);
@@ -2189,6 +2303,9 @@ fn unprotectable_leaves_a_preexisting_user_style_on_when_the_walk_ends() {
 
 #[test]
 fn dropped_enable_then_end_expires_and_follows_the_next_walk_without_owning_user_prayer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     rig.shared.lock().walks = 2;
     rig.snapshot.seed_tick(2);
@@ -2231,6 +2348,9 @@ fn dropped_enable_then_end_expires_and_follows_the_next_walk_without_owning_user
 
 #[test]
 fn a_dropped_switch_retires_the_guard_owned_old_protect() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     seed_melee_attack(&mut rig.snapshot);
@@ -2257,6 +2377,9 @@ fn a_dropped_switch_retires_the_guard_owned_old_protect() {
 
 #[test]
 fn a_dropped_switch_cleanup_does_not_restart_navigation_deferral() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     rig.shared.lock().walks = 2;
     raise_owned_missiles(&mut rig);
@@ -2287,6 +2410,9 @@ fn a_dropped_switch_cleanup_does_not_restart_navigation_deferral() {
 
 #[test]
 fn a_dropped_switch_does_not_turn_off_a_user_owned_old_protect() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     seed_protect_state(&mut rig.snapshot, Some(96));
     seed_melee_attack(&mut rig.snapshot);
@@ -2309,6 +2435,9 @@ fn a_dropped_switch_does_not_turn_off_a_user_owned_old_protect() {
 
 #[test]
 fn a_real_switch_retires_the_new_protect_without_restoring_the_old_one() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     seed_melee_attack(&mut rig.snapshot);
@@ -2332,6 +2461,9 @@ fn a_real_switch_retires_the_new_protect_without_restoring_the_old_one() {
 
 #[test]
 fn a_long_hold_gives_unavailable_owned_on_debt_a_fresh_cleanup_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     rig.slot().lock().unwrap().stop();
@@ -2359,6 +2491,9 @@ fn a_long_hold_gives_unavailable_owned_on_debt_a_fresh_cleanup_window() {
 
 #[test]
 fn a_long_hold_gives_a_refused_cleanup_click_a_fresh_attempt_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     rig.slot().lock().unwrap().stop();
@@ -2385,6 +2520,9 @@ fn a_long_hold_gives_a_refused_cleanup_click_a_fresh_attempt_window() {
 
 #[test]
 fn timed_guard_cleanup_drops_report_unavailable_varps_and_refused_clicks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (missing_varps, reason) in [
         (true, "owned protect varp unavailable within cleanup window"),
         (false, "off click refused within cleanup window"),
@@ -2423,6 +2561,9 @@ fn timed_guard_cleanup_drops_report_unavailable_varps_and_refused_clicks() {
 
 #[test]
 fn dropped_off_click_retains_observation_debt_and_gets_exactly_one_bounded_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     abort_script_walk(&rig.navs, "alice");
@@ -2459,6 +2600,9 @@ fn dropped_off_click_retains_observation_debt_and_gets_exactly_one_bounded_retry
 
 #[test]
 fn an_off_retry_does_not_block_a_later_walk_beyond_the_first_pacing_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     rig.shared.lock().walks = 2;
     raise_owned_missiles(&mut rig);
@@ -2484,6 +2628,9 @@ fn an_off_retry_does_not_block_a_later_walk_beyond_the_first_pacing_window() {
 
 #[test]
 fn another_owners_observed_protect_switch_settles_the_off_without_a_toggle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     abort_script_walk(&rig.navs, "alice");
@@ -2500,6 +2647,9 @@ fn another_owners_observed_protect_switch_settles_the_off_without_a_toggle() {
 
 #[test]
 fn observed_off_settles_cleanup_before_retry_and_leaves_a_later_user_enable_alone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = protected_rig();
     raise_owned_missiles(&mut rig);
     abort_script_walk(&rig.navs, "alice");
@@ -2518,6 +2668,9 @@ fn observed_off_settles_cleanup_before_retry_and_leaves_a_later_user_enable_alon
 
 #[test]
 fn an_unroutable_native_walk_delivers_one_no_path_terminal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = rig(Some(Arc::new(open_world(3, 1))), false);
     rig.observe(1);
     assert!(
@@ -2538,6 +2691,9 @@ fn an_unroutable_native_walk_delivers_one_no_path_terminal() {
 
 #[test]
 fn native_area_walk_budget_stop_is_refused_as_incomplete_not_no_path() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const WIDTH: usize = 2200;
     const HEIGHT: usize = 2000;
     const SPLIT_X: usize = 2050;
@@ -2612,6 +2768,9 @@ fn native_area_walk_budget_stop_is_refused_as_incomplete_not_no_path() {
 
 #[test]
 fn native_walk_failure_receipt_names_missing_route_supplies() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = toll_nav_world();
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     world.bind_named_bank_facts(&selected).unwrap();
@@ -2667,6 +2826,9 @@ fn native_walk_gated_on_fishing(fishing: i32) -> (bool, Option<Result<WalkEnd, A
 
 #[test]
 fn native_walk_routes_skill_gate_with_posted_level_and_no_arm_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (routed, end) = native_walk_gated_on_fishing(68);
     assert!(
         routed,
@@ -2677,6 +2839,9 @@ fn native_walk_routes_skill_gate_with_posted_level_and_no_arm_state() {
 
 #[test]
 fn native_walk_refuses_skill_gate_below_level() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (routed, end) = native_walk_gated_on_fishing(67);
     assert!(!routed, "Fishing 67 must not cross a Fishing-68 door");
     assert_eq!(end, Some(Ok(WalkEnd::NoPath)));
@@ -2710,6 +2875,9 @@ fn host_walk(rig: &Rig, x: i32, retarget: bool) -> bool {
 
 #[test]
 fn a_native_walk_refused_by_an_in_flight_route_gets_a_refused_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     // A host walk to the same destination is already in flight under the
     // legacy request id; the distinct native id is refused, not coalesced.
@@ -2721,6 +2889,9 @@ fn a_native_walk_refused_by_an_in_flight_route_gets_a_refused_receipt() {
 
 #[test]
 fn pause_and_resume_end_a_native_walk_with_a_cancelled_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -2738,6 +2909,9 @@ fn pause_and_resume_end_a_native_walk_with_a_cancelled_receipt() {
 
 #[test]
 fn a_watchdog_walk_displacing_a_native_walk_cancels_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -2749,6 +2923,9 @@ fn a_watchdog_walk_displacing_a_native_walk_cancels_it() {
 
 #[test]
 fn an_unproven_crossing_reaches_the_native_owner_typed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::selected::{FactKey, QuestGate, Truth};
     let gate = QuestGate::Complete(FactKey(Arc::from("tbwt")));
     let undecided: Arc<[QuestGate]> = Arc::from([gate]);
@@ -2798,6 +2975,9 @@ fn an_unproven_crossing_reaches_the_native_owner_typed() {
 
 #[test]
 fn cancelling_and_rewalking_the_same_destination_arms_the_new_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -2819,6 +2999,9 @@ fn cancelling_and_rewalking_the_same_destination_arms_the_new_walk() {
 
 #[test]
 fn native_cross_exemption_is_scoped_to_one_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = rig(Some(Arc::new(s2b_admission_contract::ice_world())), false);
     s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
     let goal = WorldTile {
@@ -2921,6 +3104,9 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
 
 #[test]
 fn native_admission_global_and_walk_danger_permissions_and_forbid() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::native::WalkBit;
     for (global, bit, permitted) in [
         (false, WalkBit::Inherit, false),
@@ -3378,6 +3564,9 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
 
 #[test]
 fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::native::{WalkDanger, WalkDangerQuery};
 
     let at = |x, z| WorldTile { x, z, level: 0 };
@@ -3630,6 +3819,9 @@ fn selection_query_reuses_combat_and_wilderness_zone_activity() {
 
 #[test]
 fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::native::{WalkDanger, WalkDangerQuery, WalkPermissions};
 
     for (global, card, permitted) in [
@@ -3724,10 +3916,10 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
                 .is_some_and(|bot| !bot.route_work_pending())
         }));
         assert_eq!(
-            rig.navs.lock().unwrap()["alice"].has_route(),
-            permitted,
-            "the actual native Walk crosses the same denied zone under global={global}, card={card}"
-        );
+        rig.navs.lock().unwrap()["alice"].has_route(),
+        permitted,
+        "the actual native Walk crosses the same denied zone under global={global}, card={card}"
+    );
         if !permitted {
             rig.observe(2);
             assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
@@ -3800,6 +3992,9 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
 }
 #[test]
 fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::native::WalkBit;
     for bit in [WalkBit::Inherit, WalkBit::Allow, WalkBit::Forbid] {
         let mut rig = open_rig(false);
@@ -3833,6 +4028,9 @@ fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
 
 #[test]
 fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
         rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
@@ -3868,6 +4066,9 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
 #[cfg(feature = "js")]
 #[test]
 fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     script_js::install_cards().expect("install canonical Sherlock card for native walk test");
     let mut slot = script::SlotScript::new();
     slot.bind_incarnation(84);
@@ -4204,6 +4405,9 @@ fn drive_second_walk(rig: &mut Rig, first_tick: u64) -> Vec<Result<WalkEnd, Acti
 
 #[test]
 fn review_control_generic_cancel_then_nopath_delivers_no_path() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = two_walk_rig();
     {
         let slot = rig.slot();
@@ -4224,6 +4428,9 @@ fn review_control_generic_cancel_then_nopath_delivers_no_path() {
 
 #[test]
 fn review_manual_takeover_then_nopath_must_still_deliver_a_terminal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = two_walk_rig();
     assert!(crate::script_runtime::take_manual_walk_ownership(
         &rig.scripts,
@@ -4240,14 +4447,14 @@ fn review_manual_takeover_then_nopath_must_still_deliver_a_terminal() {
     let ends = drive_second_walk(&mut rig, 3);
     let bots = rig.navs.lock().unwrap();
     eprintln!(
-        "manual-click native probe: ends={ends:?} NavBot={} live_refusal_id={} (cancelled request {first_request}) outcome_request_id={} reason={:?} native_walk_live={} requested_route={:?}",
-        std::mem::size_of::<NavBot>(),
-        bots["alice"].walk_live_refusal_id,
-        bots["alice"].walk_outcome_request_id,
-        bots["alice"].walk_outcome_cancel_reason,
-        bots["alice"].native_walk.is_some(),
-        bots["alice"].requested_route,
-    );
+    "manual-click native probe: ends={ends:?} NavBot={} live_refusal_id={} (cancelled request {first_request}) outcome_request_id={} reason={:?} native_walk_live={} requested_route={:?}",
+    std::mem::size_of::<NavBot>(),
+    bots["alice"].walk_live_refusal_id,
+    bots["alice"].walk_outcome_request_id,
+    bots["alice"].walk_outcome_cancel_reason,
+    bots["alice"].native_walk.is_some(),
+    bots["alice"].requested_route,
+);
     assert_eq!(
         ends.len(),
         2,
@@ -4258,6 +4465,9 @@ fn review_manual_takeover_then_nopath_must_still_deliver_a_terminal() {
 
 #[test]
 fn review_native_recovery_click_then_nopath_delivers_terminal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = two_walk_rig();
     let first_native = rig.navs.lock().unwrap()["alice"].walk_request_id;
     let state = Arc::new(WorldState::empty());
@@ -4281,7 +4491,7 @@ fn review_native_recovery_click_then_nopath_delivers_terminal() {
         let bot = &navs["alice"];
         eprintln!(
             "manual-click recovery probe: native_request={first_native} \
-             walk_request_id={} native_walk={} carried_walk={} live_refusal_id={}",
+         walk_request_id={} native_walk={} carried_walk={} live_refusal_id={}",
             bot.walk_request_id,
             bot.native_walk.is_some(),
             bot.carried_walk.is_some(),
@@ -4308,7 +4518,7 @@ fn review_native_recovery_click_then_nopath_delivers_terminal() {
         let bot = &navs["alice"];
         eprintln!(
             "manual-click after recovery click: outcome_request_id={} reason={:?} \
-             live_refusal_id={} native_walk={} carried_walk={}",
+         live_refusal_id={} native_walk={} carried_walk={}",
             bot.walk_outcome_request_id,
             bot.walk_outcome_cancel_reason,
             bot.walk_live_refusal_id,
@@ -4328,6 +4538,9 @@ fn review_native_recovery_click_then_nopath_delivers_terminal() {
 
 #[test]
 fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -4393,6 +4606,9 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
 
 #[test]
 fn manual_takeover_of_carried_walk_keeps_its_receipt_identity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -4640,6 +4856,9 @@ static TAKEOVER_LOG: TakeoverLog = TakeoverLog(Mutex::new(Vec::new()));
 
 #[test]
 fn takeover_is_taken_for_a_live_native_owner_without_a_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const CHILD: &str = "S2_NATIVE_TAKEOVER_LOG_TEST";
     if std::env::var(CHILD).as_deref() != Ok("1") {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -4684,12 +4903,15 @@ fn takeover_is_taken_for_a_live_native_owner_without_a_walk() {
     assert_eq!(bots["alice"].manual_takeover_watermark, before + 1);
     drop(bots);
     assert!(TAKEOVER_LOG.0.lock().unwrap().iter().any(|line| {
-        line.contains("tick=41 live_work=true active_walk=false live_native_owner=true live_walking_operation=false api_session=false")
-    }));
+    line.contains("tick=41 live_work=true active_walk=false live_native_owner=true live_walking_operation=false api_session=false")
+}));
 }
 
 #[test]
 fn takeover_with_pause_on_pauses_a_native_owner_without_a_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (rig, _) = in_place_rig(0);
     let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
     assert!(crate::script_runtime::take_manual_walk_ownership(
@@ -4710,6 +4932,9 @@ fn takeover_with_pause_on_pauses_a_native_owner_without_a_walk() {
 
 #[test]
 fn takeover_is_refused_for_an_absent_revoked_or_completed_owner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for command in [3, 1, 2] {
         let (mut rig, control) = in_place_rig(if command == 3 { 3 } else { 0 });
         control.store(command, std::sync::atomic::Ordering::Relaxed);
@@ -4764,6 +4989,9 @@ fn in_place_load_rig() -> Rig {
 #[cfg(feature = "js")]
 #[test]
 fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = in_place_load_rig();
     let slot = rig.slot();
     let ticks = slot.lock().unwrap().probe("globalThis.s2Ticks").unwrap();
@@ -4801,6 +5029,9 @@ fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
 #[cfg(feature = "js")]
 #[test]
 fn takeover_with_pause_off_leaves_a_load_script_without_a_walk_alone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let rig = in_place_load_rig();
     let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
     assert!(!crate::script_runtime::take_manual_walk_ownership(
@@ -4821,6 +5052,9 @@ fn takeover_with_pause_off_leaves_a_load_script_without_a_walk_alone() {
 
 #[test]
 fn manual_step_takeover_must_end_active_walk_before_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -4893,6 +5127,9 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
 
 #[test]
 fn manual_config_on_native_pause_revokes_action_resume_makes_fresh_decision() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = two_walk_rig();
     let original = rig.navs.lock().unwrap()["alice"].walk_request_id;
     assert!(crate::script_runtime::take_manual_walk_ownership(
@@ -4929,6 +5166,9 @@ fn manual_config_on_native_pause_revokes_action_resume_makes_fresh_decision() {
 
 #[test]
 fn held_manual_click_still_cancels_and_other_slot_survives() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -4973,6 +5213,9 @@ fn held_manual_click_still_cancels_and_other_slot_survives() {
 
 #[test]
 fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -5013,13 +5256,13 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
         let navs = rig.navs.lock().unwrap();
         let bot = &navs["alice"];
         eprintln!(
-            "click-after-arrival taken={taken} outcome_seq={} request={} failed={} reason={:?} intent={}",
-            bot.walk_outcome_seq,
-            bot.walk_outcome_request_id,
-            bot.walk_outcome_failed,
-            bot.walk_outcome_cancel_reason,
-            bot.user_move_intent_seq,
-        );
+        "click-after-arrival taken={taken} outcome_seq={} request={} failed={} reason={:?} intent={}",
+        bot.walk_outcome_seq,
+        bot.walk_outcome_request_id,
+        bot.walk_outcome_failed,
+        bot.walk_outcome_cancel_reason,
+        bot.user_move_intent_seq,
+    );
         assert!(!taken, "a completed request is not active walking");
         assert_eq!(
             (
@@ -5051,6 +5294,9 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
 /// next ordinary outcome clears it.
 #[test]
 fn takeover_after_an_arrived_walk_moves_only_the_sequence_and_reads_user_input_compiled() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -5113,6 +5359,9 @@ fn takeover_after_an_arrived_walk_moves_only_the_sequence_and_reads_user_input_c
 /// work, so the M0 cell must not inject.
 #[test]
 fn m0_host_gate_must_reject_a_live_compact_route() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -5137,6 +5386,9 @@ fn m0_host_gate_must_reject_a_live_compact_route() {
 /// registered and live.
 #[test]
 fn m0_host_gate_accepts_an_arrived_walk_with_a_live_owner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -5166,6 +5418,9 @@ fn m0_host_gate_accepts_an_arrived_walk_with_a_live_owner() {
 /// `UserInput` reason.
 #[test]
 fn later_ordinary_outcomes_do_not_reuse_the_manual_takeover_watermark() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -5223,6 +5478,9 @@ fn later_ordinary_outcomes_do_not_reuse_the_manual_takeover_watermark() {
 /// `None`.
 #[test]
 fn reconnect_hold_and_reset_do_not_create_a_manual_cancel_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -5251,6 +5509,9 @@ fn reconnect_hold_and_reset_do_not_create_a_manual_cancel_reason() {
 
 #[test]
 fn operator_paused_walk_is_not_cancelled_by_manual_intent() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -5277,6 +5538,9 @@ fn operator_paused_walk_is_not_cancelled_by_manual_intent() {
 
 #[test]
 fn reconnect_gated_owner_is_not_taken_over_before_its_ready_observation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -5320,6 +5584,9 @@ fn reconnect_gated_owner_is_not_taken_over_before_its_ready_observation() {
 
 #[test]
 fn takeover_during_pending_worker_cannot_reinstall_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     let (generation, request_id) = {
@@ -5368,6 +5635,9 @@ fn takeover_during_pending_worker_cannot_reinstall_follow() {
 
 #[test]
 fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::interact::InteractReq;
     let mut rig = open_rig(false);
     rig.observe(1);
@@ -5461,6 +5731,9 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
 
 #[test]
 fn held_manual_input_cancels_only_its_operator_walk_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();
@@ -5618,6 +5891,9 @@ fn wait_for_native_route_outcome(rig: &Rig) {
 
 #[test]
 fn area_walk_routes_to_reachable_shore_and_native_receipt_settles_there() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = water_area_rig(false, 40);
     rig.observe(1);
     rig.wait_routed();
@@ -5655,6 +5931,9 @@ fn area_walk_routes_to_reachable_shore_and_native_receipt_settles_there() {
 
 #[test]
 fn area_walk_does_not_arrive_on_a_disconnected_candidate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = water_area_rig(true, 40);
     rig.observe(1);
     wait_for_native_route_outcome(&rig);
@@ -5669,6 +5948,9 @@ fn area_walk_does_not_arrive_on_a_disconnected_candidate() {
 
 #[test]
 fn zero_radius_area_refuses_a_nonstandable_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = water_area_rig(false, 0);
     rig.observe(1);
     wait_for_native_route_outcome(&rig);
@@ -5694,6 +5976,9 @@ fn zero_radius_area_refuses_a_nonstandable_target() {
 
 #[test]
 fn reach_walk_keeps_adjacent_solid_target_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let target = WorldTile {
         x: 4,
         z: 4,
@@ -5735,6 +6020,9 @@ fn reach_walk_keeps_adjacent_solid_target_arrival() {
 
 #[test]
 fn area_route_refresh_keeps_mode_through_native_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = water_area_rig(false, 40);
     rig.observe(1);
     rig.wait_routed();
@@ -5893,6 +6181,9 @@ fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal()
 
 #[test]
 fn lifecycle_followups_stop_clears_combat_raise_but_preserves_user_prayer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     rig.slot().lock().unwrap().stop();
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -6054,6 +6345,9 @@ fn set_combat_varp(snapshot: &mut GameSnapshot, varp: i32, value: i32) {
 
 #[test]
 fn combat_prayer_off_sends_exactly_one_bounded_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (varp, component) = combat_prayer("Protect from Missiles");
     let mut rig = combat_debt_rig();
     set_combat_varp(&mut rig.snapshot, varp, 1);
@@ -6099,6 +6393,9 @@ fn combat_prayer_off_sends_exactly_one_bounded_retry() {
 
 #[test]
 fn combat_prayer_off_refused_retry_spends_the_retry_without_a_loop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (varp, component) = combat_prayer("Protect from Missiles");
     let mut rig = combat_debt_rig();
     set_combat_varp(&mut rig.snapshot, varp, 1);
@@ -6139,6 +6436,9 @@ fn combat_prayer_off_refused_retry_spends_the_retry_without_a_loop() {
 
 #[test]
 fn combat_prayer_off_clears_two_prayers_serially_in_table_order() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
         .expect("R289 prayer facts");
     let missiles = data
@@ -6391,6 +6691,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn first_native_crossing_with_explicit_forbid_keeps_a_bounded_poison_hold() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(Some(Arc::new(ice_world())), false);
         rig.shared.lock().options.allow_danger_zones = WalkBit::Forbid;
         observed_loadout(&mut rig.snapshot);
@@ -6430,6 +6733,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn first_native_safe_only_walk_keeps_the_poison_exemption_and_assessment() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(Some(Arc::new(ice_world())), false);
         observed_loadout(&mut rig.snapshot);
         rig.observe(1);
@@ -6450,6 +6756,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn explicit_native_opt_in_proceeds_and_returns_its_probability_assessment() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = rig(Some(Arc::new(ice_world())), false);
         observed_loadout(&mut rig.snapshot);
         {
@@ -6476,6 +6785,9 @@ mod s2b_admission_contract {
     #[cfg(feature = "js")]
     #[test]
     fn real_v1_metadata_routes_across_derived_zones_with_boolean_only_and_no_host_guard() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for hp in [14, 45] {
             let source = once_src(
                 "import { Traversal } from '../../api/walking/Traversal.js';",
@@ -6564,6 +6876,9 @@ mod s2b_admission_contract {
     /// routing of its compiled walks.
     #[test]
     fn real_v1_banking_stand_walk_routes_across_zones_like_its_compiled_walks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let source = once_src(
             "import { Banking } from '../../api/bank/Banking.js';",
             "Banking.open({ stand: { x: 255, z: 0, level: 0 } })",
@@ -6712,6 +7027,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn oversized_route_result_publishes_a_typed_walk_refusal_not_no_path() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut rig = open_rig(false);
         rig.observe(1);
         let (generation, request_id, authority) = {
@@ -6747,6 +7065,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn oversized_route_result_publishes_a_typed_advisory_refusal_not_no_path() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut rig, shared) = advising_rig(1, false);
         rig.observe(1);
         assert!(
@@ -6785,6 +7106,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn advisory_only_worker_returns_a_correlated_receipt_without_becoming_a_mover() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut rig, shared) = advising_rig(1, false);
         rig.observe(1);
         await_advice(&mut rig, &shared);
@@ -6804,6 +7128,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn newer_advice_replaces_the_old_request_without_spending_the_walk_budget() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut rig, shared) = advising_rig(2, true);
         rig.observe(1);
         rig.wait_routed();
@@ -6821,6 +7148,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn stopped_advisory_owner_cannot_publish_or_restore_a_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut rig, shared) = advising_rig(1, false);
         rig.observe(1);
         assert!(
@@ -6986,6 +7316,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn old_walk_cleanup_leaves_a_queued_assessment_and_it_answers_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut rig, shared) = pre_walk_then_queued_assessment(false);
         rig.step_unpumped();
         {
@@ -6998,6 +7331,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn old_walk_cleanup_leaves_an_accepted_assessment_and_it_answers_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut rig, shared) = pre_walk_then_queued_assessment(true);
         rig.step_unpumped();
         {
@@ -7010,6 +7346,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn host_cancel_of_a_live_assessment_delivers_one_typed_refusal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for accepted in [false, true] {
             let (mut rig, shared) = pre_walk_then_queued_assessment(accepted);
             let generation = rig.slot().lock().unwrap().runtime_generation();
@@ -7041,6 +7380,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn walk_cleanup_drops_an_assessment_whose_owner_is_revoked_without_a_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for accepted in [false, true] {
             let (mut rig, shared) = pre_walk_then_queued_assessment(accepted);
             rig.slot().lock().unwrap().stop();
@@ -7075,6 +7417,9 @@ mod s2b_admission_contract {
 
     #[test]
     fn advisory_computation_is_allowed_during_a_shared_manual_escape_without_replacing_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut rig, shared) = advising_rig(1, false);
         let manual = Arc::new(Mutex::new(WalkArm {
             admission: Some(Box::new(crate::admission::Admission {
@@ -7217,6 +7562,9 @@ fn observe_full(rig: &mut Rig, tick: u64) -> crate::script_runtime::ScriptObserv
 /// Stop with its walk still armed.
 #[test]
 fn a_run_that_ends_in_the_pump_retires_its_published_walk_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(false);
     {
         let mut shared = rig.shared.lock();
@@ -7264,6 +7612,9 @@ fn a_run_that_ends_in_the_pump_retires_its_published_walk_once() {
 /// way (the lifecycle receipt names its generation), once per run.
 #[test]
 fn a_failed_run_retires_its_published_rows_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = open_rig(true);
     rig.statuses.lock().unwrap()[0].publish_script_walk(Some(WorldTile {
         x: 20,
@@ -7305,6 +7656,9 @@ fn a_failed_run_retires_its_published_rows_once() {
 /// retired run, so it must not be published after the retirement.
 #[test]
 fn a_stop_between_the_walk_read_and_its_publication_is_not_overwritten() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::mpsc::channel;
     use std::time::Duration;
 

@@ -9387,6 +9387,9 @@ mod tests {
 
     #[test]
     fn competitor_observes_ground_updates_between_player_info_edges() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let mut actor = ActorState::new(
             ActorRole::Competitor,
@@ -9503,6 +9506,9 @@ mod tests {
 
     #[test]
     fn player_info_is_captured_during_a_held_tutorial_relog() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         for role in [ActorRole::Main, ActorRole::Competitor] {
             let mut actor = ActorState::new(role, "receiver".into(), Vec::new(), false, Vec::new());

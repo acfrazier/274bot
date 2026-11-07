@@ -76,6 +76,9 @@ fn with_data(
 
 #[test]
 fn quest_pair_r2_registry_load_validates_both_declared_gangs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_data(|selected, quests, worker| {
         let folder = Folder::new();
         folder.write(&paired_document());
@@ -117,6 +120,9 @@ impl Drop for RestoreSource {
 
 #[test]
 fn quest_pair_r2_registry_public_reload_revalidates_edited_paired_roles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_data(|selected, quests, worker| {
         let folder = Folder::new();
         let mut document = paired_document();
@@ -173,6 +179,9 @@ fn quest_pair_r2_registry_public_reload_revalidates_edited_paired_roles() {
 
 #[test]
 fn quest_pair_r2_registry_invalid_role_reports_its_gang_and_original_compile_error() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_data(|selected, quests, worker| {
         for (side, gang) in [(0, "Phoenix"), (1, "BlackArm")] {
             let folder = Folder::new();

@@ -1466,6 +1466,10 @@ fn direct_route_tiles(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
 
 #[test]
 fn evade_flee_targets_escape_all_npc_offsets_without_crossing_them() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -1580,6 +1584,9 @@ fn evade_without_selected_content_detects_attacker_without_action_or_hold() {
 
 #[test]
 fn evade_swarm_holds_through_zero_damage_ticks_until_nearby_despawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -1655,6 +1662,9 @@ fn evade_swarm_holds_through_zero_damage_ticks_until_nearby_despawn() {
 
 #[test]
 fn river_troll_evasion_survives_zero_damage_inter_swing_ticks_until_despawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -1743,6 +1753,9 @@ fn river_troll_evasion_survives_zero_damage_inter_swing_ticks_until_despawn() {
 
 #[test]
 fn evade_still_targeting_outside_estimated_range_re_flees_without_release() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -1792,6 +1805,9 @@ fn evade_still_targeting_outside_estimated_range_re_flees_without_release() {
 
 #[test]
 fn evade_re_flees_when_route_stops_next_to_targeting_npc() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -1825,6 +1841,9 @@ fn evade_re_flees_when_route_stops_next_to_targeting_npc() {
 
 #[test]
 fn blocked_flee_exhausts_nearest_and_closer_rings_without_hiding_attacker() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -1870,6 +1889,9 @@ fn blocked_flee_exhausts_nearest_and_closer_rings_without_hiding_attacker() {
 /// processing phases bounds this hold, even if every further walk fails.
 #[test]
 fn guardian_r2_swarm_missing_at_chase_boundary_releases_within_lifetime() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -1911,6 +1933,9 @@ fn guardian_r2_swarm_missing_at_chase_boundary_releases_within_lifetime() {
 
 #[test]
 fn swarm_missing_after_escape_waits_through_content_cleanup_before_return() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -1950,6 +1975,9 @@ fn swarm_missing_after_escape_waits_through_content_cleanup_before_return() {
 
 #[test]
 fn swarm_view_edge_flicker_never_hides_a_still_targeting_attacker() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -2014,6 +2042,9 @@ fn swarm_view_edge_flicker_never_hides_a_still_targeting_attacker() {
 
 #[test]
 fn angry_strange_plant_is_evade_only_and_uses_its_content_range() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -2037,6 +2068,9 @@ fn angry_strange_plant_is_evade_only_and_uses_its_content_range() {
 
 #[test]
 fn angry_drunken_dwarf_stays_dialog_and_releases_after_resolution() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
@@ -2084,6 +2118,10 @@ fn angry_drunken_dwarf_stays_dialog_and_releases_after_resolution() {
 
 #[test]
 fn fight_and_ignore_policies_force_flee_and_release_native_claim() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     for policy in [
         vault::RandomEventPolicy::Fight,
@@ -3564,6 +3602,10 @@ fn inv_box_still_beats_a_proved_lost_net() {
 
 #[test]
 fn lost_tool_picks_the_dropped_tier_not_a_preexisting_same_kind_head() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     for (tool_id, head_id, distractor_id, handle_id, tool_name, head_name, handle_name) in [
         (1351, 508, 520, 492, "Bronze axe", "Axe head", "Axe handle"),
@@ -3798,6 +3840,10 @@ fn lost_tool_full_pack_without_drop_releases_immediately() {
 
 #[test]
 fn lost_tool_missing_from_visible_tile_waits_for_next_observed_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -3920,6 +3966,10 @@ fn lost_tool_packet_probe_setup() -> (
 
 #[test]
 fn lost_tool_search_uses_event_origin_after_player_moves() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -3952,6 +4002,10 @@ fn lost_tool_search_uses_event_origin_after_player_moves() {
 
 #[test]
 fn lost_tool_search_uses_pre_event_tile_when_handle_snapshot_follows_movement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -3981,6 +4035,10 @@ fn lost_tool_search_uses_pre_event_tile_when_handle_snapshot_follows_movement() 
 
 #[test]
 fn lost_tool_search_uses_post_move_tile_for_event_after_movement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -4010,6 +4068,10 @@ fn lost_tool_search_uses_post_move_tile_for_event_after_movement() {
 
 #[test]
 fn lost_tool_search_accepts_a_head_on_the_event_tile_after_movement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -4039,6 +4101,10 @@ fn lost_tool_search_accepts_a_head_on_the_event_tile_after_movement() {
 
 #[test]
 fn lost_tool_search_accepts_map_findsquare_origin_fallback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -4067,6 +4133,10 @@ fn lost_tool_search_accepts_map_findsquare_origin_fallback() {
 
 #[test]
 fn lost_tool_inventory_evidence_anchors_recovery_after_ordinary_swing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -4101,6 +4171,10 @@ fn lost_tool_inventory_evidence_anchors_recovery_after_ordinary_swing() {
 
 #[test]
 fn hrr3_probe_ordinary_swing_message_before_event() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -4143,6 +4217,10 @@ fn hrr3_probe_ordinary_swing_message_before_event() {
 
 #[test]
 fn lost_tool_ordinary_pick_swing_message_before_event() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -4184,6 +4262,9 @@ fn lost_tool_ordinary_pick_swing_message_before_event() {
 
 #[test]
 fn lost_tool_ordinary_swing_does_not_consume_spawn_grace() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for event_delay in [1, 2] {
         let data = event_game_data();
         let mut c = new_client();
@@ -4249,6 +4330,9 @@ fn lost_tool_ordinary_swing_does_not_consume_spawn_grace() {
 
 #[test]
 fn lost_tool_pickup_waits_for_delayed_inventory_update() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (data, mut c, mut g, mut drv, settings, mut snap) = lost_tool_packet_probe_setup();
     plant_ground_obj(&mut c, 1, 0, 508, Some("Axe head"));
     tick_at(&mut c, &mut snap);
@@ -4292,6 +4376,9 @@ fn lost_tool_pickup_waits_for_delayed_inventory_update() {
 
 #[test]
 fn lost_tool_spawn_grace_includes_packet_delivery_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (data, mut c, mut g, mut drv, settings, mut snap) = lost_tool_packet_probe_setup();
     tick_at(&mut c, &mut snap);
     assert!(guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data).hold);
@@ -4314,6 +4401,10 @@ fn lost_tool_spawn_grace_includes_packet_delivery_tick() {
 
 #[test]
 fn lost_tool_late_onset_does_not_baseline_its_head() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
     let data = event_game_data();
     let mut c = new_client();
     ingame_scene(&mut c);
@@ -4339,6 +4430,9 @@ fn lost_tool_late_onset_does_not_baseline_its_head() {
 
 #[test]
 fn lost_tool_never_attaches_an_axe_handle_to_a_pickaxe_head() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (data, mut c, mut g, mut drv, settings, mut snap) = lost_tool_packet_probe_setup();
     plant_ground_obj(&mut c, 1, 0, 490, Some("Pickaxe head"));
     tick_at(&mut c, &mut snap);

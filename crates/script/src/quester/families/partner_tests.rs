@@ -326,6 +326,9 @@ fn trade_args(port: &Arc<Port>, budget: u16) -> TradeArgs {
 
 #[test]
 fn partner_run_waits_for_a_transient_pair_not_ready_observation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = trade_snapshot();
     let mut ledger = None;
     let port = Arc::new(Port::default());
@@ -346,6 +349,9 @@ fn partner_run_waits_for_a_transient_pair_not_ready_observation() {
 
 #[test]
 fn trade_machine_waits_for_a_transient_pair_not_ready_observation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, mut ledger, handle, port) = fixture(40);
     port.not_ready.store(true, Ordering::Relaxed);
     assert!(poll(&snapshot, &mut ledger, &handle, 2, Instant::now()).is_pending());
@@ -354,6 +360,9 @@ fn trade_machine_waits_for_a_transient_pair_not_ready_observation() {
 
 #[test]
 fn trade_run_retains_args_for_each_transient_begin_error_then_starts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for cause in 0..3 {
         let snapshot = trade_snapshot();
         let mut ledger = None;
@@ -408,6 +417,9 @@ fn trade_run_retains_args_for_each_transient_begin_error_then_starts() {
 
 #[test]
 fn trade_run_retries_a_failed_approach_on_the_next_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = trade_snapshot();
     let tile = api::WorldTile {
         x: 12,
@@ -454,6 +466,9 @@ fn trade_run_retries_a_failed_approach_on_the_next_tick() {
 
 #[test]
 fn trade_plan_registers_logical_pair_revoker_for_prerequisite_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = trade_snapshot();
     let mut ledger = None;
     static PORT: std::sync::LazyLock<Arc<Port>> = std::sync::LazyLock::new(|| {
@@ -511,6 +526,9 @@ fn trade_plan_registers_logical_pair_revoker_for_prerequisite_walk() {
 
 #[test]
 fn failed_begin_missing_quest_item_declines_existing_trade_screen() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(vec![], 28);
@@ -563,6 +581,9 @@ fn failed_begin_missing_quest_item_declines_existing_trade_screen() {
 
 #[test]
 fn failed_trade_offer_mismatch_declines_and_waits_for_closed_screen() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, mut ledger, handle, _) = fixture(40);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -590,6 +611,9 @@ fn failed_trade_offer_mismatch_declines_and_waits_for_closed_screen() {
 
 #[test]
 fn unexpected_confirmation_declines_instead_of_leaving_the_trade_open() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, mut ledger, handle, _) = fixture(40);
     let epoch = Instant::now();
     let mut confirm = offer(0);
@@ -615,6 +639,9 @@ fn unexpected_confirmation_declines_instead_of_leaving_the_trade_open() {
 
 #[test]
 fn timed_out_trade_closes_the_screen_at_once_and_preserves_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, mut ledger, handle, _) = fixture(2);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -636,6 +663,9 @@ fn timed_out_trade_closes_the_screen_at_once_and_preserves_failure() {
 
 #[test]
 fn a_screen_that_stays_open_ends_cleanup_after_one_close_with_the_original_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, mut ledger, handle, _) = fixture(2);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -658,6 +688,9 @@ fn a_screen_that_stays_open_ends_cleanup_after_one_close_with_the_original_failu
 
 #[test]
 fn deadline_cleanup_supersedes_the_unacknowledged_accept_with_a_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, mut ledger, handle, port) = fixture(4);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -708,6 +741,9 @@ fn deadline_cleanup_supersedes_the_unacknowledged_accept_with_a_close() {
 
 #[test]
 fn refused_trade_dispatch_still_closes_the_open_screen() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, mut ledger, handle, port) = fixture(40);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -766,6 +802,9 @@ fn agreed_offers() -> (
 
 #[test]
 fn mutual_accept_stops_the_offer_containers_and_the_trade_waits_for_the_confirm_screen() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, mut ledger, handle, _port, epoch) = agreed_offers();
     assert!(poll(&snapshot, &mut ledger, &handle, 5, epoch).is_pending());
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
@@ -779,6 +818,9 @@ fn mutual_accept_stops_the_offer_containers_and_the_trade_waits_for_the_confirm_
 
 #[test]
 fn an_offer_that_changes_while_its_container_transmits_fails_after_agreement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, mut ledger, handle, port) = fixture(40);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -808,6 +850,9 @@ fn an_offer_that_changes_while_its_container_transmits_fails_after_agreement() {
 
 #[test]
 fn the_confirm_screen_must_list_exactly_the_agreed_trade_before_the_final_accept() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for fault in 0..3 {
         let (mut snapshot, mut ledger, handle, port, epoch) = agreed_offers();
         port.confirm.store(true, Ordering::Relaxed);
@@ -842,6 +887,9 @@ fn the_confirm_screen_must_list_exactly_the_agreed_trade_before_the_final_accept
 
 #[test]
 fn a_confirm_list_that_has_not_arrived_waits_instead_of_accepting_or_failing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, mut ledger, handle, port, epoch) = agreed_offers();
     port.confirm.store(true, Ordering::Relaxed);
     let mut confirm = confirm_screen();
@@ -864,6 +912,9 @@ fn a_confirm_list_that_has_not_arrived_waits_instead_of_accepting_or_failing() {
 
 #[test]
 fn confirm_lists_emptied_by_the_closing_trade_do_not_fail_but_a_foreign_row_does() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for foreign in [false, true] {
         let (mut snapshot, mut ledger, handle, port, epoch) = agreed_offers();
         port.confirm.store(true, Ordering::Relaxed);
@@ -898,6 +949,9 @@ fn confirm_lists_emptied_by_the_closing_trade_do_not_fail_but_a_foreign_row_does
 
 #[test]
 fn transfer_requires_both_screens_then_closed_ui_and_fresh_inventory_delta() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, mut ledger, handle, port) = fixture(40);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -970,6 +1024,9 @@ fn transfer_requires_both_screens_then_closed_ui_and_fresh_inventory_delta() {
 
 #[test]
 fn trade_waits_count_observed_game_ticks_and_ignore_both_clocks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, mut ledger, handle, _) = fixture(2);
     let epoch = Instant::now();
     assert!(poll(&snapshot, &mut ledger, &handle, 2, epoch).is_pending());
@@ -1124,6 +1181,9 @@ fn complete_trade_across_a_hold(at: usize, hold: Hold) {
 
 #[test]
 fn a_hold_longer_than_every_remaining_budget_spends_no_trade_tick_and_the_trade_completes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for hold in [Hold::Ineligible, Hold::PairNotReady] {
         for at in 0..5 {
             complete_trade_across_a_hold(at, hold);
@@ -1133,6 +1193,9 @@ fn a_hold_longer_than_every_remaining_budget_spends_no_trade_tick_and_the_trade_
 
 #[test]
 fn a_trade_over_its_eligible_tick_budget_still_fails_with_cleanup_after_a_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Begun on tick 1 with a budget of 6 eligible ticks: with no hold the budget
     // is spent when the clock reads 7 and `CLOSE_MODAL` goes out.
     let (mut snapshot, mut ledger, handle, port) = fixture(6);
@@ -1192,6 +1255,9 @@ fn a_trade_over_its_eligible_tick_budget_still_fails_with_cleanup_after_a_hold()
 
 #[test]
 fn the_offer_wait_expires_at_its_policy_budget_not_before() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::trade_screen::TRADE_OFFER_WAIT_TICKS;
     let (mut snapshot, mut ledger, handle, port) = fixture(40);
     let epoch = Instant::now();
@@ -1225,6 +1291,9 @@ fn the_offer_wait_expires_at_its_policy_budget_not_before() {
 
 #[test]
 fn the_confirm_wait_expires_at_its_policy_budget_not_before() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::trade_screen::TRADE_CONFIRM_WAIT_TICKS;
     let (mut snapshot, mut ledger, handle, port, epoch) = agreed_offers();
     port.confirm.store(true, Ordering::Relaxed);
@@ -1257,6 +1326,9 @@ fn the_confirm_wait_expires_at_its_policy_budget_not_before() {
 
 #[test]
 fn counterpart_extra_noted_or_excessive_offer_blocks_before_accept() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for fault in 0..4 {
         let (mut snapshot, mut ledger, handle, _) = fixture(40);
         let epoch = Instant::now();
@@ -1295,6 +1367,9 @@ fn counterpart_extra_noted_or_excessive_offer_blocks_before_accept() {
 
 #[test]
 fn cancelled_or_expired_phase_never_emits_an_accept() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let epoch = Instant::now();
     for cancelled in [false, true] {
         let (mut snapshot, mut ledger, handle, port) = fixture(if cancelled { 40 } else { 2 });
@@ -1330,6 +1405,9 @@ fn cancelled_or_expired_phase_never_emits_an_accept() {
 
 #[test]
 fn gang_read_waits_for_foreign_main_and_keeps_identity_failures_terminal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let facts =
         Arc::new(api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap());
@@ -1404,6 +1482,9 @@ fn gang_read_waits_for_foreign_main_and_keeps_identity_failures_terminal() {
 }
 #[test]
 fn recovery_item_fact_compiles_only_bounded_arrav_items_and_an_authored_pair_role() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::compile::{CompiledProgress, PairCompileContext};
     use crate::quester::loadouts::LoadoutOverlay;
     use api::quest_facts::QuestCatalog;

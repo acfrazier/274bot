@@ -547,6 +547,9 @@ mod tests {
 
     #[test]
     fn npc_transform_resolution_follows_chains_and_fails_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let combat = combat();
         let mut dormant = npc();
         dormant.id = 1;
@@ -603,6 +606,9 @@ mod tests {
 
     #[test]
     fn u2_known_and_unknown_classes_fail_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let combat = combat();
         let mut row = npc();
         let fact = KindRisk::from_npc(&row, &combat);
@@ -735,6 +741,9 @@ mod tests {
 
     #[test]
     fn u2_curated_hazards_keep_known_damage_and_unknown_absence() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // The host reads curated damage through `ZoneKindView::hazard_damage`
         // (`ikov-lava-bridge` is 20; an uncurated hazard is unknown).
         let risk = RiskTables::build(&combat());
@@ -751,6 +760,9 @@ mod tests {
 
     #[test]
     fn u2_npc_facts_cover_every_selected_npc_and_poison_bound_uses_all_of_them() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let combat = combat();
         let ice = combat.selected().npc_by_config("icewarrior").unwrap();
         let risk = RiskTables::build(&combat);
@@ -803,6 +815,9 @@ mod tests {
 
     #[test]
     fn facts_rock_crab_dormant_kinds_use_awake_combat_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let combat = combat();
         let risk = RiskTables::build(&combat);
         for (dormant_config, awake_config) in [
@@ -838,6 +853,9 @@ mod tests {
 
     #[test]
     fn facts_rune_kit_defence_rolls_match_content() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // Old: no defence_rolls or selected worn defence fields exist, so this
         // test does not compile. New: the selected rune kit gives these rolls.
         let combat = combat();
@@ -866,6 +884,9 @@ mod tests {
 
     #[test]
     fn facts_wolf_attack_roll_is_3776() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // Old: KindRisk has no attack_roll, so this assertion does not compile.
         // New: all.npc:2389 attack=50 and combat.param attackbonus default=0.
         let combat = combat();
@@ -879,6 +900,9 @@ mod tests {
 
     #[test]
     fn facts_rock_crab_uses_content_defaults() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // Old: attack and attackbonus are not selected facts and no attack_roll
         // exists. New: omitted attack uses 1 and omitted attackbonus uses 0.
         let combat = combat();
@@ -890,6 +914,9 @@ mod tests {
 
     #[test]
     fn facts_checked_rolls_reject_negative_factors_and_invalid_npc_stats() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_eq!(combat_roll(0, -64), Some(0));
         assert_eq!(combat_roll(1, -65), None);
         assert_eq!(combat_roll(u16::MAX, i16::MAX), Some(2_151_875_064));
@@ -925,6 +952,9 @@ mod tests {
 
     #[test]
     fn facts_ranged_attack_roll_uses_ranged_level_and_bonus() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let combat = combat();
         let mut row = npc();
         row.attack_kind = Some(NpcAttackKind::Ranged);
@@ -939,6 +969,9 @@ mod tests {
 
     #[test]
     fn facts_process_table_sizes_are_bounded() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_eq!(std::mem::size_of::<KindRisk>(), 12);
         assert_eq!(std::mem::size_of::<(i32, KindRisk)>(), 16);
         let combat = combat();
@@ -967,6 +1000,9 @@ mod tests {
 
     #[test]
     fn u2_content_proved_bespoke_melee_uses_shared_damage_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let combat = combat();
         let rows = &combat.selected().npc_names().unwrap().rows;
 
@@ -1009,6 +1045,9 @@ mod tests {
 
     #[test]
     fn u2_cooperative_risk_table_matches_sync_and_checkpoints_every_npc() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let combat = combat();
         let rows = &combat.selected().npc_names().unwrap().rows;
         let mut checkpoints = 0;

@@ -359,6 +359,9 @@ fn portrait(data: &api::game_data::SelectedGameData, container: ItemContainer) -
 /// burning settle timeouts.
 #[test]
 fn coin_float_from_a_bank_seen_empty_this_session_fails_at_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = Fixture::new(
         vec![coin_float_step()],
         vec![wait_step("after-float")],
@@ -397,6 +400,9 @@ fn coin_float_from_a_bank_seen_empty_this_session_fails_at_once() {
 /// verifying trip begins (D4), and nothing parks before the bank is seen.
 #[test]
 fn coin_float_from_a_hint_or_unknown_bank_makes_the_one_verifying_trip() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for memory in [BankMemory::seeded(&[], Origin::Hint), BankMemory::default()] {
         let origin = memory.origin();
         let mut fixture = Fixture::new(
@@ -432,6 +438,9 @@ fn coin_float_from_a_hint_or_unknown_bank_makes_the_one_verifying_trip() {
 /// at that same open bank: the skip fires, no park, one trip.
 #[test]
 fn portrait_skip_fires_once_the_bank_is_opened_without_a_portrait() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = Fixture::new(
         Vec::new(),
         vec![withdraw_portrait_step(), wait_step("after-portrait")],
@@ -463,6 +472,9 @@ fn portrait_skip_fires_once_the_bank_is_opened_without_a_portrait() {
 /// and holds it); with the portrait held it is skipped without any trip.
 #[test]
 fn portrait_step_is_selected_when_banked_and_skipped_when_held() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let banked = portrait(&data, ItemContainer::Bank);
     let mut fixture = Fixture::new(
@@ -515,6 +527,9 @@ fn portrait_step_is_selected_when_banked_and_skipped_when_held() {
 /// is skipped — one trip either way, never a second.
 #[test]
 fn authored_scan_completes_without_a_trip_when_the_memory_is_known() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scan = step(
         "scan-bank",
         "bank",
@@ -566,6 +581,9 @@ fn authored_scan_completes_without_a_trip_when_the_memory_is_known() {
 /// completes on its first poll with no selection, walk or open queued.
 #[test]
 fn unguarded_scan_step_run_completes_at_once_when_the_memory_is_known() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scan = step(
         "scan-bank",
         "bank",

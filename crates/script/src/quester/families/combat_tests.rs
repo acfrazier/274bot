@@ -104,6 +104,9 @@ fn ranged_tactic_rejects_a_melee_mode() {
 
 #[test]
 fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {
@@ -198,6 +201,9 @@ fn mage_family_maps_selected_spell_order_and_explicit_fallback() {
 
 #[test]
 fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The compiled run is erased, but combat walk storage must stay a bare native handle.
     let _: fn(crate::native::ActionHandle<Walk>) -> Action = Action::Walk;
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -523,6 +529,9 @@ fn authored_combat_walk_permissions_reach_initial_return_and_abort_requests() {
 
 #[test]
 fn combat_finish_and_mixed_loot_compile_selected_configs_and_quantities() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {
@@ -617,6 +626,9 @@ fn combat_finish_and_mixed_loot_compile_selected_configs_and_quantities() {
 }
 #[test]
 fn combat_until_drop_compiles_selected_item_and_rejects_invalid_forms() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {
@@ -737,6 +749,9 @@ fn compile_json(
 
 #[test]
 fn imp_and_melee_paths_resolve_observed_quest_colour_on_r289() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let mut snapshot = GameSnapshot::new();
@@ -779,6 +794,9 @@ fn imp_and_melee_paths_resolve_observed_quest_colour_on_r289() {
 
 #[test]
 fn combat_end_predicate_distinguishes_unattackable_report() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let progress = CompiledProgress {
@@ -864,6 +882,9 @@ fn combat_end_predicate_distinguishes_unattackable_report() {
 
 #[test]
 fn unattackable_approach_is_not_reselected_after_observed_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let path = compile_with_tree_crossing(
@@ -912,6 +933,9 @@ fn unattackable_approach_is_not_reselected_after_observed_arrival() {
 
 #[test]
 fn unattackable_walk_out_is_selected_after_aborted_unattackable() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let path = compile_with_tree_crossing(
@@ -983,6 +1007,9 @@ fn unattackable_outcome() -> StepOutcome {
 
 #[test]
 fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let path = compile_with_tree_crossing(
@@ -1032,6 +1059,9 @@ fn unattackable_approach_stays_skipped_after_abort_even_when_leaving_the_tree() 
 
 #[test]
 fn unattackable_walk_out_is_skipped_once_the_caller_has_arrived() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let path = compile_with_tree_crossing(
@@ -1205,6 +1235,9 @@ pub(crate) fn imp_plan_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn S
 
 #[test]
 fn manual_takeover_watch_ends_the_combat_step_after_begin() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     let mut ledger = None;
@@ -1227,6 +1260,9 @@ fn manual_takeover_watch_ends_the_combat_step_after_begin() {
 
 #[test]
 fn manual_takeover_watch_ignores_takeover_before_begin() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     let mut ledger = None;
@@ -1466,6 +1502,9 @@ fn publish_walk_outcome(seq: u64, cancel_reason: WalkCancelReason) -> WalkOutcom
 
 #[test]
 fn boss_abort_blocks_but_m4_unattackable_report_completes_for_walkout() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let target = imp_target(&data);
     let never_stop = || Arc::new(NeverStop) as Arc<dyn PredicatePlan>;
@@ -1868,6 +1907,9 @@ fn start_m4_abort(
 
 #[test]
 fn m4_escape_hands_the_router_exact_standable_goals_in_one_tier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
     let mut run = m4_run();
@@ -1963,6 +2005,9 @@ fn m4_escape_keeps_a_goal_beyond_a_closed_door_in_the_live_flood() {
 
 #[test]
 fn m4_failed_escape_walk_replans_one_tier_lower_before_food_runs_out() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
     let mut run = m4_run();
@@ -2030,6 +2075,9 @@ fn m4_failed_escape_walk_replans_one_tier_lower_before_food_runs_out() {
 
 #[test]
 fn m4_safe_escape_completes_with_the_unattackable_receipt_and_selects_the_caller_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
     let mut run = m4_run();
@@ -2067,6 +2115,9 @@ fn m4_safe_escape_completes_with_the_unattackable_receipt_and_selects_the_caller
 
 #[test]
 fn m4_escape_that_still_sees_the_attacker_holds_then_completes_when_it_is_gone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
     let mut run = m4_run();
@@ -2121,6 +2172,9 @@ fn describe_poll(poll: &Poll<Result<StepOutcome, ActionError>>) -> String {
 /// tile a few steps up the corridor.
 #[test]
 fn m4_escape_reaches_an_exit_beyond_any_ray_or_local_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let collision = corridor_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
     let mut run = m4_run();
@@ -2152,6 +2206,9 @@ fn m4_escape_reaches_an_exit_beyond_any_ray_or_local_window() {
 /// no live flood, the planner still sends that exact tier to the route planner.
 #[test]
 fn m4_disconnected_authored_stand_is_still_sent_to_the_router() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let stand = api::WorldTile {
         x: 3109,
         z: 3329,
@@ -2318,6 +2375,9 @@ fn m4_exhausted_escape_walk(
 /// live plans that tier. The step completes only when no attacker is observed.
 #[test]
 fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_when_safe() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
     let (mut run, mut ledger, live, mut previous) = m4_exhausted_escape_walk(&lease, true);
@@ -2388,6 +2448,9 @@ fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_w
 
 #[test]
 fn stationary_m4_tree_gets_untried_goals_after_food_runs_out() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
     let (_, ledger, _, previous) = m4_exhausted_escape_walk(&lease, false);
@@ -2407,6 +2470,9 @@ fn stationary_m4_tree_gets_untried_goals_after_food_runs_out() {
 
 #[test]
 fn exhausted_m4_escape_that_never_loses_the_attacker_ends_with_the_unsafe_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
     let (mut run, mut ledger, live, _) = m4_exhausted_escape_walk(&lease, true);
@@ -2677,6 +2743,9 @@ fn assert_caller_walk_out_selected(outcome: &StepOutcome, here: api::WorldTile) 
 
 #[test]
 fn aborted_walk_user_input_and_failure_preserve_the_terminal_report() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let mut aborted = report(CombatEnd::Aborted(AbortReason::Unprotected(
         crate::combat::Unprotected::NoFood,
@@ -2843,6 +2912,9 @@ fn guard_request_from_outbox(
 
 #[test]
 fn prep_abort_without_engaged_actor_uses_heaviest_live_threat_and_eats_as_hp_falls() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::combat::{facts, GuardOp, WalkGuard};
 
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -3002,6 +3074,9 @@ fn first_strictly_heavier(weights: &[i32]) -> usize {
 
 #[test]
 fn retreat_fallback_picks_a_cow_over_a_first_listed_chicken() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::combat::facts;
 
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -3075,6 +3150,9 @@ fn retreat_fallback_picks_a_cow_over_a_first_listed_chicken() {
 
 #[test]
 fn aborted_walk_to_authored_stand_arms_walk_guard() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let here = api::WorldTile {
@@ -3137,6 +3215,9 @@ fn aborted_walk_to_authored_stand_arms_walk_guard() {
 
 #[test]
 fn prep_abort_without_live_attacker_keeps_legacy_blocked_handoff() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let here = api::WorldTile {
         x: 3000,
@@ -3169,6 +3250,9 @@ fn prep_abort_without_live_attacker_keeps_legacy_blocked_handoff() {
 
 #[test]
 fn prep_abort_escapes_attack_animation_without_health_bar() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let here = api::WorldTile {
@@ -3224,6 +3308,9 @@ fn prep_abort_escapes_attack_animation_without_health_bar() {
 
 #[test]
 fn abort_retreat_direction_uses_network_tiles_not_rendered_poses() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let here = api::WorldTile {
@@ -3297,6 +3384,9 @@ fn abort_retreat_direction_uses_network_tiles_not_rendered_poses() {
 
 #[test]
 fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let lobster = data.item_by_alias("lobster").unwrap();
@@ -3450,6 +3540,9 @@ fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
 
 #[test]
 fn failed_abort_walk_does_not_retry_named_tiles_after_food_exhaustion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let here = api::WorldTile {
@@ -3552,6 +3645,9 @@ fn failed_abort_walk_does_not_retry_named_tiles_after_food_exhaustion() {
 /// but exhaustion ends earlier when no new tile can be named.
 #[test]
 fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let here = api::WorldTile {
@@ -3774,6 +3870,9 @@ fn open_flood_depth(here: api::WorldTile, walk: &WalkOut) -> u64 {
 /// the whole recovery ends within the budgets of its requests.
 #[test]
 fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const FLOOD_RADIUS: i32 = 70;
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
@@ -3924,6 +4023,9 @@ fn an_unmeasured_escape_walk_has_no_tick_budget() {
 /// budgets, after which the hold takes over.
 #[test]
 fn a_stalled_guarded_escape_walk_keeps_eating_and_ends_with_supplies_left() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::combat::{facts, GuardOp, WalkGuard};
     use crate::survival::CurePoison;
 
@@ -4100,6 +4202,9 @@ fn a_stalled_guarded_escape_walk_keeps_eating_and_ends_with_supplies_left() {
 /// the preferred tier plus the slack, far below the router's bound.
 #[test]
 fn a_measured_escape_walk_is_abandoned_after_its_flood_depth_plus_the_slack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let here = api::WorldTile {
@@ -4234,6 +4339,9 @@ fn live_attack_animation(run: &CombatRun) -> i32 {
 
 #[test]
 fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let warlord_row = data
@@ -4309,6 +4417,9 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
 
 #[test]
 fn exhausted_hold_without_any_attacker_parks_only_after_the_threat_free_horizon() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = GameSnapshot::new();
     let (mut run, mut ledger, _, _) = engaged_abort_hold_after_failed_walk(&mut snapshot, vec![]);
     let mut ended = None;
@@ -4340,6 +4451,9 @@ fn exhausted_hold_without_any_attacker_parks_only_after_the_threat_free_horizon(
 
 #[test]
 fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 2632,
@@ -4401,6 +4515,9 @@ fn target_gone_walks_to_stand_and_rebegins_only_after_arrival() {
 
 #[test]
 fn return_to_stand_bounds_each_retryable_class_and_retains_last_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::{WalkStall, WalkStallReason};
 
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -4502,6 +4619,9 @@ fn return_to_stand_bounds_each_retryable_class_and_retains_last_failure() {
 
 #[test]
 fn return_to_stand_stops_for_each_terminal_class() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::WalkRefusal;
 
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -4588,6 +4708,9 @@ fn return_to_stand_stops_for_each_terminal_class() {
 
 #[test]
 fn return_and_abort_walks_use_only_authored_protection() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 3125,
@@ -4678,6 +4801,9 @@ fn assert_stand_goals(request: &crate::native::WalkRequest, stand: api::WorldTil
 
 #[test]
 fn target_gone_walk_replans_after_route_end_before_reengaging() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 2632,
@@ -4738,6 +4864,9 @@ fn target_gone_walk_replans_after_route_end_before_reengaging() {
 
 #[test]
 fn unreachable_stand_ends_quester_step_with_the_last_walk_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let here = api::WorldTile {
         x: 3000,
@@ -4806,6 +4935,9 @@ fn unreachable_stand_ends_quester_step_with_the_last_walk_failure() {
 /// step still stops with the last route failure.
 #[test]
 fn stand_walk_bound_spans_the_kill_budget_attempt_boundary() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let here = api::WorldTile {
         x: 3000,
@@ -4890,6 +5022,9 @@ fn stand_walk_bound_spans_the_kill_budget_attempt_boundary() {
 
 #[test]
 fn stand_walk_count_survives_a_failure_on_the_budget_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let here = api::WorldTile {
         x: 3000,
@@ -4989,6 +5124,9 @@ fn combat_run_layout_stays_compact() {
 
 #[test]
 fn return_to_stand_route_ended_at_network_tile_is_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 2632,
@@ -5052,6 +5190,9 @@ fn return_to_stand_route_ended_at_network_tile_is_arrival() {
 
 #[test]
 fn combat_walk_mappers_preserve_typed_evidence_without_reengaging() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
         FactKey(Arc::from("combat-walk-gate")),
@@ -5096,6 +5237,9 @@ fn combat_walk_mappers_preserve_typed_evidence_without_reengaging() {
 
 #[test]
 fn target_gone_walk_user_input_parks_without_reengaging() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 2632,
@@ -5141,6 +5285,9 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
 
 #[test]
 fn manual_takeover_watch_covers_return_and_loot_sublegs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 2632,
@@ -5258,6 +5405,9 @@ fn manual_takeover_watch_covers_return_and_loot_sublegs() {
 
 #[test]
 fn killed_report_enters_loot_and_takes_the_observed_drop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("white_bead").unwrap();
     let item_id = item.id;
@@ -5324,6 +5474,9 @@ fn killed_report_enters_loot_and_takes_the_observed_drop() {
 
 #[test]
 fn killed_report_waits_for_a_late_drop_before_reengaging() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
     let item_id = item.id;
@@ -5384,6 +5537,9 @@ fn killed_report_waits_for_a_late_drop_before_reengaging() {
 
 #[test]
 fn combat_loot_take_settles_after_the_appearance_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
     let stand = api::WorldTile {
@@ -5473,6 +5629,9 @@ fn combat_loot_take_settles_after_the_appearance_deadline() {
 
 #[test]
 fn combat_loot_take_without_held_count_fails_after_settlement_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
     let item_name = item.name.as_deref().unwrap();
@@ -5569,6 +5728,9 @@ fn combat_loot_take_without_held_count_fails_after_settlement_bound() {
 
 #[test]
 fn missing_combat_loot_wait_is_one_window_for_all_configured_items() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let loot: Vec<_> = ["red_bead", "yellow_bead", "black_bead", "white_bead"]
         .into_iter()
@@ -5616,6 +5778,9 @@ fn missing_combat_loot_wait_is_one_window_for_all_configured_items() {
 
 #[test]
 fn combat_loot_uses_the_steps_lost_radius() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("goblin_armour").unwrap();
     let stand = api::WorldTile {
@@ -5678,6 +5843,9 @@ fn combat_loot_uses_the_steps_lost_radius() {
 
 #[test]
 fn missing_required_combat_loot_counts_as_failure_and_a_later_drop_settles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("elemental_workshop_ore").unwrap();
     let stand = api::WorldTile {
@@ -5816,6 +5984,9 @@ fn last_test_combat_receipt(run: &CombatRun) -> &CombatReceipt {
 
 #[test]
 fn until_drop_stops_after_held_item_on_last_permitted_kill() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("bones").unwrap();
     let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
@@ -5846,6 +6017,9 @@ fn until_drop_stops_after_held_item_on_last_permitted_kill() {
 
 #[test]
 fn until_drop_missing_loot_waits_without_failing_or_resetting_total_kills() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("bones").unwrap();
     let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
@@ -5909,6 +6083,9 @@ fn until_drop_missing_loot_waits_without_failing_or_resetting_total_kills() {
 
 #[test]
 fn until_drop_takes_a_late_drop_on_the_final_permitted_kill() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("bones").unwrap();
     let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
@@ -6015,6 +6192,9 @@ fn until_drop_takes_a_late_drop_on_the_final_permitted_kill() {
 
 #[test]
 fn until_drop_no_kill_outcomes_do_not_spend_the_kill_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("bones").unwrap();
     let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
@@ -6058,6 +6238,9 @@ fn until_drop_no_kill_outcomes_do_not_spend_the_kill_budget() {
 
 #[test]
 fn nonkill_combat_outcomes_reengage_with_a_bounded_content_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let item = selected.item_by_alias("bones").unwrap();
     let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
@@ -6209,6 +6392,9 @@ fn combat_state_size_tripwire_reports_config_run_and_receipt_sizes() {
 
 #[test]
 fn same_tick_loot_settle_defers_next_item_without_skipping_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let first = selected.item_by_alias("white_bead").unwrap();
     let second = selected.item_by_alias("bones").unwrap();
@@ -6432,6 +6618,9 @@ fn complete_last_loot_dispatch(ledger: &mut TestLedger, tick: u64, sequence: u64
 /// once, on the next observed tick, instead of failing.
 #[test]
 fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let bead = data.item_by_alias("white_bead").unwrap();
     let bones = data.item_by_alias("bones").unwrap();
@@ -6560,6 +6749,9 @@ fn a_rebuilt_scene_retakes_the_same_loot_item_on_the_next_observed_tick() {
 /// cancelled one, and the step continues.
 #[test]
 fn a_second_rebuilt_scene_cancel_on_the_retaken_item_is_missed_loot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let bead = data.item_by_alias("white_bead").unwrap();
     let bones = data.item_by_alias("bones").unwrap();
@@ -6661,6 +6853,9 @@ fn a_second_rebuilt_scene_cancel_on_the_retaken_item_is_missed_loot() {
 /// loot error still ends the step.
 #[test]
 fn other_loot_phase_errors_still_fail_the_combat_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let bones = data.item_by_alias("bones").unwrap();
     let bones_name: Arc<str> = Arc::from(bones.name.as_deref().unwrap());
@@ -6721,6 +6916,9 @@ fn other_loot_phase_errors_still_fail_the_combat_step() {
 
 #[test]
 fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let bones = data.item_by_alias("bones").unwrap();
     let bead = data.item_by_alias("white_bead").unwrap();
@@ -6786,6 +6984,9 @@ fn combat_loot_reaches_below_quantity_and_skips_at_the_requested_count() {
 
 #[test]
 fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next_item() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let here = api::WorldTile {
         x: 3200,
@@ -6936,6 +7137,9 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
 
 #[test]
 fn combat_finish_requires_the_same_local_npc_slot_to_transform() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let original = data.npc_by_config("delrith").unwrap().id;
     let weakened = data.npc_by_config("delrith_weakened").unwrap().id;
@@ -6968,6 +7172,9 @@ fn combat_finish_requires_the_same_local_npc_slot_to_transform() {
 
 #[test]
 fn combat_finish_rebinds_before_accepting_an_old_slot_transform() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let original = data.npc_by_config("delrith").unwrap().id;
     let weakened = data.npc_by_config("delrith_weakened").unwrap().id;
@@ -7004,6 +7211,9 @@ fn combat_finish_rebinds_before_accepting_an_old_slot_transform() {
 
 #[test]
 fn combat_finish_restart_discards_the_previous_child_pin() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let original = data.npc_by_config("delrith").unwrap().id;
     let weakened = data.npc_by_config("delrith_weakened").unwrap().id;
@@ -7039,6 +7249,9 @@ fn combat_finish_restart_discards_the_previous_child_pin() {
 
 #[test]
 fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let mut run = finish_test_run(&data, 100);
     start_finish_wait(&mut run, 0);
@@ -7136,6 +7349,9 @@ fn combat_finish_waits_for_quiet_ready_chat_then_drives_continuation() {
 
 #[test]
 fn killed_report_keeps_demon_incantation_under_finish_dialogue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let original = data.npc_by_config("delrith").unwrap().id;
     let weakened = data.npc_by_config("delrith_weakened").unwrap().id;
@@ -7214,6 +7430,9 @@ fn killed_report_keeps_demon_incantation_under_finish_dialogue() {
 
 #[test]
 fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let mut run = finish_test_run(&data, 2);
     start_finish_wait(&mut run, 0);
@@ -7260,6 +7479,9 @@ fn combat_finish_tick_budget_covers_the_dialogue_and_interruption_blocks() {
 
 #[test]
 fn combat_finish_uses_strict_current_page_line_rules() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let make_options = || {
         super::super::compile_dialogue_options(super::super::DialogueOptionsDocument {
@@ -7346,6 +7568,9 @@ fn combat_finish_uses_strict_current_page_line_rules() {
 
 #[test]
 fn combat_finish_budget_counts_evidence_tick_deltas_across_wait_and_dialogue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let mut run = finish_test_run(&data, 2);
     run.finish.as_mut().unwrap().options = DialogueOptions::default();
@@ -7387,6 +7612,9 @@ fn combat_finish_budget_counts_evidence_tick_deltas_across_wait_and_dialogue() {
 
 #[test]
 fn combat_finish_budget_ignores_duplicate_polls_and_counts_tick_jumps() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let mut run = finish_test_run(&data, 2);
     run.phase = Phase::FinishWait;
@@ -7411,6 +7639,9 @@ fn combat_finish_budget_ignores_duplicate_polls_and_counts_tick_jumps() {
 
 #[test]
 fn combat_finish_strict_menu_refusals_block_consistently() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     for prefer in [Arc::from([]), Arc::from([Arc::from("Unmatched answer")])] {
         let mut run = finish_test_run(&data, 100);
@@ -7448,6 +7679,9 @@ fn combat_finish_strict_menu_refusals_block_consistently() {
 
 #[test]
 fn combat_kit_carry_keeps_compiled_alias_ids() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let coins = data.item_by_alias("coins").unwrap();
@@ -7551,6 +7785,9 @@ fn combat_kit_carry_keeps_compiled_alias_ids() {
 /// `player/scripts/equip.rs2:355-358,371`); each alone compiles.
 #[test]
 fn a_kit_with_a_two_hander_and_a_shield_is_refused_at_compile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let name = |alias: &str| data.item_by_alias(alias).unwrap().name.clone().unwrap();
@@ -7620,6 +7857,9 @@ fn a_kit_with_a_two_hander_and_a_shield_is_refused_at_compile() {
 /// compiler, and the singular `loadout` stays the kit of the opening style.
 #[test]
 fn a_path_names_one_loadout_per_style() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let name = |alias: &str| data.item_by_alias(alias).unwrap().name.clone().unwrap();
@@ -7834,6 +8074,9 @@ mod abort_hold_cure_policy_tests {
 
     #[test]
     fn abort_hold_respects_never_policy_when_antipoison_and_bite_are_due() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let tables = Arc::new(CombatTables::build(Arc::clone(&data)).unwrap());
         let snapshot = snapshot_with_bite_and_cure(&tables);

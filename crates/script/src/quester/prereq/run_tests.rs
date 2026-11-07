@@ -380,6 +380,9 @@ fn budget_visited_uses_a_length_and_no_option() {
 
 #[test]
 fn refusal_entry_with_denied_consent_returns_not_allowed_before_preconditions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for consent in [ConsentSwitch::PrereqDialogue, ConsentSwitch::QuestStart] {
         let (ordinal, row) = row(consent);
         let crossing = &row.crossings[0];
@@ -434,6 +437,9 @@ fn refusal_entry_with_denied_consent_returns_not_allowed_before_preconditions() 
 
 #[test]
 fn needs_step_entry_with_denied_consent_returns_not_allowed_before_probe() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let snapshot = crossing_snapshot(&row.crossings[0]);
@@ -451,6 +457,9 @@ fn needs_step_entry_with_denied_consent_returns_not_allowed_before_probe() {
 
 #[test]
 fn nested_child_consent_is_checked_before_candidate_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, parent) = row(ConsentSwitch::QuestStart);
     let state = state();
     let snapshot = snapshot(parent.crossings[0].crossing.to);
@@ -475,6 +484,9 @@ fn nested_child_consent_is_checked_before_candidate_walk() {
 
 #[test]
 fn a_wait_is_not_spent_by_polls_without_a_new_player_info() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = crossing_snapshot(&row.crossings[0]);
@@ -493,6 +505,9 @@ fn a_wait_is_not_spent_by_polls_without_a_new_player_info() {
 
 #[test]
 fn a_wait_is_spent_only_when_observed_ticks_pass_its_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = snapshot(WorldTile {
         x: 1,
         z: 2,
@@ -519,6 +534,9 @@ fn a_wait_is_spent_only_when_observed_ticks_pass_its_bound() {
 
 #[test]
 fn a_stale_pass_message_does_not_settle_the_probe() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let crossing = &row.crossings[0];
     let state = state();
@@ -532,6 +550,9 @@ fn a_stale_pass_message_does_not_settle_the_probe() {
 
 #[test]
 fn pass_message_and_landing_settle_the_probe() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for consent in [ConsentSwitch::PrereqDialogue, ConsentSwitch::QuestStart] {
         let (_, row) = row(consent);
         for crossing in row.crossings.iter() {
@@ -553,6 +574,9 @@ fn pass_message_and_landing_settle_the_probe() {
 
 #[test]
 fn probe_walks_to_each_pack_takeoff_and_clicks_the_blocked_barrier_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     assert_eq!(row.crossings.len(), 2, "the pack contains both A1 takeoffs");
     for crossing in row.crossings.iter() {
@@ -621,6 +645,9 @@ fn probe_walks_to_each_pack_takeoff_and_clicks_the_blocked_barrier_anchor() {
 
 #[test]
 fn pass_message_without_landing_keeps_waiting_until_the_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let crossing = &row.crossings[0];
     let state = state();
@@ -642,6 +669,9 @@ fn pass_message_without_landing_keeps_waiting_until_the_bound() {
 
 #[test]
 fn refusal_page_newer_than_the_watermark_settles_the_probe() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let crossing = &row.crossings[0];
     let state = state();
@@ -659,6 +689,9 @@ fn refusal_page_newer_than_the_watermark_settles_the_probe() {
 
 #[test]
 fn cant_reach_ends_the_probe_at_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let crossing = &row.crossings[0];
     let state = state();
@@ -677,6 +710,9 @@ fn cant_reach_ends_the_probe_at_once() {
 
 #[test]
 fn probe_unacknowledged_after_the_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for consent in [ConsentSwitch::PrereqDialogue, ConsentSwitch::QuestStart] {
         let (_, row) = row(consent);
         let crossing = row
@@ -724,6 +760,9 @@ fn probe_unacknowledged_after_the_bound() {
 
 #[test]
 fn outward_message_on_an_inward_probe_fails_closed_and_writes_the_stage_fact() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::QuestStart);
     let inward = row
         .crossings
@@ -755,6 +794,9 @@ fn outward_message_on_an_inward_probe_fails_closed_and_writes_the_stage_fact() {
 
 #[test]
 fn stage_61_full_pack_unknown_bank_crosses_on_the_probe() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let crossing = &row.crossings[0];
     let state = state();
@@ -772,6 +814,9 @@ fn stage_61_full_pack_unknown_bank_crosses_on_the_probe() {
 
 #[test]
 fn reclaim_opener_with_full_pack_closes_the_chat_and_gives_no_dagger() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let branch = row
         .talk
@@ -801,6 +846,9 @@ fn reclaim_opener_with_full_pack_closes_the_chat_and_gives_no_dagger() {
 
 #[test]
 fn satisfied_opener_closes_before_the_blessing_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let branch = row
         .talk
@@ -826,6 +874,9 @@ fn satisfied_opener_closes_before_the_blessing_page() {
 
 #[test]
 fn an_unmatched_opener_without_an_authored_wildcard_closes_and_writes_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = npc_snapshot(row);
@@ -957,16 +1008,25 @@ fn conversation_completes(consent: ConsentSwitch) {
 
 #[test]
 fn the_a1_walk_through_completes_with_the_active_clock_frozen() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     conversation_completes(ConsentSwitch::PrereqDialogue);
 }
 
 #[test]
 fn a2_effect_page_writes_the_fact_and_the_terminal_page_retires_the_chat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     conversation_completes(ConsentSwitch::QuestStart);
 }
 
 #[test]
 fn reclaim_retalks_once_with_the_same_row_and_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let reclaimed = row
         .talk
@@ -1065,6 +1125,9 @@ fn reclaim_retalks_once_with_the_same_row_and_budget() {
 
 #[test]
 fn a2_child_probe_selects_reachable_crossing_and_parent_talk_share_the_same_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (holy_ordinal, holy) = row(ConsentSwitch::PrereqDialogue);
     let (mort_ordinal, mort) = row(ConsentSwitch::QuestStart);
     let north = &holy.crossings[0];
@@ -1152,6 +1215,9 @@ fn a2_child_probe_selects_reachable_crossing_and_parent_talk_share_the_same_budg
 
 #[test]
 fn nested_candidate_no_path_remains_a_typed_prerequisite_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, holy) = row(ConsentSwitch::PrereqDialogue);
     let (_, mort) = row(ConsentSwitch::QuestStart);
     let state = state();
@@ -1197,6 +1263,9 @@ fn nested_candidate_no_path_remains_a_typed_prerequisite_refusal() {
 
 #[test]
 fn page_wait_counts_from_the_ack_send_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = npc_snapshot(row);
@@ -1229,6 +1298,9 @@ fn page_wait_counts_from_the_ack_send_tick() {
 
 #[test]
 fn terminal_ack_close_then_gap_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let state = state();
     let mut snapshot = snapshot(WorldTile {
         x: 1,
@@ -1319,16 +1391,25 @@ fn cancel_at_effect(after_effect: bool) {
 
 #[test]
 fn cancel_before_the_effect_page_writes_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     cancel_at_effect(false);
 }
 
 #[test]
 fn cancel_after_the_effect_page_keeps_the_fact() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     cancel_at_effect(true);
 }
 
 #[test]
 fn cancel_during_probe_revokes_the_live_handle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let snapshot = crossing_snapshot(&row.crossings[0]);
@@ -1347,6 +1428,9 @@ fn cancel_during_probe_revokes_the_live_handle() {
 
 #[test]
 fn combat_during_talk_ends_step_failed_without_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = npc_snapshot(row);
@@ -1374,6 +1458,9 @@ fn combat_during_talk_ends_step_failed_without_retry() {
 
 #[test]
 fn prerequisite_state_layout_and_ten_repeated_walks_stay_bounded() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::mem::size_of;
     println!(
         "prereq ownership layouts: budget={} run={} walk={}",
@@ -1504,6 +1591,9 @@ fn branch_and_effect_text_can_span_rendered_chat_widgets_without_allocating() {
 
 #[test]
 fn refused_entry_selects_the_matched_catalogue_row_not_the_first_route_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, holy) = row(ConsentSwitch::PrereqDialogue);
     let (ordinal, mort) = row(ConsentSwitch::QuestStart);
     let crossing = &mort.crossings[0];
@@ -1680,6 +1770,9 @@ fn resolve_journal_in_walk(
 
 #[test]
 fn reissued_walks_keep_the_original_effective_prerequisite_grants() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, holy) = row(ConsentSwitch::PrereqDialogue);
     let (_, mort) = row(ConsentSwitch::QuestStart);
     let crossing = &holy.crossings[0];
@@ -1740,6 +1833,9 @@ fn reissued_walks_keep_the_original_effective_prerequisite_grants() {
 
 #[test]
 fn cancel_during_prerequisite_handover_revokes_the_replacement_owner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let snapshot = crossing_snapshot(&row.crossings[0]);
     let state = state();
@@ -1780,6 +1876,9 @@ fn cancel_during_prerequisite_handover_revokes_the_replacement_owner() {
 
 #[test]
 fn same_gate_twice_ends_step_repeated_and_preserves_the_original_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let crossing = &row.crossings[0];
     let state = state();
@@ -1824,6 +1923,9 @@ fn same_gate_twice_ends_step_repeated_and_preserves_the_original_walk() {
 
 #[test]
 fn a_journal_and_two_distinct_rows_each_reissue_before_the_budget_refuses_a_fourth() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, holy) = row(ConsentSwitch::PrereqDialogue);
     let (_, mort) = row(ConsentSwitch::QuestStart);
     let state = state();
@@ -1874,6 +1976,9 @@ fn a_journal_and_two_distinct_rows_each_reissue_before_the_budget_refuses_a_four
 
 #[test]
 fn exhausted_re_issues_keep_the_recorded_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (ordinal, holy) = row(ConsentSwitch::PrereqDialogue);
     let (_, mort) = row(ConsentSwitch::QuestStart);
     let state = state();
@@ -1930,6 +2035,9 @@ fn exhausted_re_issues_keep_the_recorded_refusal() {
 
 #[test]
 fn reach_handover_captures_inline_walk_grants_and_cancels_the_probe_owner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::prereq::reach::PrereqReach;
 
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
@@ -2007,6 +2115,9 @@ fn reach_handover_captures_inline_walk_grants_and_cancels_the_probe_owner() {
 
 #[test]
 fn approach_walk_inherits_protect_and_allow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::WalkBit;
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let crossing = &row.crossings[0];
@@ -2051,6 +2162,9 @@ fn approach_walk_inherits_protect_and_allow() {
 
 #[test]
 fn protection_warning_reaches_the_owner_during_approach() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::{WalkEvent, WalkEventKind};
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
@@ -2095,6 +2209,9 @@ fn protection_warning_reaches_the_owner_during_approach() {
 
 #[test]
 fn exhausted_transition_budget_defers_repair_admission_without_allocating() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let snapshot = snapshot(WorldTile {
@@ -2156,6 +2273,9 @@ fn exhausted_transition_budget_defers_repair_admission_without_allocating() {
 
 #[test]
 fn a_talk_row_outlives_the_generic_deadline_and_keeps_its_typed_expiry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let snapshot = npc_snapshot(row);
@@ -2228,6 +2348,9 @@ fn last_request_id(ledger: &Option<Box<ledger::Ledger>>) -> u64 {
 
 #[test]
 fn a_cancelled_talk_ends_its_wait_at_once_and_re_approaches_the_moved_npc() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = npc_snapshot_with_open_scene(row);
@@ -2300,6 +2423,9 @@ fn a_cancelled_talk_ends_its_wait_at_once_and_re_approaches_the_moved_npc() {
 
 #[test]
 fn repeated_cancels_end_in_a_terminal_failure_that_keeps_the_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = npc_snapshot(row);
@@ -2367,6 +2493,9 @@ fn repeated_cancels_end_in_a_terminal_failure_that_keeps_the_last_detail() {
 
 #[test]
 fn an_arrived_re_approach_with_a_missing_target_spends_one_attempt_before_retargeting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = npc_snapshot_with_open_scene(row);
@@ -2400,6 +2529,9 @@ fn an_arrived_re_approach_with_a_missing_target_spends_one_attempt_before_retarg
 /// observed tick approaches again, and a Talk from the new tile gets its page.
 #[test]
 fn a_failed_re_approach_is_retried_inside_the_budget_and_the_talk_still_passes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = npc_snapshot_with_open_scene(row);
@@ -2485,6 +2617,9 @@ fn a_failed_re_approach_is_retried_inside_the_budget_and_the_talk_still_passes()
 /// approach, its walk's end, and both tiles.
 #[test]
 fn failed_re_approaches_end_in_a_terminal_failure_that_keeps_the_approach_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = npc_snapshot_with_open_scene(row);
@@ -2584,6 +2719,9 @@ fn modal_wait(ledger: &Option<Box<ledger::Ledger>>) -> Option<u64> {
 /// each send. A cancel drops the attempt's owner and its lease at once.
 #[test]
 fn a_talk_holds_the_auto_run_wait_only_while_its_own_send_awaits_a_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = npc_snapshot_with_open_scene(row);
@@ -2662,6 +2800,9 @@ fn a_talk_holds_the_auto_run_wait_only_while_its_own_send_awaits_a_page() {
 
 #[test]
 fn a_cancel_message_older_than_the_send_does_not_end_the_wait() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let mut snapshot = npc_snapshot(row);
@@ -2687,6 +2828,9 @@ fn a_cancel_message_older_than_the_send_does_not_end_the_wait() {
 
 #[test]
 fn an_ordinary_talk_still_passes_inside_its_content_bound_and_fails_past_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     assert_eq!(talk_bound(row), 7, "the derived W5 bound is unchanged");
     let advice = row
@@ -2740,6 +2884,9 @@ fn an_ordinary_talk_still_passes_inside_its_content_bound_and_fails_past_it() {
 
 #[test]
 fn a_walk_deadline_returns_no_route_to_step_without_a_fact_or_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, row) = row(ConsentSwitch::PrereqDialogue);
     let state = state();
     let snapshot = snapshot(WorldTile {
@@ -2968,6 +3115,9 @@ fn journal_observation(
 
 #[test]
 fn kitchen_journal_phoenix_completion_establishes_membership() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // blackarmgang_journal.rs2:16,96-108,203-204. The row colour is shared with Black Arm.
     kitchen_journal_observation(
         &[
@@ -2981,6 +3131,9 @@ fn kitchen_journal_phoenix_completion_establishes_membership() {
 
 #[test]
 fn kitchen_journal_joined_phoenix_page_without_completion_leaves_no_fact() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // phoenixgang = 9, blackarmgang_journal.rs2:16,60-63,203-204.
     // Two needles match, but this page never says QUEST COMPLETE.
     kitchen_journal_observation(
@@ -3023,6 +3176,9 @@ fn kitchen_journal_timeout_run() -> (
 
 #[test]
 fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut run, mut snapshot, mut ledger, state, mut budget) = kitchen_journal_timeout_run();
     assert_eq!(run.journal_attempt(), None);
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
@@ -3123,6 +3279,9 @@ fn kitchen_journal_timeout_retries_once_on_a_later_observed_tick_and_recovers() 
 
 #[test]
 fn kitchen_journal_timeout_stops_after_two_reads_with_the_last_timeout_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut run, snapshot, mut ledger, state, mut budget) = kitchen_journal_timeout_run();
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
     accept_last(&mut ledger, 1, 0);
@@ -3171,6 +3330,9 @@ fn kitchen_journal_timeout_stops_after_two_reads_with_the_last_timeout_detail() 
 
 #[test]
 fn kitchen_journal_timeout_retry_keeps_a_different_last_failure_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut run, snapshot, mut ledger, state, mut budget) = kitchen_journal_timeout_run();
     assert!(poll(&mut run, &snapshot, &mut ledger, 1, &state, &mut budget).is_pending());
     accept_last(&mut ledger, 1, 0);
@@ -3216,6 +3378,9 @@ fn kitchen_journal_timeout_retry_keeps_a_different_last_failure_detail() {
 
 #[test]
 fn kitchen_journal_black_arm_completion_refuses_phoenix_membership() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // blackarmgang_journal.rs2:114,186-197. Phoenix is below joined here.
     kitchen_journal_observation(
         &[
@@ -3230,11 +3395,17 @@ fn kitchen_journal_black_arm_completion_refuses_phoenix_membership() {
 
 #[test]
 fn kitchen_journal_green_row_without_distinctive_page_never_proves_membership() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     kitchen_journal_observation(&["@red@QUEST COMPLETE!"], None);
 }
 
 #[test]
 fn kitchen_journal_conflicting_gang_pages_leave_no_fact() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     kitchen_journal_observation(
         &[
             "@str@I searched the Phoenix Gang Headquarters and found",
@@ -3249,6 +3420,9 @@ fn kitchen_journal_conflicting_gang_pages_leave_no_fact() {
 
 #[test]
 fn kitchen_journal_hero_password_establishes_pre_completion_eligibility() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::selected::{FactKey, StageWindow};
     let mut gate = kitchen_journal_gate();
     gate.gate = QuestGate::Window(StageWindow {
@@ -3535,6 +3709,9 @@ fn assert_no_kitchen_bank_reissue(ledger: &KitchenSelectLedger, original_request
 
 #[test]
 fn bank_select_reissues_only_after_the_real_journal_owner_proves_the_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut action, args, mut snapshot, mut ledger, state) = kitchen_select_fixture();
     let gate = kitchen_journal_gate();
     let (first_request, first_authority) =
@@ -3659,6 +3836,9 @@ fn bank_select_reissues_only_after_the_real_journal_owner_proves_the_gate() {
 
 #[test]
 fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut action, args, mut snapshot, mut ledger, state) = kitchen_select_fixture();
     let gate = kitchen_journal_gate();
     let (first_request, first_authority) =
@@ -3837,6 +4017,9 @@ fn bank_select_session_change_revalidates_same_gate_reads_and_completes() {
 
 #[test]
 fn bank_select_same_row_session_reissues_stop_at_global_cap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut action, args, snapshot, mut ledger, state) = kitchen_select_fixture();
     let gate = kitchen_journal_gate();
     let (first_request, first_authority) =
@@ -3959,6 +4142,9 @@ fn bank_select_same_row_session_reissues_stop_at_global_cap() {
 
 #[test]
 fn false_journal_page_does_not_reissue_or_select_a_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut action, _, mut snapshot, mut ledger, state) = kitchen_select_fixture();
     let gate = kitchen_journal_gate();
     let (_, first_authority) =
@@ -4017,6 +4203,9 @@ fn false_journal_page_does_not_reissue_or_select_a_bank() {
 
 #[test]
 fn bank_select_journal_timeout_stops_after_two_reads_without_reissue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut action, _, snapshot, mut ledger, state) = kitchen_select_fixture();
     let gate = kitchen_journal_gate();
     let (_, first_authority) =
@@ -4110,6 +4299,9 @@ fn bank_select_journal_timeout_stops_after_two_reads_without_reissue() {
 
 #[test]
 fn bank_select_cancel_during_second_journal_read_does_not_retry_or_reissue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut action, _, snapshot, mut ledger, state) = kitchen_select_fixture();
     let gate = kitchen_journal_gate();
     let (_, first_authority) =

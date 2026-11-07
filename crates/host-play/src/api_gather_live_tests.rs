@@ -122,7 +122,10 @@ impl Drop for ThrowawayHome {
     }
 }
 
-fn live_options(home: &Path) -> ProfileOptions {
+fn live_options(home: &Path) -> Option<ProfileOptions> {
+    if !api::test_support::game_data_available() {
+        return None;
+    }
     let port = std::env::var("BOT_GAME_PORT")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -131,14 +134,21 @@ fn live_options(home: &Path) -> ProfileOptions {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(2080);
-    let nav_pack = PathBuf::from(
-        std::env::var_os("GATHERER_NAV_PACK")
-            .expect("Gather API live proof requires GATHERER_NAV_PACK"),
-    );
-    let engine_dir = PathBuf::from(
-        std::env::var_os("GATHERER_ENGINE_DIR")
-            .expect("Gather API live proof requires GATHERER_ENGINE_DIR"),
-    );
+    let nav_pack = api::test_support::local_asset_path(
+        "GATHERER_NAV_PACK",
+        "",
+        "local R289 navigation pack for Gather API live proof",
+    )?;
+    let engine_dir = api::test_support::local_asset_path(
+        "GATHERER_ENGINE_DIR",
+        "",
+        "local R289 engine content for Gather API live proof",
+    )?;
+    let cache_dir = api::test_support::local_asset_path(
+        "BOT_CACHE_DIR",
+        "",
+        "copied local R289 cache snapshot for Gather API live proof",
+    )?;
     assert!(
         nav_pack.is_absolute() && nav_pack.is_file(),
         "GATHERER_NAV_PACK must be an absolute file path: {}",
@@ -149,7 +159,12 @@ fn live_options(home: &Path) -> ProfileOptions {
         "GATHERER_ENGINE_DIR must be an absolute directory path: {}",
         engine_dir.display()
     );
-    ProfileOptions {
+    assert!(
+        cache_dir.is_absolute() && cache_dir.is_dir(),
+        "BOT_CACHE_DIR must be an absolute directory path: {}",
+        cache_dir.display()
+    );
+    Some(ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
@@ -157,14 +172,12 @@ fn live_options(home: &Path) -> ProfileOptions {
         port: Some(port),
         http_port: Some(http_port),
         vault_path: Some(home.join("vault")),
-        cache_dir: Some(PathBuf::from(
-            std::env::var_os("BOT_CACHE_DIR").expect("live proof requires copied BOT_CACHE_DIR"),
-        )),
+        cache_dir: Some(cache_dir),
         unpack_dir: Some(home.join("unpack")),
         nav_pack: Some(nav_pack),
         engine_dir: Some(engine_dir),
         ..ProfileOptions::default()
-    }
+    })
 }
 
 fn tile_from_env() -> WorldTile {
@@ -617,7 +630,9 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     std::fs::create_dir_all(&evidence_dir).expect("create receipt directory");
     api::hostlog::set_debug(true);
     let home = ThrowawayHome::enter("receipt", &evidence_dir);
-    let options = live_options(&home.path);
+    let Some(options) = live_options(&home.path) else {
+        return;
+    };
     let template = options
         .resolve(None)
         .expect("resolve local-289 profile")
@@ -954,7 +969,10 @@ fn live_quest_progress_complete_cook_through_load_api() {
         std::env::var_os("BOT_EVIDENCE_DIR").expect("progress live evidence directory"),
     );
     let home = ThrowawayHome::enter("progress", &evidence_dir);
-    let template = live_options(&home.path)
+    let Some(options) = live_options(&home.path) else {
+        return;
+    };
+    let template = options
         .resolve(None)
         .expect("resolve local profile")
         .prepare_template()

@@ -849,6 +849,9 @@ mod tests {
 
     #[test]
     fn campaign_gap_metadata_does_not_change_the_seed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let seed = build_seed_scenario(plan(CAMPAIGN_TEST_SEED_JSON)).unwrap();
         let mut document: serde_json::Value =
             serde_json::from_str(CAMPAIGN_TEST_SEED_JSON).unwrap();
@@ -868,6 +871,9 @@ mod tests {
 
     #[test]
     fn seed_plan_rejects_unknown_fields_and_places() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bad_place = plan(
             r#"{"quest":"priest","quest_varp":"prieststart","quest_display":"The Restless Ghost","items":[{"alias":"lobster","count":1,"where":"pocket"}],"start_tile":[3243,3206,0]}"#,
         );
@@ -878,6 +884,9 @@ mod tests {
 
     #[test]
     fn seed_plan_rejects_unknown_skill_and_alias() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bad_skill = plan(
             r#"{"quest":"priest","quest_varp":"prieststart","quest_display":"The Restless Ghost","stats":{"luck":5},"start_tile":[3243,3206,0]}"#,
         );
@@ -893,6 +902,9 @@ mod tests {
 
     #[test]
     fn seed_plan_builds_a_logout_terminal_scenario() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let priest = plan(
             r#"{"quest":"priest","quest_varp":"prieststart","quest_display":"The Restless Ghost","stats":{"hitpoints":30,"defence":30},"start_tile":[3243,3206,0]}"#,
         );
@@ -913,6 +925,9 @@ mod tests {
 
     #[test]
     fn campaign_seed_starts_quester_after_the_exact_watch_seed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let campaign =
             quest_campaign_scenario(CAMPAIGN_TEST_SEED_JSON).expect("campaign seed plan builds");
         let watch =

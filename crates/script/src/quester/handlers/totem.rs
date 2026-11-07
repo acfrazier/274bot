@@ -491,6 +491,9 @@ mod tests {
     /// rather than demand a path onto the door tile.
     #[test]
     fn door_approach_walks_the_anchor_area() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let door = WorldTile {
             x: 2658,
             z: 3322,
@@ -575,6 +578,9 @@ mod tests {
 
     #[test]
     fn totem_door_retries_a_failed_walk_on_the_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tile = WorldTile {
             x: 12,
             z: 34,
@@ -616,7 +622,7 @@ mod tests {
             with_step(tick, |cx| run.poll(cx))
         })
         .is_pending());
-
+    
         let retry = ledger.as_ref().unwrap().outbox.last().unwrap();
         let crate::native::HostEffect::Walk(request) = &retry.effect else {
             panic!("the next attempt should be a fresh totem approach walk");

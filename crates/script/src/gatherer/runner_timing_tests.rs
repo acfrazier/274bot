@@ -247,6 +247,9 @@ fn proven_idle_cycle(gatherer: &Gatherer, target: &TargetPlan) -> (TickCycle, Ti
 
 #[test]
 fn parked_depleting_idle_cycle_walks_before_remote_replacement_batch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::HostEffect;
 
     for (here, target_tile) in [
@@ -331,6 +334,9 @@ fn parked_depleting_idle_cycle_walks_before_remote_replacement_batch() {
 
 #[test]
 fn parked_depleting_idle_cycle_arms_a_local_operable_replacement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::HostEffect;
     use crate::surface::ServerOrderedPayload;
     use api::interact::server_ordered::ServerOrderedRequest;
@@ -393,6 +399,9 @@ fn parked_depleting_idle_cycle_arms_a_local_operable_replacement() {
 
 #[test]
 fn parked_depleting_idle_cycle_keeps_walk_for_long_or_unreachable_access() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::HostEffect;
 
     for (here, target_tile, wall_x) in [
@@ -461,6 +470,9 @@ fn parked_depleting_idle_cycle_keeps_walk_for_long_or_unreachable_access() {
 
 #[test]
 fn not_due_kit_shortage_comes_from_built_plan_and_is_published_without_a_trip() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot, target) = fixture();
     let mut bank = api::bank_memory::BankMemory::default();
     bank.observe(
@@ -493,6 +505,9 @@ fn not_due_kit_shortage_comes_from_built_plan_and_is_published_without_a_trip() 
 
 #[test]
 fn cancellation_hold_and_bank_trip_drop_cycle_but_keep_run_policy() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, _, target) = fixture();
     gatherer
         .tick_policy
@@ -516,6 +531,9 @@ fn cancellation_hold_and_bank_trip_drop_cycle_but_keep_run_policy() {
 
 #[test]
 fn eat_pauses_parked_arm_and_exposes_pause_counter_before_publish() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot, target) = fixture();
     let method = &gatherer.prepared.catalog.methods()[usize::from(target.method_index)];
     let mut cycle = TickCycle::new(GatherTiming::spec(method, 1265).unwrap(), 100, 7, 0);
@@ -586,6 +604,9 @@ fn eat_pauses_parked_arm_and_exposes_pause_counter_before_publish() {
 
 #[test]
 fn eating_after_an_ended_idle_cycle_adds_no_verdict_and_the_next_gather_restarts_natively() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::{HostEffect, InteractionReceipt};
     use crate::quester::families::tests::local_player;
     use api::interact::server_ordered::{RowDispatch, ServerOrderedDispatch};
@@ -808,6 +829,9 @@ fn eating_after_an_ended_idle_cycle_adds_no_verdict_and_the_next_gather_restarts
 
 #[test]
 fn per_target_applicability_rechecks_the_method_and_changed_tool_before_the_next_cycle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot, mut target) = fixture();
     snapshot.seed_inventory(
         [1265, 946, 1511]

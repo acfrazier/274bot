@@ -2027,6 +2027,9 @@ mod tests {
 
     #[test]
     fn matching_deposit_visits_side_order_waits_for_budget_receipt_and_drop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = bank_snapshot(
             vec![pack_item(1, "Anchovy", 0), pack_item(2, "Lobster", 1)],
             vec![
@@ -2076,6 +2079,9 @@ mod tests {
 
     #[test]
     fn deposit_all_restarts_in_order_only_after_the_posted_item_drop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = bank_snapshot(
             vec![pack_item(1, "Anchovy", 0), pack_item(2, "Lobster", 1)],
             vec![
@@ -2113,6 +2119,9 @@ mod tests {
 
     #[test]
     fn failed_deposit_match_callback_is_unavailable_without_a_click() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = bank_snapshot(
             vec![pack_item(1, "Anchovy", 0)],
             vec![bank_item(1, "Anchovy", 10, &[])],
@@ -2137,6 +2146,9 @@ mod tests {
 
     #[test]
     fn delta_withdraw_uses_the_selected_source_row_and_settles_from_inventory() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = bank_snapshot(
             Vec::new(),
             vec![
@@ -2182,6 +2194,9 @@ mod tests {
 
     #[test]
     fn delta_withdraw_waits_for_each_partial_landing_before_the_next_bounded_click() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = bank_snapshot(
             Vec::new(),
             vec![bank_item(2, "Lobster", 10, &["Withdraw-5", "Withdraw-1"])],
@@ -2248,6 +2263,9 @@ mod tests {
 
     #[test]
     fn rejected_or_replaced_bank_sessions_do_not_complete_a_withdrawal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = vec![bank_item(2, "Lobster", 4, &["Withdraw-1"])];
         let snapshot = bank_snapshot(Vec::new(), bank.clone(), Vec::new());
         let mut args = transfer_args(BankSeatOperation::WithdrawDelta);
@@ -2280,6 +2298,9 @@ mod tests {
 
     #[test]
     fn withdraw_load_uses_the_fixed_ladder_and_settles_each_click() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
         let mut snapshot = bank_snapshot(
             filler_rows(21),
@@ -2333,6 +2354,9 @@ mod tests {
 
     #[test]
     fn withdraw_load_all_waits_for_a_posted_pack_change() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut args = transfer_args(BankSeatOperation::WithdrawLoad);
         let mut snapshot = bank_snapshot(
             vec![pack_item(9, "Rune", 0)],
@@ -2363,6 +2387,9 @@ mod tests {
 
     #[test]
     fn withdraw_load_selects_the_bank_row_by_numeric_id() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = bank_snapshot(
             filler_rows(27),
             vec![
@@ -2388,6 +2415,9 @@ mod tests {
 
     #[test]
     fn withdraw_load_checks_the_requested_row_before_full_pack_success() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let absent = bank_snapshot(
             filler_rows(28),
             vec![bank_item(7, "Lobster", 10, &["Withdraw-1"])],
@@ -2419,6 +2449,9 @@ mod tests {
 
     #[test]
     fn wait_ready_logs_after_its_deadline_then_returns_false() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(1);
         snapshot.seed_inventory(Vec::new(), 28);
@@ -2444,6 +2477,9 @@ mod tests {
 
     #[test]
     fn snapshot_wait_uses_packet_generation_not_observation_sequence() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = bank_snapshot(Vec::new(), Vec::new(), Vec::new());
         let mut args = transfer_args(BankSeatOperation::WaitSnapshotAfter);
         args.request.baseline_generation = Some(41.0);
@@ -2460,6 +2496,9 @@ mod tests {
 
     #[test]
     fn note_mode_returns_slot_update_only_after_the_receipt_and_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = bank_snapshot(Vec::new(), Vec::new(), Vec::new());
         let mut args = transfer_args(BankSeatOperation::SetNoteMode);
         args.request.note_mode = true;
@@ -2482,6 +2521,9 @@ mod tests {
 
     #[test]
     fn deposit_all_without_a_side_view_fails_at_the_active_time_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = bank_snapshot(
             vec![pack_item(1, "Anchovy", 0)],
             vec![bank_item(1, "Anchovy", 10, &[])],
@@ -2507,6 +2549,9 @@ mod tests {
 
     #[test]
     fn labelled_withdraw_keeps_the_original_amount_to_action_characterization() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (label, quantity, expected) in [
             (Some("all"), None, "Withdraw All"),
             (Some("Withdraw 5"), None, "Withdraw 5"),

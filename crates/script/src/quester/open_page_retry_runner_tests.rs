@@ -190,6 +190,9 @@ impl Fixture {
 
 #[test]
 fn a_retry_with_the_dialogue_page_open_continues_it_without_a_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = Fixture::new(true);
     fixture.fail_first_attempt_walk();
     assert!(fixture.requests.continues.is_empty());
@@ -230,6 +233,9 @@ fn a_retry_with_the_dialogue_page_open_continues_it_without_a_walk() {
 
 #[test]
 fn a_retry_without_an_open_page_still_walks_to_the_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = Fixture::new(false);
     fixture.fail_first_attempt_walk();
     fixture.run_until(30, |fixture| fixture.requests.walks.len() >= 2);

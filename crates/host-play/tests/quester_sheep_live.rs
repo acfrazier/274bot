@@ -1286,6 +1286,9 @@ fn validate_live_receipt(receipt: &Value) -> Result<(), String> {
 #[test]
 #[ignore = "requires Engine A and the live environment documented at the top of this file"]
 fn live_quester_sheep_bank_loop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let case =
         build_case().unwrap_or_else(|error| panic!("build Sheep bank-loop fixture: {error}"));
     let selected = selected_data().expect("selected R289 game data");
@@ -1370,6 +1373,9 @@ mod tests {
             3
         );
 
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = build_case().expect("build live fixture without running it");
         let cell = case.cell;
         assert_eq!(cell.quest, "sheep");

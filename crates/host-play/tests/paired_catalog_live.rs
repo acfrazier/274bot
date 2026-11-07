@@ -1019,6 +1019,9 @@ fn run_cell(case: PairCase) -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
     }
+    if !api::test_support::game_data_available() {
+        return Ok(());
+    }
     let _home = script::IsolatedEnv::enter("paired-catalog-live-home");
     let revision = required("PAIRED_CATALOG_REVISION")?
         .parse::<u16>()
@@ -1712,6 +1715,9 @@ mod tests {
 
     #[test]
     fn frozen_catalog_hashes_match_both_revisions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         frozen_card_hashes_match(PairCase::Air).unwrap();
         frozen_card_hashes_match(PairCase::Mule).unwrap();
         frozen_card_hashes_match(PairCase::Flax).unwrap();
@@ -1761,6 +1767,9 @@ mod tests {
 
     #[test]
     fn generated_duel_controls_preserve_revision_specific_admission() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         const EXPECTED_RULE_BUTTONS: [i32; 14] = [
             6721, 6722, 6723, 6724, 6725, 6726, 6727, 6728, 6729, 6730, 6732, 671, 670, 7816,
         ];

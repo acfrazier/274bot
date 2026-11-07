@@ -180,6 +180,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn v1_food_count_coercions_and_cake_forms() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_compat(
             r#"
@@ -217,6 +220,9 @@ export default class T extends LoopingBot {
 /// them. The cache spells the pineapple half `1/2pineapple pizza`.
 #[test]
 fn v1_food_forms_cover_slices_and_halves() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_compat(
             r#"
@@ -287,6 +293,9 @@ export default class T extends LoopingBot {
 /// that answer instead of throwing mid-fight.
 #[test]
 fn v1_food_heal_resolves_every_name_like_frozen() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_compat(
             r#"
@@ -323,6 +332,9 @@ export default class T extends LoopingBot {
 /// it `1/2pineapple pizza`) still heals as the pizza (`food.ts:53-54`).
 #[test]
 fn v1_food_heal_partial_form_takes_the_parent_heal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let value = probe_compat(
         r#"
 import { foodHealAmount } from '../../api/combat/food.js';
@@ -345,6 +357,9 @@ export default class T extends LoopingBot {
 /// eats above the floor (`:138-141`); the floor and a fitting heal still do.
 #[test]
 fn v1_should_eat_to_use_food_holds_a_zero_heal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let value = probe_compat(
         r#"
 import { shouldEatToUseFood } from '../../api/combat/food.js';
@@ -378,6 +393,9 @@ export default class T extends LoopingBot {
 /// the floor itself when max HP is unknown.
 #[test]
 fn v1_eat_at_hp_threshold_is_the_full_heal_line() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let value = probe_compat(
         r#"
 import { eatAtHpThreshold } from '../../api/combat/food.js';
@@ -406,6 +424,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn v2_food_and_runes_contracts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_v2(
             r#"
@@ -453,6 +474,9 @@ export function tick(api) {
 
 #[test]
 fn v2_escape_runes_seven_ids_and_errors() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_v2(
             r#"
@@ -534,6 +558,9 @@ export function tick(api) {
 
 #[test]
 fn new_supply_v2_is_not_a_rustyscript_json_callback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let value = probe_v2(
         r#"
 export const apiVersion = 2;
@@ -565,6 +592,9 @@ export const apiVersion = 2;
 
 #[test]
 fn v1_food_count_preserves_falsy_skip_and_empty_name_match() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_compat(
             r#"
@@ -608,6 +638,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn v2_snapshot_inv_and_invalid_optional_types() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).unwrap();
         let iso = LoadIsolate::spawn_with_game_data(
@@ -658,6 +691,9 @@ export function tick(api) {
 
 #[test]
 fn example_supply_helpers_v2_ts_runs_all_five_on_snapshot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("supply_helpers_v2.ts");

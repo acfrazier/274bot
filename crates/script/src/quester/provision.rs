@@ -1939,6 +1939,9 @@ mod tests {
 
     #[test]
     fn authored_draynor_varrock_and_unmatched_tiles_select_without_explicit_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let draynor = tile(3092, 3242);
         let varrock_west = tile(3185, 3438);
         let banks = Arc::new(NamedBankFacts::from_banks(vec![
@@ -1973,6 +1976,9 @@ mod tests {
 
     #[test]
     fn required_draynor_bank_is_explicit_and_unmatched_required_bank_refuses() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let draynor = tile(3092, 3242);
         let banks = Arc::new(NamedBankFacts::from_banks(vec![NamedBank::new(
             "Draynor Village",
@@ -2045,6 +2051,9 @@ mod tests {
 
     #[test]
     fn pack_sufficiency_does_not_open_an_unread_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -2087,6 +2096,9 @@ mod tests {
 
     #[test]
     fn missing_preserved_tool_is_not_an_implicit_must_have_requirement() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = provisioning(Vec::new(), None);
         plan.tools = Arc::from([crate::native_bank::BankItem {
             id: 42,
@@ -2167,6 +2179,9 @@ mod tests {
 
     #[test]
     fn banked_gather_tool_uses_the_shared_bank_withdrawal_run() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (path, quests, mut snapshot, axe_id) = woodcutting_tool_fixture();
         let memo = BankMemory::seeded(&[(axe_id, 1)], Origin::Session);
         let mut provisioner = Provisioner::new();
@@ -2204,6 +2219,9 @@ mod tests {
     /// `Unknown` bank's is.
     #[test]
     fn hint_lacking_every_gather_tool_costs_the_verifying_scan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (path, quests, mut snapshot, _) = woodcutting_tool_fixture();
         let memo = BankMemory::seeded(&[], Origin::Hint);
         let mut provisioner = Provisioner::new();
@@ -2239,6 +2257,9 @@ mod tests {
 
     #[test]
     fn acquirable_without_recipe_defers_to_authored_steps_after_bank_observation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -2274,6 +2295,9 @@ mod tests {
 
     #[test]
     fn unread_bank_is_scanned_before_a_must_have_can_be_blocked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -2337,6 +2361,9 @@ mod tests {
 
     #[test]
     fn observed_empty_bank_blocks_a_must_have_shortfall() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -2374,6 +2401,9 @@ mod tests {
 
     #[test]
     fn acquirable_shortfall_runs_its_recipe_without_invalidating_bank_memo() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = provisioning(
             vec![compiled_item(
                 42,
@@ -2420,6 +2450,9 @@ mod tests {
 
     #[test]
     fn duplicate_item_without_recipe_does_not_hide_a_later_acquisition_recipe() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = provisioning(
             vec![
                 compiled_item(42, "Quest token", 1, CompiledItemKind::Acquirable, None),
@@ -2463,6 +2496,9 @@ mod tests {
 
     #[test]
     fn float_latches_survive_consumption_and_reset_clears_them() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let coin = crate::native_bank::BankItem {
             id: 10,
             name: Arc::from("Coins"),
@@ -2540,6 +2576,9 @@ mod tests {
 
     #[test]
     fn r1_missing_coin_and_carry_floats_scan_unknown_bank_but_held_floats_do_not() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (coin_qty, carry_qty) in [(100, 0), (0, 3), (100, 3)] {
             let mut plan = provisioning(Vec::new(), None);
             plan.coin_float = coin_qty;
@@ -2602,6 +2641,9 @@ mod tests {
 
     #[test]
     fn owns_inventory_skips_prepare() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = provisioning(Vec::new(), None);
         plan.owns_inventory = true;
         let snapshot = ready_snapshot(vec![item_view(
@@ -2635,6 +2677,9 @@ mod tests {
 
     #[test]
     fn staged_item_waits_for_its_stage_and_skips_the_unknown_bank_scan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut item = compiled_item(
             42,
             "Quest token",
@@ -2906,6 +2951,9 @@ mod tests {
 
     #[test]
     fn authored_provisioning_returns_the_first_open_error_without_retrying() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for has_booth in [false, true] {
             let (mut snapshot, bank, banks) = openable_bank_fixture();
             if !has_booth {
@@ -2986,6 +3034,9 @@ mod tests {
 
     #[test]
     fn scan_spill_and_withdraw_preserve_the_provisioners_open_bank_lifetime() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for required in [false, true] {
             let (mut snapshot, bank, banks) = openable_bank_fixture();
             let stand = bank.tile;
@@ -3191,6 +3242,9 @@ mod tests {
 
     #[test]
     fn hint_shortage_costs_one_scan_then_withdraws_at_the_same_open_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -3348,6 +3402,9 @@ mod tests {
 
     #[test]
     fn stale_hint_stock_costs_one_withdraw_trip_then_session_zero_then_acquisition() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = provisioning(
             vec![compiled_item(
                 42,
@@ -3506,6 +3563,9 @@ mod tests {
 
     #[test]
     fn session_known_shortage_of_a_must_have_blocks_in_place() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -3548,6 +3608,9 @@ mod tests {
     /// trip for the part it does hold.
     #[test]
     fn partially_banked_session_must_have_blocks_in_place_without_a_withdrawal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -3591,6 +3654,9 @@ mod tests {
 
     #[test]
     fn worn_must_have_is_carried_and_not_withdrawn() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -3765,6 +3831,9 @@ mod tests {
 
     #[test]
     fn scan_then_ready_closes_the_bank_before_the_next_step_acts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // The empty-bank Sheep Shearer case: the scan finds no coins, no
         // withdrawal follows, and the Path's next step is not a bank step.
         let run = run_session(
@@ -3785,6 +3854,9 @@ mod tests {
 
     #[test]
     fn scan_then_withdraw_closes_once_after_the_withdrawal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -3818,6 +3890,9 @@ mod tests {
 
     #[test]
     fn a_bank_open_before_the_first_trip_is_left_open() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // The player (or an earlier step) opened this bank: the provisioner
         // withdraws at it and never closes it, since the session is not its own.
         let plan = provisioning(
@@ -3851,6 +3926,9 @@ mod tests {
 
     #[test]
     fn ready_with_an_unmet_optional_need_logs_the_need_and_the_shortfall_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         const SLOT: &str = "status-provision-unmet-supply";
         crate::slot::compiled::tests::install_status_line_sink();
         api::hostlog::bind_slot(SLOT);
@@ -3894,6 +3972,9 @@ mod tests {
 
     #[test]
     fn a_float_left_out_for_pack_room_logs_the_shortfall() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         const SLOT: &str = "status-provision-unmet-room";
         crate::slot::compiled::tests::install_status_line_sink();
         api::hostlog::bind_slot(SLOT);
@@ -4026,6 +4107,9 @@ mod tests {
 
     #[test]
     fn a_terminal_error_with_the_bank_open_ends_the_session_and_keeps_the_lease() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut snapshot, bank, banks) = openable_bank_fixture();
         let plan = scan_plan(bank);
         let mut provisioner = Provisioner::new();
@@ -4071,6 +4155,9 @@ mod tests {
 
     #[test]
     fn cancel_keeps_a_lease_a_frame_showed_and_drops_an_unobserved_open() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut snapshot, bank, banks) = openable_bank_fixture();
         let plan = scan_plan(bank);
         let memory = BankMemory::default();
@@ -4119,6 +4206,9 @@ mod tests {
 
     #[test]
     fn a_trip_cancelled_before_the_bank_opened_does_not_own_a_bank_the_player_opens() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut snapshot, bank, banks) = openable_bank_fixture();
         let plan = scan_plan(bank);
         let memory = BankMemory::default();
@@ -4158,6 +4248,9 @@ mod tests {
 
     #[test]
     fn a_replaced_bank_session_is_not_closed_by_a_stale_lease() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut snapshot, bank, banks) = openable_bank_fixture();
         let plan = scan_plan(bank);
         let quests = quest_catalog();
@@ -4203,6 +4296,9 @@ mod tests {
 
     #[test]
     fn a_lease_from_another_login_session_is_dropped_without_a_close() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut snapshot, bank, banks) = openable_bank_fixture();
         let plan = scan_plan(bank);
         let quests = quest_catalog();
@@ -4284,6 +4380,9 @@ mod tests {
 
     #[test]
     fn a_bank_the_player_reopens_between_trips_is_not_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut provisioner, mut snapshot, mut ledger, memory, tick, banks) =
             session_with_a_leased_bank();
         let quests = quest_catalog();
@@ -4310,6 +4409,9 @@ mod tests {
 
     #[test]
     fn a_bank_the_player_reopens_during_a_close_is_not_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut provisioner, mut snapshot, mut ledger, memory, tick, banks) =
             session_with_a_leased_bank();
         let quests = quest_catalog();
@@ -4365,6 +4467,9 @@ mod tests {
     /// second, the player opens a new session before the kernel can click.
     #[test]
     fn a_reopen_inside_a_trip_keeps_the_lease_only_when_the_kernel_made_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for player in [false, true] {
             let (mut snapshot, bank, banks) = openable_bank_fixture();
             // A required bank is picked again for each trip, so the trip knows its stand.
@@ -4733,11 +4838,17 @@ mod tests {
 
     #[test]
     fn a_bank_the_player_opens_while_the_teller_kernel_finds_no_banker_is_not_its_own() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_the_players_bank(TellerStart::NoBanker);
     }
 
     #[test]
     fn a_bank_the_player_opens_after_a_denied_teller_talk_is_not_its_own() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_the_players_bank(TellerStart::BudgetDenied);
     }
 
@@ -4745,6 +4856,9 @@ mod tests {
     /// once, and after a wait for a banker.
     #[test]
     fn a_bank_the_teller_kernel_opens_is_its_own_and_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for start in [TellerStart::KernelOpens, TellerStart::KernelOpensAfterWait] {
             let (mark, lease, closes) = teller_trip(start);
             let mark = mark.expect("the kernel's open is marked");

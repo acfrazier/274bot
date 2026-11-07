@@ -235,10 +235,14 @@ mod tests {
 
     #[test]
     fn real_289_multiway_has_4697_sorted_keys() {
-        let path = std::path::Path::new(
+        let Some(path) = api::test_support::local_asset_path(
+            "BOT_NAV_CONTENT_DIR_MULTIWAY_CSV",
             "/Users/acfrazier/experiments/lostcity-289/content/maps/multiway.csv",
-        );
-        let csv = std::fs::read_to_string(path).expect("289 multiway.csv");
+            "289 content maps/multiway.csv",
+        ) else {
+            return;
+        };
+        let csv = std::fs::read_to_string(&path).expect("289 multiway.csv");
         let keys = produce_multiway_keys(&csv).unwrap();
         assert_eq!(keys.len(), 4697);
         assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));

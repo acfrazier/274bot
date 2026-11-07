@@ -130,16 +130,7 @@ fn new_scripts(directory: &std::path::Path) -> Scripts {
 
 #[test]
 fn warm_quester_script_section_shares_its_zone_text_without_allocating() {
-    if api::test_support::local_asset_path(
-        "",
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../api/data/game-data/289.json"
-        ),
-        "revision 289 game data",
-    )
-    .is_none()
-    {
+    if !api::test_support::game_data_available() {
         return;
     }
 

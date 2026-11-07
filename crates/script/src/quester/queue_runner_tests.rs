@@ -59,6 +59,9 @@ fn runemysteries_settings() -> QueueSettings {
 
 #[test]
 fn missing_login_quest_observation_waits_without_gameplay_then_admits() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(cook_settings());
     let mut ledger = None;
     let mut output = Capture::default();
@@ -99,6 +102,9 @@ fn missing_login_quest_observation_waits_without_gameplay_then_admits() {
 
 #[test]
 fn missing_login_quest_observation_times_out_with_recovery_instructions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, snapshot) = fixture(cook_settings());
     let mut ledger = None;
     let mut output = Capture::default();
@@ -121,6 +127,9 @@ fn missing_login_quest_observation_times_out_with_recovery_instructions() {
 }
 #[test]
 fn a_parked_queue_row_publishes_its_stage_step_and_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::path::{PredicateDocument, StepDocument};
 
     let (mut queued, mut snapshot) = fixture(cook_settings());
@@ -209,6 +218,9 @@ fn a_parked_queue_row_publishes_its_stage_step_and_failure() {
 
 #[test]
 fn a_queued_no_step_park_publishes_and_reuses_the_empty_step_id() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::path::PredicateDocument;
 
     let mut previous_empty_step = None;
@@ -291,6 +303,9 @@ fn a_queued_no_step_park_publishes_and_reuses_the_empty_step_id() {
 
 #[test]
 fn individually_missing_quest_row_stays_fail_closed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(runemysteries_settings());
     snapshot.seed_quest_statuses(
         vec![QuestStatusView {
@@ -337,6 +352,9 @@ fn individually_missing_quest_row_stays_fail_closed() {
 
 #[test]
 fn runemysteries_queue_uses_selected_identity_status_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(runemysteries_settings());
     snapshot.seed_varps(vec![VarpView {
         index: 101,
@@ -384,6 +402,9 @@ fn runemysteries_queue_uses_selected_identity_status_row() {
 
 #[test]
 fn completed_canonical_quest_row_wins_before_missing_requirements() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(runemysteries_settings());
     snapshot.seed_quest_statuses(
         vec![QuestStatusView {
@@ -415,6 +436,9 @@ fn completed_canonical_quest_row_wins_before_missing_requirements() {
 
 #[test]
 fn excluding_the_entire_default_queue_is_an_actionable_block() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let index: ReleaseIndex = serde_json::from_str(crate::quester::compile::INDEX_JSON).unwrap();
     let (mut queued, snapshot) = fixture(QueueSettings {
         skip: index.paths.into_iter().map(|entry| entry.id).collect(),
@@ -435,6 +459,9 @@ fn excluding_the_entire_default_queue_is_an_actionable_block() {
 
 #[test]
 fn a_parked_run_is_not_sent_to_script_prefs_but_a_requirement_block_is() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, _) = fixture(cook_settings());
     queued.queue.mark_parked(
         0,
@@ -462,6 +489,9 @@ fn a_parked_run_is_not_sent_to_script_prefs_but_a_requirement_block_is() {
 }
 #[test]
 fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(QueueSettings {
         quests: vec!["cook".into(), "sheep".into()],
         order_override: vec!["cook".into(), "sheep".into()],
@@ -570,6 +600,9 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
 
 #[test]
 fn cached_path_does_not_share_account_choices_between_activations() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::choices::{CrestGauntlets, QuestChoices};
     let (mut cooking, mut snapshot) = fixture(cook_settings());
     let (mut goldsmith, _) = fixture(cook_settings());
@@ -608,6 +641,9 @@ fn cached_path_does_not_share_account_choices_between_activations() {
 
 #[test]
 fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::registry::{FolderSource, PathRegistry};
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -705,6 +741,9 @@ fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() 
 /// the typed reason, instead of waiting, and logging, on every tick.
 #[test]
 fn a_refused_loadouts_store_blocks_the_path_instead_of_waiting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::local_state::{
         AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
         FailureReason, LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
@@ -823,6 +862,9 @@ fn open_bank(snapshot: &mut GameSnapshot, tick: u64) -> BankLease {
 
 #[test]
 fn a_restarted_run_closes_the_open_bank_before_it_reads_or_plans_anything() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(cook_settings());
     snapshot.seed_quest_statuses(cook_status(0xf80000), true);
     let lease = open_bank(&mut snapshot, 1);
@@ -868,6 +910,9 @@ fn a_restarted_run_closes_the_open_bank_before_it_reads_or_plans_anything() {
 
 #[test]
 fn resume_closes_the_bank_the_run_left_open_before_the_journal_is_read() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(cook_settings());
     snapshot.seed_quest_statuses(cook_status(0xf80000), true);
     let mut ledger = None;
@@ -907,6 +952,9 @@ fn resume_closes_the_bank_the_run_left_open_before_the_journal_is_read() {
 
 #[test]
 fn a_run_started_after_stop_leaves_an_open_bank_alone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(cook_settings());
     open_bank(&mut snapshot, 1);
     // Stop discards the retained cell, so the next run starts without a lease.
@@ -922,6 +970,9 @@ fn a_run_started_after_stop_leaves_an_open_bank_alone() {
 
 #[test]
 fn operator_stop_hands_nothing_to_the_closer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(cook_settings());
     snapshot.seed_quest_statuses(cook_status(0xf80000), true);
     let mut ledger = None;
@@ -950,6 +1001,9 @@ fn operator_stop_hands_nothing_to_the_closer() {
 
 #[test]
 fn a_held_tick_sends_no_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(cook_settings());
     let lease = open_bank(&mut snapshot, 1);
     queued.restore(&super::super::QuesterRetained {
@@ -1004,6 +1058,9 @@ fn a_held_tick_sends_no_close() {
 
 #[test]
 fn a_close_the_bank_never_honours_is_bounded_and_then_dropped() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(cook_settings());
     let lease = open_bank(&mut snapshot, 1);
     queued.restore(&super::super::QuesterRetained {

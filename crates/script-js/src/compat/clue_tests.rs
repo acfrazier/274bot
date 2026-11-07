@@ -538,6 +538,9 @@ const WIZARD: &str = "Zamorak Wizard";
 
 #[test]
 fn a_frozen_clock_emits_wait_and_keeps_the_gate_unanswered() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let opened = begin(&data, json!([[CASKET, 1]]));
@@ -593,6 +596,9 @@ fn a_frozen_clock_emits_wait_and_keeps_the_gate_unanswered() {
 
 #[test]
 fn a_generation_bump_aborts_the_session_without_a_verb() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let opened = begin(&data, json!([[MAP_EMPTY, 1]]));
@@ -633,6 +639,9 @@ fn a_generation_bump_aborts_the_session_without_a_verb() {
 
 #[test]
 fn enabled_is_re_read_at_every_gate_and_never_captured() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     // Extra begin keys are ignored, not captured: no `enabled`, `resume`,
@@ -698,6 +707,9 @@ fn enabled_is_re_read_at_every_gate_and_never_captured() {
 
 #[test]
 fn a_new_held_step_re_arms_the_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = token_of(&begin(&data, json!([[CASKET, 1]])));
@@ -727,6 +739,9 @@ fn a_new_held_step_re_arms_the_gate() {
 
 #[test]
 fn none_held_is_a_refusal_and_never_a_live_token_or_a_done() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let challenge = unrelated(&data);
@@ -754,6 +769,9 @@ fn none_held_is_a_refusal_and_never_a_live_token_or_a_done() {
 /// collect is over and by no other path on this machine.
 #[test]
 fn the_exact_clue_solved_string_is_the_finished_collects_alone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     // The paramless 2722 row is identified, reported and then idled, and
@@ -888,6 +906,9 @@ fn the_packed_coord_contract_is_copied_and_off_contract_tokens_idle() {
 
 #[test]
 fn membership_is_the_loc_pin_plus_a_decodable_coord_on_the_same_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = selected();
     assert_eq!(
         search_tile(row(&data, SEARCH)),
@@ -960,6 +981,9 @@ fn membership_is_the_loc_pin_plus_a_decodable_coord_on_the_same_row() {
 
 #[test]
 fn a_search_row_walks_to_the_decoded_tile_and_then_picks_the_loc() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[SEARCH, 1]]);
@@ -1082,6 +1106,9 @@ fn a_search_row_walks_to_the_decoded_tile_and_then_picks_the_loc() {
 
 #[test]
 fn an_arrived_search_row_waits_without_a_loc_and_never_abandons() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[SEARCH, 1]]);
@@ -1127,6 +1154,9 @@ fn an_arrived_search_row_waits_without_a_loc_and_never_abandons() {
 
 #[test]
 fn freeze_and_yield_beat_the_search_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[SEARCH, 1]]);
@@ -1168,6 +1198,9 @@ fn freeze_and_yield_beat_the_search_walk() {
 
 #[test]
 fn non_search_rows_stay_idle_over_a_fully_posted_scene() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let scene = json!({
@@ -1196,6 +1229,9 @@ fn non_search_rows_stay_idle_over_a_fully_posted_scene() {
 
 #[test]
 fn a_casket_row_opens_the_held_item_only_after_its_own_report() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[CASKET, 1]]);
@@ -1238,6 +1274,9 @@ fn a_casket_row_opens_the_held_item_only_after_its_own_report() {
 
 #[test]
 fn the_sextant_casket_is_the_open_and_not_the_packed_clue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     // Identify is casket-first: with the constrained 3554 clue and its
@@ -1270,6 +1309,9 @@ fn the_sextant_casket_is_the_open_and_not_the_packed_clue() {
 
 #[test]
 fn freeze_and_yield_beat_the_casket_open() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[CASKET, 1]]);
@@ -1301,6 +1343,9 @@ fn freeze_and_yield_beat_the_casket_open() {
 
 #[test]
 fn every_selected_casket_row_resolves_the_casket_display_name() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).expect("selected data");
         let facts = data.trails().expect("trails");
@@ -1339,6 +1384,9 @@ fn every_selected_casket_row_resolves_the_casket_display_name() {
 
 #[test]
 fn the_search_row_emits_only_walk_near_and_loc_and_never_a_completion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[SEARCH, 1]]);
@@ -1401,6 +1449,9 @@ fn the_search_row_emits_only_walk_near_and_loc_and_never_a_completion() {
 
 #[test]
 fn an_unknown_op_is_not_impl() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let step = dispatch(Some(&data), &json!({ "op": "solve" }));
@@ -1416,6 +1467,9 @@ fn an_unknown_op_is_not_impl() {
 /// belongs to, so the collect is never 3554 play.
 #[test]
 fn collecting_closes_the_posted_reward_then_takes_the_casket_overflow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, SEXTANT_CASKET);
@@ -1573,6 +1627,9 @@ fn collecting_closes_the_posted_reward_then_takes_the_casket_overflow() {
 /// close and no Take is ever dispatched under a step that is still held.
 #[test]
 fn collecting_leaves_for_the_next_scroll_and_re_arms_the_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, SEXTANT_CASKET);
@@ -1605,6 +1662,9 @@ fn collecting_leaves_for_the_next_scroll_and_re_arms_the_gate() {
 /// second collect: identify wins and the gate re-arms for it.
 #[test]
 fn a_leftover_casket_opens_instead_of_collecting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, SEXTANT_CASKET);
@@ -1642,6 +1702,9 @@ fn a_leftover_casket_opens_instead_of_collecting() {
 /// frozen `SHARK_ID` skipped, and the row's own posted name riding along.
 #[test]
 fn the_take_needs_the_posted_tile_a_posted_take_and_a_posted_name() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, SEXTANT_CASKET);
@@ -1705,6 +1768,9 @@ fn the_take_needs_the_posted_tile_a_posted_take_and_a_posted_name() {
 /// so the next call is the verb again and never the `took` line.
 #[test]
 fn an_unsettled_take_is_dispatched_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, SEXTANT_CASKET);
@@ -1727,6 +1793,9 @@ fn an_unsettled_take_is_dispatched_again() {
 /// keys.
 #[test]
 fn a_full_pack_drops_one_food_row_then_takes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     assert!(
@@ -1778,6 +1847,9 @@ fn a_full_pack_drops_one_food_row_then_takes() {
 /// Take skip already carries — and never a name match.
 #[test]
 fn a_full_pack_drops_the_shark_on_a_hard_casket() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, SEXTANT_CASKET);
@@ -1830,6 +1902,9 @@ fn a_full_pack_drops_the_shark_on_a_hard_casket() {
 /// that are not a finished collect.
 #[test]
 fn a_full_pack_with_no_food_warns_and_then_finishes_done() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, EASY_CASKET);
@@ -1870,6 +1945,9 @@ fn a_full_pack_with_no_food_warns_and_then_finishes_done() {
 /// it is a wait, and the client's 28 is never invented for it.
 #[test]
 fn a_missing_inv_size_waits_and_never_invents_the_default_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, SEXTANT_CASKET);
@@ -1908,6 +1986,9 @@ fn a_missing_inv_size_waits_and_never_invents_the_default_pack() {
 /// omitted slot is not a close, and the posted `-1` is the closed state.
 #[test]
 fn a_posted_main_is_closed_and_an_omitted_slot_is_not() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, SEXTANT_CASKET);
@@ -1946,6 +2027,9 @@ fn a_posted_main_is_closed_and_an_omitted_slot_is_not() {
 /// verbs: no close, no Take, no Drop, and the token lives.
 #[test]
 fn freeze_and_yield_beat_the_collect() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, SEXTANT_CASKET);
@@ -1988,6 +2072,9 @@ fn freeze_and_yield_beat_the_collect() {
 /// is still the landed refusal — the seam is `none-held` alone.
 #[test]
 fn the_collect_seam_is_none_held_alone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, SEXTANT_CASKET);
@@ -2017,6 +2104,9 @@ fn the_collect_seam_is_none_held_alone() {
 /// token dies on. Nothing else in the envelope is reachable from this arm.
 #[test]
 fn the_collect_arm_outcome_set_is_the_verbs_and_the_completion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = opened(&data, EASY_CASKET);
@@ -2115,6 +2205,9 @@ fn the_collect_arm_outcome_set_is_the_verbs_and_the_completion() {
 /// and no leak of a guarded, packed, coord-less or casket row.
 #[test]
 fn the_unguarded_dig_membership_is_the_selected_param_set() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).expect("selected data");
         let facts = data.trails().expect("trails");
@@ -2237,6 +2330,9 @@ fn the_unguarded_dig_membership_is_the_selected_param_set() {
 /// first name match — not an item id, not the membership alias.
 #[test]
 fn the_dig_identity_is_the_selected_spade_display() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).expect("selected data");
         let spade = data.item_by_id(SPADE_ITEM).expect("spade item");
@@ -2249,6 +2345,9 @@ fn the_dig_identity_is_the_selected_spade_display() {
 /// that same clue stays held, and never collecting.
 #[test]
 fn an_unguarded_dig_row_walks_to_the_decoded_tile_and_then_digs_the_spade() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[UNGUARDED, 1]]);
@@ -2301,6 +2400,9 @@ fn an_unguarded_dig_row_walks_to_the_decoded_tile_and_then_digs_the_spade() {
 /// posts it.
 #[test]
 fn an_unguarded_dig_row_without_the_spade_is_supplies_needed_and_live() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[UNGUARDED, 1]]);
@@ -2371,6 +2473,9 @@ fn an_unguarded_dig_row_without_the_spade_is_supplies_needed_and_live() {
 /// same scene.
 #[test]
 fn rows_outside_the_dig_classify_stay_idle_over_a_walkable_dig_scene() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     for id in std::iter::once(MAP_EMPTY).chain(MATCHER_KEEPERS) {
@@ -2406,6 +2511,9 @@ fn rows_outside_the_dig_classify_stay_idle_over_a_walkable_dig_scene() {
 /// `trail_sextant` on the row at all.
 #[test]
 fn a_coord_only_map_row_walks_to_its_decoded_tile_and_digs_the_spade() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[MAP, 1]]);
@@ -2455,6 +2563,9 @@ fn a_coord_only_map_row_walks_to_its_decoded_tile_and_digs_the_spade() {
 /// walk and no held ride along, and the token lives for the thaw.
 #[test]
 fn freeze_and_yield_beat_the_dig() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[UNGUARDED, 1]]);
@@ -2490,6 +2601,9 @@ fn freeze_and_yield_beat_the_dig() {
 /// re-arms again — never a second Dig under the casket.
 #[test]
 fn a_produced_casket_opens_and_the_dig_row_re_arms() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let clue_page = json!([[UNGUARDED, 1]]);
@@ -2530,6 +2644,9 @@ fn a_produced_casket_opens_and_the_dig_row_re_arms() {
 /// only — never a completion kind, and never a `status` field of its own.
 #[test]
 fn the_dig_row_emits_only_walk_held_wait_supplies_needed_and_yield() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[UNGUARDED, 1]]);
@@ -2609,6 +2726,9 @@ fn the_dig_row_emits_only_walk_held_wait_supplies_needed_and_yield() {
 /// filter and never a row field.
 #[test]
 fn the_guarded_dig_membership_is_the_selected_param_set() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).expect("selected data");
         let facts = data.trails().expect("trails");
@@ -2753,6 +2873,9 @@ fn the_guarded_dig_membership_is_the_selected_param_set() {
 /// prayer table in this file.
 #[test]
 fn the_selected_protect_from_magic_row_is_the_click_and_the_overlay() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).expect("selected data");
         let row = api::prayer::lookup(&data, "Protect from Magic").expect("prayer row");
@@ -2767,6 +2890,9 @@ fn the_selected_protect_from_magic_row_is_the_click_and_the_overlay() {
 /// scene.
 #[test]
 fn a_guarded_row_walks_then_digs_the_spade_and_that_dig_is_the_spawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -2832,6 +2958,9 @@ fn a_guarded_row_walks_then_digs_the_spade_and_that_dig_is_the_spawn() {
 /// wait whatever else it carries. The nearest anything is never Attacked.
 #[test]
 fn the_spawn_wait_never_attacks_the_nearest_anything() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -2903,6 +3032,9 @@ fn the_spawn_wait_never_attacks_the_nearest_anything() {
 
 #[test]
 fn a_guarded_row_without_a_combat_driver_abandons_before_any_dig() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -2924,6 +3056,9 @@ fn a_guarded_row_without_a_combat_driver_abandons_before_any_dig() {
 
 #[test]
 fn a_guarded_spawn_delegates_combat_and_maps_reports() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3056,6 +3191,9 @@ fn combat_delegation_parse_builds_radii_and_requires_encounter() {
 
 #[test]
 fn zamorak_is_magic_and_saradomin_holds_counter_protect() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).expect("selected data");
         let zamorak = data.npc_name(1007).expect("zamorak");
@@ -3077,6 +3215,9 @@ fn zamorak_is_magic_and_saradomin_holds_counter_protect() {
 
 #[test]
 fn the_attack_prefers_the_posted_target_of_the_player() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3105,6 +3246,9 @@ fn the_attack_prefers_the_posted_target_of_the_player() {
 /// goes out, no Attack does, and no toggle is waited out.
 #[test]
 fn the_protect_from_magic_overlay_gates_the_attack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3122,6 +3266,9 @@ fn the_protect_from_magic_overlay_gates_the_attack() {
 
 #[test]
 fn the_owned_kill_walks_back_and_digs_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3158,6 +3305,9 @@ fn the_owned_kill_walks_back_and_digs_again() {
 /// and the token dies with it — never a redig, never `'clue solved'`.
 #[test]
 fn an_unsettled_fight_waits_and_a_lost_wizard_ends_the_token() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3243,6 +3393,9 @@ fn an_unsettled_fight_waits_and_a_lost_wizard_ends_the_token() {
 /// going under it never Digs and never walks.
 #[test]
 fn a_wizard_that_leaves_without_an_attack_is_a_wait_not_a_redig() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3291,6 +3444,9 @@ fn a_wizard_that_leaves_without_an_attack_is_a_wait_not_a_redig() {
 /// before the gate too, so a kill never waits on the prayer.
 #[test]
 fn the_overlay_is_only_raised_behind_a_posted_spawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3362,6 +3518,9 @@ fn the_overlay_is_only_raised_behind_a_posted_spawn() {
 /// the frozen radius is refused exactly like a posted distance outside it.
 #[test]
 fn the_spawn_pick_reads_the_posted_level_and_the_posted_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3444,6 +3603,9 @@ fn the_spawn_pick_reads_the_posted_level_and_the_posted_tile() {
 /// this token's kill rather than a grace the pause spent.
 #[test]
 fn a_freeze_across_the_kill_grace_still_ends_in_the_kill() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3487,6 +3649,9 @@ fn a_freeze_across_the_kill_grace_still_ends_in_the_kill() {
 
 #[test]
 fn compatibility_pages_cannot_override_death_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = selected();
     let page = json!([[GUARDED, 1]]);
     let wizard = json!([npc(7, WIZARD, 3, 10, 10)]);
@@ -3540,6 +3705,9 @@ fn compatibility_pages_cannot_override_death_authority() {
 /// death chat present at begin is only the latch baseline.
 #[test]
 fn lifecycle_followups_compat_clue_uses_fresh_death_chat_after_respawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let old_death = clue_death_line(100);
     replace_clue_chat(vec![old_death.clone()]);
@@ -3587,6 +3755,9 @@ fn lifecycle_followups_compat_clue_uses_fresh_death_chat_after_respawn() {
 /// token lives for the thaw.
 #[test]
 fn freeze_and_yield_beat_the_guarded_encounter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3659,6 +3830,9 @@ fn freeze_and_yield_beat_the_guarded_encounter() {
 /// already owned.
 #[test]
 fn a_different_held_step_drops_the_guarded_encounter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let guard_page = json!([[GUARDED, 1]]);
@@ -3710,6 +3884,9 @@ fn a_different_held_step_drops_the_guarded_encounter() {
 /// the landed abort — the collect is the casket Open's alone.
 #[test]
 fn the_guarded_redig_repeats_and_its_casket_opens() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let clue_page = json!([[GUARDED, 1]]);
@@ -3768,6 +3945,9 @@ fn the_guarded_redig_repeats_and_its_casket_opens() {
 /// never one of the public refusal tokens.
 #[test]
 fn the_guarded_encounter_emits_only_walk_held_npc_if_button_and_wait() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -3872,6 +4052,9 @@ fn the_guarded_encounter_emits_only_walk_held_npc_if_button_and_wait() {
 /// table and no first-in-file coordinate is ever the destination.
 #[test]
 fn a_sextant_row_acquires_the_trio_in_the_frozen_order() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[UNGUARDED, 1]]);
@@ -4060,6 +4243,9 @@ fn a_sextant_row_acquires_the_trio_in_the_frozen_order() {
 /// holds the trio — and only then does its own encounter spawn.
 #[test]
 fn the_trio_intercept_is_in_front_of_the_guarded_dig_too() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[GUARDED, 1]]);
@@ -4100,6 +4286,9 @@ fn the_trio_intercept_is_in_front_of_the_guarded_dig_too() {
 /// behind the open chat.
 #[test]
 fn the_trio_intercept_waits_on_options_it_may_not_answer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[UNGUARDED, 1]]);
@@ -4167,6 +4356,9 @@ fn the_trio_intercept_waits_on_options_it_may_not_answer() {
 /// with no match waits at the tile.
 #[test]
 fn the_trio_pick_is_the_unique_spawn_rule_and_never_a_lookalike() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[UNGUARDED, 1]]);
@@ -4244,6 +4436,9 @@ fn the_trio_pick_is_the_unique_spawn_rule_and_never_a_lookalike() {
 /// acquire chain as they beat the landed arms; the chain never completes.
 #[test]
 fn freeze_yield_and_death_beat_the_trio_acquire() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     replace_clue_chat(Vec::new());
     let data = selected();
@@ -4303,6 +4498,9 @@ fn freeze_yield_and_death_beat_the_trio_acquire() {
 /// chart. A pack that already holds the whole trio is not this arm's.
 #[test]
 fn the_trio_plan_is_the_param_and_the_posted_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     // The param on the row itself, and nothing else: another value, the
@@ -4362,6 +4560,9 @@ fn the_trio_plan_is_the_param_and_the_posted_pack() {
 /// did — the intercept never becomes a second classify of them.
 #[test]
 fn search_talk_and_key_rows_never_enter_the_trio_acquire() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     // The search membership: its own decoded walk, not the professor's.
@@ -4478,6 +4679,9 @@ fn held_box() -> Value {
 
 #[test]
 fn the_puzzle_join_is_the_rows_own_selected_box() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = selected();
     assert_eq!(
         puzzle_box(Some(&data), row(&data, PUZZLE_RIDDLE)),
@@ -4502,6 +4706,9 @@ fn the_puzzle_join_is_the_rows_own_selected_box() {
 
 #[test]
 fn a_held_puzzle_box_opens_by_its_selected_name_and_repeats_while_closed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4530,6 +4737,9 @@ fn a_held_puzzle_box_opens_by_its_selected_name_and_repeats_while_closed() {
 
 #[test]
 fn a_readable_board_dispatches_one_puzzle_move_from_the_posted_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4551,6 +4761,9 @@ fn a_readable_board_dispatches_one_puzzle_move_from_the_posted_row() {
 
 #[test]
 fn a_landed_move_closes_the_solved_board_and_never_closes_it_twice() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4585,6 +4798,9 @@ fn a_landed_move_closes_the_solved_board_and_never_closes_it_twice() {
 
 #[test]
 fn a_solved_board_the_token_never_opened_is_still_closed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4598,6 +4814,9 @@ fn a_solved_board_the_token_never_opened_is_still_closed() {
 
 #[test]
 fn a_board_that_goes_unreadable_mid_solve_closes_and_latches() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4629,6 +4848,9 @@ fn a_board_that_goes_unreadable_mid_solve_closes_and_latches() {
 
 #[test]
 fn a_still_open_board_the_map_cannot_place_takes_the_same_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4652,6 +4874,9 @@ fn a_still_open_board_the_map_cannot_place_takes_the_same_close() {
 
 #[test]
 fn a_settle_bound_that_runs_out_unlanded_replans_from_the_live_board() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4676,6 +4901,9 @@ fn a_settle_bound_that_runs_out_unlanded_replans_from_the_live_board() {
 
 #[test]
 fn a_board_no_plan_exists_for_stalls_to_the_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4698,6 +4926,9 @@ fn a_board_no_plan_exists_for_stalls_to_the_close() {
 
 #[test]
 fn native_puzzle_stall_budget_advances_once_per_observed_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4723,6 +4954,9 @@ fn native_puzzle_stall_budget_advances_once_per_observed_tick() {
 
 #[test]
 fn native_puzzle_processes_new_board_evidence_in_the_same_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4747,6 +4981,9 @@ fn native_puzzle_processes_new_board_evidence_in_the_same_tick() {
 
 #[test]
 fn a_multi_move_board_clicks_one_plan_slot_per_call_until_it_closes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4787,6 +5024,9 @@ fn a_multi_move_board_clicks_one_plan_slot_per_call_until_it_closes() {
 
 #[test]
 fn freeze_and_yield_beat_the_puzzle_arm() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4815,6 +5055,9 @@ fn freeze_and_yield_beat_the_puzzle_arm() {
 
 #[test]
 fn rows_without_their_own_held_box_keep_their_own_arm() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     // A desc-only row with no box of its own, with another row's box in
@@ -4881,6 +5124,9 @@ fn talk_tile(data: &SelectedGameData, id: i32) -> Tile {
 /// still the puzzle arm's own `wait`; the fall-through is the next live call.
 #[test]
 fn a_latched_puzzle_riddle_re_talks_over_the_landed_talk_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -4963,6 +5209,9 @@ fn a_latched_puzzle_riddle_re_talks_over_the_landed_talk_step() {
 /// and never the solved read.
 #[test]
 fn a_stalled_puzzle_riddle_re_talks_the_same_way() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -5000,6 +5249,9 @@ fn a_stalled_puzzle_riddle_re_talks_the_same_way() {
 /// and the next live call talks although `closing` is never cleared.
 #[test]
 fn a_latched_puzzle_riddle_never_talks_inside_the_close_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE);
@@ -5034,6 +5286,9 @@ fn a_latched_puzzle_riddle_never_talks_inside_the_close_window() {
 /// No Examiner, tile or target is invented for it.
 #[test]
 fn a_latched_identity_only_puzzle_riddle_waits_without_its_own_npc() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, PUZZLE_RIDDLE_IDENTITY);
@@ -5211,6 +5466,9 @@ fn talk_page(id: i32) -> Value {
 /// every search, guarded, dig and casket membership stay out.
 #[test]
 fn the_talk_membership_is_the_selected_talk_family_and_nothing_else() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let talk = data.talk_key().expect("talk_key");
@@ -5265,6 +5523,9 @@ fn the_talk_membership_is_the_selected_talk_family_and_nothing_else() {
 /// talk action all wait at the tile.
 #[test]
 fn a_unique_spawn_talk_step_walks_to_the_published_tile_and_then_talks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let step = talk_of(&data, TALK);
@@ -5489,6 +5750,9 @@ fn a_unique_spawn_talk_step_walks_to_the_published_tile_and_then_talks() {
 /// row and no frozen tile anywhere in the pick.
 #[test]
 fn an_identity_only_talk_step_picks_the_nearest_posted_match() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let step = talk_of(&data, TALK_IDENTITY);
@@ -5770,6 +6034,9 @@ fn an_identity_only_talk_step_picks_the_nearest_posted_match() {
 /// abort `none-held`.
 #[test]
 fn a_held_challenge_scroll_joins_the_parent_talk_step_and_answers_the_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let parent = talk_of(&data, TALK_CHALLENGE);
@@ -5951,6 +6218,9 @@ fn a_held_challenge_scroll_joins_the_parent_talk_step_and_answers_the_count() {
 /// `Collecting` still wins the page when the token is collecting.
 #[test]
 fn the_challenge_seam_keeps_the_live_token_on_the_parent_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let token = steady(&data, TALK_CHALLENGE);
@@ -5982,6 +6252,9 @@ fn the_challenge_seam_keeps_the_live_token_on_the_parent_step() {
 /// unobserved count dialog.
 #[test]
 fn no_talk_to_while_the_chat_or_the_count_dialog_is_posted_open() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     replace_clue_chat(Vec::new());
     let data = selected();
@@ -6114,6 +6387,9 @@ fn no_talk_to_while_the_chat_or_the_count_dialog_is_posted_open() {
 /// still belongs to the talk arm.
 #[test]
 fn steady_drains_a_posted_continue_before_the_step_verb() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
 
@@ -6188,6 +6464,9 @@ fn steady_drains_a_posted_continue_before_the_step_verb() {
 /// the waits, and never a verb or a completion that belongs to another arm.
 #[test]
 fn the_talk_arm_emits_only_walk_npc_answer_count_wait_and_yield() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     replace_clue_chat(Vec::new());
     let data = selected();
@@ -6373,6 +6652,9 @@ fn froze_across_the_keeper_grace() {
 /// and a talk step is never hunted.
 #[test]
 fn the_key_membership_is_the_selected_keys_family_and_nothing_else() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let talk = data.talk_key().expect("talk_key");
@@ -6478,6 +6760,9 @@ fn the_key_membership_is_the_selected_keys_family_and_nothing_else() {
 /// pack page.
 #[test]
 fn a_keeper_row_without_a_combat_driver_abandons_without_walking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let spawn = spawn_of(key_of(&data, RIDDLE));
@@ -6503,6 +6788,9 @@ fn a_keeper_row_without_a_combat_driver_abandons_without_walking() {
 
 #[test]
 fn a_key_keeper_step_walks_attacks_and_takes_the_key_it_drops() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     for (id, key_id, keeper, name, spawn) in [
@@ -6641,6 +6929,9 @@ fn a_key_keeper_step_walks_attacks_and_takes_the_key_it_drops() {
 /// no npc page at all cannot observe the keeper, so the hunt waits.
 #[test]
 fn the_owned_keeper_gone_inside_the_grace_is_the_kill_and_walks_back() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[RIDDLE, 1]]);
@@ -6712,6 +7003,9 @@ fn the_owned_keeper_gone_inside_the_grace_is_the_kill_and_walks_back() {
 /// already on the floor is not Taken before the kill it belongs to.
 #[test]
 fn a_keeper_gone_outside_the_grace_is_a_wait_and_never_a_lost_encounter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[RIDDLE, 1]]);
@@ -6749,6 +7043,9 @@ fn a_keeper_gone_outside_the_grace_is_a_wait_and_never_a_lost_encounter() {
 /// key it left behind is Taken.
 #[test]
 fn a_freeze_across_the_keeper_grace_still_ends_in_the_kill() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[RIDDLE, 1]]);
@@ -6790,6 +7087,9 @@ fn a_freeze_across_the_keeper_grace_still_ends_in_the_kill() {
 /// Drops no food, and a page that posted no slot count waits too.
 #[test]
 fn the_key_take_reads_the_posted_key_row_at_the_spawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[RIDDLE, 1]]);
@@ -6915,6 +7215,9 @@ fn the_key_take_reads_the_posted_key_row_at_the_spawn() {
 /// re-arm, no new kind, and never `'clue solved'`, `grind-ready` or `done`.
 #[test]
 fn a_held_key_ends_the_hunt_with_the_original_riddles_idle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     for (id, key_id, keeper, name, spawn) in [
@@ -6971,6 +7274,9 @@ fn a_held_key_ends_the_hunt_with_the_original_riddles_idle() {
 /// completion kind is ever this arm's.
 #[test]
 fn the_key_hunt_emits_only_walk_npc_obj_wait_and_yield() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[RIDDLE, 1]]);
@@ -7032,6 +7338,9 @@ fn the_key_hunt_emits_only_walk_npc_obj_wait_and_yield() {
 /// completion kind.
 #[test]
 fn freeze_yield_and_death_beat_the_key_hunt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     replace_clue_chat(Vec::new());
     let data = selected();
@@ -7086,6 +7395,9 @@ fn freeze_yield_and_death_beat_the_key_hunt() {
 /// resuming the index the previous session owned.
 #[test]
 fn a_different_held_step_drops_the_key_hunt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[RIDDLE, 1]]);
@@ -7165,6 +7477,9 @@ fn shantay_keeper() -> Value {
 /// pass, closes the posted shop and resumes the original destination.
 #[test]
 fn gate_toll_buys_the_named_pass_once_and_walks_the_original_dest_back() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let pass = data
@@ -7296,6 +7611,9 @@ fn gate_toll_buys_the_named_pass_once_and_walks_the_original_dest_back() {
 /// pass already held — never enter the shop trip.
 #[test]
 fn gate_toll_never_shops_an_unnamed_or_different_short_or_a_held_pass() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = selected();
     let pass = data
         .item_by_alias(SHANTAY_PASS)
@@ -7340,6 +7658,9 @@ fn gate_toll_never_shops_an_unnamed_or_different_short_or_a_held_pass() {
 /// pauses it, while a fresh death-chat observation ends the token.
 #[test]
 fn gate_toll_yield_and_death_precede_every_shop_verb() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = selected();
     let page = json!([[SEARCH, 1]]);
     let short = shantay_short(&data);
@@ -7411,6 +7732,9 @@ fn gate_toll_yield_and_death_precede_every_shop_verb() {
 /// token, and resumes the original destination without retrying the shop.
 #[test]
 fn gate_toll_no_shop_keeps_the_token_and_resumes_the_original_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[SEARCH, 1]]);
@@ -7561,6 +7885,9 @@ fn assert_no_completion(step: &Value) {
 /// `content/scripts/skill_fletching/configs/stringing/bows.obj:1-15`.
 #[test]
 fn entrana_uses_selected_item_categories_for_worn_and_inventory_rows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = selected();
     let sickle = data
         .item_by_id(SILVER_SICKLE)
@@ -7620,6 +7947,9 @@ fn entrana_uses_selected_item_categories_for_worn_and_inventory_rows() {
 /// is outside the box or off the level is not one either.
 #[test]
 fn the_entrana_membership_is_the_rows_own_decoded_coord() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = selected();
     assert_eq!(row(&data, ENTRANA).alias, "trail_clue_hard_riddle027");
     assert!(entrana_coord(row(&data, ENTRANA)));
@@ -7649,6 +7979,9 @@ fn the_entrana_membership_is_the_rows_own_decoded_coord() {
 /// including restricted gear carried from the start.
 #[test]
 fn the_strip_uses_selected_categories_for_worn_and_inventory_items() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
@@ -7766,6 +8099,9 @@ fn the_strip_uses_selected_categories_for_worn_and_inventory_items() {
 /// listed names.
 #[test]
 fn the_strip_approaches_the_diagonal_booth_before_depositing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
@@ -7847,6 +8183,9 @@ fn the_strip_approaches_the_diagonal_booth_before_depositing() {
 /// and ends the shared attempt at the existing bank-ready bound.
 #[test]
 fn a_refused_strip_booth_open_waits_once_then_fails_finitely() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
@@ -7907,6 +8246,9 @@ fn a_refused_strip_booth_open_waits_once_then_fails_finitely() {
 /// open the booth once arrival is posted under the same bounded attempt.
 #[test]
 fn a_legacy_strip_routes_once_then_opens_under_the_same_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
@@ -7959,6 +8301,9 @@ fn a_legacy_strip_routes_once_then_opens_under_the_same_bound() {
 /// empties.
 #[test]
 fn the_restore_runs_before_the_whole_three_step_latch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     // One strip first, so this session owns a listed name.
@@ -8018,6 +8363,9 @@ fn the_restore_runs_before_the_whole_three_step_latch() {
 /// interface closed before anything is worn back on.
 #[test]
 fn the_restore_reopens_for_each_missing_name_at_the_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
@@ -8176,6 +8524,9 @@ fn the_restore_reopens_for_each_missing_name_at_the_bank() {
 /// kind — and the list keeps it for the next attempt.
 #[test]
 fn a_name_that_will_not_go_back_on_stays_listed_and_logs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
@@ -8270,6 +8621,9 @@ fn a_name_that_will_not_go_back_on_stays_listed_and_logs() {
 /// list.
 #[test]
 fn owns_equipment_reads_the_list_and_retry_clears_only_the_latch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
@@ -8304,6 +8658,9 @@ fn owns_equipment_reads_the_list_and_retry_clears_only_the_latch() {
 /// identifying a different row clears the latch on the way past.
 #[test]
 fn an_abandoned_row_is_refused_until_retry_or_a_different_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_stop();
     let data = selected();
     let search = json!([[SEARCH, 1]]);
@@ -8343,6 +8700,9 @@ fn an_abandoned_row_is_refused_until_retry_or_a_different_row() {
 /// true. The fresh instance `on_stop` is what clears it.
 #[test]
 fn a_connection_boundary_keeps_the_stripped_list_and_a_stop_clears_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
@@ -8397,6 +8757,9 @@ fn a_connection_boundary_keeps_the_stripped_list_and_a_stop_clears_it() {
 /// deposit does not spin the same verb.
 #[test]
 fn a_full_pack_is_made_room_for_before_the_reclaim_claim() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let page = json!([[ENTRANA, 1]]);
@@ -8545,6 +8908,9 @@ fn omitted_scalar_pages_fall_back_to_the_scene_and_the_echo_wins() {
 
 #[test]
 fn clue_3554_requires_duel_crossing_then_digs_at_its_packed_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     on_reset();
     let data = selected();
     let held = json!([[CLUE, 1]]);

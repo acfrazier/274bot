@@ -2347,6 +2347,9 @@ mod tests {
 
     #[test]
     fn fight_consumer_emits_the_native_missiles_if_button() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button_com = seed_protect_observation();
         let mut runtime = FightRuntime::new(17, Instant::now());
         runtime.mode = Mode::Idle;
@@ -2359,6 +2362,9 @@ mod tests {
 
     #[test]
     fn fight_eating_consumes_its_reply_before_protect_and_routes_the_protect_ack() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let mut runtime = FightRuntime::new(17, Instant::now());
         runtime.mode = Mode::Eating;
@@ -2385,6 +2391,9 @@ mod tests {
 
     #[test]
     fn fight_failed_eat_reply_is_not_stolen_by_a_concurrent_protect() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         let mut runtime = FightRuntime::new(17, Instant::now());
         runtime.mode = Mode::Eating;
@@ -2396,6 +2405,9 @@ mod tests {
 
     #[test]
     fn hunt_protect_has_the_native_prayer_level_and_points_gate() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let tables = hunt_combat_tables().unwrap();
         for (base, points, expected) in [(39, 39, None), (43, 0, None), (40, 1, Some(button))] {
@@ -2423,6 +2435,9 @@ mod tests {
 
     #[test]
     fn hunt_protect_pending_does_not_respam_and_dropped_click_retries_after_three_ticks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let mut runtime = FightRuntime::new(17, Instant::now());
         assert_eq!(runtime.protect_click().unwrap(), Some(button));
@@ -2437,6 +2452,9 @@ mod tests {
 
     #[test]
     fn hunt_protect_retries_after_points_return_and_settles_the_observed_varp() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let mut runtime = FightRuntime::new(17, Instant::now());
         assert_eq!(runtime.protect_click().unwrap(), Some(button));
@@ -2475,6 +2493,9 @@ mod tests {
 
     #[test]
     fn hunt_tables_are_cached_and_build_failure_is_reported() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         let first = hunt_combat_tables().unwrap();
         assert!(Arc::ptr_eq(&first, &hunt_combat_tables().unwrap()));
@@ -2505,6 +2526,9 @@ mod tests {
 
     #[test]
     fn hunt_antifire_tracks_confirmed_sips_across_tokens_and_expires_like_combat() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         let tables = hunt_combat_tables().unwrap();
         let potion = tables
@@ -2550,6 +2574,9 @@ mod tests {
 
     #[test]
     fn hunt_antifire_dose_drop_without_fresh_consume_chat_is_not_a_sip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         let tables = hunt_combat_tables().unwrap();
         let id = tables.potion(PotionKind::Antifire).unwrap().doses[3]
@@ -2573,6 +2600,9 @@ mod tests {
 
     #[test]
     fn hunt_antifire_ignores_another_potion_consume_chat() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         let tables = hunt_combat_tables().unwrap();
         let id = tables.potion(PotionKind::Antifire).unwrap().doses[3]

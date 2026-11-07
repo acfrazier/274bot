@@ -684,6 +684,9 @@ const PATHS_RUNNING: [&str; 2] = [
 /// a frame that stops advancing the reload never settles it, and one that
 /// advances it after the drawing draws the running notice.
 fn frames_settle_a_quester_paths_reload(drive: Drive) {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut session, _dir) = session_with_play("frame-quester-paths", &["alice"]);
     session.script_prefs_open = true;
     session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
@@ -1546,6 +1549,10 @@ fn the_rail_tiles_scroll_under_the_sticky_toolbar() {
 /// three whose script was walking. Under `UiFrame` the drawn text says the
 /// same.
 fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const NINE: [&str; 9] = [
         "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
     ];

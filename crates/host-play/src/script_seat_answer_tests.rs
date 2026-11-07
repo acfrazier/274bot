@@ -393,6 +393,9 @@ fn observe_wake_matrix() {
 
 #[test]
 fn seat_answer_publishes_after_a_combined_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(KEEP_ALL, 5);
     let tick = frames.first_visit();
     // One quiet frame: the isolate's answer reaches the seat at its end.
@@ -408,6 +411,9 @@ fn seat_answer_publishes_after_a_combined_tick() {
 
 #[test]
 fn seat_answer_publishes_after_a_combined_evidence_wake() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(KEEP_ALL, 5);
     let tick = frames.first_visit();
     frames.frame(tick, false);
@@ -420,6 +426,9 @@ fn seat_answer_publishes_after_a_combined_evidence_wake() {
 
 #[test]
 fn seat_answer_burst_keeps_tick_and_budget_domains() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(KEEP_ALL, 5);
     let tick = frames.first_visit();
     let game_tick = frames.probe("__rs2b0t_host.tick");
@@ -447,9 +456,9 @@ fn seat_answer_burst_keeps_tick_and_budget_domains() {
     );
     let evidence_after = frames.iso(script_js::LoadIsolate::snapshot_evidence_sequence_for_test);
     assert!(
-        evidence_after - evidence_before <= u64::from(dispatches_seen),
-        "only the encoded pages move the evidence sequence ({evidence_before} -> {evidence_after} over {dispatches_seen} dispatches); the seat page command adds none"
-    );
+    evidence_after - evidence_before <= u64::from(dispatches_seen),
+    "only the encoded pages move the evidence sequence ({evidence_before} -> {evidence_after} over {dispatches_seen} dispatches); the seat page command adds none"
+);
     assert!(
         !frames.frame(tick, false),
         "a completed bank has no callback wake"
@@ -458,6 +467,9 @@ fn seat_answer_burst_keeps_tick_and_budget_domains() {
 
 #[test]
 fn seat_answer_burst_is_bounded_by_the_transition_allowance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(KEEP_ALL, 40);
     let tick = frames.first_visit();
     let mut previous = frames.matches();
@@ -473,9 +485,9 @@ fn seat_answer_burst_is_bounded_by_the_transition_allowance() {
         }
     }
     assert!(
-        (5..=32).contains(&previous),
-        "inside one tick the burst stops at the 32-transition allowance, not before 5 and not at 40: {previous}"
-    );
+    (5..=32).contains(&previous),
+    "inside one tick the burst stops at the 32-transition allowance, not before 5 and not at 40: {previous}"
+);
     assert!(!frames.done());
     frames.frame(tick + 1, true);
     frames.probe("true");
@@ -485,6 +497,9 @@ fn seat_answer_burst_is_bounded_by_the_transition_allowance() {
 
 #[test]
 fn seat_answer_wake_retries_when_the_dispatch_is_refused() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(KEEP_ALL, 5);
     let tick = frames.first_visit();
     frames.run_until(tick, |frames| frames.matches() >= 2);
@@ -516,6 +531,9 @@ fn seat_answer_wake_retries_when_the_dispatch_is_refused() {
 
 #[test]
 fn seat_answer_wake_rearms_after_a_refused_page_post() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(KEEP_ALL, 5);
     let tick = frames.first_visit();
     frames.run_until(tick, |frames| frames.matches() >= 2);
@@ -538,6 +556,9 @@ fn seat_answer_wake_rearms_after_a_refused_page_post() {
 
 #[test]
 fn seat_answer_final_terminal_survives_a_refused_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(KEEP_ALL, 5);
     let tick = frames.first_visit();
     frames.record_takes();
@@ -609,13 +630,16 @@ fn seat_answer_final_terminal_survives_a_refused_dispatch() {
 /// one ended request.
 #[test]
 fn seat_release_materializes_its_handle_list_once_per_ended_request() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(KEEP_ALL, 5);
     let tick = frames.first_visit();
     frames.probe(
         "(() => { const settle = globalThis.__rs2b0t_settle_machines; globalThis.__lists = []; \
-         globalThis.__rs2b0t_settle_machines = (...args) => { \
-         globalThis.__lists.push(args.length === 0 ? null : args[0]); return settle(...args); }; \
-         return true; })()",
+     globalThis.__rs2b0t_settle_machines = (...args) => { \
+     globalThis.__lists.push(args.length === 0 ? null : args[0]); return settle(...args); }; \
+     return true; })()",
     );
     let dispatched = frames.seat().seat_pages.accepted;
     frames.run_to_done(tick);
@@ -643,6 +667,9 @@ fn seat_release_materializes_its_handle_list_once_per_ended_request() {
 /// window.
 #[test]
 fn seat_answer_wake_survives_a_slow_tick_skip() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(KEEP_ALL, 5);
     frames.iso(script_js::LoadIsolate::suppress_execution_watchdog_for_test);
     let tick = frames.first_visit();
@@ -731,6 +758,9 @@ fn seat_answer_wake_survives_a_slow_tick_skip() {
 
 #[test]
 fn seat_answer_throwing_predicate_rejects_with_identity_on_frozen_frames() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(THROWS_ON_SECOND, 5);
     let tick = frames.first_visit();
     frames.run_until(tick, |frames| {
@@ -790,7 +820,9 @@ fn reup(frames: &Frames) {
 
 #[test]
 fn seat_answer_kept_reconnect_delivers_at_the_first_full_tick() {
-    // (a) the boundary falls after the frame that posts prompt 3.
+    if !api::test_support::game_data_available() {
+        return;
+    } // (a) the boundary falls after the frame that posts prompt 3.
     {
         let frames = Frames::new(KEEP_ALL, 5);
         let tick = frames.first_visit();
@@ -914,6 +946,9 @@ fn seat_answer_kept_reconnect_delivers_at_the_first_full_tick() {
 
 #[test]
 fn seat_answer_wake_owes_nothing_across_a_destructive_boundary() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let frames = Frames::new(TWO_DEPOSITS, 5);
     let tick = frames.first_visit();
     frames.run_until(tick, |frames| {

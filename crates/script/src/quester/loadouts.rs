@@ -213,6 +213,9 @@ mod tests {
 
     #[test]
     fn tier_fill_uses_owned_stat_legal_piece_and_respects_quest_gate() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let row = Loadout::new("quest/melee")
             .with_slot("righthand", "Dragon longsword")
             .with_slot("torso", "Rune platebody");
@@ -238,6 +241,9 @@ mod tests {
 
     #[test]
     fn melee_loadout_candidates_follow_shared_weapon_preference_order() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let available = vec!["Rune longsword".into(), "Rune sword".into()];
         let candidates = tier_candidates(
             "righthand",

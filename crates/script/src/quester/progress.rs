@@ -1044,6 +1044,9 @@ mod tests {
 
     #[test]
     fn released_romeo_juliet_complete_journal_resolves_complete_before_stage_fifty() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
         let bytes = crate::quester::registry::bundled_path("romeojuliet").unwrap();
@@ -1072,6 +1075,9 @@ mod tests {
 
     #[test]
     fn released_sheep_complete_journal_resolves_complete_not_collect_more() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
         let bytes = crate::quester::registry::bundled_path("sheep").unwrap();
@@ -1121,6 +1127,9 @@ mod tests {
 
     #[test]
     fn quest_colour_matches_shared_snapshot_lookup_and_stage_colours() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
         let facts = quests

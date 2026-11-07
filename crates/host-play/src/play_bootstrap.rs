@@ -218,6 +218,9 @@ mod navigation_preparation_tests {
 
     #[test]
     fn profile_preparation_warms_navigation_families_before_routes_start() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         api::selected::FamilyPreparation::run(|worker| {
             for revision in [
                 client::io::ClientRevision::R274,

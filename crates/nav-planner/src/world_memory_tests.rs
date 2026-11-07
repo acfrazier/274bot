@@ -38,14 +38,15 @@ pub(crate) fn profile_bound_nav_state_bytes(pack: &Path) -> usize {
 
 #[test]
 fn real_289_profile_bound_nav_state_stays_inside_its_total_tripwire() {
-    let path = NavWorld::default_pack_path();
-    if !path.is_file() && std::env::var_os("NAV_PACK").is_none() {
-        eprintln!(
-            "SKIP: no nav pack at {}; set NAV_PACK or build host-play's revision-289 pack",
-            path.display()
-        );
+    let default_pack = NavWorld::default_pack_path();
+    let default_pack = default_pack.to_string_lossy();
+    let Some(path) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        &default_pack,
+        "revision-289 navigation pack",
+    ) else {
         return;
-    }
+    };
     let bytes = profile_bound_nav_state_bytes(&path);
     eprintln!(
         "profile-bound shared navigation state holds {bytes} bytes \

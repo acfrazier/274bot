@@ -133,6 +133,9 @@ fn deaths(slot: &crate::SlotScript) -> i64 {
 
 #[test]
 fn recovery_r2_watchdog_walks_to_the_last_quest_stand_without_recreating() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = snapshot();
     let stand = snapshot.local_player().unwrap().player.actor.tile;
     let mut slot = crate::SlotScript::new();
@@ -165,6 +168,9 @@ fn recovery_r2_watchdog_walks_to_the_last_quest_stand_without_recreating() {
 
 #[test]
 fn recovery_r2_recreation_preserves_the_death_cap_and_does_not_replay_chat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for death_in_gap in [false, true] {
         let mut snapshot = snapshot();
         let mut slot = crate::SlotScript::new();
@@ -221,6 +227,9 @@ fn recovery_r2_recreation_preserves_the_death_cap_and_does_not_replay_chat() {
 
 #[test]
 fn recovery_r2_pause_hold_and_reconnect_start_a_fresh_unchanged_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (freeze, thaw) in [
         (Interrupt::Pause, Interrupt::Resume),
         (Interrupt::Hold(true), Interrupt::Hold(false)),
@@ -255,6 +264,9 @@ fn recovery_r2_pause_hold_and_reconnect_start_a_fresh_unchanged_window() {
 
 #[test]
 fn recovery_r2_ineligible_frames_restamp_without_an_interrupt_callback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut quester, snapshot) = super::tests::fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |native| {
@@ -275,6 +287,9 @@ fn recovery_r2_ineligible_frames_restamp_without_an_interrupt_callback() {
 
 #[test]
 fn recovery_r2_maximum_configured_cap_reports_the_first_disallowed_death() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut quester, _) = super::tests::fixture();
     let mut snapshot = snapshot();
     quester.max_deaths = 255;
@@ -303,6 +318,9 @@ fn recovery_r2_maximum_configured_cap_reports_the_first_disallowed_death() {
 
 #[test]
 fn recovery_r2_zero_hp_waits_for_death_chat_before_interrupting_dialogue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::families::tests::seed_dialogue_combat;
     use api::snapshot::StatView;
 

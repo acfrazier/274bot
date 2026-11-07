@@ -296,6 +296,9 @@ const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(600);
 /// An iteration that stops advancing it never settles it; one that
 /// advances it after the draw shows the finished reload as running.
 fn iteration_settles_a_quester_paths_reload(mode: Loop) {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _iso = IsolatedStores::enter("tui-loop-quester-paths");
     let _paths = crate::bin::seam::lock_quester_paths_test_state();
     let (session, _arm) = session_with_alice();

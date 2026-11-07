@@ -729,6 +729,9 @@ fn debug_authority_requires_local_profile_and_loopback_host() {
 
 #[test]
 fn play_map_teleport_authorized_follows_bound_target_and_host() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = world(t(3200, 3200, 0), 8, &[]);
     let local = MapFixture::new(&world, "local-289");
     assert!(local.play(t(3200, 3200, 0)).map_teleport_authorized());
@@ -1469,6 +1472,9 @@ fn single_bot_walk_and_teleport_follow_a_focus_switch() {
 
 #[test]
 fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let log_mark = crate::walk_map::test_log::mark();
     let nav = world(t(3200, 3200, 0), 8, &[]);
     let fixture = MapFixture::new(&nav, "local-289");

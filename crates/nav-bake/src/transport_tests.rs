@@ -379,6 +379,9 @@ fn entrana_proc_source() -> String {
 
 #[test]
 fn entrana_boat_members_and_item_guards_control_world_behavior() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let proc_source = entrana_proc_source();
     let fx = Fixture::new();
     fx.write("pack/npc.pack", "657=shipmonk\n658=shipmonk2\n");

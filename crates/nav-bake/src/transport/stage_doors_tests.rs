@@ -191,6 +191,9 @@ fn quest_stage_double_doors_cross_only_with_the_completed_quest() {
 
 #[test]
 fn authoritative_stage_comparison_emits_an_exact_window_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const OPENER: &str = "\
 [oploc1,plain_door]
 if (%heroquest >= ^hero_complete) {
@@ -310,6 +313,9 @@ fn with_journal_only_hero(check: impl FnOnce(&QuestSource<'_>)) {
 /// A green row alone cannot prove the raw value needed for the crossing.
 #[test]
 fn no_domain_threshold_keeps_its_raw_window_with_either_journal_expression() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const HANDLER: &str = r#"
 [oploc2,obstacle]
 if(%heroquest < ^hero_phoenix_talked_charlie) { return; }
@@ -369,6 +375,9 @@ p_teleport(0_44_53_5_46);
 
 #[test]
 fn nonzero_stage_door_keeps_started_window_in_both_directions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Mort Myre's refusal-before-open shape. The progress-only write follows
     // the crossing and does not narrow its pre-crossing requirement.
     let fx = plain_opener_fixture(
@@ -404,6 +413,9 @@ fn nonzero_stage_door_keeps_started_window_in_both_directions() {
 
 #[test]
 fn post_completion_pass_through_keeps_exact_stage_and_current_player() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Holy barrier's exact-stage + protected-current-player shape, with a
     // different quest, loc id and coordinates so extraction is generic.
     // No script .loc row is needed for a placement-only telejump opener.
@@ -1983,6 +1995,9 @@ fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
 
 #[test]
 fn completed_quest_teleport_entrance_respects_colour_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow};
 
     let fx = Fixture::new();
@@ -2052,6 +2067,9 @@ p_teleport(0_44_53_5_46);
 
 #[test]
 fn held_key_and_held_exclusion_are_both_required_by_the_content_trajectory() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -2098,6 +2116,9 @@ p_teleport(0_44_53_5_46);
 
 #[test]
 fn teleport_entrance_keeps_every_worn_piece_strict() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -2149,6 +2170,9 @@ p_teleport(0_44_53_5_46);
 
 #[test]
 fn live_npc_refusal_is_not_assumed_away_by_the_entrance_bake() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -2200,6 +2224,9 @@ if(~check_axis(coord, loc_coord, loc_angle) = true) { return; }
 
 #[test]
 fn exact_progress_after_a_possible_later_write_requires_an_observed_value() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for later_write in [
         "%heroquest = 16;",
         "%heroquest = calc(%heroquest + 1);",
@@ -2255,6 +2282,9 @@ p_teleport(0_44_53_5_46);
 
 #[test]
 fn no_domain_completion_exit_keeps_npc_checks_universal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -2292,6 +2322,9 @@ p_teleport(0_44_53_5_46);
 
 #[test]
 fn no_domain_threshold_keeps_a_varp_window_after_a_post_completion_write() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -2340,6 +2373,9 @@ p_teleport(0_44_53_5_46);
 
 #[test]
 fn unknown_return_guard_before_a_teleport_does_not_authorize_an_entrance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -2360,6 +2396,9 @@ p_teleport(0_44_53_5_46);
 
 #[test]
 fn animated_completed_quest_force_move_respects_colour_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::selected::{FactKey, InclusiveRange, QuestGate, StageWindow};
 
     let fx = Fixture::new();
@@ -2419,6 +2458,9 @@ loc_anim(roots_close);
 
 #[test]
 fn nonmoving_equipment_query_proc_preserves_its_worn_exclusion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -2461,6 +2503,9 @@ return(false);
 
 #[test]
 fn post_crossing_timer_evaluates_pure_query_returns_before_admission() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = Fixture::new();
     write_forced_fixture(
         &fx,
@@ -2520,6 +2565,9 @@ return(false);
 
 #[test]
 fn shared_journal_kitchen_door_requires_the_phoenix_signal_in_both_directions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // brimhaven_restaurant.rs2:1-6, quest_hero.constant:4, and
     // quests.rs2:328-332: the green Shield of Arrav row does not identify a gang.
     let fx = plain_opener_fixture(

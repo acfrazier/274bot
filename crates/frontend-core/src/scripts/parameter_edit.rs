@@ -1371,15 +1371,6 @@ mod tests {
         def
     }
 
-    fn local_game_data_asset(revision: &str) -> Option<std::path::PathBuf> {
-        let default_path = format!(
-            "{}/../api/data/game-data/{revision}.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let description = format!("revision {revision} game data");
-        api::test_support::local_asset_path("", &default_path, &description)
-    }
-
     #[test]
     fn fact_backed_option_errors_are_propagated() {
         let def = source_setting("bank", "string", "named-banks");
@@ -1401,7 +1392,7 @@ mod tests {
 
     #[test]
     fn gathers_preserve_unknowns_and_resolve_aliases_food_and_quest_order() {
-        if local_game_data_asset("274").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 
@@ -1742,7 +1733,7 @@ mod tests {
 
     #[test]
     fn gather_sites_use_selected_resources_defaults_and_fishing_aliases() {
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 
@@ -1813,7 +1804,7 @@ mod tests {
 
     #[test]
     fn gather_site_invalid_current_is_display_only_and_has_a_reason() {
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 
@@ -1882,7 +1873,7 @@ mod tests {
 
     #[test]
     fn gather_sites_exclude_unselectable_resource_keys() {
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 
@@ -1953,7 +1944,7 @@ mod tests {
 
     #[test]
     fn fishing_scalar_cycle_visits_every_selectable_group_and_wraps() {
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
 
@@ -2014,7 +2005,7 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
         let Some(cook_path) = api::test_support::local_asset_path(

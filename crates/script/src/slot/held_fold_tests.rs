@@ -68,6 +68,9 @@ fn resumed_policy(slot: &mut SlotScript) -> Option<Option<RunPolicyOverride>> {
 // R4-M1 (Codex): `clear, run_auto=false, clear` must end at `clear`.
 #[test]
 fn held_policy_clear_override_clear_ends_at_the_last_clear() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(850);
     slot.seat_guardian_hold(true);
     let run_off = Some(RunPolicyOverride {
@@ -85,6 +88,9 @@ fn held_policy_clear_override_clear_ends_at_the_last_clear() {
 // R4-M2 (Grok): floors 50, 0, 50 must end at 50.
 #[test]
 fn held_policy_returning_to_an_earlier_floor_keeps_the_newest() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(851);
     slot.seat_guardian_hold(true);
     for energy in [50, 0, 50] {
@@ -102,6 +108,9 @@ fn held_policy_returning_to_an_earlier_floor_keeps_the_newest() {
 // R4-M1 (Codex): 18 held floors must end at the eighteenth.
 #[test]
 fn held_policy_eighteen_floors_end_at_the_last() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(852);
     slot.seat_guardian_hold(true);
     for energy in 0..18 {
@@ -118,6 +127,9 @@ fn held_policy_eighteen_floors_end_at_the_last() {
 // R4-M1 (Grok): Stop releases after 17 distinct floors must survive.
 #[test]
 fn held_stop_releases_survive_any_number_of_policy_rows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(853);
     slot.seat_guardian_hold(true);
     let dropped_before = slot.seat.as_ref().unwrap().dropped();
@@ -158,6 +170,9 @@ fn held_stop_releases_survive_any_number_of_policy_rows() {
 // R4-M3 (Codex): a 142-yaw hold ends at yaw 141 with nothing dropped.
 #[test]
 fn held_camera_yaws_end_at_the_last_yaw_without_a_hold_cap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(854);
     slot.seat_guardian_hold(true);
     let dropped_before = slot.seat.as_ref().unwrap().dropped();
@@ -181,6 +196,9 @@ fn held_camera_yaws_end_at_the_last_yaw_without_a_hold_cap() {
 // R4-L2 (Grok): the whole-hold cap kept the oldest rows and lost the newest.
 #[test]
 fn held_late_yaw_survives_after_many_rows_and_an_early_release() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(855);
     slot.seat_guardian_hold(true);
     held_frame(&mut slot, vec![InteractReq::AbortWalk { request_id: 5 }]);
@@ -311,6 +329,9 @@ fn held_wait_summary_matches_the_event_order_replay() {
 /// released facts to a watchdog that held a random count before the hold.
 #[test]
 fn held_wait_fold_matches_the_event_order_replay_through_the_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(856);
     let mut rng = Rng(0x0005_1077);
     for case in 0..300 {
@@ -351,6 +372,9 @@ fn held_wait_fold_matches_the_event_order_replay_through_the_slot() {
 // zero; the later enqueue must stay counted.
 #[test]
 fn held_settle_then_enqueue_keeps_the_later_wait() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(857);
     slot.seat_guardian_hold(true);
     held_frame(&mut slot, vec![InteractReq::WaitSettled]);
@@ -403,6 +427,9 @@ fn inspect(request_id: u64) -> InteractReq {
 // resume drops nothing more.
 #[test]
 fn held_channel_lane_refuses_only_posts_and_keeps_order() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(861);
     slot.seat_guardian_hold(true);
     let dropped_before = slot.seat.as_ref().unwrap().dropped();
@@ -534,6 +561,9 @@ fn watchdog_row(req: &InteractReq) -> bool {
 // deliver the token after the previews, and drop nothing.
 #[test]
 fn held_resume_delivers_an_authorized_inspect_after_141_previews() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(880);
     slot.seat_guardian_hold(true);
     for _ in 0..141 {
@@ -560,6 +590,9 @@ fn held_resume_delivers_an_authorized_inspect_after_141_previews() {
 // all of them, with the latest replacement values after the lane.
 #[test]
 fn held_resume_delivers_late_replacements_after_141_opens() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(881);
     slot.seat_guardian_hold(true);
     for channel_id in 1..=141 {
@@ -619,6 +652,9 @@ fn held_resume_delivers_late_replacements_after_141_opens() {
 // must lose the close and the inspect no more.
 #[test]
 fn held_resume_keeps_close_and_inspect_after_a_full_post_lane_and_every_replacement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(882);
     slot.seat_guardian_hold(true);
     let start = dropped(&slot);
@@ -658,6 +694,9 @@ fn held_resume_keeps_close_and_inspect_after_a_full_post_lane_and_every_replacem
 // lane follows in order, and the replacements come last.
 #[test]
 fn held_resume_delivers_every_retained_row_across_takes_in_order() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(884);
     slot.seat_guardian_hold(true);
     held_frame(
@@ -732,6 +771,9 @@ fn held_resume_delivers_every_retained_row_across_takes_in_order() {
 // the next frame, and a batch produced after resume queues behind it.
 #[test]
 fn held_resume_pages_around_queued_rows_and_later_batches_queue_behind() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(885);
     slot.seat_guardian_hold(true);
     for channel_id in 1..=200 {
@@ -863,6 +905,9 @@ fn drain_retained_with_progress(
 // `dropped` unchanged.
 #[test]
 fn held_resume_pushes_the_release_that_unblocks_a_full_walk_queue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(886);
     arm_every_walk_slot(&mut slot);
     slot.seat_guardian_hold(true);
@@ -901,6 +946,9 @@ fn held_resume_pushes_the_release_that_unblocks_a_full_walk_queue() {
 // rows, with a retained fold of `AbortWalk(1)` and 30 opens.
 #[test]
 fn held_resume_frees_the_walk_slot_that_a_blocked_full_queue_waits_for() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(887);
     arm_every_walk_slot(&mut slot);
     push_seat_walk(&mut slot, walk(17), 17);
@@ -941,6 +989,9 @@ fn held_resume_frees_the_walk_slot_that_a_blocked_full_queue_waits_for() {
 // still apply after the last page, and the entry must not stay live.
 #[test]
 fn held_second_hold_keeps_the_controls_of_a_waiting_fold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(888);
     let mut admit = page(&slot, Vec::new());
     admit.batch.starts = vec![start_input(&slot, 1, NativeKind::Hunt)];
@@ -1072,6 +1123,9 @@ fn rehold_while_the_fold_waits(
 // `Waiting`.
 #[test]
 fn held_rehold_keeps_a_phase_that_returns_to_an_earlier_value() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::seat_rows::SeatMachineEventKind::Phase;
     use crate::native::NativePhase;
     let mut slot = with_seat(889);
@@ -1124,6 +1178,9 @@ fn held_rehold_keeps_a_phase_that_returns_to_an_earlier_value() {
 // newest phase.
 #[test]
 fn held_rehold_phase_a_b_a_ends_at_the_newest_phase() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::seat_rows::SeatMachineEventKind::Phase;
     use crate::native::NativePhase;
     let mut slot = with_seat(890);
@@ -1173,6 +1230,9 @@ fn held_rehold_phase_a_b_a_ends_at_the_newest_phase() {
 // applies once, and no repeat counts as a late control.
 #[test]
 fn held_rehold_carries_a_repeated_mirror_revoke_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(891);
     let mut initial = page(&slot, (1..=20).map(lane_open).collect());
     initial.batch.mirror_revokes = vec![mirror_revoke(9, 1)];
@@ -1233,6 +1293,9 @@ fn held_rehold_carries_a_repeated_mirror_revoke_once() {
 // the isolate raises its reason (`queue_cancel`).
 #[test]
 fn held_rehold_merges_each_control_by_its_producer_key() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::seat_rows::SeatMachineEventKind::{Done, Failed, Phase};
     use crate::native::seat_rows::{SeatCancelDecoded, SeatDecisionInput};
     use crate::native::NativePhase;
@@ -1325,6 +1388,9 @@ fn held_rehold_merges_each_control_by_its_producer_key() {
 // sequence: the batch enters the isolate queue directly.
 #[test]
 fn host_held_tick_keeps_the_walk_abort_and_drops_gameplay() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(893);
     slot.seat_host_hold(true);
     let mut batch = page(
@@ -1413,6 +1479,9 @@ fn floor_override(energy: i32) -> Option<Option<RunPolicyOverride>> {
 // Synthetic sequence: the batches enter the isolate queue directly.
 #[test]
 fn watchdog_held_tick_keeps_walk_aborts_in_send_order_and_drops_gameplay() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(894);
     hold_for_watchdog(&mut slot);
     let before = dropped(&slot);
@@ -1457,6 +1526,9 @@ fn watchdog_held_tick_keeps_walk_aborts_in_send_order_and_drops_gameplay() {
 // directly.
 #[test]
 fn watchdog_held_tick_keeps_a_walk_abort_queued_in_the_seat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::script_contract::Release;
     let mut slot = with_seat(895);
     slot.seat
@@ -1493,6 +1565,9 @@ fn watchdog_held_tick_keeps_a_walk_abort_queued_in_the_seat() {
 // the rows enter the seat and the isolate queue directly.
 #[test]
 fn watchdog_held_tick_keeps_the_newest_run_policy_for_after_the_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(896);
     slot.seat
         .as_mut()
@@ -1531,6 +1606,9 @@ fn watchdog_held_tick_keeps_the_newest_run_policy_for_after_the_hold() {
 // enters the seat directly.
 #[test]
 fn host_held_tick_keeps_the_seat_run_policy_for_after_the_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(897);
     slot.seat
         .as_mut()
@@ -1565,6 +1643,9 @@ fn host_held_tick_keeps_the_seat_run_policy_for_after_the_hold() {
 // of the hold.
 #[test]
 fn guardian_hold_neither_completes_nor_starts_a_native() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::seat_rows::SeatMachineEventKind::Done;
     let mut slot = with_seat(898);
     slot.consume_seat_batch(
@@ -1613,6 +1694,9 @@ fn guardian_hold_neither_completes_nor_starts_a_native() {
 
 #[test]
 fn held_stubbed_policy_fold_keeps_last_floor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(899);
     slot.seat_guardian_hold(true);
     for energy in 1..=18 {
@@ -1628,6 +1712,9 @@ fn held_stubbed_policy_fold_keeps_last_floor() {
 
 #[test]
 fn held_stubbed_yaw_fold_keeps_last_yaw() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(900);
     slot.seat_guardian_hold(true);
     let before = dropped(&slot);
@@ -1645,6 +1732,9 @@ fn held_stubbed_yaw_fold_keeps_last_yaw() {
 
 #[test]
 fn held_stubbed_wait_fold_matches_event_order() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(901);
     let now = Instant::now();
     let initial = [InteractReq::WaitEnqueued];
@@ -1685,6 +1775,9 @@ fn held_stubbed_wait_fold_matches_event_order() {
 
 #[test]
 fn held_stubbed_channel_fold_counts_refused_posts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(902);
     slot.seat_guardian_hold(true);
     let dropped_before = dropped(&slot);
@@ -1726,6 +1819,9 @@ fn held_stubbed_channel_fold_counts_refused_posts() {
 
 #[test]
 fn held_stubbed_channel_fold_delivers_late_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = with_seat(903);
     slot.seat_guardian_hold(true);
     for channel_id in 1..=141 {

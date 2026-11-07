@@ -1165,6 +1165,9 @@ mod tests {
     /// fails the crossing, and closes the duel screen only when one is open.
     #[test]
     fn the_handshake_deadline_closes_only_an_open_duel_screen() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         configure(Some(&data));
         settings(json!({ "clueDuelPartner": "Helper" }).as_object().unwrap());

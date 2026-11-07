@@ -221,6 +221,9 @@ fn content_crossing(
 
 #[test]
 fn actual_shipyard_handlers_preserve_direct_windows_and_refuse_the_password_arm() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let graph = content_gate_graph(SHIPYARD, true);
     let direct = content_state(80, 2, 14);
     let password = content_state(80, 1, 14);
@@ -241,6 +244,9 @@ fn actual_shipyard_handlers_preserve_direct_windows_and_refuse_the_password_arm(
 
 #[test]
 fn actual_varrock_handlers_keep_membership_and_refuse_the_guard_search_arm() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let graph = content_gate_graph(VARROCK, false);
     let direct = content_state(80, 2, 14);
     let searching = content_state(80, 2, 10);
@@ -258,6 +264,9 @@ fn actual_varrock_handlers_keep_membership_and_refuse_the_guard_search_arm() {
 
 #[test]
 fn shipyard_interface_close_proof_is_lost_after_a_command_or_yield() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for prefix in [
         "p_delay(0);",
         "if_openchat(chat);",

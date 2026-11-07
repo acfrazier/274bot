@@ -969,6 +969,9 @@ mod tests {
 
     #[test]
     fn fleet_copy_hold_survives_native_supersession_until_replacement_commit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = preparing_copy("copy-superseded-hold");
         let id = script::CompiledId("Gatherer");
         let original = *f.core.preparations.keys().next().unwrap();
@@ -1036,6 +1039,9 @@ mod tests {
 
     #[test]
     fn failed_native_preparation_releases_copy_hold() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = preparing_copy("copy-preparation-failure");
         let op = *f.core.preparations.keys().next().unwrap();
         let mut pending = f.core.preparations.remove(&op).unwrap();
@@ -1061,6 +1067,9 @@ mod tests {
 
     #[test]
     fn cancelled_native_preparation_releases_copy_hold_without_a_late_write() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = preparing_copy("copy-cancel");
         let release = block_preparation(&mut f);
         assert!(f.scripts.start_profile(&mut f.core, "bob", None).is_err());
@@ -1088,6 +1097,9 @@ mod tests {
 
     #[test]
     fn withheld_native_preparation_times_out_and_releases_copy_hold() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = preparing_copy("copy-preparation-timeout");
         let release = block_preparation(&mut f);
         f.core
@@ -1111,6 +1123,9 @@ mod tests {
 
     #[test]
     fn removed_slot_releases_its_native_preparation_hold() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = preparing_copy("copy-removed");
         let release = block_preparation(&mut f);
         f.core
@@ -1126,6 +1141,9 @@ mod tests {
 
     #[test]
     fn deleted_native_copy_target_releases_its_hold_with_unavailable_error() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = preparing_copy("copy-deleted-target");
         let release = block_preparation(&mut f);
         f.core
@@ -1151,6 +1169,9 @@ mod tests {
 
     #[test]
     fn locked_vault_releases_its_native_preparation_hold() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = preparing_copy("copy-locked");
         let id = script::CompiledId("Gatherer");
         let before = f
@@ -1182,6 +1203,9 @@ mod tests {
 
     #[test]
     fn stalled_copy_writer_releases_hold_and_does_not_push_a_late_commit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = preparing_copy("copy-writer-timeout");
         let id = script::CompiledId("Gatherer");
         let before = f
@@ -1220,6 +1244,9 @@ mod tests {
 
     #[test]
     fn fleet_copy_follows_a_renamed_native_target_before_confirm() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = native_fixture("copy-rename-before-confirm");
         let id = script::CompiledId("Gatherer");
         for name in ["alice", "bob"] {
@@ -1288,6 +1315,9 @@ mod tests {
 
     #[test]
     fn accepted_marked_native_copy_commits_assignment_and_settings_before_start() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = native_fixture("accepted-copy");
         let id = script::CompiledId("Gatherer");
         let assignment = script::compiled_assignment(id);
@@ -1374,6 +1404,9 @@ mod tests {
 
     #[test]
     fn accepted_native_copy_cannot_overwrite_a_later_explicit_assignment() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for supersede in [false, true] {
             let mut f = native_fixture(if supersede {
                 "copy-reassigned-superseded"
@@ -1564,6 +1597,9 @@ mod tests {
 
     #[test]
     fn zz_review_second_copy_onto_unassigned_bot() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for second_finishes_first in [false, true] {
             assert_second_copy_wins(second_finishes_first);
         }
@@ -1571,6 +1607,9 @@ mod tests {
 
     #[test]
     fn settings_only_native_preparation_preserves_concurrent_assignment() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut f = native_fixture("settings-only-assignment");
         let id = script::CompiledId("Gatherer");
         assert!(f

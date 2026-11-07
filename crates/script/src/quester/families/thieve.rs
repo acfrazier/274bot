@@ -345,6 +345,9 @@ mod tests {
 
     #[test]
     fn family_dispatches_to_the_selected_npc_instance() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan();
         let snapshot = snapshot(25, 25, STEAL_FROM);
         let mut ledger = None;
@@ -360,6 +363,9 @@ mod tests {
 
     #[test]
     fn family_level_gate_uses_effective_level_not_base_level() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan();
         let snapshot = snapshot(24, 30, STEAL_FROM);
         let mut ledger = None;
@@ -377,6 +383,9 @@ mod tests {
 
     #[test]
     fn family_waits_without_the_selected_thieving_action() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan();
         let snapshot = snapshot(30, 30, "Talk-to");
         let mut ledger = None;
@@ -396,6 +405,9 @@ mod tests {
 
     #[test]
     fn target_alias_and_display_resolve_to_exact_selected_npc_levels() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected();
         let (alias, wait_ticks) = selected_targets(&selected, "digworkman1").unwrap();
         assert_eq!(alias.len(), 1);
@@ -452,6 +464,9 @@ mod tests {
 
     #[test]
     fn unknown_or_non_thieving_npc_does_not_resolve_as_a_target() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = selected();
         assert!(selected_targets(&selected, "not_a_selected_npc").is_err());
         assert!(selected_targets(&selected, "Banker").is_err());

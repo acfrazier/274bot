@@ -219,6 +219,10 @@ export function tick(api) {
             "{key} {empty:?}"
         );
     }
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
 
     let iso = LoadIsolate::spawn_with_game_data(
         src.into(),
@@ -295,6 +299,10 @@ export function tick(api) {
 
 #[test]
 fn v2_placements_absence_is_family_unavailable_not_empty_rows() {
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -482,6 +490,9 @@ export function tick(api) {
 
 #[test]
 fn v2_placements_bridge_gates_its_own_args() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {

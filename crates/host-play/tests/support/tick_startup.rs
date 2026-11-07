@@ -49,6 +49,9 @@ mod tests {
 
     #[test]
     fn first_knife_wait_includes_the_selected_native_roll_delay() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         assert_eq!(
             first_arm_budget(Arc::clone(&selected), "fishing.loc_2027.op1", 309, 2).unwrap(),

@@ -60,6 +60,9 @@ fn tick(slot: &mut SlotScript) {
 
 #[test]
 fn manual_walk_handover_starts_internal_card_and_refuses_an_empty_diagnosis_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(102_421);
     let here = api::snapshot::WorldTile {
@@ -130,6 +133,9 @@ fn manual_walk_handover_starts_internal_card_and_refuses_an_empty_diagnosis_once
 }
 #[test]
 fn card_refusal_entry_with_denied_global_returns_not_allowed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::local_state::{
         AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
         LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
@@ -270,6 +276,9 @@ fn card_refusal_entry_with_denied_global_returns_not_allowed() {
 
 #[test]
 fn manual_walk_memory_alias_follows_the_fact_writer_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::local_state::{
         AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
         LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
@@ -460,6 +469,9 @@ fn manual_walk_memory_alias_follows_the_fact_writer_run() {
 
 #[test]
 fn slot_keeps_parked_native_run_and_resumes_after_dose() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::{HostEffect, InteractionReceipt, NativePhase};
     use crate::survival::CurePoison;
     use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
@@ -658,6 +670,9 @@ fn slot_keeps_parked_native_run_and_resumes_after_dose() {
 
 #[test]
 fn resume_consumes_the_takeover_for_a_step_that_continues() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct InPlaceOwner;
 
     impl crate::native::NativeMachine for InPlaceOwner {
@@ -757,6 +772,9 @@ fn resume_consumes_the_takeover_for_a_step_that_continues() {
 
 #[test]
 fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(102_419);
     slot.start_compiled(
@@ -782,6 +800,9 @@ fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
 
 #[test]
 fn grinch_inventory_blocked_error_retains_its_native_stop_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     snapshot.seed_ground_items(Vec::new());
     assert_eq!(snapshot.inventory().len(), 28);
@@ -824,6 +845,9 @@ fn grinch_inventory_blocked_error_retains_its_native_stop_reason() {
 
 #[test]
 fn large_catalogue_job_and_operator_start_both_complete() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::preparation::{self, PreparationInput, PreparationKind};
     use api::identity::Scope;
 
@@ -857,6 +881,9 @@ fn large_catalogue_job_and_operator_start_both_complete() {
 
 #[test]
 fn oversized_native_settings_have_a_typed_visible_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(102_411);
     let bag = SettingsBag::from_iter([(
@@ -883,6 +910,9 @@ fn oversized_native_settings_have_a_typed_visible_refusal() {
 
 #[test]
 fn native_card_policy_timing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _selected = selected();
     let mut slot = SlotScript::new();
     slot.bind_incarnation(102_410);
@@ -906,6 +936,9 @@ fn settings_apply_only_publishes_a_nonzero_prepared_revision() {
 
 #[test]
 fn invalid_gatherer_settings_leave_no_runnable_instance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(10);
     slot.attach_source_identity("file:previous.ts");
@@ -938,6 +971,9 @@ fn invalid_gatherer_settings_leave_no_runnable_instance() {
 
 #[test]
 fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(11);
     start(&mut slot, SettingsBag::new());
@@ -962,6 +998,9 @@ fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
 
 #[test]
 fn retained_memory_contention_refuses_without_blocking_shared_preparation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(12);
     let retained = Arc::new(Mutex::new(RetainedMemory::default()));
@@ -1034,6 +1073,9 @@ fn config(revision: u64, value: u64) -> Arc<PreparedConfig> {
 
 #[test]
 fn boundary_acknowledgement_never_applies_an_obsolete_or_restart_required_edit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut slot, acknowledge) = receiver(12, SettingsApply::PendingBoundary);
     let run = slot.native_run().unwrap();
     assert_eq!(
@@ -1088,6 +1130,9 @@ fn boundary_acknowledgement_never_applies_an_obsolete_or_restart_required_edit()
 
 #[test]
 fn configuration_fences_account_incarnation_revision_and_type_without_load_success() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut alice, _) = receiver(20, SettingsApply::Applied);
     let (mut bob, _) = receiver(21, SettingsApply::Applied);
     let alice_run = alice.native_run().unwrap();
@@ -1163,6 +1208,9 @@ fn stale_factory_cleanup_contains_panics_and_runs_stop_once() {
 
 #[test]
 fn discarded_preparation_contains_configuration_destructor_panics() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct PanickingConfig(std::sync::mpsc::Sender<()>);
     impl Drop for PanickingConfig {
         fn drop(&mut self) {
@@ -1207,6 +1255,9 @@ fn discarded_preparation_contains_configuration_destructor_panics() {
 
 #[test]
 fn removal_notifies_the_native_script_once_with_removed_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct Removed(std::sync::mpsc::Sender<StopReason>);
     impl Script for Removed {
         fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
@@ -1248,6 +1299,9 @@ fn gatherer_config(revision: u64) -> Arc<PreparedConfig> {
 
 #[test]
 fn prepared_settings_revision_is_independent_of_client_revision() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(selected().revision(), 289);
     for revision in [1, 37, 290] {
         let prepared = gatherer_config(revision);
@@ -1311,6 +1365,9 @@ fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
 
 #[test]
 fn walk_permissions_capture_start_apply_restart_and_account_isolation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const TEST_NAME: &str =
         "slot::compiled::tests::walk_permissions_capture_start_apply_restart_and_account_isolation";
     const CHILD_ENV: &str = "SCRIPT_SLOT_PERMISSION_TEST_CHILD";
@@ -1400,6 +1457,9 @@ fn walk_permissions_capture_start_apply_restart_and_account_isolation() {
 
 #[test]
 fn walk_permissions_do_not_apply_before_matching_boundary_acknowledgement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut slot, acknowledge) = receiver(83, SettingsApply::PendingBoundary);
     let run = slot.native_run().unwrap();
     let bag = Arc::new(
@@ -1440,6 +1500,9 @@ fn restart_and_settle(slot: &mut SlotScript, now: Instant) {
 
 #[test]
 fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(40);
     start(&mut slot, SettingsBag::new());
@@ -1465,6 +1528,9 @@ fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
 
 #[test]
 fn watchdog_restart_reoffers_an_accepted_boundary_revision_to_the_new_instance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = SlotScript::new();
     slot.bind_incarnation(43);
     start(&mut slot, SettingsBag::new());
@@ -1486,6 +1552,9 @@ fn watchdog_restart_reoffers_an_accepted_boundary_revision_to_the_new_instance()
 
 #[test]
 fn blocked_native_work_never_automatically_restarts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut slot, _) = receiver(41, SettingsApply::Applied);
     Arc::make_mut(
         slot.compiled
@@ -1524,6 +1593,9 @@ fn blocked_native_work_never_automatically_restarts() {
 
 #[test]
 fn a_watchdog_recovery_hold_freezes_the_active_clock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut slot, _) = receiver(44, SettingsApply::Applied);
     let start = Instant::now();
     slot.watchdog.arm_fresh(start);
@@ -1545,6 +1617,9 @@ fn a_watchdog_recovery_hold_freezes_the_active_clock() {
 
 #[test]
 fn operator_pause_and_guardian_hold_freeze_the_native_waiter_clock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for held in [false, true] {
         let (mut slot, _) = receiver(45 + u64::from(held), SettingsApply::Applied);
         slot.sync_compiled_clue(false);
@@ -1650,6 +1725,9 @@ impl Script for Relog {
 
 #[test]
 fn a_relog_advances_the_compiled_session_and_fences_pre_relog_evidence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (frames, received) = std::sync::mpsc::channel();
     let mut slot = SlotScript::new();
     slot.bind_incarnation(45);
@@ -1767,6 +1845,9 @@ fn gatherer_slot_with_knife(incarnation: u64, knife: bool) -> SlotScript {
 
 #[test]
 fn builtin_gatherer_knife_permission_requires_the_live_compiled_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut gatherer = gatherer_slot(0x544d_5801);
     let first = gatherer.native_run().unwrap();
     let (other, _) = receiver(0x544d_5802, SettingsApply::Applied);
@@ -1830,6 +1911,9 @@ fn queue_gatherer_drop(
 
 #[test]
 fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     let mut stats = snapshot.stats().to_vec();
     stats.push(api::snapshot::StatView {
@@ -1903,6 +1987,9 @@ fn gatherer_equips_with_the_observed_tool_action_before_gathering() {
 
 #[test]
 fn gatherer_slot_stop_pause_and_watchdog_revoke_every_undrained_drop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = gatherer_snapshot();
     for boundary in 0..3 {
         let mut slot = gatherer_slot(80 + boundary);
@@ -1938,6 +2025,9 @@ fn gatherer_slot_stop_pause_and_watchdog_revoke_every_undrained_drop() {
 
 #[test]
 fn gatherer_session_change_replans_drop_from_observation_not_old_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(84);
     let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -1959,6 +2049,9 @@ fn gatherer_session_change_replans_drop_from_observation_not_old_authority() {
 
 #[test]
 fn gatherer_stop_policy_death_cancels_undrained_drop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(85);
     let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -1985,6 +2078,9 @@ fn gatherer_stop_policy_death_cancels_undrained_drop() {
 
 #[test]
 fn gatherer_active_gather_allocates_nothing_on_one_thousand_unchanged_polls() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_gatherer_unchanged_poll_allocations(false);
     assert_gatherer_unchanged_poll_allocations(true);
 }
@@ -2070,6 +2166,9 @@ fn assert_gatherer_unchanged_poll_allocations(knife: bool) {
 
 #[test]
 fn gatherer_delayed_drops_replan_after_two_ticks_without_assuming_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(87);
     let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -2154,6 +2253,9 @@ fn accept_gatherer_drops(slot: &mut SlotScript, tick: u32, refused_slot: Option<
 
 #[test]
 fn gatherer_rejected_drop_replans_only_its_slot_then_observes_late_settlement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(88);
     let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -2181,6 +2283,9 @@ fn gatherer_rejected_drop_replans_only_its_slot_then_observes_late_settlement() 
 
 #[test]
 fn gatherer_three_unsettled_rounds_block_without_counting_dispatch_as_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = gatherer_snapshot();
     let mut slot = gatherer_slot(89);
     let (tick, actions) = queue_gatherer_drop(&mut slot, &snapshot, 1);
@@ -2209,6 +2314,9 @@ fn gatherer_three_unsettled_rounds_block_without_counting_dispatch_as_progress()
 
 #[test]
 fn gatherer_full_pack_chat_modal_consumes_one_of_five_packets() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     snapshot.seed_chat_modal(123, vec!["Your inventory is too full.".into()]);
     let mut slot = gatherer_slot(90);
@@ -2234,6 +2342,9 @@ fn gatherer_full_pack_chat_modal_consumes_one_of_five_packets() {
 
 #[test]
 fn gatherer_rejected_click_observes_missing_target_before_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     snapshot.seed_inventory(Vec::new(), 28);
     let mut slot = gatherer_slot(91);
@@ -2287,6 +2398,9 @@ fn gatherer_rejected_click_observes_missing_target_before_retry() {
 
 #[test]
 fn gatherer_counts_yield_observed_after_target_depletion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = gatherer_snapshot();
     let product = snapshot.inventory()[0].clone();
     snapshot.seed_inventory(Vec::new(), 28);
@@ -2343,6 +2457,9 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
 
 #[test]
 fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     fn measure_mode(oak: bool, knife: bool) -> i64 {
         fn measure_prepared(
             incarnation: u64,
@@ -2616,11 +2733,17 @@ mod api_gather_seat {
     }
     #[test]
     fn seat_refusal_entry_with_denied_script_setting_returns_not_allowed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_compat_refusal_after_scene_observation(false);
     }
 
     #[test]
     fn compat_refusal_keeps_actual_session_after_scene_only_down_observation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_compat_refusal_after_scene_observation(true);
     }
 
@@ -2941,6 +3064,9 @@ mod api_gather_seat {
 
     #[test]
     fn load_api_gather_walk_permissions_follow_its_live_card_settings() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(206, true);
         assert_eq!(slot.native_walk_permissions(), None);
@@ -2978,6 +3104,9 @@ mod api_gather_seat {
 
     #[test]
     fn load_api_gather_defaults_keep_walk_permissions_refused() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(207, true);
         run(&mut slot, 207);
@@ -2997,6 +3126,9 @@ mod api_gather_seat {
 
     #[test]
     fn stop_during_preparation_is_prompt_clears_retention_and_never_installs() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(201, true);
         run(&mut slot, 201);
@@ -3027,6 +3159,9 @@ mod api_gather_seat {
 
     #[test]
     fn api_stop_revokes_five_undrained_native_drops_and_preserves_last_published_counts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(202, true);
         run_in_seat(&mut slot, 202);
@@ -3104,6 +3239,9 @@ mod api_gather_seat {
 
     #[test]
     fn reconnect_rekeys_actual_card_revokes_old_action_and_reposts_terminal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(203, true);
         run_in_seat(&mut slot, 203);
@@ -3150,6 +3288,9 @@ mod api_gather_seat {
 
     #[test]
     fn hold_pause_reset_and_watchdog_keep_only_the_authorized_retention() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(204, true);
         run(&mut slot, 204);
@@ -3217,6 +3358,9 @@ mod api_gather_seat {
 
     #[test]
     fn actual_blocked_terminal_wins_stop_race_and_next_run_keeps_retention() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = gatherer_snapshot();
         let mut slot = stub_surface_slot(212, true);
         run(&mut slot, 212);
@@ -3258,6 +3402,9 @@ mod api_gather_seat {
 
     #[test]
     fn warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // Keep libtest's own test-thread allocations out of the thread-local
         // counter. The product-status log is suppressed separately below.
         std::thread::Builder::new()
@@ -3479,6 +3626,9 @@ mod api_gather_seat {
 #[cfg(feature = "test-hooks")]
 #[test]
 fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_restore() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::interact::InteractReq;
 
     struct WalkingRows(i32);
@@ -3918,6 +4068,9 @@ fn native_status_logs_gatherer_last_event_at_info() {
 
 #[test]
 fn completed_native_status_survives_teardown_without_copying() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct CompletingReporter(bool);
 
     impl Script for CompletingReporter {
@@ -3995,6 +4148,9 @@ fn completed_native_status_survives_teardown_without_copying() {
 
 #[test]
 fn terminal_native_blocked_stop_logs_once_through_output_status() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     install_status_line_sink();
     for (slot_name, phase, flow_blocked) in [
         ("status-blocked-flow-stop", NativePhase::Working, true),
@@ -4036,6 +4192,9 @@ fn terminal_native_blocked_stop_logs_once_through_output_status() {
 
 #[test]
 fn terminal_native_blocked_stops_cleans_up_and_preserves_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (phase, flow_blocked) in [(NativePhase::Working, true), (NativePhase::Blocked, false)] {
         let stops = Arc::new(AtomicU64::new(0));
         let cancels = Arc::new(AtomicU64::new(0));
@@ -4179,6 +4338,9 @@ impl Script for HoldsModalWait {
 /// session boundary revoke the native owner, so the next read is `None`.
 #[test]
 fn a_script_interaction_wait_ends_at_stop_and_at_a_session_boundary() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for session_boundary in [false, true] {
         let mut slot = SlotScript::new();
         slot.start_test_script(Box::new(HoldsModalWait { work: None }), Some(selected()))
@@ -4203,6 +4365,9 @@ fn a_script_interaction_wait_ends_at_stop_and_at_a_session_boundary() {
 
 #[test]
 fn native_waiting_keeps_running_until_its_own_terminal_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let stops = Arc::new(AtomicU64::new(0));
     let cancels = Arc::new(AtomicU64::new(0));
     let mut slot = SlotScript::new();
@@ -4232,6 +4397,9 @@ fn native_waiting_keeps_running_until_its_own_terminal_bound() {
 
 #[test]
 fn host_world_members_reaches_the_native_snapshot_view() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::selected::Truth;
     struct Reads(Arc<std::sync::Mutex<Vec<Truth>>>);
     impl Script for Reads {
@@ -4274,6 +4442,9 @@ fn host_world_members_reaches_the_native_snapshot_view() {
 }
 #[test]
 fn compiled_evidence_wait_consumes_native_progress_but_not_watchdog_hard_stall() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct WaitingProgress {
         waits: Arc<AtomicU64>,
     }
@@ -4378,6 +4549,9 @@ fn compiled_evidence_wait_consumes_native_progress_but_not_watchdog_hard_stall()
 
 #[test]
 fn compiled_evidence_wait_requires_a_ready_live_observation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct Waiter(Arc<AtomicU64>);
     impl Script for Waiter {
         fn tick(&mut self, _tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
@@ -4434,6 +4608,9 @@ fn compiled_evidence_wait_requires_a_ready_live_observation() {
 #[cfg(feature = "test-hooks")]
 #[test]
 fn native_interact_note_progress_remains_rejected() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::interact::InteractReq;
 
     struct EmitsNote;
@@ -4478,6 +4655,9 @@ fn poll_ready_evidence_wait_card(
 
 #[test]
 fn compiled_live_child_blocks_evidence_wait_and_still_requests_wedge_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct WaitingChild {
         release: Arc<AtomicU64>,
         anchor_requests: Arc<AtomicU64>,
@@ -4616,6 +4796,9 @@ fn pending_native_evidence_wait_slot() -> SlotScript {
 
 #[test]
 fn compiled_pending_progress_and_wait_clear_at_each_ineligible_boundary() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     #[derive(Debug, Clone, Copy)]
     enum Boundary {
         Pause,
@@ -4690,6 +4873,9 @@ fn compiled_pending_progress_and_wait_clear_at_each_ineligible_boundary() {
 
 #[test]
 fn compiled_queued_seat_row_alone_blocks_evidence_wait() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::interact::InteractReq;
     use api::script_contract::EmissionClass;
 

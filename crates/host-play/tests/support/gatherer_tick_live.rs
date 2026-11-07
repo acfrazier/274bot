@@ -608,8 +608,29 @@ impl LiveRun {
         let nav_pack = absolute_path("GATHERER_NAV_PACK")?;
         let engine_dir = absolute_path("GATHERER_ENGINE_DIR")?;
         let catalog_root = absolute_path("GATHERER_CATALOG_ROOT")?;
-        let (server_profile, template) =
-            selected_profile(nav_pack, engine_dir, catalog_root, _temp.path(), None)?;
+        let cache_dir = std::env::var_os("BOT_CACHE_DIR").and_then(|_| {
+            api::test_support::local_asset_path(
+                "BOT_CACHE_DIR",
+                "",
+                "local Gatherer cache snapshot",
+            )
+        });
+        let nav_flags = std::env::var_os("GATHERER_NAV_FLAGS").and_then(|_| {
+            api::test_support::local_asset_path(
+                "GATHERER_NAV_FLAGS",
+                "",
+                "local Gatherer navigation flags",
+            )
+        });
+        let (server_profile, template) = selected_profile(
+            nav_pack,
+            engine_dir,
+            catalog_root,
+            cache_dir,
+            nav_flags,
+            _temp.path(),
+            None,
+        )?;
         if server_profile.profile_class() != host_play::ProfileClass::Local
             || server_profile.client().game_host() != ENGINE_HOST
             || server_profile.client().asset_host() != ENGINE_HOST
@@ -1063,6 +1084,9 @@ impl Drop for LiveRun {
 }
 
 fn run_live(case: Case) -> Result<(), String> {
+    if !api::test_support::game_data_available() {
+        return Ok(());
+    }
     let _serial = LIVE_RUN_LOCK
         .lock()
         .map_err(|_| "live tick-run lock poisoned")?;
@@ -1227,6 +1251,9 @@ mod tests {
 
     #[test]
     fn iron_setup_has_a_usable_tool_and_local_replacement_rocks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let catalog =
             api::selected::FamilyPreparation::run(move |worker| selected.prepare_gathering(worker))
@@ -1273,7 +1300,13 @@ mod tests {
 
     #[test]
     fn every_live_setup_starts_on_a_standable_player_tile() {
-        let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
+        let Some(pack) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "real 289 navigation pack for Gatherer live setups",
+        ) else {
+            return;
+        };
         let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
         for case in [
             Case::Probe,
@@ -1309,7 +1342,13 @@ mod tests {
 
     #[test]
     fn fixed_loc_setups_start_on_real_standable_tiles() {
-        let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
+        let Some(pack) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "real 289 navigation pack for Gatherer fixed-location setups",
+        ) else {
+            return;
+        };
         let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
         for case in [Case::Probe, Case::Fly, Case::Oak] {
             let start = case.target();
