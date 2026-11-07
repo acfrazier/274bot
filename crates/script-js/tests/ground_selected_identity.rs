@@ -209,8 +209,8 @@ export default class T extends LoopingBot {
 fn input_take_obj_requests_bound_collected_v8_heap_growth() {
     const REQUESTS: usize = 256;
     const WARM_TICKS: usize = 256;
-    // The warmed run measured 89,408 B; 1.5x allows 44,704 B of headroom.
-    const MAX_GROWTH: usize = 134_112;
+    // Warmed growth was 74,672 B; 1.5x allows 37,336 B of headroom.
+    const MAX_GROWTH: usize = 112_008;
     let src = r#"
 import { Input } from '../../input/Input.js';
 export default class T extends LoopingBot {
