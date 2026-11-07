@@ -5621,7 +5621,8 @@ fn tui_restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
     if !api::test_support::game_data_available() {
         return;
     }
-    let nav_pack_default = nav_planner::world::NavWorld::default_pack_path().to_string_lossy();
+    let nav_pack_default = nav_planner::world::NavWorld::default_pack_path();
+    let nav_pack_default = nav_pack_default.to_string_lossy();
     let Some(nav_pack_path) = api::test_support::local_asset_path(
         "NAV_PACK",
         &nav_pack_default,

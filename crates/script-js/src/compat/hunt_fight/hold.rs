@@ -412,6 +412,9 @@ mod tests {
 
     #[test]
     fn hold_consumer_emits_the_native_missiles_if_button() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button_com = super::super::seed_protect_observation();
         let mut runtime = HoldRuntime::new(23);
         let projection = super::super::parse_projection(&serde_json::json!({}));
@@ -423,6 +426,9 @@ mod tests {
 
     #[test]
     fn hold_waiting_routes_the_protect_ack_without_aborting_or_advancing_the_mode() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let mut runtime = HoldRuntime::new(23);
         runtime.mode = HoldMode::Waiting;
@@ -453,6 +459,9 @@ mod tests {
 
     #[test]
     fn hold_need_ack_keeps_its_walk_token_when_protection_changes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let mut runtime = HoldRuntime::new(23);
         runtime.mode = HoldMode::NeedAck;
@@ -530,6 +539,9 @@ mod tests {
 
     #[test]
     fn hold_reports_unavailable_protection_instead_of_silently_disabling_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         crate::scene::supply_v2::configure(None);
         let mut runtime = HoldRuntime::new(23);

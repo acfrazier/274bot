@@ -5047,6 +5047,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn catalog_failure_emits_accumulated_core_witness_and_latest_observation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_eq!(
             accumulated_core(None),
             json!({"error": "no Start baseline"})
@@ -9374,6 +9377,9 @@ export default class NativeStop extends LoopingBot {{
     /// spawned crab that was never a rock is not.
     #[test]
     fn rock_crab_activation_needs_the_projected_dormant_rock_not_a_bare_crab() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use client::client::{Client, ClientConfig, ClientNpc};
         use client::config::{Cache, NpcType};
         use client::dash3d::ClientPlayer;
