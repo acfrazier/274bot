@@ -11,10 +11,10 @@
     "quest_points": 5,
     "requirements": [],
     "items": [
-      { "obj": "goblin_armour", "qty": 3, "kind": "acquirable", "acquire": "acquire:mail", "from_stage": "gobdip:1" },
-      { "obj": "redberries", "qty": 3, "kind": "acquirable", "acquire": "acquire:redberries", "from_stage": "gobdip:1" },
-      { "obj": "onion", "qty": 2, "kind": "acquirable", "acquire": "acquire:onions", "from_stage": "gobdip:1" },
-      { "obj": "woadleaf", "qty": 2, "kind": "acquirable", "acquire": "acquire:woad", "from_stage": "gobdip:1" }
+      { "obj": "goblin_armour", "qty": 3, "kind": "acquirable", "acquire": null, "from_stage": "gobdip:1" },
+      { "obj": "redberries", "qty": 3, "kind": "acquirable", "acquire": null, "from_stage": "gobdip:1" },
+      { "obj": "onion", "qty": 2, "kind": "acquirable", "acquire": null, "from_stage": "gobdip:1" },
+      { "obj": "woadleaf", "qty": 2, "kind": "acquirable", "acquire": null, "from_stage": "gobdip:1" }
     ],
     "acquire": {
       "acquire:coins": [
