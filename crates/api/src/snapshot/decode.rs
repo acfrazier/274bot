@@ -2396,6 +2396,8 @@ mod tests {
     }
     const VIEW_RESOLUTION_ITERATIONS: usize = 128;
     const ALLOCATION_ROUNDING_UNIT_BYTES: usize = 8;
+    // R274 and R289 share this measured 128-resolution allocation baseline.
+    const VIEW_RESOLUTION_BASELINE: [usize; 4] = [640, 21_248, 640, 19_712];
 
     fn snapshot_view_resolution_allocations(revision: ClientRevision) -> [usize; 4] {
         use client::config::{LocType, NpcType};
@@ -2487,9 +2489,7 @@ mod tests {
     fn loc_and_npc_view_resolution_allocation_gate_for_each_revision() {
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let allocations = snapshot_view_resolution_allocations(revision);
-            let expected = match revision {
-                ClientRevision::R274 | ClientRevision::R289 => [640, 21_248, 640, 19_712],
-            };
+            let expected = VIEW_RESOLUTION_BASELINE;
             assert_eq!(
                 allocations[0], expected[0],
                 "{revision:?} LocView allocation count changed across 128 unchanged resolutions"
