@@ -114,6 +114,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - The 377 Cook guide targets the placed mill-base identity while using the
   current flour-bin face's Empty action; it does not target a morph leaf ID.
 
+- Adds a source-backed revision-377 Knight's Sword Path with palace pie
+  acquisition, a naturally dropped iron-bar fallback, and documented cave
+  resources. It uses Mining 10 and Cooking 10 instead of the removed Mining 15/
+  Smithing 15 smelting fallback; the revision-289 Path remains unchanged.
+
 ### Gatherer
 
 - Adds revision-377 Gatherer preparation checks and real-resource bank-trip
