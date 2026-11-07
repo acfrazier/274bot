@@ -358,7 +358,7 @@ impl SharedClientTemplate {
 
     /// Return the consuming handoff required by [`run_prepared_template`].
     /// Navigation is the already-loaded world; a post-load disk edit does not
-    /// replace it. Cache identity was checked at load; this does not re-hash.
+    /// replace it.
     pub fn validate_for_play(self: &Arc<Self>) -> Result<ValidatedTemplate, String> {
         self.validate_for_play_with_progress(&progress::ProfileProgressObserver::default())
     }
@@ -393,7 +393,6 @@ impl SharedClientTemplate {
             self.highmem_377
                 .get_or_init(|| {
                     let observer = progress::ProfileProgressObserver::default();
-                    self.profile.validate_resources_with_progress(&observer)?;
                     load_template_checked(
                         self.profile.client().cache_dir(),
                         self.profile.revision(),
