@@ -151,6 +151,14 @@ Mining and woodcutting keep item-sorted per-tool facts. Mining rates and skill
 animations come from the selected tool parameters. The decoder rejects missing
 classifications, unknown kinds, and tool rows that are duplicate or incomplete.
 
+Revision 377 resolves woodcutting animations through the selected tool struct's
+`skill_anim` parameter. It separates incompatible mining handlers into distinct
+methods for the same resource. Named fishing entrypoints keep the same
+source-shape checks as the historical loops. Shop keepers come from the
+selected unpacked NPC definitions. Shop inventories join their unique definitions
+in the selected content tree.
+The 377 run does not rewrite the tracked historical hidden-site catalogue.
+
 Regenerate both revisions when changing this family schema. A revision 274
 catalog cannot retain schema 3 when the decoder requires schema 4. These facts
 do not enable tick manipulation or change gathering requests by themselves.
