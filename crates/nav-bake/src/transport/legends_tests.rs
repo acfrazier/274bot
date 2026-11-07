@@ -88,6 +88,9 @@ fn legends_stage_observation_retains_its_own_stamp_and_refuses_a_later_floor() {
 
 #[test]
 fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = Fixture::new();
     write_legends_content(&fx);
     fx.write(
@@ -191,6 +194,9 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
 
 #[test]
 fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = Fixture::new();
     write_legends_content(&fx);
     write_jungle_map(&fx, &JUNGLE_LOC_IDS);
@@ -398,6 +404,9 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
 
 #[test]
 fn jungle_crossing_accepts_blocked_jungle_landing_only() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let facts = selected.quest_identity().expect("selected quest facts");
     let quests = QuestSource { facts };
@@ -485,6 +494,9 @@ fn jungle_crossing_accepts_blocked_jungle_landing_only() {
 
 #[test]
 fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let facts = selected.quest_identity().expect("selected quest facts");
     let quests = QuestSource { facts };
@@ -549,6 +561,9 @@ fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
 
 #[test]
 fn legends_gate_engine_closure_follows_helpers_into_general_scripts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const MULTIPLY2_BLOCK: &str = "// general/scripts/misc/math_procs.rs2:1\n[proc,multiply2](int $int1, int $int2, int $m)(int, int)\n$int1 = calc($int1 * $m);\n$int2 = calc($int2 * $m);\nreturn($int1, $int2);\n";
     let fx = Fixture::new();
     write_legends_content(&fx);

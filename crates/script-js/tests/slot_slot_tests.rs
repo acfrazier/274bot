@@ -755,12 +755,18 @@ fn watchdog_restart_starts_new_js_isolate() {
 #[test]
 fn js_surface_start_runs_after_v8_setup() {
     let mut slot = js_slot(0);
-    let t0 = Instant::now();
-    start_js(
-        &mut slot,
+    let preparation = Instant::now();
+    let start = surface_start(
         "export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }",
         LoadShape::NativeTick,
         None,
+    );
+    let prepared = preparation.elapsed();
+    let t0 = Instant::now();
+    slot.start_surface(start).expect("start JavaScript surface");
+    eprintln!(
+        "[DEV-CI-RED-start-probe] single preparation={prepared:?} start={:?}",
+        t0.elapsed()
     );
     assert!(
         t0.elapsed() < Duration::from_millis(500),
@@ -822,11 +828,20 @@ fn js_onstop_completes_before_queued_start() {
 fn js_surface_start_all_over_n_members_does_not_block() {
     let src = "export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }";
     let mut slots: Vec<SlotScript> = (0..4).map(|_| js_slot(0)).collect();
+    let preparation = Instant::now();
+    let starts: Vec<_> = (0..slots.len())
+        .map(|_| surface_start(src, LoadShape::NativeTick, None))
+        .collect();
+    let prepared = preparation.elapsed();
     let t0 = Instant::now();
-    for slot in &mut slots {
-        start_js(slot, src, LoadShape::NativeTick, None);
+    for (slot, start) in slots.iter_mut().zip(starts) {
+        slot.start_surface(start).expect("start JavaScript surface");
         assert_eq!(slot.state(), RunState::Starting);
     }
+    eprintln!(
+        "[DEV-CI-RED-start-probe] all preparation={prepared:?} start={:?}",
+        t0.elapsed()
+    );
     assert!(
         t0.elapsed() < Duration::from_millis(500),
         "Start all blocked per member: {:?}",

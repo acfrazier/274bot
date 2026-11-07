@@ -169,6 +169,9 @@ fn crossing(graph: &TransportGraph, id: i32, from: WorldTile, to: WorldTile) -> 
 
 #[test]
 fn obstacle_stile_has_exact_ungated_final_landings() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let graph = obstacle_graph(&obstacle_fixture(HANDLERS));
     for (from, to) in [
         (tile(2817, 3561), tile(2817, 3564)),
@@ -185,6 +188,9 @@ fn obstacle_stile_has_exact_ungated_final_landings() {
 
 #[test]
 fn obstacle_lower_rocks_require_started_progress_skill_and_south_only_worn_boots() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // At7dac,289.json:128978-990 proves the finite Troll domain0..50.
     // death_ig_commander.rs2:82 writes start10; quest_troll.rs2:367 writes
     // complete50. F-C may emit several windows and a terminal Complete gate.
@@ -244,6 +250,9 @@ fn obstacle_lower_rocks_require_started_progress_skill_and_south_only_worn_boots
 
 #[test]
 fn obstacle_upper_rocks_preserve_each_placement_and_skill_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let graph = obstacle_graph(&obstacle_fixture(HANDLERS));
     for (west, east, top_on_west, zs) in [
         (2858, 2861, true, [3626, 3627]),
@@ -282,6 +291,9 @@ fn obstacle_upper_rocks_preserve_each_placement_and_skill_gate() {
 
 #[test]
 fn obstacle_wall_gate_requires_exact_biohazard_completion_through_the_label() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let graph = obstacle_graph(&obstacle_fixture(HANDLERS));
     for (id, from, to) in [
         (2049, tile(2556, 3299), tile(2559, 3299)),
@@ -299,6 +311,9 @@ fn obstacle_wall_gate_requires_exact_biohazard_completion_through_the_label() {
 
 #[test]
 fn obstacle_watchtower_window_and_precompletion_ladder_keep_their_conditions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let graph = obstacle_graph(&obstacle_fixture(HANDLERS));
     let edge = crossing(
         &graph,
@@ -337,6 +352,9 @@ fn obstacle_watchtower_window_and_precompletion_ladder_keep_their_conditions() {
 
 #[test]
 fn obstacle_cellar_gate_requires_worn_leather_gloves_in_both_directions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let graph = obstacle_graph(&obstacle_fixture(HANDLERS));
     for (id, z) in [(2866, 9873), (2865, 9874)] {
         for (from, to) in [
@@ -359,6 +377,9 @@ fn obstacle_cellar_gate_requires_worn_leather_gloves_in_both_directions() {
 
 #[test]
 fn obstacle_proofs_refuse_changed_rolls_labels_and_movement_primitives() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (script, id) in [
         (
             HANDLERS.replace("~damage_self(3);", "~damage_self(4);"),
@@ -392,6 +413,9 @@ fn obstacle_proofs_refuse_changed_rolls_labels_and_movement_primitives() {
 
 #[test]
 fn obstacle_wall_equality_stays_a_window_without_the_completion_upper_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fx = obstacle_fixture(HANDLERS);
     fx.write(
         "scripts/future.rs2",

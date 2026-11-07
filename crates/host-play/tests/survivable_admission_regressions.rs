@@ -164,6 +164,7 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             read("malformed", Some("{nav:")).unwrap_or_else(|_| WalkGlobals::fail_closed()),
         ),
     ];
+    let world = api::test_support::game_data_available().then(|| corridor(40, &[20]));
     for (name, globals) in sources {
         assert_eq!(
             globals.effective_danger_level(),
@@ -187,17 +188,19 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             !manual.enforce,
             "{name}: held inherited verdict is advisory"
         );
-        let world = corridor(40, &[20]);
-        for (from, to) in [(tile(0, 1), tile(20, 1)), (tile(20, 1), tile(0, 1))] {
-            let route = find(&world, from, to);
-            let mut risk_input = input(99, PoisonState::default());
-            risk_input.pos = from;
-            let request = Admission::manual(globals.manual_options(false), risk_input, 1, globals);
-            let assessment = admission::assess(&route, &world, &request);
-            assert!(
-                admission::permits(&route, &world, &request, &assessment),
-                "{name}: {from:?}->{to:?}"
-            );
+        if let Some(world) = world.as_ref() {
+            for (from, to) in [(tile(0, 1), tile(20, 1)), (tile(20, 1), tile(0, 1))] {
+                let route = find(world, from, to);
+                let mut risk_input = input(99, PoisonState::default());
+                risk_input.pos = from;
+                let request =
+                    Admission::manual(globals.manual_options(false), risk_input, 1, globals);
+                let assessment = admission::assess(&route, world, &request);
+                assert!(
+                    admission::permits(&route, world, &request, &assessment),
+                    "{name}: {from:?}->{to:?}"
+                );
+            }
         }
         eprintln!(
             "probe source={name} stored={:?} effective={:?} native=Avoid manual=Avoid",

@@ -601,6 +601,9 @@ impl SeededState {
 /// count.
 #[test]
 fn clean_stop_scenarios_are_not_satisfied_by_their_own_seed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let items = GameItems::load();
     let names = Arc::clone(&items.names);
     let mut checked = Vec::new();

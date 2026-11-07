@@ -2502,6 +2502,9 @@ fn slot_load_and_compiled_are_xor() {
     slot.stop();
     wait_slot_state(&mut slot, script::RunState::Idle);
 
+    if !api::test_support::game_data_available() {
+        return;
+    }
     slot.start_test_script(Box::new(Noop), None).unwrap();
     assert!(start_js_surface(&mut slot, NATIVE_TICK, LoadShape::NativeTick).is_err());
     slot.stop();

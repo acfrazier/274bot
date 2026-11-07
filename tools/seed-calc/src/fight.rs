@@ -1945,6 +1945,9 @@ mod tests {
 
     #[test]
     fn product_food_causes_one_heal_and_three_tick_player_delay() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let rule = product_food_rule(40);
         let hp = (1..40)
             .find(|hp| rule.should_eat(*hp, 0))
@@ -1990,6 +1993,9 @@ mod tests {
 
     #[test]
     fn absorbing_solver_matches_deterministic_food_and_regeneration_simulation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let rule = product_food_rule(24);
         assert!(
             (1..=24).any(|hp| rule.should_eat(hp, 0)),
@@ -2142,6 +2148,9 @@ mod tests {
     }
     #[test]
     fn selected_facts_and_unsupported_classes_stay_explicit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let tables = CombatTables::build(selected).unwrap();
         let weapon = Weapon {
@@ -2195,6 +2204,9 @@ mod tests {
 
     #[test]
     fn unarmed_weapon_uses_the_content_crush_table_and_four_tick_interval() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let tables = CombatTables::build(selected).unwrap();
         let weapon = unarmed_weapon();
@@ -2211,6 +2223,9 @@ mod tests {
 
     #[test]
     fn npc_names_do_not_select_an_arbitrary_variant() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let tables = CombatTables::build(selected).unwrap();
         let query = FightQuery {
