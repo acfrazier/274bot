@@ -289,3 +289,57 @@ fn demon_377_authored_bone_preparation_advances_after_deposit() {
         );
     }
 }
+
+#[test]
+fn demon_377_authored_drain_sequence_advances_after_the_observed_pour() {
+    let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+    let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+    let path = compile::compile_uncached_for_test(
+        &serde_json::from_value(document("demon")).unwrap(),
+        &selected,
+        &quests,
+    )
+    .unwrap();
+    let progress = [progress_for_stage(&path, &selected, "demon:2", &[])];
+    let bank = known_empty_bank();
+    let probe = Probe {
+        path: &path,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+    for (tile, bucket, poured, expected) in [
+        ((3223, 3494), "bucket_empty", false, "fill-bucket"),
+        ((3223, 3494), "bucket_water", false, "wash-key-down-drain"),
+        ((3223, 3494), "bucket_empty", true, "climb-down-manhole"),
+        ((3237, 9858), "bucket_empty", true, "walk-to-sewer-key"),
+        ((3237, 9858), "bucket_empty", false, "walk-to-sewer-key"),
+    ] {
+        let mut snapshot = selection_snapshot(
+            &selected,
+            api::WorldTile {
+                x: tile.0,
+                z: tile.1,
+                level: 0,
+            },
+            &[("silverlight_key_1", 1), ("silverlight_key_2", 1), (bucket, 1)],
+        );
+        snapshot.seed_chat_lines(
+            poured
+                .then(|| api::snapshot::ChatLineView {
+                    sequence: 1,
+                    type_: 0,
+                    username: None,
+                    text: "Ok, I think I've washed the key down to the sewer.".into(),
+                })
+                .into_iter()
+                .collect(),
+        );
+        assert_eq!(
+            probe.choice("demon:2", 0, &snapshot),
+            Choice::Step(api::selected::FactKey::new(expected)),
+            "completed pouring must not reselect bucket preparation at {tile:?}"
+        );
+    }
+}
