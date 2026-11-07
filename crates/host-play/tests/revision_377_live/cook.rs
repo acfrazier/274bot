@@ -23,7 +23,7 @@ fn sample(client: &client::client::Client, snapshot: &GameSnapshot) -> Value {
 #[ignore = "requires canonical 377 resources, LIVE=1, live prefix and ROUTE_A_EVIDENCE_DIR"]
 fn cook_377_route_a() -> Result<(), String> {
     let bound = load_bound_377()?;
-    identity_record(&bound);
+    resource_record(&bound);
     let directory = required_path("ROUTE_A_EVIDENCE_DIR")?;
     fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let username = host_play::mint_live_names(1).remove(0);
