@@ -119,8 +119,11 @@
                 "radius": 3,
                 "settle_ms": 20000
               },
-              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "garlic" } } },
-              "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["you open the cupboard."] } } }
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "garlic" } } },
+                { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "garliccupboardopen" } } }
+              ] },
+              "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "garliccupboardopen" } } }
             },
             {
               "id": "search-garlic-cupboard",
