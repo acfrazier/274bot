@@ -3619,6 +3619,17 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
 
 #[test]
 fn restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let nav_pack_default = NavWorld::default_pack_path().to_string_lossy();
+    let Some(nav_pack_path) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        &nav_pack_default,
+        "revision-289 navigation pack",
+    ) else {
+        return;
+    };
     let iso = IsolatedStores::enter("panel-quester-paths-startup");
     let folder = iso.dir().join("paths");
     std::fs::create_dir_all(&folder).unwrap();
@@ -3664,9 +3675,12 @@ fn restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
         !session.quester_paths.is_running(),
         "saved folder waits for its actual navigation catalog"
     );
-    let Some(world) = NavWorld::load_default_pack_or_skip() else {
-        return;
-    };
+    let world = NavWorld::load_pack(&nav_pack_path).unwrap_or_else(|error| {
+        panic!(
+            "could not load selected nav pack at {}: {error}",
+            nav_pack_path.display()
+        )
+    });
     let fixture = MapFixture::new(&world, "public-289");
     session.core.set_play(Some(fixture.play(Tile {
         x: 2778,

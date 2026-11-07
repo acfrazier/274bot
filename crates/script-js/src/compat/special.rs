@@ -240,6 +240,9 @@ mod tests {
 
     #[test]
     fn both_selected_caches_post_the_audited_special_controls() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for rev in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(rev);
             let controls = data.special_controls().expect("generated special controls");
@@ -266,6 +269,9 @@ mod tests {
 
     #[test]
     fn missing_controls_do_not_invent_costs_or_bars() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         machine::on_reset();
         observed::on_reset();
         crate::scene::supply_v2::configure(None);
@@ -281,6 +287,9 @@ mod tests {
 
     #[test]
     fn already_armed_settles_true_without_a_click() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         set_observation(2276, 1000, 1);
         assert_eq!(start(), Started::Settled(Outcome::Done(json!(true))));
@@ -289,6 +298,9 @@ mod tests {
 
     #[test]
     fn a_tab_without_a_spec_bar_settles_false_without_a_click() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         set_observation(328, 1000, 0);
         assert_eq!(start(), Started::Settled(Outcome::Done(json!(false))));
@@ -297,6 +309,9 @@ mod tests {
 
     #[test]
     fn missing_varps_refuse_instead_of_faking_zero() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         observed::post(0, |post| {
             post.session(true);
@@ -311,6 +326,9 @@ mod tests {
 
     #[test]
     fn the_bar_click_arms_within_the_frozen_window() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = prepare(ClientRevision::R289);
         assert!(selected.special_controls().is_some());
         set_observation(2276, 1000, 0);
@@ -327,6 +345,9 @@ mod tests {
 
     #[test]
     fn the_window_ends_false_and_a_newer_arm_supersedes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         set_observation(2276, 1000, 0);
         let handle = running(start());
@@ -347,6 +368,9 @@ mod tests {
 
     #[test]
     fn an_unposted_varp_mid_arm_does_not_shorten_the_window() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         set_observation(2276, 1000, 0);
         let handle = running(start());

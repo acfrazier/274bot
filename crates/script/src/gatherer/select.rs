@@ -1888,6 +1888,9 @@ pub(crate) mod tests {
 
     #[test]
     fn loc_arrival_consumers_use_server_position_while_rendering_trails() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::quest_progress::EvidenceStamp;
         use api::selected::RunKey;
         use api::snapshot::{GameSnapshot, SnapshotView};
@@ -2129,6 +2132,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_denied_tree_is_not_ranked_as_a_target() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection(Some(&DenyDanger), false);
         assert!(
             result.target.is_none(),
@@ -2144,6 +2150,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_without_navigation_data_refuses_a_tree_that_needs_a_walk() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection(None, false);
         assert!(
             result.target.is_none(),
@@ -2161,6 +2170,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_without_navigation_data_keeps_a_tree_already_in_operating_range() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection(None, true);
         assert!(
             result.target.is_some(),
@@ -2170,6 +2182,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_without_navigation_waits_for_depleted_tree_in_gatherer_and_quester() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for quest in [false, true] {
             let result = danger_tree_selection_case(None, true, PlacementClass::Depleted, quest);
             let allowed = danger_tree_selection_case(
@@ -2191,6 +2206,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_without_navigation_waits_for_depleted_tree_in_quester() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection_case(None, true, PlacementClass::Depleted, true);
         assert_eq!(
             result.outcome,
@@ -2203,6 +2221,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_without_navigation_waits_for_avoided_tree_in_operating_range() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection_case(None, true, PlacementClass::Avoided, false);
         assert_eq!(
             result.outcome,
@@ -2215,6 +2236,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_non_live_tree_still_requires_permission_when_not_arrived_or_denied() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for quest in [false, true] {
             let distant = danger_tree_selection_case(None, false, PlacementClass::Depleted, quest);
             assert_eq!(
@@ -2236,6 +2260,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_denied_tree_is_ineligible_even_when_already_in_operating_range() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let result = danger_tree_selection(Some(&DenyDanger), true);
         assert!(
             result.target.is_none(),
@@ -2589,6 +2616,9 @@ pub(crate) mod tests {
 
     #[test]
     fn danger_filter_runs_before_live_unloaded_and_return_ranking() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("woodcutting.normal").unwrap();
         let index = method_index(&catalog, method);
@@ -2889,6 +2919,9 @@ pub(crate) mod tests {
 
     #[test]
     fn static_fishing_loc_is_selected_live() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (catalog, index, area) = static_fishing_loc_fixture();
         let result = select(
             &catalog,
@@ -2919,6 +2952,9 @@ pub(crate) mod tests {
 
     #[test]
     fn static_fishing_loc_is_selected_unloaded() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (catalog, index, area) = static_fishing_loc_fixture();
         let here = WorldTile {
             x: 2000,
@@ -2954,6 +2990,9 @@ pub(crate) mod tests {
 
     #[test]
     fn static_fishing_loc_has_a_return_target() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (catalog, index, area) = static_fishing_loc_fixture();
         let returned = resource_return_target(
             &catalog,
@@ -3230,6 +3269,9 @@ pub(crate) mod tests {
 
     #[test]
     fn large_fishing_spot_returns_to_and_observes_cells_beyond_the_eighth() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let mut spot = complete_spots(method)
@@ -3654,6 +3696,9 @@ pub(crate) mod tests {
 
     #[test]
     fn selected_fishing_target_uses_npc_type_index_and_live_tile() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog
             .method("fishing.saltfish.op1")
@@ -3836,6 +3881,9 @@ pub(crate) mod tests {
 
     #[test]
     fn bank_return_stand_observes_real_harpoon_placements_for_all_area_modes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::area::AreaMode;
 
         let catalog = real_catalog();
@@ -3933,6 +3981,9 @@ pub(crate) mod tests {
 
     #[test]
     fn catherby_edgeville_return_skips_the_all_water_harpoon_stand() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::area::AreaMode;
 
         let catalog = real_catalog();
@@ -4033,6 +4084,9 @@ pub(crate) mod tests {
 
     #[test]
     fn draynor_bank_return_stand_is_at_the_saltfish_spots_not_the_booth() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::area::AreaMode;
 
         let catalog = real_catalog();
@@ -4237,6 +4291,9 @@ pub(crate) mod tests {
 
     #[test]
     fn loc_bank_return_uses_the_resource_origin_not_an_observation_clamp() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("woodcutting.willow").unwrap();
         let index = method_index(&catalog, method);
@@ -4300,6 +4357,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_bank_return_approaches_unobserved_spots_before_reacquiring_the_actor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let index = method_index(&catalog, method);
@@ -4387,6 +4447,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_empty_arrival_decides_and_moved_east_edge_is_reacquired() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let index = method_index(&catalog, method);
@@ -4492,6 +4555,9 @@ pub(crate) mod tests {
 
     #[test]
     fn catherby_moved_spot_is_surveyed_while_old_tile_is_avoided() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.saltfish.op1").unwrap();
         let index = method_index(&catalog, method);
@@ -4587,6 +4653,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_wide_freshfish_envelope_is_fully_observed_then_absent() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.freshfish.op1").unwrap();
         let index = method_index(&catalog, method);
@@ -4657,6 +4726,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_reapproach_is_capped_even_without_view_or_arrival_progress() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let index = method_index(&catalog, method);
@@ -4724,6 +4796,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_content_envelopes_have_radius_one_safe_stands() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         for id in [310, 317, 320, 325, 1191] {
             let mut checked = 0;
@@ -4930,6 +5005,9 @@ pub(crate) mod tests {
 
     #[test]
     fn fishing_approach_fails_when_observation_rectangle_has_no_arrival() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog
             .method("fishing.saltfish.op3")
@@ -5347,6 +5425,9 @@ pub(crate) mod tests {
 
     #[test]
     fn a_live_lower_tier_beats_an_unloaded_higher_tier_and_tier_falls_back() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let low = catalog.method("woodcutting.normal").expect("normal trees");
         let high = catalog.method("woodcutting.oak").expect("oak trees");
@@ -5464,6 +5545,9 @@ pub(crate) mod tests {
 
     #[test]
     fn depleted_placements_wait_for_the_content_respawn_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("woodcutting.oak").expect("oak method");
         let method_index = method_index(&catalog, method);
@@ -5527,6 +5611,9 @@ pub(crate) mod tests {
 
     #[test]
     fn target_yield_contains_content_derived_incidental_mining_gems() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("mining.coal").expect("coal method");
         let index = method_index(&catalog, method);
@@ -5557,6 +5644,9 @@ pub(crate) mod tests {
 
     #[test]
     fn draynor_small_net_return_waits_out_a_shared_placement_exclusion() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::area::AreaMode;
 
         let catalog = real_catalog();
@@ -5698,6 +5788,9 @@ pub(crate) mod tests {
 
     #[test]
     fn generated_fishing_movement_candidates_fit_the_reviewed_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for revision in [
             client::io::ClientRevision::R274,
             client::io::ClientRevision::R289,

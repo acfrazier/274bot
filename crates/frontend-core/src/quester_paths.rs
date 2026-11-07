@@ -672,6 +672,9 @@ mod tests {
 
     #[test]
     fn automatic_folder_reload_waits_for_the_navigation_catalog() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected =
             FamilyPreparation::run(|_| api::game_data::for_revision(ClientRevision::R289).unwrap())
                 .unwrap()
@@ -742,6 +745,9 @@ mod tests {
 
     #[test]
     fn async_reload_retries_temporary_full_and_publishes_edited_folder_files() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _source = super::registry_source_test_lock();
         let store = TempStore::new();
         let folder = store.dir().join("paths");

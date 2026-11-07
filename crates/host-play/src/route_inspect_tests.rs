@@ -2973,6 +2973,9 @@ impl api::interact::Driver for CaptureDriver {
 
 #[test]
 fn native_observation_without_compat_harvests_completed_inspection() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct Observer;
     impl script::native::Script for Observer {
         fn tick(

@@ -1804,6 +1804,9 @@ mod tests {
 
     #[test]
     fn wait_door_does_not_walk_from_scene_entry_evidence() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let door = tile(6, 5);
         let wheel = tile(8, 5);
         let prior = scene(
@@ -1873,6 +1876,9 @@ mod tests {
 
     #[test]
     fn open_door_waits_until_after_scene_entry() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let door = tile(6, 5);
         let prior = scene(
             (3200, 3200),
@@ -1932,6 +1938,9 @@ mod tests {
     }
     #[test]
     fn retry_replanning_failure_keeps_the_walk_receipt_detail() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let player = tile(5, 5);
         let target = tile(7, 5);
         let mut seen = scene((3200, 3200), player, Vec::new());

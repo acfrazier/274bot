@@ -5618,6 +5618,17 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
 
 #[test]
 fn tui_restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let nav_pack_default = nav_planner::world::NavWorld::default_pack_path().to_string_lossy();
+    let Some(nav_pack_path) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        &nav_pack_default,
+        "revision-289 navigation pack",
+    ) else {
+        return;
+    };
     let iso = IsolatedStores::enter("tui-quester-paths-startup");
     let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
 
@@ -5670,9 +5681,12 @@ fn tui_restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
         !app.quester_paths_controller.is_running(),
         "saved folder waits for its actual navigation catalog"
     );
-    let Some(world) = nav_planner::world::NavWorld::load_default_pack_or_skip() else {
-        return;
-    };
+    let world = nav_planner::world::NavWorld::load_pack(&nav_pack_path).unwrap_or_else(|error| {
+        panic!(
+            "could not load selected nav pack at {}: {error}",
+            nav_pack_path.display()
+        )
+    });
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
     session.core.set_play(Some(fixture.play(Tile {
         x: 2778,
@@ -6315,6 +6329,9 @@ fn run_fleet_action(
 
 #[test]
 fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = IsolatedStores::enter("tui-restart-settings-prompt");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -6400,6 +6417,9 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
 
 #[test]
 fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = IsolatedStores::enter("tui-restart-settings-stale-summary");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();

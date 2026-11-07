@@ -1175,6 +1175,9 @@ mod tests {
 
     #[test]
     fn tick_kit_preparation_does_not_decide_method_or_tool_applicability() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         for (skill, method) in [
             ("Woodcutting", "woodcutting.normal"),
@@ -1210,6 +1213,9 @@ mod tests {
 
     #[test]
     fn tick_kit_trips_only_for_unknown_or_usable_bank_stock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("tickMethod".into(), json!("Knife"));
         let prepared = prepare(settings);
@@ -1284,6 +1290,9 @@ mod tests {
 
     #[test]
     fn supply_tool_selection_uses_effective_levels_for_boosts_and_drains() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Mining"));
         let prepared = prepare(settings);
@@ -1308,6 +1317,9 @@ mod tests {
 
     #[test]
     fn partial_supplies_do_not_admit_a_trip_and_loaded_bank_plan_targets_final_counts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
         settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
@@ -1384,6 +1396,9 @@ mod tests {
 
     #[test]
     fn current_and_partial_bank_stock_limits_the_supply_target() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
         settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
@@ -1421,6 +1436,9 @@ mod tests {
 
     #[test]
     fn food_setting_resolves_alias_or_case_insensitive_name() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let (item_id, alias, name) = selected
             .items()
@@ -1457,6 +1475,9 @@ mod tests {
 
     #[test]
     fn missing_gating_supply_keeps_tool_withdrawal_and_does_not_gate_on_empty_coins() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
         settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
@@ -1492,6 +1513,9 @@ mod tests {
 
     #[test]
     fn zero_optional_coin_target_neither_admits_nor_gates() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("coinTarget".into(), json!(0));
         let prepared = prepare(settings);
@@ -1511,6 +1535,9 @@ mod tests {
 
     #[test]
     fn coins_top_up_only_when_an_unrelated_supply_trip_is_already_due() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("coinTarget".into(), json!(500));
         let prepared = prepare(settings);
@@ -1547,6 +1574,9 @@ mod tests {
 
     #[test]
     fn reserve_latches_all_runes_only_below_one_cast_and_protects_the_batch() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let spell = selected
             .teleports()
@@ -1617,6 +1647,9 @@ mod tests {
 
     #[test]
     fn bank_unbankable_aliases_resolve_and_stay_out_of_the_deposit_plan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let mut inventory = Vec::new();
         for (index, alias) in UNBANKABLE_ALIASES.iter().enumerate() {
@@ -1747,6 +1780,9 @@ mod tests {
 
     #[test]
     fn bank_deposit_ids_include_incidental_items_and_protect_current_supplies() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let spell = selected
             .teleports()
@@ -1823,6 +1859,9 @@ mod tests {
 
     #[test]
     fn bank_deposit_keeps_alternate_content_defined_gathering_tools() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let tools = known_rows(&prepared.catalog.methods()[prepared.methods[0]].tools);
         assert!(
@@ -1847,6 +1886,9 @@ mod tests {
     /// oracle, `host-play/tests/gatherer_live.rs` `bank_conservation_tests`).
     #[test]
     fn bank_deposit_keeps_held_antipoison_doses() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let tables = crate::combat::guard::shared_tables().unwrap();
         let mut inventory = vec![item(405, "Casket", 1, ItemContainer::Inventory)];
@@ -1877,6 +1919,9 @@ mod tests {
 
     #[test]
     fn reserve_gate_requires_one_complete_cast_from_combined_stock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let spell = selected
             .teleports()
@@ -1968,6 +2013,9 @@ mod tests {
 
     #[test]
     fn axe_and_pickaxe_handles_are_not_usable_gathering_tools() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (skill, handle_id, handle_name) in [
             ("Woodcutting", 492, "Axe handle"),
             ("Mining", 466, "Pickaxe handle"),
@@ -1999,6 +2047,9 @@ mod tests {
 
     #[test]
     fn best_tool_is_selected_before_wieldability_and_bank_choice_is_best_first() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = prepare(crate::native::SettingsBag::new());
         let mut stats = stats(&prepared);
         let attack = stats.iter_mut().find(|stat| stat.index == 0).unwrap();
@@ -2034,6 +2085,9 @@ mod tests {
 
     #[test]
     fn every_content_defined_fishing_tool_is_inventory_ready_without_wielding() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
         let mut prepared = prepare(settings);
@@ -2175,6 +2229,9 @@ mod tests {
 
     #[test]
     fn session_zero_bait_is_missing_in_place_and_hint_zero_bait_earns_the_trip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = bait_fishing(10);
         let bait = prepared.supply.bait.clone().unwrap();
         let stats = stats(&prepared);
@@ -2205,6 +2262,9 @@ mod tests {
 
     #[test]
     fn an_unknown_bank_trips_to_learn() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = bait_fishing(10);
         let stats = stats(&prepared);
         let rod = [item(
@@ -2236,6 +2296,9 @@ mod tests {
     /// check is a `Session` shortage, decided in place.
     #[test]
     fn three_of_ten_bait_trips_for_three_then_misses_in_place() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = bait_fishing(10);
         let bait = prepared.supply.bait.clone().unwrap();
         let stats = stats(&prepared);
@@ -2275,6 +2338,9 @@ mod tests {
 
     #[test]
     fn the_open_bank_replan_overrides_a_stale_memory_plan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = bait_fishing(10);
         let bait = prepared.supply.bait.clone().unwrap();
         let stats = stats(&prepared);
@@ -2306,6 +2372,9 @@ mod tests {
 
     #[test]
     fn a_tool_only_in_the_memory_is_planned_and_a_session_absent_tool_is_missing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = bait_fishing(1);
         let bait = prepared.supply.bait.clone().unwrap();
         let stats = stats(&prepared);
@@ -2337,6 +2406,9 @@ mod tests {
 
     #[test]
     fn worn_runes_never_pay_a_reserve_cast() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let spell = selected
             .teleports()
@@ -2370,6 +2442,9 @@ mod tests {
     /// tool already did.
     #[test]
     fn a_worn_requirement_item_satisfies_method_ready() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         const AMULET: i32 = 1704;
         let prepared = bait_fishing(10);
         let bait = prepared.supply.bait.clone().unwrap();
@@ -2428,6 +2503,9 @@ mod tests {
     /// a known memory attached, and not when the memory plans a bait trip.
     #[test]
     fn trip_admission_over_a_known_memory_allocates_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let prepared = bait_fishing(10);
         let bait = prepared.supply.bait.clone().unwrap();
         let stats = stats(&prepared);

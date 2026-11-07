@@ -726,6 +726,9 @@ pub(crate) fn policy_s2_recipe_run(child: Box<dyn StepRun>) -> Box<dyn StepRun> 
 
 #[test]
 fn typed_bank_deposit_failure_keeps_user_text_in_acquisition_trace() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct RefusedDeposit;
     impl StepRun for RefusedDeposit {
         fn poll(&mut self, _: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
@@ -763,6 +766,9 @@ fn typed_bank_deposit_failure_keeps_user_text_in_acquisition_trace() {
 /// Quester items 4 and 5).
 #[test]
 fn acquire_recipe_forwards_its_child_transfer_to_survival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::atomic::{AtomicBool, Ordering};
 
     struct Transfer(Arc<AtomicBool>);
@@ -981,6 +987,9 @@ fn quest_walk_step_requires_arrival_and_preserves_refusal_or_user_input() {
 }
 #[test]
 fn quest_walk_step_retries_a_failed_route_and_completes_on_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let target = tile(3200, 3200);
     let start = tile(3190, 3200);
     let next = tile(3191, 3200);
@@ -1088,16 +1097,25 @@ fn assert_retryable_walk_receipt(
 
 #[test]
 fn quest_walk_no_path_receipt_retries() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_retryable_walk_receipt(WalkEnd::NoPath, None);
 }
 
 #[test]
 fn quest_walk_route_ended_receipt_retries() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_retryable_walk_receipt(WalkEnd::RouteEnded, None);
 }
 
 #[test]
 fn quest_walk_stalled_receipt_retries() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_retryable_walk_receipt(
         WalkEnd::Stalled(Arc::new(crate::native::WalkStall {
             at: tile(3190, 3200),
@@ -1111,6 +1129,9 @@ fn quest_walk_stalled_receipt_retries() {
 
 #[test]
 fn quest_walk_failed_receipt_retries_when_blocked_zone_list_is_empty() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let empty_zones: Arc<[nav_planner::contract::ZoneKey]> =
         Vec::<nav_planner::contract::ZoneKey>::new().into();
     assert_retryable_walk_receipt(WalkEnd::Failed, Some(empty_zones));
@@ -1118,6 +1139,9 @@ fn quest_walk_failed_receipt_retries_when_blocked_zone_list_is_empty() {
 
 #[test]
 fn quest_walk_risk_refusals_stop_without_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_terminal_walk_receipt(
         WalkEnd::Refused,
         Some("route refused by risk assessment"),
@@ -1136,6 +1160,9 @@ fn quest_walk_risk_refusals_stop_without_retry() {
 
 #[test]
 fn quest_walk_blocked_danger_zones_stop_without_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_terminal_walk_receipt(
         WalkEnd::NoPath,
         Some("route requires a blocked danger zone"),
@@ -1147,6 +1174,9 @@ fn quest_walk_blocked_danger_zones_stop_without_retry() {
 
 #[test]
 fn quest_walk_entrance_requirement_stops_without_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_terminal_walk_receipt(
         WalkEnd::Blocked,
         Some("entrance requires a missing item"),
@@ -1158,6 +1188,9 @@ fn quest_walk_entrance_requirement_stops_without_retry() {
 
 #[test]
 fn quest_walk_aborted_receipt_stops_without_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_terminal_walk_receipt(
         WalkEnd::Aborted,
         Some("walk was aborted"),
@@ -1169,6 +1202,9 @@ fn quest_walk_aborted_receipt_stops_without_retry() {
 
 #[test]
 fn quest_walk_user_input_and_cancelled_stop_without_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let failures = [
         (WalkEnd::UserInput, ActionError::UserInput),
         (WalkEnd::Cancelled, ActionError::Cancelled),
@@ -1198,6 +1234,9 @@ fn quest_walk_user_input_and_cancelled_stop_without_retry() {
 
 #[test]
 fn quest_walk_missing_quest_evidence_waits_one_observed_tick_without_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
         FactKey::new("walk-gate"),
     )]);
@@ -1238,6 +1277,9 @@ fn quest_walk_missing_quest_evidence_waits_one_observed_tick_without_retry() {
 
 #[test]
 fn quest_walk_retry_begin_defers_when_the_tick_budget_is_exhausted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let plan = walk_retry_plan(tile(3200, 3200));
     let snapshot = ready();
     let mut ledger = None;
@@ -1292,6 +1334,9 @@ fn quest_walk_retry_begin_defers_when_the_tick_budget_is_exhausted() {
 
 #[test]
 fn quest_walk_step_blocks_after_three_failures_with_the_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let target = tile(3200, 3200);
     let plan = walk_retry_plan(target);
     let snapshot = ready();
@@ -1333,6 +1378,9 @@ fn quest_walk_step_blocks_after_three_failures_with_the_last_detail() {
 
 #[test]
 fn prereq_walk_ordinary_failures_keep_bounded_retries_and_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(3190, 3200)));
     let mut ledger = None;
@@ -1415,6 +1463,9 @@ fn prereq_walk_ordinary_failures_keep_bounded_retries_and_last_detail() {
 
 #[test]
 fn quest_walk_step_retry_budget_resets_for_a_new_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let first_target = tile(3200, 3200);
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(3190, 3200)));
@@ -1551,6 +1602,9 @@ fn emitted(ledger: &Option<Box<ledger::Ledger>>) -> &InteractReq {
 }
 #[test]
 fn reach_takes_the_observed_stack_not_the_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     s.seed_ground_items(vec![ground()]);
     let mut ledger = None;
@@ -1572,6 +1626,9 @@ fn reach_takes_the_observed_stack_not_the_anchor() {
 
 #[test]
 fn reach_held_transports_exact_item_identity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_inventory(
         vec![ItemView {
@@ -1612,6 +1669,9 @@ fn reach_held_transports_exact_item_identity() {
 }
 #[test]
 fn missing_drop_waits_without_clicking_then_takes_a_spawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     let mut ledger = None;
     let handle = with_tick(&s, &mut ledger, 1, |t| {
@@ -1634,6 +1694,9 @@ fn missing_drop_waits_without_clicking_then_takes_a_spawn() {
 }
 #[test]
 fn unready_ground_is_not_evidence_of_a_take() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = GameSnapshot::new();
     let mut ledger = None;
     let handle = with_tick(&s, &mut ledger, 1, |t| {
@@ -1648,6 +1711,9 @@ fn unready_ground_is_not_evidence_of_a_take() {
 }
 #[test]
 fn reach_picks_the_observed_loc_not_the_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     s.seed_locs(vec![loc(1551, "Wheat", "Pick")]);
     let mut ledger = None;
@@ -1676,6 +1742,9 @@ fn reach_picks_the_observed_loc_not_the_anchor() {
 
 #[test]
 fn reach_walks_through_an_open_door_instead_of_closing_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     s.seed_local_player(api::snapshot::LocalPlayerView {
         player: api::snapshot::PlayerView {
@@ -1762,6 +1831,9 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
 
 #[test]
 fn same_tick_reach_seek_retries_new_target_on_next_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut initial = ready();
     initial.seed_ground_items(Vec::new());
     let mut later = ready();
@@ -1789,6 +1861,9 @@ fn same_tick_reach_seek_retries_new_target_on_next_tick() {
 
 #[test]
 fn same_tick_cant_reach_retarget_preserves_avoid_and_attempt_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut initial = ready();
     let first = ground();
     let mut second = first.clone();
@@ -1832,6 +1907,9 @@ fn same_tick_cant_reach_retarget_preserves_avoid_and_attempt_budget() {
 
 #[test]
 fn reach_cant_reach_retarget_waits_for_scene_entry_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut initial = ready();
     initial.seed_local_player(local_player(tile(3227, 3300)));
     initial.seed_world(api::snapshot::WorldStateView {
@@ -1907,6 +1985,9 @@ fn reach_cant_reach_retarget_waits_for_scene_entry_tick() {
 
 #[test]
 fn reach_seek_waits_for_scene_entry_before_selecting_new_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut initial = ready();
     initial.seed_local_player(local_player(tile(3227, 3300)));
     initial.seed_world(api::snapshot::WorldStateView {
@@ -1963,6 +2044,9 @@ fn reach_seek_waits_for_scene_entry_before_selecting_new_target() {
 
 #[test]
 fn same_tick_cant_reach_door_open_waits_for_next_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut initial = ready();
     initial.seed_local_player(local_player(tile(5, 5)));
     let mut wheel = loc(2644, "Spinning wheel", "Spin");
@@ -2034,6 +2118,9 @@ fn same_tick_cant_reach_door_open_waits_for_next_tick() {
 }
 #[test]
 fn west_straight_wall_door_opens_from_engine_reachable_side_without_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     let mut player = local_player(tile(5, 5));
     player.player.actor.tile = tile(4, 5);
@@ -2102,6 +2189,9 @@ fn west_straight_wall_door_opens_from_engine_reachable_side_without_walk() {
 /// fallback walks then instead of waiting out `DOOR_WAIT_MS` (still the bound).
 #[test]
 fn door_fallback_walks_on_the_tick_the_opened_door_is_observed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     s.seed_local_player(local_player(tile(5, 5)));
     let mut wheel = loc(2644, "Spinning wheel", "Spin");
@@ -2167,6 +2257,9 @@ fn door_fallback_walks_on_the_tick_the_opened_door_is_observed() {
 
 #[test]
 fn door_recovery_opens_after_network_arrival_while_render_trails() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for rendered_x in [5, 4, 0] {
         let mut s = ready();
         let mut player = local_player(tile(5, 5));
@@ -2232,6 +2325,9 @@ fn door_recovery_opens_after_network_arrival_while_render_trails() {
 
 #[test]
 fn talk_and_interact_near_checks_use_network_position() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     let target = tile(5, 5);
     let mut player = local_player(target);
@@ -2298,6 +2394,9 @@ fn talk_and_interact_near_checks_use_network_position() {
 
 #[test]
 fn non_straight_wall_door_route_end_before_arrival_does_not_open_the_door() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     s.seed_local_player(local_player(tile(5, 5)));
     let mut wheel = loc(2644, "Spinning wheel", "Spin");
@@ -2393,6 +2492,9 @@ fn non_straight_wall_door_route_end_before_arrival_does_not_open_the_door() {
 
 #[test]
 fn reach_wait_walk_preserves_typed_needs_evidence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     s.seed_local_player(local_player(tile(5, 5)));
     let mut wheel = loc(2644, "Spinning wheel", "Spin");
@@ -2481,6 +2583,9 @@ fn reach_wait_walk_preserves_typed_needs_evidence() {
 
 #[test]
 fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     let mut wheel = loc(2644, "Spinning wheel", "Spin");
     wheel.tile = tile(3081, 3430);
@@ -2524,6 +2629,9 @@ fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
 
 #[test]
 fn vanished_clicked_loc_rejected_dispatch_fails_without_retargeting_a_replacement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for kind in [
         reach::ReachKind::Loc {
             id: Some(1551),
@@ -2557,6 +2665,9 @@ fn vanished_clicked_loc_rejected_dispatch_fails_without_retargeting_a_replacemen
 
 #[test]
 fn vanished_clicked_loc_with_accepted_dispatch_does_not_retarget_replacements() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for kind in [
         reach::ReachKind::Loc {
             id: Some(1551),
@@ -2617,6 +2728,9 @@ fn vanished_clicked_loc_with_accepted_dispatch_does_not_retarget_replacements() 
 
 #[test]
 fn vanished_clicked_loc_with_rejected_dispatch_fails_without_retargeting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for kind in [
         reach::ReachKind::Loc {
             id: Some(1551),
@@ -2758,6 +2872,9 @@ fn bank_pick_for_plan(
 
 #[test]
 fn bank_without_candidates_fails_before_walk_or_open() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let plan = s2::compile_bank(
             test_args::<s2::BankArgs>(serde_json::json!({"op": "scan"})),
@@ -2787,6 +2904,9 @@ fn bank_without_candidates_fails_before_walk_or_open() {
 
 #[test]
 fn native_bank_without_explicit_selection_opens_the_context_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let plan = s2::compile_bank(
             test_args::<s2::BankArgs>(serde_json::json!({"op": "scan"})),
@@ -2867,6 +2987,9 @@ fn native_bank_without_explicit_selection_opens_the_context_bank() {
 
 #[test]
 fn authored_draynor_varrock_and_unmatched_tiles_select_nearest_without_explicit_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|base| {
         let draynor = tile(3092, 3242);
         let varrock_west = tile(3185, 3438);
@@ -2895,6 +3018,9 @@ fn authored_draynor_varrock_and_unmatched_tiles_select_nearest_without_explicit_
 
 #[test]
 fn required_draynor_bank_is_explicit_and_unmatched_required_bank_refuses() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|base| {
         let draynor = tile(3092, 3242);
         let banks = Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
@@ -2933,6 +3059,9 @@ fn required_draynor_bank_is_explicit_and_unmatched_required_bank_refuses() {
 
 #[test]
 fn bank_walk_manual_takeover_parks_without_opening_or_rewalking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|base| {
         let bank_tile = tile(3200, 3200);
         let bank = api::named_banks::NamedBank::new("Path bank", bank_tile);
@@ -2999,6 +3128,9 @@ fn bank_walk_manual_takeover_parks_without_opening_or_rewalking() {
 
 #[test]
 fn interact_false_is_failure_not_success() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let s = ready();
     let mut ledger = None;
     let handle = with_tick(&s, &mut ledger, 1, |t| {
@@ -3049,6 +3181,9 @@ fn interact_false_is_failure_not_success() {
 }
 #[test]
 fn interact_spawn_wait_is_bounded_independently_of_the_click_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let s = ready();
     let mut ledger = None;
     let plan = InteractPlan {
@@ -3080,6 +3215,9 @@ fn interact_spawn_wait_is_bounded_independently_of_the_click_deadline() {
 
 #[test]
 fn missing_spawn_recovers_when_the_observed_stack_respawns() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     s.seed_local_player(local_player(tile(3229, 3302)));
     let mut ledger = None;
@@ -3130,6 +3268,9 @@ fn missing_spawn_recovers_when_the_observed_stack_respawns() {
 }
 #[test]
 fn use_on_item_target_emits_inventory_kind() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let source_id = resolve_obj(cx, "shears").unwrap();
         let target_id = resolve_obj(cx, "wool").unwrap();
@@ -3182,6 +3323,9 @@ fn use_on_item_target_emits_inventory_kind() {
 
 #[test]
 fn anchored_use_on_inventory_target_walks_from_network_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let source_id = resolve_obj(cx, "shears").unwrap();
         let target_id = resolve_obj(cx, "wool").unwrap();
@@ -3237,6 +3381,9 @@ fn anchored_use_on_inventory_target_walks_from_network_tile() {
 /// path onto the anchor tile.
 #[test]
 fn anchored_use_on_item_target_walks_the_anchor_area() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let source_id = resolve_obj(cx, "shears").unwrap();
         let target_id = resolve_obj(cx, "wool").unwrap();
@@ -3292,6 +3439,9 @@ fn anchored_use_on_item_target_walks_the_anchor_area() {
 
 #[test]
 fn same_tick_use_on_admission_waits_after_a_completed_interaction() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let source_id = resolve_obj(compile, "shears").unwrap();
         let target_id = resolve_obj(compile, "wool").unwrap();
@@ -3350,6 +3500,9 @@ fn same_tick_use_on_admission_waits_after_a_completed_interaction() {
 
 #[test]
 fn same_tick_composed_approaches_defer_before_native_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let anchor =
             serde_json::json!({"tile": [3220, 3200, 0], "source": "native admission fixture"});
@@ -3437,6 +3590,9 @@ fn same_tick_composed_approaches_defer_before_native_dispatch() {
 
 #[test]
 fn same_tick_make_trigger_retries_the_same_location_next_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let selected = compile.selected.loc_by_config("spinningwheel").unwrap();
         let mut snapshot = ready();
@@ -3477,6 +3633,9 @@ fn same_tick_make_trigger_retries_the_same_location_next_tick() {
 }
 #[test]
 fn make_walks_to_far_anchor_when_the_loc_is_not_observed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let anchor = tile(2982, 3315);
         let plan = s2::compile_make(
@@ -3519,6 +3678,9 @@ fn make_walks_to_far_anchor_when_the_loc_is_not_observed() {
 
 #[test]
 fn buy_and_make_approach_from_the_network_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let anchor = serde_json::json!({
             "tile": [3200, 3200, 0],
@@ -3573,6 +3735,9 @@ fn buy_and_make_approach_from_the_network_tile() {
 
 #[test]
 fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::empty();
     let path = FactKey::new("synthetic");
@@ -3626,6 +3791,9 @@ fn use_on_waits_for_visibility_and_uses_resolved_inventory_identity() {
 
 #[test]
 fn use_on_product_continues_post_use_modal_before_settling() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         for (product_goal, chat_root) in [(true, 2100), (false, 2100), (true, -1), (false, -1)] {
             let source_id = resolve_obj(cx, "doogleleaves").unwrap();
@@ -3744,6 +3912,9 @@ fn use_on_product_continues_post_use_modal_before_settling() {
 
 #[test]
 fn use_on_explicit_none_leaves_visible_pages_to_the_next_owner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         for goal in ["until", "product", "none"] {
             for root in [2100, -1] {
@@ -3893,6 +4064,9 @@ fn use_on_footprint_fixture(
 
 #[test]
 fn use_on_loc_walks_to_rotated_footprint_before_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let origin = tile(3167, 3308);
         for offset in [-1, -3, 3] {
@@ -3971,6 +4145,9 @@ fn use_on_loc_walks_to_rotated_footprint_before_dispatch() {
 
 #[test]
 fn use_on_loc_ready_dispatch_keeps_exact_id_among_same_name_decoys() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let stand = tile(3170, 3308);
         let (mut snapshot, target, scene) = use_on_footprint_fixture(cx, stand);
@@ -4007,6 +4184,9 @@ fn use_on_loc_ready_dispatch_keeps_exact_id_among_same_name_decoys() {
 
 #[test]
 fn use_on_loc_unknown_scene_cannot_prove_readiness() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let (mut snapshot, target, mut scene) = use_on_footprint_fixture(cx, tile(3170, 3308));
         scene.available = false;
@@ -4036,6 +4216,9 @@ fn use_on_loc_unknown_scene_cannot_prove_readiness() {
 
 #[test]
 fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::snapshot::ChatLineView;
     let line = |sequence| ChatLineView {
         sequence,
@@ -4078,6 +4261,9 @@ fn acquire_waits_for_its_inner_settle_using_the_recipe_step_chat_mark() {
 
 #[test]
 fn policy_s2_acquire_cleans_completed_child_debt_before_advancing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct CompletedChild(RaisedPrayers);
     impl StepRun for CompletedChild {
         fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
@@ -4165,6 +4351,9 @@ fn policy_s2_acquire_cleans_completed_child_debt_before_advancing() {
 
 #[test]
 fn a_disappearing_stack_is_not_success_until_held_count_grows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     s.seed_ground_items(vec![ground()]);
     let mut ledger = None;
@@ -4210,6 +4399,9 @@ fn flour_acquire_plan() -> Arc<dyn StepPlan> {
 
 #[test]
 fn flour_acquire_resumes_at_the_bin_after_observed_grinding() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let line = |sequence, text: &str| ChatLineView {
         sequence,
         text: text.into(),
@@ -4357,6 +4549,9 @@ fn compile_context_test_with_keep<R>(
 
 #[test]
 fn unequip_all_keeps_shared_protected_equipment() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let protected_id = 7;
     let plan = compile_context_test_with_keep(&[protected_id], |cx| {
         super::s2::compile_unequip(
@@ -4396,6 +4591,9 @@ fn unequip_all_keeps_shared_protected_equipment() {
 
 #[test]
 fn npc_near_uses_observed_tiles_and_preserves_unknown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let id = resolve_npc(cx, "sir_vyvin").unwrap();
         let plan = compile_npc_near(
@@ -4504,6 +4702,9 @@ fn npc_near_uses_observed_tiles_and_preserves_unknown() {
 
 #[test]
 fn spatial_predicates_use_the_network_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let network = WorldTile {
             x: 2984,
@@ -4581,6 +4782,9 @@ fn spatial_predicates_use_the_network_tile() {
 
 #[test]
 fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let row = cx.selected.npc_by_config("king_bolren").unwrap();
         let mut s = ready();
@@ -4661,6 +4865,9 @@ fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
 
 #[test]
 fn dialogue_approaches_a_distant_npc_before_talking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let row = cx.selected.npc_by_config("king_bolren").unwrap();
         let npc = |distance| api::snapshot::NpcView {
@@ -4742,6 +4949,9 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
 }
 #[test]
 fn talk_anchor_approach_uses_area_arrival_within_the_leash() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let anchor = tile(2542, 3170);
         let plan = compile_talk(
@@ -4781,6 +4991,9 @@ fn talk_anchor_approach_uses_area_arrival_within_the_leash() {
 
 #[test]
 fn use_on_chases_a_distant_npc_without_returning_to_the_initial_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let row = cx.selected.npc_by_config("sheepunsheered").unwrap();
         let npc = |distance| api::snapshot::NpcView {
@@ -4880,6 +5093,9 @@ fn use_on_chases_a_distant_npc_without_returning_to_the_initial_anchor() {
 
 #[test]
 fn use_on_reports_fresh_server_escape_without_waiting_for_product_timeout() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::snapshot::ChatLineView;
 
     for reply_in_ack_frame in [false, true] {
@@ -5010,6 +5226,9 @@ fn use_on_reports_fresh_server_escape_without_waiting_for_product_timeout() {
 
 #[test]
 fn use_on_zero_wool_survives_interleaved_escape_rounds_without_step_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let shears = ItemView {
             def: def(resolve_obj(cx, "shears").unwrap(), "Shears"),
@@ -5115,6 +5334,9 @@ fn use_on_zero_wool_survives_interleaved_escape_rounds_without_step_failure() {
 
 #[test]
 fn use_on_until_retries_a_silent_round_without_waiting_for_step_timeout() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let shears = ItemView {
             def: def(resolve_obj(cx, "shears").unwrap(), "Shears"),
@@ -5192,6 +5414,9 @@ fn use_on_until_retries_a_silent_round_without_waiting_for_step_timeout() {
 
 #[test]
 fn use_on_until_continues_objbox_before_the_next_attempt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let shears = ItemView {
             def: def(resolve_obj(cx, "shears").unwrap(), "Shears"),
@@ -5243,6 +5468,9 @@ fn use_on_until_continues_objbox_before_the_next_attempt() {
 
 #[test]
 fn use_on_negative_feedback_is_authored_and_not_a_sheep_special_case() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let mut snapshot = ready();
         snapshot.seed_inventory(
@@ -5391,6 +5619,9 @@ fn wool_menu_client() -> client::client::Client {
 
 #[test]
 fn make_selects_the_input_menu_row_and_settles_on_the_output() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native_production::{MakeMachine, MakeRequest};
     use client::io::ServerProt;
     let mut client = wool_menu_client();
@@ -5536,6 +5767,9 @@ fn with_sheep_step<R>(
 
 #[test]
 fn sheep_partial_hand_in_use_on_stops_at_only_the_missing_raw_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let mut document: crate::quester::path::PathDocument =
             serde_json::from_str(crate::quester::compile::SHEEP_JSON).unwrap();
@@ -5626,6 +5860,9 @@ fn sheep_partial_hand_in_use_on_stops_at_only_the_missing_raw_count() {
 
 #[test]
 fn sheep_product_progress_selects_shear_spin_then_hand_in() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let document = serde_json::from_str(crate::quester::compile::SHEEP_JSON).unwrap();
         let path =
@@ -5685,6 +5922,9 @@ fn sheep_product_progress_selects_shear_spin_then_hand_in() {
 
 #[test]
 fn wait_observes_until_and_expires_at_the_authored_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let args = serde_json::json!({"until":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"egg"}}},"max_ticks":3});
         let plan = compile_wait(test_args::<WaitArgs>(args), cx).unwrap();
@@ -5734,6 +5974,9 @@ fn wait_observes_until_and_expires_at_the_authored_bound() {
 
 #[test]
 fn wait_message_until_requires_an_event_after_begin() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let plan = compile_wait(test_args::<WaitArgs>(serde_json::json!({"until":{"Fact":{"kind":"message","version":1,"args":{"any":["ready"]}}},"max_ticks":4})),cx).unwrap();
         let mut s = ready();
@@ -5763,6 +6006,9 @@ fn wait_message_until_requires_an_event_after_begin() {
 
 #[test]
 fn public_chat_cannot_settle_or_set_message_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let message = compile_message(
             test_args::<MessageArg>(serde_json::json!({"any":["grain in the hopper"]})),
@@ -5804,6 +6050,9 @@ fn public_chat_cannot_settle_or_set_message_state() {
 
 #[test]
 fn preloaded_hopper_with_spare_grain_operates_instead_of_refilling() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     s.seed_inventory(
         vec![
@@ -5874,6 +6123,9 @@ fn preloaded_hopper_with_spare_grain_operates_instead_of_refilling() {
 
 #[test]
 fn loaded_hopper_without_spare_grain_reoperates_without_harvesting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut s = ready();
     s.seed_inventory(
         vec![ItemView {
@@ -5940,6 +6192,9 @@ fn loaded_hopper_without_spare_grain_reoperates_without_harvesting() {
 
 #[test]
 fn real_empty_hopper_message_clears_the_loaded_hint() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let document = crate::quester::compile::decode_cook().unwrap();
         let hopper = &document.quest.as_ref().unwrap().acquire["acquire:flour"][3];
@@ -5979,6 +6234,9 @@ fn real_empty_hopper_message_clears_the_loaded_hint() {
 
 #[test]
 fn progress_predicates_require_known_same_run_evidence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let stage = compile_predicate(
             &PredicateDocument::Fact {
@@ -6049,6 +6307,9 @@ fn progress_predicates_require_known_same_run_evidence() {
 
 #[test]
 fn progress_predicates_validate_references_and_count_requirements() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let fact = |kind: &str, args: serde_json::Value| PredicateDocument::Fact {
             kind: kind.into(),
@@ -6143,6 +6404,9 @@ fn progress_predicates_validate_references_and_count_requirements() {
 
 #[test]
 fn progress_predicates_cover_negation_counts_and_unknown_stage() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let fact = |args| PredicateDocument::Fact {
             kind: "flag".into(),
@@ -6231,6 +6495,9 @@ fn progress_predicates_cover_negation_counts_and_unknown_stage() {
 
 #[test]
 fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::dialogue::Dialogue;
     let mut snapshot = ready();
     snapshot.seed_chat_modal(4882, vec![]);
@@ -6285,6 +6552,9 @@ fn dialogue_end_requires_game_tick_quiet_not_elapsed_host_time() {
 
 #[test]
 fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::dialogue::Dialogue;
     let mut snapshot = ready();
     snapshot.seed_chat_modal(4893, vec!["Give 'em here then.".into()]);
@@ -6367,6 +6637,9 @@ fn dialogue_closed_bulk_handover_waits_for_inventory_quiet_and_final_page() {
 
 #[test]
 fn dialogue_unrelated_inventory_churn_cannot_extend_closed_gap_forever() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::dialogue::Dialogue;
     let mut snapshot = ready();
     let item = ItemView {
@@ -6595,6 +6868,9 @@ pub(crate) fn seed_dialogue_attack_mark(snapshot: &mut GameSnapshot, mark: Dialo
 
 #[test]
 fn dialogue_self_damage_without_an_attacker_completes_after_the_close_gap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::dialogue::Dialogue;
 
     let mut snapshot = ready();
@@ -6644,6 +6920,9 @@ fn dialogue_self_damage_without_an_attacker_completes_after_the_close_gap() {
 
 #[test]
 fn dialogue_close_with_a_visible_attacker_interrupts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::dialogue::Dialogue;
     use crate::native::ActionError;
 
@@ -6687,6 +6966,9 @@ fn dialogue_close_with_a_visible_attacker_interrupts() {
 
 #[test]
 fn dialogue_hostile_close_never_reports_success() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::dialogue::Dialogue;
     let mut snapshot = ready();
     snapshot.seed_chat_modal(4882, vec![]);
@@ -6733,6 +7015,9 @@ fn dialogue_hostile_close_never_reports_success() {
 
 #[test]
 fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use super::dialogue::Dialogue;
     use crate::native::ActionError;
     for continue_component in [None, Some(4883), Some(-1)] {
@@ -6789,6 +7074,9 @@ fn dialogue_combat_interruption_covers_open_and_page_acknowledgements() {
 
 #[test]
 fn dialogue_continues_fred_pages_reusing_the_same_root() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_reused_dialogue_page_is_acknowledged(
         "Fred the Farmer",
         4893,
@@ -6800,6 +7088,9 @@ fn dialogue_continues_fred_pages_reusing_the_same_root() {
 
 #[test]
 fn dialogue_continues_sedridor_pages_reusing_the_same_root() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_reused_dialogue_page_is_acknowledged(
         "Sedridor",
         4887,
@@ -6866,6 +7157,9 @@ fn assert_reused_dialogue_page_is_acknowledged(
 
 #[test]
 fn dialogue_open_clock_starts_after_approaching_the_npc() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_chat_modal(-1, vec![]);
     let npc = api::snapshot::NpcView {
@@ -7016,6 +7310,9 @@ fn fred_args() -> dialogue::DialogueArgs {
 /// pending, and the page can still arrive in tick 36 or 37.
 #[test]
 fn dialogue_adjacent_click_first_frame_of_the_page_tick_is_not_a_timeout() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_npcs(vec![fred_npc(1, tile(3189, 3273))]);
@@ -7068,6 +7365,9 @@ fn dialogue_adjacent_click_first_frame_of_the_page_tick_is_not_a_timeout() {
 /// (33) plus the delay and observation ticks (4), not earlier and not later.
 #[test]
 fn dialogue_adjacent_click_deadline_counts_from_the_engine_read_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_npcs(vec![fred_npc(1, tile(3189, 3273))]);
@@ -7104,6 +7404,9 @@ fn dialogue_adjacent_click_deadline_counts_from_the_engine_read_tick() {
 /// last route failure becomes terminal.
 #[test]
 fn dialogue_door_detour_approach_budget_is_the_routers_route_length() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(5, 5)));
     snapshot.seed_npcs(vec![fred_npc(2, tile(7, 5))]);
@@ -7178,11 +7481,17 @@ fn dialogue_door_detour_approach_budget_is_the_routers_route_length() {
 
 #[test]
 fn sheep_partial_hand_in_spins_only_the_remaining_unheld_balls() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_sheep_partial_spin(true);
 }
 
 #[test]
 fn sheep_spinning_exhausted_inputs_fail_below_the_held_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_sheep_partial_spin(false);
 }
 
@@ -7373,6 +7682,9 @@ fn assert_sheep_partial_spin(finish_target: bool) {
 
 #[test]
 fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let row = cx.selected.npc_by_config("fred_the_farmer").unwrap();
         let npc_tile = tile(3186, 3273);
@@ -7507,6 +7819,9 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
 
 #[test]
 fn walk_protection_warning_is_status_not_a_terminal_or_rewalk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(3100, 3200)));
     let mut ledger = None;
@@ -7580,6 +7895,9 @@ fn walk_protection_warning_is_status_not_a_terminal_or_rewalk() {
 
 #[test]
 fn talk_walk_user_input_blocks_before_dialogue_interaction() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = ready();
     let mut ledger = None;
     let mut run = TalkRun {
@@ -7619,6 +7937,9 @@ fn talk_walk_user_input_blocks_before_dialogue_interaction() {
 
 #[test]
 fn refused_talk_approach_blocks_without_requeueing_the_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for end in [WalkEnd::Failed, WalkEnd::Blocked, WalkEnd::Refused] {
         let mut snapshot = ready();
         snapshot.seed_local_player(local_player(WorldTile {
@@ -7680,6 +8001,9 @@ fn refused_talk_approach_blocks_without_requeueing_the_walk() {
 
 #[test]
 fn talk_pre_dialogue_approach_retries_a_retryable_route_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(3100, 3100)));
     let mut ledger = None;
@@ -7745,6 +8069,9 @@ fn talk_pre_dialogue_approach_retries_a_retryable_route_failure() {
 
 #[test]
 fn use_on_walk_user_input_blocks_before_interaction() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = ready();
     let mut ledger = None;
     let mut run = UseOnRun {
@@ -7856,6 +8183,9 @@ fn path_walk_radius_omitted_is_one_and_explicit_zero_is_the_exact_tile() {
 
 #[test]
 fn path_walk_crossing_and_protection_are_independent() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         for protect in [false, true] {
             let mut args = serde_json::json!({
@@ -7891,6 +8221,9 @@ fn path_walk_crossing_and_protection_are_independent() {
 
 #[test]
 fn talk_expected_combat_only_hands_off_to_the_authored_opponent() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let expected = compile
             .selected
@@ -8011,6 +8344,9 @@ fn talk_expected_combat_only_hands_off_to_the_authored_opponent() {
 
 #[test]
 fn talk_expected_combat_rejects_unknown_npc_config() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let result = compile_talk(
             test_args::<TalkArgs>(
@@ -8077,6 +8413,9 @@ pub(crate) fn loadout_predicate_truth(plan: &dyn PredicatePlan, snapshot: &GameS
 
 #[test]
 fn loadout_waits_for_inventory_observation_before_bank_plan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|base| {
         let row = api::loadout::Loadout::new("cook/carry").with_carry("Lobster", 1);
         let loadouts =
@@ -8161,6 +8500,9 @@ fn loadout_waits_for_inventory_observation_before_bank_plan() {
 
 #[test]
 fn exclusive_loadout_removes_extra_then_equips_held_item_without_banking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_loadout_context(|cx| {
         let args = serde_json::json!({"loadout":"disguise","exclusive":true});
         let plan = s2::compile_loadout(test_args::<s2::LoadoutArgs>(args.clone()), cx).unwrap();
@@ -8229,6 +8571,9 @@ fn exclusive_loadout_removes_extra_then_equips_held_item_without_banking() {
 
 #[test]
 fn exclusive_loadout_resumes_partial_outfit_without_stripping_correct_items() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_loadout_context(|cx| {
         let plan = s2::compile_loadout(
             test_args::<s2::LoadoutArgs>(
@@ -8269,6 +8614,9 @@ fn exclusive_loadout_resumes_partial_outfit_without_stripping_correct_items() {
 
 #[test]
 fn exclusive_loadout_blocks_before_removal_when_inventory_is_full() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_loadout_context(|cx| {
         let plan = s2::compile_loadout(
             test_args::<s2::LoadoutArgs>(
@@ -8305,6 +8653,9 @@ fn exclusive_loadout_blocks_before_removal_when_inventory_is_full() {
 
 #[test]
 fn exclusive_loadout_can_remove_ammo_into_a_held_stack_with_full_inventory() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_loadout_context(|cx| {
         let plan = s2::compile_loadout(
             test_args::<s2::LoadoutArgs>(
@@ -8348,6 +8699,9 @@ fn exclusive_loadout_can_remove_ammo_into_a_held_stack_with_full_inventory() {
 
 #[test]
 fn equipment_only_requires_exact_observed_set_and_preserves_unknown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_loadout_context(|cx| {
         let predicate = compile_predicate(
             &PredicateDocument::Fact {
@@ -8400,6 +8754,9 @@ fn equipment_only_requires_exact_observed_set_and_preserves_unknown() {
 /// would move nothing, false while any other row is held, Unknown unobserved.
 #[test]
 fn pack_only_allows_listed_and_protected_rows_and_preserves_unknown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|base| {
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let protected = [selected.item_by_alias("bronze_axe").unwrap().id];
@@ -8451,6 +8808,9 @@ fn pack_only_allows_listed_and_protected_rows_and_preserves_unknown() {
 /// for anything else.
 #[test]
 fn desertrescue_stow_extras_skips_the_observed_clean_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let document: crate::quester::path::PathDocument =
             serde_json::from_str(crate::quester::compile::DESERT_RESCUE_JSON).unwrap();
@@ -8517,6 +8877,9 @@ fn desertrescue_stow_extras_skips_the_observed_clean_pack() {
 
 #[test]
 fn exclusive_loadout_rejects_strip_and_lower_tier_in_step_and_predicate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_loadout_context(|cx| {
         for conflict in ["strip", "allow_lower_tier"] {
             let mut args = serde_json::json!({"loadout":"disguise","exclusive":true});
@@ -8543,6 +8906,9 @@ fn exclusive_loadout_rejects_strip_and_lower_tier_in_step_and_predicate() {
 
 #[test]
 fn anchored_use_on_loc_reaches_the_loc_from_the_anchor_radius_edge() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let origin = tile(3167, 3308);
         let from = tile(origin.x - 4, origin.z);
@@ -8597,6 +8963,9 @@ fn anchored_use_on_loc_reaches_the_loc_from_the_anchor_radius_edge() {
 
 #[test]
 fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let wall_tile = tile(3167, 3308);
         let network = tile(wall_tile.x + 3, wall_tile.z);
@@ -8761,6 +9130,9 @@ fn anchored_use_on_wall_walk_uses_network_side_then_falls_back_once() {
 
 #[test]
 fn anchored_interact_wall_walk_preserves_no_path_detail_at_deadline_after_one_fallback() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let wall_tile = tile(3167, 3308);
         let network = tile(wall_tile.x + 3, wall_tile.z);
@@ -9021,6 +9393,9 @@ fn latest_retry_walk_target(ledger: &Option<Box<ledger::Ledger>>) -> WorldTile {
 
 #[test]
 fn interact_retries_a_failed_approach_and_dispatches_after_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let plan = approach_retry_interact_plan(cx);
         let mut snapshot = approach_retry_interact_snapshot(cx);
@@ -9080,6 +9455,9 @@ fn interact_retries_a_failed_approach_and_dispatches_after_arrival() {
 
 #[test]
 fn buy_retries_a_failed_approach_and_starts_at_the_shop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let plan = approach_retry_buy_plan(cx);
         let anchor = tile(3200, 3200);
@@ -9138,6 +9516,9 @@ fn buy_retries_a_failed_approach_and_starts_at_the_shop() {
 
 #[test]
 fn approach_retries_park_with_the_last_detail_after_three_attempts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let scenarios = [
             (
@@ -9203,6 +9584,9 @@ fn approach_retries_park_with_the_last_detail_after_three_attempts() {
 
 #[test]
 fn approach_danger_refusals_park_without_a_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let scenarios = [
             (
@@ -9278,6 +9662,9 @@ fn anchored_interact_wall_fixture(
 
 #[test]
 fn anchored_interact_wall_retries_typed_incomplete_route() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let (snapshot, plan, wall_tile) = anchored_interact_wall_fixture(cx);
         let mut ledger = None;
@@ -9348,6 +9735,9 @@ fn anchored_interact_wall_retries_typed_incomplete_route() {
 
 #[test]
 fn incomplete_approach_refusals_require_a_wall_fallback_without_blocked_zones() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let (wall_snapshot, wall_plan, _) = anchored_interact_wall_fixture(cx);
         let blocked: Arc<[nav_planner::contract::ZoneKey]> =
@@ -9397,6 +9787,9 @@ fn incomplete_approach_refusals_require_a_wall_fallback_without_blocked_zones() 
 
 #[test]
 fn incomplete_wall_approach_exhausts_three_attempts_with_the_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let (snapshot, plan, wall_tile) = anchored_interact_wall_fixture(cx);
         let mut ledger = None;
@@ -9466,6 +9859,9 @@ fn incomplete_wall_approach_exhausts_three_attempts_with_the_last_detail() {
 
 #[test]
 fn anchored_use_on_loc_starts_the_settle_window_after_its_initial_stand_approach() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let origin = tile(3167, 3308);
         let (mut snapshot, mut target, _) =
@@ -9535,6 +9931,9 @@ fn anchored_use_on_loc_starts_the_settle_window_after_its_initial_stand_approach
 
 #[test]
 fn anchored_use_on_retries_share_the_first_stand_arrival_settle_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let origin = tile(3167, 3308);
         let (mut snapshot, mut target, _) =
@@ -9635,6 +10034,9 @@ fn anchored_use_on_retries_share_the_first_stand_arrival_settle_window() {
 /// after the stand approach. Without a tile the target is fungible.
 #[test]
 fn exact_target_tile_interact_loc_ignores_nearer_same_id_decoys() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let origin = tile(3167, 3308);
         let (mut snapshot, target, _) = use_on_footprint_fixture(cx, tile(3163, 3308));
@@ -9696,6 +10098,9 @@ fn exact_target_tile_interact_loc_ignores_nearer_same_id_decoys() {
 
 #[test]
 fn members_world_predicate_reads_the_bound_profile_fact_not_the_account_flag() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let fact = PredicateDocument::Fact {
         kind: "members_world".into(),
         version: 1,
@@ -9751,6 +10156,9 @@ fn members_world_predicate_reads_the_bound_profile_fact_not_the_account_flag() {
 
 #[test]
 fn members_world_rejects_arguments() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let document = PredicateDocument::Fact {
         kind: "members_world".into(),
         version: 1,
@@ -9771,6 +10179,9 @@ fn members_world_rejects_arguments() {
 // Exercise the compiled fixture through its host action boundary.
 #[test]
 fn unattackable_fixture_walk_preserves_the_content_target_and_radius() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = api::quest_facts::QuestCatalog::from_identity(data.quest_identity()).unwrap();
     let document: crate::quester::path::PathDocument = serde_json::from_slice(include_bytes!(
@@ -9803,6 +10214,9 @@ fn unattackable_fixture_walk_preserves_the_content_target_and_radius() {
 
 #[test]
 fn unseen_anchored_loc_prewalk_uses_area_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let anchor = tile(2642, 3441);
         let plan = compile_interact(
@@ -9845,6 +10259,9 @@ fn unseen_anchored_loc_prewalk_uses_area_arrival() {
 
 #[test]
 fn unseen_anchored_npc_prewalk_keeps_reach_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let anchor = tile(3209, 3215);
         let plan = compile_interact(
@@ -9887,6 +10304,9 @@ fn unseen_anchored_npc_prewalk_keeps_reach_arrival() {
 /// the door from there.
 #[test]
 fn anchored_interact_wall_door_on_the_east_edge_walks_to_the_doorstep() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|_| {
         let door_tile = tile(2822, 3555);
         let doorstep = tile(2823, 3555);
@@ -9959,6 +10379,9 @@ fn anchored_interact_wall_door_on_the_east_edge_walks_to_the_doorstep() {
 /// north keeps the gate tile, which is on the player's side.
 #[test]
 fn anchored_interact_wall_gate_approaches_from_the_players_side() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|_| {
         let gate_tile = WorldTile {
             x: 3405,
@@ -10028,6 +10451,9 @@ fn anchored_interact_wall_gate_approaches_from_the_players_side() {
 /// (anchor 3407,3489, outside) keeps the door tile, which is outside.
 #[test]
 fn temple_door_exit_prewalks_to_the_inside_stand_and_opens_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|_| {
         let door_tile = tile(3408, 3489);
         let inside = tile(3409, 3489);
@@ -10401,6 +10827,9 @@ fn arrive_slot_walk(
 #[cfg(feature = "test-hooks")]
 #[test]
 fn native_walk_receipt_frees_its_seat_release_before_next_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = mill_descent_slot();
     let ladder = WorldTile {
         x: 3165,
@@ -10424,6 +10853,9 @@ fn native_walk_receipt_frees_its_seat_release_before_next_tick() {
 #[cfg(feature = "test-hooks")]
 #[test]
 fn native_walk_receipt_during_guardian_hold_frees_its_slot_after_resume() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = mill_descent_slot();
     let ladder = WorldTile {
         x: 3165,
@@ -10468,6 +10900,9 @@ fn slot_loc_ops(slot: &mut crate::slot::SlotScript) -> Vec<Option<i32>> {
 /// bin is chosen on the next tick, from its current id.
 #[test]
 fn level_change_arrival_hands_over_to_the_bin_on_the_next_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = mill_descent_slot();
     let ladder = WorldTile {
         x: 3165,
@@ -10492,6 +10927,9 @@ fn level_change_arrival_hands_over_to_the_bin_on_the_next_tick() {
 /// still hands over on its arrival tick.
 #[test]
 fn same_level_arrival_hands_over_to_the_bin_on_its_arrival_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = mill_descent_slot();
     slot_tick(&mut slot, &mill_frame(tile(3173, 3306), 1782), 10);
     let walk = take_slot_walk(&mut slot);
@@ -10538,6 +10976,9 @@ impl crate::native::Script for WalkArrivalScript {
 /// current locs. A walk on one level is read on its arrival tick.
 #[test]
 fn walk_arrival_in_a_new_scene_is_read_on_the_next_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ladder = WorldTile {
         x: 3165,
         z: 3307,

@@ -156,6 +156,9 @@ fn holds_after_one_interaction(script: Box<dyn script::native::Script>) -> bool 
 
 #[test]
 fn an_interaction_without_a_wait_never_holds_auto_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert!(
         !holds_after_one_interaction(Box::new(QueueBankButton)),
         "a raw script interaction that expects no modal takes no hold"
@@ -593,6 +596,9 @@ impl HoldRig {
 
 #[test]
 fn auto_run_hold_waits_for_the_page_and_its_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new();
     let presses = rig.run(&[
         click_frame(1, -1),
@@ -612,6 +618,9 @@ fn auto_run_hold_waits_for_the_page_and_its_close() {
 /// updates, so it lasts until the script sees its page.
 #[test]
 fn auto_run_hold_survives_queued_updates_before_the_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new();
     let presses = rig.run(&[
         click_frame(1, -1),
@@ -635,6 +644,9 @@ fn auto_run_hold_survives_queued_updates_before_the_page() {
 /// cycle's PLAYER_INFO, after three updates without it.
 #[test]
 fn auto_run_hold_survives_a_modal_in_a_later_drain_than_its_player_info() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new();
     let presses = rig.run(&[
         click_frame(1, -1),
@@ -656,6 +668,9 @@ fn auto_run_hold_survives_a_modal_in_a_later_drain_than_its_player_info() {
 /// five-packet drains. They do not release the press.
 #[test]
 fn auto_run_hold_survives_full_five_packet_drains() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new();
     let presses = rig.run(&[
         click_frame(1, -1),
@@ -670,6 +685,9 @@ fn auto_run_hold_survives_full_five_packet_drains() {
 
 #[test]
 fn auto_run_hold_ends_when_the_script_wait_expires() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new();
     let mut frames = vec![click_frame(1, -1)];
     frames.extend(std::iter::repeat_n(
@@ -694,6 +712,9 @@ fn auto_run_hold_ends_when_the_script_wait_expires() {
 
 #[test]
 fn auto_run_hold_ends_when_the_script_is_stopped() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new();
     assert_eq!(
         rig.run(&[click_frame(1, -1), frame(1, -1), frame(1, -1)]),
@@ -713,6 +734,9 @@ fn auto_run_hold_ends_when_the_script_is_stopped() {
 /// A fixed host limit shorter than the wait (the old 25 ticks) fails here.
 #[test]
 fn auto_run_hold_lasts_a_thirty_tick_wait_to_its_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const GAP_TICKS: u64 = 30;
     let mut rig = HoldRig::with_wait(GAP_TICKS, false);
     let mut frames = vec![click_frame(1, -1)];
@@ -734,6 +758,9 @@ fn auto_run_hold_lasts_a_thirty_tick_wait_to_its_deadline() {
 /// `host` `lib_tests.rs` checks the logged record).
 #[test]
 fn auto_run_hold_of_a_hung_owner_ends_after_its_deadline_plus_the_margin() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::with_wait(PAGE_WAIT_TICKS, true);
     let mut frames = vec![click_frame(1, -1)];
     frames.extend(std::iter::repeat_n(
@@ -823,6 +850,9 @@ fn assert_held_until_the_owner_ends_its_wait(rig: &HoldRig, presses: &[u32], res
 /// Converting the bound to wall time when the lease is taken fails here.
 #[test]
 fn auto_run_hold_of_a_paused_page_wait_lasts_to_the_owners_own_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::with_active_wait(ACTIVE_BOUND, false);
     let (frames, resume) = paused_wait_frames(&[click_frame(1, -1), frame(1, -1)], -1);
     let presses = rig.run(&frames);
@@ -834,6 +864,9 @@ fn auto_run_hold_of_a_paused_page_wait_lasts_to_the_owners_own_deadline() {
 /// no modal up, so only its hold keeps the press back.
 #[test]
 fn auto_run_hold_of_a_paused_acknowledgement_wait_lasts_to_the_owners_own_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::with_active_wait(ACTIVE_BOUND, true);
     let (frames, resume) = paused_wait_frames(
         &[

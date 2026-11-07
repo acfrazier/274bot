@@ -306,6 +306,9 @@ fn is_close(effect: &HostEffect) -> bool {
 
 #[test]
 fn authored_empty_actions_open_required_bank_and_leave_it_open() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     let mut ledger = None;
     let mut run = new_run(
@@ -574,6 +577,9 @@ fn assert_original_allow_acquire(run: &AcquireRun, allow: crate::native::PrereqA
 
 #[test]
 fn acquire_reissues_original_bank_pick_after_real_journal_close_and_opens_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     prepare_kitchen_journal();
     let (mut snapshot, bank, banks) = fixture();
     let start = WorldTile {
@@ -806,6 +812,9 @@ fn acquire_reissues_original_bank_pick_after_real_journal_close_and_opens_bank()
 
 #[test]
 fn acquire_no_candidate_keeps_unavailable_terminal_outcome() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, bank, banks) = fixture();
     let mut ledger = None;
     let mut run = new_run(
@@ -834,6 +843,9 @@ fn acquire_no_candidate_keeps_unavailable_terminal_outcome() {
 
 #[test]
 fn quester_bank_access_retries_a_failed_walk_on_the_next_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     let start = WorldTile {
         x: STAND.x + 12,
@@ -933,6 +945,9 @@ fn quester_bank_access_retries_a_failed_walk_on_the_next_tick() {
 
 #[test]
 fn hold_blocks_initial_open_and_does_not_advance_active_open() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     let mut ledger = None;
     let mut run = new_run(
@@ -975,6 +990,9 @@ fn hold_blocks_initial_open_and_does_not_advance_active_open() {
 
 #[test]
 fn authored_partial_withdrawal_transfers_observed_available_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     open_bank(
         &mut snapshot,
@@ -1095,6 +1113,9 @@ fn authored_partial_withdrawal_transfers_observed_available_count() {
 
 #[test]
 fn generated_deposit_precedes_live_replan_and_receipts_exact_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     snapshot.seed_inventory(
         vec![item(
@@ -1218,6 +1239,9 @@ fn generated_deposit_precedes_live_replan_and_receipts_exact_count() {
 
 #[test]
 fn quester_interrupts_acquire_run_at_transfer_boundary() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     snapshot.seed_inventory(
         vec![item(
@@ -1357,6 +1381,9 @@ fn quester_interrupts_acquire_run_at_transfer_boundary() {
 
 #[test]
 fn acquire_run_active_match_unchanged() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     let mut net = item(
         ITEM,
@@ -1455,6 +1482,9 @@ fn acquire_run_active_match_unchanged() {
 
 #[test]
 fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, _bank, banks) = fixture();
     snapshot.seed_inventory(
         vec![item(
@@ -1525,6 +1555,9 @@ fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
 
 #[test]
 fn child_due_reports_need_index_then_resume_replans_from_new_inventory() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, _bank, banks) = fixture();
     snapshot.seed_inventory(
         vec![item(ITEM, "Widget", 1, ItemContainer::Inventory, &["Use"])],
@@ -1597,6 +1630,9 @@ fn child_due_reports_need_index_then_resume_replans_from_new_inventory() {
 
 #[test]
 fn explicit_cancel_revokes_queued_effect_and_is_terminal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, bank, banks) = fixture();
     let mut ledger = None;
     let mut run = new_run(
@@ -1628,6 +1664,9 @@ fn explicit_cancel_revokes_queued_effect_and_is_terminal() {
 
 #[test]
 fn stale_run_key_cancels_and_prevents_later_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, bank, banks) = fixture();
     let mut ledger = None;
     let mut run = new_run(
@@ -1655,6 +1694,9 @@ fn stale_run_key_cancels_and_prevents_later_dispatch() {
 
 #[test]
 fn unchanged_pending_poll_uses_zero_allocations_after_warmup() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, bank, banks) = fixture();
     let mut ledger = None;
     let mut run = new_run(
@@ -1684,6 +1726,9 @@ fn unchanged_pending_poll_uses_zero_allocations_after_warmup() {
 
 #[test]
 fn unchanged_blocked_polls_retain_one_block_without_allocations() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     open_bank(&mut snapshot, Some(Vec::new()), Vec::new());
     let mut ledger = None;
@@ -1729,6 +1774,9 @@ fn unchanged_blocked_polls_retain_one_block_without_allocations() {
 
 #[test]
 fn open_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, bank, banks) = fixture();
     let mut ledger = None;
     let mut run = new_run(
@@ -1779,6 +1827,9 @@ fn open_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
 
 #[test]
 fn close_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     open_bank(&mut snapshot, Some(Vec::new()), Vec::new());
     let mut request = authored_request(Some(bank), false, Vec::new());
@@ -1835,6 +1886,9 @@ fn bank_machine_and_acquire_run_size_of_pinned() {
 
 #[test]
 fn bank_walk_prerequisite_handoff_reissues_once_and_cancel_keeps_run_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, bank, banks) = fixture();
     let data =
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 data");

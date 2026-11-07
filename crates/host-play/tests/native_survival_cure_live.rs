@@ -2353,6 +2353,9 @@ fn assert_common_cure(receipt: &Value, resumed_ticks: u64) {
 #[test]
 #[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let mut cell = fixture(
         Activity::Woodcutting,
@@ -2408,6 +2411,9 @@ fn live_l_cure_when_needed_drains_willow_and_resumes_gatherer() {
 #[test]
 #[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_gatherer_keeps_dose_through_bank_trip_and_resumes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let willow_distance = GATHERER_STAND
         .x
@@ -2524,6 +2530,9 @@ static PATH_SOURCE_LOCK: Mutex<()> = Mutex::new(());
 #[test]
 #[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let _path_source_guard = PATH_SOURCE_LOCK.lock().expect("Quester path source lock");
     let evidence = PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"));
@@ -2601,6 +2610,9 @@ fn live_l_cure_when_needed_quester_mines_copper_and_resumes_gather() {
 #[test]
 #[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_quester_interrupts_bank_provisioning_and_resumes_mining() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let _path_source_guard = PATH_SOURCE_LOCK.lock().expect("Quester path source lock");
     let evidence = PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"));
@@ -2689,6 +2701,9 @@ fn live_l_cure_quester_interrupts_bank_provisioning_and_resumes_mining() {
 #[test]
 #[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_quester_dialogue_updates_policy_on_desert_captain_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let _path_source_guard = PATH_SOURCE_LOCK.lock().expect("Quester path source lock");
     let evidence = PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"));
@@ -4074,6 +4089,9 @@ fn track_cell(
 #[test]
 #[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_never_reports_the_need_and_keeps_gathering() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let (cell, witness) = track_cell(
         "L-CURE-NEVER",
@@ -4105,6 +4123,9 @@ fn live_l_cure_never_reports_the_need_and_keeps_gathering() {
 #[test]
 #[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_park_no_dose_holds_then_drinks_a_given_dose_and_resumes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     // Design-final.md:948: max HP at least 70, HP 60. The account seeds
     // Hitpoints 70 and takes one 10-damage hit of its own before Start.
@@ -4136,6 +4157,9 @@ fn live_l_park_no_dose_holds_then_drinks_a_given_dose_and_resumes() {
 #[test]
 #[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_park_false_release_unparks_at_the_mark_of_five() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let (cell, witness) = track_cell(
         "L-PARK-FALSE-RELEASE",
@@ -4163,6 +4187,9 @@ fn live_l_park_false_release_unparks_at_the_mark_of_five() {
 #[test]
 #[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_park_food_release_eats_through_the_hold_and_unparks_at_the_eighth_mark() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let (cell, witness) = track_cell(
         "L-PARK-FOOD-RELEASE",
@@ -4190,6 +4217,9 @@ fn live_l_park_food_release_eats_through_the_hold_and_unparks_at_the_eighth_mark
 #[test]
 #[ignore = "requires LIVE=1, Engine L debug procedures enabled (debug: true), and isolated HOME"]
 fn live_l_cure_bite_after_drink_waits_for_the_drink_and_the_next_food_clock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     // HP 30 of 30 holds no bite before the poison. The account's own hit of
     // 20 goes out with the poison, so the cure and a bite are due together:
@@ -4517,6 +4547,9 @@ mod oracle_tests {
 
     #[test]
     fn the_round_gatherer_receipt_passes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // `round-merlot/gatherer-20261030T192811Z`, receipt SHA-256
         // c5d0b2006dfdbc62b59dc6cc1527557959a539ec364648a18de0707bcb652023.
         // The Gatherer went from `survival=None` straight to `Drinking:
@@ -4537,6 +4570,9 @@ mod oracle_tests {
 
     #[test]
     fn the_open_latch_needed_edge_still_passes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let report = lethal_report(Decision::Needed);
         assert!(lethal_cure_report(&report));
         let witness = cured_witness(&report, false);
@@ -4545,6 +4581,9 @@ mod oracle_tests {
 
     #[test]
     fn a_run_with_no_need_and_no_drink_fails() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // Poison line seen, then neither a Needed nor a Drinking report, no
         // drink request, no cure line: the shape of an uncured run.
         let mut witness = cured_witness(&lethal_report(Decision::Drinking), true);
@@ -4564,6 +4603,9 @@ mod oracle_tests {
 
     #[test]
     fn a_run_that_drinks_with_no_poison_fails() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // A drink request, a drink line and a settle, with no poison line:
         // `observe_frame` records drink and need ticks only after the line, so
         // this witness is what a drink without poison would have to look like.
@@ -4576,6 +4618,9 @@ mod oracle_tests {
 
     #[test]
     fn a_drink_without_a_lethal_need_report_fails() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut witness = cured_witness(&lethal_report(Decision::Drinking), true);
         witness.need_tick = None;
         assert!(cure_verdict(&witness, 154).is_err());
@@ -4611,6 +4656,9 @@ mod oracle_tests {
 
     #[test]
     fn the_need_edge_conditions_hold_for_each_decision() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // `Needed` is the open latch: a latched line is not that edge.
         let needed_latched = cured_witness(&lethal_report(Decision::Needed), true);
         assert!(check_need(&needed_latched).is_err());
@@ -5050,6 +5098,9 @@ mod oracle_tests {
 
     #[test]
     fn never_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         run_cell(
             never_case,
             never_oracle,
@@ -5165,6 +5216,9 @@ mod oracle_tests {
 
     #[test]
     fn park_no_dose_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         run_cell(
             park_no_dose_case,
             park_no_dose_oracle_of,
@@ -5346,6 +5400,9 @@ mod oracle_tests {
 
     #[test]
     fn park_false_release_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         run_cell(
             park_false_release_case,
             park_false_release_oracle_of,
@@ -5482,6 +5539,9 @@ mod oracle_tests {
 
     #[test]
     fn park_food_release_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         run_cell(
             park_food_release_case,
             park_food_release_oracle_of,
@@ -5611,6 +5671,9 @@ mod oracle_tests {
 
     #[test]
     fn bite_after_drink_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         run_cell(
             bite_after_drink_case,
             bite_after_drink_oracle,
@@ -5806,6 +5869,9 @@ mod oracle_tests {
 
     #[test]
     fn dialogue_oracle_passes_the_receipt_shape_and_fails_each_defining_condition() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = dialogue_case();
         let receipt = dialogue_oracle(&case)
             .expect("the valid fixture passes")
@@ -6038,6 +6104,9 @@ mod oracle_tests {
 
     #[test]
     fn check_need_accepts_a_chest_or_provisioning_needed_report_only_with_a_latched_onset() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // The chest cell seeds its poison before Start, so its first `Needed`
         // report is the latched onset of the line, not the open latch.
         let chest = need_witness(PoisonSource::TwistedChest, false, Decision::Needed, true);
@@ -6108,6 +6177,9 @@ mod oracle_tests {
 
     #[test]
     fn check_need_fails_each_controlled_edge_fact_of_a_chest_report() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let base = || need_witness(PoisonSource::TwistedChest, false, Decision::Needed, true);
         assert_eq!(check_need(&base()), Ok(()));
         type Edit = fn(&mut Witness);

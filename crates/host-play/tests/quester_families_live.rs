@@ -358,6 +358,9 @@ fn family_path(
 
 #[test]
 fn family_path_uses_valid_colour_fallback_instead_of_empty_text_rule() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let compile = |document: &PathDocument| {
         let bytes = serde_json::to_vec(document).unwrap();
@@ -412,6 +415,9 @@ fn family_path_uses_valid_colour_fallback_instead_of_empty_text_rule() {
 
 #[test]
 fn family_fixture_keeps_the_explicit_cook_seed_without_progress_rules() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, _) = live_data();
     let (_, _, commands) = make_cell(
         "family-fixture-seed-regression",
@@ -435,6 +441,9 @@ fn family_fixture_keeps_the_explicit_cook_seed_without_progress_rules() {
 
 #[test]
 fn computed_cog_progress_seeds_the_backing_varp() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, _) = live_data();
     let (_, _, commands) = make_cell(
         "computed-cog-seed-regression",
@@ -886,6 +895,9 @@ fn common_observe_start(
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine A"]
 fn live_quester_families_expected_combat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let captain_id = selected
         .npc_by_config("desertminingcaptain")
@@ -1036,6 +1048,9 @@ fn live_quester_families_expected_combat() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine A"]
 fn live_quester_families_loc_dialogue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let (quest_varp_id, _) = quest_varp(&selected, "priestperil");
     let door_id = selected
@@ -1149,6 +1164,9 @@ fn live_quester_families_loc_dialogue() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine A"]
 fn live_quester_families_held() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let iou_id = item_id(&selected, "death_iou");
     let combination_id = item_id(&selected, "death_combination");
@@ -1260,6 +1278,9 @@ fn live_quester_families_held() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine A"]
 fn live_quester_families_ground_use_on() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let water_id = item_id(&selected, "bucket_water");
     let empty_bucket_id = item_id(&selected, "bucket_empty");
@@ -1401,6 +1422,9 @@ fn live_quester_families_ground_use_on() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine A"]
 fn live_quester_families_main_documents() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let ui = *selected
         .dialogue_ui()
@@ -1535,6 +1559,9 @@ const FILLIMAN_STEP: &str = "answer-filliman-once";
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine L"]
 fn live_dialogue_answer_once_filliman_repeated_menu() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let (quest_varp_id, quest_varp_alias) = quest_varp(&selected, "druidspirit");
     assert_eq!(quest_varp_alias, "druidspirit");
@@ -1837,6 +1864,9 @@ fn until_drop_oracle_accepts_both_bounded_outcomes_and_rejects_other_ends() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running local Engine Q"]
 fn live_quester_families_until_drop_on_entrana() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let zombie_id = selected
         .npc_by_config("zombie_entranan")
@@ -2033,6 +2063,9 @@ fn timed_jailer_cell(
 
 #[test]
 fn timed_jailer_fixture_seeds_owned_food_and_combat_levels() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, _) = live_data();
     let (_, _, commands) = timed_jailer_cell(selected);
     assert!(commands.iter().any(|command| command == "give lobster 20"));
@@ -2052,6 +2085,9 @@ fn timed_jailer_fixture_seeds_owned_food_and_combat_levels() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running local Engine Q"]
 fn live_quester_families_timed_jail_key_take() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let jailer_id = selected
         .npc_by_config("jailer")
@@ -2268,6 +2304,9 @@ fn live_quester_families_timed_jail_key_take() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running local Engine Q"]
 fn live_quester_families_make_from_open_fletching_menu() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let axe_id = item_id(&selected, "bronze_axe");
     let knife_id = item_id(&selected, "knife");
@@ -2454,6 +2493,9 @@ fn live_quester_families_make_from_open_fletching_menu() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running local Engine Q"]
 fn live_quester_families_bronze_bar_on_anvil_makes_wire() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     let bronze_pickaxe_id = item_id(&selected, "bronze_pickaxe");
     let hammer_id = item_id(&selected, "hammer");
@@ -2867,6 +2909,9 @@ fn prerequisite_path(goal: WorldTile, recipe: bool) -> PathDocument {
 
 #[test]
 fn prerequisite_live_paths_compile_with_provenance_and_one_pass_order() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (selected, quests) = live_data();
     for (goal, recipe) in [
         (PREREQ_EAST, true),
@@ -3138,6 +3183,9 @@ mod prereq_failure_oracle_tests {
 
     #[test]
     fn prereq_negative_oracle_ignores_pre_start_chat() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (oracle, mut snapshot, status, _) = fixture_for("quest_start is not allowed", 0);
         snapshot.seed_chat_lines(vec![ChatLineView {
             type_: 0,
@@ -3154,6 +3202,9 @@ mod prereq_failure_oracle_tests {
 
     #[test]
     fn prereq_negative_oracle_still_rejects_fresh_chat() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (oracle, mut snapshot, status, _) = fixture_for("quest_start is not allowed", 0);
         snapshot.seed_chat_lines(vec![ChatLineView {
             type_: 0,
@@ -3169,6 +3220,9 @@ mod prereq_failure_oracle_tests {
 
     #[test]
     fn prereq_negative_oracle_accepts_exact_native_blocked_refusal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (oracle, snapshot, status, pages) = fixture();
         assert!(oracle
             .observe(&snapshot, Some(&status), None, &pages)
@@ -3178,6 +3232,9 @@ mod prereq_failure_oracle_tests {
 
     #[test]
     fn prereq_negative_oracle_rejects_reclaim_effect_without_opener() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (oracle, snapshot, status, _) = fixture();
         assert!(oracle
             .observe(&snapshot, Some(&status), None, &[DAGGER_RECLAIM.into()])
@@ -3186,6 +3243,9 @@ mod prereq_failure_oracle_tests {
 
     #[test]
     fn prereq_negative_oracle_rejects_different_failure() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (oracle, snapshot, mut status, pages) = fixture();
         status.failure.as_mut().unwrap().message =
             format!("{} with a different cause", oracle.messages[0]).into();
@@ -3196,6 +3256,9 @@ mod prereq_failure_oracle_tests {
 
     #[test]
     fn prereq_negative_oracle_rejects_open_modal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for main in [false, true] {
             let (oracle, mut snapshot, status, pages) = fixture();
             if main {
@@ -3211,6 +3274,9 @@ mod prereq_failure_oracle_tests {
 
     #[test]
     fn prereq_negative_oracle_rejects_changed_inventory() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (oracle, mut snapshot, status, pages) = fixture();
         snapshot.seed_inventory(vec![], 28);
         assert!(oracle
@@ -3220,6 +3286,9 @@ mod prereq_failure_oracle_tests {
 
     #[test]
     fn prereq_negative_oracle_rejects_repair_attempt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for repair in [HOLY_ADVICE, MORT_FOOD] {
             let (oracle, snapshot, status, mut pages) = fixture();
             pages.push(repair.into());
@@ -3231,6 +3300,9 @@ mod prereq_failure_oracle_tests {
 
     #[test]
     fn prereq_negative_oracle_rejects_working_with_block_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (oracle, snapshot, mut status, pages) = fixture();
         status.phase = NativePhase::Working;
         status.fields = Arc::from([StatusField {
@@ -3466,6 +3538,9 @@ fn run_quester_prereq_case(case: PrereqLiveCase, expected_failure: Option<&'stat
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_holy_barrier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_cell(PrereqLiveCase {
         selector: "live_quester_prereq_holy_barrier",
         priest: 60,
@@ -3485,6 +3560,9 @@ fn live_quester_prereq_holy_barrier() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_reclaim_then_advice() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_cell(PrereqLiveCase {
         selector: "live_quester_prereq_reclaim_then_advice",
         priest: 60,
@@ -3504,6 +3582,9 @@ fn live_quester_prereq_reclaim_then_advice() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_bank_unknown_full_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_cell(PrereqLiveCase {
         selector: "live_quester_prereq_bank_unknown_full_pack",
         priest: 60,
@@ -3523,6 +3604,9 @@ fn live_quester_prereq_bank_unknown_full_pack() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_authoritative_pass() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_cell(PrereqLiveCase {
         selector: "live_quester_prereq_authoritative_pass",
         priest: 61,
@@ -3542,6 +3626,9 @@ fn live_quester_prereq_authoritative_pass() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_mort_myre() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_cell(PrereqLiveCase {
         selector: "live_quester_prereq_mort_myre",
         priest: 61,
@@ -3561,6 +3648,9 @@ fn live_quester_prereq_mort_myre() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_both_gates() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_cell(PrereqLiveCase {
         selector: "live_quester_prereq_both_gates",
         priest: 60,
@@ -3580,6 +3670,9 @@ fn live_quester_prereq_both_gates() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_mort_myre_outward() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_cell(PrereqLiveCase {
         selector: "live_quester_prereq_mort_myre_outward",
         priest: 61,
@@ -3599,6 +3692,9 @@ fn live_quester_prereq_mort_myre_outward() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_reclaim_full_pack_refused() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_case(
         PrereqLiveCase {
             selector: "live_quester_prereq_reclaim_full_pack_refused",
@@ -3621,6 +3717,9 @@ fn live_quester_prereq_reclaim_full_pack_refused() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_authoritative_bank_unknown_full_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_cell(PrereqLiveCase {
         selector: "live_quester_prereq_authoritative_bank_unknown_full_pack",
         priest: 61,
@@ -3640,6 +3739,9 @@ fn live_quester_prereq_authoritative_bank_unknown_full_pack() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_mort_myre_already_started() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_cell(PrereqLiveCase {
         selector: "live_quester_prereq_mort_myre_already_started",
         priest: 61,
@@ -3659,6 +3761,9 @@ fn live_quester_prereq_mort_myre_already_started() {
 #[test]
 #[ignore = "requires LIVE=1 and the already-running shared local Engine Q"]
 fn live_quester_prereq_mort_myre_request_forbid() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_quester_prereq_case(
         PrereqLiveCase {
             selector: "live_quester_prereq_mort_myre_request_forbid",

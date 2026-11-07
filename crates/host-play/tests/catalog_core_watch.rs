@@ -180,6 +180,9 @@ fn herb_empty_observation(tick: u32, bank_open: bool, bank_loaded: bool) -> Obse
 
 #[test]
 fn herb_cleaner_start_requires_loaded_seed_then_closed_bank_in_the_same_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
     watch.observe("catalogtest", herb_empty_observation(1, true, true), false);
@@ -282,6 +285,9 @@ fn fire_observation_with_plot(tick: u32, logs: i32, xp: i32, bank_open: bool) ->
 
 #[test]
 fn firemaker_does_not_reuse_stale_xp_or_old_fire_after_partial_restock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let spec = firemaker_spec(CoreCase::FiremakerOak).unwrap();
     let baseline = fire_observation(1, 0, 1_000, false);
     let mut cycle = FiremakerCycle::default();
@@ -342,6 +348,9 @@ fn swarm_stop_receipt() -> script::ScriptLifecycleReceipt {
 
 #[test]
 fn alcher_swarm_stop_without_recovery_fails_the_headed_watch_with_phase_status() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::AlcherSwarmDrain, "catalogtest");
     let baseline = swarm_baseline();
@@ -395,6 +404,9 @@ fn alcher_swarm_stop_without_recovery_fails_the_headed_watch_with_phase_status()
 
 #[test]
 fn alcher_swarm_stop_does_not_fail_a_qualified_recovery() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::AlcherSwarmDrain, "catalogtest");
     let baseline = swarm_baseline();
@@ -481,6 +493,9 @@ fn ranging_redeem_baseline() -> Observation {
 
 #[test]
 fn ranging_guild_round_rejects_seeded_state_and_requires_ordered_second_enter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(
         CoreCase::parse("ranging_guild_round").unwrap(),
         CoreCase::RangingGuildRound
@@ -532,6 +547,9 @@ fn ranging_guild_round_rejects_seeded_state_and_requires_ordered_second_enter() 
 
 #[test]
 fn ranging_guild_round_does_not_treat_seeded_tickets_as_payout() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::RangingGuildRound, "catalogtest");
     let mut seeded = ranging_round_baseline();
@@ -545,6 +563,9 @@ fn ranging_guild_round_does_not_treat_seeded_tickets_as_payout() {
 
 #[test]
 fn ranging_guild_redeem_requires_real_ticket_spend_and_arrow_gain() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(
         CoreCase::parse("ranging_guild_redeem").unwrap(),
         CoreCase::RangingGuildRedeem
@@ -608,6 +629,9 @@ fn ranging_guild_redeem_requires_real_ticket_spend_and_arrow_gain() {
 
 #[test]
 fn ranging_guild_redeem_rejects_already_held_arrows_as_baseline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::RangingGuildRedeem, "catalogtest");
     let mut seeded_arrows = ranging_redeem_baseline();
@@ -661,6 +685,9 @@ fn ranging_bank_open(
 
 #[test]
 fn ranging_guild_bank_rejects_preseed_wrong_bank_and_missing_return() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(
         CoreCase::parse("ranging_guild_bank").unwrap(),
         CoreCase::RangingGuildBank
@@ -728,6 +755,9 @@ fn ranging_guild_bank_rejects_preseed_wrong_bank_and_missing_return() {
 
 #[test]
 fn ranging_guild_bank_requires_keep_coin_identity_close_return_and_fee() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let start = |observation: Observation| {
         let watch = CoreWatch::default();
         watch.configure(CoreCase::RangingGuildBank, "catalogtest");
@@ -804,6 +834,9 @@ fn ranging_guild_bank_requires_keep_coin_identity_close_return_and_fee() {
 
 #[test]
 fn ranging_guild_bank_rejects_redeem_stack_and_already_funded_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::RangingGuildBank, "catalogtest");
     let mut redeem_stack = ranging_bank_baseline();
@@ -911,6 +944,9 @@ fn ranging_full_bank_bought(from: &Observation, arrows: i32, item: i32) -> Obser
 #[test]
 fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_deadline_only_stop()
 {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(
         CoreCase::parse("ranging_guild_full").unwrap(),
         CoreCase::RangingGuildFull
@@ -1047,6 +1083,9 @@ fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_d
 #[test]
 fn ranging_guild_full_requires_bought_then_same_arrow_bank_result_modal_close_continue_and_honest_stop(
 ) {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let baseline = ranging_full_baseline();
     let watch = ranging_full_start(baseline.clone());
     let earned = ranging_full_earned_tickets(&baseline);
@@ -1435,6 +1474,9 @@ fn prayer_stop(mut observation: Observation, reason: &str) -> Observation {
 
 #[test]
 fn prayer_v2_requires_baseline_off_then_on_then_off_and_named_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let case = CoreCase::parse("prayer_v2_ts").expect("named prayer v2 cell");
     assert!(case.copies_prayer_varps());
     let watch = CoreWatch::default();
@@ -1474,6 +1516,9 @@ fn prayer_v2_requires_baseline_off_then_on_then_off_and_named_stop() {
 
 #[test]
 fn prayer_v1_stop_without_on_and_missing_varps_cannot_pass() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let case = CoreCase::parse("prayer_v1_ts").expect("named prayer v1 cell");
     let watch = CoreWatch::default();
     watch.configure(case, "catalogtest");
@@ -1500,6 +1545,9 @@ fn prayer_v1_stop_without_on_and_missing_varps_cannot_pass() {
 
 #[test]
 fn prayer_unready_and_outoforder_cannot_pass() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let case = CoreCase::parse("prayer_v2_ts").expect("named prayer v2 cell");
     let watch = CoreWatch::default();
     watch.configure(case, "catalogtest");

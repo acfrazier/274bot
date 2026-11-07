@@ -1059,6 +1059,9 @@ fn compares_bounded_and_unbounded_route_diagnostics_corpus() {
 
 #[test]
 fn native_diagnostic_reasons_preserve_unknown_quest_carry_and_entrance_requirements() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (index, case) in synthetic_cases().into_iter().skip(1).enumerate() {
         let native = live_native_walk(&case, 10_000 + index as u64);
         let observation = run_diagnostics(
@@ -1103,6 +1106,9 @@ fn native_diagnostic_reasons_preserve_unknown_quest_carry_and_entrance_requireme
 
 #[test]
 fn diagnostic_budget_cutoff_publishes_no_path_and_the_cutoff_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let case = synthetic_cases()
         .into_iter()
         .next()

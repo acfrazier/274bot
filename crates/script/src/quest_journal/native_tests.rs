@@ -83,6 +83,9 @@ fn acknowledge(ledger: &mut Option<Box<crate::native::ledger::Ledger>>, tick: u6
 
 #[test]
 fn journal_owns_click_capture_close_and_releases_after_observed_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, request) = fixture();
     let mut ledger = None;
     let handle: ActionHandle<JournalMachine> = with_tick(&snapshot, &mut ledger, 1, |t| {
@@ -144,6 +147,9 @@ fn journal_owns_click_capture_close_and_releases_after_observed_close() {
 /// ticks, and each new window (the click, the capture) renews it.
 #[test]
 fn the_quiet_read_lease_carries_the_machine_window_and_renews_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, request) = fixture();
     let mut ledger = None;
     let now = std::time::Instant::now;
@@ -200,6 +206,9 @@ fn the_quiet_read_lease_carries_the_machine_window_and_renews_it() {
 /// never goes out against a hold that ends in the frame that sends it.
 #[test]
 fn a_click_sent_in_the_frame_where_the_begin_bound_passes_keeps_its_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, request) = fixture();
     let mut ledger = None;
     let t0 = std::time::Instant::now();
@@ -249,6 +258,9 @@ fn a_click_sent_in_the_frame_where_the_begin_bound_passes_keeps_its_hold() {
 /// The close click of the page takes a fresh hold bound as well.
 #[test]
 fn a_close_sent_in_the_frame_where_the_hold_bound_passes_keeps_its_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, request) = fixture();
     let mut ledger = None;
     let t0 = std::time::Instant::now();
@@ -305,6 +317,9 @@ fn a_close_sent_in_the_frame_where_the_hold_bound_passes_keeps_its_hold() {
 /// still holds.
 #[test]
 fn a_click_queued_before_a_stall_that_outlasts_its_hold_is_never_dispatched() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, request) = fixture();
     let mut ledger = None;
     let t0 = std::time::Instant::now();
@@ -378,6 +393,9 @@ fn a_click_queued_before_a_stall_that_outlasts_its_hold_is_never_dispatched() {
 /// hold, and the stall outlasts it.
 #[test]
 fn a_close_queued_before_a_stall_that_outlasts_its_hold_is_never_dispatched() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, request) = fixture();
     let mut ledger = None;
     let t0 = std::time::Instant::now();
@@ -429,6 +447,9 @@ fn a_close_queued_before_a_stall_that_outlasts_its_hold_is_never_dispatched() {
 /// receipt stays, and the expiry cancels nothing.
 #[test]
 fn a_click_dispatched_before_its_hold_expired_keeps_its_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, request) = fixture();
     let mut ledger = None;
     let t0 = std::time::Instant::now();
@@ -469,6 +490,9 @@ fn a_click_dispatched_before_its_hold_expired_keeps_its_receipt() {
 /// the page stops being hidden there, while the hold of the click goes on.
 #[test]
 fn the_paint_cap_stays_at_the_begin_when_a_click_renews_the_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, request) = fixture();
     let mut ledger = None;
     let t0 = std::time::Instant::now();
@@ -495,6 +519,9 @@ fn the_paint_cap_stays_at_the_begin_when_a_click_renews_the_hold() {
 
 #[test]
 fn foreign_modal_busy_wrong_title_never_closed_and_cancel_revokes_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, request) = fixture();
     snapshot.seed_chat_modal(123, vec!["dialogue".into()]);
     let mut ledger = None;
@@ -548,6 +575,9 @@ fn foreign_modal_busy_wrong_title_never_closed_and_cancel_revokes_click() {
 
 #[test]
 fn unreadable_and_held_journal_are_bounded_without_hiding_forever() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, request) = fixture();
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
@@ -578,6 +608,9 @@ fn unreadable_and_held_journal_are_bounded_without_hiding_forever() {
 
 #[test]
 fn journal_adopts_matching_open_page_without_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, request) = fixture();
     snapshot.seed_main_modal(
         ROOT_289,
@@ -624,6 +657,9 @@ fn journal_adopts_matching_open_page_without_click() {
 
 #[test]
 fn foreign_modal_begin_names_root_and_unknown_modal_stays_busy() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, request) = fixture();
     snapshot.seed_main_modal(777, vec![]);
     snapshot.seed_main_modal_texts(vec!["Trade confirmation".into()]);
@@ -650,6 +686,9 @@ fn foreign_modal_begin_names_root_and_unknown_modal_stays_busy() {
 
 #[test]
 fn journal_overall_deadline_wins_after_phase_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, request) = fixture();
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
@@ -680,6 +719,9 @@ fn journal_overall_deadline_wins_after_phase_progress() {
 
 #[test]
 fn journal_quiet_lease_expiry_is_failure_not_cancellation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (snapshot, request) = fixture();
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
@@ -703,6 +745,9 @@ fn journal_quiet_lease_expiry_is_failure_not_cancellation() {
 
 #[test]
 fn journal_phase_window_counts_game_ticks_not_host_time() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, request) = fixture();
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |t| {
@@ -767,6 +812,9 @@ fn journal_phase_window_counts_game_ticks_not_host_time() {
 
 #[test]
 fn latched_chat_continue_keeps_the_journal_busy_before_its_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut snapshot, request) = fixture();
     snapshot.seed_chat_options(vec![], 105);
     let mut ledger = None;

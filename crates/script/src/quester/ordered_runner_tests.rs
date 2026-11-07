@@ -535,6 +535,9 @@ fn retry_harness(settle_at: Option<usize>) -> (Harness, Arc<AtomicUsize>) {
 
 #[test]
 fn ordered_sequence_advances_through_indistinguishable_steps_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
     harness.run_until_parked();
     assert_eq!(
@@ -555,6 +558,9 @@ fn ordered_sequence_advances_through_indistinguishable_steps_once() {
 
 #[test]
 fn authored_sequence_still_reselects_from_the_top() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut harness = Harness::new(document(SequenceOrder::Authored, |_| never(), always()));
     harness.run_until_begun(3);
     assert_eq!(harness.begun, ["step-1", "step-1", "step-1"]);
@@ -562,6 +568,9 @@ fn authored_sequence_still_reselects_from_the_top() {
 
 #[test]
 fn restart_replays_an_ordered_sequence_from_its_first_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
     harness.run_until_begun(2);
     assert_eq!(harness.begun, ["step-1", "step-2"]);
@@ -579,6 +588,9 @@ fn restart_replays_an_ordered_sequence_from_its_first_step() {
 
 #[test]
 fn skip_if_jumps_the_ordered_cursor_forward() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut harness = Harness::new(document(
         SequenceOrder::Ordered,
         |n| if n == 3 { has_egg() } else { never() },
@@ -596,6 +608,9 @@ fn skip_if_jumps_the_ordered_cursor_forward() {
 
 #[test]
 fn proven_skip_stays_committed_while_a_later_skip_is_unknown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Step 1 is proven done; step 2's skip is unknown until the equipment is
     // observed. Selection waits on step 2, and that wait must not forget
     // step 1's proven skip.
@@ -639,6 +654,9 @@ fn proven_skip_stays_committed_while_a_later_skip_is_unknown() {
 
 #[test]
 fn all_skipped_suffix_commits_the_cursor_to_the_end() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Steps 3-5 are proven done once steps 1-2 settle, so selection exhausts
     // the sequence; the confirming read must not re-evaluate them.
     let mut harness = Harness::new(document(
@@ -664,6 +682,9 @@ fn all_skipped_suffix_commits_the_cursor_to_the_end() {
 
 #[test]
 fn unresolved_first_read_after_resume_still_resets_the_cursor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // After Resume the first owned read is unresolved; the Known read that
     // follows must still replay the sequence from step 1.
     let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
@@ -707,6 +728,9 @@ fn unresolved_first_read_after_resume_still_resets_the_cursor() {
 /// `unlock-closet` began again from cursor 0 here, with no failure.
 #[test]
 fn random_event_then_a_same_stage_read_keeps_the_step_in_flight() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
     let release = Arc::new(AtomicBool::new(false));
     let reads = Arc::new(AtomicUsize::new(0));
@@ -784,6 +808,9 @@ fn held_second_step() -> (Harness, Arc<AtomicBool>) {
 /// Mime event, and moves the player the same way (`macro_events.rs2:120-137`).
 #[test]
 fn a_teleport_seen_during_a_guardian_hold_drops_only_the_step_whatever_the_event() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut harness, _release) = held_second_step();
     harness.script.on_random(&random_event());
     harness.guardian_hold(&[tile(3200, 3200), tile(3280, 3290), tile(3281, 3290)]);
@@ -802,6 +829,9 @@ fn a_teleport_seen_during_a_guardian_hold_drops_only_the_step_whatever_the_event
 /// player's own click; the guardian climbs none).
 #[test]
 fn a_plane_change_during_a_guardian_hold_is_a_teleport() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut harness, _release) = held_second_step();
     harness.script.on_random(&random_event());
     harness.guardian_hold(&[api::WorldTile {
@@ -818,6 +848,9 @@ fn a_plane_change_during_a_guardian_hold_is_a_teleport() {
 /// last frame shows the tile the first one did. The jump is in between.
 #[test]
 fn a_teleport_out_and_back_to_the_same_tile_inside_the_hold_is_still_a_teleport() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut harness, _release) = held_second_step();
     harness.script.on_random(&maze_event());
     harness.guardian_hold(&[tile(2900, 4555), tile(2900, 4556), tile(3200, 3200)]);
@@ -832,6 +865,9 @@ fn a_teleport_out_and_back_to_the_same_tile_inside_the_hold_is_still_a_teleport(
 /// the step as well.
 #[test]
 fn a_guardian_walk_of_a_few_tiles_keeps_the_step_for_every_event_name() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for event in [random_event(), maze_event()] {
         let (mut harness, release) = held_second_step();
         harness.script.on_random(&event);
@@ -857,6 +893,9 @@ fn a_guardian_walk_of_a_few_tiles_keeps_the_step_for_every_event_name() {
 /// mid-pairing would desync the partners.
 #[test]
 fn a_teleport_keeps_the_step_while_partner_work_is_pending() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut harness, release) = held_second_step();
     harness.script.pair_admission_since = Some(harness.active_now());
     harness.script.on_random(&random_event());
@@ -881,6 +920,9 @@ fn a_teleport_keeps_the_step_while_partner_work_is_pending() {
 /// surrounds, even one the position reports show.
 #[test]
 fn with_random_events_off_the_event_changes_nothing_for_the_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut harness, release) = held_second_step();
     assert_eq!(harness.script.on_random(&random_event()), RandomClaim::Host);
     // No `hold_begin`: the guardian is off. The player is moved anyway.
@@ -900,6 +942,9 @@ fn with_random_events_off_the_event_changes_nothing_for_the_step() {
 
 #[test]
 fn stage_change_resets_the_ordered_cursor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
     harness.run_until_begun(2);
     harness.colour(IN_PROGRESS);
@@ -915,6 +960,9 @@ fn stage_change_resets_the_ordered_cursor() {
 
 #[test]
 fn failed_ordered_step_is_retried_in_place() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), never()));
     harness.run_until_parked();
     assert_eq!(
@@ -930,6 +978,9 @@ fn failed_ordered_step_is_retried_in_place() {
 
 #[test]
 fn budgeted_step_can_settle_after_31_failures_on_attempt_32() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut harness, attempts) = retry_harness(Some(32));
     while harness
         .script
@@ -970,6 +1021,9 @@ fn budgeted_step_can_settle_after_31_failures_on_attempt_32() {
 
 #[test]
 fn budgeted_step_parks_on_its_named_stop_after_32_failures() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut harness, attempts) = retry_harness(None);
     harness.run_until_parked();
 
@@ -1011,6 +1065,9 @@ fn budgeted_step_parks_on_its_named_stop_after_32_failures() {
 
 #[test]
 fn budgeted_hard_poll_failure_does_not_report_an_unspent_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut document = document(SequenceOrder::Ordered, |_| never(), never());
     document.roles[0].sequences[0].steps.truncate(1);
     document.roles[0].sequences[0].steps[0].max_attempts = Some(2);
@@ -1046,6 +1103,9 @@ fn budgeted_hard_poll_failure_does_not_report_an_unspent_stop() {
 
 #[test]
 fn budgeted_needs_evidence_failure_keeps_its_failure_kind() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut document = document(SequenceOrder::Ordered, |_| never(), never());
     document.roles[0].sequences[0].steps.truncate(1);
     document.roles[0].sequences[0].steps[0].max_attempts = Some(1);
@@ -1064,6 +1124,9 @@ fn budgeted_needs_evidence_failure_keeps_its_failure_kind() {
 
 #[test]
 fn user_input_cancel_does_not_spend_budget_or_release_queued_quest() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut document = document(SequenceOrder::Ordered, |_| never(), never());
     document.roles[0].sequences[0].steps.truncate(1);
     document.roles[0].sequences[0].steps[0].max_attempts = Some(1);
@@ -1095,6 +1158,9 @@ fn user_input_cancel_does_not_spend_budget_or_release_queued_quest() {
 
 #[test]
 fn terminal_timed_ground_step_publishes_its_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     #[derive(Default)]
     struct Capture(Option<ScriptStatus>);
 

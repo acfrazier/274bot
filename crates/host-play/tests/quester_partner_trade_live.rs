@@ -152,6 +152,9 @@ fn write_folder_path(evidence: &Path) -> Result<PathBuf, String> {
 #[test]
 #[ignore = "requires LIVE=1, an explicitly selected local 289 engine and an isolated HOME; see the module docs"]
 fn live_quester_partner_trade_moves_the_phoenix_key() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let evidence = PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"));
     let folder = write_folder_path(&evidence).expect("write the folder Path");
@@ -223,6 +226,9 @@ mod tests {
     /// roles: each role authors exactly its half of the key handoff.
     #[test]
     fn the_partner_trade_fixture_compiles_for_both_roles() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let quests = std::sync::Arc::new(
             api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap(),

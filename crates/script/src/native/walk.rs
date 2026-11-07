@@ -488,6 +488,9 @@ mod tests {
     /// field for field.
     #[test]
     fn a_walk_keeps_one_boxed_replay_and_resends_the_same_request_from_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::ledger::TickBudget;
         use crate::native::HostEffect;
         use crate::quester::families::tests::{host_drops_queued_work, with_tick_budget};
@@ -702,6 +705,9 @@ mod tests {
     }
     #[test]
     fn user_input_receipt_precedes_arrival_deadline_and_required_evidence() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -751,6 +757,9 @@ mod tests {
     }
     #[test]
     fn aborted_receipt_cannot_become_arrived_at_the_requested_destination() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -822,11 +831,17 @@ mod tests {
 
     #[test]
     fn observed_not_started_quest_replans_to_an_arriving_route() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_observed_quest_replans("biohazard", "Biohazard");
     }
 
     #[test]
     fn observed_quest_display_name_replans_when_it_differs_from_the_id() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_observed_quest_replans("priestperil", "Priest in Peril");
     }
 
@@ -1021,6 +1036,9 @@ mod tests {
 
     #[test]
     fn no_path_receipt_finishes_on_the_next_observation_with_host_detail() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -1073,6 +1091,9 @@ mod tests {
 
     #[test]
     fn host_no_path_receipt_takes_priority_over_the_deadline() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -1121,6 +1142,9 @@ mod tests {
 
     #[test]
     fn settled_wait_without_a_receipt_still_obeys_the_deadline() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let required_after = EvidenceStamp {
             run: RunKey {
                 slot: 1,
@@ -1183,6 +1207,9 @@ mod tests {
 
     #[test]
     fn deadline_failure_reports_why_the_host_receipt_is_missing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let run = RunKey {
             slot: 1,
             run: 1,

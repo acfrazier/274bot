@@ -412,6 +412,9 @@ mod tests {
 
     #[test]
     fn matching_set_does_not_click_and_unknown_is_error() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         set_protect(1);
         assert_eq!(
@@ -447,6 +450,9 @@ mod tests {
 
     #[test]
     fn unavailable_on_does_not_click_off_ignores_available() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
         set_obs(0, 1, protect_identity().0, 0);
         assert_eq!(
@@ -475,6 +481,9 @@ mod tests {
 
     #[test]
     fn omitted_on_clicks_then_times_out_after_the_frozen_window() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         set_protect(0);
         let handle = running(start(set(json!({ "kind": "undefined" }))));
@@ -501,6 +510,9 @@ mod tests {
 
     #[test]
     fn a_second_start_supersedes_the_first() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
         set_protect(0);
         let first = running(start(set(on(true))));
@@ -534,6 +546,9 @@ mod tests {
 
     #[test]
     fn a_v2_admit_refuses_busy_before_anything_is_emitted() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
         set_protect(0);
         let admitted = running(start(set(on(true))));
@@ -565,6 +580,9 @@ mod tests {
 
     #[test]
     fn pause_and_hold_freeze_the_deadline_and_reset_settles_the_row() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
         set_protect(0);
         let handle = running(start(set(on(true))));
@@ -623,6 +641,9 @@ mod tests {
 
     #[test]
     fn clear_clicks_each_active_prayer_once_and_counts_them() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
         let data = crate::scene::supply_v2::selected_data().expect("selected data configured");
         let first = data.prayers().first().expect("selected prayers").clone();

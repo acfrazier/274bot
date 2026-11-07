@@ -141,6 +141,9 @@ mod tests {
 
     #[test]
     fn equipment_admissions_after_same_tick_close_retry_without_advancing_state() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for request in [
             EquipmentRequest::Wear {
                 id: 1,
@@ -230,6 +233,9 @@ mod tests {
 
     #[test]
     fn wear_dispatches_while_bank_is_open_without_closing_first() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_bank_observation(700, 1, Some(Vec::new()), Vec::new());

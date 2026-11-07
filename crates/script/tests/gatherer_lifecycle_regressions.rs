@@ -350,6 +350,9 @@ fn mining_snapshot(
 
 #[test]
 fn resource_wait_deadline_does_not_slide_with_unchanged_observations() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut slot = started(4260, &selected);
     let frame = depleted_snapshot(&selected);
@@ -369,6 +372,9 @@ fn resource_wait_deadline_does_not_slide_with_unchanged_observations() {
 }
 #[test]
 fn runite_resource_wait_ends_at_eight_minutes_before_watchdog_wedge() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut bag = SettingsBag::new();
     bag.insert("skill".into(), serde_json::json!("Mining"));
@@ -411,6 +417,9 @@ fn runite_resource_wait_ends_at_eight_minutes_before_watchdog_wedge() {
 
 #[test]
 fn depleted_auto_groups_share_the_original_gameplay_wait_cap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::gather_methods::SceneRegionInput;
     let selected = selected();
     let mut bag = SettingsBag::new();
@@ -526,6 +535,9 @@ fn depleted_auto_groups_share_the_original_gameplay_wait_cap() {
 
 #[test]
 fn recreated_gatherer_keeps_resource_wait_fresh_at_large_native_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut bag = SettingsBag::new();
     bag.insert("skill".into(), serde_json::json!("Mining"));
@@ -557,6 +569,9 @@ fn recreated_gatherer_keeps_resource_wait_fresh_at_large_native_tick() {
 
 #[test]
 fn compiled_hold_at_idle_boundary_defers_dispatch_until_released() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut bag = SettingsBag::new();
     bag.insert("skill".into(), serde_json::json!("Mining"));
@@ -602,6 +617,9 @@ fn wait_until(slot: &SlotScript) -> u64 {
 
 #[test]
 fn pause_resume_before_escape_dispatch_reissues_walk_without_hazard_click() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::gather_methods::{known_rows, TargetClass};
     use api::selected::EntityId;
 
@@ -714,6 +732,9 @@ fn tick(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
 
 #[test]
 fn incidental_gems_are_dropped_and_held_tool_is_preserved() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut bag = SettingsBag::new();
     bag.insert("skill".into(), serde_json::json!("Mining"));
@@ -756,6 +777,9 @@ fn incidental_gems_are_dropped_and_held_tool_is_preserved() {
 
 #[test]
 fn gas_replacement_cancels_the_queued_mine_with_a_walk_when_no_other_target_is_live() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::gather_methods::{known_rows, TargetClass};
     use api::selected::EntityId;
     let selected = selected();
@@ -882,6 +906,9 @@ fn assert_npc_hazard_escape(slot: &mut SlotScript, frame: &GameSnapshot) {
 
 #[test]
 fn observed_ent_replacing_the_only_live_tree_cancels_chopping_with_a_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut slot = started(4264, &selected);
     let mut frame = depleted_snapshot(&selected);
@@ -923,6 +950,9 @@ fn observed_ent_replacing_the_only_live_tree_cancels_chopping_with_a_walk() {
 
 #[test]
 fn observed_fishing_spot_uses_actor_approach_instead_of_routing_to_water() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut bag = SettingsBag::new();
     bag.insert("skill".into(), serde_json::json!("Fishing"));
@@ -1131,6 +1161,9 @@ fn wake(slot: &mut SlotScript, snapshot: &GameSnapshot, tick: u64) {
 
 #[test]
 fn scene_entry_defers_same_frame_gatherer_retarget_until_next_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::gather_methods::{known_rows, SceneRegionInput, TargetClass};
     use api::selected::EntityId;
 
@@ -1221,6 +1254,9 @@ fn scene_entry_defers_same_frame_gatherer_retarget_until_next_tick() {
 
 #[test]
 fn same_tick_level_up_wake_defers_continue_and_gatherer_resumes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut slot = started(4391, &selected);
     let mut frame = chopping_snapshot(&selected);
@@ -1289,6 +1325,9 @@ fn same_tick_level_up_wake_defers_continue_and_gatherer_resumes() {
 
 #[test]
 fn gather_progress_must_not_hide_a_later_idle_stall() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::gather_methods::{known_rows, TargetClass};
     use api::selected::EntityId;
 
@@ -1381,6 +1420,9 @@ fn gather_progress_must_not_hide_a_later_idle_stall() {
 /// A level-up's unlock page is a new modal, not a failed close of the first page.
 #[test]
 fn chained_level_up_pages_receive_separate_continues() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = started(4250, &selected());
     let mut snapshot = snapshot(&[]);
     snapshot.seed_chat_modal(100, vec!["Your Mining level is now 31.".into()]);
@@ -1432,6 +1474,9 @@ fn chained_level_up_pages_receive_separate_continues() {
 
 #[test]
 fn unchanged_dialog_page_still_fails_after_eight_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = started(4251, &selected());
     let mut snapshot = snapshot(&[]);
     snapshot.seed_chat_modal(100, vec!["Your Mining level is now 31.".into()]);
@@ -1459,6 +1504,9 @@ fn unchanged_dialog_page_still_fails_after_eight_ticks() {
 /// An unsettled drop remains retryable after newer receipts evict its receipt.
 #[test]
 fn unsettled_drop_is_replanned_or_blocked_after_receipt_eviction() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = started(4242, &selected());
     // Slot 0 is the drop the engine refused: it never empties.
     let mut present: Vec<i32> = (0..28).collect();
@@ -1504,6 +1552,9 @@ fn unsettled_drop_is_replanned_or_blocked_after_receipt_eviction() {
 /// F2: a full pack holding nothing droppable begins and clears a DropBatch every tick.
 #[test]
 fn full_pack_without_products_blocks_instead_of_looping() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = started(4243, &selected());
     let mut snapshot = snapshot(&[]);
     let bones = (0..28)
@@ -1541,6 +1592,9 @@ fn full_pack_without_products_blocks_instead_of_looping() {
 
 #[test]
 fn unchanged_resource_wait_does_not_allocate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut bag = SettingsBag::new();
     bag.insert("skill".into(), serde_json::json!("Mining"));
@@ -1574,6 +1628,9 @@ fn unchanged_resource_wait_does_not_allocate() {
 /// F3: a RestartRequired edit is applied in place at the next idle boundary.
 #[test]
 fn restart_required_edit_is_not_applied_in_place() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut slot = started(4245, &selected);
     let snapshot = depleted_snapshot(&selected);
@@ -1623,6 +1680,9 @@ fn restart_required_edit_is_not_applied_in_place() {
 
 #[test]
 fn partial_drop_progress_survives_pause_and_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for pause in [true, false] {
         let mut slot = started(4250 + u64::from(pause), &selected());
         let present: Vec<i32> = (0..28).collect();
@@ -1660,6 +1720,9 @@ fn partial_drop_progress_survives_pause_and_stop() {
 
 #[test]
 fn bronze_tool_remains_carried_below_catalog_wield_level() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut slot = started(4252, &selected);
     let mut snapshot = depleted_snapshot(&selected);
@@ -1690,6 +1753,9 @@ fn bronze_tool_remains_carried_below_catalog_wield_level() {
 
 #[test]
 fn late_drop_settlement_counts_while_modal_budget_defers_resend() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut slot = started(4253, &selected());
     let all: Vec<i32> = (0..28).collect();
     let mut snapshot = snapshot(&all);
@@ -1720,6 +1786,9 @@ fn late_drop_settlement_counts_while_modal_budget_defers_resend() {
 
 #[test]
 fn restart_required_edit_supersedes_an_older_boundary_edit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut slot = started(4254, &selected);
     let snapshot = depleted_snapshot(&selected);
@@ -1790,6 +1859,9 @@ fn restart_required_edit_supersedes_an_older_boundary_edit() {
 
 #[test]
 fn a_missing_tool_enters_bank_selection_instead_of_blocking_before_stock_is_read() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut slot = started(4300, &selected);
     let mut frame = depleted_snapshot(&selected);
@@ -1821,6 +1893,9 @@ fn a_missing_tool_enters_bank_selection_instead_of_blocking_before_stock_is_read
 
 #[test]
 fn power_to_bank_edit_waits_for_the_live_drop_batch_and_the_next_full_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut slot = started(4301, &selected);
     let mut present: Vec<i32> = (0..28).collect();
@@ -2454,6 +2529,9 @@ fn run_supply_trip_scenario(incarnation: u64, rune_stock: RuneStock) {
 
 #[test]
 fn supply_trip_waits_for_loaded_stock_equipment_and_return_and_survives_off_plane_interrupts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (incarnation, rune_stock) in [
         (4302, RuneStock::Full),
         (4303, RuneStock::Partial),
@@ -2642,6 +2720,9 @@ const LUMBRIDGE_RESPAWN_EDGE: WorldTile = WorldTile {
 
 #[test]
 fn same_frame_death_observation_uses_default_recovery_inside_the_same_scene() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -2678,6 +2759,9 @@ fn same_frame_death_observation_uses_default_recovery_inside_the_same_scene() {
 
 #[test]
 fn recreated_runner_latches_gap_death_after_empty_or_initialized_watermark() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (incarnation, baseline_sequence) in [(4401, None), (4402, Some(7))] {
         let selected = selected();
         let mut initial = depleted_snapshot(&selected);
@@ -2717,6 +2801,9 @@ fn recreated_runner_latches_gap_death_after_empty_or_initialized_watermark() {
 
 #[test]
 fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -2803,6 +2890,9 @@ fn death_recovery_reads_loaded_stock_instead_of_skipping_a_needed_supply_trip() 
 
 #[test]
 fn death_return_and_recreation_resume_retained_live_steps() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -2890,6 +2980,9 @@ fn death_return_and_recreation_resume_retained_live_steps() {
 
 #[test]
 fn death_return_refused_stops_terminally_with_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -2948,6 +3041,9 @@ fn death_return_refused_stops_terminally_with_reason() {
 /// before the stall check at `:1552`).
 #[test]
 fn death_return_retries_one_transient_stall_before_failing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -2999,6 +3095,9 @@ fn death_return_retries_one_transient_stall_before_failing() {
 /// with the last stall's own cause, ticks and tiles.
 #[test]
 fn death_return_after_the_retry_budget_keeps_the_last_stall_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -3080,6 +3179,9 @@ fn death_return_after_the_retry_budget_keeps_the_last_stall_detail() {
 /// return: Stop drops the run together with its queued walk result.
 #[test]
 fn death_return_stall_after_stop_submits_no_retry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -3127,6 +3229,9 @@ fn death_return_stall_after_stop_submits_no_retry() {
 /// `died-again`; the return retry budget does not carry over.
 #[test]
 fn second_death_during_the_retried_return_latches_its_first_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -3182,6 +3287,9 @@ fn second_death_during_the_retried_return_latches_its_first_step() {
 /// spent its retry must not deny the next recovery's return.
 #[test]
 fn second_recovery_return_gets_a_fresh_retry_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -3312,6 +3420,9 @@ fn second_recovery_return_gets_a_fresh_retry_budget() {
 
 #[test]
 fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_death() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -3402,6 +3513,9 @@ fn default_max_deaths_allows_two_recoveries_with_a_haul_and_blocks_the_third_dea
 
 #[test]
 fn stop_death_policy_terminates_the_recovery_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut settings = SettingsBag::new();
     settings.insert("deathPolicy".into(), serde_json::json!("Stop"));
@@ -3430,6 +3544,9 @@ fn stop_death_policy_terminates_the_recovery_run() {
 
 #[test]
 fn random_hold_release_revalidates_lost_or_broken_pickaxe_before_gathering() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (incarnation, broken_head) in [(4407, false), (4408, true)] {
         let selected = selected();
         let frame = mining_snapshot(&selected, "mining.coal", false);
@@ -3484,6 +3601,9 @@ fn random_hold_release_revalidates_lost_or_broken_pickaxe_before_gathering() {
 
 #[test]
 fn food_is_eaten_at_the_boundary_then_refilled_by_the_shared_supply_trip() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut frame = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut frame, 6, 10);
@@ -3545,6 +3665,9 @@ fn food_is_eaten_at_the_boundary_then_refilled_by_the_shared_supply_trip() {
 
 #[test]
 fn recreated_pending_respawn_still_requires_position_and_restored_hitpoints() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -3579,6 +3702,9 @@ fn recreated_pending_respawn_still_requires_position_and_restored_hitpoints() {
 
 #[test]
 fn death_in_proving_recreation_gap_blocks_as_a_second_death() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -3624,6 +3750,9 @@ fn death_in_proving_recreation_gap_blocks_as_a_second_death() {
 
 #[test]
 fn recovery_return_reconnect_on_another_plane_keeps_the_retained_resource_area() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -3664,6 +3793,9 @@ fn recovery_return_reconnect_on_another_plane_keeps_the_retained_resource_area()
 
 #[test]
 fn refused_death_return_stops_and_cannot_be_recreated() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut initial = depleted_snapshot(&selected);
     lifecycle_hitpoints(&mut initial, 10, 10);
@@ -3738,6 +3870,9 @@ fn site_work_anchor(slot: &SlotScript) -> WorldTile {
 
 #[test]
 fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut slot = started_with(4420, &selected, site_willow_bag("woodcutting.draynor"));
     let mut frame = site_willow_frame();
@@ -3842,6 +3977,9 @@ fn site_first_walk_resume_and_changed_site_fresh_start_keep_selected_resource_an
 
 #[test]
 fn site_refused_initial_walk_stops_with_nav_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut slot = started_with(4422, &selected, site_willow_bag("woodcutting.draynor"));
     let frame = site_willow_frame();
@@ -3884,6 +4022,9 @@ fn site_refused_initial_walk_stops_with_nav_detail() {
 
 #[test]
 fn exhausted_site_stops_instead_of_widening() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::gather_methods::{known_rows, TargetClass};
     use api::selected::EntityId;
     let selected = selected();
@@ -3952,6 +4093,9 @@ fn exhausted_site_stops_instead_of_widening() {
 /// The Mime return mesbox can arrive before the inventory sidebar is restored.
 #[test]
 fn mime_unlock_page_is_continued_before_inventory_readiness() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected();
     let mut settings = SettingsBag::new();
     settings.insert("skill".into(), serde_json::json!("Woodcutting"));

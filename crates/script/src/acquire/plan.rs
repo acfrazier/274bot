@@ -626,6 +626,9 @@ mod tests {
     /// obtainable at all.
     #[test]
     fn a_partial_multi_item_withdraw_takes_what_the_session_bank_holds() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let bead = |alias: &str| {
             let item = data.item_by_alias(alias).expect("bead");

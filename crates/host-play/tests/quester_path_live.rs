@@ -240,6 +240,9 @@ fn arrav_smoke_pair(
 #[test]
 #[ignore = "requires LIVE=1 and an explicitly selected local 289 engine; see common/quester_live.rs"]
 fn live_quester_path_smoke() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     let quest = std::env::var("QUESTER_PATH").expect("QUESTER_PATH names the Path");
     let seeds_path = PathBuf::from(std::env::var_os("QUESTER_SEEDS").expect("QUESTER_SEEDS"));
@@ -1358,6 +1361,9 @@ fn campaign_gap_proof(
 #[test]
 #[ignore = "QUEST-CAMPAIGN: exact authored seeds, Engine Q, staging folder and observed-tick deadline"]
 fn live_quester_campaign() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("WORLD_GAME_PORT").as_deref(), Ok("44694"));
     assert!(
@@ -1486,6 +1492,9 @@ mod smoke_tests {
 
     #[test]
     fn arthur_fixture_seeds_minimum_combat_stats() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let row = smoke_row("arthur").unwrap();
         let path =
             serde_json::from_str(include_str!("../../script/paths/289/arthur.json")).unwrap();
@@ -1540,6 +1549,9 @@ mod smoke_tests {
 
     #[test]
     fn smoke_seeds_parse_and_build_the_embedded_cook_cell() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         let seeds = parse_seeds(COOK_SEEDS).unwrap();
         assert_eq!(seeds.stage, "cook:0");
@@ -1568,6 +1580,9 @@ mod smoke_tests {
 
     #[test]
     fn clean_smoke_does_not_seed_target_progress() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         let seeds = parse_seeds(COG_CLEAN_SEEDS).unwrap();
         let row = smoke_row("cog").unwrap();
@@ -1586,6 +1601,9 @@ mod smoke_tests {
 
     #[test]
     fn path_terminal_smoke_uses_the_seeded_stage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         let mut seeds = parse_seeds(COOK_SEEDS).unwrap();
         seeds.mode = Some("path_terminal".into());
@@ -1601,6 +1619,9 @@ mod smoke_tests {
 
     #[test]
     fn jonny_smoke_constructs_two_real_roles_without_seeded_goal_items() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         let seeds = parse_seeds(include_str!("fixtures/quester-path/blackarm-jonny.json")).unwrap();
         assert_eq!(seeds.stage, "p:8");
@@ -1667,6 +1688,9 @@ mod smoke_tests {
 
     #[test]
     fn paired_arrav_smoke_refuses_non_stage_modes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         for mode in ["clean", "path_terminal"] {
             let mut seeds =
@@ -1685,6 +1709,9 @@ mod smoke_tests {
 
     #[test]
     fn production_path_smoke_seed_fixtures_build_embedded_stages() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         for (quest, stage, text) in [
             (
@@ -1800,6 +1827,9 @@ mod smoke_tests {
 
     #[test]
     fn itexam_fixture_starts_thieving_at_the_authored_minimum() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         let seeds = parse_seeds(include_str!("fixtures/quester-path/itexam-thieve.json")).unwrap();
         let row = smoke_row("itexam").unwrap();
@@ -1870,6 +1900,9 @@ mod smoke_tests {
 
     #[test]
     fn smoke_cell_serves_a_folder_cook_through_the_registry() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _registry_guard = PATH_REGISTRY_LOCK.lock().unwrap();
         let seeds = parse_seeds(COOK_SEEDS).unwrap();
         // Baseline from the embedded index, before any folder is published.
@@ -1951,6 +1984,9 @@ mod smoke_tests {
 
 #[test]
 fn campaign_identity_does_not_require_a_qualification_profile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let catalog = campaign_catalog().unwrap();
     assert_eq!(
         catalog.quest("scorpcatcher").unwrap().display.as_ref(),
@@ -2258,6 +2294,9 @@ mod campaign_gap_tests {
 
     #[test]
     fn counted_content_misses_within_budget_prove_both_gap_kinds() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for no_step in [false, true] {
             let (gap, logs, actor) = counted_miss_packet(no_step);
             let proof = campaign_gap_proof(
@@ -2532,6 +2571,9 @@ mod campaign_gap_tests {
 
     #[test]
     fn no_step_gap_requires_stage_and_a_settled_boundary_anchor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let gap = CampaignGap {
             step_id: PRIOR_STEP.into(),
             park_reason: "no step for stage".into(),
@@ -2616,6 +2658,9 @@ mod campaign_gap_tests {
 
     #[test]
     fn capped_no_step_gap_uses_uncapped_status_and_captured_goal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let gap = CampaignGap {
             step_id: PRIOR_STEP.into(),
             park_reason: "no step for stage".into(),
@@ -2717,6 +2762,9 @@ mod campaign_gap_tests {
 
     #[test]
     fn recorded_sheep_status_and_capture_prove_the_anchor_but_not_a_working_final_phase() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let packet: serde_json::Value =
             serde_json::from_str(include_str!("fixtures/campaign-sheepherder-gap-2.json")).unwrap();
         let gap = campaign_gap(&serde_json::json!({"gap": packet["gap"]}))

@@ -209,6 +209,9 @@ mod tests {
 
     #[test]
     fn any_empty_selects_and_unknown_skip_waits_on_empty_snapshot() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let document = decode_cook().unwrap();
@@ -272,6 +275,9 @@ mod tests {
 
     #[test]
     fn romeo_known_empty_bank_advances_to_missing_item_acquisition() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let document =
@@ -328,6 +334,9 @@ mod tests {
 
     #[test]
     fn rune_stage_one_selects_talisman_recovery_and_package_steps_in_order() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let compiled = path(RUNE_MYSTERIES_JSON, &data, &quests);
@@ -460,6 +469,9 @@ mod tests {
 
     #[test]
     fn sheep_partial_products_use_journal_remaining_count_and_keep_full_supply_recoverable() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let compiled = path(SHEEP_JSON, &data, &quests);
@@ -599,11 +611,17 @@ mod tests {
 
     #[test]
     fn nearest_uses_authored_approach_for_talk() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_nearest_approach_for_family("talk", serde_json::json!({"npc": "cook"}));
     }
 
     #[test]
     fn nearest_uses_authored_approach_for_interact() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_nearest_approach_for_family(
             "interact",
             serde_json::json!({
@@ -619,6 +637,9 @@ mod tests {
 
     #[test]
     fn nearest_uses_authored_approach_for_use_on() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_nearest_approach_for_family(
             "use_on",
             serde_json::json!({
@@ -634,6 +655,9 @@ mod tests {
 
     #[test]
     fn monk_friends_cave_side_boundary_selects_blanket_instead_of_rewalking_ladder() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _home = crate::IsolatedEnv::enter("monk-friends-select");
         let data = selected();
         crate::quester::compile::prepare_for_test({
@@ -664,6 +688,9 @@ mod tests {
 
     #[test]
     fn gertrude_yard_cursor_does_not_reselect_earlier_walks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let document: PathDocument =
@@ -692,6 +719,9 @@ mod tests {
 
     #[test]
     fn nearest_reselects_completed_candidates_and_never_chooses_through_unknown_evidence() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::ActionError;
         use crate::quester::compile::{PredicatePlan, StepContext, StepPlan, StepRun};
         struct Skip(Truth);
@@ -808,6 +838,9 @@ mod tests {
 
     #[test]
     fn ordered_sequence_selects_from_the_cursor_and_jumps_proven_skips() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let bank = known_empty_bank();
@@ -857,6 +890,9 @@ mod tests {
 
     #[test]
     fn authored_sequence_ignores_the_cursor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let bank = known_empty_bank();
@@ -887,6 +923,9 @@ mod tests {
     /// the hall step does not exist).
     #[test]
     fn totem_combo_door_steps_are_side_aware() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let quests = quests(&data);
         let bank = known_empty_bank();

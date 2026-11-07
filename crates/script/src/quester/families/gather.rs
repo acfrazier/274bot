@@ -863,15 +863,24 @@ mod tests {
 
     #[test]
     fn quest_gather_denied_permissions_restrict_mixed_resource_stands() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_quest_mixed_resource_walk(true);
     }
 
     #[test]
     fn quest_gather_allowed_permissions_keep_resource_approach_unchanged() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_quest_mixed_resource_walk(false);
     }
     #[test]
     fn gather_arrival_clears_authored_approach_before_stale_tile_can_rewalk() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = plan("mining.copper", 1);
         let snapshot = snapshot(&plan, 1);
         let here = snapshot.local_player().unwrap().player.actor.tile;
@@ -915,6 +924,9 @@ mod tests {
 
     #[test]
     fn gather_uses_native_resource_action_and_finishes_only_at_exact_goal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan("mining.copper", 2);
         let mut snapshot = snapshot(&plan, 1);
         let mut ledger = None;
@@ -948,6 +960,9 @@ mod tests {
 
     #[test]
     fn same_tick_gather_and_authored_approach_admissions_keep_their_plan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for approach in [false, true] {
             let mut plan = plan("mining.copper", 2);
             let snapshot = snapshot(&plan, 1);
@@ -992,6 +1007,9 @@ mod tests {
     /// that area rather than demand a path onto the anchor tile.
     #[test]
     fn authored_gather_approach_walks_the_anchor_area() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = plan("mining.copper", 2);
         let snapshot = snapshot(&plan, 1);
         let origin = snapshot.local_player().unwrap().player.actor.tile;
@@ -1025,6 +1043,9 @@ mod tests {
 
     #[test]
     fn ordinary_gatherer_defers_supply_refusal_to_server_for_revalidation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan("mining.copper", 1);
         let mut snapshot = snapshot(&plan, 1);
         let loc = snapshot.locs()[0].clone();
@@ -1078,6 +1099,9 @@ mod tests {
 
     #[test]
     fn gather_observed_fishing_npc_owns_approach_without_a_walk() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = plan("fishing.saltfish.op1", 1);
         plan.skill = Skill::Fishing;
         plan.item_id = 317;
@@ -1165,6 +1189,9 @@ mod tests {
     // Retain the reviewer's copper qty=2 probe through continue and resumed yield.
     #[test]
     fn review_probe_level_up_modal_mid_goal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan("mining.copper", 2);
         let mut snapshot = snapshot(&plan, 1);
         let mut ledger = None;
@@ -1213,6 +1240,9 @@ mod tests {
 
     #[test]
     fn gather_takes_a_usable_method_even_when_another_method_is_level_gated() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = plan("mining.copper", 1);
         let snapshot = snapshot(&plan, 1);
         let iron = plan
@@ -1240,6 +1270,9 @@ mod tests {
 
     #[test]
     fn gather_arrives_at_a_loc_footprint_not_its_origin() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan("mining.copper", 1);
         let mut snapshot = snapshot(&plan, 1);
         let mut loc = snapshot.locs()[0].clone();
@@ -1270,6 +1303,9 @@ mod tests {
 
     #[test]
     fn gather_level_gate_emits_nothing_and_missing_evidence_has_a_fixed_deadline() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let iron = plan("mining.iron", 1);
         let snapshot = snapshot(&iron, 1);
         let mut ledger = None;
@@ -1301,6 +1337,9 @@ mod tests {
 
     #[test]
     fn late_inventory_growth_cannot_extend_the_gather_deadline() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan("mining.copper", 1);
         let mut snapshot = snapshot(&plan, 1);
         let mut ledger = None;
@@ -1323,6 +1362,9 @@ mod tests {
 
     #[test]
     fn manual_approach_cancellation_wins_over_an_inventory_goal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = plan("mining.copper", 1);
         let mut snapshot = snapshot(&plan, 1);
         let tile = snapshot.local_player().unwrap().player.actor.tile;
@@ -1349,6 +1391,9 @@ mod tests {
     }
     #[test]
     fn compiled_woodcutting_gather_runs_until_three_bundled_normal_logs() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (plan, catalog, method_index, axe_id, op) = compiled_woodcutting_step();
         let mut snapshot = woodcutting_snapshot(&catalog, method_index, axe_id, &op);
         let mut ledger = None;

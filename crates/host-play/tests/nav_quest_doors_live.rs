@@ -296,6 +296,9 @@ fn endpoint_observed_after(
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_QUEST_DOORS_EVIDENCE, and an owned three-character BOT_LIVE_NAME_PREFIX"]
 fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     assert!(std::env::var_os("HOME").is_some(), "set a disposable HOME");
@@ -2335,11 +2338,17 @@ fn run_brimhaven_phoenix_kitchen_journal() {
 #[test]
 #[ignore = "requires Engine Q at 127.0.0.1:44694/http1180, LIVE=1, WORLD_NAV_PACK, an owned three-character lowercase BOT_LIVE_NAME_PREFIX, and NAV_KITCHEN_EVIDENCE"]
 fn live_brimhaven_phoenix_kitchen_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_brimhaven_phoenix_kitchen_journal();
 }
 
 #[test]
 #[ignore = "requires Engine L, LIVE=1, qualified WORLD_NAV_PACK, own npr2 prefix and NAV_KITCHEN_EVIDENCE"]
 fn live_brimhaven_black_arm_kitchen_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_brimhaven_black_arm_kitchen_refusal();
 }

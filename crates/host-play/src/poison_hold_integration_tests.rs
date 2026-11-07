@@ -518,6 +518,9 @@ fn frame(
 
 #[test]
 fn poison_hold_full_window_waits_31_and_resumes_only_after_clear() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new(0, 0, true);
     rig.pump(tile(0), true);
     {
@@ -565,6 +568,9 @@ fn poison_hold_full_window_waits_31_and_resumes_only_after_clear() {
 
 #[test]
 fn poison_hold_partial_window_waits_the_remainder() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new(0, 0, true);
     for tick in 1..=13 {
         rig.observe(tick, tile(0), None, None);
@@ -596,6 +602,9 @@ fn poison_hold_partial_window_waits_the_remainder() {
 
 #[test]
 fn poison_hold_sends_no_hop_into_exposure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new(40, 0, true);
     rig.pump(tile(40), true);
     {
@@ -622,6 +631,9 @@ fn poison_hold_sends_no_hop_into_exposure() {
 
 #[test]
 fn poison_long_approach_clears_without_a_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new(0, 40, true);
     rig.pump(tile(0), true);
     {
@@ -657,6 +669,9 @@ fn poison_long_approach_clears_without_a_stop() {
 
 #[test]
 fn poison_door_interaction_restarts_the_window_at_tick_20() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new(0, 40, true);
     rig.pump(tile(0), true);
     for tick in 1..=20 {
@@ -701,6 +716,9 @@ fn poison_door_interaction_restarts_the_window_at_tick_20() {
 
 #[test]
 fn poison_hold_sends_one_stand_click_when_movement_was_not_accepted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new(0, 0, false);
     rig.pump(tile(0), true);
     {
@@ -720,6 +738,9 @@ fn poison_hold_sends_one_stand_click_when_movement_was_not_accepted() {
 
 #[test]
 fn poison_hold_reassesses_a_kind_two_hit_as_poisoned() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new(0, 0, true);
     rig.pump(tile(0), true);
     assert!(rig.bot()[ALICE]
@@ -752,6 +773,9 @@ fn poison_hold_reassesses_a_kind_two_hit_as_poisoned() {
 
 #[test]
 fn poison_hold_reset_ends_at_deadline_and_retry_gets_a_new_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = HoldRig::new(0, 0, true);
     rig.pump(tile(0), true);
     for tick in 1..=31 {
@@ -803,6 +827,9 @@ fn poison_hold_reset_ends_at_deadline_and_retry_gets_a_new_hold() {
 
 #[test]
 fn known_clear_or_poisoned_fact_with_no_world_never_becomes_unsettled() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut clear = HoldRig::new(0, 0, true);
     clear.pump(tile(0), true);
     for tick in 1..=30 {

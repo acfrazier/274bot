@@ -114,6 +114,9 @@ fn save_frame(client: &mut Client, snapshot: &GameSnapshot, dir: &Path, name: &s
 #[test]
 #[ignore = "LIVE=1, BOT_CPU=1, disposable HOME, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_CACHE_DIR, NAV_FARES_SNAPSHOT_ROOT and NAV_FARES_EVIDENCE required"]
 fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     let evidence =
@@ -380,6 +383,9 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
 #[test]
 #[ignore = "LIVE=1, BOT_CPU=1, disposable HOME, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_CACHE_DIR, NAV_FARES_SNAPSHOT_ROOT and NAV_FARES_EVIDENCE required"]
 fn live_shilo_cart_ten_coins_to_zero() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     let evidence_root =

@@ -411,6 +411,9 @@ fn finish_watchdog_hold(slot: &mut script::SlotScript, here: WorldTile) {
 
 #[test]
 fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::with_source(CLIENT_SOURCE);
     rig.queue_start();
     force_watchdog_sampling(&mut rig.slot().lock().unwrap(), rig.tile);
@@ -483,19 +486,22 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
 
 #[test]
 fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::interact::InteractReq;
     use script_channels::{BrokerWorld, ChannelBroker};
 
     let mut rig = GatherReconnectRig::with_empty_inventory(
         r#"export const apiVersion = 2;
-           export function tick(api) {
-             globalThis.__api = api;
-             globalThis.__page = api.snapshot.gather;
-             if (globalThis.__launch && !globalThis.__run) {
-               globalThis.__run = api.gather.run({ skill: 'Woodcutting', disposition: 'Power' });
-               globalThis.__run.then(value => { globalThis.__runResult = value; });
-             }
-           }"#,
+       export function tick(api) {
+         globalThis.__api = api;
+         globalThis.__page = api.snapshot.gather;
+         if (globalThis.__launch && !globalThis.__run) {
+           globalThis.__run = api.gather.run({ skill: 'Woodcutting', disposition: 'Power' });
+           globalThis.__run.then(value => { globalThis.__runResult = value; });
+         }
+       }"#,
     );
     rig.queue_start();
     let (rows, owned) = rig.drain_host();
@@ -506,10 +512,10 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
     let channel = "rs2b0t:kq:v1:gather-api,bob,carol,dave";
     let mut receiver = GatherReconnectRig::with_source(
         r#"export const apiVersion = 2;
-           globalThis.__received = [];
-           const channel = new BroadcastChannel('rs2b0t:kq:v1:gather-api,bob,carol,dave');
-           channel.onmessage = e => __received.push(e.data);
-           export function tick(_api) {}"#,
+       globalThis.__received = [];
+       const channel = new BroadcastChannel('rs2b0t:kq:v1:gather-api,bob,carol,dave');
+       channel.onmessage = e => __received.push(e.data);
+       export function tick(_api) {}"#,
     );
     receiver.isolate_tick_without_host_drain();
     rig.scripts
@@ -547,8 +553,8 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
     }
     rig.probe(&format!(
         "globalThis.__channel = new BroadcastChannel('{channel}'); \
-         __channel.postMessage({{ proof: 'during-seat' }}); \
-         __api.request({{ op: 'held', name: 'Logs', action: 'Drop' }}); true"
+     __channel.postMessage({{ proof: 'during-seat' }}); \
+     __api.request({{ op: 'held', name: 'Logs', action: 'Drop' }}); true"
     ));
     rig.isolate_tick_without_host_drain();
     rig.slot()
@@ -659,6 +665,9 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
 
 #[test]
 fn paused_gather_seat_keeps_host_rows_queued_until_resume_in_every_frame_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::interact::InteractReq;
 
     for owned in [false, true] {
@@ -750,6 +759,9 @@ fn paused_gather_seat_keeps_host_rows_queued_until_resume_in_every_frame_state()
 
 #[test]
 fn api_foreground_edges_drop_owned_rows_and_restore_unowned_paused_rows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut unowned = GatherReconnectRig::with_source(QUIET_SOURCE);
     unowned.isolate_tick_without_host_drain();
     unowned.frame();
@@ -1184,6 +1196,9 @@ impl GatherReconnectRig {
 
 #[test]
 fn gather_reconnect_before_start_drain_replays_pending_typed_start_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::new();
     rig.queue_start();
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
@@ -1207,6 +1222,9 @@ fn gather_reconnect_before_start_drain_replays_pending_typed_start_once() {
 
 #[test]
 fn gather_reconnect_during_preparation_keeps_one_waiter_and_seat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::new();
     rig.queue_start();
     let (rows, owned) = rig.drain_host();
@@ -1248,6 +1266,9 @@ fn gather_reconnect_during_preparation_keeps_one_waiter_and_seat() {
 
 #[test]
 fn gather_reconnect_after_install_rekeys_same_token_and_keeps_waiter_pending() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::new();
     let token = rig.start_through_host();
     rig.expect_running_page(token);
@@ -1278,6 +1299,9 @@ fn gather_reconnect_after_install_rekeys_same_token_and_keeps_waiter_pending() {
 
 #[test]
 fn load_observer_rearms_kept_seat_from_real_owner_gate_after_reconnect() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::with_real_session_gate(RECONNECT_SOURCE);
     let token = rig.start_through_host();
     rig.expect_running_page(token);
@@ -1310,27 +1334,30 @@ fn load_observer_rearms_kept_seat_from_real_owner_gate_after_reconnect() {
     assert_eq!(rig.native_run().session_key(), Some(next_session));
     rig.stop_and_settle(token);
     rig.probe(
-        "globalThis.__launch=false; globalThis.__run=null; globalThis.__stop=false; globalThis.__stopSent=false; globalThis.__settleCount=0; true",
-    );
+    "globalThis.__launch=false; globalThis.__run=null; globalThis.__stop=false; globalThis.__stopSent=false; globalThis.__settleCount=0; true",
+);
     let next_token = rig.start_through_host();
     assert_ne!(next_token, token, "the new Start has its own request id");
     rig.expect_running_page(next_token);
     rig.stop_and_settle(next_token);
     assert!(
-        !rig
-            .slot()
-            .lock()
-            .unwrap()
-            .drain_logs()
-            .iter()
-            .any(|log| log.contains("seat batch without an execution fence")
-                || log.contains("dropped malformed seat batch run stamp")),
-        "the Load observer must rearm the execution fence and the isolate's Start stamp after reconnect"
-    );
+    !rig
+        .slot()
+        .lock()
+        .unwrap()
+        .drain_logs()
+        .iter()
+        .any(|log| log.contains("seat batch without an execution fence")
+            || log.contains("dropped malformed seat batch run stamp")),
+    "the Load observer must rearm the execution fence and the isolate's Start stamp after reconnect"
+);
 }
 
 #[test]
 fn manual_movement_takes_over_a_gather_session_with_no_walk_in_flight() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::new();
     let token = rig.start_through_host();
     rig.expect_running_page(token);
@@ -1388,6 +1415,9 @@ fn manual_movement_takes_over_a_gather_session_with_no_walk_in_flight() {
 
 #[test]
 fn gather_reconnect_terminal_before_boundary_settles_once_across_keyframes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::new();
     let token = rig.start_through_host();
     rig.expect_running_page(token);
@@ -1411,6 +1441,9 @@ fn gather_reconnect_terminal_before_boundary_settles_once_across_keyframes() {
 
 #[test]
 fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::new();
     let token = rig.start_through_host();
     rig.expect_running_page(token);
@@ -1450,6 +1483,9 @@ fn gather_reconnect_lost_stop_reemits_stop_without_restarting_seat() {
 
 #[test]
 fn guardian_no_navigation_terminal_drains_after_guardian_release() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::new();
     rig.walk_danger = None;
     let token = rig.start_through_host();
@@ -1514,6 +1550,9 @@ fn guardian_no_navigation_terminal_drains_after_guardian_release() {
 
 #[test]
 fn guardian_hold_keeps_isolate_seat_batch_backlog_bounded() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::new();
     rig.walk_danger = Some(&AllowWalkDanger);
     let token = rig.start_through_host();
@@ -1554,6 +1593,9 @@ fn guardian_hold_keeps_isolate_seat_batch_backlog_bounded() {
 
 #[test]
 fn paused_only_guardian_frames_keep_seat_backlog_bounded() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::new();
     let token = rig.start_through_host();
     rig.expect_running_page(token);
@@ -1574,6 +1616,9 @@ fn paused_only_guardian_frames_keep_seat_backlog_bounded() {
 
 #[test]
 fn gather_reconnect_lost_start_and_stop_replays_pair_then_one_terminal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::new();
     let _ = rig.probe("globalThis.__pair = true");
     rig.isolate_tick_without_host_drain();
@@ -1611,6 +1656,9 @@ fn gather_reconnect_lost_start_and_stop_replays_pair_then_one_terminal() {
 
 #[test]
 fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for boundary in ["stop", "replace", "watchdog", "remove"] {
         for terminal_before_boundary in [false, true] {
             let mut rig = GatherReconnectRig::new();
@@ -1733,6 +1781,9 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
 
 #[test]
 fn progress_pending_across_reconnect_completes_once_then_admits_next_session() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = GatherReconnectRig::with_source(
         r#"export const apiVersion = 2;
 export function tick(api) { globalThis.__api = api; }"#,
@@ -1747,8 +1798,8 @@ export function tick(api) { globalThis.__api = api; }"#,
     );
     rig.isolate_tick_without_host_drain();
     rig.probe(
-        "globalThis.__firstSettles=0; __api.questProgress({quest:'cook'}).then(out=>{globalThis.__first=out; __firstSettles++}); true",
-    );
+    "globalThis.__firstSettles=0; __api.questProgress({quest:'cook'}).then(out=>{globalThis.__first=out; __firstSettles++}); true",
+);
     rig.isolate_tick_without_host_drain();
 
     assert!(!rig.slot().lock().unwrap().api_owns_foreground());
@@ -1777,8 +1828,8 @@ export function tick(api) { globalThis.__api = api; }"#,
     // Progress is a Session: a second root cannot supersede it while live.
     // Once the first terminal is credited, the next request is admitted.
     rig.probe(
-        "globalThis.__secondSettles=0; __api.questProgress({quest:'cook'}).then(out=>{globalThis.__second=out; __secondSettles++}); true",
-    );
+    "globalThis.__secondSettles=0; __api.questProgress({quest:'cook'}).then(out=>{globalThis.__second=out; __secondSettles++}); true",
+);
     rig.isolate_tick_without_host_drain();
     let (rows, owned) = rig.drain_host();
     assert!(rows.is_empty());
@@ -1937,6 +1988,9 @@ fn route_exists(
 
 #[test]
 fn load_gather_inspect_route_keeps_load_script_options() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = active_gather_permission_rig(serde_json::json!({
         "allowDangerZones": true,
         "allowWilderness": true,
@@ -1947,9 +2001,9 @@ fn load_gather_inspect_route_keeps_load_script_options() {
 
     let _ = rig.drain_host();
     assert_eq!(
-        rig.probe("globalThis.__api.request({op:'inspect-route', from:{x:3200,z:3200,level:0}, to:{x:3210,z:3210,level:0}, allow_bank_fetch:true, request_id:0}); true"),
-        serde_json::Value::Bool(true)
-    );
+    rig.probe("globalThis.__api.request({op:'inspect-route', from:{x:3200,z:3200,level:0}, to:{x:3210,z:3210,level:0}, allow_bank_fetch:true, request_id:0}); true"),
+    serde_json::Value::Bool(true)
+);
     rig.isolate_tick_without_host_drain();
     let (requests, owned) = rig.drain_host();
     assert!(owned, "the Load Gather session owns the foreground");
@@ -1989,6 +2043,9 @@ fn load_gather_inspect_route_keeps_load_script_options() {
 
 #[test]
 fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = active_gather_permission_rig(serde_json::json!({
         "allowDangerZones": true,
         "allowWilderness": true,
@@ -2055,6 +2112,9 @@ fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
 
 #[test]
 fn load_api_gather_permissions_admit_danger_and_wilderness_routes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let defaults = active_gather_permission_rig(serde_json::json!({}));
     let allowed = active_gather_permission_rig(serde_json::json!({
         "allowDangerZones": true,

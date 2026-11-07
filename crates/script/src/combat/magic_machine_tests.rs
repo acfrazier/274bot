@@ -206,6 +206,9 @@ fn is_arm_control(effect: Option<HostEffect>, choose: i32, toggle: i32, spell: i
 
 #[test]
 fn fresh_autocast_combat_adopts_visible_matching_armed_spell() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let controls = *scene.data.autocast_controls().unwrap();
     let spell_component = scene.data.spell_button_com("Fire Bolt");
@@ -239,6 +242,9 @@ fn fresh_autocast_combat_adopts_visible_matching_armed_spell() {
 
 #[test]
 fn wrong_missing_hidden_stale_or_unarmed_autocast_state_starts_serial_arm() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let cases = [
         ("wrong spell", Some("Wind Strike"), 3, true, true, false),
         ("missing spell text", None, 3, true, true, false),
@@ -283,6 +289,9 @@ fn wrong_missing_hidden_stale_or_unarmed_autocast_state_starts_serial_arm() {
 
 #[test]
 fn inactive_or_wrong_staff_tree_cannot_adopt_autocast_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut inactive = magic_scene(Some("staff_of_fire"), 35);
     let controls = *inactive.data.autocast_controls().unwrap();
     seed_autocast_widget_text(
@@ -324,6 +333,9 @@ fn inactive_or_wrong_staff_tree_cannot_adopt_autocast_state() {
 
 #[test]
 fn sibling_widget_with_matching_text_cannot_adopt_armed_autocast() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let controls = *scene.data.autocast_controls().unwrap();
     seed_autocast_widget_text(
@@ -344,6 +356,9 @@ fn sibling_widget_with_matching_text_cannot_adopt_armed_autocast() {
 
 #[test]
 fn autocast_state_is_not_adopted_after_initial_arm_decision() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let controls = *scene.data.autocast_controls().unwrap();
     seed_autocast_widget_text(
@@ -374,6 +389,9 @@ fn autocast_state_is_not_adopted_after_initial_arm_decision() {
 
 #[test]
 fn case17_autocast_initial_armed_spell_is_replaced_and_rune_out_rearms_strike() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let mut harness = Harness::new(&scene, request(&scene, None, false));
     arm(&mut harness, &mut scene, 1, "Fire Bolt");
@@ -390,6 +408,9 @@ fn case17_autocast_initial_armed_spell_is_replaced_and_rune_out_rearms_strike() 
 
 #[test]
 fn mage_fight_enables_only_the_protect_prayer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     scene.stat(5, 43, 43);
     scene.install();
@@ -443,6 +464,9 @@ fn mage_fight_enables_only_the_protect_prayer() {
 
 #[test]
 fn case24_manual_order_with_armed_staff_never_arms_or_attacks_and_casts_five_ticks_apart() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 60);
     let order = ["wind_blast", "water_blast", "earth_blast", "fire_blast"];
     let mut harness = Harness::new(&scene, request(&scene, Some(&order), false));
@@ -465,6 +489,9 @@ fn case24_manual_order_with_armed_staff_never_arms_or_attacks_and_casts_five_tic
 
 #[test]
 fn case25_manual_specific_rejection_is_permanent_but_not_no_runes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("ibanstaff"), 60);
     let order = ["ibans_blast", "fire_bolt"];
     let mut harness = Harness::new(&scene, request(&scene, Some(&order), false));
@@ -490,6 +517,9 @@ fn case25_manual_specific_rejection_is_permanent_but_not_no_runes() {
 
 #[test]
 fn case25_crumble_is_only_castable_against_undead_and_specific_refusal_is_not_runes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scene = magic_scene(None, 41);
     let frame = Frame::borrow(SnapshotView::new(
         Some(&scene.snapshot),
@@ -529,6 +559,9 @@ fn case25_crumble_is_only_castable_against_undead_and_specific_refusal_is_not_ru
 
 #[test]
 fn case32_iban_staff_defaults_to_selectable_fire_blast_but_explicit_iban_is_manual() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("ibanstaff"), 60);
     let mut automatic = Harness::new(&scene, request(&scene, None, false));
     arm(&mut automatic, &mut scene, 1, "Fire Blast");
@@ -550,6 +583,9 @@ fn case32_iban_staff_defaults_to_selectable_fire_blast_but_explicit_iban_is_manu
 
 #[test]
 fn manual_order_fallback_flag_is_required_at_rune_exhaustion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for fallback in [false, true] {
         let mut scene = magic_scene(Some("staff_of_fire"), 35);
         set_count(&mut scene, "chaosrune", 1);
@@ -575,6 +611,9 @@ fn manual_order_fallback_flag_is_required_at_rune_exhaustion() {
 
 #[test]
 fn manual_cast_timeout_retries_once_then_reports_unresponsive() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let mut harness = Harness::new(&scene, request(&scene, Some(&["fire_bolt"]), false));
     cast(harness.pending(&scene, 1), component(&scene, "fire_bolt"));
@@ -599,6 +638,9 @@ fn manual_cast_timeout_retries_once_then_reports_unresponsive() {
 
 #[test]
 fn manual_classified_refusal_exhaustion_is_unresponsive_not_arm_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scene = magic_scene(Some("ibanstaff"), 60);
     let mut harness = Harness::new(&scene, request(&scene, Some(&["ibans_blast"]), false));
     cast(harness.pending(&scene, 1), component(&scene, "ibans_blast"));
@@ -614,6 +656,9 @@ fn manual_classified_refusal_exhaustion_is_unresponsive_not_arm_failure() {
 
 #[test]
 fn splash_resource_settle_counts_cast_once_without_damage_or_shorter_cadence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let mut harness = Harness::new(&scene, request(&scene, Some(&["fire_bolt"]), false));
     cast(harness.pending(&scene, 1), component(&scene, "fire_bolt"));
@@ -636,6 +681,9 @@ fn splash_resource_settle_counts_cast_once_without_damage_or_shorter_cadence() {
 
 #[test]
 fn arm_failure_is_prep_failed_and_native_side_tab_admission_is_serial() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     scene.snapshot.seed_side_tabs(
         vec![SideTabView {
@@ -667,6 +715,9 @@ fn arm_failure_is_prep_failed_and_native_side_tab_admission_is_serial() {
 
 #[test]
 fn spell_queue_outlives_visual_and_impact_does_not_relabel_the_new_facing_actor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let mut mage = PlayerView {
         index: 2,
@@ -806,6 +857,9 @@ fn spell_queue_outlives_visual_and_impact_does_not_relabel_the_new_facing_actor(
 
 #[test]
 fn mage_boosts_never_select_melee_attack_or_strength_potions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     let first_free = scene.inventory.len();
     for (offset, alias) in ["4dose2attack", "4dose2strength", "4dose1magic"]
@@ -836,6 +890,9 @@ fn mage_boosts_never_select_melee_attack_or_strength_potions() {
 
 #[test]
 fn steady_autocast_observation_and_ranking_allocate_nothing_for_two_hundred_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 35);
     // Forty Fire Bolts consume 120 air runes; keep the chosen spell stable.
     set_count(&mut scene, "airrune", 150);
@@ -864,6 +921,9 @@ fn steady_autocast_observation_and_ranking_allocate_nothing_for_two_hundred_tick
 
 #[test]
 fn steady_manual_order_selection_allocates_nothing_between_casts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = magic_scene(Some("staff_of_fire"), 60);
     let order = ["wind_blast", "water_blast"];
     refresh_magic(&mut scene, 3, false);

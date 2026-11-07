@@ -2047,6 +2047,9 @@ mod tests {
 
     #[test]
     fn next_page_pins_the_machine_keys_over_the_observed_frame() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, tile) = search_row(&data);
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
@@ -2227,6 +2230,9 @@ mod tests {
 
     #[test]
     fn native_clue_walk_latches_one_radius_request_until_arrival() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, target) = search_row(&data);
         let mut frame = wounded(&[(held_id, 1)], 10);
@@ -2281,6 +2287,9 @@ mod tests {
 
     #[test]
     fn native_clue_walk_deadline_blocks_with_named_reason_without_reissuing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, _) = search_row(&data);
         let mut frame = wounded(&[(held_id, 1)], 10);
@@ -2360,6 +2369,9 @@ mod tests {
 
     #[test]
     fn native_entrana_search_uses_the_posted_loc_approach() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let south = WorldTile {
             x: 2818,
@@ -2446,6 +2458,9 @@ mod tests {
 
     #[test]
     fn a_held_search_row_walks_with_every_walk_option_off() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, tile) = search_row(&data);
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
@@ -2465,6 +2480,9 @@ mod tests {
 
     #[test]
     fn nothing_held_is_an_idle_begin_the_next_frame_starts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let mut script = Sherlock::default();
 
@@ -2495,6 +2513,9 @@ mod tests {
 
     #[test]
     fn the_identify_is_the_machines_own_membership_read() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let mut script = Sherlock::default();
 
@@ -2513,6 +2534,9 @@ mod tests {
 
     #[test]
     fn a_none_held_abort_clears_the_token_without_counting() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, tile) = search_row(&data);
         let mut script = Sherlock::default();
@@ -2550,6 +2574,9 @@ mod tests {
 
     #[test]
     fn the_finished_collect_counts_and_clears_the_token_in_one_iterate() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let casket = casket_row(&data);
         let mut script = Sherlock::default();
@@ -2584,6 +2611,9 @@ mod tests {
 
     #[test]
     fn a_posted_zero_hitpoint_page_freezes_without_ending_the_session() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, tile) = search_row(&data);
         let mut script = Sherlock::default();
@@ -2610,6 +2640,9 @@ mod tests {
 
     #[test]
     fn a_supplies_needed_tick_keeps_the_token_and_fetches_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let dig = dig_row(&data);
         let mut script = Sherlock::default();
@@ -2650,6 +2683,9 @@ mod tests {
 
     #[test]
     fn the_page_marshals_the_observed_pack_and_scene() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, _) = search_row(&data);
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
@@ -2929,6 +2965,9 @@ mod tests {
 
     #[test]
     fn a_tick_without_a_sink_dispatches_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, _) = search_row(&data);
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
@@ -2947,6 +2986,9 @@ mod tests {
 
     #[test]
     fn a_frozen_frame_yields_instead_of_walking() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let (held_id, _) = search_row(&data);
         let mut frame = Frame::new(&[(held_id, 1)], Some(far()));
@@ -2968,6 +3010,9 @@ mod tests {
     /// it at `Steady`, and enqueue maps it onto `ContinueDialog`.
     #[test]
     fn a_posted_continue_dialog_produces_a_continue_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected();
         let held_id = talk_row(&data);
         let mut script = Sherlock::default();

@@ -249,6 +249,9 @@ fn converging_to(harness: &Harness) -> Option<Style> {
 
 #[test]
 fn t2_needs_two_protected_frames_then_converges_and_restyles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     let bow = id(&scene, "maple_shortbow");
@@ -310,6 +313,9 @@ fn t2_needs_two_protected_frames_then_converges_and_restyles() {
 
 #[test]
 fn t2_ignores_one_frame_the_same_mask_after_a_settle_and_a_flip_before_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     // One protected frame, then the protect drops: never a switch.
@@ -357,6 +363,9 @@ fn t2_ignores_one_frame_the_same_mask_after_a_settle_and_a_flip_before_it() {
 
 #[test]
 fn switch_zero_wear_completes_same_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // A NoWeapons duel: slot 3 is locked, melee is unarmed, the mage kit is the
     // runes alone (manual casts).
     let mut scene = pen_scene();
@@ -406,6 +415,9 @@ fn switch_zero_wear_completes_same_tick() {
 
 #[test]
 fn switch_failed_keeps_old_style_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     protect(&mut scene, MELEE_PROTECT);
@@ -457,6 +469,9 @@ fn step_without_server(harness: &mut Harness, scene: &mut Scene, tick: u64) -> D
 
 #[test]
 fn switch_right_hand_vanishes_before_completion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     protect(&mut scene, MELEE_PROTECT);
@@ -504,6 +519,9 @@ fn switch_right_hand_vanishes_before_completion() {
 
 #[test]
 fn items_between_the_pack_and_the_worn_container_are_not_vanished() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The server moves a wear in one tick, but the client applies the pack and the
     // worn container in separate packets: one frame can show the bow and the
     // arrows in neither. The wear rows are still in flight, so nothing fails.
@@ -545,6 +563,9 @@ fn items_between_the_pack_and_the_worn_container_are_not_vanished() {
 
 #[test]
 fn switch_settle_covers_old_cooldown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // A rate-7 two-hander against a rate-3 (rapid) bow.
     let mut scene = pen_scene();
     scene
@@ -605,6 +626,9 @@ fn switch_settle_covers_old_cooldown() {
 
 #[test]
 fn switch_t2_rotates_past_two_styles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (opening, expected) in [
         (
             Style::Melee,
@@ -750,6 +774,9 @@ fn item_name(scene: &Scene, alias: &str) -> String {
 
 #[test]
 fn switch_thrownaxe_needs_no_quiver() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = pen_scene();
     scene
         .players
@@ -811,6 +838,9 @@ fn bow_and_iron_arrows_scene() -> (Scene, CombatRequest) {
 
 #[test]
 fn switch_bow_uses_held_fallback_ammo() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, req) = bow_and_iron_arrows_scene();
     let (bow, iron) = (id(&scene, "maple_shortbow"), id(&scene, "iron_arrow"));
     let mut harness = start(&mut scene, req);
@@ -847,6 +877,9 @@ fn switch_bow_uses_held_fallback_ammo() {
 
 #[test]
 fn switch_refused_mandatory_ammo_fails() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, req) = bow_and_iron_arrows_scene();
     let scimitar = item_name(&scene, "rune_scimitar");
     let bow = item_name(&scene, "maple_shortbow");
@@ -896,6 +929,9 @@ fn switch_refused_mandatory_ammo_fails() {
 
 #[test]
 fn a_client_refused_first_wear_keeps_converging_and_retries_next_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     protect(&mut scene, MELEE_PROTECT);
@@ -920,6 +956,9 @@ fn a_client_refused_first_wear_keeps_converging_and_retries_next_tick() {
 
 #[test]
 fn a_full_armour_change_wears_the_right_hand_first_over_two_plans() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = pen_scene();
     scene
         .players
@@ -986,6 +1025,9 @@ fn a_full_armour_change_wears_the_right_hand_first_over_two_plans() {
 
 #[test]
 fn a_shield_waits_for_the_right_hand_when_a_two_hander_gives_way() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = pen_scene();
     scene
         .players
@@ -1037,6 +1079,9 @@ fn far_opponent(scene: &mut Scene, at: api::WorldTile) {
 
 #[test]
 fn t4_switches_after_two_attack_intervals_out_of_reach() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     far_opponent(&mut scene, tile(3345, 3250));
@@ -1065,6 +1110,9 @@ fn t4_switches_after_two_attack_intervals_out_of_reach() {
 
 #[test]
 fn t4_never_fires_beside_the_opponent_or_without_an_alternative() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Adjacent: never.
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
@@ -1086,6 +1134,9 @@ fn t4_never_fires_beside_the_opponent_or_without_an_alternative() {
 
 #[test]
 fn t4_waits_out_a_swing_onset_inside_the_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     far_opponent(&mut scene, tile(3345, 3250));
@@ -1138,6 +1189,9 @@ fn has_held(batch: &DrainedBatch, verb: &str) -> bool {
 
 #[test]
 fn upkeep_shares_the_budget_so_a_wear_set_completes_only_after_its_last_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Three differing slots (bow, quiver, helm) under an emergency eat and the
     // prayers: the five-event budget leaves room for fewer wears than the set
     // holds, so completion waits for the last slot to be observed.
@@ -1193,6 +1247,9 @@ fn upkeep_shares_the_budget_so_a_wear_set_completes_only_after_its_last_slot() {
 
 #[test]
 fn a_drink_on_the_trigger_tick_admits_no_wear_and_starts_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     give(&mut scene, "1doseprayerrestore", 1);
@@ -1280,6 +1337,9 @@ fn ranged_opening(with_melee_kit: bool) -> (Scene, CombatRequest) {
 
 #[test]
 fn exhausted_arrows_switch_to_melee_instead_of_aborting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, req) = ranged_opening(true);
     let mut harness = start(&mut scene, req);
     assert_eq!(harness.machine.active_style(), Style::Ranged);
@@ -1309,6 +1369,9 @@ fn exhausted_arrows_switch_to_melee_instead_of_aborting() {
 
 #[test]
 fn exhausted_arrows_with_no_alternative_abort_as_before() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, req) = ranged_opening(false);
     let mut harness = start(&mut scene, req);
     scene.equipment.retain(|row| row.slot != 13);
@@ -1331,6 +1394,9 @@ fn exhausted_arrows_with_no_alternative_abort_as_before() {
 
 #[test]
 fn exhaustion_of_the_target_during_a_convergence_fails_the_switch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     protect(&mut scene, MELEE_PROTECT);
@@ -1358,6 +1424,9 @@ fn exhaustion_of_the_target_during_a_convergence_fails_the_switch() {
 
 #[test]
 fn the_same_protect_mask_never_switches_twice() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Melee -> Ranged on Protect from Melee; the arrows run out and T1 returns
     // to melee while the opponent still protects against melee. The mask is the
     // one recorded at the last completed switch: no rotation to the staff.
@@ -1403,6 +1472,9 @@ fn the_same_protect_mask_never_switches_twice() {
 
 #[test]
 fn no_equipment_allowance_means_no_wear_and_no_switch_evaluation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // A bow to wear and a runes-only mage kit that would switch with no wear at
     // all: with equipment changes forbidden neither may ever happen.
     let (mut scene, mut kits) = sword_and_bow();
@@ -1430,6 +1502,9 @@ fn no_equipment_allowance_means_no_wear_and_no_switch_evaluation() {
 
 #[test]
 fn a_locked_right_hand_is_never_worn_and_the_switch_completes_on_the_other_slots() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = pen_scene();
     scene
         .players
@@ -1480,6 +1555,9 @@ fn melee_pick(harness: &Harness, scene_alias: &str) -> bool {
 
 #[test]
 fn the_melee_pick_is_the_highest_tier_the_attack_level_allows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let steel_and_rune = ["steel_scimitar", "rune_scimitar"];
     assert!(melee_pick(
         &pick_scene(30, &steel_and_rune),
@@ -1493,6 +1571,9 @@ fn the_melee_pick_is_the_highest_tier_the_attack_level_allows() {
 
 #[test]
 fn an_obj_outside_the_old_name_family_is_picked_by_its_category() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Excalibur (tier 20) is a melee-category weapon the display-name family
     // never listed; at attack 30 it beats the steel scimitar.
     assert!(melee_pick(
@@ -1503,6 +1584,9 @@ fn an_obj_outside_the_old_name_family_is_picked_by_its_category() {
 
 #[test]
 fn a_quest_gated_tier_and_a_slower_tie_are_not_picked() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The dragon dagger's gate needs a quest varp the machine cannot see.
     assert!(melee_pick(
         &pick_scene(99, &["steel_scimitar", "dragon_dagger"]),
@@ -1519,6 +1603,9 @@ fn a_quest_gated_tier_and_a_slower_tie_are_not_picked() {
 
 #[test]
 fn no_weapons_opens_unarmed_melee_and_never_wears_the_ranged_kit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut req = request(kits);
     req.style = Style::Ranged; // the ranged weapon cannot be worn: not legal
@@ -1537,6 +1624,9 @@ fn no_weapons_opens_unarmed_melee_and_never_wears_the_ranged_kit() {
 
 #[test]
 fn the_kit_less_style_is_never_opened_when_kits_are_declared() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // NoMelee with a bow and arrows: only the ranged kit, so ranged opens even
     // though `request.style` still says melee.
     let (mut scene, mut kits) = sword_and_bow();
@@ -1578,6 +1668,9 @@ fn the_kit_less_style_is_never_opened_when_kits_are_declared() {
 
 #[test]
 fn a_melee_only_request_never_switches() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // NoRanged + NoMagic: only the melee kit.
     let (mut scene, mut kits) = sword_and_bow();
     kits.ranged = None;
@@ -1613,6 +1706,9 @@ const MACHINE_BYTES: usize = 560;
 
 #[test]
 fn a_steady_pvp_fight_with_kits_allocates_nothing_for_two_hundred_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     scene.local.player.actor.animation = scene.melee_seq();
@@ -1633,6 +1729,9 @@ fn a_steady_pvp_fight_with_kits_allocates_nothing_for_two_hundred_ticks() {
 
 #[test]
 fn a_completed_switch_allocates_exactly_its_style_box() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Melee -> Ranged: one `Box<RangedState>`.
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
@@ -1668,6 +1767,9 @@ fn a_completed_switch_allocates_exactly_its_style_box() {
 
 #[test]
 fn t3_returns_to_the_preferred_style_only_when_the_opponent_shows_no_protect_and_is_in_reach() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     protect(&mut scene, MELEE_PROTECT);
@@ -1749,6 +1851,9 @@ fn fallback_switch_in_the_gap() -> (Harness, Scene, Vec<ItemView>) {
 
 #[test]
 fn fallback_ammunition_between_the_pack_and_the_worn_container_is_not_vanished() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The kit's literal steel arrows are absent, so the quiver is the fallback
     // pick (iron arrows). While its wear row awaits the echo and the pack no
     // longer shows the arrows, the need is still the iron arrows.
@@ -1776,6 +1881,9 @@ fn fallback_ammunition_between_the_pack_and_the_worn_container_is_not_vanished()
 
 #[test]
 fn fallback_ammunition_that_never_reaches_the_worn_container_fails_the_switch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The pending wear is only a window: once it times out with the arrows in
     // neither container, the switch fails and is never counted.
     let (mut harness, mut scene, _moved) = fallback_switch_in_the_gap();
@@ -1807,6 +1915,9 @@ fn completed_ranged_switch(harness: &mut Harness, scene: &mut Scene) -> u64 {
 
 #[test]
 fn a_settle_holds_the_exhaustion_for_its_first_idle_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The arrows run out inside the settle: no trigger is evaluated there (T1
     // included), the engagement does not abort for it, and the first Idle tick
     // starts the switch back to melee.
@@ -1845,6 +1956,9 @@ fn a_settle_holds_the_exhaustion_for_its_first_idle_tick() {
 
 #[test]
 fn an_exhaustion_in_a_settle_with_no_alternative_still_aborts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Nothing to switch to (the sword is gone too): the settle does not hold
     // the abort back.
     let (mut scene, kits) = sword_and_bow();
@@ -1874,6 +1988,9 @@ fn an_exhaustion_in_a_settle_with_no_alternative_still_aborts() {
 
 #[test]
 fn a_mage_opening_without_runes_opens_the_usable_melee_kit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut scene = pen_scene();
     scene
         .players
@@ -1905,6 +2022,9 @@ fn a_mage_opening_without_runes_opens_the_usable_melee_kit() {
 
 #[test]
 fn the_preference_order_decides_the_opening_between_two_usable_kits() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (scene, kits) = sword_and_bow();
     let mut req = request(kits);
     req.style = Style::Melee;
@@ -1945,6 +2065,9 @@ fn penned_npc_opening(authored: Style, executable: Style) -> (Scene, Harness) {
 
 #[test]
 fn an_active_mage_opening_does_not_apply_the_authored_melee_reach_filter() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (_, harness) = penned_npc_opening(Style::Melee, Style::Mage);
     assert_eq!(harness.machine.active_style(), Style::Mage);
     assert_eq!(
@@ -1958,6 +2081,9 @@ fn an_active_mage_opening_does_not_apply_the_authored_melee_reach_filter() {
 
 #[test]
 fn an_active_melee_opening_keeps_reach_refusal_for_an_authored_mage_request() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (scene, mut harness) = penned_npc_opening(Style::Mage, Style::Melee);
     assert_eq!(harness.machine.active_style(), Style::Melee);
     assert_eq!(harness.machine.engaged(), None);
@@ -2033,6 +2159,9 @@ fn exhausted_penned_mage(pending_wear: bool, alternative: bool) -> (Scene, Harne
 
 #[test]
 fn t1_melee_switch_refuses_the_penned_npc_and_uses_the_existing_no_target_path() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for pending_wear in [false, true] {
         let (mut scene, mut harness) = exhausted_penned_mage(pending_wear, false);
         for tick in 2..=17 {
@@ -2080,6 +2209,9 @@ fn t1_melee_switch_refuses_the_penned_npc_and_uses_the_existing_no_target_path()
 
 #[test]
 fn t1_melee_switch_reselects_a_reachable_npc_instead_of_the_penned_one() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for pending_wear in [false, true] {
         let (mut scene, mut harness) = exhausted_penned_mage(pending_wear, true);
         let mut attacked = false;
@@ -2115,6 +2247,9 @@ fn t1_melee_switch_reselects_a_reachable_npc_instead_of_the_penned_one() {
 
 #[test]
 fn no_weapons_and_no_melee_without_runes_ends_the_preparation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The cross product `NoWeapons + NoMelee` leaves manual magic only. With no
     // runes held the machine opens it and ends the preparation: it never wears
     // or casts.
@@ -2179,6 +2314,9 @@ fn picked(harness: &Harness, style: Style, alias: &str) -> bool {
 
 #[test]
 fn an_unusable_first_ranged_candidate_never_hides_a_usable_later_one() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // A weapon with no ammunition held comes first, in either order (a crossbow
     // with no bolts; the ogre bow, of a higher level, with no ogre arrows); the
     // shortbow has arrows.
@@ -2201,6 +2339,9 @@ fn an_unusable_first_ranged_candidate_never_hides_a_usable_later_one() {
 
 #[test]
 fn ranged_candidates_rank_by_level_and_the_level_gates_them() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The maple shortbow (level 30) beats the shortbow (1) in either order,
     // unless the Ranged level does not allow it.
     for items in [
@@ -2222,6 +2363,9 @@ fn ranged_candidates_rank_by_level_and_the_level_gates_them() {
 
 #[test]
 fn competing_staves_pick_the_one_that_serves_the_most_spells() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // With the mind and air runes held, the fire staff serves wind strike and
     // fire strike (its fire rune), the air staff only wind strike.
     for items in [
@@ -2253,6 +2397,9 @@ fn competing_staves_pick_the_one_that_serves_the_most_spells() {
 
 #[test]
 fn begin_allocates_no_magic_state_for_a_mage_kit_it_does_not_open() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // A mage kit beside the melee and ranged kits costs its own few small
     // allocations (the kit rows), not a `MagicState` to validate its spell order.
     let bytes = |with_mage: bool| {

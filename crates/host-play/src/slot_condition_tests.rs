@@ -203,6 +203,9 @@ fn assert_onset(owner: &SlotCondition, q: u8, latched: bool, refreshed: bool) {
 
 #[test]
 fn incomplete_frame_at_same_tick_hides_fact() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(1);
     owner.observe_frame(&snapshot, &drain(true, true), false);
@@ -218,6 +221,9 @@ fn incomplete_frame_at_same_tick_hides_fact() {
 
 #[test]
 fn reconnect_hides_fact_until_first_complete_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.observe_frame(&frame(200), &drain(true, true), false);
     owner.session_ended();
@@ -257,6 +263,9 @@ fn unavailable_tables_keep_food_and_cures_unknown() {
 
 #[test]
 fn reconnect_watermark_ignores_retained_and_unread_old_drinks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(1);
     chat(&mut snapshot, 1, DRINK_LINE);
@@ -289,6 +298,9 @@ fn reconnect_watermark_ignores_retained_and_unread_old_drinks() {
 
 #[test]
 fn player_chat_cannot_spoof_poison_drink_or_fruit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (type_, username) in [
         (2, Some("Other player")),
         (3, Some("Other player")),
@@ -341,6 +353,9 @@ fn player_chat_cannot_spoof_poison_drink_or_fruit() {
 
 #[test]
 fn queued_poison_marks_keep_only_proven_drink_immunity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(1);
     chat(&mut snapshot, 1, DRINK_LINE);
@@ -382,6 +397,9 @@ fn consumer_rejects_stale_stamp() {
 
 #[test]
 fn slot_condition_consumes_chat_at_edges_only() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(0);
     chat(&mut snapshot, 1, POISON_LINE);
@@ -401,8 +419,10 @@ fn slot_condition_consumes_chat_at_edges_only() {
 
 #[test]
 fn reducer_latch_future_line_with_coherent_weaker_rows_uses_q_unknown() {
-    // Synthetic replay of RS5 R5-01: PLAYER_INFO t (hit), NPC_INFO t
-    // (scorpion), then the first poison chat of t+1 before PLAYER_INFO t+1.
+    if !api::test_support::game_data_available() {
+        return;
+    } // Synthetic replay of RS5 R5-01: PLAYER_INFO t (hit), NPC_INFO t
+      // (scorpion), then the first poison chat of t+1 before PLAYER_INFO t+1.
     let mut owner = owner();
     let mut snapshot = frame(1);
     snapshot.seed_npcs(vec![npc(108, 1)]);
@@ -418,6 +438,9 @@ fn reducer_latch_future_line_with_coherent_weaker_rows_uses_q_unknown() {
 
 #[test]
 fn reducer_latch_split_drain_stale_npc_rows_waits_for_coherent_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for stronger in [false, true] {
         let mut owner = owner();
         let mut snapshot = frame(1);
@@ -436,6 +459,9 @@ fn reducer_latch_split_drain_stale_npc_rows_waits_for_coherent_frame() {
 
 #[test]
 fn reducer_edge_order_old_latch_closes_before_new_edge_evidence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(1);
     chat(&mut snapshot, 1, POISON_LINE);
@@ -450,6 +476,9 @@ fn reducer_edge_order_old_latch_closes_before_new_edge_evidence() {
 
 #[test]
 fn reducer_latch_window_ends_ambiguous_uses_q_unknown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(1);
     chat(&mut snapshot, 1, POISON_LINE);
@@ -462,6 +491,9 @@ fn reducer_latch_window_ends_ambiguous_uses_q_unknown() {
 
 #[test]
 fn reducer_latch_disqualifying_edges_use_q_unknown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (tick, previous_complete, hit_kind) in
         [(2, true, Some(1)), (1, false, Some(1)), (1, true, None)]
     {
@@ -483,6 +515,9 @@ fn reducer_latch_disqualifying_edges_use_q_unknown() {
 
 #[test]
 fn reducer_latch_no_priced_poison_source_uses_q_unknown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for rows in [vec![npc(1, 1)], vec![npc(108, 1), npc(191, 2)]] {
         let mut owner = owner();
         let mut snapshot = frame(1);
@@ -497,6 +532,9 @@ fn reducer_latch_no_priced_poison_source_uses_q_unknown() {
 
 #[test]
 fn reducer_latch_never_lowers() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(1);
     chat(&mut snapshot, 1, POISON_LINE);
@@ -512,6 +550,9 @@ fn reducer_latch_never_lowers() {
 
 #[test]
 fn slot_condition_feeds_kind2_mark_and_chat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(1);
     chat(&mut snapshot, 1, POISON_LINE);
@@ -545,6 +586,9 @@ fn slot_condition_feeds_kind2_mark_and_chat() {
 
 #[test]
 fn drink_line_alone_credits_ordinary() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(1);
     chat(&mut snapshot, 1, DRINK_LINE);
@@ -566,6 +610,9 @@ fn drink_line_alone_credits_ordinary() {
 
 #[test]
 fn effect_origin_backlog_drain_of_three_credits_from_t_minus_two() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(3);
     chat(&mut snapshot, 1, DRINK_LINE);
@@ -578,6 +625,9 @@ fn effect_origin_backlog_drain_of_three_credits_from_t_minus_two() {
 
 #[test]
 fn two_lines_in_one_edge_credit_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(3);
     snapshot.seed_chat_lines(vec![
@@ -632,6 +682,9 @@ fn inventory(snapshot: &mut GameSnapshot, generation: u64, ids: &[i32]) {
 
 #[test]
 fn dose_drop_without_line_does_not_clear_poison() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for id in [179, 185, 464] {
         let mut owner = owner();
         let mut snapshot = frame(1);
@@ -651,6 +704,9 @@ fn dose_drop_without_line_does_not_clear_poison() {
 
 #[test]
 fn ordinary_and_super_drops_with_line_credit_only_ordinary_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for id in [179, 185] {
         let mut owner = owner();
         let mut snapshot = frame(1);
@@ -670,6 +726,9 @@ fn ordinary_and_super_drops_with_line_credit_only_ordinary_bound() {
 
 #[test]
 fn fruit_line_requires_fruit_loss_and_grants_no_future_fire() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for consumed in [false, true] {
         let mut owner = owner();
         let mut snapshot = frame(1);
@@ -702,6 +761,9 @@ fn fruit_line_requires_fruit_loss_and_grants_no_future_fire() {
 
 #[test]
 fn fruit_chat_then_count_loss_match_on_adjacent_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
     chat(&mut snapshot, 1, FRUIT_LINE);
@@ -719,6 +781,9 @@ fn fruit_chat_then_count_loss_match_on_adjacent_ticks() {
 
 #[test]
 fn fruit_count_loss_then_chat_match_on_adjacent_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
     inventory(&mut snapshot, 2, &[]);
@@ -736,6 +801,9 @@ fn fruit_count_loss_then_chat_match_on_adjacent_ticks() {
 
 #[test]
 fn fruit_chat_and_count_loss_do_not_match_after_the_content_bound() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for chat_first in [true, false] {
         let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
         snapshot.seed_tick(2);
@@ -765,6 +833,9 @@ fn fruit_chat_and_count_loss_do_not_match_after_the_content_bound() {
 
 #[test]
 fn fruit_chat_pairs_with_count_loss_after_a_k_two_drain() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
     chat(&mut snapshot, 1, FRUIT_LINE);
@@ -778,8 +849,10 @@ fn fruit_chat_pairs_with_count_loss_after_a_k_two_drain() {
 
 #[test]
 fn fruit_chat_pairs_with_count_loss_in_a_later_non_edge_frame() {
-    // The line of tick 3 can be read at the edge of tick 2, and the inventory of
-    // tick 3 can arrive after PLAYER_INFO(3) in a frame without PLAYER_INFO.
+    if !api::test_support::game_data_available() {
+        return;
+    } // The line of tick 3 can be read at the edge of tick 2, and the inventory of
+      // tick 3 can arrive after PLAYER_INFO(3) in a frame without PLAYER_INFO.
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
     chat(&mut snapshot, 1, FRUIT_LINE);
@@ -798,6 +871,9 @@ fn fruit_chat_pairs_with_count_loss_in_a_later_non_edge_frame() {
 
 #[test]
 fn same_edge_fruit_then_newer_poison_line_is_onset() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
     inventory(&mut snapshot, 2, &[]);
@@ -814,6 +890,9 @@ fn same_edge_fruit_then_newer_poison_line_is_onset() {
 
 #[test]
 fn split_fruit_chat_then_poison_line_with_count_loss_is_onset() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
     chat(&mut snapshot, 1, FRUIT_LINE);
@@ -831,9 +910,11 @@ fn split_fruit_chat_then_poison_line_with_count_loss_is_onset() {
 
 #[test]
 fn newer_poison_line_cancels_waiting_fruit_chat() {
-    // One edge holds the fruit line (older) and a newer poison line; the count
-    // loss comes on the next edge. The clear must stand, or the loss would cure
-    // the newer onset.
+    if !api::test_support::game_data_available() {
+        return;
+    } // One edge holds the fruit line (older) and a newer poison line; the count
+      // loss comes on the next edge. The clear must stand, or the loss would cure
+      // the newer onset.
     let (mut owner, mut snapshot) = poisoned_owner_with_fruit();
     snapshot.seed_tick(2);
     chat_pair(&mut snapshot, (1, FRUIT_LINE), (2, POISON_LINE));
@@ -858,6 +939,9 @@ fn newer_poison_line_cancels_waiting_fruit_chat() {
 
 #[test]
 fn poison_window_clear_on_the_31st_clean_edge() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=30 {
@@ -889,6 +973,9 @@ fn poison_window_clear_on_the_31st_clean_edge() {
 
 #[test]
 fn poison_window_remaining_counts_down() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=12 {
@@ -909,6 +996,9 @@ fn poison_window_remaining_counts_down() {
 
 #[test]
 fn poison_window_not_accepted_needs_one_edge() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     for tick in 1..=31 {
         owner.observe_frame(&frame(tick), &drain(true, true), false);
@@ -947,6 +1037,9 @@ fn poison_window_not_accepted_needs_one_edge() {
 
 #[test]
 fn poison_window_interaction_restarts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=20 {
@@ -984,6 +1077,9 @@ fn poison_window_interaction_restarts() {
 
 #[test]
 fn poison_window_modal_resets_and_names_cause() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=12 {
@@ -1006,6 +1102,9 @@ fn poison_window_modal_resets_and_names_cause() {
 
 #[test]
 fn poison_window_frame_gap_resets() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=12 {
@@ -1026,6 +1125,9 @@ fn poison_window_frame_gap_resets() {
 
 #[test]
 fn poison_window_incomplete_trace_resets() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=12 {
@@ -1051,6 +1153,9 @@ fn poison_window_incomplete_trace_resets() {
 
 #[test]
 fn poison_window_incomplete_fact_resets() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=12 {
@@ -1063,18 +1168,21 @@ fn poison_window_incomplete_fact_resets() {
     assert!(owner.current().is_none());
     owner.observe_frame(&frame(12), &drain(false, true), false);
     assert_eq!(
-        poison_window(&owner),
-        PoisonWindow {
-            remaining: 31,
-            accepted: false,
-            last_reset: WindowReset::IncompleteFact,
-        },
-        "old: a missing condition fact hid the reset cause; new: it restarts and records IncompleteFact"
-    );
+    poison_window(&owner),
+    PoisonWindow {
+        remaining: 31,
+        accepted: false,
+        last_reset: WindowReset::IncompleteFact,
+    },
+    "old: a missing condition fact hid the reset cause; new: it restarts and records IncompleteFact"
+);
 }
 
 #[test]
 fn poison_mark_on_31st_clean_edge_prevents_clear() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=30 {
@@ -1099,6 +1207,9 @@ fn poison_mark_on_31st_clean_edge_prevents_clear() {
 
 #[test]
 fn delayed_login_mark_never_follows_false_clear() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=30 {
@@ -1161,8 +1272,10 @@ fn queue_packet(client: &mut Client, packet: ClientProt) {
 
 #[test]
 fn outgoing_interactions_restart_only_unknown_login_poison() {
-    // Cover operations, item/widget uses, inventory controls and interface
-    // continuations through the real encrypted outgoing decoder.
+    if !api::test_support::game_data_available() {
+        return;
+    } // Cover operations, item/widget uses, inventory controls and interface
+      // continuations through the real encrypted outgoing decoder.
     for packet in [
         ClientProt::OPLOC1,
         ClientProt::OPNPC5,
@@ -1196,10 +1309,10 @@ fn outgoing_interactions_restart_only_unknown_login_poison() {
         for tick in 31..=60 {
             owner.observe_frame(&frame(tick), &drain(true, true), false);
             assert_eq!(
-                owner.current().unwrap().poison,
-                PoisonState::Unknown { since: 0 },
-                "packet {packet:?} at clean 30 resets the window; it remains Unknown through clean 30 of the new window"
-            );
+            owner.current().unwrap().poison,
+            PoisonState::Unknown { since: 0 },
+            "packet {packet:?} at clean 30 resets the window; it remains Unknown through clean 30 of the new window"
+        );
         }
         owner.observe_frame(&frame(61), &drain(true, true), false);
         assert_eq!(
@@ -1222,6 +1335,9 @@ fn outgoing_interactions_restart_only_unknown_login_poison() {
 
 #[test]
 fn walk_only_packets_accept_without_restarting_the_31_tick_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for packet in [
         ClientProt::MOVE_GAMECLICK,
         ClientProt::MOVE_MINIMAPCLICK,
@@ -1241,15 +1357,18 @@ fn walk_only_packets_accept_without_restarting_the_31_tick_window() {
         }
         owner.observe_frame(&frame(31), &drain(true, true), false);
         assert_eq!(
-            owner.current().unwrap().poison,
-            PoisonState::Clear,
-            "old: `>33` delayed Clear until edge 34; new: movement accepts without resetting and clears at 31"
-        );
+        owner.current().unwrap().poison,
+        PoisonState::Clear,
+        "old: `>33` delayed Clear until edge 34; new: movement accepts without resetting and clears at 31"
+    );
     }
 }
 
 #[test]
 fn empty_dispatch_and_telemetry_do_not_restart_login_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut client = outgoing_client(client::io::ClientRevision::R289);
     let mut owner = owner();
     owner.accepted_click();
@@ -1271,6 +1390,9 @@ fn empty_dispatch_and_telemetry_do_not_restart_login_window() {
 
 #[test]
 fn repeated_interactions_keep_login_poison_unknown() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut client = outgoing_client(client::io::ClientRevision::R289);
     let mut owner = owner();
     for tick in 1..=100 {
@@ -1289,6 +1411,9 @@ fn repeated_interactions_keep_login_poison_unknown() {
 
 #[test]
 fn condition_dispatch_checkpoint_and_trace_allocate_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let client = outgoing_client(client::io::ClientRevision::R289);
     let mut owner = owner();
     let measured = allocation_counter::measure(|| {
@@ -1302,6 +1427,9 @@ fn condition_dispatch_checkpoint_and_trace_allocate_nothing() {
 
 #[test]
 fn guardian_hold_resets_and_records_the_clean_window_cause() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     owner.accepted_click();
     for tick in 1..=14 {
@@ -1351,6 +1479,9 @@ fn guardian_hold_resets_and_records_the_clean_window_cause() {
 
 #[test]
 fn admission_capture_reads_slot_condition() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut snapshot = frame(1);
     hit(&mut snapshot, 2, 6, 1);
@@ -1364,6 +1495,9 @@ fn admission_capture_reads_slot_condition() {
 
 #[test]
 fn slot_condition_observe_frame_allocates_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let snapshot = frame(0);
     let drain = drain(false, true);
@@ -1377,6 +1511,9 @@ fn slot_condition_observe_frame_allocates_nothing() {
 
 #[test]
 fn slot_condition_line_frame_allocates_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut owner = owner();
     let mut line = frame(1);
     chat(&mut line, 1, POISON_LINE);

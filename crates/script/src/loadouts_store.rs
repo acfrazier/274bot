@@ -1281,6 +1281,9 @@ mod tests {
 
     #[test]
     fn copy_equipment_keeps_supplies_and_unknown_gear() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut loadout = Loadout::new("melee").with_carry("Lobster", 8);
         copy_equipment_preserving_supplies(
             &mut loadout,
@@ -1297,6 +1300,9 @@ mod tests {
 
     #[test]
     fn catalog_metadata_options_when_schema_empty() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = SettingDef {
             id: "location".into(),
@@ -1343,6 +1349,9 @@ mod tests {
 
     #[test]
     fn food_options_follow_selected_fixed_heal_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = equipment_from("FOOD_OPTIONS");
         assert!(resolve_setting_options(&def, &store, None)
@@ -1373,6 +1382,9 @@ mod tests {
 
     #[test]
     fn gatherer_food_options_start_with_none_and_inline_labels_are_preserved() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let food = equipment_from("gatherer-food");
@@ -1416,6 +1428,9 @@ mod tests {
 
     #[test]
     fn w1c_equipment_options_match_curated_families_on_both_pins() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -1676,6 +1691,9 @@ mod tests {
 
     #[test]
     fn resolve_item_options_matches_both_pinned_revisions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1706,6 +1724,9 @@ mod tests {
 
     #[test]
     fn resolve_item_options_label_sort_orders_prefix_then_keys_on_both_pins() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let spec = ItemOptionSpec {
             prefix: vec!["custom".into()],
@@ -1763,6 +1784,9 @@ mod tests {
 
     #[test]
     fn resolve_item_options_drops_missing_alias_and_keeps_sort() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[cand("not_a_real_selected_item", None)]));
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1776,6 +1800,9 @@ mod tests {
 
     #[test]
     fn resolve_item_options_tie_order_and_identity_labels() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1810,6 +1837,9 @@ mod tests {
 
     #[test]
     fn resolve_item_options_rebounds_without_mutating_schema() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -1825,6 +1855,9 @@ mod tests {
 
     #[test]
     fn resolve_item_options_leaves_literals_and_loadouts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut store = LoadoutsStore::default();
         store.upsert(Loadout::new("fish"));
         let literal = SettingDef {
@@ -1952,6 +1985,9 @@ mod tests {
 
     #[test]
     fn resolve_gather_options_empty_without_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         assert!(
             resolve_setting_options(&equipment_from("gather:mining"), &store, None)
@@ -1973,6 +2009,9 @@ mod tests {
 
     #[test]
     fn resolve_named_banks_keeps_nearest_before_catalog_names() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let mut def = equipment_from("named-banks");
         def.options.push("Nearest".into());
@@ -1989,6 +2028,9 @@ mod tests {
 
     #[test]
     fn resolve_gatherer_teleports_uses_only_available_selected_spell_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let mut def = equipment_from("gatherer-teleports");
         def.options.push("Off".into());

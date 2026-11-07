@@ -8810,15 +8810,6 @@ fn ui_frame(
 mod parameter_options_tests {
     use super::*;
 
-    fn local_game_data_asset(revision: &str) -> Option<std::path::PathBuf> {
-        let default_path = format!(
-            "{}/../api/data/game-data/{revision}.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let description = format!("revision {revision} game data");
-        api::test_support::local_asset_path("", &default_path, &description)
-    }
-
     fn compiled_schema(
         session: &crate::session::Session,
         name: &str,
@@ -8835,10 +8826,10 @@ mod parameter_options_tests {
 
     #[test]
     fn panel_site_filter_uses_selectable_shared_search_results() {
-        let session = crate::session::Session::new();
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
+        let session = crate::session::Session::new();
 
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = frontend_core::scripts::Loadouts::default();
@@ -8877,10 +8868,10 @@ mod parameter_options_tests {
 
     #[test]
     fn disabled_panel_site_keeps_the_saved_reason_read_only() {
-        let session = crate::session::Session::new();
-        if local_game_data_asset("289").is_none() {
+        if !api::test_support::game_data_available() {
             return;
         }
+        let session = crate::session::Session::new();
 
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = frontend_core::scripts::Loadouts::default();

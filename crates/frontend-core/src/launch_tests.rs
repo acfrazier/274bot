@@ -104,6 +104,9 @@ fn a_vault_opens_with_the_typed_or_the_legacy_trimmed_passphrase() {
 
 #[test]
 fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     if std::env::var_os(PROFILE_PREPARATION_CHILD).is_none() {
         run_child_test(PROFILE_PREPARATION_TEST)
             .unwrap_or_else(|error| panic!("profile preparation test child failed: {error}"));

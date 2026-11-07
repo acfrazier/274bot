@@ -2803,6 +2803,9 @@ fn memory_relog_warns_while_a_script_runs() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn memory_relog_warns_while_a_compiled_script_runs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = script::IsolatedEnv::enter("frontend-core-mem-warn");
     let mut s = session("mem-warn", &[("alice", 1, false)]);
     let mut scripts = test_scripts(&iso.dir);

@@ -376,6 +376,9 @@ mod tests {
 
     #[test]
     fn both_selected_caches_post_the_audited_staff_spell_controls() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for rev in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(rev);
             let controls = data
@@ -397,6 +400,9 @@ mod tests {
 
     #[test]
     fn observe_tracks_staff_panel_and_armed_without_faking_missing_controls() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let missing = observe(None, 328, 3);
         assert_eq!(missing["available"], false);
         assert_eq!(missing["choose_com"], -1);
@@ -437,6 +443,9 @@ mod tests {
 
     #[test]
     fn an_unknown_spell_logs_the_frozen_line_and_presses_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         set_observation(0, 328, 0);
         assert_eq!(
@@ -452,6 +461,9 @@ mod tests {
 
     #[test]
     fn missing_facts_and_a_foreign_tab_refuse_without_pressing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         machine::on_reset();
         observed::on_reset();
@@ -480,6 +492,9 @@ mod tests {
 
     #[test]
     fn the_arm_always_selects_and_toggles_even_when_initially_armed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = prepare(ClientRevision::R274);
         assert_eq!(selected.spell_button_com("Wind Strike"), 1830);
         set_observation(1, 328, 3);
@@ -513,6 +528,9 @@ mod tests {
 
     #[test]
     fn a_press_that_never_lands_times_out_with_its_own_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R289);
         set_observation(0, 328, 0);
         let handle = running(start("Wind Strike"));
@@ -531,6 +549,9 @@ mod tests {
 
     #[test]
     fn a_newer_arm_supersedes_the_one_in_flight() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         prepare(ClientRevision::R274);
         set_observation(0, 328, 0);
         let old = running(start("Wind Strike"));

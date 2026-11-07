@@ -579,6 +579,9 @@ mod tests {
 
     #[test]
     fn shop_npc_open_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = client_with_shop(false);
         let snapshot = snapshot(&client, Vec::new(), vec![npc_row()]);
         let mut ledger = None;
@@ -598,6 +601,9 @@ mod tests {
 
     #[test]
     fn shop_buy_button_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = client_with_shop(true);
         let snapshot = snapshot(&client, Vec::new(), Vec::new());
         let mut ledger = None;
@@ -620,6 +626,9 @@ mod tests {
 
     #[test]
     fn shop_close_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = client_with_shop(true);
         let snapshot = snapshot(&client, vec![item(4, "Pot", 2)], Vec::new());
         let mut ledger = None;
@@ -743,6 +752,9 @@ mod tests {
     /// it early.
     #[test]
     fn shop_npc_open_without_a_reach_view_waits_the_cap() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = client_with_shop(false);
         let mut snapshot = snapshot(&client, Vec::new(), vec![npc_row()]);
         snapshot.seed_local_player(local_player(WorldTile {
@@ -764,6 +776,9 @@ mod tests {
     /// Trade + 1 + slack.
     #[test]
     fn shop_npc_open_with_a_stale_reach_view_waits_the_cap() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let here = WorldTile {
             x: 3198,
             z: 3200,
@@ -792,6 +807,9 @@ mod tests {
     /// tile before a Trade is sent.
     #[test]
     fn shop_keeper_walk_replans_after_a_failed_approach() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = client_with_shop(false);
         let origin = WorldTile {
             x: 3190,
@@ -892,6 +910,9 @@ mod tests {
     /// landed, within the settle bound when nothing moved.
     #[test]
     fn a_shop_closed_mid_batch_ends_the_purchase_without_another_button() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for landed in [false, true] {
             let open = client_with_shop(true);
             let closed = client_with_shop(false);

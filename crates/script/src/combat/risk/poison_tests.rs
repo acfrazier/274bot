@@ -99,6 +99,9 @@ fn a_long_modal_and_resumed_walk_do_not_clear_an_established_poison_mark() {
 
 #[test]
 fn same_value_silent_refresh_and_more_marks_never_clear_positive_server_poison() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut server = IndependentServerPoison::default();
     server.refresh(5);
     let mut memory = PoisonMemory::from_state(PoisonState::Unknown { since: 0 });

@@ -1284,6 +1284,9 @@ fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_gatherer_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let arm = Arc::new(Mutex::new(host_play::WalkArm::default()));
     let walks = Arc::new(Mutex::new(HashMap::from([(
         "vs-bob".into(),

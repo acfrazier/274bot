@@ -535,6 +535,9 @@ mod tests {
 
     #[test]
     fn prepare_on_274_reports_289_only_without_creating_a_run() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(ClientRevision::R274).unwrap();
         FamilyPreparation::run(move |families| {
             let mut cx = PrepareContext {
@@ -773,6 +776,9 @@ mod tests {
 
     #[test]
     fn unavailable_rows_are_picker_rows_never_released_and_refuse_an_only_pick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let reason = unavailable_quest("hauntedmine").expect("Haunted Mine row");
         assert!(!reason.is_empty());
         assert!(registry::bundled_path("hauntedmine").is_none());

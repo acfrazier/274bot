@@ -79,6 +79,9 @@ fn prerequisite_gate() -> (
 
 #[test]
 fn prerequisite_handoff_reissues_original_walk_once_and_cancel_revokes_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     let (gate, crossing, pass_message) = prerequisite_gate();
     let target = WorldTile {
@@ -478,6 +481,9 @@ fn credit_catherby_yield(gatherer: &mut Gatherer, snapshot: &GameSnapshot, now: 
 
 #[test]
 fn catherby_wait_deadline_is_not_proof_that_temporary_spots_are_unavailable() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     let west = WorldTile {
         x: 2836,
@@ -528,6 +534,9 @@ fn catherby_wait_deadline_is_not_proof_that_temporary_spots_are_unavailable() {
 
 #[test]
 fn catherby_big_fish_replacement_does_not_prove_permanent_absence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     let west = WorldTile {
         x: 2836,
@@ -575,6 +584,9 @@ fn catherby_big_fish_replacement_does_not_prove_permanent_absence() {
 
 #[test]
 fn catherby_exhausted_survey_renews_the_9753_approach_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     let here = WorldTile {
         x: 2838,
@@ -632,6 +644,9 @@ fn catherby_exhausted_survey_renews_the_9753_approach_budget() {
 
 #[test]
 fn catherby_absent_survey_renews_empty_coverage_and_approaches() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     let west = WorldTile {
         x: 2838,
@@ -672,6 +687,9 @@ fn catherby_absent_survey_renews_empty_coverage_and_approaches() {
 
 #[test]
 fn catherby_no_spots_blocks_at_800_ticks_despite_walking_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     credit_catherby_yield(&mut gatherer, &snapshot, 100);
     snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
@@ -707,6 +725,9 @@ fn catherby_no_spots_blocks_at_800_ticks_despite_walking_progress() {
 
 #[test]
 fn catherby_unobserved_spots_cannot_start_another_walk_after_800_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
         x: 2838,
@@ -733,6 +754,9 @@ fn catherby_unobserved_spots_cannot_start_another_walk_after_800_ticks() {
 
 #[test]
 fn catherby_hazard_wait_is_bounded_by_yield_not_walking_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     credit_catherby_yield(&mut gatherer, &snapshot, 100);
     snapshot.seed_local_player(crate::quester::families::tests::local_player(WorldTile {
@@ -768,6 +792,9 @@ fn catherby_hazard_wait_is_bounded_by_yield_not_walking_progress() {
 
 #[test]
 fn catherby_idle_and_observation_walks_report_surveying_not_working() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     credit_catherby_yield(&mut gatherer, &snapshot, 100);
     let mut ledger = None;
@@ -789,6 +816,9 @@ fn catherby_idle_and_observation_walks_report_surveying_not_working() {
 
 #[test]
 fn catherby_first_tick_starts_the_no_yield_window_on_the_session_clock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot) = catherby_fishing_fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 10000, |tick| {
@@ -808,6 +838,9 @@ fn catherby_first_tick_starts_the_no_yield_window_on_the_session_clock() {
 
 #[test]
 fn catherby_product_and_gather_completion_each_renew_the_no_yield_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = catherby_fishing_fixture();
     credit_catherby_yield(&mut gatherer, &snapshot, 100);
     assert_eq!(gatherer.scratch.last_yield_tick, 100);
@@ -1195,6 +1228,9 @@ fn assert_original_allow_gatherer(gatherer: &Gatherer, allow: crate::native::Pre
 
 #[test]
 fn gatherer_reissues_original_bank_pick_only_after_real_journal_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     prepare_kitchen_journal();
     let (mut gatherer, mut snapshot) = bank_fixture(Some("Varrock East"));
     snapshot.seed_quest_statuses(
@@ -1404,6 +1440,9 @@ fn gatherer_reissues_original_bank_pick_only_after_real_journal_close() {
 
 #[test]
 fn gatherer_preserves_detailed_bank_no_candidate_without_wrapping_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot) = bank_fixture(Some("Varrock East"));
     let mut ledger = None;
     gatherer.trip = TripStep::Select;
@@ -1431,11 +1470,17 @@ fn gatherer_preserves_detailed_bank_no_candidate_without_wrapping_it() {
 
 #[test]
 fn gatherer_nearest_bank_setting_emits_no_explicit_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert!(gatherer_bank_pick(None).explicit_bank.is_none());
 }
 
 #[test]
 fn gatherer_named_bank_setting_remains_an_explicit_pick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(
         gatherer_bank_pick(Some("Varrock East")).explicit_bank,
         Some(0)
@@ -1526,16 +1571,25 @@ fn assert_target_handoff(depleted: bool) {
 
 #[test]
 fn depleted_tree_selects_and_clicks_next_live_target_in_the_observation_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_target_handoff(true);
 }
 
 #[test]
 fn missing_tree_selects_and_clicks_next_live_target_in_the_observation_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_target_handoff(false);
 }
 
 #[test]
 fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot) = fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -1682,16 +1736,25 @@ fn assert_approached_tree_identity(depleted: bool) {
 
 #[test]
 fn arrived_live_tree_keeps_identity_when_nearest_tree_changes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_approached_tree_identity(false);
 }
 
 #[test]
 fn arrived_depleted_tree_reselects_the_live_alternative() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_approached_tree_identity(true);
 }
 
 #[test]
 fn arrived_live_tree_is_not_clicked_after_leaving_its_footprint() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -1813,26 +1876,41 @@ fn assert_route_ended_tree_reselection(observation: TargetObservation, loaded: b
 
 #[test]
 fn route_ended_gone_tree_reselects_without_blocking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_route_ended_tree_reselection(TargetObservation::Gone, true);
 }
 
 #[test]
 fn route_ended_depleted_tree_reselects_without_blocking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_route_ended_tree_reselection(TargetObservation::Depleted, true);
 }
 
 #[test]
 fn route_ended_still_present_tree_keeps_the_routing_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_route_ended_tree_reselection(TargetObservation::Active, true);
 }
 
 #[test]
 fn route_ended_unloaded_tree_keeps_the_routing_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_route_ended_tree_reselection(TargetObservation::Gone, false);
 }
 
 #[test]
 fn unloaded_loc_approach_preserves_reach_and_loc_identity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot) = fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -1865,6 +1943,9 @@ fn unloaded_loc_approach_preserves_reach_and_loc_identity() {
 
 #[test]
 fn unloaded_npc_observation_stand_uses_area_without_loc_identity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot) = fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -1988,6 +2069,9 @@ fn start_monkey_form_target(worn: Option<Vec<ItemView>>) -> Gatherer {
 
 #[test]
 fn monkey_form_begin_refuses_a_worn_greegree() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let gatherer = start_monkey_form_target(Some(vec![worn(4024)]));
     assert_eq!(
         gatherer
@@ -2001,6 +2085,9 @@ fn monkey_form_begin_refuses_a_worn_greegree() {
 
 #[test]
 fn monkey_form_begin_allows_a_worn_amulet_of_glory() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let gatherer = start_monkey_form_target(Some(vec![worn(1704)]));
     assert!(gatherer.failure.is_none());
     assert!(gatherer.target.is_some());
@@ -2008,6 +2095,9 @@ fn monkey_form_begin_allows_a_worn_amulet_of_glory() {
 
 #[test]
 fn monkey_form_begin_allows_an_empty_worn_set() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let gatherer = start_monkey_form_target(Some(Vec::new()));
     assert!(gatherer.failure.is_none());
     assert!(gatherer.target.is_some());
@@ -2015,6 +2105,9 @@ fn monkey_form_begin_allows_an_empty_worn_set() {
 
 #[test]
 fn monkey_form_begin_waits_for_an_observed_worn_set() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let gatherer = start_monkey_form_target(None);
     assert!(gatherer.failure.is_none());
     assert!(gatherer.needs_validate);
@@ -2022,6 +2115,9 @@ fn monkey_form_begin_waits_for_an_observed_worn_set() {
 }
 #[test]
 fn progressed_return_stall_replans_once_from_the_observed_position() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot, initial, replan, current) = catherby_partial_return_fixture();
     let mut ledger = None;
     let mut submitted_at = None;
@@ -2055,6 +2151,9 @@ fn progressed_return_stall_replans_once_from_the_observed_position() {
 
 #[test]
 fn second_transient_return_stall_is_terminal_without_a_third_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot, initial, _, current) = catherby_partial_return_fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 710, |tick| {
@@ -2102,6 +2201,9 @@ fn second_transient_return_stall_is_terminal_without_a_third_walk() {
 
 #[test]
 fn refused_recovery_route_is_terminal_and_preserves_host_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot, initial, _, current) = catherby_partial_return_fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 720, |tick| {
@@ -2151,6 +2253,9 @@ fn refused_recovery_route_is_terminal_and_preserves_host_reason() {
 
 #[test]
 fn end_blocked_return_stall_is_terminal_not_a_transient_replan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot, initial, _, current) = catherby_partial_return_fixture();
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 730, |tick| {
@@ -2180,6 +2285,9 @@ fn end_blocked_return_stall_is_terminal_not_a_transient_replan() {
 
 #[test]
 fn typed_bank_deposit_failure_keeps_the_content_reason() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, _) = fixture();
     gatherer.deposit_failure(ActionError::BankDeposit(
         crate::bank::ops::DepositFailure::FullStack,
@@ -2253,6 +2361,9 @@ fn unbankable_bank_fixture(fish_count: i32) -> (Gatherer, GameSnapshot) {
 
 #[test]
 fn unbankable_items_are_kept_and_the_bank_trip_continues_after_freeing_space() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for fish_count in [26, 1] {
         let (mut gatherer, mut snapshot) = unbankable_bank_fixture(fish_count);
         let mut ledger = None;
@@ -2305,6 +2416,9 @@ fn unbankable_items_are_kept_and_the_bank_trip_continues_after_freeing_space() {
 
 #[test]
 fn unbankable_items_stop_only_when_the_pack_remains_full_after_deposit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for start_full in [true, false] {
         let (mut gatherer, mut snapshot) = unbankable_bank_fixture(0);
         if !start_full {
@@ -2334,6 +2448,9 @@ fn unbankable_items_stop_only_when_the_pack_remains_full_after_deposit() {
 
 #[test]
 fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = unbankable_bank_fixture(0);
     let tool = ItemView {
         container: ItemContainer::Bank,
@@ -2418,6 +2535,9 @@ fn tool_fetch_trip_keeps_unbankable_items_and_continues_to_withdraw_the_tool() {
 
 #[test]
 fn unbankable_items_report_item_reason_when_pack_fills_without_withdrawals() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot) = unbankable_bank_fixture(0);
     gatherer.trip = TripStep::Validate;
     gatherer.needs_validate = false;
@@ -2437,6 +2557,9 @@ fn unbankable_items_report_item_reason_when_pack_fills_without_withdrawals() {
 
 #[test]
 fn unbankable_items_report_supply_reason_when_withdrawals_fill_the_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, snapshot) = unbankable_bank_fixture(0);
     gatherer.trip = TripStep::Validate;
     gatherer.needs_validate = false;
@@ -2457,6 +2580,9 @@ fn unbankable_items_report_supply_reason_when_withdrawals_fill_the_pack() {
 
 #[test]
 fn power_gatherer_rejects_bank_edit_at_lower_mine() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (power_config, bank_config) = FamilyPreparation::run(|families| {
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let mut cx = crate::native::PrepareContext {
@@ -2667,6 +2793,9 @@ const CURED: api::condition::PoisonState = api::condition::PoisonState::Immune {
 
 #[test]
 fn gatherer_interrupts_gather_step_for_drink_at_line() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot, mut ledger) =
         poisoned_while_gathering(vec![antipoison_dose()]);
     let drink = last_held(&ledger);
@@ -2698,6 +2827,9 @@ fn gatherer_interrupts_gather_step_for_drink_at_line() {
 /// `p_delay(1)`, where the engine drops it (`OpHeldHandler.ts:16-19`).
 #[test]
 fn gatherer_boundary_drinks_before_bite() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot, mut ledger) =
         poisoned_while_gathering(vec![antipoison_dose(), held_lobster(1)]);
     let drink = last_held(&ledger);
@@ -2744,6 +2876,9 @@ fn gatherer_boundary_drinks_before_bite() {
 /// deferral, not `oneop-failed`.
 #[test]
 fn gatherer_resends_a_dropped_drink_and_resumes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot, mut ledger) =
         poisoned_while_gathering(vec![antipoison_dose()]);
     let first = last_held(&ledger).expect("first drink");
@@ -2815,6 +2950,9 @@ fn note_held(
 /// the dose drop, not from the send: no bite in tick 5, the bite in tick 6.
 #[test]
 fn gatherer_late_drink_effect_moves_the_drink_lock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot, mut ledger) =
         poisoned_while_gathering(vec![antipoison_dose(), held_lobster(1)]);
     let drink = last_held(&ledger);
@@ -2845,6 +2983,9 @@ fn gatherer_late_drink_effect_moves_the_drink_lock() {
 /// (`OpHeldHandler.ts:16-19`).
 #[test]
 fn gatherer_drink_effect_at_its_bound_holds_work_through_the_lock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot, mut ledger) =
         poisoned_while_gathering(vec![antipoison_dose()]);
     let drink = last_held(&ledger);
@@ -2885,6 +3026,9 @@ fn gatherer_drink_effect_at_its_bound_holds_work_through_the_lock() {
 /// sent inside it is ignored by the content without a reply.
 #[test]
 fn gatherer_late_bite_effect_moves_the_next_food_clock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     snapshot.seed_inventory(vec![held_lobster(0), held_lobster(1)], 28);
     snapshot.seed_tick(20);
@@ -2934,6 +3078,9 @@ fn gatherer_late_bite_effect_moves_the_next_food_clock() {
 /// bite waits exactly as in the late-bite case without the rise.
 #[test]
 fn gatherer_natural_regeneration_before_a_late_bite_does_not_start_the_food_clock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     snapshot.seed_inventory(vec![held_lobster(0), held_lobster(1)], 28);
     snapshot.seed_tick(20);
@@ -2987,6 +3134,9 @@ fn gatherer_natural_regeneration_before_a_late_bite_does_not_start_the_food_cloc
 /// drop (`OneOp` settles a bite on the count alone).
 #[test]
 fn gatherer_natural_regeneration_does_not_settle_a_bite() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     snapshot.seed_inventory(vec![held_lobster(0), held_lobster(1)], 28);
     snapshot.seed_tick(20);
@@ -3039,6 +3189,9 @@ fn tick_with_hp(
 
 #[test]
 fn gatherer_walk_requests_food_guard() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut gatherer, mut snapshot) = fixture();
     let here = WorldTile {
         x: 3200,

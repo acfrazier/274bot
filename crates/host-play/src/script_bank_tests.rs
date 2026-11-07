@@ -43,6 +43,9 @@ fn bank(name: &'static str, x: i32, z: i32) -> NamedBank {
 #[cfg(feature = "js")]
 #[test]
 fn bank_pick_v2_explicit_opt_ins_control_the_returned_bank_over_settings_defaults() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let catalog = api::named_banks::bank_catalog().expect("named bank catalog");
     let mage = NamedBank {
         definition: catalog.iter().find(|b| b.name == "Mage Arena"),
@@ -313,6 +316,9 @@ fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
 
 #[test]
 fn typed_select_air_fallback_is_opt_in_when_no_route_target_exists() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let canifis = NamedBank {
         routable: false,
         ..bank("Canifis", 8, 8)
@@ -420,7 +426,7 @@ fn typed_select_air_fallback_is_opt_in_when_no_route_target_exists() {
             } else {
                 assert!(
                     matches!(&receipt.outcome, BankPickOutcome::NoCandidate { detail }
-                    if detail.as_ref() == "bank selection found no candidate")
+                if detail.as_ref() == "bank selection found no candidate")
                 );
             }
             slot.stop();
@@ -430,6 +436,9 @@ fn typed_select_air_fallback_is_opt_in_when_no_route_target_exists() {
 
 #[test]
 fn typed_select_routes_before_using_a_closer_air_fallback_with_compatibility_bounds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let canifis = NamedBank {
         routable: false,
         ..bank("Canifis", 8, 8)
@@ -551,6 +560,9 @@ fn typed_select_routes_before_using_a_closer_air_fallback_with_compatibility_bou
 
 #[test]
 fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_immutable() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let banks = vec![bank("bank", 12, 12)];
     let (mut slot, action) = native_pick_action(banks.clone(), tile(0, 0), None, false);
     let selected = slot
@@ -683,6 +695,9 @@ fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_im
 
 #[test]
 fn native_bank_access_resolves_teller_and_object_metadata() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let flags = vec![0; 4 * 16 * 16];
     let (walk, blocked) = pack_walk(&flags);
     let teller = nav_planner::pack::BankStand {
@@ -770,6 +785,9 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
 
 #[test]
 fn native_bank_access_declared_teller_does_not_require_packed_geometry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let catalog = api::named_banks::bank_catalog().expect("named bank catalog");
     let definition = catalog
         .iter()
@@ -2863,21 +2881,24 @@ mod bank_pick_capture {
 #[cfg(feature = "js")]
 #[test]
 fn bank_callback_answers_progress_on_unchanged_host_frames_without_game_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
 
     let source = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__started) return;
-        globalThis.__started = true;
-        globalThis.__matches = [];
-        await Bank.depositAllMatching((name) => {
-            globalThis.__matches.push(name);
-            return false;
-        });
-        globalThis.__done = true;
-    }
+async loop() {
+    if (globalThis.__started) return;
+    globalThis.__started = true;
+    globalThis.__matches = [];
+    await Bank.depositAllMatching((name) => {
+        globalThis.__matches.push(name);
+        return false;
+    });
+    globalThis.__done = true;
+}
 }
 "#;
     let scripts: crate::ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -3235,13 +3256,19 @@ mod journal_diagnosis {
 
     #[test]
     fn deadline_during_journal_search_preserves_genuine_no_path() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let outcome = pick_with_deadline(true, false, false, Some(BankPickStage::Search));
         assert!(matches!(outcome, BankPickOutcome::NoCandidate { detail }
-                if detail.as_ref() == "bank selection failed: NoPath"));
+            if detail.as_ref() == "bank selection failed: NoPath"));
     }
 
     #[test]
     fn deadline_after_journal_diagnosis_preserves_needs_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let outcome = pick_with_deadline(false, false, false, Some(BankPickStage::Finish));
         let BankPickOutcome::NeedsStep { gates, allow } = outcome else {
             panic!("a completed journal diagnosis must not become an air fallback");
@@ -3253,13 +3280,19 @@ mod journal_diagnosis {
 
     #[test]
     fn deadline_after_journal_diagnosis_preserves_genuine_no_path() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let outcome = pick_with_deadline(true, false, false, Some(BankPickStage::Finish));
         assert!(matches!(outcome, BankPickOutcome::NoCandidate { detail }
-                if detail.as_ref() == "bank selection failed: NoPath"));
+            if detail.as_ref() == "bank selection failed: NoPath"));
     }
 
     #[test]
     fn unknown_bank_gate_requests_a_journal_with_original_grants() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let BankPickOutcome::NeedsStep { gates, allow } = pick(false, false, false) else {
             panic!("an unknown journal-establishable gate needs a read");
         };
@@ -3271,14 +3304,20 @@ mod journal_diagnosis {
 
     #[test]
     fn proven_false_bank_gate_preserves_the_real_no_path_detail() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert!(
             matches!(pick(true, false, false), BankPickOutcome::NoCandidate { detail }
-            if detail.as_ref() == "bank selection failed: NoPath")
+        if detail.as_ref() == "bank selection failed: NoPath")
         );
     }
 
     #[test]
     fn a_false_candidate_does_not_hide_a_later_unknown_candidate() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let BankPickOutcome::NeedsStep { gates, .. } = pick(true, true, false) else {
             panic!("the unknown candidate remains diagnosable after a false candidate");
         };
@@ -3289,6 +3328,9 @@ mod journal_diagnosis {
 
     #[test]
     fn a_strictly_reachable_candidate_precedes_every_journal_diagnosis() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let BankPickOutcome::Selected(selected) = pick(false, false, true) else {
             panic!("a reachable public bank must not request a journal");
         };

@@ -306,6 +306,9 @@ mod tests {
 
     #[test]
     fn closing_8880_accepts_a_different_chat_and_handles_it_separately() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = snapshot();
         snapshot.seed_chat_modal(8880, vec!["Make".into()]);
         let mut ledger = None;
@@ -348,6 +351,9 @@ mod tests {
 
     #[test]
     fn survival_close_waits_for_every_chat_and_the_count_dialog() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = snapshot();
         snapshot.seed_chat_modal(8880, vec!["Make".into()]);
         let mut ledger = None;
@@ -378,6 +384,9 @@ mod tests {
 
     #[test]
     fn a_count_dialog_alone_requests_the_strict_survival_close() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = snapshot();
         snapshot.seed_count_dialog(true);
         let mut ledger = None;
@@ -401,6 +410,9 @@ mod tests {
 
     #[test]
     fn drink_acknowledgement_remains_the_dose_drop_not_modal_state() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = snapshot();
         snapshot.seed_inventory(
             vec![ItemView {
@@ -438,6 +450,9 @@ mod tests {
 
     #[test]
     fn unreadiness_is_not_evidence_that_the_target_chat_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = snapshot();
         snapshot.seed_chat_modal(8880, vec!["Make".into()]);
         let mut ledger = None;

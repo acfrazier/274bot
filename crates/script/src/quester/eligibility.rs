@@ -449,6 +449,9 @@ mod tests {
 
     #[test]
     fn failed_skill_requirement_is_blocked_with_source_and_required_vs_live() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (selected, quests, mut snapshot) = fixture();
         let mut document = decode_cook().unwrap();
         document.quest.as_mut().unwrap().requirements.push(req(
@@ -490,6 +493,9 @@ mod tests {
 
     #[test]
     fn qp_and_quest_requirements_block_until_live_gates_pass() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (selected, quests, mut snapshot) = fixture();
         let mut document = decode_cook().unwrap();
         document.quest.as_mut().unwrap().requirements.extend([
@@ -549,6 +555,9 @@ mod tests {
 
     #[test]
     fn unread_bank_does_not_block_must_have_but_known_empty_bank_does() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (selected, quests, snapshot) = fixture();
         let path = must_have_egg_path(&selected, &quests);
         assert!(!BankMemory::default().known());
@@ -574,6 +583,9 @@ mod tests {
     /// worn `mustHave` item is carried.
     #[test]
     fn hint_absence_and_worn_items_never_block_a_must_have() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (selected, quests, mut snapshot) = fixture();
         let path = must_have_egg_path(&selected, &quests);
         let egg = selected.item_by_alias("egg").expect("egg alias").id;
@@ -626,6 +638,9 @@ mod tests {
 
     #[test]
     fn item_requirements_are_ignored_after_the_quest_starts_and_complete_is_done() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (selected, quests, mut snapshot) = fixture();
         let path = must_have_egg_path(&selected, &quests);
         let known_empty = BankMemory::seeded(&[], Origin::Session);
@@ -656,6 +671,9 @@ mod tests {
     }
     #[test]
     fn members_world_gate_uses_the_live_profile_world() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (selected, quests, mut snapshot) = fixture();
         let mut document = decode_cook().unwrap();
         document.quest.as_mut().unwrap().members = true;

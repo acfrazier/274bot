@@ -815,6 +815,9 @@ mod tests {
 
     #[test]
     fn make_x_select_budget_denial_retries_same_product_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = make_menu_client("Make X");
         let snapshot = menu_snapshot(&client);
         let mut ledger = None;
@@ -838,6 +841,9 @@ mod tests {
 
     #[test]
     fn make_x_same_tick_count_page_budget_denial_answers_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut client = make_menu_client("Make X");
         let menu = menu_snapshot_with_held(&client, 5);
         client.dialog_input_open = true;
@@ -881,6 +887,9 @@ mod tests {
 
     #[test]
     fn fixed_make_button_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = make_menu_client("Make 10");
         let snapshot = menu_snapshot(&client);
         let mut ledger = None;
@@ -904,6 +913,9 @@ mod tests {
 
     #[test]
     fn fixed_make_button_selects_exact_held_target_remainder() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = make_menu_client_with_buttons(&["Make 5", "Make 10"]);
         let snapshot = menu_snapshot_with_held(&client, 5);
         let mut ledger = None;
@@ -920,6 +932,9 @@ mod tests {
 
     #[test]
     fn fixed_make_button_requires_an_exact_remaining_quantity() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = make_menu_client("Make 5");
         let snapshot = menu_snapshot(&client);
         let mut ledger = None;
@@ -936,6 +951,9 @@ mod tests {
 
     #[test]
     fn exact_fixed_chat_action_precedes_make_x() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = make_menu_client_with_buttons(&["Make 10", "Make X"]);
         let snapshot = menu_snapshot(&client);
         let mut ledger = None;
@@ -952,6 +970,9 @@ mod tests {
 
     #[test]
     fn make_x_waits_for_the_first_queued_spinning_product() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut client = make_menu_client("Make X");
         let menu = menu_snapshot(&client);
         let mut ledger = None;
@@ -1044,6 +1065,9 @@ mod tests {
 
     #[test]
     fn same_tick_menu_polls_do_not_consume_observed_tick_deadline() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let client = make_menu_client("Make 1");
         let snapshot = menu_snapshot(&client);
         let mut ledger = None;
@@ -1067,6 +1091,9 @@ mod tests {
 
     #[test]
     fn main_make_accepts_smithing_set_operations() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // smithing.if:1245-1254 posts these labels for column5.
         // smithing.rs2:25-30 maps them to one, five and ten processes.
         for (quantity, operation) in [(1, 1), (5, 2), (10, 3)] {
@@ -1132,6 +1159,9 @@ mod tests {
 
     #[test]
     fn main_make_returns_partial_target_when_content_closes_menu() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let menu_id = 1737;
         let mut client = main_make_client(menu_id, "Bronze bar", &["Make 1", "Make 5", "Make 10"]);
         let mut snapshot = main_make_snapshot(&client);
@@ -1176,6 +1206,9 @@ mod tests {
 
     #[test]
     fn fixed_main_make_counts_processes_for_item_targets() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let menu_id = 1737;
         let client = main_make_client(menu_id, "Logs", &["Make 1", "Make 5", "Make 10"]);
         let snapshot = main_make_snapshot(&client);

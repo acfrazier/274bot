@@ -586,6 +586,9 @@ mod tests {
 
     #[test]
     fn sweep_settles_bits_independently_and_advances_after_timeout() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected_data();
         let mut observation = PrayerObservation::empty();
         for row in &data.prayers()[..3] {
@@ -620,6 +623,9 @@ mod tests {
 
     #[test]
     fn policy_s2_scoped_clear_waits_for_missing_owned_row_and_preserves_user() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected_data();
         let skin = data.prayer_by_name("Thick Skin").unwrap();
         let protect = data.prayer_by_name("Protect from Melee").unwrap();
@@ -687,6 +693,9 @@ mod tests {
 
     #[test]
     fn clear_batches_ordered_offs_keep_failed_suffix_and_report_timeout() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = selected_data();
         assert!(data.prayers().len() >= 6);
         let mut snapshot = GameSnapshot::new();

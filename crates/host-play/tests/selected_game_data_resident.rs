@@ -4,16 +4,7 @@
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn selected_289_facts_do_not_retain_an_inflated_source_copy() {
-    if api::test_support::local_asset_path(
-        "",
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../api/data/game-data/289.json"
-        ),
-        "revision 289 game data for the selected-data RSS test",
-    )
-    .is_none()
-    {
+    if !api::test_support::game_data_available() {
         return;
     }
     let before = host_play::current_resident_bytes().expect("current process RSS before facts");

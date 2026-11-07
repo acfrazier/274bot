@@ -637,6 +637,9 @@ fn probability_picker_session(
 
 #[test]
 fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _guard = crate::test_support::imgui_context_guard();
     let _stores = IsolatedStores::enter("picker-probability-admission");
     let mut ctx = crate::test_support::imgui_context();

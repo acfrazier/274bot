@@ -105,6 +105,9 @@ fn path_json(dest: WorldTile) -> String {
 
 #[test]
 fn throwers_crossing_path_compiles_with_current_schema() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     script::quester::compile::prepare_for_test(move |cap| {

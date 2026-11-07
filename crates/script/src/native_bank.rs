@@ -2928,6 +2928,9 @@ mod tests {
     /// fallback bound is `SELECT_FALLBACK_TICKS` (9) ticks later.
     #[test]
     fn select_only_dropped_request_settles_at_nine_observed_ticks_without_access() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for allow_air_fallback in [false, true] {
             let (mut snapshot, mut ledger, handle) = select_waiter(allow_air_fallback);
             snapshot.seed_tile(WorldTile {
@@ -2979,6 +2982,9 @@ mod tests {
     /// active time at all.
     #[test]
     fn select_only_waiter_counts_observed_ticks_not_elapsed_time() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (snapshot, mut ledger, handle) = select_waiter(true);
         assert!(
             poll_select_waiter(
@@ -3040,6 +3046,9 @@ mod tests {
     /// one tick short of its own, and settles on its own bound tick.
     #[test]
     fn select_fallback_bound_counts_from_the_dispatch_not_from_construction() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (snapshot, mut ledger, handle, _) = select_waiter_dispatched_at(true, 4);
         for tick in [1 + SELECT_FALLBACK_TICKS, 4 + SELECT_FALLBACK_TICKS - 1] {
             assert!(
@@ -3072,6 +3081,9 @@ mod tests {
     /// bound tick wins over the kernel's own fallback.
     #[test]
     fn select_receipt_published_by_the_bound_tick_beats_the_fallback() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (snapshot, mut ledger, handle, authority) = select_waiter_dispatched_at(true, 1);
         let selected = SelectedBank {
             bank_index: 0,
@@ -3109,6 +3121,9 @@ mod tests {
     }
     #[test]
     fn select_needs_step_receipt_preserves_gates_and_original_grants() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (snapshot, mut ledger, handle, authority) = select_waiter_dispatched_at(false, 1);
         let at = WorldTile {
             x: 5,
@@ -3167,6 +3182,9 @@ mod tests {
 
     #[test]
     fn select_no_candidate_preserves_failure_detail_and_air_fallback() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let detail: Arc<str> = Arc::from("NoPath: no route to an eligible bank");
         for allow_air_fallback in [false, true] {
             let (snapshot, mut ledger, handle, authority) =
@@ -3465,6 +3483,9 @@ mod tests {
 
     #[test]
     fn catalog_object_access_opens_live_loc_from_adjacent_bank_stand() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = catalog_bank("Shantay Pass");
         let loc_tile = WorldTile {
             x: bank.tile.x + 1,
@@ -3512,6 +3533,9 @@ mod tests {
     }
     #[test]
     fn catalog_object_dialogue_continues_and_settles_loaded_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = catalog_bank("Shantay Pass");
         let loc_tile = WorldTile {
             x: bank.tile.x + 1,
@@ -3591,6 +3615,9 @@ mod tests {
 
     #[test]
     fn catalog_already_open_duel_chest_banks_without_an_opener() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = catalog_bank("Duel Arena");
         let loc_tile = WorldTile {
             x: bank.tile.x - 1,
@@ -3648,6 +3675,9 @@ mod tests {
 
     #[test]
     fn catalog_booth_opens_without_an_object_opener() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = catalog_bank("Catherby");
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -3691,6 +3721,9 @@ mod tests {
 
     #[test]
     fn catalog_open_first_bank_resolves_live_loc_stages_near_stand() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = catalog_bank("Duel Arena");
         let loc_tile = WorldTile {
             x: bank.tile.x - 1,
@@ -3774,6 +3807,9 @@ mod tests {
     /// after it (the player's) is not marked as this machine's open.
     #[test]
     fn a_bank_the_player_opens_after_the_chest_lid_click_is_not_marked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = catalog_bank("Duel Arena");
         let loc_tile = WorldTile {
             x: bank.tile.x - 1,
@@ -3835,6 +3871,9 @@ mod tests {
 
     #[test]
     fn catalog_object_stuck_continue_modal_uses_its_page_ack_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = catalog_bank("Shantay Pass");
         let loc_tile = WorldTile {
             x: bank.tile.x + 1,
@@ -3918,6 +3957,9 @@ mod tests {
 
     #[test]
     fn catalog_object_finished_dialogue_does_not_restart_for_stuck_modal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = catalog_bank("Shantay Pass");
         let loc_tile = WorldTile {
             x: bank.tile.x + 1,
@@ -3983,6 +4025,9 @@ mod tests {
 
     #[test]
     fn catalog_open_first_missing_locs_respects_observed_tick_limit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = catalog_bank("Duel Arena");
         let loc_tile = WorldTile {
             x: bank.tile.x - 1,
@@ -4080,6 +4125,9 @@ mod tests {
 
     #[test]
     fn teller_access_drives_multiple_dialogue_pages_from_declared_metadata() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
@@ -4189,6 +4237,9 @@ mod tests {
 
     #[test]
     fn packed_teller_uses_the_declared_action_index_fallback() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_npcs(vec![npc_row(12, "Packed Teller", &["Talk-to", "Bank"])]);
@@ -4229,6 +4280,9 @@ mod tests {
 
     #[test]
     fn native_teller_access_fails_when_unopened() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_npcs(Vec::new());
@@ -4259,6 +4313,9 @@ mod tests {
 
     #[test]
     fn native_teller_access_waits_for_loaded_stock_after_session_opens() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_bank_observation(10, 1, None, Vec::new());
@@ -4292,6 +4349,9 @@ mod tests {
 
     #[test]
     fn native_teller_access_fails_when_open_session_never_loads_stock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_bank_observation(10, 1, None, Vec::new());
@@ -4318,6 +4378,9 @@ mod tests {
 
     #[test]
     fn bank_machine_without_interrupt_unchanged() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let item_id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -4372,6 +4435,9 @@ mod tests {
 
     #[test]
     fn deposit_products_succeeds_when_inventory_products_are_already_zero() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let item_id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -4410,6 +4476,9 @@ mod tests {
     /// session a native machine opened skips it (TICK-FIX #11, below).
     #[test]
     fn exact_withdraw_in_an_adopted_session_selects_item_mode_before_id_fenced_transfer() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let item_id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -4491,6 +4560,9 @@ mod tests {
     /// item at once instead of pressing Item a tick first.
     #[test]
     fn exact_withdraw_in_a_session_the_kernel_opened_skips_the_item_press() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let item_id = 314;
         let stand = WorldTile {
             x: 3208,
@@ -4654,6 +4726,9 @@ mod tests {
     /// one landed click is never the request.
     #[test]
     fn exact_withdraw_clicks_the_fixed_ladder_until_the_final_count() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = 995;
         let bank = |count| {
             Some(vec![row_with(
@@ -4721,6 +4796,9 @@ mod tests {
     /// never reported complete.
     #[test]
     fn partial_withdraw_of_missing_stock_is_incomplete() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -4757,6 +4835,9 @@ mod tests {
     /// a same-named noted row is never re-found by name.
     #[test]
     fn deposit_presses_the_exact_side_row() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (trout, noted) = (333, 334);
         let deposit_ops = ["Deposit-1", "Deposit-5", "Deposit-All"];
         let side = vec![
@@ -4824,6 +4905,9 @@ mod tests {
     /// still-old side component and select the held next target instead.
     #[test]
     fn stale_side_after_first_fish_clicks_the_current_next_target() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (swordfish, tuna, net, beer, harpoon, coins) = (371, 359, 303, 1917, 311, 995);
         let side_row = |id, name, count, slot| {
             row_with(
@@ -4898,6 +4982,9 @@ mod tests {
     /// hide the held incidental targets; net and beer remain depositable.
     #[test]
     fn stale_last_fish_side_row_does_not_replace_net_or_beer() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (swordfish, tuna, net, beer, harpoon, coins) = (371, 359, 303, 1917, 311, 995);
         let side_row = |id, name, count, slot| {
             row_with(
@@ -4991,6 +5078,9 @@ mod tests {
     /// method tool and coins remain protected.
     #[test]
     fn stale_side_rows_do_not_block_completion_with_only_protected_items() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (swordfish, tuna, net, beer, harpoon, coins) = (371, 359, 303, 1917, 311, 995);
         let side_row = |id, name, count, slot| {
             row_with(
@@ -5041,6 +5131,9 @@ mod tests {
     /// One delayed first observation must not spend the tick budget as wall time.
     #[test]
     fn transfer_is_pending_after_a_thirty_second_gap_and_settles_on_count_delta() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = 333;
         let side = vec![row_with(
             item(id, "Trout", 2, ItemContainer::BankSide),
@@ -5092,6 +5185,9 @@ mod tests {
 
     #[test]
     fn same_tick_transfer_repolls_remain_pending_after_wall_clock_gap() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = 333;
         let side = vec![row_with(
             item(id, "Trout", 2, ItemContainer::BankSide),
@@ -5141,6 +5237,9 @@ mod tests {
 
     #[test]
     fn transfer_expires_after_eight_fresh_ticks_and_success_wins_at_the_boundary() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = 333;
         let side = vec![row_with(
             item(id, "Trout", 2, ItemContainer::BankSide),
@@ -5230,6 +5329,9 @@ mod tests {
 
     #[test]
     fn transfer_boundary_burst_expires_after_eight_observed_ticks_without_elapsed_time() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = 333;
         let side = vec![row_with(
             item(id, "Trout", 2, ItemContainer::BankSide),
@@ -5294,6 +5396,9 @@ mod tests {
 
     #[test]
     fn note_mode_dispatch_expires_on_the_eighth_observed_tick_whatever_the_elapsed_time() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -5359,6 +5464,9 @@ mod tests {
     }
     #[test]
     fn withdraw_timeout_is_independent_of_elapsed_time() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let item_id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -5394,6 +5502,9 @@ mod tests {
 
     #[test]
     fn withdraw_without_a_server_response_times_out_after_eight_observed_ticks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let item_id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -5427,6 +5538,9 @@ mod tests {
     /// session, is never a completed deposit (Required or until-empty).
     #[test]
     fn deposit_does_not_settle_after_its_bank_session_is_gone() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let trout = 333;
         let side = vec![row_with(
             item(trout, "Trout", 2, ItemContainer::BankSide),
@@ -5501,6 +5615,9 @@ mod tests {
     /// losing the bank session still takes precedence over that timeout.
     #[test]
     fn unavailable_protected_pack_preserves_timeout_and_session_ordering() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let trout = 333;
         let side = vec![row_with(
             item(trout, "Trout", 2, ItemContainer::BankSide),
@@ -5596,6 +5713,9 @@ mod tests {
     /// cannot stand in for held candidates or report success at the bound.
     #[test]
     fn deposit_all_fails_when_side_view_never_becomes_usable() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(vec![item(526, "Bones", 1, ItemContainer::Inventory)], 28);
@@ -5676,6 +5796,9 @@ mod tests {
     /// awaited state is checked before the deadline.
     #[test]
     fn a_side_view_posting_on_the_bound_tick_settles_the_wait() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(vec![item(526, "Bones", 1, ItemContainer::Inventory)], 28);
@@ -5721,6 +5844,9 @@ mod tests {
     /// waiting. A reopened session or eight still-open observed ticks fails it.
     #[test]
     fn close_settles_on_the_acknowledged_close_not_the_main_root() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let open = || {
             let mut snapshot = GameSnapshot::new();
             snapshot.seed_ingame(2);
@@ -5798,6 +5924,9 @@ mod tests {
 
     #[test]
     fn named_bank_selector_fails_closed_on_skill_quest_and_preference_gates() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let public = NamedBank::new(
             "Public",
             WorldTile {
@@ -5840,6 +5969,9 @@ mod tests {
 
     #[test]
     fn native_bank_close_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(Vec::new(), 28);
@@ -5858,6 +5990,9 @@ mod tests {
 
     #[test]
     fn native_bank_catalog_loc_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = catalog_bank("Shantay Pass");
         let loc_tile = WorldTile {
             x: bank.tile.x + 1,
@@ -5907,6 +6042,9 @@ mod tests {
 
     #[test]
     fn native_bank_open_stand_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tile = WorldTile {
             x: 3200,
             z: 3200,
@@ -5943,6 +6081,9 @@ mod tests {
 
     #[test]
     fn native_bank_open_booth_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tile = WorldTile {
             x: 3200,
             z: 3200,
@@ -5977,6 +6118,9 @@ mod tests {
 
     #[test]
     fn native_bank_deposit_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = 333;
         let side = row_with(
             item(id, "Trout", 2, ItemContainer::BankSide),
@@ -6010,6 +6154,9 @@ mod tests {
 
     #[test]
     fn native_bank_note_mode_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -6043,6 +6190,9 @@ mod tests {
 
     #[test]
     fn native_bank_withdraw_click_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = 314;
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
@@ -6095,6 +6245,9 @@ mod tests {
 
     #[test]
     fn native_teller_talk_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
@@ -6124,6 +6277,9 @@ mod tests {
     /// this machine's open.
     #[test]
     fn a_bank_the_player_opens_after_a_denied_first_teller_talk_is_not_marked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_npcs(vec![npc_row(7, "Gundai", &["Talk-to"])]);
@@ -6203,6 +6359,9 @@ mod tests {
 
     #[test]
     fn native_teller_continue_page_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut page = GameSnapshot::new();
         page.seed_ingame(2);
         page.seed_chat_modal(1, vec!["Bank access page".into()]);
@@ -6221,6 +6380,9 @@ mod tests {
 
     #[test]
     fn native_teller_choice_page_budget_denial_retries_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut page = GameSnapshot::new();
         page.seed_ingame(2);
         page.seed_chat_modal(1, vec!["Bank access page".into()]);
@@ -6250,6 +6412,9 @@ mod tests {
     }
     #[test]
     fn slow_host_keeps_waiting_for_an_open_bank_session() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let stand = WorldTile {
             x: 3208,
             z: 3220,
@@ -6311,6 +6476,9 @@ mod tests {
     }
     #[test]
     fn open_session_without_an_item_table_fails_after_the_observed_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let stand = WorldTile {
             x: 3208,
             z: 3220,
@@ -6377,6 +6545,9 @@ mod tests {
 
     #[test]
     fn slow_host_keeps_waiting_for_a_bank_close_to_release_its_side_root() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(Vec::new(), 28);
@@ -6418,6 +6589,9 @@ mod tests {
 
     #[test]
     fn close_times_out_when_main_shuts_but_side_root_stays_held() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(Vec::new(), 28);
@@ -6454,6 +6628,9 @@ mod tests {
 
     #[test]
     fn deposit_wait_counts_only_observed_ticks_after_the_click() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let item_id = 314;
         let side = row_with(
             item(item_id, "Ore", 1, ItemContainer::BankSide),
@@ -6509,6 +6686,9 @@ mod tests {
 
     #[test]
     fn deposit_missing_receipt_recovers_after_observed_tick_bounds() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let item_id = 314;
         let side = row_with(
             item(item_id, "Ore", 1, ItemContainer::BankSide),
@@ -6572,6 +6752,9 @@ mod tests {
 
     #[test]
     fn deposit_no_response_recovers_after_eight_post_dispatch_ticks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let item_id = 314;
         let side = row_with(
             item(item_id, "Ore", 1, ItemContainer::BankSide),
@@ -6646,6 +6829,9 @@ mod tests {
     /// open request, so a reader can tell it from a player's bank.
     #[test]
     fn a_session_that_appears_after_the_machines_own_open_is_marked_as_its_own() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let stand = WorldTile {
             x: 2809,
             z: 3441,
@@ -6700,6 +6886,9 @@ mod tests {
     /// never make that session the machine's own open.
     #[test]
     fn a_session_found_already_open_is_not_marked_as_the_machines_own() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let stand = WorldTile {
             x: 2809,
             z: 3441,
@@ -6798,6 +6987,9 @@ mod tests {
     /// `deposit_applied_before_the_close_is_credited_once_after_the_reopen`.)
     #[test]
     fn deposit_reopens_its_stand_when_the_session_closes_before_the_transfer_settles() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let shrimp = 317;
         let net = 303;
         let stand = WorldTile {
@@ -6885,6 +7077,9 @@ mod tests {
     /// before.
     #[test]
     fn deposit_reopen_is_bounded_and_needs_a_stand() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let shrimp = 317;
         let net = 303;
         let stand = WorldTile {
@@ -6996,6 +7191,9 @@ mod tests {
     /// when an open never loads.
     #[test]
     fn deposit_reopens_when_the_bank_closes_or_never_loads_before_its_table() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let shrimp = 317;
         let net = 303;
         let stand = WorldTile {
@@ -7082,6 +7280,9 @@ mod tests {
     /// so the Gatherer's bounded stand retry still owns that case.
     #[test]
     fn open_stand_still_fails_on_its_bound_when_the_table_never_arrives() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let stand = WorldTile {
             x: 2809,
             z: 3441,
@@ -7167,6 +7368,9 @@ mod tests {
     /// once, without another click.
     #[test]
     fn deposit_applied_before_the_close_is_credited_once_after_the_reopen() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let shrimp = 317;
         let net = 303;
         let stand = WorldTile {
@@ -7243,6 +7447,9 @@ mod tests {
     /// for the 22 still held; the output is the whole 27.
     #[test]
     fn deposit_partly_applied_before_the_close_resumes_the_remainder() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let shrimp = 317;
         let net = 303;
         let stand = WorldTile {
@@ -7327,6 +7534,9 @@ mod tests {
     /// catch.
     #[test]
     fn deposit_sweep_resumes_the_unapplied_product_after_the_reopen() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let shrimp = 317;
         let anchovy = 321;
         let net = 303;
@@ -7431,6 +7641,9 @@ mod tests {
     /// repeating the delta on the next row.
     #[test]
     fn capacity_deposit_applied_before_the_close_is_not_repeated() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let shrimp = 317;
         let anchovy = 321;
         let net = 303;
@@ -7524,6 +7737,9 @@ mod tests {
     /// still goes out, and the delta completes only once that row has left.
     #[test]
     fn capacity_two_slots_credit_the_row_applied_before_the_close_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let shrimp = 317;
         let anchovy = 321;
         let net = 303;
@@ -7635,6 +7851,9 @@ mod tests {
     /// Withdraw-X goes out.
     #[test]
     fn exact_withdrawal_applied_before_the_close_is_not_repeated() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bait = 314;
         let stand = WorldTile {
             x: 2809,
@@ -7787,6 +8006,9 @@ mod tests {
 
         #[test]
         fn refused_dispatch_recovers_immediately_without_crediting_acceptance() {
+            if !api::test_support::game_data_available() {
+                return;
+            }
             let (mut snapshot, mut ledger, handle) = fixture();
             dispatch(&mut ledger, 1, false);
             assert!(poll(&snapshot, &mut ledger, &handle, 2).is_pending());
@@ -7809,6 +8031,9 @@ mod tests {
 
         #[test]
         fn transfer_boundary_recovered_noop_returns_at_reconcile_end() {
+            if !api::test_support::game_data_available() {
+                return;
+            }
             let (snapshot, mut ledger, handle) = fixture();
             assert!(matches!(
                 dispatch(&mut ledger, 1, true),
@@ -7833,6 +8058,9 @@ mod tests {
 
         #[test]
         fn accepted_noop_rescans_once_then_blocks_with_its_typed_reason() {
+            if !api::test_support::game_data_available() {
+                return;
+            }
             let (snapshot, mut ledger, handle) = fixture();
             dispatch(&mut ledger, 1, true);
             assert!(poll(&snapshot, &mut ledger, &handle, 9).is_pending());
@@ -7853,6 +8081,9 @@ mod tests {
 
         #[test]
         fn delayed_inventory_revision_reconciles_before_retry_without_duplicate_credit() {
+            if !api::test_support::game_data_available() {
+                return;
+            }
             for bank_first in [true, false] {
                 let (mut snapshot, mut ledger, handle) = fixture();
                 dispatch(&mut ledger, 1, true);
@@ -7884,6 +8115,9 @@ mod tests {
 
         #[test]
         fn earlier_transfer_succeeds_before_retry_and_next_product_is_rescanned() {
+            if !api::test_support::game_data_available() {
+                return;
+            }
             let (mut snapshot, _, old_handle) = fixture();
             drop(old_handle);
             let second = 321;
@@ -7949,6 +8183,9 @@ mod tests {
 
         #[test]
         fn side_slot_movement_after_refusal_uses_current_slot() {
+            if !api::test_support::game_data_available() {
+                return;
+            }
             let (mut snapshot, mut ledger, handle) = fixture();
             dispatch(&mut ledger, 1, false);
             assert!(poll(&snapshot, &mut ledger, &handle, 2).is_pending());
@@ -7983,6 +8220,9 @@ mod tests {
 
         #[test]
         fn refusal_recovery_reuses_close_reopen_reconciliation() {
+            if !api::test_support::game_data_available() {
+                return;
+            }
             let (mut snapshot, _, old_handle) = fixture();
             // Add a real recorded bank stand to the same shared machine request.
             drop(old_handle);
@@ -8033,6 +8273,9 @@ mod tests {
 
         #[test]
         fn permanent_content_refusals_block_without_reissue() {
+            if !api::test_support::game_data_available() {
+                return;
+            }
             let mut wrong = Vec::new();
             for (message, reason) in [
                 (
@@ -8077,6 +8320,9 @@ mod tests {
 
         #[test]
         fn saturated_stack_is_explicit_without_sending_a_futile_click() {
+            if !api::test_support::game_data_available() {
+                return;
+            }
             let (mut snapshot, _, old_handle) = fixture();
             drop(old_handle);
             snapshot.seed_bank_observation(
@@ -8111,6 +8357,9 @@ mod tests {
 
         #[test]
         fn stale_or_player_refusal_text_does_not_override_transient_recovery() {
+            if !api::test_support::game_data_available() {
+                return;
+            }
             let (mut snapshot, mut ledger, handle) = fixture();
             dispatch(&mut ledger, 1, false);
             snapshot.seed_chat_lines(vec![
@@ -8139,6 +8388,9 @@ mod tests {
     }
     #[test]
     fn deposit_and_withdraw_wrappers_forward_interrupt_and_transfer_in_flight() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let shrimp = 317;
         let net = 303;
         let mut deposit_snapshot = GameSnapshot::new();
@@ -8273,6 +8525,9 @@ mod tests {
 
     #[test]
     fn transfer_boundary_deposit_capacity() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let shrimp = 317;
         let anchovy = 321;
         let net = 303;
@@ -8348,6 +8603,9 @@ mod tests {
 
     #[test]
     fn transfer_boundary_withdraw_list() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bait = 314;
         let coin = 995;
         let mut snapshot = GameSnapshot::new();
@@ -8436,6 +8694,9 @@ mod tests {
 
     #[test]
     fn transfer_boundary_starts_no_bank_action_in_same_poll() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bait = 314;
         let coin = 995;
         let mut snapshot = GameSnapshot::new();

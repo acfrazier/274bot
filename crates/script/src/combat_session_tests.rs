@@ -521,6 +521,9 @@ impl Harness {
 
 #[test]
 fn default_fight_card_uses_the_shared_stand_retry_cap_and_classifier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::{WalkEnd, WalkReceipt, WalkRefusal};
 
     for refusal in [None, Some(WalkRefusal::Unsurvivable)] {
@@ -589,6 +592,9 @@ fn default_fight_card_uses_the_shared_stand_retry_cap_and_classifier() {
 
 #[test]
 fn pause_clears_only_the_bot_raised_prayer_and_settles_interrupted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let skin = world.prayer("Thick Skin");
     let raised = world.prayer("Protect from Missiles");
@@ -624,6 +630,9 @@ fn pause_clears_only_the_bot_raised_prayer_and_settles_interrupted() {
 
 #[test]
 fn death_retires_the_obligation_without_clicking_prayers() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let raised = world.prayer("Protect from Missiles");
     world.attack();
@@ -645,6 +654,9 @@ fn death_retires_the_obligation_without_clicking_prayers() {
 
 #[test]
 fn an_unsettled_stop_reports_the_accepted_raise_for_the_host() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let skin = world.prayer("Thick Skin");
     let raised = world.prayer("Protect from Missiles");
@@ -659,6 +671,9 @@ fn an_unsettled_stop_reports_the_accepted_raise_for_the_host() {
 
 #[test]
 fn attackers_players_never_initiates_against_a_player_who_is_not_attacking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     world.bystander();
     let mut harness = Harness::new(
@@ -691,6 +706,9 @@ fn attackers_players_never_initiates_against_a_player_who_is_not_attacking() {
 
 #[test]
 fn a_target_that_never_appears_settles_the_machine_report() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     world.npcs.clear();
     world.refresh();
@@ -735,6 +753,9 @@ fn a_target_that_never_appears_settles_the_machine_report() {
 
 #[test]
 fn a_held_frame_neither_begins_nor_settles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     world.held = true;
     let mut harness = Harness::npc(world);
@@ -792,6 +813,9 @@ fn player_card(globals: Option<crate::native::PvpGlobals>, pvp: bool) -> Harness
 
 #[test]
 fn a_player_target_without_any_source_is_refused_with_the_script_code() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // No request field, and no ready setting (the host sends none): refused
     // before any fight, with the code the script matches.
     for globals in [None, Some(crate::native::PvpGlobals::fail_closed())] {
@@ -809,6 +833,9 @@ fn a_player_target_without_any_source_is_refused_with_the_script_code() {
 
 #[test]
 fn the_global_setting_alone_starts_a_fight_through_the_card() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut harness = player_card(
         Some(crate::native::PvpGlobals { start_fights: true }),
         false,
@@ -828,6 +855,9 @@ fn the_global_setting_alone_starts_a_fight_through_the_card() {
 
 #[test]
 fn the_request_field_alone_starts_a_fight_through_the_card() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut harness = player_card(None, true);
     assert_eq!(harness.tick(1), ScriptFlow::Continue);
     assert_eq!(harness.tick(2), ScriptFlow::Continue);
@@ -839,6 +869,9 @@ fn the_request_field_alone_starts_a_fight_through_the_card() {
 
 #[test]
 fn a_zone_refusal_reaches_the_script_with_its_zone_code() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The bot stands in Lumbridge: not a Wilderness, not a pen.
     let mut harness = player_card(Some(crate::native::PvpGlobals { start_fights: true }), true);
     harness.world.npcs.clear();

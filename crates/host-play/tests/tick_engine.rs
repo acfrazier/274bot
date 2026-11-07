@@ -5472,7 +5472,16 @@ mod packet_oracle_tests {
 
     #[test]
     fn river_setup_starts_on_a_real_standable_tile() {
-        let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let Some(pack) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "real 289 navigation pack for tick-engine river setup",
+        ) else {
+            return;
+        };
         let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
         let scenario = Scenario::river("tick-setup");
         let (_, target) = scenario.required_loc.expect("river has a fixed loc");
@@ -5504,7 +5513,13 @@ mod packet_oracle_tests {
 
     #[test]
     fn oak_setup_starts_on_a_real_standable_tile() {
-        let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
+        let Some(pack) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "real 289 navigation pack for tick-engine oak setup",
+        ) else {
+            return;
+        };
         let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
         let scenario = Scenario::oak("tick-setup");
         let (_, target) = scenario.required_loc.expect("oak has a fixed loc");
@@ -5521,7 +5536,16 @@ mod packet_oracle_tests {
 
     #[test]
     fn copper_replacements_share_a_real_standable_cardinal_stand() {
-        let pack = PathBuf::from(std::env::var_os("NAV_PACK").expect("NAV_PACK is required"));
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let Some(pack) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "real 289 navigation pack for tick-engine copper setup",
+        ) else {
+            return;
+        };
         let world = nav_planner::world::NavWorld::load_pack(&pack).unwrap();
         let scenario = Scenario::copper("tick-setup").unwrap();
         let first = scenario.required_loc.unwrap().1;

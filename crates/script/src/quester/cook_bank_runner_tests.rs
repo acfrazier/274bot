@@ -437,6 +437,9 @@ impl CookFixture {
 
 #[test]
 fn real_cook_in_progress_held_ingredients_do_not_scan_bank_for_optional_tools() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(true, false);
     fixture.snapshot.seed_quest_statuses(
         vec![QuestStatusView {
@@ -455,6 +458,9 @@ fn real_cook_in_progress_held_ingredients_do_not_scan_bank_for_optional_tools() 
 
 #[test]
 fn real_cook_held_ingredients_do_not_scan_bank_for_optional_tools() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(true, false);
     fixture.until_root_begin();
     assert_eq!(
@@ -466,6 +472,9 @@ fn real_cook_held_ingredients_do_not_scan_bank_for_optional_tools() {
 
 #[test]
 fn real_cook_not_started_talks_first_without_bank_scan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, false);
     fixture.until_root_begin();
     assert_eq!(
@@ -481,6 +490,9 @@ fn real_cook_not_started_talks_first_without_bank_scan() {
 
 #[test]
 fn real_cook_banked_ingredients_share_one_open_bank_visit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, true);
     // Gated items are only due from cook:1, so the banked withdrawal
     // run happens after the start talk, not before it.
@@ -500,6 +512,9 @@ fn real_cook_banked_ingredients_share_one_open_bank_visit() {
 
 #[test]
 fn real_cook_ground_acquisition_preserves_empty_bank_memory_between_recipes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, false);
     // Flour now leads the acquisition order, so hold it: the test
     // exercises the ground egg leg that follows.
@@ -535,6 +550,9 @@ fn real_cook_ground_acquisition_preserves_empty_bank_memory_between_recipes() {
 
 #[test]
 fn real_cook_provisioned_acquisition_emits_child_begin_and_terminal_settle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, false);
     fixture.seed_in_progress();
     fixture.hold("pot_flour");
@@ -559,6 +577,9 @@ fn real_cook_provisioned_acquisition_emits_child_begin_and_terminal_settle() {
 
 #[test]
 fn real_cook_terminal_stage_finishes_without_any_bank_or_walk_work() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, false);
     fixture.seed_junk(26);
     let finished_at = fixture.snapshot.local_player().unwrap().player.actor.tile;
@@ -600,6 +621,9 @@ fn real_cook_terminal_stage_finishes_without_any_bank_or_walk_work() {
 
 #[test]
 fn real_cook_unrelated_junk_with_enough_slots_makes_no_bank_trip() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(true, false);
     fixture.seed_junk(1);
     fixture.until_root_begin();
@@ -613,6 +637,9 @@ fn real_cook_unrelated_junk_with_enough_slots_makes_no_bank_trip() {
 
 #[test]
 fn real_cook_unrelated_junk_deposits_only_the_missing_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, true);
     fixture.seed_junk(26);
     // Gated items are only due from cook:1; at cook:0 this fixture
@@ -633,6 +660,9 @@ fn real_cook_unrelated_junk_deposits_only_the_missing_slot() {
 
 #[test]
 fn completed_queued_path_leaves_junk_until_next_path_needs_one_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::queue::{Queue, QueueSettings, ReleaseIndex};
 
     let mut fixture = CookFixture::new(false, true);
@@ -882,6 +912,9 @@ fn r2_until_provision_decision(fixture: &mut CookFixture) {
 
 #[test]
 fn r2_sheep_optional_coin_float_does_not_park_a_full_path_pack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = r2_fixture_from_bundled_path("sheep", |_| {});
     r2_seed_rows(&mut fixture, &[("shears", 1), ("wool", 27)]);
     r2_seed_bank(&mut fixture, &[("coins", 100)]);
@@ -904,6 +937,9 @@ fn r2_sheep_optional_coin_float_does_not_park_a_full_path_pack() {
 
 #[test]
 fn r2_cook_hint_admission_preserves_the_active_egg_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = r2_fixture_from_bundled_path("cook", |value| {
         value["quest"]["items"]
             .as_array_mut()
@@ -938,6 +974,9 @@ fn r2_cook_hint_admission_preserves_the_active_egg_slot() {
 
 #[test]
 fn r2_cook_does_not_start_an_acquisition_without_its_final_slot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = r2_fixture_from_bundled_path("cook", |_| {});
     // A full pack of preserved tools that overlap no flour peak input:
     // neither the grain nor the final flour has a slot.
@@ -960,6 +999,9 @@ fn r2_cook_does_not_start_an_acquisition_without_its_final_slot() {
 
 #[test]
 fn r1_real_sheep_empty_and_twenty_wool_reach_first_root_without_capacity_park() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for held_wool in [0, 20] {
         let mut fixture = sheep_fixture(held_wool, false);
         fixture.until_root_begin();
@@ -971,6 +1013,9 @@ fn r1_real_sheep_empty_and_twenty_wool_reach_first_root_without_capacity_park() 
 
 #[test]
 fn r1_real_sheep_banked_sequential_goals_do_not_require_forty_one_slots() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = sheep_fixture(0, true);
     fixture.until_root_begin();
     assert!(!fixture.script.parked, "{:?}", fixture.output.logs);
@@ -990,6 +1035,9 @@ fn r1_real_sheep_banked_sequential_goals_do_not_require_forty_one_slots() {
 
 #[test]
 fn r1_provisioner_bank_scan_and_withdrawal_are_traced() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, true);
     // Gated items are only due from cook:1; at cook:0 there is no bank run to trace.
     fixture.seed_in_progress();
@@ -1012,6 +1060,9 @@ fn r1_provisioner_bank_scan_and_withdrawal_are_traced() {
 /// first withdraw click goes out on the tick the scan settles.
 #[test]
 fn real_cook_provisioning_withdraws_on_the_scan_receipt_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, true);
     fixture.seed_in_progress();
     let scanned = "quester cook: provision bank scan settled";
@@ -1039,6 +1090,9 @@ fn real_cook_provisioning_withdraws_on_the_scan_receipt_tick() {
 
 #[test]
 fn r1_provisioner_capacity_deposit_is_traced() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, true);
     fixture.seed_junk(26);
     // Gated items are only due from cook:1; at cook:0 there is no bank run to trace.
@@ -1056,6 +1110,9 @@ fn r1_provisioner_capacity_deposit_is_traced() {
 
 #[test]
 fn r1_finish_is_emitted_after_trace_event_cap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookFixture::new(false, false);
     // Fill the first stage's own trace budget. The finish line is terminal,
     // so it is logged even while the stage trace stays capped.

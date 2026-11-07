@@ -257,6 +257,9 @@ mod tests {
 
     #[test]
     fn site_anchor_is_selected_accessible_resource_nearest_exact_centroid() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for revision in [
             api::selected::ClientRevision::R274,
             api::selected::ClientRevision::R289,
@@ -367,6 +370,9 @@ mod tests {
 
     #[test]
     fn site_candidate_admission_rejects_false_and_unknown_content_access() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::gather_methods::ZoneEffect;
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let catalog =
@@ -475,6 +481,9 @@ mod tests {
 
     #[test]
     fn search_skips_more_than_thirty_two_exhausted_placements_without_allocation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let catalog =
             api::selected::FamilyPreparation::run(move |worker| selected.prepare_gathering(worker))
@@ -540,6 +549,9 @@ mod tests {
 
     #[test]
     fn search_exhausts_all_four_rings_and_retry_reset_starts_at_one() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let catalog =
             api::selected::FamilyPreparation::run(move |worker| selected.prepare_gathering(worker))

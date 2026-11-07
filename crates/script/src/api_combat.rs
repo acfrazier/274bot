@@ -1065,6 +1065,9 @@ mod tests {
 
     #[test]
     fn names_resolve_against_selected_content() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let cow = tables.selected().npc_by_config("cow").unwrap().id;
         let native = decode(json!({ "target": { "npc": "cow" } }))
@@ -1129,6 +1132,9 @@ mod tests {
 
     #[test]
     fn every_request_field_reaches_the_native_request() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         let native = decode(json!({
             "target": { "npc": "cow" },
@@ -1303,6 +1309,9 @@ mod tests {
 
     #[test]
     fn case2_a_named_player_target_and_the_pvp_key_decode_and_reach_the_native_request() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let tables = tables();
         assert!(KEYS.contains(&"pvp"));
         // The request never decides the opt-in: `check()` accepts it, and the

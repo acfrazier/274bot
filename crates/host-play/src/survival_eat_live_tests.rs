@@ -2038,6 +2038,9 @@ mod oracle_tests {
 
     #[test]
     fn fruit_oracle_accepts_first_allowed_tick_and_observed_cure() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (frames, actions) = fruit_receipt(85, true);
         assert_eq!(
             evaluate_fruit(&frames, &actions, Some(82)),
@@ -2047,6 +2050,9 @@ mod oracle_tests {
 
     #[test]
     fn fruit_oracle_requires_real_combat_actions_from_the_same_fight() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut frames, mut actions) = fruit_receipt(85, true);
         for frame in &mut frames {
             frame.route_active = false;
@@ -2065,11 +2071,11 @@ mod oracle_tests {
         );
         actions[1]["action_id"] = json!(8);
         assert!(matches!(evaluate_fruit(&frames, &actions, Some(82)),
-            OracleDecision::Fail(reason) if reason.starts_with("oracle:")));
+        OracleDecision::Fail(reason) if reason.starts_with("oracle:")));
         actions[1]["action_id"] = json!(7);
         actions[1]["wire_decoded"] = json!(false);
         assert!(matches!(evaluate_fruit(&frames, &actions, Some(82)),
-            OracleDecision::Fail(reason) if reason.starts_with("oracle:")));
+        OracleDecision::Fail(reason) if reason.starts_with("oracle:")));
     }
 
     #[test]

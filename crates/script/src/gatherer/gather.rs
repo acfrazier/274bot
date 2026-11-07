@@ -619,6 +619,9 @@ mod tests {
 
     #[test]
     fn native_resource_boundary_rejects_low_level_tool_and_bait_misses() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = prepared_catalog();
         let mut ledger = None;
         for (method, level, items, expected) in [
@@ -643,6 +646,9 @@ mod tests {
 
     #[test]
     fn resource_and_pickaxe_gates_use_the_source_effective_stat() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = prepared_catalog();
         let mut ledger = None;
         for (method, base, effective, tool, expected) in [
@@ -671,6 +677,9 @@ mod tests {
 
     #[test]
     fn only_quest_state_gaps_can_be_owned_by_a_path() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut method = fixture_method();
         let gap = |code: &str| api::selected::Gap {
             code: code.into(),
@@ -706,6 +715,9 @@ mod tests {
 
     #[test]
     fn gather_retry_waits_for_budget_without_spending_the_retry() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let catalog = prepared_catalog();
         let method = catalog.methods_for_resource("normal").next().unwrap();
@@ -767,6 +779,9 @@ mod tests {
 
     #[test]
     fn stray_page_defers_spent_event_without_losing_gather_run() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let catalog = prepared_catalog();
@@ -873,6 +888,9 @@ mod tests {
 
     #[test]
     fn same_tick_repolls_do_not_consume_gather_quiet_ticks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = prepared_catalog();
         let (method_index, entity) = catalog
             .methods()

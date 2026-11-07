@@ -83,6 +83,9 @@ struct CorpusInput {
 #[test]
 #[ignore = "explicit evidence export; run on both approved P1-B and P1-C worktrees"]
 fn export_survivable_p1c_corpus_and_diff() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     export().unwrap_or_else(|error| panic!("survivability corpus export failed: {error}"));
 }
 

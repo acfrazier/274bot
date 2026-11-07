@@ -235,6 +235,9 @@ impl CookDialogueFixture {
 
 #[test]
 fn original_cook_hand_in_settles_after_owned_dialogue_transitions_to_completion_scroll() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookDialogueFixture::new();
     let mut flow = ScriptFlow::Continue;
     for tick in 1..=80 {
@@ -294,6 +297,9 @@ fn original_cook_hand_in_settles_after_owned_dialogue_transitions_to_completion_
 /// tick, and then completes as an ordinary hand-in.
 #[test]
 fn a_random_event_that_takes_the_hand_in_talk_over_resends_it_once_without_a_restart() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookDialogueFixture::new();
     fixture.talk_opens_page = false;
     let mut tick = 1;
@@ -360,6 +366,9 @@ fn a_random_event_that_takes_the_hand_in_talk_over_resends_it_once_without_a_res
 /// Talk-to, and it completes.
 #[test]
 fn a_teleport_out_and_back_inside_one_tick_drops_the_talk_once_and_the_hand_in_recovers() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut fixture = CookDialogueFixture::new();
     fixture.talk_opens_page = false;
     let start = tile(3209, 3215);

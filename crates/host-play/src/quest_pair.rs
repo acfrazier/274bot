@@ -1329,6 +1329,9 @@ mod tests {
     }
     #[test]
     fn unpaired_observe_and_watchdog_waiting_never_lock_coordinator() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let core = Arc::new(QuestPairCoordinator::default());
         core.remember("alice");
         let seat = core.seat("alice", "127.0.0.1", 44594);
@@ -2470,6 +2473,9 @@ mod tests {
 
     #[test]
     fn remote_cancel_and_roster_removal_fence_native_outbox_while_actor_slot_is_locked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use script::native::{
             ActionContext, ActionHandle, NativeMachine, NativeTick, Script, ScriptFailure,
             ScriptFlow,

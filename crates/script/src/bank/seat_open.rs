@@ -2411,6 +2411,9 @@ mod tests {
 
     #[test]
     fn closed_duel_chest_opens_before_banking_and_waits_for_the_new_state() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_tile(tile(3382, 3269));
@@ -2510,6 +2513,9 @@ mod tests {
     /// in `NearRetry`, which looped inside one poll for ever.
     #[test]
     fn a_retry_click_with_the_tick_budget_spent_waits_for_the_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (done, finished) = std::sync::mpsc::channel();
         // The poll runs on its own thread so that a loop fails the test
         // instead of hanging it. A looping thread spins until the process exits.
@@ -2587,6 +2593,9 @@ mod tests {
 
     #[test]
     fn already_open_duel_chest_skips_the_opener() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_tile(tile(3382, 3269));
@@ -2604,6 +2613,9 @@ mod tests {
 
     #[test]
     fn already_loaded_bank_skips_all_chest_actions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_locs(vec![duel_chest(false)]);
@@ -2642,6 +2654,9 @@ mod tests {
 
     #[test]
     fn banking_open_preferences_gate_the_closer_mage_arena_choice() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mage = catalog_bank("Mage Arena");
         let public = NamedBank::new("Public", tile(mage.air_tile().x + 1, mage.air_tile().z));
         let facts = Arc::new(NamedBankFacts::from_banks(vec![public, mage]));

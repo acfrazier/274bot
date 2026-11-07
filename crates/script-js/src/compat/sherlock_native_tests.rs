@@ -528,6 +528,9 @@ fn until_combat(
 
 #[test]
 fn pause_delivers_the_cancelled_outcome_instead_of_parking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -573,6 +576,9 @@ fn pause_delivers_the_cancelled_outcome_instead_of_parking() {
 
 #[test]
 fn clear_prayers_completion_error_does_not_clear_hygiene_pending() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(6);
     let mut script = script(&world, true);
     let mut ledger = None;
@@ -627,6 +633,9 @@ fn clear_prayers_completion_error_does_not_clear_hygiene_pending() {
 
 #[test]
 fn policy_s2_startup_preserves_user_prayers() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new(1);
     let thick_skin = world.data.prayer_by_name("Thick Skin").unwrap();
     let mut script = script(&world, false);
@@ -640,6 +649,9 @@ fn policy_s2_startup_preserves_user_prayers() {
 
 #[test]
 fn native_fight_is_one_owner_with_no_compiled_interacts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -660,6 +672,9 @@ fn native_fight_is_one_owner_with_no_compiled_interacts() {
 
 #[test]
 fn ready_ok_lands_as_the_next_combat_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -729,6 +744,9 @@ fn ready_ok_lands_as_the_next_combat_page() {
 
 #[test]
 fn policy_s2_pause_clears_only_accepted_combat_raise_before_poll() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let skin = world.data.prayer_by_name("Thick Skin").unwrap().clone();
     let displaced = world
@@ -810,6 +828,9 @@ fn policy_s2_pause_clears_only_accepted_combat_raise_before_poll() {
 
 #[test]
 fn policy_s2_pending_or_refused_raise_never_becomes_cleanup_ownership() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for refused in [false, true] {
         let mut world = World::new(0);
         let skin = world.data.prayer_by_name("Thick Skin").unwrap().clone();
@@ -887,6 +908,9 @@ fn policy_s2_pending_or_refused_raise_never_becomes_cleanup_ownership() {
 
 #[test]
 fn policy_s2_pause_does_not_retain_displaced_ownership() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let ranged = world
         .data
@@ -948,6 +972,9 @@ fn policy_s2_pause_does_not_retain_displaced_ownership() {
 
 #[test]
 fn native_death_then_pause_preserves_a_user_prayer_raised_after_respawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let raised = world
         .data
@@ -1021,6 +1048,9 @@ fn native_death_then_pause_preserves_a_user_prayer_raised_after_respawn() {
 
 #[test]
 fn allocation_counts_by_tick_class() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new(0);
     let mut script = script(&world, false);
     let mut ledger = None;
@@ -1068,6 +1098,9 @@ fn allocation_counts_by_tick_class() {
 
 #[test]
 fn native_chat_death_aborts_a_guard_once_at_restored_hp_even_while_held() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     crate::compat::clue::on_reset();
     let mut world = World::new(0);
     let mut script = script(&world, false);
@@ -1108,6 +1141,9 @@ fn native_chat_death_aborts_a_guard_once_at_restored_hp_even_while_held() {
 
 #[test]
 fn native_hp_zero_without_death_chat_freezes_and_resumes_the_live_guard() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     crate::compat::clue::on_reset();
     let mut world = World::new(0);
     let mut script = script(&world, false);
@@ -1136,6 +1172,9 @@ fn native_hp_zero_without_death_chat_freezes_and_resumes_the_live_guard() {
 
 #[test]
 fn native_hp_zero_with_an_incomplete_stat_page_keeps_the_live_guard() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     crate::compat::clue::on_reset();
     let mut world = World::new(0);
     let mut script = script(&world, false);
@@ -1186,6 +1225,9 @@ fn native_hp_zero_with_an_incomplete_stat_page_keeps_the_live_guard() {
 
 #[test]
 fn native_death_latch_survives_inactive_reconnect_and_replaced_chat_ring() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     crate::compat::clue::on_reset();
     let mut world = World::new(0);
     world
@@ -1519,6 +1561,9 @@ fn begin_clue_stand_walk(
 /// the only stand-bearing caller's actual guardian and keeper delegations.
 #[test]
 fn clue_guardian_and_keeper_stand_walks_retry_three_times_and_stop_on_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for caller in [ClueCombatCaller::Guardian, ClueCombatCaller::Keeper] {
         let (world, mut slot, mut walk) = begin_clue_stand_walk(caller);
         let details = [
@@ -1679,6 +1724,9 @@ fn settle_sherlock_restart(slot: &mut script::slot::SlotScript) {
 
 #[test]
 fn native_sherlock_watchdog_recreation_observes_death_from_gap_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     crate::compat::clue::on_reset();
     let mut world = World::new(0);
     world
@@ -1724,6 +1772,9 @@ fn native_sherlock_watchdog_recreation_observes_death_from_gap_once() {
 
 #[test]
 fn native_sherlock_fresh_start_baselines_stale_death_chat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     crate::compat::clue::on_reset();
     let mut world = World::new(0);
     world

@@ -75,6 +75,9 @@ fn cook_page_open() -> GameSnapshot {
 /// settle tick sends nothing; the next sends one new click.
 #[test]
 fn a_talk_dropped_unsent_by_a_guardian_hold_is_sent_again_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let page = cook_beside_player();
     let (mut ledger, mut budget) = (None, TickBudget::default());
     let handle = begin_cook_talk(&page, &mut ledger, &mut budget);
@@ -111,6 +114,9 @@ fn a_talk_dropped_unsent_by_a_guardian_hold_is_sent_again_once() {
 /// action as "did not open"; the resume sends one new click instead.
 #[test]
 fn an_accepted_talk_whose_dialogue_never_opened_is_sent_again_not_failed_at_its_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let page = cook_beside_player();
     let (mut ledger, mut budget) = (None, TickBudget::default());
     let handle = begin_cook_talk(&page, &mut ledger, &mut budget);
@@ -150,6 +156,9 @@ fn an_accepted_talk_whose_dialogue_never_opened_is_sent_again_not_failed_at_its_
 /// the hold ends, so the dialogue is driven and no second Talk-to goes out.
 #[test]
 fn a_talk_whose_page_is_open_after_the_hold_is_not_sent_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let page = cook_beside_player();
     let (mut ledger, mut budget) = (None, TickBudget::default());
     let handle = begin_cook_talk(&page, &mut ledger, &mut budget);
@@ -174,6 +183,9 @@ fn a_talk_whose_page_is_open_after_the_hold_is_not_sent_again() {
 /// is the host's to send: the resume neither fails nor doubles it.
 #[test]
 fn a_talk_the_host_still_holds_after_the_hold_is_not_doubled() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let page = cook_beside_player();
     let (mut ledger, mut budget) = (None, TickBudget::default());
     let handle = begin_cook_talk(&page, &mut ledger, &mut budget);
@@ -340,6 +352,9 @@ fn use_on_through_a_dropping_hold(
 /// of wool yet) and sends exactly one new request.
 #[test]
 fn a_use_on_dropped_unsent_by_a_guardian_hold_is_sent_again_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let snapshot = use_on_snapshot(cx, false);
         let dropped = use_on_through_a_dropping_hold(&use_on_plan(cx), &snapshot, &snapshot);
@@ -377,6 +392,9 @@ fn a_use_on_dropped_unsent_by_a_guardian_hold_is_sent_again_once() {
 /// without the check.
 #[test]
 fn a_use_on_dropped_unsent_whose_product_came_during_the_hold_is_not_sent_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let dropped = use_on_through_a_dropping_hold(
             &use_on_plan(cx),
@@ -398,6 +416,9 @@ fn a_use_on_dropped_unsent_whose_product_came_during_the_hold_is_not_sent_again(
 /// one request is.
 #[test]
 fn a_use_on_dropped_unsent_checks_its_until_count_before_it_sends_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let plan = use_on_until_plan(cx);
         let one = use_on_snapshot_holding(cx, 1);
@@ -422,6 +443,9 @@ fn a_use_on_dropped_unsent_checks_its_until_count_before_it_sends_again() {
 /// starts over once.
 #[test]
 fn an_accepted_use_on_whose_product_never_came_is_sent_again_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let snapshot = use_on_snapshot(cx, false);
         let plan = use_on_plan(cx);
@@ -460,6 +484,9 @@ fn an_accepted_use_on_whose_product_never_came_is_sent_again_once() {
 /// step completes and sends nothing.
 #[test]
 fn an_accepted_use_on_whose_product_arrived_is_not_sent_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let before = use_on_snapshot(cx, false);
         let after = use_on_snapshot(cx, true);
@@ -491,6 +518,9 @@ fn an_accepted_use_on_whose_product_arrived_is_not_sent_again() {
 /// no walk receipt will ever come. The walk is sent again, once.
 #[test]
 fn a_walk_dropped_unsent_by_a_guardian_hold_is_sent_again_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::walk::Walk;
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(3200, 3200)));
@@ -542,6 +572,9 @@ fn a_walk_dropped_unsent_by_a_guardian_hold_is_sent_again_once() {
 /// and carries on from where the player stands, so nothing is sent again.
 #[test]
 fn a_walk_the_host_armed_is_not_sent_again_after_a_guardian_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::walk::Walk;
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(3200, 3200)));
@@ -580,6 +613,9 @@ fn a_walk_the_host_armed_is_not_sent_again_after_a_guardian_hold() {
 /// unsent, but the player already stands at its goal.
 #[test]
 fn a_dropped_walk_is_not_sent_again_when_the_player_already_stands_at_its_goal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::walk::Walk;
     let goal = tile(3220, 3200);
     let mut away = ready();
@@ -675,6 +711,9 @@ fn cook_approach_walking(
 /// follows the router's answer.
 #[test]
 fn a_talk_approach_dropped_unsent_by_a_guardian_hold_is_planned_again_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, mut budget) = (None, TickBudget::default());
     let handle = cook_approach_walking(&mut ledger, &mut budget);
     let far = cook_away_from_player(10);
@@ -719,6 +758,9 @@ fn a_talk_approach_dropped_unsent_by_a_guardian_hold_is_planned_again_once() {
 /// ends short (tick 44): a fresh plan, not a failure.
 #[test]
 fn a_talk_approach_whose_route_budget_ran_out_during_the_hold_is_planned_again_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, mut budget) = (None, TickBudget::default());
     let handle = cook_approach_walking(&mut ledger, &mut budget);
     let far = cook_away_from_player(10);
@@ -772,6 +814,9 @@ fn a_talk_approach_whose_route_budget_ran_out_during_the_hold_is_planned_again_o
 /// route is sent; the Talk-to is.
 #[test]
 fn a_talk_approach_that_ends_in_reach_after_the_hold_talks_instead_of_walking_again() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, mut budget) = (None, TickBudget::default());
     let handle = cook_approach_walking(&mut ledger, &mut budget);
     budget.hold_begin();
@@ -798,6 +843,9 @@ fn a_talk_approach_that_ends_in_reach_after_the_hold_talks_instead_of_walking_ag
 /// follows it, inside its budget. Nothing is sent again.
 #[test]
 fn a_talk_approach_the_host_still_follows_is_not_planned_again_after_a_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut ledger, mut budget) = (None, TickBudget::default());
     let handle = cook_approach_walking(&mut ledger, &mut budget);
     let far = cook_away_from_player(10);
@@ -869,6 +917,9 @@ fn frame_at(here: WorldTile) -> GameSnapshot {
 /// the hold ended and never twice.
 #[test]
 fn a_slots_guardian_hold_drops_a_queued_walk_and_the_walk_resumes_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let goal = tile(3220, 3200);
     let mut slot = test_script_slot(Box::new(WalkScript { goal, handle: None }));
     let start = frame_at(tile(3200, 3200));
@@ -905,6 +956,9 @@ fn a_slots_guardian_hold_drops_a_queued_walk_and_the_walk_resumes_once() {
 /// seen between two frames of the hold, not between its ends.
 #[test]
 fn a_slot_classifies_a_hold_by_the_player_positions_its_frames_show() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     let hold = |slot: &mut crate::slot::SlotScript, tick: u64, frames: &[WorldTile]| {
         slot.seat_guardian_hold(true);
@@ -952,6 +1006,9 @@ fn a_slot_classifies_a_hold_by_the_player_positions_its_frames_show() {
 
 #[test]
 fn stopping_a_queued_talk_releases_the_slots_modal_wait() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     struct QueuedTalk {
         handle: Option<ActionHandle<Dialogue>>,
     }

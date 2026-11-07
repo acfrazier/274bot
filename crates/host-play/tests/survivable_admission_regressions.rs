@@ -233,6 +233,9 @@ fn probe_gated_default_is_never_for_every_preference_source() {
 
 #[test]
 fn held_default_admits_router_endpoint_and_opt_in_proceeds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = corridor(40, &[20]);
     let route = find(&world, tile(0, 1), tile(20, 1));
     let request = default_admission(input(99, PoisonState::default()));
@@ -269,6 +272,9 @@ fn held_default_admits_router_endpoint_and_opt_in_proceeds() {
 
 #[test]
 fn walking_out_from_inside_a_zone_is_not_an_entering_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = corridor(80, &[2]);
     let route = find(&world, tile(2, 1), tile(78, 1));
     let mut start = input(99, PoisonState::default());
@@ -305,6 +311,9 @@ fn walking_out_from_inside_a_zone_is_not_an_entering_crossing() {
 
 #[test]
 fn no_crossing_walk_is_admitted_under_unknown_attacker_and_missing_facts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = corridor(16, &[]);
     let route = find(&world, tile(0, 1), tile(10, 1));
     let mut engaged = input(99, PoisonState::default());
@@ -343,6 +352,9 @@ fn no_crossing_walk_is_admitted_under_unknown_attacker_and_missing_facts() {
 
 #[test]
 fn input_problems_refuse_only_entering_crossings_in_every_enforcing_mode() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::combat::risk::LiveRow;
     use script::combat::{ActorKind, ActorRef};
 
@@ -410,6 +422,9 @@ fn input_problems_refuse_only_entering_crossings_in_every_enforcing_mode() {
 
 #[test]
 fn reentering_after_an_origin_escape_is_a_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = corridor(40, &[2]);
     let mut tiles: Vec<_> = (2..=20).map(|x| tile(x, 1)).collect();
     tiles.extend((2..20).rev().map(|x| tile(x, 1)));
@@ -476,6 +491,9 @@ fn ice_r(world: &NavWorld) -> i32 {
 /// admission judges; only an engaged origin's walk out is an escape.
 #[test]
 fn fringe_origin_walk_into_the_acquisition_set_is_a_judged_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let spawn = 30;
     let world = corridor(70, &[spawn]);
     let r = ice_r(&world);
@@ -530,6 +548,9 @@ fn fringe_origin_walk_into_the_acquisition_set_is_a_judged_crossing() {
 /// New: the timeline has a numeric death bound; display totals saturate.
 #[test]
 fn saturated_display_is_refused_numerically_by_every_enforcing_request() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Forty-one overlapping ice warrior envelopes exceed the display floor.
     let spawns: Vec<i32> = (20..=60).collect();
     let world = corridor(100, &spawns);
@@ -576,8 +597,17 @@ fn saturated_display_is_refused_numerically_by_every_enforcing_request() {
 #[test]
 #[ignore = "needs WORLD_NAV_PACK (a real 289 pack)"]
 fn real_pack_display_overflow_is_judged_numerically_by_enforcing_avoid() {
-    let path = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK");
-    let world = NavWorld::load_pack(std::path::Path::new(&path)).unwrap();
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let Some(path) = api::test_support::local_asset_path(
+        "WORLD_NAV_PACK",
+        "",
+        "real 289 navigation pack for survivability regression",
+    ) else {
+        return;
+    };
+    let world = NavWorld::load_pack(&path).unwrap();
     let state = WorldState::default().with_map_members(true);
     let from = tile(3222, 3218);
     for to in [tile(2662, 3305), tile(2809, 3436)] {

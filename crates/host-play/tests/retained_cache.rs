@@ -7,6 +7,9 @@ use host_play::{ProfileOptions, SharedClientTemplate};
 #[test]
 #[ignore = "requires retained 274 and 289 engine/cache assets"]
 fn custom_endpoint_template_does_not_inherit_supported_server_facts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let Some(home) =
         api::test_support::local_asset_path("HOME", "", "home directory with retained game data")
     else {

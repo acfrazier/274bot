@@ -51,6 +51,9 @@ fn grove_anchor_uses_nearest_content_tree_to_frozen_center_deterministically() {
 
 #[test]
 fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mainland = WorldTile {
         x: 3100,
         z: 3200,
@@ -515,6 +518,9 @@ fn install_ranked_luthas_reach_view(anchor: WorldTile, ranked_stands: &[(WorldTi
 
 #[test]
 fn a_far_start_walks_to_luthas_spawn_without_a_scene_reach_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let brimhaven_cart = WorldTile {
         x: 2776,
@@ -549,6 +555,9 @@ fn a_far_start_walks_to_luthas_spawn_without_a_scene_reach_gate() {
 
 #[test]
 fn a_short_luthas_staging_walk_without_a_row_retries() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -587,6 +596,9 @@ fn a_short_luthas_staging_walk_without_a_row_retries() {
 
 #[test]
 fn a_staging_arrival_without_luthas_waits_one_tick_before_retrying() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -656,6 +668,9 @@ fn a_staging_arrival_without_luthas_waits_one_tick_before_retrying() {
 
 #[test]
 fn staging_walk_failures_share_three_attempts_and_keep_the_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -712,6 +727,9 @@ fn staging_walk_failures_share_three_attempts_and_keep_the_last_detail() {
 
 #[test]
 fn being_at_luthas_staging_tile_checks_the_row_before_another_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -752,6 +770,9 @@ fn being_at_luthas_staging_tile_checks_the_row_before_another_walk() {
 
 #[test]
 fn luthas_stand_selection_uses_search_rank_before_manhattan_distance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -1054,6 +1075,9 @@ fn earn_the_fare(
 
 #[test]
 fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (h, mut world, first, again) = earn_the_fare(None, (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
@@ -1065,6 +1089,9 @@ fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
 
 #[test]
 fn walk_to_retries_a_failed_luthas_approach_and_completes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (h, mut world, first, again) = earn_the_fare(Some(RetryPoint::InitialTalk), (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
@@ -1076,6 +1103,9 @@ fn walk_to_retries_a_failed_luthas_approach_and_completes() {
 
 #[test]
 fn walk_to_retries_a_failed_post_fill_luthas_approach_and_completes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (h, mut world, first, again) = earn_the_fare(Some(RetryPoint::PostFillTalk), (None, None));
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
@@ -1087,6 +1117,9 @@ fn walk_to_retries_a_failed_post_fill_luthas_approach_and_completes() {
 
 #[test]
 fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     install_luthas_reach_view(world.facts.luthas_anchor, None);
@@ -1187,6 +1220,9 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
 
 #[test]
 fn a_walkable_but_unreachable_luthas_stand_is_not_selected() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -1227,6 +1263,9 @@ fn a_walkable_but_unreachable_luthas_stand_is_not_selected() {
 
 #[test]
 fn first_luthas_approach_uses_an_orthogonal_stand_from_a_diagonal_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -1259,6 +1298,9 @@ fn first_luthas_approach_uses_an_orthogonal_stand_from_a_diagonal_tile() {
 
 #[test]
 fn initial_luthas_move_stages_without_a_posted_row_then_replans_orthogonally() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let anchor = world.facts.luthas_anchor;
@@ -1330,6 +1372,9 @@ fn initial_luthas_move_stages_without_a_posted_row_then_replans_orthogonally() {
 
 #[test]
 fn retries_skip_a_blocked_luthas_stand() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -1379,6 +1424,9 @@ fn retries_skip_a_blocked_luthas_stand() {
 
 #[test]
 fn dialogue_timeout_retries_within_the_talk_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -1441,6 +1489,9 @@ fn dialogue_timeout_retries_within_the_talk_budget() {
 
 #[test]
 fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -1492,6 +1543,9 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
 
 #[test]
 fn walk_to_keeps_prerequisite_consent_after_earning_the_fare() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for consent in [
         (Some(false), Some(false)),
         (Some(false), Some(true)),
@@ -1532,6 +1586,9 @@ fn walk_to_consent_metadata_keeps_the_active_frame_bounded() {
 
 #[test]
 fn an_interrupt_during_the_re_walk_stops_it_and_ends_false() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Frozen follow pass: EventSignal.pending ends the walk (WalkExecutor.ts:844-853).
     let (h, mut world, _, again) = earn_the_fare(None, (None, None));
     world.ours = true;
@@ -1548,6 +1605,9 @@ fn an_interrupt_during_the_re_walk_stops_it_and_ends_false() {
 
 #[test]
 fn walk_to_does_not_recover_a_short_that_is_not_the_boat_fare() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (from, count) in [
         // Karamja, but the missing gate is a different coin count.
         (MUSA, 10),
@@ -1587,6 +1647,9 @@ fn walk_to_does_not_recover_a_short_that_is_not_the_boat_fare() {
 
 #[test]
 fn walk_to_with_a_full_pack_and_no_banana_does_not_recover() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     world.filler = 27;
@@ -1607,6 +1670,9 @@ fn walk_to_with_a_full_pack_and_no_banana_does_not_recover() {
 
 #[test]
 fn walk_resilient_baked_failure_short_of_the_fare_goes_to_luthas() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     reset();
     let mut world = World::new(MUSA, 5);
     let coins_id = world.facts.coins;
@@ -1651,6 +1717,9 @@ fn walk_resilient_baked_failure_short_of_the_fare_goes_to_luthas() {
 
 #[test]
 fn walk_to_waits_out_the_frozen_300_second_default() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Frozen `opts?.timeoutMs ?? 300_000` (WalkExecutor.ts:228).
     reset();
     let mut world = World::new(

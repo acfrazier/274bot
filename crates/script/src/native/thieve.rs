@@ -1038,6 +1038,9 @@ mod tests {
 
     #[test]
     fn same_tick_thieve_level_up_defers_modal_and_next_dispatch() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick_snapshots;
         let anchor = WorldTile {
             x: 3,
@@ -1094,6 +1097,9 @@ mod tests {
 
     #[test]
     fn same_tick_thieve_anchor_walk_retries_after_spent_event() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1136,6 +1142,9 @@ mod tests {
 
     #[test]
     fn outside_radius_without_a_visible_target_walks_to_the_anchor_on_the_first_poll() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1180,6 +1189,9 @@ mod tests {
     /// ask for an area arrival, not a path onto the anchor tile.
     #[test]
     fn anchor_walk_asks_for_area_arrival_at_the_authored_radius() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1223,6 +1235,9 @@ mod tests {
     /// workman; reach fails it `walk route ended before arrival`.
     #[test]
     fn area_anchor_walk_accepts_a_standable_tile_without_a_path_onto_the_anchor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 20,
             z: 20,
@@ -1346,6 +1361,9 @@ mod tests {
     /// instead ends the step with "walk route ended before arrival".
     #[test]
     fn route_ended_at_the_radius_after_a_retry_is_an_area_arrival() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3359,
             z: 3401,
@@ -1467,6 +1485,9 @@ mod tests {
     /// from the anchor on `[3346,3394,0]`.
     #[test]
     fn route_ended_outside_the_radius_is_a_walk_failure_with_one_replan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3359,
             z: 3401,
@@ -1542,6 +1563,9 @@ mod tests {
 
     #[test]
     fn failed_approach_walk_replans_once_then_pickpockets() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1603,6 +1627,9 @@ mod tests {
 
     #[test]
     fn repeated_approach_walk_failure_ends_after_the_bound_with_the_last_detail() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1691,6 +1718,9 @@ mod tests {
 
     #[test]
     fn empty_anchor_fails_by_name_at_the_respawn_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1731,6 +1761,9 @@ mod tests {
 
     #[test]
     fn anchor_wait_follows_the_selected_spawns_own_respawn_window() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1771,6 +1804,9 @@ mod tests {
 
     #[test]
     fn anchor_spawn_at_the_deadline_is_clicked_and_its_first_attempt_survives() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1823,6 +1859,9 @@ mod tests {
 
     #[test]
     fn anchor_wait_does_not_end_on_the_deadline() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1861,6 +1900,9 @@ mod tests {
 
     #[test]
     fn below_the_static_requirement_refuses_before_any_walk_or_click() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1898,6 +1940,9 @@ mod tests {
 
     #[test]
     fn visible_target_from_the_start_keeps_the_existing_pickpocket_path() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -1928,6 +1973,9 @@ mod tests {
 
     #[test]
     fn thieve_anchor_walk_retries_after_failure_from_the_observed_tile() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2006,6 +2054,9 @@ mod tests {
 
     #[test]
     fn thieve_area_entry_resets_retry_before_a_separate_approach() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2138,6 +2189,9 @@ mod tests {
 
     #[test]
     fn interaction_keeps_the_selected_npc_instance_index() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2166,6 +2220,9 @@ mod tests {
 
     #[test]
     fn target_without_a_thieving_action_is_not_dispatchable() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let targets = [target(1, 1)];
         let mut bad = npc(19, 1, 1);
         bad.actions = vec![Some("Talk-to".into())];
@@ -2231,6 +2288,9 @@ mod tests {
 
     #[test]
     fn thieving_pick_prefers_a_reachable_npc_over_a_nearer_one_behind_a_wall() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let player = WorldTile {
             x: 0,
             z: 0,
@@ -2291,6 +2351,9 @@ mod tests {
 
     #[test]
     fn explicit_anchor_walk_is_cancelled_by_manual_input_before_inventory_goal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2341,6 +2404,9 @@ mod tests {
 
     #[test]
     fn native_reach_interacts_with_a_remote_target_before_route_recovery() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2377,6 +2443,9 @@ mod tests {
 
     #[test]
     fn missing_reach_receipt_does_not_wedge_level_up_modal_or_thieving() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2466,6 +2535,9 @@ mod tests {
 
     #[test]
     fn pending_reach_is_bounded_and_thieve_deadline_runs_during_modal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2517,6 +2589,9 @@ mod tests {
 
     #[test]
     fn pending_modal_reach_never_emits_a_second_npc_click() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2571,6 +2646,9 @@ mod tests {
 
     #[test]
     fn level_up_modal_is_continued_and_thieving_resumes_without_duplicate_clicks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2661,6 +2739,9 @@ mod tests {
 
     #[test]
     fn troll_guard_failure_returns_a_combat_failure_instead_of_a_stun() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2725,6 +2806,9 @@ mod tests {
 
     #[test]
     fn cannot_reach_chat_reuses_reach_door_route() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2845,6 +2929,9 @@ mod tests {
     /// forgotten and dispatched once more after the settle tick.
     #[test]
     fn a_pickpocket_dropped_unsent_by_a_guardian_hold_is_attempted_again_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2879,6 +2966,9 @@ mod tests {
 
     #[test]
     fn an_inline_anchor_walk_dropped_unsent_resumes_once_without_spending_a_retry() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2938,6 +3028,9 @@ mod tests {
     /// completes instead of attempting again or timing out.
     #[test]
     fn a_dropped_pickpocket_is_not_attempted_again_when_the_goal_is_held() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,
@@ -2971,6 +3064,9 @@ mod tests {
     /// adds nothing on top of it, so no second request appears before then.
     #[test]
     fn an_accepted_pickpocket_is_retried_once_by_its_own_window_after_a_hold() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let anchor = WorldTile {
             x: 3,
             z: 4,

@@ -221,6 +221,9 @@ mod tests {
 
     #[test]
     fn slash_prefers_scimitar_and_stab_prefers_longsword_within_a_tier() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = ["Rune scimitar", "Rune longsword", "Adamant scimitar"];
         assert_eq!(
             best(&bank, 40.0, false, &[]).as_deref(),
@@ -234,6 +237,9 @@ mod tests {
 
     #[test]
     fn attack_level_gates_the_tier() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = ["Rune scimitar", "Rune longsword", "Adamant scimitar"];
         assert_eq!(
             best(&bank, 39.0, false, &[]).as_deref(),
@@ -253,6 +259,9 @@ mod tests {
 
     #[test]
     fn higher_tier_wins_and_the_family_name_is_returned() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_eq!(
             best(&["rune scimitar", "dragon longsword"], 60.0, false, &[]).as_deref(),
             Some("Dragon longsword")
@@ -261,6 +270,9 @@ mod tests {
 
     #[test]
     fn dragon_types_follow_the_stab_and_slash_orders() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = [
             "Dragon dagger(p)",
             "Dragon dagger",
@@ -280,6 +292,9 @@ mod tests {
 
     #[test]
     fn refused_names_match_exactly() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let bank = ["Rune scimitar", "Rune sword"];
         assert_eq!(
             best(&bank, 40.0, false, &["Rune scimitar"]).as_deref(),
@@ -293,11 +308,17 @@ mod tests {
 
     #[test]
     fn unknown_names_pick_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_eq!(best(&["Abyssal whip", "Lobster"], 99.0, false, &[]), None);
     }
 
     #[test]
     fn known_weapon_uses_family_order() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_eq!(
             known_melee_weapon(
                 &family(),

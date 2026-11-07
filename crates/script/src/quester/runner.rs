@@ -5036,6 +5036,9 @@ mod tests {
 
     #[test]
     fn queue_status_is_nonterminal_and_journal_payload_is_published_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         #[derive(Default)]
         struct Capture(Vec<ScriptStatus>);
         impl NativeOutput for Capture {
@@ -5092,6 +5095,9 @@ mod tests {
 
     #[test]
     fn authored_and_synthetic_family_failures_share_the_bounded_retry_policy() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut script, snapshot) = fixture();
         let mut ledger = None;
         for attempt in 1..=5 {
@@ -5112,6 +5118,9 @@ mod tests {
 
     #[test]
     fn budget_counts_begin_and_poll_failures_together() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut script, snapshot) = fixture();
         {
             let path = Arc::get_mut(&mut script.path).expect("unshared path");
@@ -5150,6 +5159,9 @@ mod tests {
 
     #[test]
     fn begin_user_input_parks_without_spending_the_step_budget() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut script, _) = fixture();
         {
             let path = Arc::get_mut(&mut script.path).expect("unshared path");
@@ -5172,6 +5184,9 @@ mod tests {
 
     #[test]
     fn alternating_budgeted_steps_hit_the_runwide_failure_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut script, snapshot) = fixture();
         let sequence_index = script
             .path
@@ -5228,6 +5243,9 @@ mod tests {
 
     #[test]
     fn budgeted_failures_still_observe_the_no_progress_watchdog() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut script, snapshot) = fixture();
         let sequence_index = script
             .path
@@ -5292,6 +5310,9 @@ mod tests {
 
     #[test]
     fn family_receipts_are_exposed_in_quester_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::combat::{CombatEnd, CombatReport};
         use api::quest_progress::EvidenceStamp;
 
@@ -5478,6 +5499,9 @@ mod tests {
 
     #[test]
     fn no_food_abort_walks_then_parks_with_receipt_without_advancing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{HostEffect, WalkEnd, WalkReceipt};
         use api::quest_progress::EvidenceStamp;
         use api::selected::ClientRevision;
@@ -5703,6 +5727,9 @@ mod tests {
 
     #[test]
     fn message_settle_uses_step_begin_chat_not_tick_sequence() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         use api::snapshot::{ChatLineView, GameSnapshot, QuestStatusView};
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -5769,6 +5796,9 @@ mod tests {
 
     #[test]
     fn completed_step_settles_and_hands_over_on_its_ready_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use api::snapshot::{GameSnapshot, QuestStatusView};
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -5843,6 +5873,9 @@ mod tests {
     /// or Talk-to) is already queued when that tick ends.
     #[test]
     fn begun_root_step_acts_on_its_begin_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         let (mut script, snapshot) = status_fixture(super::super::compile::decode_cook().unwrap());
         let mut ledger = None;
@@ -5858,6 +5891,9 @@ mod tests {
 
     #[test]
     fn same_tick_receipt_and_settle_do_not_fail_the_next_step_begin() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{with_tick, with_tick_snapshots};
         use super::super::path::{PredicateDocument, SequenceOrder, StepDocument};
         use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, VarpView};
@@ -5959,6 +5995,9 @@ mod tests {
 
     #[test]
     fn scene_entry_defers_fresh_step_selection() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_snapshots;
         use super::super::path::{PredicateDocument, SequenceOrder, StepDocument};
         use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, VarpView};
@@ -6082,6 +6121,9 @@ mod tests {
 
     #[test]
     fn budget_exhausted_root_begin_retries_without_failing_the_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{with_tick, with_tick_snapshots};
         use super::super::path::{PredicateDocument, SequenceOrder, StepDocument};
         use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, VarpView};
@@ -6181,6 +6223,9 @@ mod tests {
 
     #[test]
     fn stage_cross_follows_observed_stage_and_never_the_previous_cursor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut script, snapshot) = status_fixture(super::super::compile::decode_cook().unwrap());
         let path = Arc::get_mut(&mut script.path).unwrap();
         path.sequences[0].cross = Arc::from([Arc::from("first-zone")]);
@@ -6516,6 +6561,9 @@ mod tests {
 
     #[test]
     fn quester_polls_survival_inside_gather_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         quester_survival_cancels_step_and_restarts("gather");
     }
 
@@ -6524,6 +6572,9 @@ mod tests {
     /// no retained progress, so `advance` restarts the step.
     #[test]
     fn quester_cancel_through_resume_path_restarts_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
         use std::sync::atomic::Ordering;
@@ -6566,6 +6617,9 @@ mod tests {
     /// the un-park failed the step with "step settle timeout".
     #[test]
     fn quester_park_ends_a_settle_wait_and_unpark_rereads() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
 
@@ -6621,6 +6675,9 @@ mod tests {
 
     #[test]
     fn quester_closes_dialogue_page_before_drink() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         quester_survival_cancels_step_and_restarts("talk");
     }
 
@@ -6631,6 +6688,9 @@ mod tests {
     /// tick the close settles.
     #[test]
     fn quester_closes_count_dialog_before_drink() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
 
@@ -6683,6 +6743,9 @@ mod tests {
 
     #[test]
     fn quester_never_cancels_walk_or_combat_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         quester_survival_cancels_step_and_restarts("walk");
         quester_survival_cancels_step_and_restarts("combat");
     }
@@ -6694,6 +6757,9 @@ mod tests {
     /// ends, not one tick later and not after the generic eight-tick bound.
     #[test]
     fn quester_resends_a_dropped_drink_after_the_drink_lock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
 
@@ -6780,6 +6846,9 @@ mod tests {
     /// would end (tick 5).
     #[test]
     fn quester_late_drink_effect_moves_the_drink_lock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
         use std::sync::atomic::Ordering;
@@ -6838,6 +6907,9 @@ mod tests {
     /// the next-food clock holds only bites.
     #[test]
     fn quester_resumes_work_in_the_tick_its_bite_settles() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
         use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
@@ -6914,6 +6986,9 @@ mod tests {
     /// count drop, so the next-food clock is not anchored on the rise.
     #[test]
     fn quester_natural_regeneration_does_not_settle_a_bite() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
         use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
@@ -6986,6 +7061,9 @@ mod tests {
 
     #[test]
     fn quester_drinks_while_clear_prayers_pending() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::combat::{ClearPrayers, ClearPrayersArgs, RaisedPrayers};
         use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
@@ -7277,6 +7355,9 @@ mod tests {
 
     #[test]
     fn jailer_terminal_status_uses_the_completed_sequence_cursor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::PathDocument;
 
         let document: PathDocument =
@@ -7349,6 +7430,9 @@ mod tests {
 
     #[test]
     fn quester_resume_drops_step_and_cancels_provisioner_unchanged() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::Interrupt;
 
         struct PendingStep;
@@ -7409,6 +7493,9 @@ mod tests {
 
     #[test]
     fn quester_prayer_cleanup_park_still_blocks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
 
         let (mut script, snapshot) = fixture();
@@ -7578,6 +7665,9 @@ mod tests {
 
     #[test]
     fn quester_survival_cancels_provisioner_acquire_run() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
 
@@ -7647,6 +7737,9 @@ mod tests {
 
     #[test]
     fn quester_parks_during_provisioning_and_restarts_trip_after_unpark() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::{ItemActionFamily, ItemContainer};
@@ -7770,6 +7863,9 @@ mod tests {
 
     #[test]
     fn quester_survival_during_provisioning_with_transfer_in_flight() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::{ItemActionFamily, ItemContainer};
@@ -8151,6 +8247,9 @@ mod tests {
 
     #[test]
     fn parked_runner_keeps_eating_and_unparks_when_need_clears() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         use crate::native::{HostEffect, ScriptFlow};
         use crate::survival::CurePoison;
@@ -8261,6 +8360,9 @@ mod tests {
 
     #[test]
     fn parked_quester_publishes_waiting_continue_status_and_resumes_parked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use crate::native::{Interrupt, NativePhase, ScriptFlow};
         use crate::survival::CurePoison;
@@ -8613,6 +8715,9 @@ mod tests {
     /// dropped; the budget now counts the recipe's steps too.
     #[test]
     fn wide_acquire_recipe_logs_every_child_and_later_step_line() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -8737,6 +8842,9 @@ mod tests {
     /// floor, because the unchanged stage never enters the stage hook again.
     #[test]
     fn new_run_key_flushes_repeats_and_sizes_the_current_stage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -8863,6 +8971,9 @@ mod tests {
     /// a real run: 20 steps keep their begin and settled lines.
     #[test]
     fn long_stage_logs_every_step_line_across_the_old_run_cap() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::{PredicateDocument, SequenceOrder};
 
@@ -9029,6 +9140,9 @@ mod tests {
 
     #[test]
     fn acquisition_settle_timeout_keeps_child_in_parked_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::PredicateDocument;
 
         let child = test_step(
@@ -9049,6 +9163,9 @@ mod tests {
 
     #[test]
     fn acquisition_skip_evidence_timeout_keeps_child_in_parked_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::PredicateDocument;
 
         let child = test_step(
@@ -9073,6 +9190,9 @@ mod tests {
 
     #[test]
     fn root_skip_evidence_timeout_names_the_unknown_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::PredicateDocument;
 
         let mut document = super::super::compile::decode_cook().unwrap();
@@ -9109,6 +9229,9 @@ mod tests {
 
     #[test]
     fn acquisition_child_begin_failure_keeps_child_in_parked_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::{PathDocument, PredicateDocument};
 
         let mut document: PathDocument =
@@ -9147,6 +9270,9 @@ mod tests {
 
     #[test]
     fn later_begin_failure_does_not_publish_stale_acquisition_child() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::{PathDocument, PredicateDocument};
 
@@ -9241,6 +9367,9 @@ mod tests {
 
     #[test]
     fn runner_trace_records_skip_settle_failure_park_and_collapsed_retries() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -9386,6 +9515,9 @@ mod tests {
 
     #[test]
     fn acquisition_child_failure_is_visible_in_parked_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::{PredicateDocument, StepDocument};
 
@@ -9591,6 +9723,9 @@ mod tests {
 
     #[test]
     fn acquire_restarts_recipe_after_lost_product_then_succeeds() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -9659,6 +9794,9 @@ mod tests {
 
     #[test]
     fn acquire_restart_bound_parks_with_the_attempt_count() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -9699,6 +9837,9 @@ mod tests {
 
     #[test]
     fn acquire_that_succeeds_first_time_does_not_restart() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -9739,6 +9880,9 @@ mod tests {
     /// the parent settle window instead of looping on skips.
     #[test]
     fn acquire_pass_that_only_skips_does_not_restart() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -9772,6 +9916,9 @@ mod tests {
     /// selected: once its `skip_if` holds, the runner's settle window decides.
     #[test]
     fn acquire_does_not_restart_once_its_skip_holds() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -9808,6 +9955,9 @@ mod tests {
 
     #[test]
     fn settle_timeout_park_keeps_timed_out_step_in_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::{PredicateDocument, StepDocument};
 
@@ -9898,6 +10048,9 @@ mod tests {
 
     #[test]
     fn quester_reports_walk_evidence_as_a_terminal_block() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut script, _) = fixture();
         let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Window(
             api::selected::StageWindow {
@@ -9924,6 +10077,9 @@ mod tests {
 
     #[test]
     fn combat_interrupted_talk_parks_without_advancing_or_reading() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{
             seed_dialogue_attacker, seed_dialogue_combat, with_tick, with_tick_output,
         };
@@ -10030,6 +10186,9 @@ mod tests {
 
     #[test]
     fn unreadable_start_never_dispatches_start_and_retargets_when_ready() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         let (mut script, mut s) = fixture();
         let mut ledger = None;
@@ -10052,6 +10211,9 @@ mod tests {
 
     #[test]
     fn unavailable_colour_and_unselectable_stage_park_instead_of_spinning() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         let (mut script, s) = fixture();
         script.record_failure(ActionError::Unavailable("stale walk failure".into()));
@@ -10109,6 +10271,9 @@ mod tests {
 
     #[test]
     fn missing_spawn_status_names_the_wait_and_retains_the_park_cause() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{with_tick, with_tick_output};
         use api::snapshot::{GameSnapshot, QuestStatusView};
         #[derive(Default)]
@@ -10202,6 +10367,9 @@ mod tests {
 
     #[test]
     fn path_header_false_preserves_global_consent_on_the_real_walk_request() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         use crate::native::{HostEffect, WalkBit};
         use api::snapshot::{GameSnapshot, QuestStatusView};
@@ -10271,6 +10439,9 @@ mod tests {
 
     #[test]
     fn unprotectable_walk_publishes_its_cause_and_keeps_working() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{with_tick, with_tick_output};
         use crate::native::{HostEffect, WalkEvent, WalkEventKind};
         use api::snapshot::{GameSnapshot, QuestStatusView};
@@ -10372,6 +10543,9 @@ mod tests {
 
     #[test]
     fn user_input_walk_blocks_without_attempts_or_repeated_work() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{post_user_input_walk_receipt, with_tick};
         use api::snapshot::{GameSnapshot, QuestStatusView};
 
@@ -10450,6 +10624,9 @@ mod tests {
     }
     #[test]
     fn missing_partner_admission_expires_with_clear_stop_start_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::pair::{
             AccountKey, Gang, PairError, PairFrame, PairRegistration, PairRequest, PairSettings,
             PairStep, PairToken, PartnerDeclaration, PartnerRole, QuestPairPort, RoleReceipt,
@@ -10624,6 +10801,9 @@ mod tests {
 
     #[test]
     fn quest_pair_r2_phase_begin_busy_wait_has_an_active_time_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::compile::StepPlan;
         struct BusyPhase;
         impl StepPlan for BusyPhase {
@@ -10912,6 +11092,9 @@ mod tests {
 
     #[test]
     fn nested_bank_has_skip_starts_real_scan_and_receipt_selects_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (bank_count, expected_step) in [
             (0, "skip-if-bank-has-logs"),
             (1, "fallback-if-bank-has-logs"),
@@ -10961,6 +11144,9 @@ mod tests {
 
     #[test]
     fn nested_acquire_bank_has_skip_starts_real_scan_and_receipt_selects_child() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (bank_count, expected_step) in [
             (0, "skip-if-bank-has-logs"),
             (1, "fallback-if-bank-has-logs"),
@@ -11008,6 +11194,9 @@ mod tests {
 
     #[test]
     fn non_bank_unknown_skip_keeps_waiting_without_starting_bank_scan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::PredicateDocument;
 
         let mut document = super::super::compile::decode_cook().unwrap();
