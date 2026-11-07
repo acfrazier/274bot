@@ -55,7 +55,7 @@ fn answer_for(choices: &[&str], prefer: &[Arc<str>]) -> i32 {
     });
     match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
         HostEffect::Interaction(InteractReq::Answer { option }) => *option,
-        effect => panic!("the authored menu must emit an Answer, got {effect:?}"),
+        _ => panic!("the authored menu must emit an Answer"),
     }
 }
 
