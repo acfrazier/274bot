@@ -22,7 +22,7 @@ const PROFILE_BOUND_SHARED_NAV_STATE_LIMIT: usize = 91_188_976;
 /// bound profile owns once and every bot lease borrows. The `pack` is a
 /// revision's staged `274bot.navpack`; R274, R289 and the PR #6 R377 pack use
 /// the same decoder and this same helper.
-fn profile_bound_nav_state_bytes(pack: &Path) -> usize {
+pub(crate) fn profile_bound_nav_state_bytes(pack: &Path) -> usize {
     let mut world = None;
     let measured = allocation_counter::measure(|| {
         world = Some(NavWorld::load_pack(pack).unwrap_or_else(|error| {
