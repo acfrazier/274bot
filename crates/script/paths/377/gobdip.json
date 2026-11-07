@@ -237,9 +237,36 @@
               "id": "get-coins",
               "kind": "acquire",
               "version": 1,
+              "comment": "Fund remaining purchases: 35 initially, 25 after orange dye, 5 after buying two woad leaves, none after blue dye.",
               "args": { "recipe": "acquire:coins" },
-              "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } },
-              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } }
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } },
+                { "All": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "orangedye" } } },
+                  { "Any": [
+                    { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 25 } } },
+                    { "All": [
+                      { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "woadleaf", "qty": 2 } } },
+                      { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 5 } } }
+                    ] },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluedye" } } }
+                  ] }
+                ] }
+              ] },
+              "settle": { "Any": [
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 35 } } },
+                { "All": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "orangedye" } } },
+                  { "Any": [
+                    { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 25 } } },
+                    { "All": [
+                      { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "woadleaf", "qty": 2 } } },
+                      { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 5 } } }
+                    ] },
+                    { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bluedye" } } }
+                  ] }
+                ] }
+              ] }
             },
             {
               "id": "get-mail",
