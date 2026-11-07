@@ -966,6 +966,9 @@ fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, u16) {
 
 #[test]
 fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [274_u16, 289] {
         let (root, cache) = profile_fixture(revision);
         // OnDemand hubs are keyed by (game_host, game_port); parallel panel

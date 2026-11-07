@@ -1182,6 +1182,9 @@ fn restocked_from(baseline: &Observation) -> Observation {
 
 #[test]
 fn brimhaven_moss_inspect_v1_seed_and_fallback_cannot_pass() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(
         CoreCase::parse("brimhaven_moss_inspect_v1").unwrap(),
         CoreCase::BrimhavenMossInspectV1
@@ -1239,6 +1242,9 @@ fn brimhaven_moss_inspect_v1_seed_and_fallback_cannot_pass() {
 
 #[test]
 fn brimhaven_moss_inspect_v1_requires_restock_then_fresh_barnaby_then_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
     let baseline = brimhaven_v1_baseline();
@@ -1312,6 +1318,9 @@ fn route_inspect_brimhaven_v2_requires_token_then_id0_then_bank_tile() {
 
 #[test]
 fn brimhaven_moss_inspect_v1_same_frame_pier_accept_cannot_pass() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
     let baseline = brimhaven_v1_baseline();
@@ -1337,6 +1346,9 @@ fn brimhaven_moss_inspect_v1_same_frame_pier_accept_cannot_pass() {
 
 #[test]
 fn brimhaven_moss_inspect_v1_wrong_boat_and_old_generation_cannot_pass() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
     let baseline = brimhaven_v1_baseline();
@@ -1379,6 +1391,9 @@ fn brimhaven_moss_inspect_v1_wrong_boat_and_old_generation_cannot_pass() {
 
 #[test]
 fn brimhaven_moss_inspect_v1_generation_zero_is_legitimate_before_reset() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
     let mut baseline = brimhaven_v1_baseline();
@@ -1401,6 +1416,9 @@ fn brimhaven_moss_inspect_v1_generation_zero_is_legitimate_before_reset() {
 
 #[test]
 fn brimhaven_moss_inspect_v1_generation_transition_uses_new_ring_seq() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let watch = CoreWatch::default();
     watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
     let mut baseline = brimhaven_v1_baseline();

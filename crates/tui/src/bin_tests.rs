@@ -805,6 +805,9 @@ ScriptRegistry.register({ name: 'NatureCrafter', create: () => new NatureCrafter
 
 #[test]
 fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [274_u16, 289] {
         let (root, cache) = profile_fixture(revision);
         let args = parse_args_from([

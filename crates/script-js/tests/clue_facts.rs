@@ -839,8 +839,13 @@ export function tick(api) {
     .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let value: serde_json::Value =
-        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let value: serde_json::Value = serde_json::from_str(
+        iso.probe("globalThis.__probe")
+            .unwrap_or_else(|error| panic!("{error}; isolate setup: {:?}", iso.poll_ready()))
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     iso.join();
     assert_eq!(
         value["step"]["error"], "family-unavailable:trails",
@@ -893,8 +898,13 @@ export function tick(api) {
     .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let missing: serde_json::Value =
-        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let missing: serde_json::Value = serde_json::from_str(
+        iso.probe("globalThis.__probe")
+            .unwrap_or_else(|error| panic!("{error}; isolate setup: {:?}", iso.poll_ready()))
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     iso.join();
     assert_eq!(missing["omitted"]["error"], "invalid-args", "{missing:?}");
     assert_eq!(missing["stringId"]["error"], "invalid-args", "{missing:?}");

@@ -4837,6 +4837,9 @@ fn restored_50_fps_costs_nothing_for_slots_that_do_not_draw() {
 
 #[test]
 fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = open_world(3, 3);
     let fixture = MapFixture::new(&world, "public-289");
     let play = fixture.play(Tile {
@@ -4914,6 +4917,9 @@ fn walkto_panel_state(session: &Session) -> (&'static [&'static str], (bool, boo
 
 #[test]
 fn picker_teleport_follows_profile_class() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = open_world(3, 3);
     let origin = Tile {
         x: 0,
