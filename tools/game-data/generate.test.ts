@@ -3838,10 +3838,15 @@ if (process.env.GAME_DATA_377_CONTENT) {
     for (const shop of payload.shops) {
         const packed = selectedInventoryModule.default.getByName(shop.inv);
         assert.ok(packed?.stockobj && packed.stockcount && packed.stockrate, `${shop.inv}: selected packed inventory is required`);
+        const stock = Array.from(packed.stockobj, (id, index) => [id, packed.stockcount![index], packed.stockrate![index]]);
+        // UpdateInvFullEncoder writes id + 1 as u16; 0xffff is an empty wire slot.
+        for (const [id, count, rate] of stock) {
+            if (id === 0xffff) assert.deepEqual([count, rate], [0, 0], `${shop.inv}: an absent stock slot has no count or rate`);
+        }
         assert.deepEqual(
             shop.items.map((row: { obj: string; baseline: number; restockTicks: number }) =>
                 [selectedObjectIds.get(row.obj), row.baseline, row.restockTicks]),
-            Array.from(packed.stockobj, (id, index) => [id, packed.stockcount![index], packed.stockrate![index]]),
+            stock.filter(([id]) => id !== 0xffff),
             `${shop.inv}: source stock must match the selected server inventory`,
         );
     }
