@@ -10577,6 +10577,37 @@ fn real_content_atlas_stands_match_the_client_reach_strategy() {
     }
 }
 
+fn apply_legacy_entrana_fixture_guards(
+    graph: &mut TransportGraph,
+    data: &api::game_data::SelectedGameData,
+) {
+    // 0.2.9 already derives these guards from selected items. The no-data
+    // baseline has none; use the content fixture to retain whole-edge equality.
+    let boat = graph
+        .edges
+        .iter_mut()
+        .find(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 657)
+        .expect("legacy outbound Entrana boat");
+    for (container, forbidden) in [
+        ("inv", &mut boat.forbidden_held),
+        ("worn", &mut boat.forbidden_worn),
+    ] {
+        let categories = inv_totalcat_categories(ENTRANA_PROC_SOURCE, container);
+        forbidden.clear();
+        for item in data.items() {
+            if item
+                .category
+                .as_deref()
+                .is_some_and(|category| categories.contains(category))
+            {
+                forbidden.push(item.id);
+            }
+        }
+        forbidden.sort_unstable();
+        forbidden.dedup();
+    }
+}
+
 #[test]
 fn revision_377_direct_trapdoor_keeps_content_landing_and_source_delay() {
     let fx = Fixture::new();
@@ -10622,12 +10653,13 @@ p_telejump(0_46_149_63_13);
     let derive = |data: Option<&api::game_data::SelectedGameData>| {
         derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
     };
-    let baseline = derive(None);
+    let mut baseline = derive(None);
     for revision in [
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
         let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        apply_legacy_entrana_fixture_guards(&mut baseline, &data);
         assert_eq!(
             derive(Some(&data)).edges,
             baseline.edges,
@@ -10714,12 +10746,13 @@ p_telejump($coord);
     let derive = |data: Option<&api::game_data::SelectedGameData>| {
         derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
     };
-    let baseline = derive(None);
+    let mut baseline = derive(None);
     for revision in [
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
         let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        apply_legacy_entrana_fixture_guards(&mut baseline, &data);
         assert_eq!(
             derive(Some(&data)).edges,
             baseline.edges,
@@ -10844,12 +10877,13 @@ switch_coord (loc_coord) {
     let derive = |data: Option<&api::game_data::SelectedGameData>| {
         derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
     };
-    let baseline = derive(None);
+    let mut baseline = derive(None);
     for revision in [
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
         let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        apply_legacy_entrana_fixture_guards(&mut baseline, &data);
         assert_eq!(derive(Some(&data)).edges, baseline.edges);
     }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
@@ -10974,12 +11008,13 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
     let derive = |data: Option<&api::game_data::SelectedGameData>| {
         derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
     };
-    let baseline = derive(None);
+    let mut baseline = derive(None);
     for revision in [
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
         let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        apply_legacy_entrana_fixture_guards(&mut baseline, &data);
         assert_eq!(
             derive(Some(&data)).edges,
             baseline.edges,
