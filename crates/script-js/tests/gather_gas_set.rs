@@ -310,6 +310,10 @@ export default class T extends LoopingBot {
 /// Selected data without the generated gas slice is the fail-closed miss on every member, never an empty set.
 #[test]
 fn selected_data_without_the_gas_slice_fails_closed_on_every_member() {
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let raw = r#"{
         "schema_version": 5,
         "revision": 274,

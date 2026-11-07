@@ -539,6 +539,10 @@ export function tick(api) {
             "{key} {empty:?}"
         );
     }
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
 
     let iso = LoadIsolate::spawn_with_game_data(
         src.into(),

@@ -827,6 +827,10 @@ export function tick(api) {
         "game data unavailable: this server's content isn't verified (see profile/engine settings)",
         "{value:?}"
     );
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
 
     // A selected slot without the trail family: the family token, before
     // none-held, even with an empty page.
@@ -887,6 +891,10 @@ export function tick(api) {
             "game data unavailable: this server's content isn't verified (see profile/engine settings)",
             "{key} {empty:?}"
         );
+    }
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
     }
 
     let iso = LoadIsolate::spawn_with_game_data(
