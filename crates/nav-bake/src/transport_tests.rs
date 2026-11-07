@@ -10687,8 +10687,9 @@ fn revision_377_coordinate_stairs_keep_downstairs_and_explicit_middle_options() 
         "maps/m50_54.jm2",
         "==== MAP ====\n0 0 0: h1\n==== LOC ====\n1 2 41: 1739 10\n",
     );
-    // Canon stairs.rs2:43-49,232-270: the middle stair's first option
-    // opens a choice; only its explicit up/down operations are direct moves.
+    // Canon stairs.rs2:43-84 repeats the identical 1_49_52_52_62 arm;
+    // it must not invalidate Morgan's separate downstairs placement.
+    // The middle stair's first option (:232-270) remains a choice.
     fx.write(
         "scripts/ladders+stairs/scripts/stairs.rs2",
         "\
@@ -10696,6 +10697,8 @@ fn revision_377_coordinate_stairs_keep_downstairs_and_explicit_middle_options() 
 p_arrivedelay;
 switch_coord (loc_coord) {
     case 1_48_51_28_2 : p_telejump(0_48_51_26_2);
+    case 1_49_52_52_62 : p_telejump(0_49_52_52_60);
+    case 1_49_52_52_62 : p_telejump(0_49_52_52_60);
     case default : @unhandled_stairs(loc_coord);
 }
 [oploc1,scenery_1739]
