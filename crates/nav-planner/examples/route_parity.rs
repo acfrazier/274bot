@@ -220,7 +220,8 @@ fn main() -> Result<(), String> {
     }
     let mut world =
         NavWorld::load_pack(Path::new(&args[0])).map_err(|error| format!("load: {error:?}"))?;
-    let data = api::game_data::for_revision(client::io::ClientRevision::R289)?;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289)
+        .map_err(|error| format!("game data: {error}"))?;
     world
         .bind_named_bank_facts(&data)
         .map_err(|error| format!("banks: {error:?}"))?;
