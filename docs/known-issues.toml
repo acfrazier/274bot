@@ -901,3 +901,15 @@ listed = "0.2.8"
 target = "none"
 severity = "low"
 owner = "combat (PvP slices)"
+
+[[item]]
+id = "tui-paired-duel-clean-logout"
+kind = "known-issue"
+area = "Terminal app"
+text = """Stopping the two bots after a paired Duel Arena fight can time out
+  before both clean logouts are acknowledged. The fight can work before this
+  stop failure. No verified workaround is recorded."""
+first = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "M3 clean logout"
