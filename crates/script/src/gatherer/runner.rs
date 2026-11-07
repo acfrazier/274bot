@@ -3359,12 +3359,14 @@ mod tests {
             size_of::<crate::survival::SurvivalStep>()
         );
         assert!(size_of::<GatherRetained>() <= 80);
-        // One boxed `GatherScratch` per run: 56 bytes at the branch base
-        // (1bc5c3868), 80 now. The 24 bytes are the bank trip's session-restart count, its
-        // access recovery state, the avoided bank index and the last reason.
+        // One boxed `GatherScratch` per run: 56 bytes at the fix's base
+        // (1bc5c3868), 80 at the 0.2.9 batch head (the selected bank moved in),
+        // 104 with the bank relog fix. Its 24 bytes are the bank trip's
+        // session-restart count, its access recovery state, the avoided bank
+        // index and the last reason.
         assert!(
-            size_of::<GatherScratch>() <= 80,
-            "GatherScratch={} exceeds 80 bytes",
+            size_of::<GatherScratch>() <= 104,
+            "GatherScratch={} exceeds 104 bytes",
             size_of::<GatherScratch>()
         );
         println!(

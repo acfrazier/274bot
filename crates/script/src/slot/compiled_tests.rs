@@ -2523,14 +2523,16 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
     // not production state: bag entries 416 + index 36 + keys 30 + bag Off 3
     // + resource Value vector 72 + oak 3 - prepared resource 3.
     // Thus oak Off is 9914. Knife adds two item-name Arcs 48 and two retained
-    // Off-to-Knife string deltas 4 = 9966; 9974 leaves 8 B headroom.
+    // Off-to-Knife string deltas 4 = 9966. The bank relog fix adds 24 B to the
+    // boxed GatherScratch (session restarts, access recovery, avoided bank,
+    // last reason): 9990. 9998 leaves 8 B headroom.
     // The new private owner probe reproduces all three preparation totals
     // (3495/4052/4104); r2-tick-family-byte-probe-1/probe.stdout has each leaf.
     // Inline TickKit storage is already in Prepared; shared tables stay out.
     for (oak, knife, exclusive) in measurements {
         assert!(
-            (0..=9974).contains(&exclusive),
-            "exclusive Gatherer heap exceeds the attributed 9974 B cap: oak={oak}, knife={knife}, measured={exclusive}"
+            (0..=9998).contains(&exclusive),
+            "exclusive Gatherer heap exceeds the attributed 9998 B cap: oak={oak}, knife={knife}, measured={exclusive}"
         );
     }
 }
@@ -3389,12 +3391,14 @@ mod api_gather_seat {
         // Arc<str> for "Off". Installation is unchanged. Linux measures 9,971 B
         // and macOS independently measures 10,035 B (BATCH-029-INT/
         // r2-pvp-v2-mac-api-seat-1). Main permits 8 B headroom on each platform.
+        // The bank relog fix adds 24 B to the boxed GatherScratch (Linux 9,995 B
+        // measured; macOS +24 B by the same allocation size, not measured).
         // Non-blocking follow-up: "Off" could use &'static str or a shared
         // static Arc instead of a separate allocation per bot.
         #[cfg(target_os = "macos")]
-        let exclusive_limit = 10043;
+        let exclusive_limit = 10067;
         #[cfg(target_os = "linux")]
-        let exclusive_limit = 9979;
+        let exclusive_limit = 10003;
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let exclusive_limit = 8848;
         assert!(

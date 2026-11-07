@@ -2011,14 +2011,22 @@ impl BankMachine {
     }
 
     /// An open request that adopted an already-open modal and has sent no
-    /// stand access of its own (every access it emits sets `opened_from`).
-    /// That modal belongs to an earlier session or to another request, so
-    /// its missing table says nothing about this request's access, and
-    /// waiting on it again cannot recover: a soft reconnect (login response
-    /// 15) keeps the client's modal fields but drops the item table
-    /// (`client.rs:3735-3758`, `reset_packet_observations`).
+    /// stand access of its own (every access it emits sets `opened_from`,
+    /// except the opener's click on a chest lid, which is its own access and
+    /// is waiting for the lid to open). That modal belongs to an earlier
+    /// session or to another request, so its missing table says nothing about
+    /// this request's access, and waiting on it again cannot recover: a soft
+    /// reconnect (login response 15) keeps the client's modal fields but drops
+    /// the item table (`client.rs:3735-3758`, `reset_packet_observations`).
     fn adopted_open_without_access(&self) -> bool {
-        matches!(self.request.action, BankAction::OpenStand { .. }) && self.opened_from.is_none()
+        matches!(self.request.action, BankAction::OpenStand { .. })
+            && self.opened_from.is_none()
+            && !matches!(
+                self.phase,
+                Phase::AwaitOpen {
+                    first_target: Some(_)
+                }
+            )
     }
 
     /// The open session is gone (closed, or replaced by a newer one) before
