@@ -284,7 +284,9 @@
               "skip_if": { "Any": [
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } },
+                { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["i think i've washed the key down to the sewer"], "clear": [] } } },
+                { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } }
               ] },
               "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_water" } } }
             },
@@ -304,7 +306,8 @@
               "skip_if": { "Any": [
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
-                { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } }
+                { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } },
+                { "Fact": { "kind": "message_state", "version": 1, "args": { "set": ["i think i've washed the key down to the sewer"], "clear": [] } } }
               ] },
               "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["i think i've washed the key down to the sewer"] } } }
             },
