@@ -12,8 +12,10 @@
 
 use crate::world::NavWorld;
 
-/// Measured decoded world on the candidate pack, plus 8 bytes.
-const PROFILE_BOUND_SHARED_NAV_STATE_LIMIT: usize = usize::MAX;
+/// Measured decoded world on the candidate pack (91,188,966 B, exactly the
+/// diagnostic's PreparingNavigation retention), plus 8 bytes and rounded up
+/// to the 8-byte alignment: 91,188,976 B.
+const PROFILE_BOUND_SHARED_NAV_STATE_LIMIT: usize = 91_188_976;
 
 #[test]
 fn real_289_profile_bound_nav_state_stays_inside_its_total_tripwire() {

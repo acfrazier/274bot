@@ -3382,6 +3382,14 @@ mod api_gather_seat {
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>(),
             8
         );
+        // Inline seat layout, separate from the owned-heap cap below: 656 B
+        // measured on the 64-bit CI targets. The inventory's rule allows +8%,
+        // rounded to an 8-byte boundary: 656 * 1.08 = 708.5 -> 712 B.
+        assert!(
+            std::mem::size_of::<crate::slot::api_seat::ApiSeat>() <= 712,
+            "ApiSeat inline layout grew to {} B (measured 656 B; limit 712 B)",
+            std::mem::size_of::<crate::slot::api_seat::ApiSeat>()
+        );
         // The source-532 baseline is 8,848 B Linux / 8,912 B macOS, including
         // Cure, QuietRead and the typed bank receipt. Shared tables stay excluded.
         // Tick preparation +483 B = boxed Gatherer +408 + Prepared fields +72
