@@ -1635,7 +1635,7 @@ fn completion_row_overtakes_377_journal_without_closing_the_scroll() {
         });
         assert!(matches!(
             ack(&mut ledger, 1),
-            HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+            HostEffect::Interaction(crate::interact::InteractReq::IfButton { component_id })
                 if component_id == component
         ));
         assert!(script.journal.is_some());
