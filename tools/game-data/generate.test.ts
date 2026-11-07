@@ -3806,7 +3806,7 @@ if (process.env.GAME_DATA_377_CONTENT) {
     const spec377 = revisions.find(spec => spec.revision === 377)!;
     const payload = JSON.parse(fs.readFileSync(spec377.output, 'utf8'));
     assert.equal(payload.revision, 377);
-    assert.deepEqual(payload.prayers, extractPrayerFacts(spec377.content, 377).prayers);
+    assert.deepEqual(payload.prayers, extractPrayerFacts(spec377.content).prayers);
     // GAME_DATA_377_ENGINE selects the checkout at runtime; a static import would bind another corpus.
     const selectedObjectModule: { default: { load(dir: string): void; configs: Parameters<typeof extractTrailFacts>[1] } } = await import(pathToFileURL(path.join(spec377.engine, 'src/cache/config/ObjType.ts')).href);
     selectedObjectModule.default.load(path.join(spec377.engine, 'data/pack'));
