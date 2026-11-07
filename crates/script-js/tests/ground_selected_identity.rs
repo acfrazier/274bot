@@ -207,8 +207,9 @@ export default class T extends LoopingBot {
 }
 
 fn input_take_obj_requests_bound_collected_v8_heap_growth() {
-    const REQUESTS: usize = 2_048;
-    const MAX_GROWTH: usize = 550_000;
+    const REQUESTS: usize = 256;
+    const MAX_GROWTH: usize = 128 * 1024;
+    // The queue admits 256 rows; 512 B per request scales the existing ground-request allowance.
     let src = r#"
 import { Input } from '../../input/Input.js';
 export default class T extends LoopingBot {
@@ -391,7 +392,7 @@ fn main() {
     assert_cold_input_take_obj_request_has_fast_properties_on_posted_page();
     println!("PASS cold Input.takeObj binding fast properties on posted ground page");
     input_take_obj_requests_bound_collected_v8_heap_growth();
-    println!("PASS Input.takeObj collected V8 heap bound for 2048 requests");
+    println!("PASS Input.takeObj collected V8 heap bound for 256 requests");
     ground_item_interact_emits_the_selected_posted_id_through_flatbuffer();
     println!("PASS ground identity, FlatBuffer batch, and cold fast properties");
     ground_item_interact_with_missing_action_returns_false_without_queueing();
