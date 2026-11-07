@@ -141,16 +141,41 @@
               "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "garlic" } } }
             },
             {
-              "id": "take-hammer",
+              "id": "take-hammer-coins",
               "kind": "interact",
               "version": 1,
               "advances": false,
               "args": {
-                "target": { "ground": "hammer" },
+                "target": { "ground": "coins" },
                 "op": "Take",
-                "anchor": { "tile": [2934, 3286, 0], "source": "maps/m45_51.jm2:7018 (OBJ 2347)" },
-                "radius": 2,
-                "wait_if_missing": true
+                "anchor": { "tile": [3232, 3500, 0], "source": "maps/m50_54.jm2:12022-12023 (OBJ 995 qty 3/4); maps/m50_154.jm2:7787 ladder_1755 and ladders.rs2:90-97 provide the alcove route" },
+                "radius": 6,
+                "wait_if_missing": true,
+                "until": { "obj": "coins", "qty": 1 },
+                "settle_ms": 300000
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hammer" } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 1 } } }
+              ] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 1 } } }
+            },
+            {
+              "id": "buy-hammer",
+              "kind": "buy",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "shop": {
+                  "npc": "generalshopkeeper2",
+                  "anchor": {
+                    "tile": [3218, 3415, 0],
+                    "source": "maps/m50_53.jm2:12934 (NPC 522); scripts/_unpack/377/all.npc:13305,13309 (Trade, owned_shop generalshop2); packed server/inv.dat generalshop2 has hammer stock 5"
+                  }
+                },
+                "obj": "hammer",
+                "qty": 1,
+                "est_gp": 1
               },
               "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hammer" } } },
               "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hammer" } } }
