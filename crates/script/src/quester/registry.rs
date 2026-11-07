@@ -9,7 +9,7 @@ use api::game_data::SelectedGameData;
 use api::gather_methods::GatherCatalog;
 use api::identity::WorkIdentity;
 use api::quest_facts::QuestCatalog;
-use api::selected::FamilyPreparation;
+use api::selected::{ClientRevision, FamilyPreparation};
 use nav_planner::contract::{NavLease, ZoneTableView};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, ReadDir};
