@@ -17,6 +17,7 @@ pub(super) fn selected_revision(
     match selected.revision() {
         274 => Ok(ClientRevision::R274),
         289 => Ok(ClientRevision::R289),
+        377 => Ok(ClientRevision::R377),
         _ => Err(StartError::Unavailable(
             "selected game-data revision is unsupported".into(),
         )),
