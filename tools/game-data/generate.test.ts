@@ -2161,7 +2161,7 @@ const TRAIL_FIXTURE_IDS: Record<string, number> = {
     trail_clue_hard_sextant028: 3554,
     trail_clue_hard_sextant028_casket: 3555,
 };
-const trailFixtureItems = Object.entries(TRAIL_FIXTURE_IDS).map(([debugname, id]) => ({
+const trailFixtureItems: Parameters<typeof extractTrailFacts>[1] = Object.entries(TRAIL_FIXTURE_IDS).map(([debugname, id]) => ({
     id,
     debugname,
     name: debugname.endsWith('_casket') ? 'Casket' : 'Clue scroll',
@@ -2173,7 +2173,8 @@ const trailFixtureItems = Object.entries(TRAIL_FIXTURE_IDS).map(([debugname, id]
     wearpos: -1,
     wearpos2: 0,
     wearpos3: 0,
-})) as any;
+    manwear: -1,
+}));
 
 function writeTrailFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
     const files: Record<string, string> = {
@@ -2343,14 +2344,15 @@ assert.equal(trailFacts.rows.some((row) => row.alias === 'trail_clue_medium_anag
 assert.equal(trailFacts.rows.every((row) => row.params.every((param) => typeof param.value === 'string' && typeof param.key === 'string')), true);
 
 // the six answers are a sibling list on the challenge aliases, never a membership row
-assert.deepEqual(trailFacts.challenge_answers, [
+const expectedTrailChallengeAnswers = [
     { alias: 'trail_clue_medium_anagram001_challenge', id: 2842, answer: '6859' },
     { alias: 'trail_clue_medium_anagram002_challenge', id: 2844, answer: '9' },
     { alias: 'trail_clue_medium_anagram003_challenge', id: 2846, answer: '40' },
     { alias: 'trail_clue_medium_anagram006_challenge', id: 2850, answer: '5' },
     { alias: 'trail_clue_medium_anagram007_challenge', id: 2852, answer: '48' },
     { alias: 'trail_clue_medium_anagram008_challenge', id: 2854, answer: '5096' },
-]);
+];
+assert.deepEqual(trailFacts.challenge_answers, expectedTrailChallengeAnswers);
 assert.equal(trailFacts.rows.some((row) => row.alias.endsWith('_challenge')), false);
 assert.equal(trailFacts.rows.some((row) => row.params.some((param) => param.key === 'trail_challenge_answer')), false);
 // the answer is not copied onto the parent that shares its prefix, and no link is invented
@@ -2396,9 +2398,22 @@ assert.equal(trailRow(repackedTrailFacts, 'trail_clue_hard_sextant028').id, repa
 assert.equal(trailRow(repackedTrailFacts, 'trail_clue_hard_sextant028').access, 'constrained');
 
 // revision 377 derives the same membership but never inherits the 289 constrained-clue annotation
-const trailFacts377 = extractTrailFacts(trailFixture(), trailFixtureItems, 377);
+const selectedTrailAnswerParam = 5;
+const selectedTrailAnswers = new Map(expectedTrailChallengeAnswers.map(({ alias, answer }) => [alias, Number(answer)]));
+const selectedTrailItems = trailFixtureItems.map((item) => {
+    const answer = selectedTrailAnswers.get(item.debugname!);
+    return { ...item, params: answer === undefined ? undefined : new Map([[selectedTrailAnswerParam, answer]]) };
+});
+const selectedTrailContent = trailFixture((files) => {
+    files['pack/param.pack'] = `${selectedTrailAnswerParam}=trail_challenge_answer\n`;
+    files['scripts/_unpack/377/all.obj'] = ['easy', 'medium', 'hard', 'casket']
+        .map((tier) => files[`${TRAIL_CONFIG}/trail_${tier}.obj`]).join('\n');
+});
+const trailFacts377 = extractTrailFacts(selectedTrailContent, selectedTrailItems, 377);
 assert.equal(trailFacts377.rows.some((row) => 'access' in row), false);
 assert.deepEqual(trailFacts377.rows.map((row) => row.alias).sort(), trailFacts.rows.map((row) => row.alias).sort());
+assert.deepEqual(trailFacts377.challenge_answers, expectedTrailChallengeAnswers);
+fs.rmSync(selectedTrailContent, { recursive: true });
 
 // a constant-table coordinate is not selected when the obj param is absent
 assert.deepEqual(trailRow(trailFacts, 'trail_clue_easy_vague003').params, [{ key: 'trail_desc', value: 'Dig near the drawers.' }]);
