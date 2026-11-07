@@ -206,6 +206,105 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+fn input_take_obj_requests_bound_collected_v8_heap_growth() {
+    const REQUESTS: usize = 256;
+    const WARM_TICKS: usize = 256;
+    // Warmed growth was 74,672 B; 1.5x allows 37,336 B of headroom.
+    const MAX_GROWTH: usize = 112_008;
+    let src = r#"
+import { Input } from '../../input/Input.js';
+export default class T extends LoopingBot {
+    loop() {
+        const count = globalThis.__request_count;
+        const kept = globalThis.__kept || (globalThis.__kept = []);
+        if (!Input.takeObj(2737, 3440, 1053, 1)) {
+            throw new Error('Input.takeObj refused the posted ground row');
+        }
+        const row = __rs2b0t_host.interact[__rs2b0t_host.interact.length - 1];
+        if (!row || row.op !== 'obj' || row.id !== 1053) {
+            throw new Error('Input.takeObj did not retain its queued ground row');
+        }
+        if (kept.length < count) kept.push(row);
+        globalThis.__probe = (globalThis.__probe | 0) + 1;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let take = ["Take".to_string()];
+    let ground = [ground_row(1053, "Coins", &take)];
+    let mut snap = base_snapshot();
+    snap.ground = &ground;
+    iso.post_snapshot(script_js::wire::encode_snapshot(&snap));
+    assert_eq!(
+        iso.probe("globalThis.__request_count = 1").unwrap(),
+        serde_json::json!(1)
+    );
+    for tick in 1..=WARM_TICKS as u64 {
+        iso.on_game_tick(tick);
+        assert_eq!(
+            iso.probe("__probe").unwrap(),
+            serde_json::json!(tick),
+            "the warm-up completes each request tick"
+        );
+        assert_eq!(
+            iso.drain_interacts().len(),
+            1,
+            "the host receives one warm-up Input.takeObj request per tick"
+        );
+    }
+    assert_eq!(
+        iso.probe("__kept.length").unwrap(),
+        serde_json::json!(1),
+        "warm-up exercises the retained-request path"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__kept.length = 0").unwrap(),
+        serde_json::json!(0),
+        "discard the warm-up request before the baseline"
+    );
+    let baseline = iso
+        .collected_heap_bytes_for_test()
+        .expect("collect the warmed isolate heap before materializing requests");
+    assert_eq!(
+        iso.probe(&format!("globalThis.__request_count = {REQUESTS}"))
+            .unwrap(),
+        serde_json::json!(REQUESTS)
+    );
+    for request in 1..=REQUESTS as u64 {
+        let tick = WARM_TICKS as u64 + request;
+        iso.on_game_tick(tick);
+        assert_eq!(
+            iso.probe("__probe").unwrap(),
+            serde_json::json!(tick),
+            "the script completes one request tick"
+        );
+        assert_eq!(
+            iso.drain_interacts().len(),
+            1,
+            "the host receives one Input.takeObj request per tick"
+        );
+    }
+    assert_eq!(
+        iso.probe("__kept.length").unwrap(),
+        serde_json::json!(REQUESTS),
+        "Input.takeObj retains every materialized request"
+    );
+    let after = iso
+        .collected_heap_bytes_for_test()
+        .expect("collect the retained request heap");
+    let growth = after.saturating_sub(baseline);
+    println!(
+        "Input.takeObj collected V8 heap: requests={REQUESTS} baseline={baseline} \
+         after={after} growth={growth} limit={MAX_GROWTH}"
+    );
+    assert!(
+        growth <= MAX_GROWTH,
+        "{REQUESTS} retained Input.takeObj requests grew the collected V8 used heap by \
+         {growth} bytes; limit {MAX_GROWTH} (baseline {baseline}, after {after})"
+    );
+    iso.join();
+}
+
 fn ground_item_interact_emits_the_selected_posted_id_through_flatbuffer() {
     assert_cold_ground_request_has_fast_properties();
     let reqs = posted_ground_interactions();
@@ -330,6 +429,8 @@ fn main() {
 
     assert_cold_input_take_obj_request_has_fast_properties_on_posted_page();
     println!("PASS cold Input.takeObj binding fast properties on posted ground page");
+    input_take_obj_requests_bound_collected_v8_heap_growth();
+    println!("PASS Input.takeObj collected V8 heap bound for 256 requests");
     ground_item_interact_emits_the_selected_posted_id_through_flatbuffer();
     println!("PASS ground identity, FlatBuffer batch, and cold fast properties");
     ground_item_interact_with_missing_action_returns_false_without_queueing();

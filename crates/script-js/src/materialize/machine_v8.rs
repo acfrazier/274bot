@@ -715,6 +715,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn generic_value_rows_bound_collected_v8_heap_growth() {
+        const ROWS: usize = 4_096;
+        // 917,408 B measured: 1.5x leaves 458,848 B of headroom; the
+        // serde_v8 dictionary-mode variant measured 2,949,048 B.
+        const MAX_HEAP_GROWTH: usize = 1_376_256;
+        crate::runtime::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        callback_v8::install_ops(&mut runtime).unwrap();
+        install(&mut runtime).unwrap();
+
+        let warm = serde_json::json!({
+            "id": 0,
+            "name": "Coins",
+            "actions": ["Take"],
+            "tile": { "x": 2737, "z": 3440 },
+        });
+        {
+            let mut scope = runtime.deno_runtime().handle_scope();
+            value_to_v8(&mut scope, &warm, 0).expect("warm row materializes");
+        }
+        let baseline = collected_used_heap(&mut runtime);
+        {
+            let context = runtime.deno_runtime().main_context();
+            let mut scope = runtime.deno_runtime().handle_scope();
+            let global = context.open(&mut scope).global(&mut scope);
+            let kept = v8::Array::new(&mut scope, ROWS as i32);
+            for index in 0..ROWS {
+                let row = serde_json::json!({
+                    "id": index,
+                    "name": "Coins",
+                    "actions": ["Take"],
+                    "tile": { "x": 2737, "z": 3440 },
+                });
+                let value = value_to_v8(&mut scope, &row, 0)
+                    .unwrap_or_else(|error| panic!("row {index} materializes: {error}"));
+                assert_eq!(
+                    kept.set_index(&mut scope, index as u32, value),
+                    Some(true),
+                    "V8 retains row {index}"
+                );
+            }
+            let key = callback_v8::string(&mut scope, "__value_rows");
+            global.set(&mut scope, key, kept.into());
+        }
+        let after = collected_used_heap(&mut runtime);
+        let growth = after.saturating_sub(baseline);
+        println!(
+            "generic machine values collected V8 heap: rows={ROWS} baseline={baseline} \
+             after={after} growth={growth} limit={MAX_HEAP_GROWTH}"
+        );
+        assert!(
+            growth <= MAX_HEAP_GROWTH,
+            "{ROWS} retained generic values grew the collected V8 used heap by {growth} \
+             bytes; limit {MAX_HEAP_GROWTH} (baseline {baseline}, after {after})"
+        );
+        assert_eq!(
+            runtime.eval::<usize>("__value_rows.length").unwrap(),
+            ROWS,
+            "all materialized rows remain reachable"
+        );
+    }
+
     const CAPACITY_TEST_NAME: &str =
         "materialize::machine_v8::tests::shaped_values_equal_the_serde_values_and_the_cache_stays_bounded";
     const CAPACITY_CHILD_ENV: &str = "SCRIPT_MACHINE_VALUE_SHAPE_TEST_CHILD";
