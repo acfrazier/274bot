@@ -2588,6 +2588,13 @@ fn tick_loop(
             #[cfg(feature = "test-hooks")]
             IsolateCmd::TestNoop => {}
             #[cfg(feature = "test-hooks")]
+            IsolateCmd::TestCollectHeap(reply) => {
+                let isolate = runtime.deno_runtime().v8_isolate();
+                isolate.low_memory_notification();
+                let used_heap_size = isolate.get_heap_statistics().used_heap_size();
+                let _ = reply.send(used_heap_size);
+            }
+            #[cfg(feature = "test-hooks")]
             IsolateCmd::TestBlock { release, entered } => {
                 {
                     let (lock, cv) = &*entered;

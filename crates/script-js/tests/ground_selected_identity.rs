@@ -206,6 +206,77 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+fn input_take_obj_requests_bound_collected_v8_heap_growth() {
+    const REQUESTS: usize = 2_048;
+    const MAX_GROWTH: usize = 550_000;
+    let src = r#"
+import { Input } from '../../input/Input.js';
+export default class T extends LoopingBot {
+    loop() {
+        const count = globalThis.__request_count ?? 1;
+        const kept = globalThis.__kept = [];
+        for (let index = 0; index < count; index++) {
+            if (!Input.takeObj(2737, 3440, 1053, 1)) {
+                throw new Error('Input.takeObj refused the posted ground row');
+            }
+            kept.push(__rs2b0t_host.interact[__rs2b0t_host.interact.length - 1]);
+        }
+        globalThis.__probe = kept.length;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let take = ["Take".to_string()];
+    let ground = [ground_row(1053, "Coins", &take)];
+    let mut snap = base_snapshot();
+    snap.ground = &ground;
+    iso.post_snapshot(script_js::wire::encode_snapshot(&snap));
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), serde_json::json!(1));
+    assert_eq!(iso.drain_interacts().len(), 1, "warm Input.takeObj request");
+    assert_eq!(
+        iso.probe("(() => { globalThis.__kept = null; globalThis.__request_count = 0; return true; })()")
+            .unwrap(),
+        serde_json::json!(true)
+    );
+    let baseline = iso
+        .collected_heap_bytes_for_test()
+        .expect("collect the warm isolate heap");
+
+    assert_eq!(
+        iso.probe(&format!("globalThis.__request_count = {REQUESTS}"))
+            .unwrap(),
+        serde_json::json!(REQUESTS)
+    );
+    snap.tick = 2;
+    iso.post_snapshot(script_js::wire::encode_snapshot(&snap));
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        serde_json::json!(REQUESTS),
+        "Input.takeObj retains every materialized request"
+    );
+    assert_eq!(
+        iso.drain_interacts().len(),
+        REQUESTS,
+        "the host receives every Input.takeObj request"
+    );
+    let after = iso
+        .collected_heap_bytes_for_test()
+        .expect("collect the retained request heap");
+    let growth = after.saturating_sub(baseline);
+    println!(
+        "Input.takeObj collected V8 heap: requests={REQUESTS} baseline={baseline} \
+         after={after} growth={growth} limit={MAX_GROWTH}"
+    );
+    assert!(
+        growth <= MAX_GROWTH,
+        "{REQUESTS} retained Input.takeObj requests grew the collected V8 used heap by \
+         {growth} bytes; limit {MAX_GROWTH} (baseline {baseline}, after {after})"
+    );
+    iso.join();
+}
+
 fn ground_item_interact_emits_the_selected_posted_id_through_flatbuffer() {
     assert_cold_ground_request_has_fast_properties();
     let reqs = posted_ground_interactions();
@@ -330,6 +401,8 @@ fn main() {
 
     assert_cold_input_take_obj_request_has_fast_properties_on_posted_page();
     println!("PASS cold Input.takeObj binding fast properties on posted ground page");
+    input_take_obj_requests_bound_collected_v8_heap_growth();
+    println!("PASS Input.takeObj collected V8 heap bound for 2048 requests");
     ground_item_interact_emits_the_selected_posted_id_through_flatbuffer();
     println!("PASS ground identity, FlatBuffer batch, and cold fast properties");
     ground_item_interact_with_missing_action_returns_false_without_queueing();

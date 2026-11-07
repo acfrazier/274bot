@@ -216,7 +216,9 @@ enum IsolateCmd {
     /// Test seam: a command that does nothing.
     #[cfg(feature = "test-hooks")]
     TestNoop,
-    /// Isolate teardown. `invoke_hook` is true for operator join and
+    /// Test seam: collect V8 garbage and return the isolate's used heap.
+    #[cfg(feature = "test-hooks")]
+    TestCollectHeap(std::sync::mpsc::Sender<usize>),
     /// self-stop; raw Drop sends false so a dying isolate never runs
     /// `onStop` into a dropped rx.
     Stop {
@@ -905,6 +907,17 @@ impl LoadIsolate {
     #[doc(hidden)]
     pub fn queue_noop_for_test(&self) {
         self.send(IsolateCmd::TestNoop);
+    }
+    /// Collect V8 garbage on the isolate thread and return its used heap.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn collected_heap_bytes_for_test(&self) -> Result<usize, String> {
+        let (tx, rx) = mpsc::channel();
+        if !self.send(IsolateCmd::TestCollectHeap(tx)) {
+            return Err("heap collection: isolate thread gone".into());
+        }
+        rx.recv_timeout(Duration::from_secs(10))
+            .map_err(|error| format!("heap collection: {error}"))
     }
 
     /// The backlog counter that the dispatch check compares with its bound.
