@@ -1603,8 +1603,15 @@ fn completion_row_overtakes_377_journal_without_closing_the_scroll() {
             let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
             let document =
                 serde_json::from_slice(include_bytes!("../../paths/377/demon.json")).unwrap();
-            let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests)
-                .unwrap();
+            let path = super::super::compile::compile_uncached_for_test_with_zones(
+                &document,
+                &data,
+                &quests,
+                super::super::compile::real_377_nav_lease()
+                    .zones()
+                    .expect("real 377 zone catalog"),
+            )
+            .unwrap();
             let script = Quester::new(
                 RunKey {
                     slot: 1,
