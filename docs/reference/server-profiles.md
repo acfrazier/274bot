@@ -74,17 +74,16 @@ Revision 377 is an explicit local development target. `host-play --revision 377
 client decoder, including revision-specific config and interface fields.
 Low- and high-memory clients keep separate mode-dependent tables.
 
-The selected cache and navigation pack must carry real revision-377 identities.
-The driver does not borrow revision-289 data or navigation, relabel a cache, or
-skip a resource check. A changed bound archive or an incompatible pack refuses
-the affected operation. Generated game facts attach only when their cache
-identity and pinned source bytes match; otherwise the runtime logs why it
-withheld them.
+Select a real revision-377 cache, decoded snapshot and navigation pack.
+The driver uses revision-specific decoders; it does not relabel revision-289
+resources. Generated facts are local inputs. The runtime does not authenticate
+their source revision, commit or content hash (ADR 0019). Keep the 377 resource
+paths separate from the 274/289 paths.
 
 The bounded `client_377` scenario uses the existing
 `panel-play --revision 377 --live script_client_377` harness. After the normal
-mainland seed, it captures scene 2, sends a short direct courtyard walk without
-the whole-world router, waits for the exact destination, and talks to the live
-NPC with selected-cache type 0 (Hans). It requires a closed dialogue before the
-send and captures the new dialogue. This client qualification does not qualify
+mainland seed, it captures scene 2. It sends a short direct courtyard walk without
+the whole-world router and waits for the exact destination. It then talks to the
+live NPC with selected-cache type 0 (Hans). It requires a closed dialogue before
+the send and captures the new dialogue. This client qualification does not qualify
 combat, gathering, questing, banking, or other game-data-dependent families.
