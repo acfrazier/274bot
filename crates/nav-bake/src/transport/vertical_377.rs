@@ -28,6 +28,38 @@ pub(in crate::transport) fn supplemental_edges_377(
         }
     }
 
+    // 377 renamed several legacy stair aliases to scenery_<id>. Read their
+    // coordinate switches, including explicit middle-stair up/down options,
+    // rather than granting a name-based price to an unsupported handler.
+    if let Ok(source) =
+        fs::read_to_string(content_root.join("scripts/ladders+stairs/scripts/stairs.rs2"))
+    {
+        for (op, name, body) in script_blocks(&source) {
+            let Some(option) = oploc_option(&op) else {
+                continue;
+            };
+            let Some(&id) = ids.get(&name) else {
+                continue;
+            };
+            if graph
+                .edges
+                .iter()
+                .any(|edge| edge.loc_id == id && edge.option == option)
+                || !loc_defs
+                    .op_at(id, option)
+                    .is_some_and(|op| op.starts_with("Climb"))
+            {
+                continue;
+            }
+            let Some((rule, ticks)) = coordinate_stair_switch(&body) else {
+                continue;
+            };
+            let key = (name, option);
+            rules.insert(key.clone(), (TransportKind::Stairs, rule));
+            extras.insert(key, ticks);
+        }
+    }
+
     // Unlike the standard two-phase trapdoor pair, trapdoor_9472 directly
     // p_telejumps to an absolute tile (general_use/scripts/trapdoors.rs2:25-29).
     // Reuse the strict AST recognizer: only presentation, suspension and one
@@ -75,6 +107,70 @@ pub(in crate::transport) fn supplemental_edges_377(
     });
     resolve_ladder_stair_rules(&rules, &extras, ids, positions, loc_defs, graph, skipped);
     manhole_edges_377(content_root, ids, positions, loc_defs, graph, skipped);
+}
+
+/// Only a canonical location-coordinate switch whose arms each make one
+/// fixed jump. A dialogue, gate, extra effect or changed default fails closed.
+fn coordinate_stair_switch(body: &str) -> Option<(ScriptRule, i32)> {
+    let statements = parse_body(body)?;
+    let (switch, ticks) = match statements.as_slice() {
+        [Stmt::Call(name, args), switch @ Stmt::Switch(..)]
+            if name == "p_arrivedelay" && args.is_empty() =>
+        {
+            (switch, ARRIVAL_DELAY_TICKS)
+        }
+        [switch @ Stmt::Switch(..)] => (switch, 0),
+        _ => return None,
+    };
+    let Stmt::Switch(Expr::Word(on), arms) = switch else {
+        return None;
+    };
+    if on != "loc_coord" {
+        return None;
+    }
+    let mut rule = ScriptRule::default();
+    let mut default_seen = false;
+    for (keys, body) in arms {
+        if matches!(keys.as_slice(), [Expr::Word(key)] if key == "default") {
+            if default_seen
+                || !matches!(
+                    body.as_slice(),
+                    [Stmt::Jump(label, args)]
+                        if label == "unhandled_stairs"
+                            && matches!(args.as_slice(), [Expr::Word(coord)] if coord == "loc_coord")
+                )
+            {
+                return None;
+            }
+            default_seen = true;
+            continue;
+        }
+        let [Stmt::Call(name, args)] = body.as_slice() else {
+            return None;
+        };
+        let [destination] = args.as_slice() else {
+            return None;
+        };
+        if name != "p_telejump" || keys.is_empty() {
+            return None;
+        }
+        for key in keys {
+            let Expr::Word(coord) = key else {
+                return None;
+            };
+            let (level, x, z) = coord_literal(coord)?;
+            let outcome = landing_expr(destination);
+            if !matches!(outcome, Outcome::Landing(_))
+                || rule
+                    .by_loc_coord
+                    .insert(pack_coord(level, x, z), outcome)
+                    .is_some()
+            {
+                return None;
+            }
+        }
+    }
+    (default_seen && !rule.by_loc_coord.is_empty()).then_some((rule, ticks))
 }
 
 /// The palace coin alcove is reached through Varrock's sewer. Its surface
