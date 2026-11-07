@@ -8,7 +8,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 ### Content harness
 
 - Add selected revision-377 journal reads for Cook's Assistant, Sheep Shearer,
-  Rune Mysteries and Romeo & Juliet. Reads validate the selected pin, quest
+  Rune Mysteries and Romeo & Juliet. Reads validate the selected revision's quest
   button, title and all 100 ordered body fragments. Missing tables fail closed.
 - Add source-mapped revision-377 Paths for Sheep Shearer, Rune Mysteries and
   Romeo & Juliet, including journal-based intermediate-state recovery.
