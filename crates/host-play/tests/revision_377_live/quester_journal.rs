@@ -44,13 +44,14 @@ struct NpcSample {
     overhead: Option<String>,
 }
 
-// Forty-level stats clear Varrock's low-level aggression checks. Five trout
-// and those stats support Squire's aggressive cave. Npc.ts:1017 defines the check.
+// Forty-three in these stats gives combat 49 (canon Player.ts:1429-1434).
+// That is the first level exempt from the palace's level-24 zombie hunts
+// (canon all.npc:2289; Npc.ts:1017). Keep the production danger policy at default.
 const COMBAT_FIXTURE: &[&str] = &[
-    "setstat attack 40",
-    "setstat strength 40",
-    "setstat defence 40",
-    "setstat hitpoints 40",
+    "setstat attack 43",
+    "setstat strength 43",
+    "setstat defence 43",
+    "setstat hitpoints 43",
     "give trout 5",
 ];
 
@@ -295,9 +296,9 @@ impl Sample {
             })
     }
     fn combat_can_relog(&self) -> bool {
-        self.combat_level > 40
-            && self.combat_stats.iter().all(|level| *level == 40)
-            && self.hitpoints == 40
+        self.combat_level >= 49
+            && self.combat_stats.iter().all(|level| *level == 43)
+            && self.hitpoints == 43
             && self.safe_to_relog()
     }
     fn combat_fixture_ready(&self) -> bool {
@@ -326,7 +327,7 @@ impl Sample {
         if quest.key == "squire" {
             // setstat skill rows are verified after the clean relog, when the
             // server publishes them. Before it, wait only for the visible combat fixture.
-            self.combat_level > 40 && self.safe_to_relog()
+            self.combat_level >= 49 && self.safe_to_relog()
         } else {
             self.combat_can_relog()
         }
@@ -447,14 +448,22 @@ fn journal_witness_rejects_stale_or_partial_product_evidence() {
     );
     let mut prepared = fresh.clone();
     prepared.combat_level = 49;
-    prepared.combat_stats = [40; 4];
-    prepared.hitpoints = 40;
+    prepared.combat_stats = [43; 4];
+    prepared.hitpoints = 43;
     prepared.inventory = vec![(333, 5)];
     assert!(witness_predicate(&prepared, RUNE, 0, true));
+    let mut old_area_fixture = prepared.clone();
+    old_area_fixture.combat_level = 46;
+    old_area_fixture.combat_stats = [40; 4];
+    old_area_fixture.hitpoints = 40;
+    assert!(
+        !old_area_fixture.combat_can_relog(),
+        "combat 46 does not clear the default level-24 sewer-zombie policy"
+    );
     for invalid in 0..4 {
         let mut sample = prepared.clone();
         match invalid {
-            0 => sample.combat_level = 12,
+            0 => sample.combat_level = 48,
             1 => sample.inventory.clear(),
             2 => sample.hitpoints = 10,
             _ => sample.in_combat = true,
@@ -590,7 +599,7 @@ impl Witness {
         let mut seeds = vec!["own-account tutorial bypass and mainland position, then clean relog"];
         if needs_combat_fixture(self.quest.key) {
             seeds.push(
-                "labelled combat-only area fixture: Attack/Strength/Defence/Hitpoints 40, five trout",
+                "labelled combat-only area fixture: Attack/Strength/Defence/Hitpoints 43, combat at least 49, five trout; default danger policy",
             );
         }
         if self.quest.key == "squire" {
@@ -934,8 +943,8 @@ fn batch2_product(quest: Quest, extra: &[&str]) -> Sample {
         dialogue: vec![],
         chat: vec![],
         combat_level: 49,
-        combat_stats: [40; 4],
-        hitpoints: 40,
+        combat_stats: [43; 4],
+        hitpoints: 43,
         in_combat: false,
         local_index: Some(1),
         nearby_npcs: vec![],
@@ -1000,8 +1009,8 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
         dialogue: vec![],
         chat: vec![],
         combat_level: 49,
-        combat_stats: [40; 4],
-        hitpoints: 40,
+        combat_stats: [43; 4],
+        hitpoints: 43,
         in_combat: false,
         local_index: Some(1),
         nearby_npcs: vec![],
