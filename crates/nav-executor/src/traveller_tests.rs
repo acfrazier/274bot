@@ -1086,7 +1086,11 @@ fn revision_377_bounds_folded_walk_hops_without_changing_legacy_targets() {
         z: 3200,
         level: 0,
     };
-    for revision in [ClientRevision::R274, ClientRevision::R289, ClientRevision::R377] {
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
         let mut c = scene_client();
         let snap = snap_at(&mut c, 0, 0);
         let mut rec = FollowRec {
