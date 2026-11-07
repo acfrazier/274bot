@@ -303,7 +303,7 @@ impl Script for FightScript {
                     (
                         Arc::new(request),
                         Arc::clone(&self.tables),
-                        tick.cx
+                        tick
                             .pvp_globals
                             .unwrap_or_else(script::native::PvpGlobals::fail_closed),
                     ),
