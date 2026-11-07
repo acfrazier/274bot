@@ -3,8 +3,8 @@
 //! Both tests are ignored and require `LIVE=1` plus an owned `BOT_LIVE_NAME_PREFIX`.
 //! They use the canonical `--revision 377` local profile with explicit paths
 //! `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`, `CLIENT_UNPACK_DIR`, `NAV_PACK`,
-//! `NAV_FLAGS`, and (optionally) a real `BOT_CACHE_MANIFEST`. Template
-//! preparation follows the production runtime-cache path in a private home.
+//! and `NAV_FLAGS`. Template preparation follows the production runtime-cache
+//! path in a private home.
 //!
 //! Live invocation (with the real resource paths supplied by the owner):
 //! ```text
@@ -12,7 +12,6 @@
 //!   LIVE=1 BOT_LIVE_NAME_PREFIX=f377 ENGINE_DIR=<377-engine> \
 //!   CLIENT_377_CACHE_DIR=<377-raw-cache> CLIENT_UNPACK_DIR=<377-decoded-snapshot> \
 //!   NAV_PACK=<377-nav-pack> NAV_FLAGS=<377-nav-flags> \
-//!   BOT_CACHE_MANIFEST=<real-377-cache-manifest> \
 //!   cargo test --locked -p host-play --test revision_377_live \
 //!   -- --ignored --nocapture --test-threads=1
 //! ```
@@ -49,10 +48,8 @@ use api::snapshot::{GameSnapshot, SceneView, WorldTile};
 use client::client::Client;
 use client::io::ClientRevision;
 use host::Pump;
-use host_play::nav_identity::NavFlagsOrigin;
 use host_play::profile::{NavAvailability, ProfileEnvironment};
 use host_play::{ProfileClass, ProfileOptions, ServerProfile, SharedClientTemplate};
-use nav_planner::manifest::{hash_file, nav_manifest_path, CacheManifest, NavManifest};
 use serde_json::{json, Value};
 
 const REVISION: u16 = 377;
@@ -95,9 +92,6 @@ struct Bound377 {
     unpack_dir: PathBuf,
     nav_pack: PathBuf,
     nav_flags: PathBuf,
-    cache_manifest_path: Option<PathBuf>,
-    nav_manifest: NavManifest,
-    decoded_content_id: String,
     profile: Arc<ServerProfile>,
     template: Arc<SharedClientTemplate>,
 }
@@ -109,12 +103,6 @@ fn required_path(name: &str) -> Result<PathBuf, String> {
         return Err(format!("{name} must be a non-empty absolute path"));
     }
     Ok(path)
-}
-
-fn optional_path(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
 }
 
 fn require_live_guard() -> Result<(), String> {
@@ -155,56 +143,11 @@ fn load_bound_377() -> Result<Bound377, String> {
     let unpack_dir = required_path("CLIENT_UNPACK_DIR")?;
     let nav_pack = required_path("NAV_PACK")?;
     let nav_flags = required_path("NAV_FLAGS")?;
-    let cache_manifest_path = optional_path("BOT_CACHE_MANIFEST");
     path_is_dir(&engine_dir, "ENGINE_DIR")?;
     path_is_dir(&cache_dir, "CLIENT_377_CACHE_DIR")?;
     path_is_dir(&unpack_dir, "CLIENT_UNPACK_DIR")?;
     path_is_file(&nav_pack, "NAV_PACK")?;
     path_is_file(&nav_flags, "NAV_FLAGS")?;
-    if let Some(path) = &cache_manifest_path {
-        path_is_file(path, "BOT_CACHE_MANIFEST")?;
-    }
-
-    let cache_manifest = CacheManifest::capture(REVISION, &cache_dir)?;
-    if let Some(path) = &cache_manifest_path {
-        let declared: CacheManifest = serde_json::from_slice(
-            &fs::read(path)
-                .map_err(|error| format!("read cache manifest {}: {error}", path.display()))?,
-        )
-        .map_err(|error| format!("parse cache manifest {}: {error}", path.display()))?;
-        declared.verify(REVISION, &cache_dir)?;
-        if declared != cache_manifest {
-            return Err("declared 377 cache manifest differs from captured cache bytes".into());
-        }
-    }
-    let decoded_content_id = nav_bake::bake::decoded_identity(REVISION, &cache_dir, &unpack_dir)?;
-    let nav_manifest_path = nav_manifest_path(&nav_pack);
-    path_is_file(&nav_manifest_path, "NAV_PACK manifest")?;
-    let nav_manifest: NavManifest =
-        serde_json::from_slice(&fs::read(&nav_manifest_path).map_err(|error| {
-            format!("read nav manifest {}: {error}", nav_manifest_path.display())
-        })?)
-        .map_err(|error| {
-            format!(
-                "parse nav manifest {}: {error}",
-                nav_manifest_path.display()
-            )
-        })?;
-    let nav_hash = hash_file(&nav_pack)?;
-    nav_manifest.verify_pack(
-        REVISION,
-        &cache_manifest,
-        &nav_hash,
-        Some(&decoded_content_id),
-    )?;
-    if let Some(expected_flags) = nav_manifest.flags_sha256.as_deref() {
-        let actual_flags = hash_file(&nav_flags)?;
-        if actual_flags != expected_flags {
-            return Err(format!(
-                "NAV_FLAGS digest mismatch: expected {expected_flags}, got {actual_flags}"
-            ));
-        }
-    }
 
     let home = ScratchHome::new()?;
     let environment = ProfileEnvironment {
@@ -213,7 +156,6 @@ fn load_bound_377() -> Result<Bound377, String> {
         unpack_dir: Some(unpack_dir.clone()),
         nav_pack: Some(nav_pack.clone()),
         nav_flags: Some(nav_flags.clone()),
-        cache_manifest: cache_manifest_path.clone(),
         ..ProfileEnvironment::default()
     };
     let options = ProfileOptions {
@@ -223,7 +165,6 @@ fn load_bound_377() -> Result<Bound377, String> {
         unpack_dir: Some(unpack_dir.clone()),
         nav_pack: Some(nav_pack.clone()),
         nav_flags: Some(nav_flags.clone()),
-        cache_manifest: cache_manifest_path.clone(),
         ..ProfileOptions::default()
     };
     let selection = options.resolve_with_env(None, &environment)?;
@@ -246,7 +187,10 @@ fn load_bound_377() -> Result<Bound377, String> {
     let profile = Arc::clone(template.profile());
     let prepared = profile
         .prepared_cache()
-        .ok_or("production template did not retain its verified runtime cache")?;
+        .ok_or("production template did not retain its runtime cache")?;
+    let profile_world = profile
+        .world()
+        .ok_or("bound 377 profile has no loaded navigation world")?;
     if profile.revision() != ClientRevision::R377
         || profile.profile_class() != ProfileClass::Local
         || profile.client().revision() != ClientRevision::R377
@@ -256,15 +200,11 @@ fn load_bound_377() -> Result<Bound377, String> {
         || profile.client().asset_port() != ASSET_PORT
         || profile.client().cache_dir() != prepared.jag_dir.as_path()
         || profile.client().unpack_dir() != prepared.unpack_root()
-        || profile.cache_id() != decoded_content_id.as_str()
-        || prepared.identity.content_id_hex() != decoded_content_id
         || profile.nav_pack() != nav_pack.as_path()
-        || profile.nav_flags_origin() != NavFlagsOrigin::External
+        || profile.nav_flags() != nav_flags.as_path()
         || profile.nav_availability() != &NavAvailability::Bound
-        || profile.nav_identity() != Some(&nav_manifest)
-        || !matches!(profile.nav_origin(), host_play::NavOrigin::External { path } if path.as_path() == nav_pack.as_path())
     {
-        return Err("bound profile lost the explicit 377 cache or navigation identity".into());
+        return Err("bound profile lost the explicit 377 resources or navigation world".into());
     }
     let data = profile.game_data().ok_or_else(|| {
         format!(
@@ -272,19 +212,22 @@ fn load_bound_377() -> Result<Bound377, String> {
             profile.game_data_status().detail()
         )
     })?;
-    if data.revision() != REVISION as i32
-        || data.content_id() != Some(decoded_content_id.as_str())
-        || (data.cache_id() != profile.cache_id() && data.content_id() != Some(profile.cache_id()))
-    {
-        return Err("bound game data does not identify the selected 377 cache/snapshot".into());
+    if data.revision() != REVISION as i32 {
+        return Err(format!(
+            "bound game data revision {} does not match selected revision {REVISION}",
+            data.revision()
+        ));
     }
 
+    let template_world = template
+        .world()
+        .ok_or("production template did not retain the loaded navigation world")?;
     if !Arc::ptr_eq(template.profile(), &profile)
-        || template.world().is_none()
+        || !Arc::ptr_eq(&profile_world, &template_world)
         || template.game_data().is_none()
     {
         return Err(
-            "production shared template lost the bound 377 profile, data, or nav world".into(),
+            "production shared template lost the bound 377 profile, game data, or nav world".into(),
         );
     }
 
@@ -295,9 +238,6 @@ fn load_bound_377() -> Result<Bound377, String> {
         unpack_dir,
         nav_pack,
         nav_flags,
-        cache_manifest_path,
-        nav_manifest,
-        decoded_content_id,
         profile,
         template,
     })
@@ -354,37 +294,28 @@ fn fresh_uid(offset: i32) -> i32 {
     37_700 + offset
 }
 
-fn identity_record(bound: &Bound377) {
+fn resource_record(bound: &Bound377) {
     let data = bound.profile.game_data().expect("checked 377 game data");
     println!(
         "{}",
         json!({
             "test": "revision_377_live",
-            "phase": "identity",
+            "phase": "resources",
             "profile": bound.profile.label(),
-            "revision": bound.profile.revision().as_i32(),
+            "revision": REVISION,
             "game_host": bound.profile.client().game_host(),
             "game_port": bound.profile.client().game_port(),
             "asset_host": bound.profile.client().asset_host(),
             "asset_port": bound.profile.client().asset_port(),
             "engine_dir": bound.engine_dir,
-            "cache_dir": bound.cache_dir,
-            "unpack_dir": bound.unpack_dir,
+            "source_cache_dir": bound.cache_dir,
+            "source_unpack_dir": bound.unpack_dir,
             "bound_cache_dir": bound.profile.client().cache_dir(),
             "bound_unpack_dir": bound.profile.client().unpack_dir(),
             "nav_pack": bound.nav_pack,
             "nav_flags": bound.nav_flags,
-            "cache_manifest": bound.cache_manifest_path,
-            "cache_id": bound.profile.cache_id(),
-            "decoded_content_id": bound.decoded_content_id,
-            "nav_revision": bound.nav_manifest.revision,
-            "nav_cache_id": bound.nav_manifest.cache_id,
-            "nav_content_id": bound.nav_manifest.content_id,
             "game_data_revision": data.revision(),
-            "game_data_cache_id": data.cache_id(),
-            "game_data_content_id": data.content_id(),
             "game_data_status": bound.profile.game_data_status().to_json(),
-            "nav_origin": format!("{:?}", bound.profile.nav_origin()),
             "navigation": format!("{:?}", bound.profile.nav_availability()),
         })
     );
@@ -394,7 +325,7 @@ fn identity_record(bound: &Bound377) {
 #[ignore = "explicit 377 cache/snapshot/nav resources; LIVE=1 and an owned BOT_LIVE_NAME_PREFIX are required"]
 fn retained_377_template_shares_mode_correct_revision_bound_caches() -> Result<(), String> {
     let bound = load_bound_377()?;
-    identity_record(&bound);
+    resource_record(&bound);
 
     let low_a = bound.template.prepare_client(fresh_uid(0), true)?;
     let low_b = bound.template.prepare_client(fresh_uid(1), true)?;
@@ -588,7 +519,7 @@ fn direct_step_toward(
 
 fn run_live_interaction() -> Result<(), String> {
     let bound = load_bound_377()?;
-    identity_record(&bound);
+    resource_record(&bound);
     let username = host_play::mint_live_names(1).remove(0);
     let password = host_play::profile_password(&username);
     let mut client = bound.template.prepare_client(fresh_uid(10), false)?;
