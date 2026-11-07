@@ -11,11 +11,30 @@
 //! shared navigation state is a conscious one.
 
 use crate::world::NavWorld;
+use std::path::Path;
 
 /// Measured decoded world on the candidate pack (91,188,966 B, exactly the
 /// diagnostic's PreparingNavigation retention), plus 8 bytes and rounded up
 /// to the 8-byte alignment: 91,188,976 B.
 const PROFILE_BOUND_SHARED_NAV_STATE_LIMIT: usize = 91_188_976;
+
+/// Retained bytes of one decoded nav world: the process-shared state that a
+/// bound profile owns once and every bot lease borrows. The `pack` is a
+/// revision's staged `274bot.navpack`; R274, R289 and the PR #6 R377 pack use
+/// the same decoder and this same helper.
+fn profile_bound_nav_state_bytes(pack: &Path) -> usize {
+    let mut world = None;
+    let measured = allocation_counter::measure(|| {
+        world = Some(NavWorld::load_pack(pack).unwrap_or_else(|error| {
+            panic!(
+                "could not load selected nav pack at {}: {error}",
+                pack.display()
+            )
+        }));
+    });
+    assert!(world.take().is_some(), "the decoded world stays alive");
+    usize::try_from(measured.bytes_current).expect("the retained world's byte count is nonnegative")
+}
 
 #[test]
 fn real_289_profile_bound_nav_state_stays_inside_its_total_tripwire() {
@@ -27,20 +46,7 @@ fn real_289_profile_bound_nav_state_stays_inside_its_total_tripwire() {
         );
         return;
     }
-    let mut world = None;
-    let measured = allocation_counter::measure(|| {
-        world = Some(
-            NavWorld::load_pack(&path).unwrap_or_else(|error| {
-                panic!(
-                    "could not load selected nav pack at {}: {error}",
-                    path.display()
-                )
-            }),
-        );
-    });
-    assert!(world.take().is_some(), "the decoded world stays alive");
-    let bytes = usize::try_from(measured.bytes_current)
-        .expect("the retained world's byte count is nonnegative");
+    let bytes = profile_bound_nav_state_bytes(&path);
     eprintln!(
         "profile-bound shared navigation state holds {bytes} bytes \
          (limit {PROFILE_BOUND_SHARED_NAV_STATE_LIMIT})"
