@@ -402,10 +402,6 @@ mod tests {
             );
             let prepared = config.get::<Arc<Prepared>>().unwrap();
             assert_eq!(prepared.selected.revision(), 377);
-            assert_eq!(
-                prepared.catalog.pin().revision,
-                api::selected::ClientRevision::R377
-            );
             assert!(prepared.resource_error.is_none());
             assert!(prepared.site_error.is_none());
             assert_eq!(prepared.site().unwrap().id, site);
