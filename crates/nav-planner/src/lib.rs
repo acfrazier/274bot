@@ -44,3 +44,7 @@ pub fn debug_enabled() -> bool {
 #[cfg(test)]
 #[path = "lib_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "world_memory_tests.rs"]
+mod world_memory_tests;
