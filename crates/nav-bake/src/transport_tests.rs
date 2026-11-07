@@ -10841,14 +10841,20 @@ switch_coord (loc_coord) {
         },
     ]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
-    let derive = |revision| {
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, revision).0
+    let derive = |revision: Option<api::selected::ClientRevision>| {
+        let data = revision.map(|revision| {
+            api::game_data::for_revision(revision).expect("selected revision game data")
+        });
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data.as_deref()).0
     };
     let baseline = derive(None);
-    for revision in [Some(274), Some(289)] {
+    for revision in [
+        Some(api::selected::ClientRevision::R274),
+        Some(api::selected::ClientRevision::R289),
+    ] {
         assert_eq!(derive(revision).edges, baseline.edges);
     }
-    let graph = derive(Some(377));
+    let graph = derive(Some(api::selected::ClientRevision::R377));
     let down = graph
         .edges
         .iter()
@@ -10913,8 +10919,10 @@ switch_coord (loc_coord) {
             ..Default::default()
         }]);
         let collision = bake_collision(&fx, &defs, &HashSet::new());
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+            .expect("R377 game data");
         let graph =
-            derive_transports_with_audit(fx.path(), &defs, &collision, None, None, Some(377)).0;
+            derive_transports_with_audit(fx.path(), &defs, &collision, None, None, Some(&data)).0;
         assert!(
             graph.edges.iter().all(|edge| edge.loc_id != 1723),
             "unsupported stair body must not gain an unconditional edge: {body}"
@@ -10963,18 +10971,24 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
         },
     ]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
-    let derive = |revision| {
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, revision).0
+    let derive = |revision: Option<api::selected::ClientRevision>| {
+        let data = revision.map(|revision| {
+            api::game_data::for_revision(revision).expect("selected revision game data")
+        });
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data.as_deref()).0
     };
     let baseline = derive(None);
-    for revision in [Some(274), Some(289)] {
+    for revision in [
+        Some(api::selected::ClientRevision::R274),
+        Some(api::selected::ClientRevision::R289),
+    ] {
         assert_eq!(
             derive(revision).edges,
             baseline.edges,
             "legacy extraction stays unchanged"
         );
     }
-    let graph = derive(Some(377));
+    let graph = derive(Some(api::selected::ClientRevision::R377));
     let closed = graph
         .edges
         .iter()
@@ -11047,7 +11061,7 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
     ] {
         fx.write("scripts/general_use/scripts/manholes.rs2", &mutation);
         assert!(
-            !derive(Some(377))
+            !derive(Some(api::selected::ClientRevision::R377))
                 .edges
                 .iter()
                 .any(|edge| edge.loc_id == 881),
@@ -11062,7 +11076,7 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
         ),
     );
     assert!(
-        !derive(Some(377))
+        !derive(Some(api::selected::ClientRevision::R377))
             .edges
             .iter()
             .any(|edge| matches!(edge.loc_id, 881 | 882)),
