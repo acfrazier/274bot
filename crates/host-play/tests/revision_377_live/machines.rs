@@ -300,7 +300,13 @@ impl Script for FightScript {
         let result = (|| -> Result<(), script::native::ActionError> {
             if let Some(request) = self.request.take() {
                 self.fight = Some(tick.actions.begin::<Combat>(
-                    (Arc::new(request), Arc::clone(&self.tables)),
+                    (
+                        Arc::new(request),
+                        Arc::clone(&self.tables),
+                        tick.cx
+                            .pvp_globals
+                            .unwrap_or_else(script::native::PvpGlobals::fail_closed),
+                    ),
                     &mut tick.cx,
                 )?);
             }
@@ -358,8 +364,10 @@ impl Script for SurvivalScript {
                     required_after: tick.cx.evidence(),
                     evidence: None,
                     cross: Box::default(),
+                    avoid: Box::default(),
                     protect: false,
                     food_guard: true,
+                    cure_guard: false,
                     allow: script::native::WalkAllow {
                         prayer: false,
                         food: true,
@@ -595,7 +603,7 @@ fn run(case: Case) -> Result<(), String> {
     #[cfg(feature = "js")]
     script_js::install_cards().map_err(|error| error.to_string())?;
     let bound = load_bound_377()?;
-    identity_record(&bound);
+    resource_record(&bound);
     let data = bound
         .profile
         .game_data()
@@ -615,10 +623,14 @@ fn run(case: Case) -> Result<(), String> {
             not_targeting_others: true,
         },
         melee_mode: Some(MeleeMode::Accurate),
-        kit: Some(Arc::new(CompiledKit {
-            worn: Arc::from([(3, facts.weapon)]),
-            carry: Arc::from([]),
-        })),
+        kits: script::combat::StyleKits {
+            melee: Some(Arc::new(CompiledKit {
+                worn: Arc::from([(3, facts.weapon)]),
+                carry: Arc::from([]),
+                special: None,
+            })),
+            ..Default::default()
+        },
         budget_ticks: 200,
         allow: Allowances {
             prayer: false,
@@ -1056,6 +1068,12 @@ fn cow_witness_requires_kill_swing_xp_and_native_loot() {
         flick_resets: 0,
         flick_misses: 0,
         flick_fallback: false,
+        pvp_blocked: 0,
+        pvp_source: None,
+        kill_line_seen: false,
+        switches: 0,
+        switch_failed: 0,
+        active_style: script::combat::Style::Melee,
     };
     let mut outcome = Outcome {
         combat: Some(report),
