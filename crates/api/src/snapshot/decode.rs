@@ -2394,4 +2394,99 @@ mod tests {
             "the clear path bumps no gen — a gated copy would stick true"
         );
     }
+    const VIEW_RESOLUTION_ITERATIONS: usize = 128;
+
+    fn snapshot_view_resolution_allocations(revision: ClientRevision) -> [usize; 4] {
+        use client::config::{LocType, NpcType};
+
+        let mut cache = Cache::default();
+        let mut loc = LocType::default();
+        loc.name = "loc name with a heap-backed payload".to_owned();
+        loc.desc = "location description with a heap-backed payload".to_owned();
+        loc.op = vec![
+            Some("Open the location".to_owned()),
+            Some("Search the location".to_owned()),
+        ];
+        cache.locs.push(loc);
+
+        let mut npc_type = NpcType::default();
+        npc_type.name = "npc name with a heap-backed payload".to_owned();
+        npc_type.op = vec![
+            Some("Talk to the npc".to_owned()),
+            Some("Attack the npc".to_owned()),
+        ];
+        cache.npcs.push(npc_type);
+
+        let client = Client::from_shared_with_revision(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                members: true,
+                lowmem: true,
+            },
+            Arc::new(cache),
+            Arc::new(vec![]),
+            Vec::new(),
+            revision,
+        );
+        let mut npc = client::client::ClientNpc::default();
+        npc.r#type = Some(0);
+        npc.entity.chat_message = Some("npc overhead text with heap-backed storage".to_owned());
+
+        let resolve_loc = || {
+            std::hint::black_box(loc_view(
+                (1 << 14) | 9,
+                (2 << 6) | 10,
+                LocLayer::Wall,
+                (3_200, 3_400),
+                1,
+                12,
+                18,
+                Some((3_210, 3_405)),
+                &client.cache,
+            ));
+        };
+        let resolve_npc = || {
+            std::hint::black_box(NpcView::from_slot(
+                17,
+                &npc,
+                (3_200, 3_400),
+                1,
+                6,
+                100,
+                &client.cache,
+            ));
+        };
+
+        for _ in 0..2 {
+            resolve_loc();
+            resolve_npc();
+        }
+
+        let loc = allocation_counter::measure(|| {
+            for _ in 0..VIEW_RESOLUTION_ITERATIONS {
+                resolve_loc();
+            }
+        });
+        let npc = allocation_counter::measure(|| {
+            for _ in 0..VIEW_RESOLUTION_ITERATIONS {
+                resolve_npc();
+            }
+        });
+        [
+            loc.count_total as usize,
+            loc.bytes_total as usize,
+            npc.count_total as usize,
+            npc.bytes_total as usize,
+        ]
+    }
+
+    #[test]
+    fn loc_and_npc_view_resolution_allocation_gate_for_each_revision() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let allocations = snapshot_view_resolution_allocations(revision);
+            eprintln!("snapshot view allocations {revision:?}: {allocations:?}");
+        }
+    }
 }
