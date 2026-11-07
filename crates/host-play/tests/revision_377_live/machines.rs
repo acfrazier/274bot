@@ -299,16 +299,17 @@ impl Script for FightScript {
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         let result = (|| -> Result<(), script::native::ActionError> {
             if let Some(request) = self.request.take() {
-                self.fight = Some(tick.actions.begin::<Combat>(
-                    (
-                        Arc::new(request),
-                        Arc::clone(&self.tables),
-                        tick
-                            .pvp_globals
-                            .unwrap_or_else(script::native::PvpGlobals::fail_closed),
-                    ),
-                    &mut tick.cx,
-                )?);
+                self.fight = Some(
+                    tick.actions.begin::<Combat>(
+                        (
+                            Arc::new(request),
+                            Arc::clone(&self.tables),
+                            tick.pvp_globals
+                                .unwrap_or_else(script::native::PvpGlobals::fail_closed),
+                        ),
+                        &mut tick.cx,
+                    )?,
+                );
             }
             if let Some(handle) = &self.fight {
                 if let Poll::Ready(report) = tick.actions.poll(handle, &mut tick.cx) {
