@@ -213,7 +213,7 @@ fn input_take_obj_requests_bound_collected_v8_heap_growth() {
 import { Input } from '../../input/Input.js';
 export default class T extends LoopingBot {
     loop() {
-        const count = globalThis.__request_count ?? 1;
+        const count = globalThis.__request_count;
         const kept = globalThis.__kept = [];
         for (let index = 0; index < count; index++) {
             if (!Input.takeObj(2737, 3440, 1053, 1)) {
@@ -231,26 +231,15 @@ export default class T extends LoopingBot {
     let mut snap = base_snapshot();
     snap.ground = &ground;
     iso.post_snapshot(script_js::wire::encode_snapshot(&snap));
-    iso.on_game_tick(1);
-    assert_eq!(iso.probe("__probe").unwrap(), serde_json::json!(1));
-    assert_eq!(iso.drain_interacts().len(), 1, "warm Input.takeObj request");
-    assert_eq!(
-        iso.probe("(() => { globalThis.__kept = null; globalThis.__request_count = 0; return true; })()")
-            .unwrap(),
-        serde_json::json!(true)
-    );
-    let baseline = iso
-        .collected_heap_bytes_for_test()
-        .expect("collect the warm isolate heap");
-
     assert_eq!(
         iso.probe(&format!("globalThis.__request_count = {REQUESTS}"))
             .unwrap(),
         serde_json::json!(REQUESTS)
     );
-    snap.tick = 2;
-    iso.post_snapshot(script_js::wire::encode_snapshot(&snap));
-    iso.on_game_tick(2);
+    let baseline = iso
+        .collected_heap_bytes_for_test()
+        .expect("collect the isolate heap before materializing requests");
+    iso.on_game_tick(1);
     assert_eq!(
         iso.probe("__probe").unwrap(),
         serde_json::json!(REQUESTS),
