@@ -1,6 +1,7 @@
 //! 377-only vertical aliases and direct absolute climbs. Legacy extraction is
 //! unchanged; this producer runs only for the explicitly selected revision.
 use super::*;
+use std::collections::hash_map::Entry;
 
 pub(in crate::transport) fn supplemental_edges_377(
     content_root: &Path,
@@ -160,13 +161,15 @@ fn coordinate_stair_switch(body: &str) -> Option<(ScriptRule, i32)> {
             };
             let (level, x, z) = coord_literal(coord)?;
             let outcome = landing_expr(destination);
-            if !matches!(outcome, Outcome::Landing(_))
-                || rule
-                    .by_loc_coord
-                    .insert(pack_coord(level, x, z), outcome)
-                    .is_some()
-            {
+            if !matches!(outcome, Outcome::Landing(_)) {
                 return None;
+            }
+            match rule.by_loc_coord.entry(pack_coord(level, x, z)) {
+                Entry::Vacant(entry) => {
+                    entry.insert(outcome);
+                }
+                Entry::Occupied(entry) if entry.get() == &outcome => {}
+                Entry::Occupied(_) => return None,
             }
         }
     }
