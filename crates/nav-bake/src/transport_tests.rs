@@ -11061,7 +11061,7 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
     ] {
         fx.write("scripts/general_use/scripts/manholes.rs2", &mutation);
         assert!(
-            !derive(Some(api::selected::ClientRevision::R377))
+            !derive(Some(&data))
                 .edges
                 .iter()
                 .any(|edge| edge.loc_id == 881),
@@ -11076,7 +11076,7 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
         ),
     );
     assert!(
-        !derive(Some(api::selected::ClientRevision::R377))
+        !derive(Some(&data))
             .edges
             .iter()
             .any(|edge| matches!(edge.loc_id, 881 | 882)),
