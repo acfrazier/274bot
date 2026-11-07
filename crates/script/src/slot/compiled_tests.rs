@@ -7,6 +7,22 @@ fn selected() -> Arc<api::game_data::SelectedGameData> {
 }
 
 #[test]
+fn compiled_runs_select_each_supported_game_data_revision() {
+    use api::selected::ClientRevision;
+
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        let Some(selected) = api::game_data::test_data(revision) else {
+            return;
+        };
+        assert_eq!(compiled::selected_revision(&selected).unwrap(), revision);
+    }
+}
+
+#[test]
 fn work_scope_requires_the_bound_slot_lifetime() {
     let mut slot = SlotScript::new();
     assert_eq!(slot.work_scope(), None);
