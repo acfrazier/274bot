@@ -46,6 +46,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   inventory stock joins unique definitions in the selected content tree.
 - Trail extraction marks the constrained clue by alias and uses its joined
   local item ID. It does not require a fixed corpus ID.
+- Shared data publication retains the 0.2.9 source-join checks without
+  reintroducing frozen corpus counts, item IDs or prayer button ranges.
 
 - The API can select revision 377 data generated from local Fairy Ring
   engine, content and cache inputs. Gathering, quest and debug assets stay
