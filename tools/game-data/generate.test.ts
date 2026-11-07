@@ -2387,6 +2387,14 @@ assert.deepEqual(constrainedRows.map((row) => [row.alias, row.id, row.access]), 
 assert.equal(constrainedRows[0].role, 'clue');
 assert.equal(JSON.stringify(trailFacts).includes('"open"'), false);
 
+const repackedConstrainedId = 9001;
+const repackedTrailFacts = extractTrailFacts(trailFixture((files) => {
+    files['pack/obj.pack'] = files['pack/obj.pack'].replace('3554=trail_clue_hard_sextant028\n', `${repackedConstrainedId}=trail_clue_hard_sextant028\n`);
+}), trailFixtureItems.map((item: Parameters<typeof extractTrailFacts>[1][number]) =>
+    Object.assign({}, item, item.debugname === 'trail_clue_hard_sextant028' ? { id: repackedConstrainedId } : {})));
+assert.equal(trailRow(repackedTrailFacts, 'trail_clue_hard_sextant028').id, repackedConstrainedId);
+assert.equal(trailRow(repackedTrailFacts, 'trail_clue_hard_sextant028').access, 'constrained');
+
 // revision 377 derives the same membership but never inherits the 289 constrained-clue annotation
 const trailFacts377 = extractTrailFacts(trailFixture(), trailFixtureItems, 377);
 assert.equal(trailFacts377.rows.some((row) => 'access' in row), false);
@@ -2938,6 +2946,68 @@ assert.equal(family289Rows(baseline, 'fishing.freshfish.op1'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op3'), 1);
 assert.equal(baseline.payload.placements.length, 1);
 assert.equal(baseline.payload.methods.some((method) => method.id === hemensterCarpMethod), true, 'the anchored direct-yield extractor admits the selected quest handler');
+
+const woodcutScript = 'scripts/skill_woodcutting/scripts/woodcut.rs2';
+function structWoodcuttingFixture(mutate?: (rootDir: string) => void) {
+    return gatheringFixture((rootDir) => {
+        const script = path.join(rootDir, woodcutScript);
+        const before = fs.readFileSync(script, 'utf8');
+        const after = before.replaceAll('anim(oc_param($axe, woodcutting_anim), 0)', 'anim(struct_param(oc_param($axe, woodcutting_struct), skill_anim), 0)');
+        assert.notEqual(after, before, 'the selected woodcutting loop uses its tool animation');
+        fs.writeFileSync(script, after);
+        const structs: string[] = [];
+        for (const relative of listContentFiles(rootDir, 'scripts', '.obj')) {
+            const file = path.join(rootDir, relative);
+            const source = fs.readFileSync(file, 'utf8');
+            const changed = source.replace(/^param=woodcutting_anim,([^\r\n]+)$/gm, (_line, animation: string) => {
+                const alias = `fixture_${animation}`;
+                structs.push(`[${alias}]\nparam=skill_anim,${animation}\n`);
+                return `param=woodcutting_struct,${alias}`;
+            });
+            if (changed !== source) fs.writeFileSync(file, changed);
+        }
+        fs.writeFileSync(path.join(rootDir, 'scripts/skill_woodcutting/configs/fixture.struct'), structs.join('\n'));
+        mutate?.(rootDir);
+    });
+}
+assert.deepEqual(extractGatheringFamily(structWoodcuttingFixture(), 377).payload, baseline.payload,
+    '377 resolves each axe animation through its selected struct without changing the gathering facts');
+assert.throws(() => extractGatheringFamily(structWoodcuttingFixture()), /unrecognized loop/,
+    'historical revisions do not admit the 377 woodcutting shape');
+assert.throws(() => extractGatheringFamily(structWoodcuttingFixture((rootDir) => {
+    fs.rmSync(path.join(rootDir, 'scripts/skill_woodcutting/configs/fixture.struct'));
+}), 377), /expected one skill_anim parameter/,
+    '377 cannot substitute a legacy animation when the selected tool struct is missing');
+
+const mixedIron = extractGatheringFamily(structWoodcuttingFixture((rootDir) => {
+    replaceIn(rootDir, 'scripts/skill_mining/configs/rocks.loc',
+        'recol1d=6242\ncategory=mining_rock_fast\nparam=next_loc_stage_mining,rocks1',
+        'recol1d=6242\ncategory=mining_rock_normal\nparam=next_loc_stage_mining,rocks1');
+}), 377);
+const mixedIronMethods = mixedIron.payload.methods.filter((method) => method.resources.includes('iron'));
+assert.deepEqual(mixedIronMethods.map((method) => [method.id, method.tick_arm.delay_drop]).sort(),
+    [['mining.iron', true], ['mining.iron.get_ore_fast', false]]);
+assert.deepEqual(mixedIronMethods.flatMap((method) => targetsOf(method, 'resource').map((target) => target.id)).sort((a, b) => a - b),
+    targetsOf(baseline.payload.methods.find((method) => method.id === 'mining.iron')!, 'resource').map((target) => target.id).sort((a, b) => a - b),
+    'each incompatible 377 iron target stays available with exactly its own tick timing');
+
+function renameWaterfallSpot(rootDir: string) {
+    for (const relative of ['pack/loc.pack', 'scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2',
+        ...listContentFiles(rootDir, 'scripts', '.loc')]) {
+        const file = path.join(rootDir, relative);
+        const before = fs.readFileSync(file, 'utf8');
+        const after = before.replace(/\bloc_2027\b/g, 'fishing_spot_2027');
+        if (after !== before) fs.writeFileSync(file, after);
+    }
+}
+const namedWaterfall = extractGatheringFamily(structWoodcuttingFixture(renameWaterfallSpot), 377);
+for (const slot of [1, 2]) {
+    assert.deepEqual(namedWaterfall.payload.methods.find((method) => method.id === `fishing.fishing_spot_2027.op${slot}`)?.tick_arm,
+        baseline.payload.methods.find((method) => method.id === `fishing.loc_2027.op${slot}`)!.tick_arm,
+        '377 named waterfall entries retain source-checked timing and roll blocks');
+}
+assert.throws(() => extractGatheringFamily(gatheringFixture(renameWaterfallSpot)), /no reviewed fishing tick specification/,
+    'historical revisions do not admit the 377 fishing entry identity');
 const waterfallScript = 'scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2';
 for (const [from, to] of [
     ['p_oploc(2);\n        return;', 'p_oploc(2);'],
@@ -3236,6 +3306,21 @@ assert.deepEqual(gatherResources(synFacts([synOak]), synNames), [
 assert.deepEqual(gatherResources(synFacts([synJungle]), new Map()), [
     { skill: 'woodcutting', method: 'woodcutting.jungle', methods: ['woodcutting.jungle'], aliases: [], key: 'jungle', resources: ['jungle'], label: 'Jungle', level: 0, selectable: false, forbidden_states: [], gap: 'no-resource-target' },
 ], 'a refused method keeps its row with a humanized fallback label');
+const synIron = synMethod('mining.iron', 'mining', ['iron'], synKnownIds([{ item: 440, level: 15 }]), synKnownIds([]));
+const synIronWall = synMethod('mining.iron.method_2', 'mining', ['iron'], synKnownIds([{ item: 440, level: 35 }]), synKnownIds([]), { forbidden_states: ['monkey-form'] });
+assert.deepEqual(gatherResources(synFacts([synIron, synIronWall]), new Map([[440, 'Iron ore']])), [
+    {
+        skill: 'mining', method: 'mining.iron', methods: ['mining.iron', 'mining.iron.method_2'],
+        aliases: [], key: 'iron', resources: ['iron'], label: 'Iron ore', level: 15,
+        selectable: true, forbidden_states: ['monkey-form'], gap: null,
+    },
+], 'distinct source-proved methods share one resource option and retain both method IDs');
+assert.deepEqual(
+    gatherResources(synFacts([synIron, { ...synIronWall, tools: synUnknownGap('wall-tool') }]), new Map([[440, 'Iron ore']]))
+        .map((row) => [row.selectable, row.gap]),
+    [[false, 'wall-tool']],
+    'a grouped resource cannot hide a refused method',
+);
 const synFresh = synMethod('fishing.freshfish.op1', 'fishing', ['raw_trout', 'raw_salmon'], synKnownIds([{ item: 335, level: 20 }, { item: 331, level: 30 }]), synKnownIds([]));
 const synFreshAlias = synMethod('fishing.freshfish.op2', 'fishing', ['raw_salmon', 'raw_trout'], synKnownIds([{ item: 331, level: 30 }, { item: 335, level: 20 }]), synKnownIds([]));
 const freshGroups = gatherResources(synFacts([synFresh, synFreshAlias]), synNames);
@@ -3726,6 +3811,23 @@ if (process.env.GAME_DATA_377_CONTENT) {
     const selectedObjectModule: { default: { load(dir: string): void; configs: Parameters<typeof extractTrailFacts>[1] } } = await import(pathToFileURL(path.join(spec377.engine, 'src/cache/config/ObjType.ts')).href);
     selectedObjectModule.default.load(path.join(spec377.engine, 'data/pack'));
     const decoded377Items = selectedObjectModule.default.configs;
+    // The engine checkout is selected by GAME_DATA_377_ENGINE at runtime.
+    const selectedInventoryModule: {
+        default: {
+            load(dir: string): void;
+            getByName(name: string): { stockobj: Uint16Array | null; stockcount: Uint16Array | null; stockrate: Int32Array | null } | null;
+        };
+    } = await import(pathToFileURL(path.join(spec377.engine, 'src/cache/config/InvType.ts')).href);
+    selectedInventoryModule.default.load(path.join(spec377.engine, 'data/pack'));
+    for (const shop of payload.shops) {
+        const packed = selectedInventoryModule.default.getByName(shop.key);
+        assert.ok(packed?.stockobj && packed.stockcount && packed.stockrate, `${shop.key}: selected packed inventory is required`);
+        assert.deepEqual(
+            shop.stock.map((row: { id: number; qty: number; restock_ticks: number }) => [row.id, row.qty, row.restock_ticks]),
+            Array.from(packed.stockobj, (id, index) => [id, packed.stockcount![index], packed.stockrate![index]]),
+            `${shop.key}: source stock must match the selected server inventory`,
+        );
+    }
     assert.deepEqual(payload.trails, extractTrailFacts(spec377.content, decoded377Items, 377));
     const overriddenChallenge = 'trail_clue_medium_anagram003_challenge';
     assert.equal(payload.trails.challenge_answers.find((row: { alias: string }) => row.alias === overriddenChallenge)?.answer, '40', '377 answer follows the actual decoded parameter override, not the earlier raw 32');
