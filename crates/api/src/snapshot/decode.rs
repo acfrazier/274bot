@@ -2436,7 +2436,7 @@ mod tests {
 
         let resolve_loc = || {
             std::hint::black_box(loc_view(
-                (1 << 14) | 9,
+                9,
                 (2 << 6) | 10,
                 LocLayer::Wall,
                 (3_200, 3_400),
