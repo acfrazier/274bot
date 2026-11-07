@@ -718,8 +718,8 @@ mod tests {
     #[test]
     fn generic_value_rows_bound_collected_v8_heap_growth() {
         const ROWS: usize = 4_096;
-        // 917,408 B measured: 1.5x leaves 458,848 B of headroom and stays below the
-        // projected 3,603,312 B growth if rows regress to dictionary mode.
+        // 917,408 B measured: 1.5x leaves 458,848 B of headroom; the
+        // serde_v8 dictionary-mode variant measured 2,949,048 B.
         const MAX_HEAP_GROWTH: usize = 1_376_256;
         crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
