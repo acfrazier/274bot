@@ -1036,6 +1036,13 @@ target. `close_enough` defaults to 2. Legs with an exact planned
 `takeoff` settle at radius 0 on the planned landing; teleport hops accept
 radius 2 and glider landings radius 1 whatever the runner passes.
 
+- **377 bounded walk hops:** an endpoint shortcut must be within both 20
+  straight-line tiles and 20 remaining packed-route steps. Otherwise the
+  next target is at most 15 route steps ahead, still clipped to the loaded
+  scene. This avoids spending one finite hop budget on a long folded
+  local path around a nearby wall or fence. It does not extend the hop
+  timeout or change the 274/289 endpoint shortcut.
+
 - **Stalled walk recovery:** five distinct game ticks without tile progress
   or actor movement reissue the current aim, even if the map flag remains.
   A delayed action or queued modal can block successive accepted clicks;
