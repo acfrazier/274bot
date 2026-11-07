@@ -325,10 +325,7 @@ impl NativeMachine for Combat {
         if request.tactic != Tactic::Open || matches!(request.fallback, Fallback::FaceTank { .. }) {
             return Err(unavailable("tactic slice"));
         }
-        let expected_revision = match cx.revision() {
-            api::selected::ClientRevision::R274 => 274,
-            api::selected::ClientRevision::R289 => 289,
-        };
+        let expected_revision = cx.revision().as_i32();
         if tables.selected().revision() != expected_revision {
             return Err(unavailable("combat data revision"));
         }
