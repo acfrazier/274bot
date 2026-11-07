@@ -8,6 +8,57 @@ use api::selected::{ClientRevision, FactKey, Knowledge, RunKey, Truth};
 use api::snapshot::GameSnapshot;
 use std::sync::Arc;
 
+/// Exercise authored preferences through the dialogue machine and return its
+/// one-based answer without duplicating option-selection logic.
+fn answer_for(choices: &[&str], prefer: &[Arc<str>]) -> i32 {
+    use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
+    use super::families::tests::{seed_dialogue_combat, with_tick};
+    use crate::interact::InteractReq;
+    use crate::native::HostEffect;
+
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(vec![], 28);
+    seed_dialogue_combat(&mut snapshot, false);
+    snapshot.seed_chat_modal(
+        4882,
+        choices.iter().map(|text| (*text).to_string()).collect(),
+    );
+    snapshot.seed_chat_options(
+        choices
+            .iter()
+            .enumerate()
+            .map(|(index, text)| api::snapshot::ChatOptionView {
+                component_id: index as i32,
+                text: (*text).into(),
+            })
+            .collect(),
+        -1,
+    );
+    let mut ledger = None;
+    let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.actions
+            .begin::<Dialogue>(
+                DialogueArgs {
+                    target: DialogueTarget::Continuation,
+                    options: DialogueOptions {
+                        prefer: prefer.into(),
+                        ..Default::default()
+                    },
+                },
+                &mut tick.cx,
+            )
+            .unwrap()
+    });
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        let _ = tick.actions.poll(&handle, &mut tick.cx);
+    });
+    match &ledger.as_ref().unwrap().outbox.last().unwrap().effect {
+        HostEffect::Interaction(InteractReq::Answer { option }) => *option,
+        effect => panic!("the authored menu must emit an Answer, got {effect:?}"),
+    }
+}
+
 #[test]
 fn selected_377_journal_paths_compile_and_recover_source_states() {
     api::selected::FamilyPreparation::run(|worker| {
@@ -222,18 +273,10 @@ fn rune_377_lost_talisman_path_selects_dukes_quest_branch() {
             "Where can I find money?",
         ],
     ] {
-        let options: Vec<_> = choices
-            .iter()
-            .enumerate()
-            .map(|(index, text)| api::snapshot::ChatOptionView {
-                component_id: index as i32,
-                text: (*text).into(),
-            })
-            .collect();
-        let selected = super::super::families::dialogue::pick_preferred(&options, &prefer);
+        let option = answer_for(&choices, &prefer);
         assert_eq!(
-            selected.map(|index| options[index].text.as_str()),
-            Some("Have you any quests for me?"),
+            choices[option as usize - 1],
+            "Have you any quests for me?",
             "recover-duke must not fall back to the final money option"
         );
     }
@@ -258,14 +301,6 @@ fn sheep_377_path_targets_shearable_forms_and_prefers_freds_hand_in() {
     // fred_the_farmer.rs2:163-166 offers these exact choices once
     // %the_thing_sheared is 1.
     let menu = ["I'm back!", "Fred! Fred! I've seen The Thing!"];
-    let options: Vec<_> = menu
-        .iter()
-        .enumerate()
-        .map(|(index, text)| api::snapshot::ChatOptionView {
-            component_id: index as i32,
-            text: (*text).into(),
-        })
-        .collect();
     for (stage, step_id) in [
         ("sheep:1", "hand-held"),
         ("sheep:1", "hand-in"),
@@ -289,10 +324,10 @@ fn sheep_377_path_targets_shearable_forms_and_prefers_freds_hand_in() {
             .iter()
             .map(|text| Arc::from(text.as_str().unwrap()))
             .collect();
-        let selected = super::super::families::dialogue::pick_preferred(&options, &prefer);
+        let option = answer_for(&menu, &prefer);
         assert_eq!(
-            selected.map(|index| options[index].text.as_str()),
-            Some("I'm back!"),
+            menu[option as usize - 1],
+            "I'm back!",
             "{step_id} must choose Fred's wool hand-in branch"
         );
     }
@@ -350,16 +385,11 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
         ],
     ];
     for choices in menus {
-        let options: Vec<api::snapshot::ChatOptionView> = choices
-            .iter()
-            .enumerate()
-            .map(|(index, text)| api::snapshot::ChatOptionView {
-                component_id: index as i32 + 1,
-                text: (*text).into(),
-            })
-            .collect();
-        let selected = super::super::families::dialogue::pick_preferred(&options, &prefer);
-        assert_eq!(selected, Some(0), "{choices:?}");
+        // The emitted `Answer` option is 1-based; the quest branch is first in
+        // both menus, so the driver must answer option 1, never fall back to
+        // a later non-quest option.
+        let option = answer_for(choices, &prefer);
+        assert_eq!(option, 1, "{choices:?}");
     }
     assert_eq!(
         document["quest"]["acquire"]["acquire:burnt-meat"]
@@ -381,6 +411,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
+            None,
         )
         .unwrap_or_else(|error| panic!("377 Witch's Potion failed to compile: {error:?}"));
         let gobdip = bundled_path_for(ClientRevision::R377, "gobdip").unwrap();
@@ -390,6 +421,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
+            None,
         )
         .unwrap_or_else(|error| panic!("377 Goblin Diplomacy failed to compile: {error:?}"));
         let vampire = bundled_path_for(ClientRevision::R377, "vampire").unwrap();
@@ -399,6 +431,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
+            None,
         )
         .unwrap_or_else(|error| panic!("377 Vampire Slayer failed to compile: {error:?}"));
         let demon = bundled_path_for(ClientRevision::R377, "demon").unwrap();
@@ -408,6 +441,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
+            None,
         )
         .unwrap_or_else(|error| panic!("377 Demon Slayer failed to compile: {error:?}"));
         assert_eq!(
