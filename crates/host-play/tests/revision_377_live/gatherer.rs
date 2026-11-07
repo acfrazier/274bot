@@ -389,7 +389,7 @@ fn integer(status: &ScriptStatus, key: &str) -> i64 {
 
 fn run(case: Case) -> Result<(), String> {
     let bound = load_bound_377()?;
-    identity_record(&bound);
+    resource_record(&bound);
     let region = bound
         .profile
         .game_data()
