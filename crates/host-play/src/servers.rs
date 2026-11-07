@@ -153,6 +153,7 @@ impl Servers {
                 },
                 local(289, 289, 44594, 1080, "vault-289"),
                 local(274, 274, 43594, 80, "vault"),
+                local(377, 377, 43595, 81, "vault-377"),
             ],
         }
     }
@@ -378,7 +379,7 @@ impl Servers {
                     profile.vault
                 ));
             }
-            if !matches!(profile.revision, 274 | 289) || profile.worlds.is_empty() {
+            if !matches!(profile.revision, 274 | 289 | 377) || profile.worlds.is_empty() {
                 return Err(format!(
                     "profile {:?} has an invalid revision or empty roster",
                     profile.name

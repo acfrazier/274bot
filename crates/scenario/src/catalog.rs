@@ -33,6 +33,8 @@ impl Entry {
 const REGISTRY: &[Entry] = &[
     Entry::new("walk", scenarios::walk_scenario),
     Entry::new("render_smoke", scenarios::render_smoke_scenario),
+    Entry::new("client_377", scenarios::client_377_scenario),
+    Entry::new("cook_377", scenarios::cook_377::cook_377_scenario),
     Entry::new(
         "render_betty_views_betty_yaw0",
         render_betty_views::betty_yaw0_scenario,

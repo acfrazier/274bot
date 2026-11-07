@@ -1244,6 +1244,127 @@ fn a_persistent_foreign_main_modal_uses_the_existing_read_cap_without_clicks() {
 }
 
 #[test]
+fn completion_row_overtakes_377_journal_without_closing_the_scroll() {
+    use api::selected::{ClientRevision, SelectedPin};
+
+    static PIN_377: std::sync::LazyLock<Arc<SelectedPin>> = std::sync::LazyLock::new(|| {
+        api::game_data::for_revision(ClientRevision::R377)
+            .unwrap()
+            .selected_pin()
+            .unwrap()
+    });
+    static CHANGED_PIN: std::sync::LazyLock<SelectedPin> = std::sync::LazyLock::new(|| {
+        let mut pin = PIN_377.as_ref().clone();
+        pin.nav_sha256[0] ^= 1;
+        pin
+    });
+
+    for (revision, completed, changed_pin) in [
+        (ClientRevision::R289, true, false),
+        (ClientRevision::R377, false, false),
+        (ClientRevision::R377, true, true),
+        (ClientRevision::R377, true, false),
+    ] {
+        let (mut script, mut snapshot, component, name) = if revision == ClientRevision::R289 {
+            let (script, snapshot) = fixture(true);
+            (script, snapshot, 42, "Cook's Assistant")
+        } else {
+            let data = api::game_data::for_revision(revision).unwrap();
+            let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+            let document =
+                serde_json::from_slice(include_bytes!("../../paths/377/demon.json")).unwrap();
+            let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests)
+                .unwrap();
+            let script = Quester::new(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                path,
+                data,
+                quests,
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
+            );
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            (script, snapshot, 7334, "Demon Slayer")
+        };
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: name.into(),
+                component_id: component,
+                colour: 0xf8f800,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            if revision == ClientRevision::R377 {
+                tick.cx.pin = PIN_377.as_ref();
+            }
+            assert!(!script.read_stage(tick, false));
+        });
+        assert!(matches!(
+            ack(&mut ledger, 1),
+            HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+                if component_id == component
+        ));
+        assert!(script.journal.is_some());
+
+        // Delrith queues completion one tick after the last message closes.
+        // The selected green row and scroll can therefore overtake the click.
+        let root = 12140; // Observed 377 quest-completion scroll.
+        snapshot.seed_main_modal(root, vec![]);
+        snapshot.seed_quest_statuses(
+            vec![
+                QuestStatusView {
+                    name: name.into(),
+                    component_id: component,
+                    colour: if completed { 0x00f800 } else { 0xf8f800 },
+                },
+                QuestStatusView {
+                    name: "Another quest".into(),
+                    component_id: 9999,
+                    colour: 0x00f800,
+                },
+            ],
+            true,
+        );
+        let adopted = with_tick(&snapshot, &mut ledger, 2, |tick| {
+            if changed_pin {
+                tick.cx.pin = &CHANGED_PIN;
+            } else if revision == ClientRevision::R377 {
+                tick.cx.pin = PIN_377.as_ref();
+            }
+            script.read_stage(tick, false)
+        });
+        let terminal = revision == ClientRevision::R377 && completed && !changed_pin;
+        assert_eq!(adopted, terminal);
+        if terminal {
+            assert_eq!(script.progress().unwrap().complete, Truth::True);
+            assert_eq!(script.stage().unwrap().0.as_ref(), "demon:30");
+            assert!(!script.parked);
+            assert!(
+                script.last_journal().is_none(),
+                "no journal read was fabricated"
+            );
+        } else {
+            assert!(script.parked);
+            assert!(script.progress().is_none());
+        }
+        assert!(script.journal.is_none());
+        assert_eq!(snapshot.modals().main, root, "never close the scroll");
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        assert!(ledger
+            .as_mut()
+            .unwrap()
+            .quiet_read(std::time::Instant::now())
+            .is_none());
+    }
+}
+
+#[test]
 fn a_foreign_quest_journal_title_still_fails_instead_of_waiting() {
     let (mut script, mut snapshot) = fixture(true);
     snapshot.seed_main_modal(

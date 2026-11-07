@@ -690,6 +690,12 @@ its own `prefer`/`choose`/`line_rules`, never the default last option.
 `continue_only: true` omits `npc` and drains an already-open conversation
 without talking or walking, under the same adopted-page rule.
 
+On revision 377, a nameless placed NPC config can use its observed current
+form. Declared static operations must include Talk-to; the current snapshot
+must also expose Talk-to for that exact placed type before interaction.
+Null or non-talkable current forms cannot be opened. Compilation never
+replaces the configured type with a static leaf. Revision 274/289 is unchanged.
+
 `interact` and `use_on` share one dialogue policy. `"continue"` drives strict
 Continue-only continuation and refuses an unconfigured menu. The options-object
 form uses its authored answer rules and `strict` value. Both forms expect a page
@@ -788,6 +794,13 @@ Lost races never add a failed-key penalty. An unchanged row and pack at the
 bound can avoid that exact ID/tile/plane for ten ticks. The third true failure
 excludes the key for the run. Capacity and duplicate refusals remain typed.
 Exact-ground reach refusals never enter the legacy door fallback.
+
+`use_on.target.npc` accepts one symbolic config name or a nonempty array of
+fungible alternatives, for example `["sheepunsheered", "sheepunsheered3"]`.
+All names resolve in the selected revision. The same reachable-target chooser
+ranks every authored type together and keeps the placed NPC index on dispatch;
+a same-name NPC outside the selected types is not eligible. A string keeps
+its existing single-type behavior.
 
 `use_on` accepts `target: {"ground": "blackcog", "tile": [2613,9639,0],
 "source": "content provenance"}`. The optional tile selects an exact ground
@@ -1031,6 +1044,13 @@ authored with radius six cannot acquire a target nine tiles away. Ranged live
 qualification fixtures use a radius of eleven to cover their distant staging.
 
 ### Quester journal reads
+
+On 377, a same-pin green row for the active quest supersedes an in-flight
+stage journal transaction. The runner cancels the obsolete read, releases
+its quiet lease, and uses the existing terminal-colour resolver without
+closing the completion scroll or fabricating journal lines. Another quest's
+green row or a changed selected pin cannot authorize this handover. The
+274/289 reader path and foreign-root/title checks are unchanged.
 
 Native Quester dialogue completion requires its end gap of observed game ticks
 with chat closed (one by default, or the step's `gap_ticks`), rather than an

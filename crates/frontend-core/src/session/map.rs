@@ -129,6 +129,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     pub(crate) fn walk_risk_input(&self, name: Option<&str>) -> host_play::admission::RiskInput {
+        let world = self.nav_world();
         name.and_then(|name| {
             self.with_slot_snapshot(name, |snapshot| {
                 host_play::admission::capture(
@@ -136,6 +137,7 @@ impl<Io> OperatorSession<Io> {
                     self.map_members(),
                     Default::default(),
                     false,
+                    world.as_deref(),
                 )
             })
         })

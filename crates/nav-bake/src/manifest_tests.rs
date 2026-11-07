@@ -118,3 +118,23 @@ fn manifest_capture_failures_have_typed_causes() {
         }
     ));
 }
+
+#[test]
+fn revision_377_manifest_keeps_profile_and_content_binding() {
+    let cache = CacheManifest {
+        revision: 377,
+        archives: [("config".to_owned(), "cd".repeat(32))]
+            .into_iter()
+            .collect(),
+    };
+    let manifest = capture_nav_manifest(377, &cache, b"nav", None, None, None, None, 3, 2).unwrap();
+    manifest
+        .verify(377, &cache, b"nav", None, None, None, None, 3, 2)
+        .unwrap();
+    assert!(manifest
+        .verify(289, &cache, b"nav", None, None, None, None, 3, 2)
+        .is_err());
+    assert!(manifest
+        .verify(377, &cache, b"changed", None, None, None, None, 3, 2)
+        .is_err());
+}

@@ -1,6 +1,7 @@
 use super::*;
 
 const RAW_289: &[u8] = include_bytes!("../data/game-data/289.json");
+const RAW_377: &[u8] = include_bytes!("../data/game-data/377.json");
 
 #[test]
 fn generated_game_data_gzip_preserves_every_source_byte() {
@@ -11,6 +12,7 @@ fn generated_game_data_gzip_preserves_every_source_byte() {
             include_bytes!("../data/game-data/274.json").as_slice(),
         ),
         (289, REVISION_289, RAW_289),
+        (377, REVISION_377, RAW_377),
     ] {
         let mut decoded = Vec::new();
         GzDecoder::new(compressed)
@@ -37,6 +39,54 @@ fn selected_pin_is_shared_and_unbound_facts_fail_closed() {
         unbound.selected_pin(),
         Err(FactError::FamilyUnavailable(_))
     ));
+}
+
+#[test]
+fn revision_377_selects_and_pins_its_actual_core_asset() {
+    let data = for_revision(ClientRevision::R377).expect("selected 377 game data");
+    assert_eq!(data.revision(), 377);
+    assert!(Arc::ptr_eq(
+        &data,
+        &for_revision(ClientRevision::R377).expect("cached 377 game data")
+    ));
+
+    let pin = data.selected_pin().expect("377 pin");
+    let data_289 = for_revision(ClientRevision::R289).expect("selected 289 game data");
+    let pin_289 = data_289.selected_pin().expect("289 pin");
+    assert_eq!(pin.revision, ClientRevision::R377);
+    assert_eq!(pin.cache_id.as_ref(), data.cache_id());
+    assert_eq!(
+        pin.content_id.as_ref(),
+        data.content_id().expect("377 content identity")
+    );
+    assert_ne!(pin.cache_id, pin_289.cache_id);
+    assert_ne!(pin.content_id, pin_289.content_id);
+
+    let selected = for_profile(ClientRevision::R377, pin.cache_id.as_ref())
+        .expect("377 cache identity selects 377 data");
+    assert!(Arc::ptr_eq(&selected, &data));
+    assert!(for_profile(ClientRevision::R377, pin_289.cache_id.as_ref()).is_err());
+    assert!(matches!(
+        for_optional_profile(ClientRevision::R377, pin_289.cache_id.as_ref()),
+        Ok(None)
+    ));
+}
+
+#[test]
+fn revision_377_refuses_unproved_effects_and_duel_buttons() {
+    let data = for_revision(ClientRevision::R377).expect("selected 377 game data");
+    assert!(data.special_weapons().is_empty());
+    assert!(data.dialogue_ui().is_none());
+    let duel = data.duel_controls().expect("selected 377 duel identities");
+    for bit in [2, 3, 11] {
+        assert_eq!(duel.rule_button(bit), None, "unproved rule bit {bit}");
+    }
+    for bit in [0, 1, 4, 5, 6, 7, 8, 9, 10, 12, 13] {
+        assert!(
+            duel.rule_button(bit).is_some(),
+            "source-proven rule bit {bit}"
+        );
+    }
 }
 
 #[test]
@@ -102,6 +152,144 @@ fn streamed_pin_covers_trailing_whitespace_and_refuses_truncated_input() {
     let data = SelectedGameData::decode(changed.as_slice(), ClientRevision::R289).unwrap();
     assert_eq!(data.selected_pin(), Err(FactError::PinMismatch));
     assert!(SelectedGameData::decode(&RAW_289[..RAW_289.len() / 2], ClientRevision::R289).is_err());
+}
+
+fn offline_bake_fixture(
+    update: impl FnOnce(&mut serde_json::Value),
+) -> (Arc<SelectedGameData>, Vec<u8>, Vec<u8>) {
+    let mut core: serde_json::Value = serde_json::from_slice(RAW_289).unwrap();
+    let cache = core["provenance"]["cache_identity"]
+        .as_object_mut()
+        .unwrap();
+    cache.remove("nav_sha256");
+    cache.remove("flags_sha256");
+    update(&mut core);
+    let bytes = serde_json::to_vec(&core).unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_slice(MANIFEST).unwrap();
+    let row = manifest["revisions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["revision"] == 289)
+        .unwrap();
+    row["bytes"] = (bytes.len() as u64).into();
+    row["sha256"] = format!("{:x}", Sha256::digest(&bytes)).into();
+    row["engine_commit"] = core["provenance"]["engine_commit"].clone();
+    row["content_commit"] = core["provenance"]["content_commit"].clone();
+    row["cache_identity"] = core["provenance"]["cache_identity"].clone();
+    let data = SelectedGameData::decode(bytes.as_slice(), ClientRevision::R289).unwrap();
+    (data, bytes, serde_json::to_vec(&manifest).unwrap())
+}
+
+#[test]
+fn offline_quest_bake_verifies_real_family_before_nav_exists_without_a_runtime_pin() {
+    let (data, core, manifest) = offline_bake_fixture(|_| {});
+    assert!(matches!(
+        data.bind_pin(
+            core.len() as u64,
+            Sha256::digest(&core).into(),
+            &manifest,
+            ClientRevision::R289,
+        ),
+        Err(FactError::FamilyUnavailable(_))
+    ));
+    let (facts, identity) = crate::quest_facts::for_bake(&data, &manifest).unwrap();
+    assert!(facts.rows.iter().any(|row| row.id == "cook"));
+    assert_eq!(
+        identity.sha256,
+        <[u8; 32]>::from(Sha256::digest(include_bytes!(
+            "../data/game-data/289/quests.json"
+        )))
+    );
+    assert!(data.selected_pin().is_err());
+    assert!(data.quest_family_identity().is_none());
+    assert!(
+        data.try_quests().is_none(),
+        "offline decoding cannot prepare runtime facts"
+    );
+}
+
+#[test]
+fn offline_quest_bake_refuses_unverified_core_and_changed_manifest() {
+    let (data, mut core, manifest) = offline_bake_fixture(|_| {});
+    let unverified: SelectedGameData = serde_json::from_slice(&core).unwrap();
+    assert!(matches!(
+        crate::quest_facts::for_bake(&unverified, &manifest),
+        Err(FactError::FamilyUnavailable(_))
+    ));
+    core.push(b' ');
+    let changed = SelectedGameData::decode(core.as_slice(), ClientRevision::R289).unwrap();
+    assert!(matches!(
+        crate::quest_facts::for_bake(&changed, &manifest),
+        Err(FactError::PinMismatch)
+    ));
+    for field in ["bytes", "sha256", "engine_commit", "content_commit"] {
+        let mut changed: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        let row = &mut changed["revisions"][1];
+        row[field] = if field == "bytes" {
+            0.into()
+        } else {
+            "00".repeat(32).into()
+        };
+        assert!(
+            matches!(
+                crate::quest_facts::for_bake(&data, &serde_json::to_vec(&changed).unwrap()),
+                Err(FactError::PinMismatch)
+            ),
+            "{field}"
+        );
+    }
+    for field in ["cache_id", "content_id"] {
+        let mut changed: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        changed["revisions"][1]["cache_identity"][field] = "00".repeat(32).into();
+        assert!(
+            matches!(
+                crate::quest_facts::for_bake(&data, &serde_json::to_vec(&changed).unwrap()),
+                Err(FactError::PinMismatch)
+            ),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn offline_quest_bake_still_checks_family_descriptor_and_header_provenance() {
+    let (data, _, manifest) = offline_bake_fixture(|_| {});
+    for field in ["path", "bytes", "sha256", "schema"] {
+        let mut changed: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        changed["revisions"][1]["families"]["quests"][field] = match field {
+            "bytes" | "schema" => 0.into(),
+            _ => "changed".into(),
+        };
+        assert!(
+            crate::quest_facts::for_bake(&data, &serde_json::to_vec(&changed).unwrap()).is_err(),
+            "{field}"
+        );
+    }
+    for field in ["engine_commit", "content_commit", "cache_id", "content_id"] {
+        let (data, _, manifest) = offline_bake_fixture(|core| {
+            if matches!(field, "engine_commit" | "content_commit") {
+                core["provenance"][field] = "ab".repeat(20).into();
+            } else {
+                core["provenance"]["cache_identity"][field] = "ab".repeat(32).into();
+                if field == "content_id" {
+                    if let Some(starts) = core
+                        .get_mut("quest_starts")
+                        .filter(|value| value.is_object())
+                    {
+                        starts["content_id"] = "ab".repeat(32).into();
+                    }
+                }
+            }
+        });
+        assert!(
+            matches!(
+                crate::quest_facts::for_bake(&data, &manifest),
+                Err(FactError::PinMismatch)
+            ),
+            "{field}"
+        );
+    }
 }
 
 #[test]
@@ -822,6 +1010,70 @@ fn partial_quest_identity_row_decodes() {
     assert_eq!(facts.rows[0].requirements.qualification, "partial");
     assert!(!facts.rows[0].requirements.unknown_as_satisfied);
     assert!(facts.coverage.is_empty());
+}
+
+#[test]
+fn revision_377_quest_identity_accepts_named_unknown_sides_only() {
+    for &side in QUEST_IDENTITY_UNKNOWN_SIDES {
+        let mut wire: serde_json::Value =
+            serde_json::from_str(&minimal_json("")).expect("minimal selected data");
+        wire["revision"] = serde_json::json!(377);
+        wire["quest_identity"] = serde_json::json!({
+            "rows": [{
+                "id": "test",
+                "component": "test",
+                "display": "Test",
+                "varp": "test",
+                "varp_id": 1,
+                "complete": 1,
+                "quest_points": 1,
+                "unknown_sides": [side],
+                "requirements": {
+                    "qualification": "partial",
+                    "skills": [],
+                    "items": [],
+                    "empty_must_have": true,
+                    "unknown_as_satisfied": false
+                }
+            }],
+            "coverage": []
+        });
+        let bytes = serde_json::to_vec(&wire).expect("serialized test facts");
+        let data = SelectedGameData::decode(bytes.as_slice(), ClientRevision::R377)
+            .expect("the named unknown side is representable");
+        assert_eq!(
+            data.quest_identity().expect("quest facts").rows[0].unknown_sides,
+            vec![side.to_string()]
+        );
+    }
+
+    let mut wire: serde_json::Value =
+        serde_json::from_str(&minimal_json("")).expect("minimal selected data");
+    wire["revision"] = serde_json::json!(377);
+    wire["quest_identity"] = serde_json::json!({
+        "rows": [{
+            "id": "test",
+            "component": "test",
+            "display": "Test",
+            "varp": "test",
+            "varp_id": 1,
+            "complete": 1,
+            "quest_points": 1,
+            "unknown_sides": ["future_side"],
+            "requirements": {
+                "qualification": "partial",
+                "skills": [],
+                "items": [],
+                "empty_must_have": true,
+                "unknown_as_satisfied": false
+            }
+        }],
+        "coverage": []
+    });
+    let bytes = serde_json::to_vec(&wire).expect("serialized test facts");
+    let error = SelectedGameData::decode(bytes.as_slice(), ClientRevision::R377)
+        .expect_err("unknown vocabulary values are refused");
+    assert!(error.contains("unsupported unknown_sides"), "{error}");
 }
 
 #[test]

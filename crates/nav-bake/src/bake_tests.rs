@@ -24,6 +24,10 @@ fn the_289_config_jag_is_inside_the_cache_and_274_beside_it() {
         config_jag_for(274, Path::new("/274/engine/data/pack/client")).unwrap(),
         PathBuf::from("/274/engine/data/pack/config")
     );
+    assert_eq!(
+        config_jag_for(377, Path::new("/377/cache")).unwrap(),
+        PathBuf::from("/377/cache/config")
+    );
 }
 
 #[test]
@@ -190,6 +194,7 @@ fn a_missing_door_config_fails_the_bake() {
         doors_dir: &doors,
         gates: &gates,
         config_jag: &config_jag,
+        server_loc_dat_377: None,
         cache: None,
         require_all_door_configs: true,
         input_fingerprints: None,
@@ -226,6 +231,7 @@ fn bake_requires_the_config_archive_source_fingerprint() {
         doors_dir: &doors,
         gates: &gates,
         config_jag: &config_jag,
+        server_loc_dat_377: None,
         cache: None,
         require_all_door_configs: false,
         input_fingerprints: Some(&input_fingerprints),

@@ -205,10 +205,47 @@ fn tables_cell(world: &NavWorld) -> &OnceLock<Option<Tables>> {
     world.risk_facts(OnceLock::new)
 }
 
+fn build_tables_for(selected: Arc<api::game_data::SelectedGameData>) -> Option<Tables> {
+    let combat = CombatTables::build(selected).ok()?;
+    let risks = RiskTables::build(&combat);
+    Some(Tables { combat, risks })
+}
+
 fn build_tables() -> Option<Tables> {
     let combat = script::combat::guard::shared_tables().ok()?;
     let risks = RiskTables::build(&combat);
     Some(Tables { combat, risks })
+}
+
+/// Pin revision 377's combat and risk facts on its world before any slot can
+/// observe it. A failed build remains unavailable in this world's one cache;
+/// it must not fall through to the legacy shared revision-289 tables.
+pub(crate) fn bind_377_tables(
+    world: &NavWorld,
+    selected: Option<Arc<api::game_data::SelectedGameData>>,
+) -> Result<(), script::combat::guard::GuardRefusal> {
+    let cached = tables_cell(world).get_or_init(|| {
+        let selected = selected.filter(|data| data.revision() == 377)?;
+        build_tables_for(selected)
+    });
+    if cached
+        .as_ref()
+        .is_some_and(|tables| tables.combat.selected().revision() != 377)
+    {
+        return Err(script::combat::guard::GuardRefusal::Tables);
+    }
+    Ok(())
+}
+
+/// The route-job charge uses the world's selected combat rows when bound.
+/// Before a synthetic/legacy world is initialized, retain its R289 estimate;
+/// an explicitly unavailable world stays unavailable.
+pub(crate) fn combat_tables_for_estimate(world: &NavWorld) -> Option<Arc<CombatTables>> {
+    match tables_cell(world).get() {
+        Some(Some(tables)) => Some(Arc::clone(&tables.combat)),
+        Some(None) => None,
+        None => script::combat::guard::shared_tables().ok(),
+    }
 }
 
 fn tables(world: &NavWorld) -> Option<&Tables> {
@@ -286,11 +323,14 @@ pub fn unavailable(map_members: bool) -> RiskInput {
 
 /// Capture one admission from the host's current condition, never a retained
 /// assessment's poison input. Missing or stale conditions fail closed.
+/// Use the world's selected facts when present. An unavailable binding stays
+/// unavailable; callers without a world retain the legacy table selection.
 pub fn capture(
     snapshot: &GameSnapshot,
     map_members: bool,
     condition: Option<&api::condition::BotCondition>,
     off_debt: bool,
+    world: Option<&NavWorld>,
 ) -> RiskInput {
     let poison = condition
         .filter(|fact| {
@@ -307,7 +347,11 @@ pub fn capture(
         off_debt,
         ..unavailable(map_members)
     };
-    if let Ok(tables) = script::combat::guard::shared_tables() {
+    let combat = match world {
+        Some(world) => condition_tables(world).map(|(combat, _)| combat),
+        None => script::combat::guard::shared_tables().ok(),
+    };
+    if let Some(tables) = combat {
         let stamp = EvidenceStamp {
             run: api::selected::RunKey {
                 slot: 0,
@@ -633,6 +677,7 @@ pub(crate) fn publish(
         map_members,
         bot.condition.current(),
         bot.walk_guard_off.is_some(),
+        Some(world),
     );
     if !fresh(assessment, input) {
         admission.input = input;

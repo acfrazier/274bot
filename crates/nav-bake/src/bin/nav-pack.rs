@@ -16,21 +16,24 @@
 //! `content/maps`, matching doors configs under that content tree, and
 //! `<engine>/data/pack/config`. Pass all three paths to use a different tree.
 //! Revision-bound bakes use explicit inputs:
-//! `nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR
+//! `nav-pack --revision 274|289|377 --content CONTENT_DIR --cache CACHE_DIR
 //! --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out NAV_FLAGS]
-//! [--snapshot-root SNAPSHOT_ROOT]`.
+//! [--snapshot-root SNAPSHOT_ROOT] [--server-loc-dat SERVER_LOC_DAT]`.
+//! Revision 377 requires `--server-loc-dat` for the engine's packed
+//! `server/loc.dat`; the other revisions do not accept that option.
 //! Runtime-compatible packs require `--snapshot-root`: the parent containing
 //! the complete version-keyed decoded snapshot. Omitting it preserves the
 //! legacy offline packed-identity format, which runtime binding rejects.
 //! This mode verifies every cache archive and the selected config before
 //! baking, then emits `<NAV_PACK>.json` using [`nav_planner::manifest::NavManifest`].
 //! Revision 274 reads the server `data/pack/config` beside the `client/`
-//! cache directory; revision 289 reads `data/pack/client/config`.
+//! cache directory. Revisions 289 and 377 read `config` inside the cache directory.
 //! Door loc ids come from the `*.loc` door configs plus
 //! `scripts/general_use/configs/gates.loc` (derived from the maps dir's
-//! parent, the Server `content/` root); the loc definitions
-//! (blockwalk, width/length, active) come from the client cache's `config`
-//! jag. Every `.jm2` under the maps dir bakes or the run fails; non-`.jm2`
+//! parent, the Server `content/` root). Revision 377 collision definitions
+//! decode the explicit engine server table followed by the client `loc.dat`,
+//! using engine post-decode semantics. Other revisions retain client cache
+//! collision definitions. Every `.jm2` under the maps dir bakes or the run fails; non-`.jm2`
 //! files (`ignore.csv`/`free2play.csv`) are metadata and skipped. The
 //! transport graph derives from the Server content tree (the maps dir's
 //! parent): door/ladder/stairs/agility edges, with boats and teleport
@@ -99,6 +102,7 @@ struct BakeInputs {
     maps_dir: PathBuf,
     doors_dir: PathBuf,
     config_jag: PathBuf,
+    server_loc_dat_377: Option<PathBuf>,
     cache_dir: Option<PathBuf>,
     cache_manifest: Option<PathBuf>,
     snapshot_root: Option<PathBuf>,
@@ -159,6 +163,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             maps_dir,
             doors_dir,
             config_jag,
+            server_loc_dat_377: None,
             cache_dir: None,
             cache_manifest: None,
             snapshot_root: None,
@@ -175,6 +180,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
     let mut cache_dir = None;
     let mut cache_manifest = None;
     let mut snapshot_root = None;
+    let mut server_loc_dat_377 = None;
     let mut out = None;
     let mut explicit_flags = None;
     let mut it = args.iter();
@@ -195,9 +201,9 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
                 }
                 let parsed = value
                     .parse::<u16>()
-                    .map_err(|_| "--revision must be 274 or 289".to_string())?;
-                if !matches!(parsed, 274 | 289) {
-                    return Err("--revision must be 274 or 289".into());
+                    .map_err(|_| "--revision must be 274, 289 or 377".to_string())?;
+                if !matches!(parsed, 274 | 289 | 377) {
+                    return Err("--revision must be 274, 289 or 377".into());
                 }
                 revision = Some(parsed);
             }
@@ -209,19 +215,22 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             "--snapshot-root" if snapshot_root.is_none() => {
                 snapshot_root = Some(PathBuf::from(value))
             }
+            "--server-loc-dat" if server_loc_dat_377.is_none() => {
+                server_loc_dat_377 = Some(PathBuf::from(value));
+            }
             "--out" if out.is_none() => out = Some(PathBuf::from(value)),
             "--flags-out" if explicit_flags.is_none() => {
                 explicit_flags = Some(PathBuf::from(value));
             }
             "--content" | "--cache" | "--cache-manifest" | "--snapshot-root" | "--out"
-            | "--flags-out" => {
+            | "--flags-out" | "--server-loc-dat" => {
                 return Err(format!("duplicate explicit option {flag}"));
             }
             _ => return Err(format!("unknown explicit option {flag}")),
         }
     }
     let revision =
-        revision.ok_or_else(|| "explicit mode requires --revision 274|289".to_string())?;
+        revision.ok_or_else(|| "explicit mode requires --revision 274|289|377".to_string())?;
     let content =
         content.ok_or_else(|| "explicit mode requires --content CONTENT_DIR".to_string())?;
     let cache_dir =
@@ -229,6 +238,12 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
     let cache_manifest = cache_manifest
         .ok_or_else(|| "explicit mode requires --cache-manifest CACHE_MANIFEST".to_string())?;
     let out = out.ok_or_else(|| "explicit mode requires --out NAV_PACK".to_string())?;
+    if revision == 377 && server_loc_dat_377.is_none() {
+        return Err("revision 377 requires --server-loc-dat SERVER_LOC_DAT".into());
+    }
+    if revision != 377 && server_loc_dat_377.is_some() {
+        return Err("--server-loc-dat is only supported for revision 377".into());
+    }
     let inputs = content_inputs(&content);
     let config_jag = config_jag_for(revision, &cache_dir)?;
     let flags_out = explicit_flags.unwrap_or_else(|| flags_path_for(&out));
@@ -241,6 +256,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         maps_dir: inputs.maps_dir,
         doors_dir: inputs.doors_dir,
         config_jag,
+        server_loc_dat_377,
         cache_dir: Some(cache_dir),
         cache_manifest: Some(cache_manifest),
         snapshot_root,
@@ -314,6 +330,7 @@ fn bake_world(
         doors_dir: &inputs.doors_dir,
         gates,
         config_jag: &inputs.config_jag,
+        server_loc_dat_377: inputs.server_loc_dat_377.as_deref(),
         cache,
         require_all_door_configs: true,
         input_fingerprints: None,

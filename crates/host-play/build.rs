@@ -142,6 +142,7 @@ fn main() {
         Ok(path) => path,
         Err(e) => fail(&format!("{e} ({inputs_origin})")),
     };
+    let server_loc_dat_377 = (revision == 377).then(|| engine_dir.join("data/pack/server/loc.dat"));
 
     // Canonical inputs are required: a build that cannot produce the artifact
     // fails here instead of shipping an apparently ready app without nav.
@@ -149,6 +150,10 @@ fn main() {
     require_dir(&inputs.doors_dir, revision, &inputs_origin);
     require_file(&inputs.gates, revision, &inputs_origin);
     require_file(&config_jag, revision, &inputs_origin);
+    if let Some(server) = &server_loc_dat_377 {
+        require_file(server, revision, &inputs_origin);
+        println!("cargo:rerun-if-changed={}", server.display());
+    }
     let archives: Vec<PathBuf> = CacheManifest::ARCHIVES
         .iter()
         .map(|name| cache_dir.join(name))
@@ -180,6 +185,9 @@ fn main() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
     let mut explicit: Vec<PathBuf> = vec![config_jag.clone()];
+    if let Some(server) = &server_loc_dat_377 {
+        explicit.push(server.clone());
+    }
     explicit.extend(archives.iter().cloned());
     let explicit_refs: Vec<&Path> = explicit.iter().map(PathBuf::as_path).collect();
     let input_fingerprints = match fingerprints(&content_dir, &explicit_refs) {
@@ -246,9 +254,14 @@ fn main() {
             "decoded navigation cache: {e}; supply BOT_NAV_SNAPSHOT_ROOT with a complete matching offline snapshot"
         ))
     });
+    let collision_sources: &[&Path] = if let Some(server) = server_loc_dat_377.as_deref() {
+        &[&config_jag, server]
+    } else {
+        &[&config_jag]
+    };
     let source_sha256 = nav_bake::bundle::source_digest_from_fingerprints(
         &content_dir,
-        &[&config_jag],
+        collision_sources,
         &input_fingerprints,
     )
     .unwrap_or_else(|e| fail(&e));
@@ -338,6 +351,7 @@ fn main() {
                 revision,
                 &inputs,
                 &config_jag,
+                server_loc_dat_377.as_deref(),
                 &manifest,
                 manifest_source.as_deref(),
                 &generator,
@@ -405,6 +419,7 @@ fn bake_and_stage(
     revision: u16,
     inputs: &nav_bake::bake::ContentInputs,
     config_jag: &Path,
+    server_loc_dat_377: Option<&Path>,
     cache: &CacheManifest,
     manifest_source: Option<&Path>,
     generator: &str,
@@ -425,6 +440,7 @@ fn bake_and_stage(
         doors_dir: &inputs.doors_dir,
         gates: &inputs.gates,
         config_jag,
+        server_loc_dat_377,
         cache: Some(cache),
         require_all_door_configs: true,
         input_fingerprints: Some(input_fingerprints),

@@ -484,10 +484,94 @@ fn upgrade_copy_preserves_vault_profiles_and_worlds_file() {
 }
 
 #[test]
+fn revision_377_selects_its_own_loopback_resources_and_fact_boundary() {
+    let fixture = Fixture::new();
+    let (options, rest) = parse_profile_args(["--revision", "377"]).unwrap();
+    assert!(rest.is_empty());
+    let selected = options.resolve_with_env(Some(289), &fixture.env()).unwrap();
+    assert_eq!(selected.name(), "local-377");
+    assert_eq!(selected.revision(), ClientRevision::R377);
+    assert_eq!(selected.transport(), client::Transport::Tcp);
+    assert_eq!(selected.profile_class(), host_play::ProfileClass::Local);
+    assert_eq!(
+        (selected.game_host(), selected.game_port()),
+        ("127.0.0.1", 43595)
+    );
+    assert_eq!(
+        (selected.asset_host(), selected.asset_port()),
+        ("127.0.0.1", 81)
+    );
+    assert!(selected.unpack_dir().ends_with(".274bot/unpack-377"));
+    assert_eq!(selected.cache_dir(), selected.unpack_dir());
+    assert!(selected.vault_path().ends_with(".274bot/vault-377"));
+    assert!(selected.nav_pack().ends_with(".274bot/377/274bot.navpack"));
+    assert!(selected
+        .nav_flags()
+        .ends_with(".274bot/377/274bot.navflags"));
+    assert!(selected.supported_server());
+    selected.require_bot_operation().unwrap();
+    assert!(matches!(
+        selected.selection().login_key,
+        LoginKey::EngineDir { engine_dir: None }
+    ));
+}
+
+#[test]
+fn revision_377_environment_and_saved_selection_do_not_change_the_default() {
+    let fixture = Fixture::new();
+    let mut environment = fixture.env();
+    environment.revision = Some("377".into());
+    let from_environment = ProfileOptions::default()
+        .resolve_with_env(Some(289), &environment)
+        .unwrap();
+    assert_eq!(from_environment.revision(), ClientRevision::R377);
+    let from_saved = ProfileOptions::default()
+        .resolve_with_env(Some(377), &fixture.env())
+        .unwrap();
+    assert_eq!(from_saved.revision(), ClientRevision::R377);
+    let default = ProfileOptions::default()
+        .resolve_with_env(None, &fixture.env())
+        .unwrap();
+    assert_eq!(default.revision(), ClientRevision::R274);
+}
+
+#[test]
+fn revision_377_requires_an_engine_and_rejects_a_named_revision_conflict() {
+    let fixture = Fixture::new();
+    let (options, _) = parse_profile_args(["--revision", "377"]).unwrap();
+    let mut environment = fixture.env();
+    environment.engine_dir = None;
+    assert!(options
+        .resolve_with_env(None, &environment)
+        .unwrap_err()
+        .contains("ENGINE_DIR"));
+    let (conflict, _) =
+        parse_profile_args(["--profile", "local-289", "--revision", "377"]).unwrap();
+    assert!(conflict
+        .resolve_with_env(None, &fixture.env())
+        .unwrap_err()
+        .contains("--revision conflicts with the selected --profile"));
+}
+
+#[test]
+fn revision_377_cache_manifest_retains_revision_and_byte_admission() {
+    let fixture = Fixture::new();
+    let manifest = CacheManifest::capture(377, &fixture.0).unwrap();
+    manifest.verify(377, &fixture.0).unwrap();
+    assert!(manifest.verify(289, &fixture.0).is_err());
+    assert_ne!(
+        manifest.identity(),
+        CacheManifest::capture(289, &fixture.0).unwrap().identity()
+    );
+    std::fs::write(fixture.0.join("config"), b"changed archive").unwrap();
+    assert!(manifest.verify(377, &fixture.0).is_err());
+}
+
+#[test]
 fn removed_legacy_flags_and_profile_conflicts_fail_before_vault_access() {
     let fixture = Fixture::new();
     for args in [
-        vec!["--revision", "377"],
+        vec!["--revision", "378"],
         vec!["--revision"],
         vec!["--port", "0"],
         vec!["--revision", "--prod"],
@@ -1455,19 +1539,30 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
 }
 
 #[test]
-fn missing_289_sidecar_and_missing_pack_keep_existing_refusals() {
+fn missing_selected_revision_sidecar_and_missing_pack_keep_existing_refusals() {
     let fixture = Fixture::new();
     let bytes = tiny_v8_pack();
     let pack = fixture.0.join("orphan.navpack");
     std::fs::write(&pack, &bytes).unwrap();
-    let mut options = fixture.options(289);
-    options.nav_pack = Some(pack);
-    assert!(options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind()
-        .unwrap_err()
-        .contains("revision 289 requires"));
+    let manifest = CacheManifest::capture(377, &fixture.0).unwrap();
+    std::fs::write(
+        fixture.0.join("manifest-377.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    for revision in [289, 377] {
+        let mut options = fixture.options(revision);
+        options.nav_pack = Some(pack.clone());
+        let error = options
+            .resolve_with_env(None, &fixture.env())
+            .unwrap()
+            .bind()
+            .unwrap_err();
+        assert!(
+            error.contains(&format!("revision {revision} requires")),
+            "{error}"
+        );
+    }
 
     let missing = fixture
         .options(274)

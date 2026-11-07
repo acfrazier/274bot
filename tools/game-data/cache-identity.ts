@@ -5,8 +5,8 @@ import { execFileSync } from 'node:child_process';
 // The Rust codec is the sole definition of decoded identity. This tool never
 // downloads or repacks game assets. Build `cargo build -p nav-bake --bin cache-content-id`
 // first and set GAME_DATA_IDENTITY_BIN when using a non-default target directory.
-// Snapshot roots are always explicit: GAME_DATA_274_SNAPSHOTS and
-// GAME_DATA_289_SNAPSHOTS name the client unpack trees each revision verifies.
+// Snapshot roots are always explicit: GAME_DATA_<revision>_SNAPSHOTS names
+// the selected 274, 289, or 377 client unpack tree.
 export function verifyCacheIdentity(revision: number, engine: string, expected: { cache_id: string; content_id?: string }) {
     const root = path.resolve(import.meta.dirname, '../..');
     const binary = process.env.GAME_DATA_IDENTITY_BIN ?? path.join(process.env.CARGO_TARGET_DIR ?? path.join(root, 'target'), 'debug/cache-content-id');

@@ -7,13 +7,14 @@
 use api::interact::{
     answer_count, cheat, cheat_allowed, close_modal, create_interactions, interact, login,
     mainland_hop, offers_operation, op_loc, operation_of, press, seed_at, set_run, still_present,
-    tele_args, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult,
-    WireCommand, MAX_OPERATIONS, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF, SCENE_READY,
+    tele_args, walk, ActionSpec, Driver, Interactions, OpTarget, PacketCheckpoint, SendReason,
+    SendResult, WireCommand, MAX_OPERATIONS, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF,
+    SCENE_READY,
 };
 use api::obj_names::ItemDefView;
 use api::prot::{
-    legal_sends_for, AbuseReason, Base37Name, CycleLogic1, CycleLogic2, LegalSend, MinimapTrailer,
-    MouseMoveRecord, PacketError, Send, LEGAL_SEND,
+    legal_sends_for, packet_metadata, AbuseReason, Base37Name, CycleLogic1, CycleLogic2, LegalSend,
+    MinimapTrailer, MouseMoveRecord, PacketCategory, PacketError, PacketMetadata, Send, LEGAL_SEND,
 };
 use api::snapshot::{
     GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, NpcView, WorldTile,
@@ -25,7 +26,7 @@ use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::ClientObj;
 use client::datastruct::LinkList;
-use client::io::{ClientProt, Isaac, Packet, ServerProt};
+use client::io::{ClientProt, ClientProt377, Isaac, Packet, ServerProt};
 use std::sync::Arc;
 
 fn cfg() -> ClientConfig {
@@ -1826,6 +1827,45 @@ fn client_driver_walk_writes_move_gameclick() {
     assert_eq!(c.out.pos, 7);
 }
 
+/// The real R377 Client producers' encrypted walk and NPC frames are decoded
+/// by the selected 377 wire metadata, including variable-byte movement.
+#[test]
+fn revision_377_direct_client_frames_are_traced_with_wire_metadata() {
+    let mut c = Client::new_with_revision(cfg(), ClientRevision::R377);
+    c.ingame = true;
+    c.local_player = Some(ClientPlayer::at(5, 5));
+    c.npc[7] = Some(Box::new(ClientNpc::at(5, 5)));
+    c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+
+    let checkpoint = PacketCheckpoint::capture(&c);
+    assert!(walk(&mut c, 10, 10));
+    let mut traced = Vec::new();
+    assert!(Driver::trace_packets(&c, checkpoint, &mut |opcode| traced.push(opcode)));
+    assert_eq!(traced, [ClientProt377::MOVE_GAMECLICK.id as u8]);
+
+    c.set_menu(0, MiniMenuAction::OP_NPC1, 7, 0, 0);
+    let checkpoint = PacketCheckpoint::capture(&c);
+    assert!(Driver::do_action(&mut c, 0));
+    traced.clear();
+    assert!(Driver::trace_packets(&c, checkpoint, &mut |opcode| traced.push(opcode)));
+    assert!(
+        traced.contains(&(ClientProt377::OPNPC1.id as u8)),
+        "R377 NPC action frame must be recognized"
+    );
+}
+
+#[test]
+fn revision_377_trace_refuses_unknown_wire_opcodes() {
+    let mut c = Client::new_with_revision(cfg(), ClientRevision::R377);
+    c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+    let checkpoint = PacketCheckpoint::capture(&c);
+    c.out.p1_enc(i32::from(u8::MAX));
+
+    let mut traced = Vec::new();
+    assert!(!Driver::trace_packets(&c, checkpoint, &mut |opcode| traced.push(opcode)));
+    assert!(traced.is_empty());
+}
+
 /// The real `Client` driver: the close dispatch runs `Client::close_modal`
 /// (the doAction CLOSE_BUTTON arm), which clears the local modal ids and
 /// writes CLOSE_MODAL through `out`.
@@ -1907,6 +1947,137 @@ fn legal_send_rows_are_selected_for_revision_289() {
         assert_eq!(rows[index], *expected, "revision-289 row for {named:?}");
     }
     assert_eq!(legal_sends_for(ClientRevision::R274), LEGAL_SEND);
+}
+
+#[test]
+fn legal_send_rows_are_selected_for_revision_377() {
+    let rows = legal_sends_for(ClientRevision::R377);
+    assert_eq!(rows.len(), 77, "only known semantic identities are listed");
+    assert!(rows
+        .iter()
+        .all(|row| (0..=i32::from(u8::MAX)).contains(&row.id)));
+
+    let mut ids: Vec<_> = rows.iter().map(|row| row.id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), rows.len(), "R377 wire opcode ids are unique");
+    assert!(rows.contains(&LegalSend { id: 28, length: -1 }));
+    assert!(rows.contains(&LegalSend { id: 112, length: 2 }));
+    assert!(rows.contains(&LegalSend { id: 78, length: 4 }));
+    assert!(rows.contains(&LegalSend { id: 187, length: 1 }));
+}
+
+#[test]
+fn revision_377_packet_metadata_uses_pinned_wire_rows_and_known_semantics() {
+    assert_eq!(
+        packet_metadata(ClientRevision::R377, ClientProt377::MOVE_GAMECLICK.id as u8),
+        Some(PacketMetadata {
+            opcode: 28,
+            named: ClientProt::MOVE_GAMECLICK,
+            length: -1,
+            category: PacketCategory::UserEvent,
+        })
+    );
+    assert_eq!(
+        packet_metadata(ClientRevision::R377, ClientProt377::OPNPC1.id as u8),
+        Some(PacketMetadata {
+            opcode: 112,
+            named: ClientProt::OPNPC1,
+            length: 2,
+            category: PacketCategory::UserEvent,
+        })
+    );
+
+    let focus = packet_metadata(
+        ClientRevision::R377,
+        ClientProt377::EVENT_HAS_WINDOW.id as u8,
+    )
+    .unwrap();
+    assert_eq!(focus.named, ClientProt::EVENT_APPLET_FOCUS);
+    assert_eq!(focus.length, 4);
+    assert_eq!(focus.category, PacketCategory::ClientEvent);
+
+    let applet_focus = packet_metadata(
+        ClientRevision::R377,
+        ClientProt377::EVENT_APPLET_FOCUS.id as u8,
+    )
+    .unwrap();
+    assert_eq!(applet_focus.named, ClientProt::EVENT_APPLET_FOCUS);
+    assert_eq!(applet_focus.length, 1);
+    assert_eq!(applet_focus.category, PacketCategory::ClientEvent);
+
+    let unsupported = [
+        ClientProt377::EVENT_SYNTH_ERROR,
+        ClientProt377::SEND_SNAPSHOT,
+        ClientProt377::RESUME_P_NAMEDIALOG,
+    ];
+    for wire_row in ClientProt377::ALL {
+        let observed = packet_metadata(ClientRevision::R377, wire_row.id as u8);
+        if unsupported
+            .iter()
+            .any(|unmapped| unmapped.id == wire_row.id)
+        {
+            assert_eq!(observed, None, "unmapped R377 row {wire_row:?}");
+        } else {
+            let observed = observed.expect("known R377 wire row has metadata");
+            assert_eq!(observed.opcode, wire_row.id as u8);
+            assert_eq!(observed.length, wire_row.length, "wire row {wire_row:?}");
+        }
+    }
+
+    for unmapped in unsupported {
+        assert_eq!(
+            packet_metadata(ClientRevision::R377, unmapped.id as u8),
+            None,
+            "unmapped R377 semantic {unmapped:?} fails closed"
+        );
+    }
+}
+
+#[test]
+fn revision_377_typed_writer_refuses_before_output_or_cipher_mutation() {
+    let seed = [1, 2, 3, 4];
+    let prefix = Send::if_button(0x1234).unwrap();
+    let next = Send::if_button(0x5678).unwrap();
+    let unsupported = Send::event_mouse_click(1, false, 2, 3).unwrap();
+    assert_eq!(
+        packet_metadata(
+            ClientRevision::R377,
+            ClientProt377::EVENT_MOUSE_CLICK.id as u8
+        )
+        .unwrap()
+        .named,
+        ClientProt::EVENT_MOUSE_CLICK,
+        "wire observation metadata does not grant typed Send admission"
+    );
+
+    let mut actual = Client::new_with_revision(cfg(), ClientRevision::R377);
+    actual.out.random = Some(Isaac::new(&seed));
+    prefix
+        .write_for_revision(ClientRevision::R377, &mut actual.out)
+        .unwrap();
+    let before = actual.out.data()[..actual.out.pos].to_vec();
+    let before_pos = actual.out.pos;
+    assert!(unsupported
+        .write_for_revision(ClientRevision::R377, &mut actual.out)
+        .is_err());
+    assert_eq!(actual.out.pos, before_pos);
+    assert_eq!(&actual.out.data()[..actual.out.pos], before);
+    next.write_for_revision(ClientRevision::R377, &mut actual.out)
+        .unwrap();
+
+    let mut control = Client::new_with_revision(cfg(), ClientRevision::R377);
+    control.out.random = Some(Isaac::new(&seed));
+    prefix
+        .write_for_revision(ClientRevision::R377, &mut control.out)
+        .unwrap();
+    next.write_for_revision(ClientRevision::R377, &mut control.out)
+        .unwrap();
+    assert_eq!(
+        &actual.out.data()[..actual.out.pos],
+        &control.out.data()[..control.out.pos],
+        "refusal must not advance R377 ISAAC"
+    );
 }
 
 fn legal_row(prot: ClientProt) -> LegalSend {
@@ -4826,6 +4997,53 @@ fn revision_289_pending_door_step_matches_primary_bytes() {
         &driver.out.data()[..driver.out.pos],
         &[234, 5, 0, 12, 133, 12, 134]
     );
+}
+
+#[test]
+fn selected_pending_door_step_matches_client_movement_bytes() {
+    let seed = [1, 2, 3, 4];
+    for revision in [ClientRevision::R289, ClientRevision::R377] {
+        let mut s = scene_revision(revision);
+        s.client.local_player = Some(ClientPlayer::at(5, 5));
+        s.client.gens.player += 1;
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&s.client);
+        let tile = WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0,
+        };
+        let mut control = configured_client_revision(revision);
+        control.local_player = Some(ClientPlayer::at(5, 5));
+        control.out.random = Some(Isaac::new(&seed));
+        assert!(walk(&mut control, tile.x, tile.z));
+        let mut driver = configured_client_revision(revision);
+        driver.out.random = Some(Isaac::new(&seed));
+        let result = Interactions::new(&snap, &mut driver).pending_door_step(tile);
+        assert!(
+            matches!(result, SendResult::Sent { .. }),
+            "{revision:?} door step must not be DriverRejected: {result:?}"
+        );
+        assert_eq!(
+            &driver.out.data()[..driver.out.pos],
+            &control.out.data()[..control.out.pos],
+            "{revision:?} door step must match the native one-tile movement codec"
+        );
+        assert_eq!(
+            driver.out.pos, 7,
+            "one opcode, one length and five body bytes"
+        );
+    }
+}
+
+#[test]
+fn unbound_377_driver_refuses_pending_door_step_without_writing() {
+    let mut driver = Recorder {
+        revision: ClientRevision::R377,
+        ..Recorder::default()
+    };
+    assert!(!driver.send_pending_door_step(3205, 3206));
+    assert!(driver.out.0.is_empty());
 }
 
 #[test]

@@ -488,9 +488,8 @@ impl ServerProfile {
 
 fn require_bot_operation(revision: ClientRevision) -> Result<(), String> {
     match revision {
-        // Both revisions have controlled host action, selected-world navigation,
-        // bank-return and Guardian proof. Retain exhaustive revision dispatch:
-        // a future client revision must make an explicit qualification choice.
-        ClientRevision::R274 | ClientRevision::R289 => Ok(()),
+        // Resource and selected-fact gates remain mandatory for every admitted
+        // revision. Future revisions must make an explicit dispatch choice.
+        ClientRevision::R274 | ClientRevision::R289 | ClientRevision::R377 => Ok(()),
     }
 }

@@ -96,7 +96,7 @@ pub fn derive_transports(
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> TransportGraph {
-    derive_transports_with_audit(content_root, loc_defs, collision, None, None).0
+    derive_transports_with_audit(content_root, loc_defs, collision, None, None, None).0
 }
 /// The graph and accounting for source gates the live snapshot cannot prove.
 pub(crate) fn derive_transports_for_bake(
@@ -106,6 +106,7 @@ pub(crate) fn derive_transports_for_bake(
     configured_door_ids: &HashSet<i32>,
     parsed_door_configs: &[PathBuf],
     quests: Option<&QuestSource<'_>>,
+    revision: Option<u16>,
 ) -> (TransportGraph, VarpGateAudit) {
     let (graph, skipped, audit) = derive_transports_with_audit(
         content_root,
@@ -113,6 +114,7 @@ pub(crate) fn derive_transports_for_bake(
         collision,
         Some((configured_door_ids, parsed_door_configs)),
         quests,
+        revision,
     );
     report(content_root, &graph, &skipped);
     (graph, audit)
@@ -125,7 +127,7 @@ fn derive_transports_with_skips(
     collision: &WorldCollision,
 ) -> (TransportGraph, HashMap<&'static str, usize>) {
     let (graph, skipped, _) =
-        derive_transports_with_audit(content_root, loc_defs, collision, None, None);
+        derive_transports_with_audit(content_root, loc_defs, collision, None, None, None);
     (graph, skipped)
 }
 
@@ -135,6 +137,7 @@ fn derive_transports_with_audit(
     collision: &WorldCollision,
     preloaded_doors: Option<(&HashSet<i32>, &[PathBuf])>,
     quests: Option<&QuestSource<'_>>,
+    revision: Option<u16>,
 ) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
     let mut graph = TransportGraph {
         quest_family: quests.map(|quests| quests.family),
@@ -218,7 +221,14 @@ fn derive_transports_with_audit(
         collision,
         &mut skipped,
     );
-    boat_edges(&mut graph, &gates, &mut audit);
+    boat_edges(
+        content_root,
+        revision,
+        &mut graph,
+        &gates,
+        &mut audit,
+        &mut skipped,
+    );
     cart_edges(
         &mut graph,
         gates.completed_quest_name("zombiequeen", "zombiequeen_complete"),
@@ -280,6 +290,16 @@ fn derive_transports_with_audit(
         &mut graph,
         &mut skipped,
     );
+    if revision == Some(377) {
+        supplemental_edges_377(
+            content_root,
+            &ids,
+            &positions,
+            loc_defs,
+            &mut graph,
+            &mut skipped,
+        );
+    }
     teleport_edges(content_root, &mut graph, &mut skipped);
     // After every producer: the members gate each edge's source handler
     // declares, read once for every kind.
@@ -577,6 +597,16 @@ const EXTRA_TICKS: &[(&str, i32)] = &[
     ("spiralstairsmiddle", 0),
     ("spiralstairstop", 0),
     ("spiralstairs_wooden", 0),
+    // Revision 377 stairs.rs2 names the Lumbridge spiral staircase by id.
+    // These handlers have no p_arrivedelay or p_delay, like spiralstairs above.
+    ("scenery_1738", 0),
+    ("scenery_1739", 0),
+    ("scenery_1740", 0),
+    // Revision 377 stairs.rs2:1175-1201: Wizard's Tower's direct
+    // p_telejump handlers have no arrival delay or p_delay.
+    ("fai_wiztower_spiralstairs", 0),
+    ("fai_wiztower_spiralstairs_middle", 0),
+    ("fai_wiztower_spiralstairstop", 0),
     // Miscellania castle: the same `p_arrivedelay; p_telejump(movecoord(
     // coord, 0, ±1, 0))` Climb-up/-down bodies as `spiralstairsmiddle`.
     ("spiralstairsmiddle_wooden", 0),

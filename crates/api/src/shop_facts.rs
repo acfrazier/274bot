@@ -6,6 +6,11 @@
 //! module does not duplicate catalog/price tables. Only the twelve ShopBuyout
 //! preset inventories are posted; other content shops stay unpublished so
 //! lookups cannot pretend every shop is supported.
+//!
+//! There is no 377 shop extraction: every lookup reports unavailable on 377
+//! through the existing empty/`None` APIs, and 377 never parses or joins the
+//! legacy excerpts, so no 289 value can leak onto 377 (or poison the cache)
+//! regardless of lookup order.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -128,6 +133,7 @@ struct ParsedShopFacts {
 static PARSED_SHOP_FACTS: OnceLock<ParsedShopFacts> = OnceLock::new();
 static JOINED_274: OnceLock<JoinedShops> = OnceLock::new();
 static JOINED_289: OnceLock<JoinedShops> = OnceLock::new();
+static JOINED_UNAVAILABLE: OnceLock<JoinedShops> = OnceLock::new();
 
 struct JoinedShops {
     shops: Vec<ShopRecord>,
@@ -156,8 +162,24 @@ fn parsed_shop_facts() -> &'static ParsedShopFacts {
     })
 }
 
+/// Empty join for revisions with no shop extraction (377). Built without
+/// touching the legacy excerpts, so 377 lookups can neither observe 289
+/// values nor poison the 274/289 cells however lookups interleave.
+fn unavailable_shops() -> &'static JoinedShops {
+    JOINED_UNAVAILABLE.get_or_init(|| JoinedShops {
+        shops: Vec::new(),
+        by_inv: HashMap::new(),
+        by_keeper: HashMap::new(),
+        vendor_keepers: Vec::new(),
+    })
+}
+
 fn joined_shops(data: &SelectedGameData) -> &'static JoinedShops {
-    let cell = if data.revision() == 274 {
+    let revision = data.revision();
+    if revision != 274 && revision != 289 {
+        return unavailable_shops();
+    }
+    let cell = if revision == 274 {
         &JOINED_274
     } else {
         &JOINED_289
@@ -211,6 +233,7 @@ fn join_vendor_keepers(
 }
 
 /// Posted shops for this revision, skipping any inv whose obj aliases are missing.
+/// Empty when the revision has no shop extraction (377).
 pub fn shops_for(data: &SelectedGameData) -> &'static [ShopRecord] {
     &joined_shops(data).shops
 }
@@ -266,8 +289,11 @@ pub fn vendors_for<'a>(
         .item_by_id(item_id)
         .and_then(|item| item.alias.as_deref());
     let joined = joined_shops(data);
-    let keepers = &parsed_shop_facts().keepers;
     joined.vendor_keepers.iter().filter_map(move |keeper_row| {
+        // Looked up inside the row closure so revisions with no join (377)
+        // never parse the legacy excerpts: their row list is empty, so this
+        // body never runs for them.
+        let keepers = &parsed_shop_facts().keepers;
         let item_alias = item_alias?;
         let record = &joined.shops[keeper_row.shop_index];
         let keeper = &keepers[keeper_row.keeper_index];
@@ -290,6 +316,9 @@ pub fn vendor_by_keeper_config<'a>(
     config: &str,
     item_id: i32,
 ) -> Option<VendorFact<'a>> {
+    if data.revision() != 274 && data.revision() != 289 {
+        return None;
+    }
     let item_alias = data.item_by_id(item_id)?.alias.as_deref()?;
     let joined = joined_shops(data);
     let keepers = &parsed_shop_facts().keepers;
@@ -602,6 +631,46 @@ mod tests {
             assert!(shop_by_inv(&catalog, "generalshop1").is_none());
             assert!(shop_by_inv(&catalog, "magearena_staffshop").is_none());
         }
+    }
+
+    #[test]
+    fn shops_are_unavailable_on_377_in_either_lookup_order() {
+        // 377 first: no 289 value may leak onto 377 even when 377 warms first.
+        let un377 = data(ClientRevision::R377);
+        assert!(shops_for(&un377).is_empty());
+        assert!(shop_by_inv(&un377, "adventurershop").is_none());
+        assert!(shop_by_inv(&un377, "ADVENTURERSHOP").is_none());
+        assert!(shop_by_keeper(&un377, "Aemad").is_none());
+        assert!(shop_by_keeper(&un377, "Magic Store owner").is_none());
+        let harpoon_289 = data(ClientRevision::R289)
+            .item_by_alias("harpoon")
+            .expect("harpoon")
+            .id;
+        assert!(vendors_for(&un377, harpoon_289).next().is_none());
+        assert!(vendor_by_keeper_config(&un377, "gerrant", harpoon_289).is_none());
+        let value = serde_json::to_value(content_json_value(&un377)).expect("377 shop JSON");
+        assert!(
+            value.as_object().expect("shops object").is_empty(),
+            "377 posts no shops"
+        );
+
+        // Warming 274/289 afterwards still yields the full posted set:
+        // 377-first lookups must not poison the shared cache.
+        for rev in [ClientRevision::R274, ClientRevision::R289] {
+            let catalog = data(rev);
+            assert_eq!(shops_for(&catalog).len(), POSTED_INVS.len(), "{rev:?}");
+            assert!(shop_by_keeper(&catalog, "Aemad").is_some());
+        }
+        let cat289 = data(ClientRevision::R289);
+        assert_eq!(vendors_for(&cat289, harpoon_289).count(), 2);
+
+        // And 289-first lookups must not leak back onto 377 either.
+        assert!(shops_for(&un377).is_empty());
+        assert!(shop_by_keeper(&un377, "Aubury").is_none());
+        assert!(vendors_for(&un377, harpoon_289).next().is_none());
+        assert!(vendor_by_keeper_config(&un377, "gerrant", harpoon_289).is_none());
+        let value = serde_json::to_value(content_json_value(&un377)).expect("377 shop JSON");
+        assert!(value.as_object().expect("shops object").is_empty());
     }
 
     #[test]

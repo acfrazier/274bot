@@ -32,7 +32,7 @@ and writes the current whole-world pack (`encode` in
 
 ```bash
 NAV_PACK=/absolute/output/274bot.navpack NAV_FLAGS=/absolute/output/274bot.navflags cargo run -p nav-bake --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]
-# or: nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out F] [--snapshot-root ROOT]
+# or: nav-pack --revision 274|289|377 --content CONTENT_DIR --cache CACHE_DIR --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out F] [--snapshot-root ROOT] [--server-loc-dat SERVER_LOC_DAT]
 ```
 
 When `BOT_NAV_ENGINE_DIR` or `ENGINE_DIR` is set, legacy positional mode
@@ -44,6 +44,17 @@ to `.navflags` (default `~/.274bot/274bot.navflags`); the `.navreach`/`.navcanli
 sidecars are written next to `--out`. Explicit mode ignores `$NAV_PACK` and requires
 `--out NAV_PACK` (plus `--revision`, `--content`, `--cache`, `--cache-manifest`).
 `gates.loc` is derived from the maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
+
+Revision 377 also requires `--server-loc-dat` naming the canonical engine's
+packed `server/loc.dat`. This is explicit because a published client cache
+need not live below `data/pack/client`. The 377 collision definitions apply
+the engine's defaults, server record, client record and active-field
+postpass in that order. They do not use the client's
+`breakroutefinding` postpass, which clears collision flags that the server
+retains. The application build takes this server table from its selected
+engine's `data/pack/server/loc.dat`. Its bytes participate in source
+provenance and warm-build invalidation. Revisions 274 and 289 reject the new
+CLI option and keep their existing inputs and collision behavior.
 
 Each edge's `members_req` comes from the content handler that edge's op runs,
 resolved as the engine does: type `[<op>,<name>]`, then category
@@ -199,8 +210,9 @@ New nav manifests, build stamps and compiled bundle rows carry `content_id` and
 Source provenance hashes the conservative content-tree closure and actual baker
 config; the build stamp also binds generator source bytes. Legacy resources are
 not relabeled: rebuild the application with the complete matching snapshot, or
-use `nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR
---cache-manifest CACHE_MANIFEST --snapshot-root SNAPSHOT_ROOT --out NAV_PACK`.
+use `nav-pack --revision 274|289|377 --content CONTENT_DIR --cache CACHE_DIR
+--cache-manifest CACHE_MANIFEST --snapshot-root SNAPSHOT_ROOT --out NAV_PACK`
+(plus `--server-loc-dat SERVER_LOC_DAT` for revision 377).
 The root contains the 16-hex version-keyed snapshot directory. Omitting
 `--snapshot-root` creates an offline-only legacy pack; runtime binding rejects
 it. Missing required decoded records fail rather than claiming Ready.
@@ -267,8 +279,9 @@ records the cache identity, SHA-256 digests of all staged navigation artifacts
 `quest_gates.rs`/`router.rs`/`transport.rs` and transport producers), the
 navpois generator identity (`map/services.rs`/`map/poi.rs`), and an input
 fingerprint (size, mtime and SHA-256) of every canonical input (content tree,
-config jag, cache archives). Source and captured cache digests use one input-
-fingerprint snapshot. The decoded identity is computed from that verified
+config jag, cache archives, and the explicit engine server loc table for
+revision 377). Source and captured cache digests use one input-fingerprint
+snapshot. The decoded identity is computed from that verified
 cache snapshot and recomputed after baking before publishing. Any change to
 those inputs, to the pack format identity (`nav_planner::pack::FORMAT_ID`), to the
 generator, to the cache identity, a missing navpois sidecar, or a missing/
@@ -349,6 +362,29 @@ content-derived absence gates `forbidden_held` (must not be carried) and
 `worn_all_req`; carried or banked pieces do not. `BankBudget` neither
 supplies nor equips these strict pieces; the Quester loadout handles
 equipping. A held `item_req` is never budgeted as spent.
+
+An explicitly selected revision-377 bake also runs `vertical_377.rs`.
+It prices the renamed `ladder_1755` from the canonical climb helper while
+preserving its coordinate-specific landing and relative fallback. That return
+connects the Varrock sewer to the otherwise walled-in palace coin alcove.
+Renamed `scenery_*` stairs are priced from canonical coordinate-switch
+handlers. Each admitted arm must make one fixed jump; only the optional
+`p_arrivedelay` contributes an extra tick. This retains Morgan's downstairs
+route and explicit middle-stair up/down options without admitting the
+dialogue-bearing first option, gates or additional side effects.
+Repeated coordinate arms are accepted only when their resolved movement is
+identical; conflicting duplicates reject the handler.
+The surface entrance is the canonical `manholeclosed` Open followed by
+`manholeopen` Climb down. Its edge retains the opened loc ID and the player's
+z+6400 landing, at three ticks for the pair. Already-open placements take
+two ticks. The producer certifies every opener statement, including the
+cover placement, and rejects gates or additional side effects.
+Direct absolute climbs, including `trapdoor_9472`, use the strict source
+recognizer: presentation, suspension and one fixed move only, with a matching
+Climb operation. The ice-dungeon trapdoor lands at `(3007,9549,0)` in three
+ticks and has no invented open phase. This supplement does not run for
+revision 274, revision 289 or an unspecified revision.
+
 Spell runes and script-deleted fares or passes are consumptive requirements.
 Spell teleports have no fixed origin: they live on `TransportGraph::teleports`
 unless `FindOptions::allow_teleports`. Wilderness tiles stay out unless
@@ -999,6 +1035,13 @@ Arrival radius is the Chebyshev distance treated as arrived at a hop
 target. `close_enough` defaults to 2. Legs with an exact planned
 `takeoff` settle at radius 0 on the planned landing; teleport hops accept
 radius 2 and glider landings radius 1 whatever the runner passes.
+
+- **377 bounded walk hops:** an endpoint shortcut must be within both 20
+  straight-line tiles and 20 remaining packed-route steps. Otherwise the
+  next target is at most 15 route steps ahead, still clipped to the loaded
+  scene. This avoids spending one finite hop budget on a long folded
+  local path around a nearby wall or fence. It does not extend the hop
+  timeout or change the 274/289 endpoint shortcut.
 
 - **Stalled walk recovery:** five distinct game ticks without tile progress
   or actor movement reissue the current aim, even if the map flag remains.

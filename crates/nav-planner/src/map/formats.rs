@@ -538,7 +538,11 @@ impl ServiceIdentity {
     /// content || nav || source || generator || policy), each digest raw 32 bytes.
     pub fn binding(self) -> Result<Digest, MapError> {
         use sha2::{Digest as _, Sha256};
-        super::revision(self.revision)?;
+        // Source-derived service POIs also accompany explicit 377 nav packs.
+        // Client-derived image/catalogue jobs retain their decoder admission.
+        if !matches!(self.revision, 274 | 289 | 377) {
+            return Err(MapError::Invalid("revision"));
+        }
         let mut h = Sha256::new();
         h.update(b"274bot.map.services\0");
         h.update(NAVPOIS_VERSION.to_be_bytes());

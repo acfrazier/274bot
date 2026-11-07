@@ -4,12 +4,14 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { assertPinned, assertRs2b0tPinned, contentDirt, engineDirt, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2LinkBelow, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseObjSections, parsePrayerInterface, parseQuestEnumEntry } from './generate.ts';
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
 import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, hiddenSitesRecord, HIDDEN_SITES_FILE, isKnownGatherTarget, SITE_OVERRIDES, GATHERING_SCHEMA, type GatherResourceWire, type GatherSiteBank, type GatherSiteWire, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
 import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
+import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 import { QUESTS_SCHEMA, categoryName, extractQuestsFamily, familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, runtimeNpcOperations, npcEvidenceBytes, type SelectedBuild } from './generate.ts';
 import { sha256, sourceFile } from './extractors/common.ts';
@@ -22,6 +24,7 @@ import './npc-transforms.test.ts';
 import './npc-stat-default.test.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
 import type { NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
+import { extractCookSurfaces } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -659,6 +662,35 @@ assert.deepEqual(styleFacts.weapon_styles.map((row) => [
     [59, 2, 4, 3, 14], [60, 2, 4, 4, 14], [61, 1, 4, 0, null],
     [62, 2, 4, 1, 12],
 ]);
+// Validate explicit object rates after fallback resolution on every supported revision.
+fs.writeFileSync(combatParamFile, combatParams
+    .replace('[attackrate]\ntype=int\ndefault=4', '[attackrate]\ntype=int\ndefault=6')
+    + '[attackrange]\ntype=int\ndefault=0\n[levelrequire]\ntype=int\ndefault=0\n');
+try {
+    for (const revision of [274, 289, 377]) {
+        const weapon = (rate: number | string | undefined) => ({
+            id: 52,
+            category: 12,
+            params: new Map<number, number | string>(rate === undefined ? [] : [[9, rate]]),
+        });
+        const extractRate = (rate: number | string | undefined) =>
+            extractCombatStyleFacts(content, [weapon(rate)], [], combatScripts, revision).weapon_styles[0]!.attackrate;
+        assert.equal(extractRate(undefined), revision === 377 ? 6 : 4, `${revision}: selected attackrate fallback`);
+        for (const rate of [0, 4, 255]) {
+            assert.equal(extractRate(rate), rate, `${revision}: valid explicit attackrate ${rate}`);
+        }
+        assert.throws(() => extractRate('4'), /obj 52: attackrate is not numeric/, `${revision}: reject a string rate`);
+        for (const rate of [-1, 256, 1.5, NaN, Infinity, -Infinity]) {
+            assert.throws(
+                () => extractRate(rate),
+                new RegExp(`obj 52: attackrate ${String(rate).replace('.', '\\.')} is out of range`),
+                `${revision}: reject invalid explicit attackrate ${rate}`,
+            );
+        }
+    }
+} finally {
+    fs.writeFileSync(combatParamFile, combatParams);
+}
 assert.deepEqual(styleFacts.combat_tabs.map((row) => [row.tab, row.root_id]), [
     [0, 904], [1, 901], [6, 902], [9, 903], [12, 900], [13, 910], [14, 911], [15, 328],
 ]);
@@ -859,6 +891,18 @@ assert.equal(herbs.herbs[0].level, 3, 'guam uses identify.param default, not cos
 assert.equal(herbs.herbs[1].key, 'snake weed');
 assert.equal(herbs.herbs[1].level_source, 'identified_herb_level');
 
+const herb377Content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-herb377-fixture-'));
+fs.cpSync(herblore, path.join(herb377Content, 'scripts/skill_herblore'), { recursive: true });
+fs.mkdirSync(path.join(herb377Content, 'scripts/_unpack/377'), { recursive: true });
+const [guam377Config, snake377Config] = fs.readFileSync(path.join(herblore, 'configs/herbs.obj'), 'utf8').split('[snake_weed]');
+assert.ok(snake377Config);
+fs.writeFileSync(path.join(herb377Content, 'scripts/skill_herblore/configs/herbs.obj'), guam377Config);
+fs.writeFileSync(path.join(herb377Content, 'scripts/_unpack/377/all.obj'), `[snake_weed]${snake377Config}`);
+assert.deepEqual(extractHerbFacts(herb377Content, herbItems, 377), herbs, '377 joins its unpacked quest herbs without substituting legacy levels');
+fs.rmSync(path.join(herb377Content, 'scripts/_unpack/377/all.obj'));
+assert.throws(() => extractHerbFacts(herb377Content, herbItems, 377), /all\.obj/, '377 requires its actual quest-herb input');
+fs.rmSync(herb377Content, { recursive: true });
+
 const dropContent = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-drop-fixture-'));
 const dropScripts = path.join(dropContent, 'scripts/drop tables/scripts');
 const npcConfigs = path.join(dropContent, 'scripts/_unpack/225');
@@ -941,6 +985,28 @@ assert.deepEqual(drops.find((row) => row.name === 'Fire giant')?.items, [
 ]);
 assert.deepEqual(drops.find((row) => row.name === 'Green dragon')?.display_names, ['Dragon bones', 'Dragonhide']);
 assert.deepEqual(drops.find((row) => row.name === 'Kalphite Queen')?.display_names, ['Rune spear']);
+
+const drop377Content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-drop377-fixture-'));
+fs.cpSync(path.join(dropContent, 'scripts/drop tables'), path.join(drop377Content, 'scripts/drop_tables'), { recursive: true });
+fs.mkdirSync(path.join(drop377Content, 'scripts/_unpack/377'), { recursive: true });
+fs.mkdirSync(path.join(drop377Content, 'scripts/npc/configs'), { recursive: true });
+fs.mkdirSync(path.join(drop377Content, 'scripts/areas/area_kalphite/configs'), { recursive: true });
+const [giantDropConfigs, greenDragonDropConfig] = fs.readFileSync(path.join(npcConfigs, 'all.npc'), 'utf8').split('[green_dragon]');
+assert.ok(greenDragonDropConfig);
+fs.writeFileSync(path.join(drop377Content, 'scripts/_unpack/377/all.npc'), giantDropConfigs);
+fs.writeFileSync(path.join(drop377Content, 'scripts/npc/configs/dragons.npc'), `[green_dragon]${greenDragonDropConfig}`);
+fs.copyFileSync(path.join(kqConfigs, 'kalphite.npc'), path.join(drop377Content, 'scripts/areas/area_kalphite/configs/kalphite.npc'));
+const moss377File = path.join(drop377Content, 'scripts/drop_tables/scripts/moss_giant.rs2');
+const moss377Source = fs.readFileSync(moss377File, 'utf8');
+const moss377Wrapped = `[ai_queue3,mossgiant] @moss_drop;\n[label,moss_drop]\n${moss377Source.replace(/^\[ai_queue3,mossgiant\]\r?\n/, '')}`;
+fs.writeFileSync(moss377File, moss377Wrapped);
+assert.deepEqual(extractDropFacts(drop377Content, dropItems, dropNpcs, 377), drops, '377 joins its own drop-table and split NPC sources');
+fs.writeFileSync(moss377File, '[ai_queue3,mossgiant] @missing_drop;\n');
+assert.throws(() => extractDropFacts(drop377Content, dropItems, dropNpcs, 377), /missing drop block label:missing_drop/, '377 cannot silently drop an unresolved label');
+fs.writeFileSync(moss377File, moss377Wrapped);
+fs.rmSync(path.join(drop377Content, 'scripts/npc/configs/dragons.npc'));
+assert.throws(() => extractDropFacts(drop377Content, dropItems, dropNpcs, 377), /missing content input scripts\/npc\/configs\/dragons\.npc/, '377 cannot fall back to legacy dragon config');
+fs.rmSync(drop377Content, { recursive: true });
 
 fs.rmSync(path.join(dropScripts, 'shared_droptables.rs2'));
 assert.throws(
@@ -1253,6 +1319,15 @@ assert.throws(
     /ambiguous joins Bronze scimitar/,
     'duplicate wieldable display names must fail closed at generate time',
 );
+const shortbow377 = equipmentItems.find(item => item.alias === 'shortbow')!;
+const ambiguous377Equipment = extractEquipmentNamesFacts(
+    [...equipmentItems, { ...shortbow377, id: 19000, alias: 'quest_shortbow' }],
+    new Map([...equipmentPack, ['quest_shortbow', 19000]]), undefined, 377,
+).bows.find(row => row.requested_name === 'Shortbow')!;
+assert.equal(ambiguous377Equipment.disposition, 'ambiguous');
+assert.equal(ambiguous377Equipment.id, undefined, '377 ambiguity does not invent a selected id');
+assert.equal(ambiguous377Equipment.alias, undefined, '377 ambiguity is not a silent preferred variant');
+assert.deepEqual(ambiguous377Equipment.candidates?.map(row => row.alias), ['shortbow', 'quest_shortbow']);
 assert.throws(
     () => extractEquipmentNamesFacts(equipmentItems, new Map([['shortbow', 999], ['black_dagger', 1217], ['deathdagger', 746], ['bronze_arrow', 882]])),
     /obj\.pack shortbow=999/,
@@ -1457,6 +1532,7 @@ try {
     fs.rmSync(gateContent, { recursive: true, force: true });
 }
 assert.deepEqual(requestedRevisions(['--revision', '289']), [289]);
+assert.deepEqual(requestedRevisions(['--revision', '377']), [377]);
 assert.throws(() => requestedRevisions(['--revision', '999']), /usage/);
 
 function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
@@ -2699,6 +2775,17 @@ function trioGiverRow(facts: TrioGiverFacts, alias: string) {
 const trioGiverExtract = extractTrioGiversFacts(trioGiverFixture());
 const trioGiverFacts = trioGiverExtract.facts;
 
+const trioGiver377Root = trioGiverFixture((files) => {
+    files['scripts/_unpack/377/all.npc'] = Object.values(TRIO_GIVER_CONFIGS).map(file => files[file]).join('\n');
+    for (const file of Object.values(TRIO_GIVER_CONFIGS)) delete files[file];
+});
+const trioGiver377 = extractTrioGiversFacts(trioGiver377Root, 377);
+assert.deepEqual(trioGiver377.facts, trioGiverFacts, '377 joins its actual unpacked NPC configs without legacy per-area paths');
+assert.deepEqual(trioGiver377.inputs.npc_configs.map(input => input.path), ['scripts/_unpack/377/all.npc'], 'the shared selected config is inventoried once');
+fs.rmSync(path.join(trioGiver377Root, 'scripts/_unpack/377/all.npc'));
+assert.throws(() => extractTrioGiversFacts(trioGiver377Root, 377), /all\.npc: required file missing/);
+fs.rmSync(trioGiver377Root, { recursive: true });
+
 // The closed set in file order: one row per giver, one packed id, one .npc name,
 // one world tile converted from the mapsquare filename and the local coordinates.
 assert.deepEqual(trioGiverFacts, {
@@ -3544,6 +3631,22 @@ for (const relative of [...BASE_ENGINE_INPUT_PATHS, ...DEBUG_ENGINE_INPUT_PATHS]
     fs.writeFileSync(file, `stub ${relative}\n`);
 }
 const baseContentFiles = baseContentFileList();
+const base377ContentFiles = baseContentFileList(377);
+for (const relative of [
+    'scripts/areas/area_falador/configs/dwarven_mine.inv',
+    'scripts/areas/area_falador/configs/dwarven_mine.npc',
+    'scripts/skill_runecraft/configs/runecraft.constant',
+    'maps/m45_75.jm2',
+    'scripts/quests/quest_murder/configs/quest_murder.loc',
+    'scripts/general/configs/quest.enum',
+    'maps/m42_55.jm2',
+]) {
+    assert.equal(base377ContentFiles.includes(relative), false, `${relative} belongs only to an omitted legacy route family`);
+    assert.ok(baseContentFiles.includes(relative), 'legacy route inputs remain unchanged');
+}
+for (const relative of ['pack/npc.pack', 'pack/loc.pack', 'pack/obj.pack']) {
+    assert.ok(base377ContentFiles.includes(relative), `${relative} remains a selected shared pack input`);
+}
 for (const relative of [
     'scripts/quests/quest_itexam/scripts/digsite_workman.rs2',
     'scripts/quests/quest_troll/scripts/troll_stronghold_camp_guard.rs2',
@@ -3954,6 +4057,17 @@ const noOverrides: readonly SiteOverride[] = [];
         /Luthas coin message\/grant disagree \(43\/44\)/,
         'the full-crate payout is the amount the content actually grants',
     );
+    write(luthasPath, luthasScript);
+    const legacyPlantation = path.join(content, 'scripts/areas/area_karamja/configs/plantation.loc');
+    const unpackedPlantation = 'scripts/_unpack/377/all.loc';
+    write(unpackedPlantation, fs.readFileSync(legacyPlantation, 'utf8'));
+    fs.rmSync(legacyPlantation);
+    const selected377 = extractKaramjaFacts(content, npcNames, locNames, npcPlacements, 377);
+    assert.deepEqual(selected377.facts, result.facts, '377 uses its actual unpacked loc configs without requiring a legacy plantation path');
+    assert.ok(selected377.inputs.some(input => input.path === unpackedPlantation));
+    assert.equal(selected377.inputs.some(input => input.path.endsWith('plantation.loc')), false);
+    fs.rmSync(path.join(content, unpackedPlantation));
+    assert.throws(() => extractKaramjaFacts(content, npcNames, locNames, npcPlacements, 377), /all\.loc: required file missing/);
 }
 
 // Overrides name, require or drop a published row by id: the id and region never change.
@@ -3989,6 +4103,26 @@ const noOverrides: readonly SiteOverride[] = [];
     assert.equal(ruleButtons.length, 14);
     assert.deepEqual(ruleButtons.map((row) => row.bit), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
     assert.equal(ruleButtons.find((row) => row.bit === 13)?.component, 7816);
+    const duel377Fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'duel-rules-377-'));
+    fs.mkdirSync(path.join(duel377Fixture, 'pack'), { recursive: true });
+    fs.mkdirSync(path.join(duel377Fixture, 'scripts/minigames/game_duelarena/configs'), { recursive: true });
+    fs.mkdirSync(path.join(duel377Fixture, 'scripts/minigames/game_duelarena/scripts'), { recursive: true });
+    const duel377Constants = path.join(duel377Fixture, 'scripts/minigames/game_duelarena/configs/duelarena.constant');
+    const duel377Settings = path.join(duel377Fixture, 'scripts/minigames/game_duelarena/scripts/duel_arena_settings.rs2');
+    fs.writeFileSync(path.join(duel377Fixture, 'pack/interface.pack'), '101=duel_select_type:no_forfeit\n113=duel_select_type:no_specs\n');
+    fs.writeFileSync(duel377Constants, '^no_forfeit = 0\n^no_specs = 13\n');
+    const selected377Settings = '[if_button,duel_select_type:no_forfeit]\n~toggle_duel_setting(^no_forfeit);\n[if_button,duel_select_type:no_specs]\n~toggle_duel_setting(^no_specs);\n[proc,toggle_duel_setting](int $setting)\n%dueloptions = togglebit(%dueloptions, $setting);\n';
+    fs.writeFileSync(duel377Settings, selected377Settings);
+    assert.deepEqual(extractDuelRuleButtons(duel377Fixture, 377), [{ bit: 0, component: 101 }, { bit: 13, component: 113 }], '377 emits only handler-proven rule buttons, retaining their selected bit positions');
+    assert.throws(() => extractDuelRuleButtons(duel377Fixture), /not the 14 known rules/, 'the legacy full-rule contract is unchanged');
+    fs.writeFileSync(duel377Settings, selected377Settings.replace('~toggle_duel_setting(^no_specs);', '~toggle_duel_setting(^no_forfeit);'));
+    assert.throws(() => extractDuelRuleButtons(duel377Fixture, 377), /no_specs handler does not toggle its named setting/);
+    fs.writeFileSync(duel377Settings, selected377Settings.replace('%dueloptions = togglebit(%dueloptions, $setting);', '%dueloptions = 0;'));
+    assert.throws(() => extractDuelRuleButtons(duel377Fixture, 377), /toggle proc does not toggle dueloptions/);
+    fs.writeFileSync(duel377Settings, selected377Settings);
+    fs.writeFileSync(duel377Constants, '^no_forfeit = 0\n^no_specs = 14\n');
+    assert.throws(() => extractDuelRuleButtons(duel377Fixture, 377), /invalid or duplicate bit/);
+    fs.rmSync(duel377Fixture, { recursive: true, force: true });
     const zones = extractDuelZones(root289);
     assert.equal(zones.pens.length, 6);
     assert.deepEqual([zones.pens[0]?.x1, zones.pens[0]?.z1, zones.pens[0]?.x2, zones.pens[0]?.z2], [3333, 3244, 3357, 3258]);
@@ -4007,12 +4141,12 @@ const noOverrides: readonly SiteOverride[] = [];
         [3202, 'rune_halberd'],
         [3204, 'dragon_halberd'],
     ]));
-    const halberdStrength = (id: number) => halberdTiers.find((row) => row.obj_id === id)?.strength;
+    const halberdStrength = (id: number) => halberdTiers.rows.find((row) => row.obj_id === id)?.strength;
     assert.equal(halberdStrength(3190), 1, 'bronze halberd tier1.rs2:17 gates strength 1');
     assert.equal(halberdStrength(3200), 15, 'adamant halberd tier30.rs2:17 gates strength 15');
     assert.equal(halberdStrength(3202), 20, 'rune halberd tier40.rs2:17 gates strength 20');
     assert.deepEqual(
-        halberdTiers.find((row) => row.obj_id === 3204),
+        halberdTiers.rows.find((row) => row.obj_id === 3204),
         { obj_id: 3204, tier: 60, quest_gated: true, strength: 30 },
         'dragon halberd tier60.rs2:10 gates attack 60 and strength 30 behind the quest',
     );
@@ -4030,6 +4164,31 @@ const noOverrides: readonly SiteOverride[] = [];
         /missing the strength level/,
         'a one-argument strength gate throws',
     );
+    const tier377Fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'melee-tier-377-'));
+    fs.mkdirSync(path.join(tier377Fixture, 'scripts/levelrequire/scripts'), { recursive: true });
+    for (const tier of [1, 5, 10, 20, 30, 40, 45, 50, 60, 70]) {
+        fs.writeFileSync(path.join(tier377Fixture, `scripts/levelrequire/scripts/tier${tier}.rs2`), '// no fixture gate\n');
+    }
+    const direct377Gate = '[opheld2,literal_maul]\nif (stat_base(attack) < 51 | stat_base(strength) < 49) {\nmes("Requirements not met.");\nreturn;\n}\n~equip(last_slot);\n';
+    const direct377File = path.join(tier377Fixture, 'scripts/levelrequire/scripts/tier50.rs2');
+    fs.writeFileSync(direct377File, direct377Gate
+        + '[opheld2,slayer_spear]\nif (stat_base(slayer) < 55 | stat_base(attack) < 50) {\nmes("Requirements not met.");\nreturn;\n}\n~equip(last_slot);\n');
+    fs.writeFileSync(path.join(tier377Fixture, 'scripts/levelrequire/scripts/tier60.rs2'), '[opheld2,quest_scimitar] @levelrequire_mm_quest_attack(61, last_slot);\n');
+    fs.writeFileSync(path.join(tier377Fixture, 'scripts/levelrequire/scripts/tier70.rs2'), '[opheld2,paired_hammers] @levelrequire_attack_and_strength2(71, last_slot);\n');
+    const tier377Styles = [1, 2, 3, 4, 5].map(obj_id => ({ obj_id, category: 0 }));
+    const tier377Aliases = new Map([[1, 'literal_maul'], [2, 'slayer_spear'], [3, 'quest_scimitar'], [4, 'paired_hammers'], [5, 'unproved']]);
+    const tiers377 = extractMeleeWeaponTiers(tier377Fixture, tier377Styles, tier377Aliases, 377);
+    assert.deepEqual(tiers377.rows, [
+        { obj_id: 1, tier: 51, quest_gated: false, strength: 49 },
+        { obj_id: 3, tier: 61, quest_gated: true, strength: 0 },
+        { obj_id: 4, tier: 71, quest_gated: false, strength: 71 },
+    ], '377 direct, quest and same-level attack/strength gates derive their selected operands');
+    assert.deepEqual(tiers377.unknown.map(row => row.alias), ['slayer_spear', 'unproved'], 'unsupported skills and missing gates do not acquire a false tier-0 or complete eligibility claim');
+    fs.writeFileSync(direct377File, direct377Gate.replace('return;', 'mes("No refusal.");'));
+    assert.equal(extractMeleeWeaponTiers(tier377Fixture, tier377Styles, tier377Aliases, 377).rows.some(row => row.obj_id === 1), false, 'a missing refusal does not prove a wield requirement');
+    fs.writeFileSync(direct377File, direct377Gate.replace('stat_base(attack) < 51', 'stat_base(attack) > 51'));
+    assert.equal(extractMeleeWeaponTiers(tier377Fixture, tier377Styles, tier377Aliases, 377).rows.some(row => row.obj_id === 1), false, 'an inverted condition is not a minimum tier');
+    fs.rmSync(tier377Fixture, { recursive: true, force: true });
     // An unknown specwep obj (no §6.1 row) fails closed instead of emitting
     // an untyped fact.
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pvp-facts-fixture-'));
@@ -4060,6 +4219,97 @@ const noOverrides: readonly SiteOverride[] = [];
         { id: 2, params: new Map() },
     ]);
     assert.deepEqual(bonus, [], 'sa_energy is not a worn combat bonus');
+}
+
+{
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'cook-surfaces-377-'));
+    const files = {
+        'scripts/skill_cooking/scripts/cooking.rs2': '[oplocu,_cooking_oven] @attempt_cook_item(last_useitem);\n[oplocu,_cooking_fire]\n@attempt_cook_item(last_useitem);\n',
+        'scripts/test.loc': '[new_oven]\nname=Selected oven\ncategory=cooking_oven\n[new_fire]\nname=Selected fire\ncategory=cooking_fire\n[legacy_name_only]\nname=Range\n',
+        'pack/loc.pack': '700=new_oven\n701=new_fire\n702=legacy_name_only\n',
+        'maps/m50_50.jm2': '==== LOC ====\n0 1 2: 700\n0 3 4: 701\n0 5 6: 702\n',
+    };
+    for (const [relative, text] of Object.entries(files)) {
+        fs.mkdirSync(path.dirname(path.join(content, relative)), { recursive: true });
+        fs.writeFileSync(path.join(content, relative), text);
+    }
+    execFileSync('git', ['init', '-q'], { cwd: content });
+    execFileSync('git', ['add', '-A'], { cwd: content });
+    const selected = extractCookSurfaces(content, undefined, 377);
+    assert.deepEqual(selected.facts.rows, [
+        { x: 3201, z: 3202, level: 0, name: 'Selected oven', debugname: 'new_oven', kind: 'oven' },
+        { x: 3203, z: 3204, level: 0, name: 'Selected fire', debugname: 'new_fire', kind: 'fire' },
+    ], '377 kinds and identities derive from selected categories, not frozen aliases or display names');
+    assert.equal(selected.inputs.handlers?.[0].path, 'scripts/skill_cooking/scripts/cooking.rs2');
+    fs.writeFileSync(path.join(content, 'scripts/skill_cooking/scripts/cooking.rs2'), '[oplocu,_cooking_fire] @attempt_cook_item(last_useitem);\n');
+    assert.throws(() => extractCookSurfaces(content, undefined, 377), /cooking_oven cooking handler is not derived/);
+    fs.rmSync(content, { recursive: true });
+}
+
+// The real 377 selected corpus exercises the same source joins, never the
+// 274/289 identity/count/coordinate pins. Optional only for legacy-only runs.
+if (process.env.GAME_DATA_377_CONTENT) {
+    const spec377 = revisions.find(spec => spec.revision === 377)!;
+    const payload = JSON.parse(fs.readFileSync(spec377.output, 'utf8'));
+    const selectedItems = pinDecodedItems(377);
+    assert.equal(payload.revision, 377);
+    assert.equal(payload.provenance.engine_commit, spec377.expectedEngine);
+    assert.equal(payload.provenance.content_commit, spec377.expectedContent);
+    assert.deepEqual(payload.provenance.cache_identity, spec377.cacheIdentity);
+    assert.deepEqual(payload.prayers, extractPrayerFacts(spec377.content, 377).prayers);
+    // GAME_DATA_377_ENGINE selects the checkout at runtime; a static import would bind another corpus.
+    const selectedObjectModule: { default: { load(dir: string): void; configs: Parameters<typeof extractTrailFacts>[1] } } = await import(pathToFileURL(path.join(spec377.engine, 'src/cache/config/ObjType.ts')).href);
+    selectedObjectModule.default.load(path.join(spec377.engine, 'data/pack'));
+    const decoded377Items = selectedObjectModule.default.configs;
+    assert.deepEqual(payload.trails, extractTrailFacts(spec377.content, decoded377Items, 377));
+    const overriddenChallenge = 'trail_clue_medium_anagram003_challenge';
+    assert.equal(payload.trails.challenge_answers.find((row: { alias: string }) => row.alias === overriddenChallenge)?.answer, '40', '377 answer follows the actual decoded parameter override, not the earlier raw 32');
+    const challengeItem = decoded377Items.find(item => item.debugname === overriddenChallenge)!;
+    const answerParamId = parsePack(fs.readFileSync(path.join(spec377.content, 'pack/param.pack'), 'utf8')).get('trail_challenge_answer')!;
+    const originalParams = challengeItem.params;
+    try {
+        challengeItem.params = new Map(originalParams);
+        challengeItem.params.set(answerParamId, -1);
+        assert.throws(() => extractTrailFacts(spec377.content, decoded377Items, 377), /decoded trail_challenge_answer does not match selected source params/, 'a mismatched decoded value cannot become a selected answer');
+    } finally {
+        challengeItem.params = originalParams;
+    }
+    assert.equal(payload.trails.rows.some((row: { access?: string }) => row.access !== undefined), false, '377 must not inherit the 289 constrained-clue annotation');
+    assert.deepEqual(payload.talk_key, extractTalkKeyFacts(spec377.content, selectedItems).facts);
+    assert.deepEqual(payload.trio_givers, extractTrioGiversFacts(spec377.content, 377).facts);
+    assert.deepEqual(payload.quest_identity, extractQuestIdentityFacts(spec377.content, 377));
+    assert.deepEqual(payload.quest_starts, extractQuestStartFacts(spec377.content, payload.quest_identity.rows, 377, spec377.cacheIdentity.content_id!));
+    assert.deepEqual(payload.teleports, extractTeleportSpells(spec377.content, selectedItems));
+    const magic377 = extractMagicFacts(spec377.content, selectedItems);
+    assert.deepEqual(payload.spells, magic377.spells);
+    assert.deepEqual(payload.staves, magic377.staves);
+    assert.deepEqual(payload.herbs, extractHerbFacts(spec377.content, selectedItems, 377).herbs);
+    const equipment377 = extractEquipmentNamesFacts(payload.items, parsePack(fs.readFileSync(path.join(spec377.content, 'pack/obj.pack'), 'utf8')), repoRoot, 377);
+    assert.deepEqual(payload.equipment_names, JSON.parse(JSON.stringify(equipment377)), 'the wire omits undefined optional metadata');
+    assert.deepEqual(payload.cook_surfaces, extractCookSurfaces(spec377.content, undefined, 377).facts);
+    assert.equal('catalog' in payload.provenance.cook_inputs, false, '377 does not inherit frozen camp/stand inputs');
+    const aliases377 = new Map<number, string>();
+    for (const item of payload.items) if (typeof item.alias === 'string') aliases377.set(item.id, item.alias);
+    const tiers377 = extractMeleeWeaponTiers(spec377.content, payload.weapon_styles, aliases377, 377);
+    assert.deepEqual(payload.melee_weapon_tiers, tiers377.rows);
+    assert.ok(tiers377.unknown.length > 0 && payload.coverage.some((row: { family: string }) => row.family === 'melee_weapon_tiers'), 'unproved 377 melee gates need named UNKNOWN coverage');
+    const ruleButtons377 = new Map(extractDuelRuleButtons(spec377.content, 377).map(row => [row.bit, row.component]));
+    assert.deepEqual(payload.duel.rule_buttons, Array.from({ length: 14 }, (_, bit) => ruleButtons377.get(bit) ?? 0), 'absent selected rule handlers retain unavailable slots, not legacy components');
+    assert.deepEqual(payload.duel.rule_buttons.flatMap((id: number, bit: number) => id === 0 ? [bit] : []), [2, 3, 11]);
+    assert.throws(() => extractDialogueUiFacts(spec377.content), /quest completion does not open the authored quest scroll in both branches/, '377 must not weaken the single-common-root proof or select just one completion branch');
+    for (const family of ['autocast', 'special', 'special_weapons', 'nurmof_essence', 'flour_six', 'dialogue_ui', 'server_ordered']) {
+        assert.equal(family in payload, false, `${family}: no legacy facts may be substituted on 377`);
+        assert.ok(payload.coverage.some((row: { family: string; status: string; reason: string }) => row.family === family && row.status === 'UNKNOWN' && row.reason.length > 0), `${family}: omitted family needs named UNKNOWN coverage`);
+    }
+    const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'crates/api/data/game-data/manifest.json'), 'utf8'));
+    const manifest377 = manifest.revisions.find((row: { revision: number }) => row.revision === 377);
+    assert.ok(manifest377);
+    assert.equal(manifest377.sha256, sha256(spec377.output).sha256);
+    for (const family of ['gathering', 'quests', 'debug']) {
+        const descriptor = manifest377.families[family];
+        const artifact = path.join(path.dirname(spec377.output), descriptor.path);
+        assert.deepEqual({ bytes: descriptor.bytes, sha256: descriptor.sha256 }, sha256(artifact), `${family}: exact 377 family bytes`);
+    }
 }
 
 console.log('generate fixture passed');

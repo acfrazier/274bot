@@ -63,3 +63,27 @@ fn in_memory_hash_matches_streamed_file_hash_without_early_completion() {
         .iter()
         .all(|(completed, total)| completed < total));
 }
+
+#[test]
+fn revision_377_cache_capture_keeps_revision_and_archive_checks() {
+    use super::CacheManifest;
+
+    let root = std::env::temp_dir().join(format!(
+        "274bot-nav-cache-377-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    for name in CacheManifest::ARCHIVES {
+        std::fs::write(root.join(name), name.as_bytes()).unwrap();
+    }
+    let manifest = CacheManifest::capture(377, &root).unwrap();
+    assert_eq!(manifest.revision, 377);
+    assert_eq!(manifest.archives.len(), CacheManifest::ARCHIVES.len());
+    manifest.verify(377, &root).unwrap();
+    assert!(manifest.verify(289, &root).is_err());
+    assert!(CacheManifest::capture(378, &root).is_err());
+    std::fs::write(root.join("config"), b"different").unwrap();
+    assert!(manifest.verify(377, &root).is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}

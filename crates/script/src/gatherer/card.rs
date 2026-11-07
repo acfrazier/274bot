@@ -218,7 +218,25 @@ mod tests {
         location: &str,
         disposition: &str,
     ) -> Arc<PreparedConfig> {
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        prepared_revision_site(
+            api::selected::ClientRevision::R289,
+            skill,
+            resource,
+            site,
+            location,
+            disposition,
+        )
+    }
+
+    fn prepared_revision_site(
+        revision: api::selected::ClientRevision,
+        skill: &str,
+        resource: &str,
+        site: &str,
+        location: &str,
+        disposition: &str,
+    ) -> Arc<PreparedConfig> {
+        let selected = api::game_data::for_revision(revision).unwrap();
         let mut bag = SettingsBag::new();
         bag.insert("disposition".into(), json!(disposition));
         bag.insert("skill".into(), json!(skill));
@@ -354,5 +372,89 @@ mod tests {
             session: 1,
         };
         assert!(create(power_run, power_config, &mut RetainedMemory::default()).is_ok());
+    }
+
+    #[test]
+    fn revision_377_prepares_its_own_tree_and_net_sites_for_banking() {
+        for (skill, resource, site, method, products) in [
+            (
+                "Woodcutting",
+                "normal",
+                "woodcutting.lumbridge",
+                "woodcutting.normal",
+                &[1511][..],
+            ),
+            (
+                "Fishing",
+                "fishing.net.tool_303.products_317_321",
+                "fishing.draynor_village",
+                "fishing.saltfish.op1",
+                &[317, 321][..],
+            ),
+        ] {
+            let config = prepared_revision_site(
+                api::selected::ClientRevision::R377,
+                skill,
+                resource,
+                site,
+                "Site",
+                "Bank",
+            );
+            let prepared = config.get::<Arc<Prepared>>().unwrap();
+            assert_eq!(prepared.selected.revision(), 377);
+            assert_eq!(
+                prepared.catalog.pin().revision,
+                api::selected::ClientRevision::R377
+            );
+            assert!(prepared.resource_error.is_none());
+            assert!(prepared.site_error.is_none());
+            assert_eq!(prepared.site().unwrap().id, site);
+            assert_eq!(prepared.products.as_ref(), products);
+            assert_eq!(prepared.methods.len(), 1);
+            assert_eq!(
+                prepared.catalog.methods()[prepared.methods[0]]
+                    .id
+                    .0
+                    .as_ref(),
+                method
+            );
+            assert!(create(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                config,
+                &mut RetainedMemory::default(),
+            )
+            .is_ok());
+        }
+    }
+
+    #[test]
+    fn revision_377_refuses_a_site_without_the_selected_resource() {
+        let config = prepared_revision_site(
+            api::selected::ClientRevision::R377,
+            "Mining",
+            "runite",
+            "mining.varrock_east.se",
+            "Site",
+            "Bank",
+        );
+        let prepared = config.get::<Arc<Prepared>>().unwrap();
+        assert!(prepared.site().is_none());
+        assert!(prepared.site_error.is_some());
+        assert!(matches!(
+            create(
+                RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                config,
+                &mut RetainedMemory::default(),
+            ),
+            Err(StartError::Config(error)) if error.field.as_ref() == "site"
+        ));
     }
 }

@@ -898,7 +898,7 @@ impl ProfileSelection {
                         });
                     }
                     return Err(format!(
-                        "navigation/profile mismatch: revision 289 requires {} (prepare in step 5)",
+                        "navigation/profile mismatch: revision {revision} requires {} (prepare in step 5)",
                         manifest_path.display()
                     ));
                 }

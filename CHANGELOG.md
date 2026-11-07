@@ -5,7 +5,131 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ## Unreleased
 
+### Content harness
+
+- Add selected revision-377 journal reads for Cook's Assistant, Sheep Shearer,
+  Rune Mysteries and Romeo & Juliet. Reads validate the selected pin, quest
+  button, title and all 100 ordered body fragments. Missing tables fail closed.
+- Add source-mapped revision-377 Paths for Sheep Shearer, Rune Mysteries and
+  Romeo & Juliet, including journal-based intermediate-state recovery.
+- Revision-377 NPC snapshots use the current varbit/varp-selected form's
+  name, menu actions and combat level, while retaining the placed type and
+  size. Null forms expose no menu or level. Quester can defer unnamed 377
+  talk roots to that observed menu; it never substitutes a static leaf target.
+  Roots with declared operations must still offer Talk-to; Reldo's missing
+  static name does not force a leaf substitution.
+  Revision 274/289 is unchanged.
+- Prepare the revision-377 Rune Mysteries live witness with a labelled,
+  observed combat-only area fixture and food before Start. Retain combat
+  stats and nearby NPC targets in its evidence; leave quest state, items,
+  Runecrafting XP and quest points to the native Path and content.
+- Revision-377 Rune Mysteries lost-talisman recovery selects the Duke's
+  quest branch instead of the default money dialogue.
+- Revision-377 Sheep Shearer uses all five shearable sheep in Fred's field
+  and selects the wool hand-in even after the account has seen The Thing.
+  Romeo & Juliet delivers Juliet's message without an unnecessary recovery
+  trip when the message has been lost.
+- Add the bespoke revision-377 `cook_377` scenario and a fresh-account live
+  witness. Ingredients come from world interactions. Completion, Cooking XP
+  and quest points must come from Fairy Ring's product scripts.
+- Revision-377 location snapshots now expose the current multiloc name,
+  actions and size, while retaining the placed interaction ID. Varp updates
+  refresh these forms. Revision-274/289 location views are unchanged.
+
+### Game data
+
+- The API can select revision 377 data generated from the pinned Fairy Ring
+  engine, content and cache. Gathering, quest and debug assets keep independent
+  identity checks. Unproved 289-only controls and tactics remain unavailable;
+  they are not copied into the 377 data.
+- Revision 377 generated-input pins now come from a fresh engine/content
+  build, without inherited generated IDs. Regeneration requires clean-checkout
+  pack outputs and a navigation rebake before the final identity binding.
+- Shop lookups now report revision-377 facts as unavailable instead of
+  returning legacy revision-289 stock, price or keeper values.
+
+### Navigation
+
+- Price revision-377 Wizard's Tower stairs from their direct teleport
+  handlers, retaining all four up/down links and excluding the choice menu.
+  Revision-274/289 transport names and costs are unchanged.
+- Revision 377's packed-name door admission now requires a closed category
+  for named configs. The refused Black Knights' Fortress doors no longer
+  create crossings. Numeric 274/289 declarations remain unchanged.
+- Quester checks the selected pin before revision admission, preserving the
+  revision-274/289 pin-mismatch error precedence.
+- Revision 377 cache manifests now pass the navigation identity checks.
+  Revision mismatches and changed archive bytes still fail.
+- Route-admission inputs now use the navigation world's selected food, prayer,
+  shield and threat facts. Unavailable 377 bindings remain unavailable rather
+  than reading revision-289 rows.
+  Prayer cleanup also reads the revision-377 driver's prayer rows.
+- The existing navigation baker accepts explicit revision 377 inputs and
+  reads their config through the revision-377 decoder. The pack format
+  remains version 17.
+- Revision 377's named Lumbridge stair handlers retain their script-derived
+  landings and one-tick cost. An explicit real-pack qualification covers
+  city routes, bidirectional doors, stairs and the Port Sarim ship journey.
+- An offline quest-family bake verifies the actual core, manifest, family
+  bytes and source provenance before navigation exists. Runtime selected pins
+  still require the final real navigation and flags digests.
+- Source-derived service POI sidecars accept explicit revision 377 packs.
+  Client-derived image/catalogue jobs keep their existing decoder admission,
+  and sidecar revision and digest mismatches still fail.
+- Revision 377 boat starts admit multiple selected-map NPC spawns when
+  their script rules select the same journey, restoring Brimhaven to
+  Ardougne. Missing spawns and conflicting journey branches remain refused.
+- Native door traversal uses the revision-377 client's movement encoder for
+  the one-tile step after opening a door. Other revisions keep their existing
+  packet path.
+- Revision 377 navigation resolves named door and gate configs through its
+  packed loc names, including open-stage IDs. This restores the Lumbridge
+  wheat-field gate crossings. Revision-274/289 parsing is unchanged.
+
+### Host
+
+- Adds explicit `local-377` host selection with revision-specific strict
+  cache decoding and bundled navigation admission. Other revision defaults
+  and all navigation digest/provenance checks stay unchanged.
+- Adds the `client_377` direct-walk and Hans interaction proof scenario.
+- Updates the revision-377 client dependency to the reviewed bank-operation
+  ports, including inventory buttons, drag and amount prompts.
+- Survival and walk guards use the world's selected combat and consumption
+  facts. Revision 377 no longer inherits revision-289 guard tables.
+- Adds finite revision-377 native cow combat and loot, food and antipoison
+  witnesses, plus individual Hans clue handoffs. Each cell discloses its
+  pre-Start account fixtures and records real rendered frames.
+
+### Quester
+
+- Revision-377 Doric's Quest mines its clay and copper at Rimmington rather
+  than waiting for roaming imps to drop clay. Iron still comes from dwarves,
+  without requiring Mining level 15. Imp Catcher's hunting area now includes
+  the source-defined imp wandering and teleport range.
+
+- Adds revision-377 Quester admission and a source-backed Cook's Assistant
+  guide. It uses the selected revision's Path roster and game data. Missing
+  tables refuse explicitly; revision-289 guides do not fill revision-377 gaps.
+- The native Cook witness starts with no ingredients or quest progress and
+  checks the server's completion state, Cooking XP and quest points. It requires
+  the native host's matching completed-run receipt, not a transient status row.
+- The 377 Cook guide targets the placed mill-base identity while using the
+  current flour-bin face's Empty action; it does not target a morph leaf ID.
+
+- Adds a source-backed revision-377 Knight's Sword Path with palace pie
+  acquisition, a naturally dropped iron-bar fallback, and documented cave
+  resources. Its fresh-account witness seeds only Mining 10 and Cooking 10
+  beyond the common combat fixture; Smithing starts at level 1 / 0 XP and
+  must gain exactly 12,725 XP. The revision-289 Path remains unchanged.
+
 ### Gatherer
+
+- Adds revision-377 Gatherer preparation checks and real-resource bank-trip
+  qualification for Lumbridge normal trees and Draynor shrimp. The live cells
+  use selected 377 sites, the Draynor bank and the production template.
+  They require banked products and fresh gathering after the return.
+  The Draynor fishing fixture seeds Defence 60 before Start and waits for
+  combat level 18. It does not enable dangerous-zone access.
 
 - After a death, the Gatherer no longer stops on the first blocked step of its
   way back to the resource area. It plans that return again once, as on a

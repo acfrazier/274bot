@@ -53,18 +53,28 @@ pub(super) fn report_walk(
 
 /// The next walk-hop target: the leg's last tile when it is within ~20
 /// tiles, otherwise a tile ~15 steps ahead of the player (or the last
-/// uncleared tile when the leg is shorter), so each hop re-routes a fresh
-/// short path and never aims back toward the leg start.
-pub(super) fn pick_aim(tiles: &[WorldTile], here: WorldTile, cursor: usize) -> (WorldTile, usize) {
+/// uncleared tile when the leg is shorter). On 377 the endpoint must also
+/// be within 20 packed-route steps: a folded leg can have a nearby endpoint
+/// whose local path would exhaust one finite hop budget.
+pub(super) fn pick_aim(
+    tiles: &[WorldTile],
+    here: WorldTile,
+    cursor: usize,
+    revision: client::io::ClientRevision,
+) -> (WorldTile, usize) {
     let last = *tiles.last().expect("walk legs are non-empty");
-    if cheb(here, last) <= 20 {
+    let near_end = cheb(here, last) <= 20;
+    if near_end && revision != client::io::ClientRevision::R377 {
+        return (last, tiles.len() - 1);
+    }
+    let base = tiles
+        .iter()
+        .position(|t| *t == here)
+        .filter(|&i| i >= cursor)
+        .unwrap_or(cursor);
+    if near_end && tiles.len() - 1 - base <= 20 {
         (last, tiles.len() - 1)
     } else {
-        let base = tiles
-            .iter()
-            .position(|t| *t == here)
-            .filter(|&i| i >= cursor)
-            .unwrap_or(cursor);
         let idx = (base + 15).min(tiles.len() - 1).max(base + 1);
         (tiles[idx], idx)
     }
@@ -77,8 +87,9 @@ pub(super) fn pick_aim_in_scene(
     here: WorldTile,
     cursor: usize,
     scene: &api::snapshot::SceneView,
+    revision: client::io::ClientRevision,
 ) -> (WorldTile, usize) {
-    let (aim, mut idx) = pick_aim(tiles, here, cursor);
+    let (aim, mut idx) = pick_aim(tiles, here, cursor, revision);
     if tile_in_scene(scene, aim) {
         return (aim, idx);
     }
@@ -402,7 +413,8 @@ impl FollowRun {
             .position(|t| *t == here)
             .filter(|&i| i >= hop.cursor)
             .unwrap_or(hop.cursor);
-        let (mut aim, mut idx) = pick_aim_in_scene(tiles, here, hop.cursor, snapshot.scene());
+        let (mut aim, mut idx) =
+            pick_aim_in_scene(tiles, here, hop.cursor, snapshot.scene(), d.revision());
         loop {
             if aim == here {
                 (hop.end_refused_ticks, hop.end_refused_last_tick) = refused;

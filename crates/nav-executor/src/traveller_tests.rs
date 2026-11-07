@@ -6,7 +6,7 @@ use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
 use client::config::if_type::{ButtonType, ComponentType};
 use client::config::{IfType, IfTypeMut, LocType, NpcType, ObjType};
 use client::dash3d::ClientNpc;
-use client::io::{ClientStream, ServerProt};
+use client::io::{ClientRevision, ClientStream, ServerProt};
 use std::sync::Arc;
 
 use crate::traveller::{
@@ -1069,6 +1069,59 @@ fn current_aim_is_none_idle_and_the_walk_hop_aim_in_follow() {
         }),
         "the walk hop's aim is the leg's last tile"
     );
+}
+
+#[test]
+fn revision_377_bounds_folded_walk_hops_without_changing_legacy_targets() {
+    // The endpoint is ten tiles away, but a fence makes the packed walk
+    // seventy steps long. Clicking its endpoint must not spend one finite
+    // hop budget walking the entire detour on 377.
+    let coords: Vec<_> = (0..=30)
+        .map(|z| (3200, 3200 + z))
+        .chain((1..=10).map(|x| (3200 + x, 3230)))
+        .chain((0..30).rev().map(|z| (3210, 3200 + z)))
+        .collect();
+    let dest = WorldTile {
+        x: 3210,
+        z: 3200,
+        level: 0,
+    };
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        let mut c = scene_client();
+        let snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            revision: Some(revision),
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut traveller = Traveller::new();
+        let mut options = TravelOptions::default();
+        let route = Route {
+            legs: vec![walk_leg(&coords)],
+            dest,
+            ticks: 35.0,
+        };
+        assert!(traveller
+            .follow(&mut rec, &snap, route, &mut options)
+            .is_none());
+        let aim = traveller.current_aim().expect("the first hop was sent");
+        if revision == ClientRevision::R377 {
+            let index = coords
+                .iter()
+                .position(|&(x, z)| (x, z) == (aim.x, aim.z))
+                .expect("the hop remains on the packed route");
+            assert!(
+                index <= 20,
+                "377 must bound route distance, not just straight-line distance: {index}"
+            );
+        } else {
+            assert_eq!(aim, dest, "{revision:?} preserves its endpoint shortcut");
+        }
+    }
 }
 
 #[test]
@@ -7779,10 +7832,15 @@ struct FollowRec {
     reject_to: Option<(i32, i32)>,
     route: Option<(i32, i32)>,
     build_base: Option<(i32, i32)>,
+    revision: Option<ClientRevision>,
     sink: Sink,
 }
 
 impl Driver for FollowRec {
+    fn revision(&self) -> ClientRevision {
+        self.revision.unwrap_or(ClientRevision::R274)
+    }
+
     fn set_menu(&mut self, _slot: i32, action: i32, _a: i32, _b: i32, _c: i32) {
         match action {
             MiniMenuAction::OP_LOC1 => self.loc_ops += 1,
@@ -8086,7 +8144,7 @@ fn pick_aim_in_scene_clips_a_hop_that_would_leave_the_104() {
         height: 104,
         collision_flags: vec![],
     };
-    let (aim, _) = super::pick_aim_in_scene(&tiles, here, 0, &scene);
+    let (aim, _) = super::pick_aim_in_scene(&tiles, here, 0, &scene, ClientRevision::R274);
     let lz = aim.z - scene.base_z;
     assert!(
         (0..104).contains(&lz),

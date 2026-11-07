@@ -83,8 +83,10 @@ unchanged, while a present empty vector clears it.
 as `CombatView` (`in_combat`, `target`); it is unready without a local player.
 
 `PlayerView.headicons` carries the client's appearance bitmask unchanged for
-local and remote players. Bits 3, 4, and 5 denote protect melee, missiles,
-and magic.
+local and remote players on 274/289 only. Bits 3, 4, and 5 denote protect
+melee, missiles, and magic. That legacy bitmask claim does not extend to 377:
+on 377 `PlayerView.headicons` is 0, and the snapshot does not expose separate
+client `pk_icon_377`/`prayer_icon_377` fields (or any other headicon field).
 
 `NpcView` retains the packed NPC type id; matching
 `SelectedGameData::npc_name(id).headicon` is the optional headicon fact

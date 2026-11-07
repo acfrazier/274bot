@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "npc_377.rs"]
+mod npc_377;
+
 impl NpcView {
     fn from_slot(
         index: usize,
@@ -8,17 +11,30 @@ impl NpcView {
         level: i32,
         distance: i32,
         loop_cycle: i32,
-        cache: &Cache,
+        client: &Client,
     ) -> Self {
         let entity = &npc.entity;
-        let (name, actions, npc_level, size) = match npc.r#type.and_then(|t| cache.npcs.get(t)) {
-            Some(t) => (
-                Some(t.name.clone()),
-                t.op.clone(),
-                t.vislevel.max(0),
-                t.size,
-            ),
-            None => (None, Vec::new(), 0, entity.size),
+        let cache = &client.cache;
+        let placed = npc.r#type.and_then(|id| cache.npcs.get(id));
+        let is_377 = client.revision() == client::io::ClientRevision::R377;
+        let form = if is_377 {
+            npc.r#type.and_then(|id| npc_377::menu_form(client, id))
+        } else {
+            placed
+        };
+        let (name, actions) = match form {
+            Some(form) => (Some(form.name.clone()), form.op.clone()),
+            None => (None, Vec::new()),
+        };
+        let (npc_level, size) = if is_377 {
+            (
+                form.map(|form| form.vislevel.max(0)).unwrap_or(0),
+                placed.map(|placed| placed.size).unwrap_or(entity.size),
+            )
+        } else {
+            placed
+                .map(|placed| (placed.vislevel.max(0), placed.size))
+                .unwrap_or((0, entity.size))
         };
         NpcView {
             index,
@@ -152,7 +168,7 @@ impl GameSnapshot {
                 ),
                 combat_level: lp.combat_level,
                 skill_level: lp.skill_level,
-                headicons: lp.headicons,
+                headicons: i32::from(lp.headicons),
                 weapon: player_weapon(&lp.appearance),
             },
             energy: client.runenergy,
@@ -188,7 +204,7 @@ impl GameSnapshot {
                     ),
                     combat_level: player.combat_level,
                     skill_level: player.skill_level,
-                    headicons: player.headicons,
+                    headicons: i32::from(player.headicons),
                     weapon: player_weapon(&player.appearance),
                 });
             }
@@ -1160,12 +1176,21 @@ impl GameSnapshot {
     /// gate leaves nav reading the previous build's door or flax.
     pub(super) fn rebuild_loc(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.loc_gen);
+        let morph_changed = client.revision() == client::io::ClientRevision::R377
+            && track(client.gens.varp, &mut self.loc_varp_gen);
         let standalone = self.loc_bits_prelude.is_none();
         let (stamp, static_gen) = self.loc_bits(client);
-        if !moved && stamp == self.loc_model_stamp && static_gen == self.loc_static_gen {
+        if !moved
+            && !morph_changed
+            && stamp == self.loc_model_stamp
+            && static_gen == self.loc_static_gen
+        {
             return false;
         }
-        let dirty = moved || stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
+        let dirty = moved
+            || morph_changed
+            || stamp != self.loc_model_stamp
+            || static_gen != self.loc_static_gen;
         self.loc_model_stamp = stamp;
         self.loc_static_gen = static_gen;
         if standalone && client.ingame && client.scene_state == 2 {
@@ -1189,7 +1214,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(sprite) = client.world.get_scene(level, sx, sz) {
@@ -1202,7 +1227,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(gd) = client.world.get_gd(level, sx, sz) {
@@ -1215,7 +1240,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
                 if let Some(decor) = client.world.get_decor(level, sx, sz) {
@@ -1228,7 +1253,7 @@ impl GameSnapshot {
                         sx,
                         sz,
                         local_tile,
-                        &client.cache,
+                        client,
                     ));
                 }
             }
@@ -1326,10 +1351,12 @@ impl GameSnapshot {
     }
 
     pub(super) fn rebuild_npcs(&mut self, client: &Client) -> bool {
-        if client.gens.npc == self.gens.npc {
+        let morph_changed = client.revision() == client::io::ClientRevision::R377
+            && track(client.gens.varp, &mut self.npc_varp_gen);
+        let moved = track(client.gens.npc, &mut self.gens.npc);
+        if !moved && !morph_changed {
             return false;
         }
-        self.gens.npc = client.gens.npc;
         self.npc.clear();
         self.npc.reserve(client.npc_count as usize);
         let base = (client.map_build_base_x, client.map_build_base_z);
@@ -1349,7 +1376,7 @@ impl GameSnapshot {
                     level,
                     distance,
                     client.loop_cycle,
-                    &client.cache,
+                    client,
                 ));
             }
         }
@@ -1528,17 +1555,31 @@ fn loc_view(
     sx: i32,
     sz: i32,
     local_tile: Option<(i32, i32)>,
-    cache: &Cache,
+    client: &Client,
 ) -> LocView {
     let id = (typecode >> 14) & 0x7fff;
     let shape = info & 0x1f;
     let angle = (info >> 6) & 0x3;
     let x = base.0 + sx;
     let z = base.1 + sz;
+    let base_loc = client.cache.locs.get(id as usize);
+    // Java 377 Client:4133-4176 resolves only menu text/options (including
+    // the Examine target). Routing keeps the base size/forceapproach at
+    // Client:6979-6993; World:795-858 keeps base placement/collision/anim.
+    let display_loc = if client.revision() == client::io::ClientRevision::R377 {
+        client.cache.resolve_loc(id as usize, &client.var)
+    } else {
+        base_loc
+    };
+    let (name, description, actions) = match display_loc {
+        Some(loc) => (
+            (!loc.name.is_empty()).then(|| loc.name.clone()),
+            (!loc.desc.is_empty()).then(|| loc.desc.clone()),
+            loc.op.clone(),
+        ),
+        None => (None, None, Vec::new()),
+    };
     let (
-        name,
-        description,
-        actions,
         width,
         length,
         block_walk,
@@ -1548,11 +1589,8 @@ fn loc_view(
         map_function,
         map_scene,
         force_approach,
-    ) = match cache.locs.get(id as usize) {
+    ) = match base_loc {
         Some(loc) => (
-            (!loc.name.is_empty()).then(|| loc.name.clone()),
-            (!loc.desc.is_empty()).then(|| loc.desc.clone()),
-            loc.op.clone(),
             loc.width,
             loc.length,
             loc.blockwalk,
@@ -1563,20 +1601,7 @@ fn loc_view(
             loc.mapscene,
             loc.forceapproach,
         ),
-        None => (
-            None,
-            None,
-            Vec::new(),
-            1,
-            1,
-            true,
-            true,
-            false,
-            -1,
-            -1,
-            -1,
-            0,
-        ),
+        None => (1, 1, true, true, false, -1, -1, -1, 0),
     };
     LocView {
         typecode,
