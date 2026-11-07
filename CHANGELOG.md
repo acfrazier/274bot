@@ -38,17 +38,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Game data
 
+- Revision-377 gathering reads each woodcutting animation from its selected
+  tool struct. Revision-274/289 extraction retains the legacy animation path.
+  Incompatible mining handlers use separate methods for the same resource.
+  Named fishing entrypoints retain the reviewed timing and roll checks.
+  Shop keepers and their price parameters come from the selected unpacked NPCs;
+  inventory stock joins unique definitions in the selected content tree.
+- Trail extraction marks the constrained clue by alias and uses its joined
+  local item ID. It does not require a fixed corpus ID.
+
 - The API can select revision 377 data generated from local Fairy Ring
   engine, content and cache inputs. Gathering, quest and debug assets stay
   revision-selected. Unproved 289-only controls and tactics remain unavailable;
   they are not copied into the 377 data.
 
-  engine, content and cache inputs. Gathering, quest and debug facts decode
-  separately. Unproved 289-only controls and tactics remain unavailable;
-  they are not copied into the 377 data.
-- Revision 377 generated-input pins now come from a fresh engine/content
-  build, without inherited generated IDs. Regeneration requires clean-checkout
-  pack outputs and a navigation rebake before the final identity binding.
 - Shop lookups now report revision-377 facts as unavailable instead of
   returning legacy revision-289 stock, price or keeper values.
 
