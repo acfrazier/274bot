@@ -63,7 +63,7 @@ cargo run --locked -p xtask -- ci --all
 This command runs the formatting checks, lint checks, architecture check,
 FlatBuffer check, all Clippy commands, and every test lane from GitHub CI.
 It writes one log file per step and a `summary.txt` file to
-`target/xtask-ci/`.
+`target/xtask-ci/`. A failing step also prints its last 200 log lines to stdout.
 
 Use `cargo run --locked -p xtask -- ci --list` to print the step names. Run selected steps with
 `cargo run --locked -p xtask -- ci <step>...`. Use `--log-dir <path>` to choose another log

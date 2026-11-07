@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
@@ -217,12 +217,66 @@ pub fn run(args: Vec<String>) -> Result<u8, String> {
         writeln!(summary, "{line}")
             .map_err(|error| format!("cannot write {}: {error}", summary_path.display()))?;
         println!("{line}");
+        if code != 0
+            && let Err(error) = print_failed_log(&log_path)
+        {
+            eprintln!("xtask: cannot print {}: {error}", log_path.display());
+        }
     }
 
     summary
         .flush()
         .map_err(|error| format!("cannot flush {}: {error}", summary_path.display()))?;
     Ok(u8::from(failed))
+}
+
+fn print_failed_log(path: &Path) -> io::Result<()> {
+    let mut log = File::open(path)?;
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "== {}: last 200 log lines ==", path.display())?;
+    copy_log_tail(&mut log, &mut stdout, 200)?;
+    writeln!(stdout, "\n== end of {} ==", path.display())
+}
+
+fn copy_log_tail(
+    log: &mut (impl Read + Seek),
+    output: &mut impl Write,
+    max_lines: usize,
+) -> io::Result<()> {
+    if max_lines == 0 {
+        return Ok(());
+    }
+    let mut end = log.seek(SeekFrom::End(0))?;
+    let mut remaining = max_lines;
+    let mut last_byte = true;
+    let mut buffer = [0; 8192];
+    while end > 0 {
+        let length = end.min(buffer.len() as u64) as usize;
+        let start = end - length as u64;
+        log.seek(SeekFrom::Start(start))?;
+        log.read_exact(&mut buffer[..length])?;
+        for index in (0..length).rev() {
+            let byte = buffer[index];
+            if last_byte {
+                last_byte = false;
+                if byte == b'\n' {
+                    continue;
+                }
+            }
+            if byte == b'\n' {
+                remaining -= 1;
+                if remaining == 0 {
+                    log.seek(SeekFrom::Start(start + index as u64 + 1))?;
+                    io::copy(log, output)?;
+                    return Ok(());
+                }
+            }
+        }
+        end = start;
+    }
+    log.seek(SeekFrom::Start(0))?;
+    io::copy(log, output)?;
+    Ok(())
 }
 
 fn parse_options(args: Vec<String>, root: &Path) -> Result<Options, String> {
@@ -1249,6 +1303,35 @@ fn io_error(error: io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_log_tail_preserves_short_and_non_utf8_logs() {
+        for bytes in [b"".as_slice(), b"failure", b"failure\n", b"\xff\n\n"] {
+            let mut log = io::Cursor::new(bytes);
+            let mut output = Vec::new();
+            copy_log_tail(&mut log, &mut output, 200).unwrap();
+            assert_eq!(output, bytes);
+        }
+    }
+
+    #[test]
+    fn failed_log_tail_limits_lines_across_read_blocks() {
+        for trailing_newline in [false, true] {
+            let lines: Vec<_> = (0..400)
+                .map(|index| format!("{index}: {}", "x".repeat(100)))
+                .collect();
+            let mut contents = lines.join("\n");
+            let mut expected = lines[200..].join("\n");
+            if trailing_newline {
+                contents.push('\n');
+                expected.push('\n');
+            }
+            let mut log = io::Cursor::new(contents);
+            let mut output = Vec::new();
+            copy_log_tail(&mut log, &mut output, 200).unwrap();
+            assert_eq!(output, expected.as_bytes());
+        }
+    }
 
     #[test]
     fn ci_step_list_contains_every_lane_and_clippy_command() {
