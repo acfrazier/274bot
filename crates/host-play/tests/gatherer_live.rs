@@ -52,7 +52,7 @@ use host::Pump;
 use host_play::evidence_writer::{
     EvidenceJob, EvidenceRequest, EvidenceSidecar, EvidenceWriter, PngColor,
 };
-use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
+use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate, SlotArm};
 #[cfg(feature = "live-harness")]
 use scenario::{RunnerStatus, ScenarioRunner};
 use serde_json::{json, Map, Value};
@@ -2035,6 +2035,10 @@ struct GatherSlot {
     relog_pause_requested: bool,
     /// `BankTripRelog`: the preparation sent the mainland hop itself.
     relog_prep_hop_sent: bool,
+    /// The slot's arm. The preparation relogs a bot that has no script yet,
+    /// so the approved scriptless policy parks it after its own logout; the
+    /// fixture posts the operator's Login, as a user would.
+    login_arm: Option<Arc<SlotArm>>,
 }
 /// How far the character walks toward the bank before an `Access` cut. The
 /// oak fixture (3017,3170) is 75 tiles from the Draynor bank (3092,3243), so
@@ -2324,6 +2328,7 @@ impl GatherSlot {
             relog: relog_plan().unwrap_or(RelogPlan::DEFAULT),
             relog_pause_requested: false,
             relog_prep_hop_sent: false,
+            login_arm: None,
         }
     }
 
@@ -4110,6 +4115,9 @@ impl GatherSlot {
                 let ifaces = Arc::clone(&client.ifaces);
                 if !interact::logout(client, &ifaces) {
                     return Err("logout interface unavailable during fixture preparation".into());
+                }
+                if let Some(arm) = &self.login_arm {
+                    arm.arm_explicit_login();
                 }
                 self.phase = Prep::WaitRelog;
             }
@@ -6554,6 +6562,15 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             )))
         })
     };
+    // The preparation relogs each bot before any script runs: each slot's arm
+    // is owned here so the fixture can post the Login after its own logout.
+    let subject_arm = SlotArm::new(274_289_304, true);
+    state.lock().unwrap().login_arm = Some(Arc::clone(&subject_arm));
+    let helper_arm = helper_state.as_ref().map(|helper| {
+        let arm = SlotArm::new(274_289_305, true);
+        helper.lock().unwrap().login_arm = Some(Arc::clone(&arm));
+        arm
+    });
     let start_handle: Arc<Mutex<Option<ScriptStartHandle>>> = Arc::new(Mutex::new(None));
     let frame_state = Arc::clone(&state);
     let frame_handle = Arc::clone(&start_handle);
@@ -6805,7 +6822,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     {
         subject.settings.random_events = false;
     }
-    play.try_spawn_slot(subject, None, None, None)?;
+    play.try_spawn_slot(subject, None, None, Some(subject_arm))?;
     if let (Some(helper_account), Some(helper_password)) =
         (helper_account.as_ref(), helper_password.as_ref())
     {
@@ -6813,7 +6830,7 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
             mint_profile(helper_account, helper_password, 2)?,
             None,
             None,
-            None,
+            helper_arm,
         )?;
     }
     let settings = cell.settings(case);
