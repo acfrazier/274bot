@@ -1,11 +1,47 @@
-//! Canon 377 journal stages, not transient NPC dialogue, settle batch-two Paths.
+//! Canon 377 journal recovery and observable batch-two Path step selection.
 use super::super::{compile, progress};
 use super::bundled_path_for;
+use crate::quester::probe::{known_empty_bank, progress_for_stage, Choice, Probe};
+use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, JournalRead};
 use api::selected::{ClientRevision, Knowledge, RunKey};
+use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
 use serde_json::Value;
 use std::sync::Arc;
+
+fn selection_snapshot(
+    data: &SelectedGameData,
+    tile: api::WorldTile,
+    items: &[(&str, i32)],
+) -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_tile(tile);
+    snapshot.seed_local_player(crate::quester::families::tests::local_player(tile));
+    snapshot.seed_inventory(
+        items
+            .iter()
+            .enumerate()
+            .map(|(slot, (alias, count))| ItemView {
+                def: crate::quester::families::tests::def(
+                    data.item_by_alias(alias).unwrap().id,
+                    alias,
+                ),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: slot as i32,
+                count: *count,
+                actions: Vec::new(),
+                component_id: 0,
+            })
+            .collect(),
+        28,
+    );
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_locs(Vec::new());
+    snapshot
+}
 
 #[test]
 fn batch2_377_journals_recover_every_action_boundary() {
@@ -150,5 +186,79 @@ fn batch2_377_coin_acquisition_exercises_real_palace_spawns() {
             serde_json::json!({"obj": "coins", "qty": qty})
         );
         assert_eq!(action["args"]["wait_if_missing"], true);
+    }
+}
+
+#[test]
+fn vampire_377_authored_stairs_advance_at_the_canonical_landing() {
+    let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+    let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+    let path = compile::compile_uncached_for_test(
+        &serde_json::from_value(document("vampire")).unwrap(),
+        &selected,
+        &quests,
+    )
+    .unwrap();
+    let progress = [progress_for_stage(&path, &selected, "vampire:2", &[])];
+    let bank = known_empty_bank();
+    let probe = Probe {
+        path: &path,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+    for (x, z, level, items, expected) in [
+        (3099, 3266, 0, &[][..], "climb-morgan-stairs"),
+        (3102, 3266, 1, &[][..], "open-garlic-cupboard"),
+        (3101, 3266, 1, &[][..], "open-garlic-cupboard"),
+        (3097, 3269, 1, &[][..], "open-garlic-cupboard"),
+        (3102, 3266, 1, &[("garlic", 1)][..], "take-hammer"),
+    ] {
+        let snapshot = selection_snapshot(&selected, api::WorldTile { x, z, level }, items);
+        assert_eq!(
+            probe.choice("vampire:2", 0, &snapshot),
+            Choice::Step(api::selected::FactKey::new(expected)),
+            "the authored selector must not repeat completed stairs at {x},{z},{level}"
+        );
+    }
+}
+
+#[test]
+fn demon_377_authored_bone_preparation_advances_after_deposit() {
+    let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+    let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+    let path = compile::compile_uncached_for_test(
+        &serde_json::from_value(document("demon")).unwrap(),
+        &selected,
+        &quests,
+    )
+    .unwrap();
+    let progress = [progress_for_stage(&path, &selected, "demon:2", &[])];
+    let bank = known_empty_bank();
+    let probe = Probe {
+        path: &path,
+        selected: &selected,
+        quests: &quests,
+        progress: &progress,
+        bank: &bank,
+    };
+    let tile = api::WorldTile {
+        x: 3185,
+        z: 3436,
+        level: 0,
+    };
+    for (items, expected) in [
+        (&[("coins", 3), ("trout", 5)][..], "bank-for-bones"),
+        (&[("coins", 3)][..], "collect-25-bones"),
+        (&[("coins", 3), ("bones", 24)][..], "collect-25-bones"),
+        (&[("coins", 3), ("bones", 25)][..], "ask-traiborn"),
+    ] {
+        let snapshot = selection_snapshot(&selected, tile, items);
+        assert_eq!(
+            probe.choice("demon:2", 0, &snapshot),
+            Choice::Step(api::selected::FactKey::new(expected)),
+            "the authored selector must preserve the post-bank bone collection boundary: {items:?}"
+        );
     }
 }
