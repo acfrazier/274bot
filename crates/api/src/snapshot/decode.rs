@@ -2403,21 +2403,25 @@ mod tests {
         use client::config::{LocType, NpcType};
 
         let mut cache = Cache::default();
-        let mut loc = LocType::default();
-        loc.name = "loc name with a heap-backed payload".to_owned();
-        loc.desc = "location description with a heap-backed payload".to_owned();
-        loc.op = vec![
-            Some("Open the location".to_owned()),
-            Some("Search the location".to_owned()),
-        ];
+        let loc = LocType {
+            name: "loc name with a heap-backed payload".to_owned(),
+            desc: "location description with a heap-backed payload".to_owned(),
+            op: vec![
+                Some("Open the location".to_owned()),
+                Some("Search the location".to_owned()),
+            ],
+            ..LocType::default()
+        };
         cache.locs.push(loc);
 
-        let mut npc_type = NpcType::default();
-        npc_type.name = "npc name with a heap-backed payload".to_owned();
-        npc_type.op = vec![
-            Some("Talk to the npc".to_owned()),
-            Some("Attack the npc".to_owned()),
-        ];
+        let npc_type = NpcType {
+            name: "npc name with a heap-backed payload".to_owned(),
+            op: vec![
+                Some("Talk to the npc".to_owned()),
+                Some("Attack the npc".to_owned()),
+            ],
+            ..NpcType::default()
+        };
         cache.npcs.push(npc_type);
 
         let client = Client::from_shared_with_revision(
@@ -2433,8 +2437,10 @@ mod tests {
             Vec::new(),
             revision,
         );
-        let mut npc = client::client::ClientNpc::default();
-        npc.r#type = Some(0);
+        let mut npc = client::client::ClientNpc {
+            r#type: Some(0),
+            ..Default::default()
+        };
         npc.entity.chat_message = Some("npc overhead text with heap-backed storage".to_owned());
 
         let resolve_loc = || {
