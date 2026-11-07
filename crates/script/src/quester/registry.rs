@@ -1755,7 +1755,7 @@ mod tests {
     }
 
     #[test]
-    fn revision_377_bundle_loads_and_compiles_its_own_cook_path() {
+    fn revision_377_bundle_loads_and_compiles_its_own_paths() {
         FamilyPreparation::run(|worker| {
             let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
             let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
@@ -1784,6 +1784,7 @@ mod tests {
                     "romeojuliet",
                     "runemysteries",
                     "sheep",
+                    "squire",
                     "vampire"
                 ]
             );
@@ -1807,22 +1808,27 @@ mod tests {
                 1781,
                 "target the placed millbase, not its visible morph leaf"
             );
-            let compiled = compile::compile_path(
-                bytes.as_ref(),
-                &selected,
-                &quests,
-                worker,
-                &crate::local_state::OperatorLoadouts::absent(),
-                None,
-            )
-            .unwrap_or_else(|error| panic!("377 Cook failed to compile: {error:?}"));
-            assert_eq!(compiled.id.0.as_ref(), "cook");
-            assert_eq!(compiled.display_name.as_ref(), "Cook's Assistant");
-            assert_eq!(compiled.colour_complete.0.as_ref(), "cook:2");
-            assert!(
-                compiled.progress.rules.is_empty(),
-                "Cook needs no journal interface"
-            );
+            for id in ids {
+                let bytes = registry.bytes(&id).unwrap();
+                let compiled = compile::compile_path(
+                    bytes.as_ref(),
+                    &selected,
+                    &quests,
+                    worker,
+                    &crate::local_state::OperatorLoadouts::absent(),
+                    None,
+                )
+                .unwrap_or_else(|error| panic!("377 {id} failed to compile: {error:?}"));
+                assert_eq!(compiled.id.0.as_ref(), id.as_str());
+                if id == "cook" {
+                    assert_eq!(compiled.display_name.as_ref(), "Cook's Assistant");
+                    assert_eq!(compiled.colour_complete.0.as_ref(), "cook:2");
+                    assert!(
+                        compiled.progress.rules.is_empty(),
+                        "Cook needs no journal interface"
+                    );
+                }
+            }
         })
         .unwrap()
         .join()
@@ -1928,7 +1934,8 @@ mod tests {
                     "hetty",
                     "gobdip",
                     "vampire",
-                    "demon"
+                    "demon",
+                    "squire"
                 ]
             );
             assert!(
