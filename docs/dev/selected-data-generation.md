@@ -87,6 +87,13 @@ Shared extraction retains the 0.2.9 source-join rules. It does not require
 frozen corpus row counts, item IDs, prayer button ranges or display names.
 Missing definitions, duplicate joins and malformed source shapes still fail.
 
+Regression fixtures must supply the selected facts their consumers require.
+Legacy navigation controls retain the selected revision's Entrana inventory
+and equipment guards; a graph derived without item data lacks those guards.
+A 377 NPC menu fixture needs an interactive current-form entry in
+`CacheRevision377.config.npcs` as well as its shared `NpcType` row.
+Without that entry, the NPC's menu actions remain absent.
+
 A generated result proves consistency with the selected Fairy Ring scripts.
 It does not prove historical RuneScape accuracy.
 
