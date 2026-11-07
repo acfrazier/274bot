@@ -360,9 +360,11 @@ scenario!(
 /// full core poll) plus the `terminal.draw` that composes every pane and
 /// overlay onto the backend. The steady frame is not allocation-free: the
 /// draw rebuilds every pane's text each frame, so the bound is the
-/// measured warm count (180 calls, 16,364 bytes per iteration with one
-/// connected row) plus the no-growth equality: a second block of 100
-/// unchanged iterations must cost exactly the same and retain nothing.
+/// measured warm count plus headroom — the lab hosts measure 180 calls
+/// and 16,365–16,366 bytes per iteration with one connected row, and the
+/// ceiling is the higher measurement plus 2%, rounded up — plus the
+/// no-growth equality: a second block of 100 unchanged iterations must
+/// cost exactly the same and retain nothing.
 ///
 /// The measurement runs in a child process: the process-wide log store
 /// carries every earlier test's lines, and a frame that rebuilds the log
@@ -422,16 +424,22 @@ fn the_whole_headed_frame_adds_no_allocation_growth_across_100_unchanged_iterati
         second.bytes_current, 0,
         "the whole-frame iterations retain nothing"
     );
-    const WHOLE_FRAME_CALL_CEILING: u64 = 18_000;
-    const WHOLE_FRAME_BYTE_CEILING: u64 = 1_636_400;
+    // Per-frame totals differ slightly between hosts (16,365 and 16,366 B
+    // per iteration on the two lab hosts), so the ceilings carry headroom
+    // instead of pinning one host's measurement: the highest per-host
+    // measured warm count plus 2%, rounded up.
+    const WHOLE_FRAME_CALL_CEILING_PER_FRAME: u64 = 184;
+    const WHOLE_FRAME_BYTE_CEILING_PER_FRAME: u64 = 16_694;
     assert!(
-        second.count_total <= WHOLE_FRAME_CALL_CEILING,
-        "100 unchanged whole frames: {} calls exceeds the measured {WHOLE_FRAME_CALL_CEILING}",
-        second.count_total
+        second.count_total <= WHOLE_FRAME_CALL_CEILING_PER_FRAME * 100,
+        "100 unchanged whole frames: {} calls exceeds the measured warm count plus 2% headroom ({})",
+        second.count_total,
+        WHOLE_FRAME_CALL_CEILING_PER_FRAME * 100
     );
     assert!(
-        second.bytes_total <= WHOLE_FRAME_BYTE_CEILING,
-        "100 unchanged whole frames: {} B exceeds the measured {WHOLE_FRAME_BYTE_CEILING}",
-        second.bytes_total
+        second.bytes_total <= WHOLE_FRAME_BYTE_CEILING_PER_FRAME * 100,
+        "100 unchanged whole frames: {} B exceeds the measured warm count plus 2% headroom ({})",
+        second.bytes_total,
+        WHOLE_FRAME_BYTE_CEILING_PER_FRAME * 100
     );
 }

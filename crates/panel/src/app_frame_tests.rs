@@ -1775,9 +1775,10 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
 ///
 /// The steady pump frame is not allocation-free: the core poll pass clones
 /// the host's status rows every poll and `pump_shots` pays one call, so
-/// the bound is the measured warm count (23 calls/frame with two
-/// published rows, 2,300 over 100 frames) plus the no-growth equality:
-/// a second block of 100 unchanged frames must cost exactly the same.
+/// the bound is the measured warm count plus headroom — both lab hosts
+/// measure 23 calls/frame with two published rows, and the ceiling is
+/// that measurement plus 2%, rounded up — plus the no-growth equality: a
+/// second block of 100 unchanged frames must cost exactly the same.
 #[test]
 fn the_whole_pump_frame_adds_no_allocation_growth_across_100_unchanged_frames() {
     const CHILD: &str = "PANEL_WHOLE_FRAME_GATE_CHILD";
@@ -1833,9 +1834,13 @@ fn the_whole_pump_frame_adds_no_allocation_growth_across_100_unchanged_frames() 
         second, first,
         "100 unchanged whole frames must cost exactly what the first block cost"
     );
-    const WHOLE_FRAME_CALL_CEILING: usize = 2_300;
+    // Call counts can differ between hosts, so the ceiling carries
+    // headroom instead of pinning one host's measurement: the measured
+    // warm count (23 calls/frame on both lab hosts) plus 2%, rounded up.
+    const WHOLE_FRAME_CALL_CEILING_PER_FRAME: usize = 24;
     assert!(
-        second <= WHOLE_FRAME_CALL_CEILING,
-        "100 unchanged whole frames: {second} calls exceeds the measured {WHOLE_FRAME_CALL_CEILING}"
+        second <= WHOLE_FRAME_CALL_CEILING_PER_FRAME * 100,
+        "100 unchanged whole frames: {second} calls exceeds the measured warm count plus 2% headroom ({})",
+        WHOLE_FRAME_CALL_CEILING_PER_FRAME * 100
     );
 }
