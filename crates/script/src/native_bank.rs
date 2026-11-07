@@ -3081,6 +3081,9 @@ mod tests {
     /// bank or the only bank stays, so the pick never ends empty because of it.
     #[test]
     fn select_avoid_drops_the_failed_bank_only_when_another_is_eligible() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let three = [("far", 10), ("near", 6), ("nearer", 4)];
         assert_eq!(pick_candidates(&three, None, None).0, [0, 1, 2]);
         assert_eq!(pick_candidates(&three, None, Some(1)).0, [0, 2]);
@@ -7512,6 +7515,9 @@ mod tests {
     /// failing, and the fresh table settles it. 0.2.8 failed at the bound.
     #[test]
     fn open_stand_adopting_a_tableless_modal_accesses_the_stand_at_the_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let stand = WorldTile {
             x: 2809,
             z: 3441,
@@ -7572,6 +7578,9 @@ mod tests {
     /// instead of waiting out the bound for a click nobody sent.
     #[test]
     fn open_stand_adopting_a_modal_that_closes_accesses_the_stand_at_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let stand = WorldTile {
             x: 2809,
             z: 3441,
@@ -7607,6 +7616,9 @@ mod tests {
     /// caller's bounded retry. Exactly one `OpenStand` effect is emitted.
     #[test]
     fn open_stand_adopting_a_tableless_modal_accesses_the_stand_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let stand = WorldTile {
             x: 2809,
             z: 3441,

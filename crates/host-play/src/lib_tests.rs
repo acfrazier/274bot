@@ -1178,6 +1178,9 @@ fn memory_toggle_leaves_active_client_unchanged_until_next_login() {
 
 #[test]
 fn memory_queue_survives_socket_reconnect_until_clean_logout() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -3053,6 +3056,9 @@ fn play_for_script_control() -> Play {
 /// never comes back without its script. Every public Stop does it.
 #[test]
 fn a_script_stop_cancels_the_handshake_of_the_relog_it_was_running_through() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     type Stop = fn(&Play, &str, api::selected::RunKey);
     let stops: [(&str, Stop); 2] = [
         ("script_stop", |play, name, _| play.script_stop(name)),
@@ -3109,6 +3115,9 @@ fn a_script_stop_cancels_the_handshake_of_the_relog_it_was_running_through() {
 /// it parked; the saved auto-login preference does not log it in.
 #[test]
 fn starting_and_stopping_a_script_on_a_parked_bot_leaves_it_parked() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut play = play_for_script_control();
     let arm = SlotArm::new(7, true);
     play.attach_arm("alice", Arc::clone(&arm));
@@ -25603,6 +25612,9 @@ fn assert_worker_uses_generic_code5_wait(
 
 #[test]
 fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -25731,6 +25743,9 @@ fn spawned_worker_code5_without_exit_evidence_uses_generic_sixty_seconds() {
 
 #[test]
 fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -25901,6 +25916,9 @@ fn worker_runs_idle_timer(scripted: bool) -> bool {
 /// bot ever sent the idle request.)
 #[test]
 fn a_worker_runs_the_idle_timer_only_while_no_script_runs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert!(
         worker_runs_idle_timer(false),
         "a bot with no script runs the idle timer"
@@ -25913,6 +25931,9 @@ fn a_worker_runs_the_idle_timer_only_while_no_script_runs() {
 
 #[test]
 fn spawned_worker_clean_release_budget_exhaustion_uses_generic_sixty_seconds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::mpsc;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

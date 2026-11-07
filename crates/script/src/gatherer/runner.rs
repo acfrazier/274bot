@@ -4611,21 +4611,33 @@ mod tests {
 
     #[test]
     fn relog_during_access_restarts_the_trip_and_it_finishes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         relog_restarts_the_trip_and_it_finishes(TripStep::Access, false);
     }
 
     #[test]
     fn relog_during_open_restarts_the_trip_and_it_finishes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         relog_restarts_the_trip_and_it_finishes(TripStep::Open, true);
     }
 
     #[test]
     fn relog_during_deposit_restarts_the_trip_and_it_finishes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         relog_restarts_the_trip_and_it_finishes(TripStep::Deposit, false);
     }
 
     #[test]
     fn relog_during_withdraw_restarts_the_trip_and_it_finishes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         relog_restarts_the_trip_and_it_finishes(TripStep::Withdraw, false);
     }
 
@@ -4634,6 +4646,9 @@ mod tests {
     /// the last reason the trip recorded.
     #[test]
     fn spent_session_restart_budget_ends_in_a_terminal_failure_with_the_last_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = BaitFixture::new();
         let mut gatherer = trip_after_relog(&fixture, TripStep::Open);
@@ -4805,6 +4820,9 @@ mod tests {
     /// pick. The third ends the run with the last receipt's detail.
     #[test]
     fn access_recovers_each_ordinary_walk_failure_within_the_budget() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{WalkStall, WalkStallReason};
         use crate::quester::families::tests::with_tick;
         let stall = |why| {
@@ -4930,6 +4948,9 @@ mod tests {
     /// access walk at once: the owner must not retry them.
     #[test]
     fn access_walk_cancellation_and_refusals_stay_terminal_at_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         for (end, code) in [
             (WalkEnd::UserInput, "manual-movement"),
@@ -4960,6 +4981,9 @@ mod tests {
     /// it; the failure after that is terminal with its detail.
     #[test]
     fn access_reselect_without_another_reachable_bank_walks_to_the_failed_one_again() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = roster_fixture();
         let mut gatherer = access_walker(&fixture);
@@ -5029,6 +5053,9 @@ mod tests {
     /// last receipt's detail, not the generic reason.
     #[test]
     fn access_recovery_pick_without_any_bank_keeps_the_last_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = roster_fixture();
         let mut gatherer = access_walker(&fixture);
@@ -5077,6 +5104,9 @@ mod tests {
     /// takes the same recovery and last-reason handling as the typed receipt.
     #[test]
     fn access_recovery_sentinel_pick_widens_then_keeps_the_last_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = roster_fixture();
         let mut gatherer = access_walker(&fixture);

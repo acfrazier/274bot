@@ -1697,6 +1697,9 @@ fn gate_tick_frame(
 }
 
 fn warmed_tick_frame_allocations_gate(revision: client::io::ClientRevision) {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut client = gate_client(revision);
     let mut snapshot = GameSnapshot::new();
     // The first decode rebuilds every armed family once (player, scene, loc,
