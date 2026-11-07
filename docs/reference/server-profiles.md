@@ -80,7 +80,8 @@ resources. Generated facts are local inputs. The runtime does not authenticate
 their source revision, commit or content hash (ADR 0019). Keep the 377 resource
 paths separate from the 274/289 paths.
 
-Native Quester dispatch and combat preparation admit the selected 377 tables.
+Native Quester dispatch, combat preparation and slot-owned bank requests admit
+the selected 377 tables.
 The 377 Path compilation fixtures require `NAV_377_PACK` for their real zone
 catalogue; do not substitute the 289 reference pack for that input.
 
