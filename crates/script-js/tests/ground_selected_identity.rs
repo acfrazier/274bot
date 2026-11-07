@@ -209,18 +209,22 @@ export default class T extends LoopingBot {
 fn input_take_obj_requests_bound_collected_v8_heap_growth() {
     const REQUESTS: usize = 256;
     const MAX_GROWTH: usize = 128 * 1024;
-    // The queue admits 256 rows; 512 B per request scales the existing ground-request allowance.
+    // 256 is the host queue cap; 512 B/request scales the existing ground-request bound.
     let src = r#"
 import { Input } from '../../input/Input.js';
 export default class T extends LoopingBot {
     loop() {
         const count = globalThis.__request_count;
-        const kept = globalThis.__kept = [];
-        for (let index = 0; index < count; index++) {
+        const kept = globalThis.__kept || (globalThis.__kept = []);
+        if (kept.length < count) {
             if (!Input.takeObj(2737, 3440, 1053, 1)) {
                 throw new Error('Input.takeObj refused the posted ground row');
             }
-            kept.push(__rs2b0t_host.interact[__rs2b0t_host.interact.length - 1]);
+            const row = __rs2b0t_host.interact[__rs2b0t_host.interact.length - 1];
+            if (!row || row.op !== 'obj' || row.id !== 1053) {
+                throw new Error('Input.takeObj did not retain its queued ground row');
+            }
+            kept.push(row);
         }
         globalThis.__probe = kept.length;
     }
@@ -240,16 +244,18 @@ export default class T extends LoopingBot {
     let baseline = iso
         .collected_heap_bytes_for_test()
         .expect("collect the isolate heap before materializing requests");
-    iso.on_game_tick(1);
+    for tick in 1..=REQUESTS as u64 {
+        iso.on_game_tick(tick);
+        assert_eq!(
+            iso.drain_interacts().len(),
+            1,
+            "the host receives one Input.takeObj request per tick"
+        );
+    }
     assert_eq!(
         iso.probe("__probe").unwrap(),
         serde_json::json!(REQUESTS),
         "Input.takeObj retains every materialized request"
-    );
-    assert_eq!(
-        iso.drain_interacts().len(),
-        REQUESTS,
-        "the host receives every Input.takeObj request"
     );
     let after = iso
         .collected_heap_bytes_for_test()
