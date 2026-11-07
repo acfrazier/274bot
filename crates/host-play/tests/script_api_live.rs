@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use api::interact::{self, Interactions};
 use api::snapshot::{ChatLineView, GameSnapshot, QuestListStatus, WorldTile};
 use client::client::Client;
-use host_play::{mint_live_entries, mint_live_names, run_with_template, Play, ProfileOptions};
+use host_play::{
+    mint_live_entries, mint_live_names, run_with_template, Play, ProfileOptions, SlotArm,
+};
 use script::native::{ScriptStatus, StatusValue};
 use serde_json::{json, Value};
 use vault::{Profile, ProfileSettings};
@@ -219,16 +221,27 @@ fn pre_relog_tutorial_step(
     ))
 }
 
-fn logout(client: &mut Client) -> Result<(), String> {
+/// Press the fixture logout, then post the host's explicit Login for this
+/// slot. Every fixture logout is a relog before Start: the bot has no script
+/// then, so the approved scriptless policy parks it after the exit and it
+/// waits for the operator's Login.
+fn logout_then_login(client: &mut Client, arm: &SlotArm) -> Result<(), String> {
     let ifaces = Arc::clone(&client.ifaces);
     if interact::logout(client, &ifaces) {
+        arm.arm_explicit_login();
         Ok(())
     } else {
         Err("fixture logout unavailable".into())
     }
 }
 
-fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<Fixture>) {
+fn fixture_frame(
+    client: &mut Client,
+    held: bool,
+    journal: bool,
+    shared: &Mutex<Fixture>,
+    arm: &SlotArm,
+) {
     let mut state = shared.lock().unwrap();
     if state.error.is_some() {
         return;
@@ -321,7 +334,7 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                         "fixture tutorial gate: fresh get tutorial: 1000 in the {}; no reseed needed",
                         PreRelogTutorialPhase::Initial.label()
                     );
-                    logout(client)?;
+                    logout_then_login(client, arm)?;
                     state.phase = 3;
                 }
                 Some(PreRelogTutorialAction::Reseed) => {
@@ -350,7 +363,7 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                         "fixture tutorial gate: fresh get tutorial: 1000 in the {}",
                         PreRelogTutorialPhase::AfterReseed.label()
                     );
-                    logout(client)?;
+                    logout_then_login(client, arm)?;
                     state.phase = 3;
                 }
                 Some(PreRelogTutorialAction::Reseed) => {
@@ -400,7 +413,7 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                 state.phase = 6;
             }
             6 if journal && chat_has(&snapshot, "get rjquest: 30") => {
-                logout(client)?;
+                logout_then_login(client, arm)?;
                 state.phase = 7;
             }
             8 if journal
@@ -546,6 +559,10 @@ fn start_fixture_at(
     }));
     let frame_state = Arc::clone(&state);
     let frame_account = account.clone();
+    // The fixture relogs a scriptless bot before its script starts, so it
+    // owns the arm that posts the operator Login after its own logout.
+    let arm = SlotArm::new(274_289_303, true);
+    let frame_arm = Arc::clone(&arm);
     let mut play = run_with_template(
         template,
         false,
@@ -553,7 +570,7 @@ fn start_fixture_at(
         |_| (None, None),
         move |client, name, input| {
             if name == frame_account {
-                fixture_frame(client, input.hold, journal, &frame_state);
+                fixture_frame(client, input.hold, journal, &frame_state, &frame_arm);
             }
         },
     )
@@ -567,7 +584,7 @@ fn start_fixture_at(
         },
         None,
         None,
-        None,
+        Some(arm),
     )
     .expect("spawn fresh local fixture account");
     wait_for(&play, &account, &state, Duration::from_secs(240), |_| {

@@ -1161,7 +1161,10 @@ pub(crate) fn script_trade_scenario() -> Scenario {
             profile: 1,
             per_frame: {
                 let mut slot = TradeAcceptSlot::default();
-                Box::new(move |c| trade_acceptor_frame(c, &mut slot))
+                Box::new(move |c| {
+                    trade_acceptor_frame(c, &mut slot);
+                    false
+                })
             },
         }],
         settings: ScenarioSettings {
@@ -1312,6 +1315,10 @@ struct PairCompanionSlot {
     kq_witness: Option<Arc<Mutex<KqFleetWitness>>>,
     prep_barrier: Option<PairPrepBarrier>,
     tutorial_reseed: Option<crate::tutorial::PostRelogTutorial>,
+    /// This frame pressed the logout; the host must post the slot's explicit
+    /// Login because a bot with no script stays parked after its exit. The
+    /// companion hook returns it once and clears it.
+    login_wanted: bool,
 }
 
 impl PairCompanionSlot {
@@ -1332,6 +1339,7 @@ impl PairCompanionSlot {
             kq_witness: None,
             prep_barrier: None,
             tutorial_reseed: None,
+            login_wanted: false,
         }
     }
 }
@@ -1370,6 +1378,10 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
                     slot.logout_session = c.gens.session;
                     slot.last_action = now;
                     slot.stage = PairPrepStage::WaitRelog;
+                    // The companion has no script during prep, so the
+                    // approved scriptless policy parks it after this exit.
+                    // Ask the host for the operator's explicit Login.
+                    slot.login_wanted = true;
                 }
             }
         }
@@ -1924,12 +1936,21 @@ fn pair_watch_settings_with_deadline(
     }
 }
 
+/// Box the pair companion's client-cycle hook and surface its one-shot host
+/// login request (the prep relog's logout needs the operator Login).
+fn pair_companion_hook(mut slot: PairCompanionSlot) -> Box<dyn FnMut(&mut Client) -> bool + Send> {
+    Box::new(move |c| {
+        pair_companion_frame(c, &mut slot);
+        std::mem::take(&mut slot.login_wanted)
+    })
+}
+
 fn pair_companion(kind: PairCompanionKind) -> Companion {
     Companion {
         profile: 1,
         per_frame: {
-            let mut slot = PairCompanionSlot::new(kind);
-            Box::new(move |c| pair_companion_frame(c, &mut slot))
+            let slot = PairCompanionSlot::new(kind);
+            pair_companion_hook(slot)
         },
     }
 }
@@ -1939,7 +1960,7 @@ fn pair_prep_companion(kind: PairCompanionKind, prep_barrier: PairPrepBarrier) -
         per_frame: {
             let mut slot = PairCompanionSlot::new(kind);
             slot.prep_barrier = Some(prep_barrier);
-            Box::new(move |c| pair_companion_frame(c, &mut slot))
+            pair_companion_hook(slot)
         },
     }
 }
@@ -1953,7 +1974,7 @@ fn clue_witness_companion(
             let mut slot = PairCompanionSlot::new(PairCompanionKind::ClueHelper);
             slot.clue_witness = Some(witness);
             slot.prep_barrier = Some(prep_barrier);
-            Box::new(move |c| pair_companion_frame(c, &mut slot))
+            pair_companion_hook(slot)
         },
     }
 }
@@ -1971,7 +1992,7 @@ fn kq_witness_companion(
             slot.kq_has_pass = profile <= 1;
             slot.kq_witness = Some(witness);
             slot.prep_barrier = Some(prep_barrier);
-            Box::new(move |c| pair_companion_frame(c, &mut slot))
+            pair_companion_hook(slot)
         },
     }
 }

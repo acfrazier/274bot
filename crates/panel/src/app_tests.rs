@@ -9122,3 +9122,74 @@ fn the_panel_top_line_keeps_a_login_notice_through_retry_states_until_it_expires
     );
     println!("LOGIN_NOTICE_PANEL_TOP {seen:#?}\nLOGIN_NOTICE_PANEL_EXPIRED {banner}");
 }
+
+/// IDLEFIX-028: a bot with no script whose connection dropped stays logged
+/// out, and the banner and the status rows say why (the same words as the
+/// terminal app, which reads the same `frontend-core` state line).
+#[test]
+fn the_panel_says_why_a_bot_with_no_script_is_logged_out() {
+    panel_shows_the_park(
+        host_play::SlotArm::exit_while_idle_for_test,
+        "ogged out: disconnected while idle (Log in to connect)",
+    );
+}
+
+/// Only the client's own idle request makes a server logout an idle logout;
+/// any other one reads as a logout by the server.
+#[test]
+fn the_panel_calls_only_a_requested_logout_an_idle_logout() {
+    panel_shows_the_park(
+        |arm| arm.exit_by_server_logout_for_test(true),
+        "ogged out: idle logout by the server (Log in to connect)",
+    );
+    panel_shows_the_park(
+        |arm| arm.exit_by_server_logout_for_test(false),
+        "ogged out by the server (Log in to connect)",
+    );
+}
+
+fn panel_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str) {
+    use crate::session::{Session, SlotIo};
+    use frontend_core::surface::{FrameBuf, SlotInput};
+    use host_play::{SlotArm, StartupPhase};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut s = Session::new();
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 1,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    let arm = SlotArm::new(2, true);
+    play.attach_arm("bob", Arc::clone(&arm));
+    s.core.fleet_mut().add("bob");
+    s.core.insert_slot_io(
+        "bob",
+        SlotIo {
+            input: SlotInput::new(),
+            pixels: FrameBuf::new(),
+        },
+    );
+    s.set_focus_for_test("bob");
+    s.core.set_play(Some(play));
+    arm.complete_login_for_test();
+    exit(&arm);
+    {
+        let play = s.core.play_for_test().unwrap();
+        play.statuses.lock().unwrap().push(host_play::SlotStatus {
+            username: "bob".into(),
+            login_latched: true,
+            login_latch_reason: arm.login_latch_reason(),
+            startup_phase: StartupPhase::Queueing,
+            startup_phase_started: Instant::now(),
+            ..host_play::SlotStatus::default()
+        });
+    }
+    s.core.poll_at(Instant::now());
+    let (banner, status) = draw_banner_and_status(&s);
+    assert!(banner.contains(state), "{banner}");
+    assert!(status.contains(state), "{status}");
+}

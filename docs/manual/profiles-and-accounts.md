@@ -120,10 +120,20 @@ asked, except that the bot you have selected goes first. 274bot also allows at
 most 29 login attempts from your address in a row. The count starts again after
 60 seconds with no attempt. That keeps it under the public server's limit.
 
-If the game drops a bot that has **Log in automatically** on, or that runs a
-script, 274bot logs it in again. After three unexpected drops within ten minutes,
-the bot stops trying. Its state reads `logged out (repeat guard: 3 unexpected
-logouts in 600s; Log in to retry)`. Click **Log in** to clear it.
+A bot that runs a script is logged in again if the game drops it. After three
+unexpected drops within ten minutes, the bot stops trying. Its state reads
+`logged out (repeat guard: 3 unexpected logouts in 600s; Log in to retry)`. Click
+**Log in** to clear it. If you stop the script while that bot is waiting to log
+in again, it stops trying and stays logged out.
+
+A bot with no script acts like a person at the game. The game's idle timer
+runs for it, so the game logs it out after about 90 seconds without input. A
+mouse or key press counts as input. A command you send to the bot also counts:
+a walk, a route step or a command you type. If the game drops the bot for any
+reason, or logs it out, it stays logged out. Its state says why. Click **Log
+in**, or start a script on it, to bring it back. If you stop that script before
+the bot is back, the bot stays logged out. A bot that runs a script has the idle
+timer switched off.
 
 ## Read the login messages
 
@@ -143,6 +153,9 @@ app show the same text in lower case.
 | `…: next in line, server: too many login attempts` | The server refused a login for going too fast. | Wait. The wait grows after each refusal. |
 | `logging in…`, `loading scene…` | The login is under way. | Wait. |
 | `logged out (Log in to connect)` | The bot is logged out. | Click **Log in**. |
+| `logged out: disconnected while idle (Log in to connect)` | The bot had no script when the game dropped its connection. It does not reconnect by itself. | Click **Log in**, or start a script. |
+| `logged out: idle logout by the server (Log in to connect)` | The bot had no script, and the game logged it out after the bot's own idle request. | Click **Log in**, or start a script. |
+| `logged out by the server (Log in to connect)` | The bot had no script, and the game logged it out with no idle request from the bot. | Click **Log in**, or start a script. |
 
 ## Read the login codes about your account
 

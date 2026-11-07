@@ -250,7 +250,7 @@ cells = [
 # session/fleet.rs routes the fleet-row commands (marks, filter, sort, the
 # saved-order reorder and fleet plans); the driver cell drives them all.
 [[cover]]
-globs = ["crates/frontend-core/src/error_expiry.rs", "crates/frontend-core/src/lib.rs", "crates/frontend-core/src/session/commands.rs", "crates/frontend-core/src/session/fleet.rs"]
+globs = ["crates/frontend-core/src/error_expiry.rs", "crates/frontend-core/src/lib.rs", "crates/frontend-core/src/session/commands.rs", "crates/frontend-core/src/session/fleet.rs", "crates/frontend-core/src/session/world_switch.rs"]
 cells = [
   "frontend-core.driver-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
   "frontend-core.error-expiry-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib error_expiry::tests::",
@@ -1013,10 +1013,14 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/host/src/slot_io.rs", "crates/host/src/login_queue.rs", "vendor/fr-client-rust/crates/client/src/io/**", "vendor/fr-client-rust/crates/client/src/client/client.rs"]
+globs = ["crates/host/src/slot_io.rs", "crates/host/src/login_queue.rs", "crates/host-play/src/play_login.rs", "vendor/fr-client-rust/crates/client/src/io/**", "vendor/fr-client-rust/crates/client/src/client/client.rs"]
 cells = [
   "host.transport-relog|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_protocol_error_relogs_fresh_into_a_world --nocapture --test-threads=1",
   "host.transport-dead-server|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_dead_server_deadline_reconnects_into_a_world --nocapture --test-threads=1",
+  "host.transport-idle-held|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_scripted_bot_never_sends_the_idle_request --nocapture --test-threads=1",
+  "host.scriptless-park-protocol-error|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_scriptless_protocol_error_stays_parked_until_login --nocapture --test-threads=1",
+  "host.scriptless-park-dead-server|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_scriptless_dead_server_stays_parked_until_login --nocapture --test-threads=1",
+  "host.scriptless-idle-logout|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_scriptless_idle_logout_stays_parked_until_login --nocapture --test-threads=1",
 ]
 
 [[cover]]

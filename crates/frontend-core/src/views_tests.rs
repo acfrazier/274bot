@@ -327,6 +327,76 @@ fn repeat_logout_guard_reason_is_visible_in_slot_status() {
     );
 }
 
+/// A bot logged out after an exit nobody asked for says why, the same text in
+/// every frontend (the panel and the TUI both show `detail.state`).
+#[test]
+fn idle_park_reason_is_visible_in_slot_status() {
+    let row = FleetRow::fixture("alice", Phase::LoggedOut, None, None);
+    for (reason, expected) in [
+        (
+            host_play::LoginLatchReason::IdleDisconnect,
+            "logged out: disconnected while idle (Log in to connect)",
+        ),
+        (
+            host_play::LoginLatchReason::IdleLogout,
+            "logged out: idle logout by the server (Log in to connect)",
+        ),
+        (
+            host_play::LoginLatchReason::ServerLogout,
+            "logged out by the server (Log in to connect)",
+        ),
+    ] {
+        let status = SlotStatus {
+            username: "alice".into(),
+            login_latched: true,
+            login_latch_reason: Some(reason),
+            ..SlotStatus::default()
+        };
+        let mut text = String::new();
+        write_state(&mut text, &row, Some(&status), false);
+        assert_eq!(text, expected);
+    }
+}
+
+/// The park of a bot without a script travels from the arm to the row and
+/// the detail text, and an explicit Log in clears it.
+#[test]
+fn an_idle_park_reaches_the_row_and_the_detail_text_until_log_in() {
+    let mut s = fleet("idle-park", &["ip-dee"], true);
+    s.select("ip-dee");
+    let arm = s.play().unwrap().arm("ip-dee").expect("arm");
+    arm.complete_login_for_test();
+    arm.exit_while_idle_for_test();
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(host_play::LoginLatchReason::IdleDisconnect)
+    );
+    publish(&s, "ip-dee", |r| {
+        r.connected = false;
+        r.ingame = false;
+        r.login_latched = true;
+        r.login_latch_reason = arm.login_latch_reason();
+        phase_to(r, StartupPhase::Queueing);
+    });
+    s.poll();
+    let parked = row(&s, "ip-dee");
+    assert_eq!(parked.phase, Phase::LoggedOut);
+    assert!(!parked.guard_parked());
+    assert!(!parked.logout_eligibility().eligible());
+    assert_eq!(
+        detail(&s).state,
+        "logged out: disconnected while idle (Log in to connect)"
+    );
+
+    arm.arm_explicit_login();
+    publish(&s, "ip-dee", |r| {
+        r.login_latched = false;
+        r.login_latch_reason = None;
+    });
+    s.poll();
+    assert_eq!(row(&s, "ip-dee").phase, Phase::Waiting);
+}
+
 #[test]
 fn manual_walk_cancellation_status_replaces_the_scene_detail() {
     let row = FleetRow::fixture("alice", Phase::Ready, None, None);

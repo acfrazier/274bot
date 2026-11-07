@@ -1235,6 +1235,8 @@ fn memory_queue_survives_socket_reconnect_until_clean_logout() {
     arm.set_lowmem_handshake(true);
     arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+    // The reconnect under test is a script's.
+    start_idle_script(&play, "alice");
     let first = login_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert!(wait_settled(|| play
         .statuses()
@@ -2482,6 +2484,8 @@ fn client_after_connection_loss() -> Client {
 fn observed_clean_exit_seeds_release_admission_but_transport_and_decode_exits_do_not() {
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
+    // Release evidence serves a login the slot still wants: a script's.
+    arm.set_script_active(true);
     let mut client = client_after_server_logout();
     let before = Instant::now();
     tick_flags(&mut client, &[], &arm);
@@ -2601,6 +2605,7 @@ fn connection_loss_keeps_the_reconnect_handshake() {
     client.lost_con();
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
+    arm.set_script_active(true);
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(should_handshake(&arm, client.ingame));
@@ -2700,6 +2705,7 @@ fn protocol_error_t1_logs_in_fresh_and_rebuilds_the_world() {
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
+    arm.set_script_active(true);
 
     client.ptype = 74;
     client.psize = 0;
@@ -2733,6 +2739,7 @@ fn protocol_error_t2_logs_in_fresh() {
     let mut client = hosted_client_on_a_built_scene(addr);
     let arm = SlotArm::new(7, true);
     on_login_success(&arm, arm.login_command(false).unwrap());
+    arm.set_script_active(true);
 
     // A one-byte frame for a zero-length opcode fails the fixed-length check.
     client.ptype = 74;
@@ -2849,6 +2856,303 @@ fn unexpected_server_logout_relogs_an_active_script_with_auto_login_off() {
     assert_eq!(arm.login_latch_reason(), None);
 }
 
+/// Every way a session ends unexpectedly, as the client reports it, with the
+/// reason the park gives: only a server logout after the client's own idle
+/// request is an idle logout.
+fn unexpected_exits() -> Vec<(&'static str, LoginLatchReason, Client)> {
+    let dead_server = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = hosted_client_on_a_built_scene(listener.local_addr().unwrap());
+        client.last_response = Some(Instant::now() - Duration::from_secs(16));
+        client.game_loop();
+        assert!(!client.ingame);
+        client
+    };
+    let protocol_error = {
+        let mut client = hosted_client_on_a_built_scene("127.0.0.1:43594".parse().unwrap());
+        client.ptype = 74;
+        client.psize = 0;
+        client.handle_packet(74, &mut Packet::new(vec![]));
+        client
+    };
+    vec![
+        (
+            "connection lost",
+            LoginLatchReason::IdleDisconnect,
+            client_after_connection_loss(),
+        ),
+        (
+            "dead server deadline",
+            LoginLatchReason::IdleDisconnect,
+            dead_server,
+        ),
+        (
+            "protocol error",
+            LoginLatchReason::IdleDisconnect,
+            protocol_error,
+        ),
+        (
+            "server logout",
+            LoginLatchReason::ServerLogout,
+            client_after_server_logout(),
+        ),
+        (
+            "idle logout",
+            LoginLatchReason::IdleLogout,
+            client_after_observed_idle_logout(),
+        ),
+    ]
+}
+
+/// A native script that does nothing: the slot counts as scripted.
+struct IdleTestScript;
+
+impl script::native::Script for IdleTestScript {
+    fn tick(
+        &mut self,
+        _tick: &mut script::native::NativeTick<'_>,
+    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+        Ok(script::native::ScriptFlow::Continue)
+    }
+}
+
+/// Run `IdleTestScript` on `name`, as an operator Start would, so the slot
+/// keeps its reconnect policy.
+fn start_idle_script(play: &Play, name: &str) {
+    play.script_start_handle()
+        .start_test_script(name, Box::new(IdleTestScript), None)
+        .expect("start the idle script");
+}
+
+/// A bot with no script behaves like a human client: after any unexpected
+/// disconnect, and after the server's idle logout, it stays logged out until
+/// the operator logs it in. It never relogs by itself, however long the
+/// auto-login preference has asked for it.
+#[test]
+fn scriptless_unexpected_disconnect_stays_parked() {
+    for (label, reason, mut client) in unexpected_exits() {
+        let arm = SlotArm::new(7, true);
+        on_login_success(&arm, arm.login_command(false).unwrap());
+
+        assert!(!tick_flags(&mut client, &[], &arm), "{label}");
+        assert!(
+            !should_handshake(&arm, client.ingame),
+            "{label}: a bot with no script must not reconnect"
+        );
+        assert!(!arm.relogs_after_drop(), "{label}");
+        assert_eq!(
+            arm.login_latch_reason(),
+            Some(reason),
+            "{label}: the park says why the bot is logged out"
+        );
+        assert!(
+            !arm.login_latched(),
+            "{label}: a park is not an operator latch"
+        );
+        assert!(arm.auto_login(), "{label}: the saved preference is kept");
+    }
+}
+
+#[test]
+fn a_bot_with_a_running_script_still_relogs_after_an_unexpected_exit() {
+    for (label, _, mut client) in unexpected_exits() {
+        let arm = SlotArm::new(7, true);
+        on_login_success(&arm, arm.login_command(false).unwrap());
+        arm.set_script_active(true);
+
+        assert!(!tick_flags(&mut client, &[], &arm), "{label}");
+        assert!(
+            should_handshake(&arm, client.ingame),
+            "{label}: a script's reconnect is unchanged"
+        );
+        assert_eq!(arm.login_latch_reason(), None, "{label}");
+    }
+}
+
+/// The script flag is decided from the slot's own state at the exit: the
+/// boundary sync that follows corrects a flag that was stale when the client
+/// reported the exit.
+#[test]
+fn the_script_state_at_the_boundary_decides_a_stale_exit() {
+    // A script started online: the exit parked first, the sync restores it.
+    let mut client = client_after_connection_loss();
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    tick_flags(&mut client, &[], &arm);
+    assert!(!should_handshake(&arm, false));
+    arm.set_script_active(true);
+    assert!(should_handshake(&arm, false));
+    assert_eq!(arm.login_latch_reason(), None);
+
+    // A script stopped online: the exit owed the relog, the sync parks it.
+    let mut client = client_after_connection_loss();
+    let arm = SlotArm::new(7, true);
+    arm.set_script_active(true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    tick_flags(&mut client, &[], &arm);
+    assert!(should_handshake(&arm, false));
+    arm.set_script_active(false);
+    assert!(!should_handshake(&arm, false));
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(LoginLatchReason::IdleDisconnect)
+    );
+}
+
+/// The mailbox row that the end of a script's need posts: a relog that is in
+/// progress is no longer current and the bot parks; the operator's own Login
+/// still connects. The public Stop that posts it, with an open handshake, is
+/// `a_script_stop_cancels_the_handshake_of_the_relog_it_was_running_through`.
+#[test]
+fn stopping_the_script_cancels_a_relog_in_progress_and_login_connects_again() {
+    let mut client = client_after_connection_loss();
+    let arm = SlotArm::new(7, true);
+    arm.set_script_active(true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    tick_flags(&mut client, &[], &arm);
+    let command = arm.login_command(false).expect("the script's relog");
+    let world = 0;
+    assert!(arm.login_attempt_is_current(command, world));
+
+    arm.set_script_active(false);
+    assert!(!arm.login_attempt_is_current(command, world));
+    assert!(!should_handshake(&arm, false));
+    assert_eq!(
+        arm.relog_park_reason().to_string(),
+        "idle_disconnect",
+        "the one park line names the reason"
+    );
+
+    arm.arm_explicit_login();
+    assert!(should_handshake(&arm, false));
+    assert_eq!(arm.login_latch_reason(), None);
+}
+
+/// A `Play` with no slot thread, for the control-thread paths of a script's
+/// Start and Stop. The test plays the slot thread's part by hand.
+fn play_for_script_control() -> Play {
+    run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+}
+
+/// The race: a script's connection drops, the slot starts the script's
+/// replacement handshake, and the operator stops the script while that
+/// handshake is open. The Stop itself, not a later slot step, cancels the
+/// attempt: a handshake that finishes afterwards is not accepted, so the bot
+/// never comes back without its script. Every public Stop does it.
+#[test]
+fn a_script_stop_cancels_the_handshake_of_the_relog_it_was_running_through() {
+    type Stop = fn(&Play, &str, api::selected::RunKey);
+    let stops: [(&str, Stop); 2] = [
+        ("script_stop", |play, name, _| play.script_stop(name)),
+        ("script_native_stop", |play, name, key| {
+            assert!(play.script_native_stop(name, key));
+        }),
+    ];
+    for (label, stop) in stops {
+        let mut play = play_for_script_control();
+        let arm = SlotArm::new(7, true);
+        play.attach_arm("alice", Arc::clone(&arm));
+        let key = play
+            .script_start_handle()
+            .start_test_script("alice", Box::new(IdleTestScript), None)
+            .expect("start the idle script");
+        // The slot thread's own step, before it connects.
+        crate::play_slots::sync_script_login(&arm, &play.scripts, "alice");
+        on_login_success(&arm, arm.login_command(false).unwrap());
+        let mut client = client_after_connection_loss();
+        tick_flags(&mut client, &[], &arm);
+        assert!(should_handshake(&arm, false), "{label}: the script's relog");
+
+        let (command, world) = capture_login_authorization(&arm, false).expect(label);
+        let cancel = client::io::client_stream::LoginCancel::new();
+        assert!(arm.begin_attempt(command, world, cancel.clone()), "{label}");
+        assert!(!cancel.is_cancelled(), "{label}");
+
+        // The slot thread is inside the handshake and syncs nothing.
+        stop(&play, "alice", key);
+
+        assert!(cancel.is_cancelled(), "{label}: Stop cancels the handshake");
+        assert!(
+            !arm.finish_attempt(
+                command,
+                world,
+                Instant::now() + Duration::from_secs(30),
+                &cancel,
+                &Ok(()),
+            ),
+            "{label}: a handshake that completes after Stop is not accepted"
+        );
+        assert!(!should_handshake(&arm, false), "{label}");
+        assert_eq!(
+            arm.login_latch_reason(),
+            Some(LoginLatchReason::IdleDisconnect),
+            "{label}"
+        );
+        arm.arm_explicit_login();
+        assert!(should_handshake(&arm, false), "{label}: Log in connects");
+    }
+}
+
+/// A script started on a parked bot and stopped before the bot is back leaves
+/// it parked; the saved auto-login preference does not log it in.
+#[test]
+fn starting_and_stopping_a_script_on_a_parked_bot_leaves_it_parked() {
+    let mut play = play_for_script_control();
+    let arm = SlotArm::new(7, true);
+    play.attach_arm("alice", Arc::clone(&arm));
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    let mut client = client_after_connection_loss();
+    tick_flags(&mut client, &[], &arm);
+    assert!(!should_handshake(&arm, false), "parked");
+
+    start_idle_script(&play, "alice");
+    crate::play_slots::sync_script_login(&arm, &play.scripts, "alice");
+    assert!(should_handshake(&arm, false), "the script logs the bot in");
+
+    play.script_stop("alice");
+
+    assert!(!should_handshake(&arm, false), "no scriptless auto-login");
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(LoginLatchReason::IdleDisconnect)
+    );
+    arm.arm_explicit_login();
+    assert!(should_handshake(&arm, false), "the operator's Log in works");
+}
+
+/// A script that starts while the bot is parked logs it in; an operator
+/// latch is not undone by a script.
+#[test]
+fn a_script_started_during_a_park_logs_in_but_not_through_an_operator_latch() {
+    let mut client = client_after_connection_loss();
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    tick_flags(&mut client, &[], &arm);
+    assert!(!should_handshake(&arm, false));
+    arm.set_script_active(true);
+    assert!(should_handshake(&arm, false));
+
+    let mut client = client_after_server_logout();
+    let arm = SlotArm::new(7, true);
+    on_login_success(&arm, arm.login_command(false).unwrap());
+    arm.request_logout();
+    tick_flags(&mut client, &[], &arm);
+    arm.set_script_active(true);
+    assert!(!should_handshake(&arm, false), "the operator's logout wins");
+}
+
 #[test]
 fn session_exit_snapshot_is_consistent_with_logout_order() {
     for logout_before_exit in [false, true] {
@@ -2879,7 +3183,11 @@ fn clean_server_logout_does_not_count_toward_repeat_guard() {
     let mut client = client_after_server_logout();
     observe_client_session_exit(&mut client, &arm);
     assert_eq!(arm.unexpected_logout_count_at(Instant::now()), 0);
-    assert_eq!(arm.login_latch_reason(), None);
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(LoginLatchReason::ServerLogout),
+        "a bot without a script parks; the guard counts nothing"
+    );
 }
 
 #[test]
@@ -8722,6 +9030,125 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         records.is_empty(),
         "host-internal probe logged a reply candidate"
     );
+}
+
+/// A cheat the operator typed is input to the game: once the client accepts
+/// it, the idle counter restarts, as a typed chat line would restart it in the
+/// Java client. A host bookkeeping cheat is not input, and neither is a cheat
+/// the client refuses.
+#[test]
+fn an_accepted_operator_cheat_resets_the_idle_counter_and_bookkeeping_does_not() {
+    // (queue the command, the client accepts cheats, idle count afterwards)
+    type Queue = fn(&Play);
+    let cases: [(&str, Queue, bool, u32); 4] = [
+        (
+            "operator cheat",
+            |play| play.cheat("alice", "getcoord").unwrap(),
+            true,
+            0,
+        ),
+        (
+            "host bookkeeping cheat",
+            |play| play.cheat_internal("alice", "getvar tutorial").unwrap(),
+            true,
+            4000,
+        ),
+        (
+            "operator cheat the client refuses",
+            |play| play.cheat("alice", "getcoord").unwrap(),
+            false,
+            4000,
+        ),
+        ("no command", |_| {}, true, 4000),
+    ];
+    for (label, queue, admitted, idle_after) in cases {
+        let play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: "alice".into(),
+            ingame: true,
+            scene_state: 2,
+            ..SlotStatus::default()
+        });
+        play.cheats
+            .lock()
+            .unwrap()
+            .insert("alice".into(), VecDeque::new());
+        queue(&play);
+
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let mut client = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        client.ingame = true;
+        client.scene_state = 2;
+        if admitted {
+            client.set_cheat_admission(client::CheatAdmission::Granted);
+        }
+        client.shell.idle_cycles = 4000;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
+
+        super::script_observe_cached_with_channels(
+            &mut client,
+            "alice",
+            true,
+            false,
+            false,
+            1,
+            None,
+            None,
+            None,
+            Some(&snapshot),
+            None,
+            #[cfg(feature = "js")]
+            None,
+            None,
+            &scripts,
+            &play.cheats,
+            &navs,
+            &world,
+            false,
+            false,
+            false,
+            None,
+            None,
+            None,
+            None,
+            #[cfg(feature = "js")]
+            None,
+            #[cfg(feature = "js")]
+            super::script_channels::BrokerWorld::Unavailable,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(client.shell.idle_cycles, idle_after, "{label}");
+    }
 }
 
 #[test]
@@ -25135,6 +25562,8 @@ fn spawned_worker_clean_server_logout_code5_retries_on_release_cadence() {
         None,
         Some(Arc::clone(&arm)),
     );
+    // The relog under test is a script's reconnect.
+    start_idle_script(&play, "clean-release-worker");
 
     let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16), "initial login is fresh");
@@ -25249,6 +25678,8 @@ fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
         None,
         Some(Arc::clone(&arm)),
     );
+    // The relog under test is a script's reconnect.
+    start_idle_script(&play, "dirty-exit-worker");
 
     let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16));
@@ -25270,6 +25701,131 @@ fn spawned_worker_dirty_exit_code5_uses_generic_sixty_seconds() {
     release_wait.send(()).unwrap();
     play.stop_slot("dirty-exit-worker");
     server.join().unwrap();
+}
+
+/// The spawned worker of a bot with no script does not reconnect by itself
+/// after the server drops its connection: it parks, publishes why, and only
+/// the operator's Log in starts the next handshake.
+#[test]
+fn spawned_scriptless_worker_stays_parked_after_a_drop_until_login() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (disconnect_tx, disconnect_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        let (opcode, arrived) = read_worker_login_attempt(&mut first);
+        attempt_tx.send((1, opcode, arrived)).unwrap();
+        answer_worker_login(&mut first, 2);
+        disconnect_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+        drop(first);
+
+        let (mut second, _) = listener.accept().unwrap();
+        let (opcode, arrived) = read_worker_login_attempt(&mut second);
+        attempt_tx.send((2, opcode, arrived)).unwrap();
+        answer_worker_login(&mut second, 5);
+    });
+
+    let mut play = run_worker_play(endpoint, |_, _, _| {});
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(
+        profile("scriptless-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!((number, opcode), (1, 16));
+    assert!(wait_settled(|| play.slot_connected("scriptless-worker")));
+    disconnect_tx.send(()).unwrap();
+    assert!(
+        wait_settled(|| arm.login_latch_reason() == Some(LoginLatchReason::IdleDisconnect)),
+        "the dropped bot parks with its reason"
+    );
+    assert!(
+        attempt_rx.recv_timeout(Duration::from_secs(4)).is_err(),
+        "no reconnect starts: login spacing is 1.2 s"
+    );
+    assert!(wait_settled(|| play.statuses().iter().any(|row| row
+        .username
+        == "scriptless-worker"
+        && row.login_latch_reason
+            == Some(LoginLatchReason::IdleDisconnect))));
+
+    arm.arm_explicit_login();
+    play.wake("scriptless-worker");
+    let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!(
+        (number, opcode),
+        (2, 18),
+        "the operator's Log in reconnects into the dirty session"
+    );
+
+    arm.stop.store(true, Ordering::Relaxed);
+    play.stop_slot("scriptless-worker");
+    server.join().unwrap();
+}
+
+/// Whether the client of a spawned, logged-in worker ran the Java idle timer
+/// at any frame in a few seconds, with or without a running script.
+fn worker_runs_idle_timer(scripted: bool) -> bool {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        read_worker_login_attempt(&mut socket);
+        answer_worker_login(&mut socket, 2);
+        let _ = release_rx.recv_timeout(Duration::from_secs(60));
+    });
+    let ran = Arc::new(AtomicBool::new(false));
+    let seen = Arc::clone(&ran);
+    let mut play = run_worker_play(endpoint, move |client, _, _| {
+        if client.ingame && client.host_idle_timer() {
+            seen.store(true, Ordering::Relaxed);
+        }
+    });
+    let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
+    play.spawn_slot(
+        profile("idle-timer-worker", 42),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+    if scripted {
+        start_idle_script(&play, "idle-timer-worker");
+    }
+    assert!(wait_settled(|| play.slot_connected("idle-timer-worker")));
+    thread::sleep(Duration::from_secs(3));
+    let result = ran.load(Ordering::Relaxed);
+
+    arm.stop.store(true, Ordering::Relaxed);
+    release_tx.send(()).unwrap();
+    play.stop_slot("idle-timer-worker");
+    server.join().unwrap();
+    result
+}
+
+/// A bot with no script runs the Java idle timer; a running script holds it
+/// off. (The host owns reconnect, so before the host asked for the timer no
+/// bot ever sent the idle request.)
+#[test]
+fn a_worker_runs_the_idle_timer_only_while_no_script_runs() {
+    assert!(
+        worker_runs_idle_timer(false),
+        "a bot with no script runs the idle timer"
+    );
+    assert!(
+        !worker_runs_idle_timer(true),
+        "a running script suppresses the idle timer"
+    );
 }
 
 #[test]
@@ -25309,6 +25865,8 @@ fn spawned_worker_clean_release_budget_exhaustion_uses_generic_sixty_seconds() {
         None,
         Some(Arc::clone(&arm)),
     );
+    // The relog under test is a script's reconnect.
+    start_idle_script(&play, "release-budget-worker");
 
     let (number, opcode, _) = attempt_rx.recv_timeout(Duration::from_secs(60)).unwrap();
     assert_eq!((number, opcode), (1, 16));
