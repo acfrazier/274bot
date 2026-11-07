@@ -703,7 +703,13 @@ where
         let prayer_cleanup_hold = if let Some(snapshot) = snapshot.read().filter(|_| up) {
             let mut bots = navs.lock().unwrap();
             if !stop_prayers.is_empty() {
-                let bot = bots.entry(name.to_owned()).or_default();
+                // The bot exists on every steady frame; `entry` would build
+                // an owned key per call. Borrow it first, and pay for the
+                // key only on the one path that inserts.
+                let bot = match bots.get_mut(name) {
+                    Some(bot) => bot,
+                    None => bots.entry(name.to_owned()).or_default(),
+                };
                 super::script_walk::owe_combat_prayers_off(
                     bot,
                     stop_prayers,
@@ -1327,7 +1333,13 @@ where
         }
         {
             let mut navs = navs.lock().unwrap();
-            let bot = navs.entry(name.to_owned()).or_default();
+            // The bot exists on every steady frame; `entry` would build an
+            // owned key per observe. Borrow it first, and pay for the key
+            // only on the one path that inserts.
+            let bot = match navs.get_mut(name) {
+                Some(bot) => bot,
+                None => navs.entry(name.to_owned()).or_default(),
+            };
             bot.work_scope = slot.work_scope();
             bot.native_permissions = slot.native_walk_permissions();
             bot.compat_v1 = slot.surface_family() == Some(script::surface::SurfaceFamily::JsV1);
@@ -1626,7 +1638,13 @@ where
                     let compatibility_work_scope = slot.work_scope();
                     {
                         let mut navs = navs.lock().unwrap();
-                        let bot = navs.entry(name.to_owned()).or_default();
+                        // The bot exists on every steady frame; `entry` would
+                        // build an owned key per observe. Borrow it first,
+                        // and pay for the key only on the insert path.
+                        let bot = match navs.get_mut(name) {
+                            Some(bot) => bot,
+                            None => navs.entry(name.to_owned()).or_default(),
+                        };
                         bot.work_scope = slot.work_scope();
                         bot.quest_context = super::script_nav::route_quest_context(&slot, tick);
                         bot.native_permissions = slot.native_walk_permissions();

@@ -355,3 +355,91 @@ scenario!(
     quester_paths_reload,
     iteration_settles_a_quester_paths_reload
 );
+
+/// The whole TUI frame: one headed loop iteration — `session.pump` (the
+/// full core poll) plus the `terminal.draw` that composes every pane and
+/// overlay onto the backend. The steady frame is not allocation-free: the
+/// draw rebuilds every pane's text each frame, so the bound is the
+/// measured warm count plus headroom — the lab hosts measure 180 calls
+/// and 16,365–16,366 bytes per iteration with one connected row, and the
+/// ceiling is the higher measurement plus 2%, rounded up — plus the
+/// no-growth equality: a second block of 100 unchanged iterations must
+/// cost exactly the same and retain nothing.
+///
+/// The measurement runs in a child process: the process-wide log store
+/// carries every earlier test's lines, and a frame that rebuilds the log
+/// pane costs more as the ring fills, so an in-process count depends on
+/// the test's position in the binary. A fresh child starts an empty ring
+/// and measures the same cost a fresh TUI process pays.
+#[test]
+fn the_whole_headed_frame_adds_no_allocation_growth_across_100_unchanged_iterations() {
+    const CHILD: &str = "TUI_WHOLE_FRAME_GATE_CHILD";
+    const TEST_PATH: &str = "bin::loop_tests::the_whole_headed_frame_adds_no_allocation_growth_across_100_unchanged_iterations";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST_PATH, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated whole-frame gate");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed; 0 failed;"),
+            "whole-frame gate child failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let _iso = IsolatedStores::enter("tui-loop-whole-frame");
+    let (session, _arm) = session_with_alice();
+    publish(&session, true);
+    let mut rig = Rig::new(Loop::Headed, session);
+    // Warm: the first projection builds, log lines and terminal buffers
+    // settle before the counted iterations.
+    for _ in 0..16 {
+        assert_eq!(rig.iterate(), None);
+    }
+    let first = allocation_counter::measure(|| {
+        for _ in 0..100 {
+            assert_eq!(rig.iterate(), None, "an unchanged iteration ended the run");
+        }
+    });
+    assert_eq!(
+        first.bytes_current, 0,
+        "the first block retains nothing: {first:?}"
+    );
+    let second = allocation_counter::measure(|| {
+        for _ in 0..100 {
+            assert_eq!(rig.iterate(), None, "an unchanged iteration ended the run");
+        }
+    });
+    assert_eq!(
+        second.count_total, first.count_total,
+        "unchanged iterations must not grow"
+    );
+    assert_eq!(
+        second.bytes_total, first.bytes_total,
+        "unchanged iterations must not grow"
+    );
+    assert_eq!(
+        second.bytes_current, 0,
+        "the whole-frame iterations retain nothing"
+    );
+    // Per-frame totals differ slightly between hosts (16,365 and 16,366 B
+    // per iteration on the two lab hosts), so the ceilings carry headroom
+    // instead of pinning one host's measurement: the highest per-host
+    // measured warm count plus 2%, rounded up.
+    const WHOLE_FRAME_CALL_CEILING_PER_FRAME: u64 = 184;
+    const WHOLE_FRAME_BYTE_CEILING_PER_FRAME: u64 = 16_694;
+    assert!(
+        second.count_total <= WHOLE_FRAME_CALL_CEILING_PER_FRAME * 100,
+        "100 unchanged whole frames: {} calls exceeds the measured warm count plus 2% headroom ({})",
+        second.count_total,
+        WHOLE_FRAME_CALL_CEILING_PER_FRAME * 100
+    );
+    assert!(
+        second.bytes_total <= WHOLE_FRAME_BYTE_CEILING_PER_FRAME * 100,
+        "100 unchanged whole frames: {} B exceeds the measured warm count plus 2% headroom ({})",
+        second.bytes_total,
+        WHOLE_FRAME_BYTE_CEILING_PER_FRAME * 100
+    );
+}
