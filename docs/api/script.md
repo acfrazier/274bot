@@ -1039,6 +1039,13 @@ qualification fixtures use a radius of eleven to cover their distant staging.
 
 ### Quester journal reads
 
+On 377, a same-pin green row for the active quest supersedes an in-flight
+stage journal transaction. The runner cancels the obsolete read, releases
+its quiet lease, and uses the existing terminal-colour resolver without
+closing the completion scroll or fabricating journal lines. Another quest's
+green row or a changed selected pin cannot authorize this handover. The
+274/289 reader path and foreign-root/title checks are unchanged.
+
 Native Quester dialogue completion requires its end gap of observed game ticks
 with chat closed (one by default, or the step's `gap_ticks`), rather than an
 elapsed host-millisecond gap. Inventory changes and
