@@ -1,8 +1,9 @@
 //! Source-grounded batch-2 connectivity and unchanged production-route evidence.
 use std::path::PathBuf;
 
+use api::query::{is_arrived, CollisionArrivalProbe};
 use api::snapshot::WorldTile;
-use nav_planner::router::{find_with, FindOptions, Leg};
+use nav_planner::router::{find_first_with, find_with, FindOptions, Leg};
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
 use serde_json::json;
@@ -109,33 +110,47 @@ fn morgan_cupboard_route_returns_to_ground_floor() {
     };
     let mut rows = Vec::new();
     let mut failed = false;
+    let to = tile(3232, 3500, 0);
+    // Match take-hammer-coins: the native ground interaction uses radius-six
+    // Reach, not an exact stand on the palace alcove's coin spawn.
+    let probe = CollisionArrivalProbe::new(|tile: WorldTile| {
+        Some(world.collision.walkable_word(tile.x, tile.z, tile.level) as i32)
+    });
+    let goals: Vec<_> = (-6..=6)
+        .flat_map(|dx| (-6..=6).map(move |dz| tile(to.x + dx, to.z + dz, to.level)))
+        .filter(|stand| world.collision.standable(*stand) && is_arrived(*stand, to, 6, || &probe))
+        .collect();
+    assert!(!goals.is_empty(), "the real coins have a Reach approach");
     for from in [tile(3102, 3266, 1), tile(3097, 3270, 1)] {
-        let to = tile(2934, 3286, 0);
-        rows.push(
-            match find_with(
-                &world.collision,
-                &world.graph,
-                from,
-                to,
-                FindOptions::default(),
-                &state,
-            ) {
-                Ok(route) => {
-                    json!({"from":from,"to":to,"ticks":route.ticks,"legs":format!("{:?}",route.legs)})
-                }
-                Err(error) => {
-                    failed = true;
-                    json!({"from":from,"to":to,"error":format!("{error:?}")})
-                }
-            },
+        let result = find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &goals,
+            FindOptions::default(),
+            &state,
         );
+        rows.push(match result.route() {
+            Ok(route) => {
+                assert!(route
+                    .legs
+                    .iter()
+                    .any(|leg| { matches!(leg, Leg::Transport { edge } if edge.loc_id == 1723) }));
+                json!({"from":from,"to":to,"ticks":route.ticks,"legs":format!("{:?}",route.legs)})
+            }
+            Err(error) => {
+                failed = true;
+                json!({"from":from,"to":to,"error":format!("{error:?}")})
+            }
+        });
     }
     let edges: Vec<_> = world
         .graph
         .edges
         .iter()
-        .filter(|edge| (3090..=3110).contains(&edge.at.x) && (3260..=3280).contains(&edge.at.z))
-        .map(|edge| json!({"loc":edge.loc_id,"at":edge.at,"to":edge.to,"ticks":edge.ticks}))
+        .enumerate()
+        .filter(|(_, edge)| (3090..=3110).contains(&edge.at.x) && (3260..=3280).contains(&edge.at.z))
+        .map(|(index, edge)| json!({"loc":edge.loc_id,"at":edge.at,"to":edge.to,"ticks":edge.ticks,"approach":format!("{:?}",world.graph.approaches.get(index))}))
         .collect();
     std::fs::write(
         path("PATHS_377_MORGAN_REPORT"),
@@ -143,6 +158,7 @@ fn morgan_cupboard_route_returns_to_ground_floor() {
             "verdict": if failed {"FAIL"} else {"PASS"},
             "routes": rows,
             "edges": edges,
+            "reach_goals": goals,
         }))
         .unwrap(),
     )
