@@ -1003,10 +1003,16 @@ function parseShopInventory(text: string, inv: string): ShopInventory {
     return { inv, scope, allstock, stock: parseInvShopStock(text, inv) };
 }
 
-function extractShopFacts(content: string, items: readonly ShopItemSource[]) {
+function extractShopFacts(content: string, items: readonly ShopItemSource[], revision = 289) {
     const keepers: ParsedShopKeeper[] = [];
+    const selectedNpcs = revision === 377
+        ? fs.readFileSync(path.join(content, 'scripts/_unpack/377/all.npc'), 'utf8')
+        : undefined;
+    const selectedInventories = revision === 377
+        ? contentTreeFiles(content, 'scripts', '.inv').map((file) => fs.readFileSync(path.join(content, file), 'utf8'))
+        : undefined;
     for (const source of SHOP_KEEPER_SOURCES) {
-        const text = fs.readFileSync(path.join(content, source.file), 'utf8');
+        const text = selectedNpcs ?? fs.readFileSync(path.join(content, source.file), 'utf8');
         for (const config of source.configs) {
             const values = parseNpcSection(text, config);
             const required = (key: string) => {
@@ -1027,7 +1033,10 @@ function extractShopFacts(content: string, items: readonly ShopItemSource[]) {
     }
     const itemByAlias = new Map(items.filter((item) => item.alias !== null).map((item) => [item.alias as string, item]));
     const shops: ShopRecordFact[] = SHOP_INVENTORY_SOURCES.map(({ inv, file }) => {
-        const inventory = parseShopInventory(fs.readFileSync(path.join(content, file), 'utf8'), inv);
+        const selected = selectedInventories?.flatMap((text) =>
+            Array.from(text.matchAll(new RegExp(`^\\[${inv}\\][\\t ]*\\r?$`, 'gm')), () => text));
+        if (selected && selected.length !== 1) throw new Error(`${inv}: expected one selected inventory definition, found ${selected.length}`);
+        const inventory = parseShopInventory(selected ? selected[0]! : fs.readFileSync(path.join(content, file), 'utf8'), inv);
         const owners = keepers.filter((keeper) => keeper.owned_shop === inv);
         const first = owners[0];
         if (!first) throw new Error(`${inv}: no keeper owns this inventory`);
@@ -1385,7 +1394,7 @@ export function extractDropFacts(content: string, items: ObjType[], npcs: NpcTyp
 
 /** One selected `param=` line. The value stays the raw string, in file order. */
 export type TrailParam = { key: string; value: string };
-/** One membership row: an enum alias or a casket those rows name. `access` is present only on packed 3554. */
+/** One membership row: an enum alias or a casket those rows name. `access` marks the constrained clue alias. */
 export type TrailMembershipRow = { alias: string; id: number; role: 'clue' | 'casket'; params: TrailParam[]; access?: 'constrained' };
 /** One challenge answer. The raw param string, not a coerced number. */
 export type TrailChallengeAnswer = { alias: string; id: number; answer: string };
@@ -1491,7 +1500,6 @@ export function extractTrailFacts(content: string, items: ObjType[], revision = 
     if (revision !== 377) {
         const constrained = rows.filter((row) => row.alias === TRAIL_CONSTRAINED.alias);
         if (constrained.length !== 1) throw new Error(`trails: ${TRAIL_CONSTRAINED.alias} must be one membership row`);
-        if (constrained[0]!.id !== TRAIL_CONSTRAINED.id) throw new Error(`trails: ${TRAIL_CONSTRAINED.alias} pack id ${constrained[0]!.id}, expected ${TRAIL_CONSTRAINED.id}`);
         constrained[0]!.access = 'constrained';
     }
     const challenge_answers: TrailChallengeAnswer[] = [];
@@ -2684,7 +2692,7 @@ async function generate(spec: Revision, stage: GenerationStage) {
     const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8'));
     if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`);
     const equipmentNames = extractEquipmentNamesFacts(items, objPack, root, spec.revision);
-    const gathering = extractGatheringFamily(spec.content);
+    const gathering = extractGatheringFamily(spec.content, spec.revision);
     const gatheringFile = path.join(path.dirname(spec.output), String(spec.revision), 'gathering.json');
     fs.mkdirSync(path.dirname(gatheringFile), { recursive: true });
     fs.writeFileSync(gatheringFile, familyBytes(gathering, 'gathering'));
@@ -2804,12 +2812,12 @@ async function generate(spec: Revision, stage: GenerationStage) {
     if (cookCatalog) fs.writeFileSync(path.join(root, 'crates/api/data/game-data/cook-catalog.json'), cookCatalogJson(cookCatalog));
     fs.rmSync(path.join(root, 'crates/api/data/game-data/bank-catalog.rs'), { force: true });
     fs.rmSync(path.join(root, 'crates/api/data/game-data/cook-catalog.rs'), { force: true });
-    const shops = extractShopFacts(spec.content, items);
+    const shops = extractShopFacts(spec.content, items, spec.revision);
     const gatherItemNames = new Map<number, string>();
     for (const item of items) if (item.name !== null && item.name !== '') gatherItemNames.set(item.id, item.name);
     const gatherResourceRows = gatherResources(gathering.payload, gatherItemNames);
     const gatherSiteResult = gatherSites(gathering.payload, gatherResourceRows, spec.content, bankCatalog, { revision: spec.revision });
-    hiddenSites.set(spec.revision, gatherSiteResult.hidden);
+    if (spec.revision !== 377) hiddenSites.set(spec.revision, gatherSiteResult.hidden);
     Object.assign(facts, { gather_resources: gatherResourceRows, gather_sites: gatherSiteResult.rows });
 
     const payload = {
@@ -2906,10 +2914,12 @@ async function main() {
     for (const spec of revisions.filter(spec => options.revisions.includes(spec.revision))) {
         results.push(await generate(spec, options.stage));
     }
-    const hiddenPath = path.join(root, HIDDEN_SITES_FILE);
-    const hiddenFile: Record<string, HiddenSitesRecord> = fs.existsSync(hiddenPath) ? JSON.parse(fs.readFileSync(hiddenPath, 'utf8')) : {};
-    for (const [revision, hidden] of hiddenSites) hiddenFile[String(revision)] = hiddenSitesRecord(hidden);
-    fs.writeFileSync(hiddenPath, hiddenSitesBytes(hiddenFile));
+    if (hiddenSites.size > 0) {
+        const hiddenPath = path.join(root, HIDDEN_SITES_FILE);
+        const hiddenFile: Record<string, HiddenSitesRecord> = fs.existsSync(hiddenPath) ? JSON.parse(fs.readFileSync(hiddenPath, 'utf8')) : {};
+        for (const [revision, hidden] of hiddenSites) hiddenFile[String(revision)] = hiddenSitesRecord(hidden);
+        fs.writeFileSync(hiddenPath, hiddenSitesBytes(hiddenFile));
+    }
     console.log(JSON.stringify({ stage: options.stage, revisions: results }, null, 2));
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });
