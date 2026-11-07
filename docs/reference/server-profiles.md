@@ -80,6 +80,15 @@ resources. Generated facts are local inputs. The runtime does not authenticate
 their source revision, commit or content hash (ADR 0019). Keep the 377 resource
 paths separate from the 274/289 paths.
 
+Native Quester dispatch and combat preparation admit the selected 377 tables.
+The 377 Path compilation fixtures require `NAV_377_PACK` for their real zone
+catalogue; do not substitute the 289 reference pack for that input.
+
+For the client's frozen Java-oracle tests, `CLIENT_377_CACHE_DIR` must name the
+eight-JAG fixture that matches the checked-in oracle. A newly packed running
+engine cache is not that frozen fixture. Keep this test path separate from the
+cache used by a live host run.
+
 The bounded `client_377` scenario uses the existing
 `panel-play --revision 377 --live script_client_377` harness. After the normal
 mainland seed, it captures scene 2. It sends a short direct courtyard walk without
