@@ -967,6 +967,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   also cancels a reconnect that is under way. Bots running a script reconnect
   as before, with the same back-off and the same stop after three unexpected
   exits in ten minutes.
+- Adds a source-backed revision-377 Knight's Sword Path with palace pie
+  acquisition, a naturally dropped iron-bar fallback, and documented cave
+  resources. It uses Mining 10 and Cooking 10 instead of the removed Mining 15/
+  Smithing 15 smelting fallback; the revision-289 Path remains unchanged.
 
 ### Gatherer
 
