@@ -61,7 +61,7 @@
             "lost_radius": 16,
             "kill_budget_ticks": 2400,
             "loadout": null,
-            "loot": ["goblin_armour", "coins"],
+            "loot": [{ "obj": "goblin_armour", "qty": 3 }, "coins"],
             "until": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } }
           },
           "skip_if": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "goblin_armour", "qty": 3 } } },

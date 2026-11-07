@@ -28,6 +28,7 @@ Canonical source: `/Volumes/dev-scratch/fairy-ring-worktrees/canon-1105/content`
 - Redberries OBJ 1951 at `maps/m51_52.jm2:6650,6651,6654`, anchor `(3271,3366,0)`.
 - Onions: `maps/m46_50.jm2:5084-5089`, anchor `(2950,3251,0)`, `pickables.rs2:35-43`.
 - Mail farm stand `(3146,3232,0)`, bounded to `(3138,3224)`–`(3152,3264)`, from `maps/m49_50.jm2:6702-6713`. The previous unbounded village encounter stalled at `(2953,3507,0)` with repeated `I can't reach that!` and only one mail. The open-melee tactic sends an NPC Attack, rather than opening intervening doors (`crates/script/src/combat/machine.rs:2321-2346,3177-3205`); an outdoor source-bounded encounter avoids selecting across that geometry without changing shared combat behavior.
+- Mail looting uses the explicit inventory threshold 3. A bare loot alias means "take only while holding none" (`families/combat.rs:197-216,711-716,1775-1785`); the separate `until` predicate does not raise that threshold. The historical one-hour combat-49 witness therefore kept killing after its first mail without collecting another. Incidental goblin coins retain their one-pile policy; the separate natural palace recipe funds any remaining dye cost.
 
 ## Not copied from 289
 
