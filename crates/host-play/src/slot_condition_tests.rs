@@ -1287,9 +1287,13 @@ fn repeated_interactions_keep_login_poison_unknown() {
     }
 }
 
-#[test]
-fn condition_dispatch_checkpoint_and_trace_allocate_nothing() {
-    let client = outgoing_client(client::io::ClientRevision::R289);
+/// The dispatch-checkpoint/trace gate runs the client the slot loop binds,
+/// so the revision decides the opcode mapping `observe_dispatch` walks.
+/// R274 maps its own table; R289 walks the stage-3 table. A revision-377
+/// merge adds `dispatch_checkpoint_allocations_gate_r377` calling this
+/// helper with `ClientRevision::R377` (CI-MEMORY-GATE-1106 slice C).
+fn dispatch_checkpoint_allocations_gate(revision: client::io::ClientRevision) {
+    let client = outgoing_client(revision);
     let mut owner = owner();
     let measured = allocation_counter::measure(|| {
         for _ in 0..1000 {
@@ -1298,6 +1302,16 @@ fn condition_dispatch_checkpoint_and_trace_allocate_nothing() {
         }
     });
     assert_eq!(measured.bytes_total, 0);
+}
+
+#[test]
+fn dispatch_checkpoint_allocations_gate_r274() {
+    dispatch_checkpoint_allocations_gate(client::io::ClientRevision::R274);
+}
+
+#[test]
+fn dispatch_checkpoint_allocations_gate_r289() {
+    dispatch_checkpoint_allocations_gate(client::io::ClientRevision::R289);
 }
 
 #[test]
@@ -1362,22 +1376,23 @@ fn admission_capture_reads_slot_condition() {
     assert!(matches!(input.poison, PoisonState::Unknown { .. }));
 }
 
-#[test]
-fn slot_condition_observe_frame_allocates_nothing() {
-    let mut owner = owner();
+/// The steady and line-frame gates observe the snapshot the slot loop
+/// publishes; the revision names the client the frames arrive from, so the
+/// 377 merge adds `condition_frame_allocations_gate_r377` beside the two
+/// below (CI-MEMORY-GATE-1106 slice C).
+fn condition_frame_allocations_gate(revision: client::io::ClientRevision) {
+    let _ = revision;
+    let mut steady_owner = owner();
     let snapshot = frame(0);
-    let drain = drain(false, true);
+    let steady = drain(false, true);
     let measured = allocation_counter::measure(|| {
         for _ in 0..1000 {
-            owner.observe_frame(&snapshot, &drain, false);
+            steady_owner.observe_frame(&snapshot, &steady, false);
         }
     });
     assert_eq!(measured.bytes_total, 0);
-}
 
-#[test]
-fn slot_condition_line_frame_allocates_nothing() {
-    let mut owner = owner();
+    let mut line_owner = owner();
     let mut line = frame(1);
     chat(&mut line, 1, POISON_LINE);
     hit(&mut line, 1, 1, 1);
@@ -1385,11 +1400,21 @@ fn slot_condition_line_frame_allocates_nothing() {
     let mut drink = frame(2);
     chat(&mut drink, 2, DRINK_LINE);
     let measured = allocation_counter::measure(|| {
-        owner.observe_frame(&line, &drain(true, false), false);
-        owner.observe_frame(&line, &drain(false, true), false);
-        owner.observe_frame(&drink, &drain(true, true), false);
+        line_owner.observe_frame(&line, &drain(true, false), false);
+        line_owner.observe_frame(&line, &drain(false, true), false);
+        line_owner.observe_frame(&drink, &drain(true, true), false);
     });
     assert_eq!(measured.bytes_total, 0);
+}
+
+#[test]
+fn condition_frame_allocations_gate_r274() {
+    condition_frame_allocations_gate(client::io::ClientRevision::R274);
+}
+
+#[test]
+fn condition_frame_allocations_gate_r289() {
+    condition_frame_allocations_gate(client::io::ClientRevision::R289);
 }
 
 #[test]
@@ -1418,4 +1443,206 @@ fn client_gens_size_of_pinned() {
         120,
         "npc_info adds one u64 to each of five retained copies: 40 B per bot, no allocation"
     );
+}
+
+// The CI memory gate for one warmed host tick per protocol revision
+// (CI-MEMORY-GATE-1106 slice C): the production frame seam in the order
+// `play_slots.rs` runs it — snapshot decode (`host::publish_snapshot`),
+// the bot's own condition owner (frame, dispatch checkpoint, dispatch
+// observation), the script tick (`SlotScript::on_game_tick` through the
+// observe path), and the nav step (`step_nav_bot`). The 377 merge adds
+// `warmed_tick_frame_allocations_gate_r377` beside the two tests below,
+// calling the same helper with `ClientRevision::R377`.
+
+use std::collections::{HashMap, VecDeque};
+use std::sync::Mutex as StdMutex;
+
+/// The idle native script the warmed tick gate runs: the real compiled-slot
+/// poll path (`NativeTick` construction and the seat wiring) with no
+/// effects of its own.
+struct GateIdleScript;
+
+impl script::native::Script for GateIdleScript {
+    fn tick(
+        &mut self,
+        _cx: &mut script::native::NativeTick<'_>,
+    ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+        Ok(script::native::ScriptFlow::Continue)
+    }
+}
+
+/// A connected, ingame client at `revision` with the local player and the
+/// hitpoints row armed once, so the first decode rebuilds those families.
+/// The steady frame the gate measures leaves every generation unchanged.
+fn gate_client(revision: client::io::ClientRevision) -> Client {
+    let mut client = outgoing_client(revision);
+    client.local_player = Some(client::dash3d::ClientPlayer::at(0, 0));
+    client.stat_effective_level[3] = 60;
+    client.stat_base_level[3] = 60;
+    client.gens.player += 1;
+    client.gens.player_info += 1;
+    client.gens.scene += 1;
+    client.gens.stat += 1;
+    client
+}
+
+/// The gate's reach probe: the unavailable view behind a shared handle, so
+/// a call costs nothing after the warm frame.
+fn gate_reach() -> Arc<api::query::ReachQueryView> {
+    static REACH: std::sync::LazyLock<Arc<api::query::ReachQueryView>> =
+        std::sync::LazyLock::new(|| Arc::new(api::query::ReachQueryView::unavailable()));
+    Arc::clone(&*REACH)
+}
+
+/// One warmed tick frame across the four production seams.
+#[allow(clippy::too_many_arguments)]
+fn gate_tick_frame(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    scripts: &crate::script_runtime::ScriptWall,
+    cheats: &Arc<StdMutex<HashMap<String, VecDeque<String>>>>,
+    navs: &Arc<StdMutex<HashMap<String, crate::script_runtime::NavBot>>>,
+    statuses: &Arc<StdMutex<Vec<crate::SlotStatus>>>,
+    world: &Option<Arc<nav_planner::world::NavWorld>>,
+    tick: u64,
+) {
+    // 1. The snapshot decode seam (`play_slots.rs` publishes the frame here).
+    host::publish_snapshot(snapshot, client, drain(false, true));
+    // 2. The bot's own condition owner observes the frame and takes the
+    //    dispatch checkpoint (the slot loop's order).
+    let checkpoint = {
+        let mut all = navs.lock().unwrap();
+        let bot = all.get_mut("alice").expect("the gate bot");
+        bot.condition
+            .observe_frame(snapshot, &drain(false, true), false);
+        bot.condition
+            .dispatch_checkpoint(client)
+            .expect("clean dispatch")
+    };
+    // 3. The script tick: `SlotScript::on_game_tick` dispatches on the edge
+    //    and the idle card runs the real seat poll.
+    crate::script_runtime::script_observe(
+        client,
+        "alice",
+        true,
+        true,
+        tick,
+        Some((0, 0, 0)),
+        None,
+        None,
+        Some(&*snapshot),
+        None,
+        scripts,
+        cheats,
+        navs,
+        world,
+        false,
+        false,
+    );
+    // 4. The dispatch observation follows the frame's dispatches.
+    navs.lock()
+        .unwrap()
+        .get_mut("alice")
+        .expect("the gate bot")
+        .condition
+        .observe_dispatch(client, checkpoint);
+    // 5. The nav step.
+    crate::script_runtime::step_nav_bot(
+        client,
+        "alice",
+        snapshot.tile(),
+        snapshot,
+        navs,
+        statuses,
+        None,
+        false,
+        false,
+        None,
+        gate_reach,
+    );
+}
+
+fn warmed_tick_frame_allocations_gate(revision: client::io::ClientRevision) {
+    let mut client = gate_client(revision);
+    let mut snapshot = GameSnapshot::new();
+    // The first decode rebuilds every armed family once (player, scene, loc,
+    // stats); the measured frames leave every generation unchanged.
+    host::publish_snapshot(&mut snapshot, &client, drain(false, true));
+    // The same condition-completing fixtures the frame helper seeds.
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_inventory_packet_generations(Some(0), None);
+
+    let scripts: crate::script_runtime::ScriptWall = Default::default();
+    let slot = crate::script_runtime::script_slot_or_insert(&scripts, "alice");
+    slot.lock()
+        .unwrap()
+        .start_test_script(Box::new(GateIdleScript), None)
+        .expect("the idle gate script starts");
+    let work_scope = slot.lock().unwrap().work_scope();
+    let mut bot = crate::script_runtime::NavBot {
+        work_scope,
+        ..crate::script_runtime::NavBot::default()
+    };
+    // The production session start arms the owner's selected tables, so the
+    // observed frame completes the fact and stays clean.
+    bot.condition.session_started(
+        0,
+        0,
+        Some((script::combat::guard::shared_tables().unwrap(), 11)),
+    );
+    let navs = Arc::new(StdMutex::new(HashMap::from([("alice".to_string(), bot)])));
+    let cheats = Arc::new(StdMutex::new(HashMap::new()));
+    let statuses = Arc::new(StdMutex::new(vec![crate::SlotStatus {
+        username: "alice".into(),
+        ..Default::default()
+    }]));
+    let world: Option<Arc<nav_planner::world::NavWorld>> = None;
+
+    // Warm: the first script tick, the first dispatch observation and any
+    // one-shot logging settle before the counted frames.
+    for tick in 1..=32u64 {
+        gate_tick_frame(
+            &mut client,
+            &mut snapshot,
+            &scripts,
+            &cheats,
+            &navs,
+            &statuses,
+            &world,
+            tick,
+        );
+    }
+    // 1,000 unchanged tick frames must allocate nothing.
+    let measured = allocation_counter::measure(|| {
+        for tick in 33..=1032u64 {
+            gate_tick_frame(
+                &mut client,
+                &mut snapshot,
+                &scripts,
+                &cheats,
+                &navs,
+                &statuses,
+                &world,
+                tick,
+            );
+        }
+    });
+    assert_eq!(
+        measured.bytes_total, 0,
+        "1,000 unchanged tick frames allocate nothing: {measured:?}"
+    );
+    assert_eq!(
+        measured.bytes_current, 0,
+        "the warmed tick frames retain nothing: {measured:?}"
+    );
+}
+
+#[test]
+fn warmed_tick_frame_allocations_gate_r274() {
+    warmed_tick_frame_allocations_gate(client::io::ClientRevision::R274);
+}
+
+#[test]
+fn warmed_tick_frame_allocations_gate_r289() {
+    warmed_tick_frame_allocations_gate(client::io::ClientRevision::R289);
 }

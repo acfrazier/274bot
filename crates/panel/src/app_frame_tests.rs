@@ -1766,3 +1766,76 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
     assert!(rig.text.contains("draynor-jail-guards"), "{}", rig.text);
     assert!(rig.text.contains("Guide reason:"), "{}", rig.text);
 }
+
+/// The whole panel frame as the CI lanes run it: one real Dear ImGui frame
+/// whose pump phase is the production `frame_pumps` order and whose staged
+/// GameInput submit follows it. The CI lanes have no GPU adapter
+/// (`SKIP_GPU=1`), so the drawing half of `ui_frame` stays under the
+/// per-surface warm-frame tests; this gate bounds the composed warm frame.
+///
+/// The steady pump frame is not allocation-free: the core poll pass clones
+/// the host's status rows every poll and `pump_shots` pays one call, so
+/// the bound is the measured warm count (23 calls/frame with two
+/// published rows, 2,300 over 100 frames) plus the no-growth equality:
+/// a second block of 100 unchanged frames must cost exactly the same.
+#[test]
+fn the_whole_pump_frame_adds_no_allocation_growth_across_100_unchanged_frames() {
+    const CHILD: &str = "PANEL_WHOLE_FRAME_GATE_CHILD";
+    const TEST_PATH: &str =
+        "app::frame_tests::the_whole_pump_frame_adds_no_allocation_growth_across_100_unchanged_frames";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        // The process-wide log store carries every earlier test's lines,
+        // and the pump's per-frame cost depends on what the ring holds, so
+        // an in-process count depends on the test's position in the
+        // binary. A fresh child starts an empty ring and measures the same
+        // cost a fresh panel process pays.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST_PATH, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated whole-frame gate");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed; 0 failed;"),
+            "whole-frame gate child failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let (session, _dir) = session_with_play("frame-alloc-whole", &["alice", "bob"]);
+    let Some(mut rig) = Rig::new(Drive::Pumps, session) else {
+        return;
+    };
+    publish_ingame(rig.session(), "alice");
+    publish_ingame(rig.session(), "bob");
+    // Warm: the first status transitions, the log lines they publish, the
+    // ImGui frame queues and every lazy per-frame buffer settle here.
+    for _ in 0..16 {
+        assert!(!rig.frame(Pointer::Away));
+    }
+    let before = crate::test_alloc::alloc_calls();
+    for _ in 0..100 {
+        assert!(
+            !rig.frame(Pointer::Away),
+            "an unchanged frame ended the run"
+        );
+    }
+    let first = crate::test_alloc::alloc_calls() - before;
+    let before = crate::test_alloc::alloc_calls();
+    for _ in 0..100 {
+        assert!(
+            !rig.frame(Pointer::Away),
+            "an unchanged frame ended the run"
+        );
+    }
+    let second = crate::test_alloc::alloc_calls() - before;
+    assert_eq!(
+        second, first,
+        "100 unchanged whole frames must cost exactly what the first block cost"
+    );
+    const WHOLE_FRAME_CALL_CEILING: usize = 2_300;
+    assert!(
+        second <= WHOLE_FRAME_CALL_CEILING,
+        "100 unchanged whole frames: {second} calls exceeds the measured {WHOLE_FRAME_CALL_CEILING}"
+    );
+}
