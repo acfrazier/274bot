@@ -490,6 +490,9 @@ export function tick(api) {
 
 #[test]
 fn v2_placements_bridge_gates_its_own_args() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {

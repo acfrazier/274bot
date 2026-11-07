@@ -1373,6 +1373,9 @@ mod tests {
             3
         );
 
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = build_case().expect("build live fixture without running it");
         let cell = case.cell;
         assert_eq!(cell.quest, "sheep");
