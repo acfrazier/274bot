@@ -750,8 +750,9 @@ mod tests {
                 });
                 let value = value_to_v8(&mut scope, &row, 0)
                     .unwrap_or_else(|error| panic!("row {index} materializes: {error}"));
-                assert!(
+                assert_eq!(
                     kept.set_index(&mut scope, index as u32, value),
+                    Some(true),
                     "V8 retains row {index}"
                 );
             }
