@@ -296,7 +296,7 @@ fn derive_transports_with_audit(
         &mut graph,
         &mut skipped,
     );
-    if revision == Some(377) {
+    if game_data.is_some_and(|data| data.revision() == 377) {
         supplemental_edges_377(
             content_root,
             &ids,
