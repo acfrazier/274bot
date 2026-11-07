@@ -309,37 +309,14 @@
               "settle": { "Fact": { "kind": "message", "version": 1, "args": { "any": ["i think i've washed the key down to the sewer"] } } }
             },
             {
-              "id": "open-manhole",
-              "kind": "interact",
-              "version": 1,
-              "advances": false,
-              "args": {
-                "target": { "loc": "manholeclosed" },
-                "op": "Open",
-                "anchor": { "tile": [3237, 3458, 0], "source": "maps/m50_54.jm2:8588 (LOC 881); manholes.rs2:1-5; all.loc op1=Open" },
-                "radius": 3,
-                "wait_if_missing": true
-              },
-              "skip_if": { "Any": [
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
-                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight" } } },
-                { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } },
-                { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "manholeopen" } } }
-              ] },
-              "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "manholeopen" } } }
-            },
-            {
               "id": "climb-down-manhole",
-              "kind": "interact",
+              "kind": "walk",
               "version": 1,
               "advances": false,
               "args": {
-                "target": { "loc": "manholeopen" },
-                "op": "Climb down",
-                "anchor": { "tile": [3237, 3458, 0], "source": "manholes.rs2:8-9 p_telejump z+6400; all.loc op1=Climb down. Not a priced nav name (nav-bake transport.rs EXTRA_TICKS has no manholeopen); this step sends the op itself." },
-                "radius": 3,
-                "wait_if_missing": true,
-                "settle_ms": 10000
+                "tile": [3237, 9858, 0],
+                "source": "maps/m50_54.jm2:8588 (LOC 881); manholes.rs2:1-10 opens the cover and telejumps z+6400; the paired 377 nav transport owns both operations and arrival",
+                "radius": 1
               },
               "skip_if": { "Any": [
                 { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "silverlight_key_3" } } },
@@ -393,16 +370,13 @@
             },
             {
               "id": "climb-out-of-sewer",
-              "kind": "interact",
+              "kind": "walk",
               "version": 1,
               "advances": false,
               "args": {
-                "target": { "loc": "ladder_1755" },
-                "op": "Climb-up",
-                "anchor": { "tile": [3237, 9858, 0], "source": "maps/m50_154.jm2:7911 (LOC 1755); ladders.rs2:90-97 z-6400; all.loc op1=Climb-up. 377 has no ladder_from_cellar." },
-                "radius": 3,
-                "wait_if_missing": true,
-                "settle_ms": 10000
+                "tile": [3237, 3458, 0],
+                "source": "maps/m50_154.jm2:7911 (LOC 1755); ladders.rs2:90-97 telejumps z-6400; navigation owns the climb and its surface arrival",
+                "radius": 1
               },
               "skip_if": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } } },
               "settle": { "Not": { "Fact": { "kind": "in_area", "version": 1, "args": { "area": "sewer" } } } }
