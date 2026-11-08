@@ -112,6 +112,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Saved-settings fixtures keep current envelopes and explicit malformed-format
   refusal checks.
   Picker fixtures use the decoded world owned by their checked profile.
+- Random-event detection avoids temporary lowercase names for non-matching
+  NPCs and hazard locs. Matching and event handling are unchanged.
 
 ### Not in this release
 

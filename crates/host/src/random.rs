@@ -248,6 +248,31 @@ fn no_npc_event(kind: RandomKind, name: &str) -> DetectedRandom {
     }
 }
 
+/// Match a runtime name to a lowercase event literal without allocating.
+/// The event literals are ASCII; the Unicode path preserves lowercase
+/// mappings that can produce ASCII, such as the Kelvin sign's `k`.
+fn matches_lower_name(name: &str, lowercase: &str) -> bool {
+    matches_any_lower_name(name, std::slice::from_ref(&lowercase))
+}
+
+fn matches_any_lower_name(name: &str, lowercase: &[&str]) -> bool {
+    if name.is_ascii() {
+        lowercase
+            .iter()
+            .any(|&expected| name.eq_ignore_ascii_case(expected))
+    } else {
+        lowercase.iter().any(|&expected| {
+            if expected.is_ascii() {
+                name.chars()
+                    .flat_map(char::to_lowercase)
+                    .eq(expected.chars())
+            } else {
+                name.to_lowercase() == expected
+            }
+        })
+    }
+}
+
 /// Scene NPCs and locs, in rs2b0t `detectSceneEvents` order: dialog /
 /// pick / evade over the NPC pass, then hazard locs. Cooled NPC slots
 /// (the 45 s wrong-talk bin) are skipped.
@@ -270,7 +295,6 @@ fn detect_scene(
         let Some(raw) = npc.name.as_deref() else {
             continue;
         };
-        let name = raw.to_lowercase();
         let ours = is_ours(npc, self_slot, display_name.as_deref());
         // Hostile event actors are owned only when face_entity resolves to
         // this local-player slot. The drunken dwarf stays in Dialog: its
@@ -282,7 +306,7 @@ fn detect_scene(
         {
             return Some(DetectedRandom {
                 kind: RandomKind::Evade,
-                name,
+                name: raw.to_lowercase(),
                 ours: true,
                 npc_index: Some(npc.index),
             });
@@ -290,12 +314,12 @@ fn detect_scene(
         // A talking random following another player is foreign even if
         // stale overhead text mentions us (`RandomEvents.ts:39-44`).
         if ours
-            && DIALOG_NAMES.contains(&name.as_str())
+            && matches_any_lower_name(raw, DIALOG_NAMES)
             && !event_npc_targets_another_player(npc, self_slot)
         {
             return Some(DetectedRandom {
                 kind: RandomKind::Dialog,
-                name,
+                name: raw.to_lowercase(),
                 ours: true,
                 npc_index: Some(npc.index),
             });
@@ -306,10 +330,12 @@ fn detect_scene(
         // which offers only `Attack` — is not our event: no Pick, no
         // walk, no hold, and it must not shadow the box/lamp candidates
         // that follow this scene pass.
-        if name == PICK_NAME && owned_pickable_plant(npc, self_slot, display_name.as_deref()) {
+        if matches_lower_name(raw, PICK_NAME)
+            && owned_pickable_plant(npc, self_slot, display_name.as_deref())
+        {
             return Some(DetectedRandom {
                 kind: RandomKind::Pick,
-                name,
+                name: raw.to_lowercase(),
                 ours: true,
                 npc_index: Some(npc.index),
             });
@@ -319,12 +345,11 @@ fn detect_scene(
         let Some(raw) = loc.name.as_deref() else {
             continue;
         };
-        let name = raw.to_lowercase();
         // Hazard names first, per the spec's pack note: rs2b0t's
         // gas-chest / smoking-rock ids collide with unrelated 274 locs
         // ("Chest", "Rocks"), so this rev matches names only. Whirlpool
         // locs exist in the 274 pack; the other two are no-ops here.
-        if name == "whirlpool" {
+        if matches_lower_name(raw, "whirlpool") {
             return Some(DetectedRandom {
                 kind: RandomKind::Hazard,
                 name: "whirlpool".to_string(),
@@ -332,7 +357,7 @@ fn detect_scene(
                 npc_index: None,
             });
         }
-        if name == "gas chest" {
+        if matches_lower_name(raw, "gas chest") {
             return Some(DetectedRandom {
                 kind: RandomKind::Hazard,
                 name: "poisonous gas".to_string(),
@@ -340,7 +365,7 @@ fn detect_scene(
                 npc_index: None,
             });
         }
-        if name == "smoking rock" {
+        if matches_lower_name(raw, "smoking rock") {
             return Some(DetectedRandom {
                 kind: RandomKind::Hazard,
                 name: "smoking rock".to_string(),
