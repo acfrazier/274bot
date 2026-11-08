@@ -327,6 +327,76 @@ fn repeat_logout_guard_reason_is_visible_in_slot_status() {
     );
 }
 
+/// A bot logged out after an exit nobody asked for says why, the same text in
+/// every frontend (the panel and the TUI both show `detail.state`).
+#[test]
+fn idle_park_reason_is_visible_in_slot_status() {
+    let row = FleetRow::fixture("alice", Phase::LoggedOut, None, None);
+    for (reason, expected) in [
+        (
+            host_play::LoginLatchReason::IdleDisconnect,
+            "logged out: disconnected while idle (Log in to connect)",
+        ),
+        (
+            host_play::LoginLatchReason::IdleLogout,
+            "logged out: idle logout by the server (Log in to connect)",
+        ),
+        (
+            host_play::LoginLatchReason::ServerLogout,
+            "logged out by the server (Log in to connect)",
+        ),
+    ] {
+        let status = SlotStatus {
+            username: "alice".into(),
+            login_latched: true,
+            login_latch_reason: Some(reason),
+            ..SlotStatus::default()
+        };
+        let mut text = String::new();
+        write_state(&mut text, &row, Some(&status), false);
+        assert_eq!(text, expected);
+    }
+}
+
+/// The park of a bot without a script travels from the arm to the row and
+/// the detail text, and an explicit Log in clears it.
+#[test]
+fn an_idle_park_reaches_the_row_and_the_detail_text_until_log_in() {
+    let mut s = fleet("idle-park", &["ip-dee"], true);
+    s.select("ip-dee");
+    let arm = s.play().unwrap().arm("ip-dee").expect("arm");
+    arm.complete_login_for_test();
+    arm.exit_while_idle_for_test();
+    assert_eq!(
+        arm.login_latch_reason(),
+        Some(host_play::LoginLatchReason::IdleDisconnect)
+    );
+    publish(&s, "ip-dee", |r| {
+        r.connected = false;
+        r.ingame = false;
+        r.login_latched = true;
+        r.login_latch_reason = arm.login_latch_reason();
+        phase_to(r, StartupPhase::Queueing);
+    });
+    s.poll();
+    let parked = row(&s, "ip-dee");
+    assert_eq!(parked.phase, Phase::LoggedOut);
+    assert!(!parked.guard_parked());
+    assert!(!parked.logout_eligibility().eligible());
+    assert_eq!(
+        detail(&s).state,
+        "logged out: disconnected while idle (Log in to connect)"
+    );
+
+    arm.arm_explicit_login();
+    publish(&s, "ip-dee", |r| {
+        r.login_latched = false;
+        r.login_latch_reason = None;
+    });
+    s.poll();
+    assert_eq!(row(&s, "ip-dee").phase, Phase::Waiting);
+}
+
 #[test]
 fn manual_walk_cancellation_status_replaces_the_scene_detail() {
     let row = FleetRow::fixture("alice", Phase::Ready, None, None);
@@ -1071,6 +1141,8 @@ fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot(
     use script::combat::risk::{RiskInput, RouteAssessment, UnknownWhy, Verdict};
     let assessment = Arc::new(RouteAssessment {
         verdict: Verdict::Unknown(UnknownWhy::Poison),
+        bound: 1.0,
+        poison_test: script::combat::risk::PoisonTest::NotNeeded,
         plan: Default::default(),
         crossings: Box::new([]),
         more: 0,
@@ -1081,10 +1153,9 @@ fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot(
         generation: 1,
         reason: Arc::from("Route assessment unknown: Poison"),
     });
-    let arm = Arc::new(Mutex::new(host_play::WalkArm {
-        assessment: Some(Arc::clone(&assessment)),
-        ..Default::default()
-    }));
+    let mut arm = host_play::WalkArm::default();
+    arm.assessment = Some(Arc::clone(&assessment));
+    let arm = Arc::new(Mutex::new(arm));
     let walks = Arc::new(Mutex::new(HashMap::from([(
         "vr-alice".into(),
         Arc::clone(&arm),
@@ -1135,16 +1206,15 @@ fn focused_manual_refusal_without_a_route_retains_its_shared_reason() {
     let reason: Arc<str> = Arc::from(
         "NoRouteWithinBounds { tried: 0, last: None }; blocked by danger zones: Sentinel strip",
     );
+    let mut arm = host_play::WalkArm::default();
+    arm.refusal = Some(script::native::WalkRefusal::NoRouteWithinBounds {
+        tried: 0,
+        last: None,
+    });
+    arm.refusal_detail = Some(Arc::clone(&reason));
     let walks = Arc::new(Mutex::new(HashMap::from([(
         "vr-alice".into(),
-        Arc::new(Mutex::new(host_play::WalkArm {
-            refusal: Some(script::native::WalkRefusal::NoRouteWithinBounds {
-                tried: 0,
-                last: None,
-            }),
-            refusal_detail: Some(Arc::clone(&reason)),
-            ..Default::default()
-        })),
+        Arc::new(Mutex::new(arm)),
     )])));
     let mut session = fleet("walk-refusal-retention", &["vr-alice", "vr-bob"], false);
     session.set_walk_arms(walks);
@@ -1284,6 +1354,9 @@ fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_gatherer_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let arm = Arc::new(Mutex::new(host_play::WalkArm::default()));
     let walks = Arc::new(Mutex::new(HashMap::from([(
         "vs-bob".into(),

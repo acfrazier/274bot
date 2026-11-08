@@ -1,12 +1,12 @@
 //! Offline Retreat isolate policy tests. No LIVE.
 
-use script::shim::InteractReq;
-use script_js::hunt_fight::{
+use script::interact::InteractReq;
+use script::native::snapshot_source::{SnapshotInput, TileInput};
+use script_js::compat::hunt_fight::{
     self, hold_token_alive, last_hp, retreat_deadline_remaining_ms, retreat_force_bound_reached,
     retreat_token_alive, seen_contains, skip_contains, token_alive, FightNpc, FightObservation,
     Tile, RETREAT_HOP_MS, RETREAT_RETRY_MS,
 };
-use script_js::wire::{SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 use std::thread;
@@ -277,7 +277,7 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

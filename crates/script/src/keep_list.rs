@@ -172,6 +172,9 @@ mod tests {
 
     #[test]
     fn selected_food_forms_and_caller_order_match_both_revisions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(revision);
             let mut full = options("Cake", "melee");
@@ -200,6 +203,9 @@ mod tests {
 
     #[test]
     fn mage_keeps_all_exact_spell_runes_without_staff_subtraction() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(revision);
             let mut mage = options("Lobster", "mage");
@@ -221,6 +227,9 @@ mod tests {
 
     #[test]
     fn ranged_ammo_and_duplicates_preserve_canonical_order() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(revision);
             let mut range = options("Cake", "range");
@@ -260,6 +269,9 @@ mod tests {
 
     #[test]
     fn moss_shape_never_infers_cargo_or_equipment() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(revision);
             let mut moss = options("Lobster", "melee");

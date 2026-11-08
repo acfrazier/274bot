@@ -134,6 +134,9 @@ fn milk_fixture(cx: &CompileContext<'_>, player: WorldTile) -> (GameSnapshot, Ar
 
 #[test]
 fn reachable_egg_wins_over_a_nearer_egg_behind_the_coop_fence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let player = tile(3222, 3300);
     let decoy_at = tile(3224, 3300);
     let reachable_at = tile(3222, 3305);
@@ -175,6 +178,9 @@ fn reachable_egg_wins_over_a_nearer_egg_behind_the_coop_fence() {
 
 #[test]
 fn cant_reach_egg_repicks_the_other_egg_instead_of_hunting_doors() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     let mut first = ground();
     first.tile = tile(3226, 3301);
@@ -223,6 +229,9 @@ fn cant_reach_egg_repicks_the_other_egg_instead_of_hunting_doors() {
 
 #[test]
 fn stale_cow_chase_repicks_the_live_reachable_cow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let player = tile(3250, 3280);
         let cow_id = resolve_npc(cx, "cow").unwrap();
@@ -262,6 +271,9 @@ fn stale_cow_chase_repicks_the_live_reachable_cow() {
 
 #[test]
 fn cow_behind_the_field_fence_is_not_milked_across_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let player = tile(3250, 3280);
         let cow_id = resolve_npc(cx, "cow").unwrap();
@@ -293,6 +305,9 @@ fn cow_behind_the_field_fence_is_not_milked_across_it() {
 
 #[test]
 fn cant_reach_message_repicks_another_cow_immediately() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let player = tile(3250, 3280);
         let cow_id = resolve_npc(cx, "cow").unwrap();
@@ -338,6 +353,9 @@ fn cant_reach_message_repicks_another_cow_immediately() {
 
 #[test]
 fn wheat_met_on_the_way_replaces_the_anchor_wheat_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let anchor = tile(3155, 3300);
     let far = {
         let mut wheat = loc(313, "Wheat", "Pick");
@@ -413,6 +431,9 @@ fn wheat_met_on_the_way_replaces_the_anchor_wheat_walk() {
 
 #[test]
 fn alternating_reachability_stops_after_the_bound_not_the_settle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let player = tile(3250, 3280);
         let cow_id = resolve_npc(cx, "cow").unwrap();

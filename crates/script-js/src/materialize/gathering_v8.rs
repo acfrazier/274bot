@@ -18,7 +18,7 @@ const LOCATION_OPTIONS: i32 = 4;
 const BOOTH_FIELDS: i32 = 5;
 const RESOLVE: i32 = 6;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_gathering_locations", gathering_callback)
 }
 
@@ -400,7 +400,7 @@ globalThis.checkGathering = () => {
 "#;
 
     fn setup() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         cb::install_ops(&mut runtime).unwrap();
         install(&mut runtime).unwrap();

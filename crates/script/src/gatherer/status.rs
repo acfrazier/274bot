@@ -1,7 +1,8 @@
+pub use crate::native::tickcycle::CycleStats as TickStats;
 use crate::native::{
     NativeOutput, NativePhase, ScriptFailure, ScriptStatus, StatusField, StatusValue,
 };
-use crate::shim::{host_control_buttons, ScriptPaint};
+use crate::paint::{host_control_buttons, ScriptPaint};
 use crate::CompiledId;
 use api::selected::RunKey;
 use std::sync::Arc;
@@ -33,6 +34,9 @@ pub struct StatusData {
     pub zone_gated: u16,
     pub excluded_targets: Arc<str>,
     pub last_event: Arc<str>,
+    pub tick_method: Arc<str>,
+    pub tick_cycle: i64,
+    pub tick_stats: TickStats,
 }
 
 /// Value kind of one published status key. [`KEYS`] projects key/kind from
@@ -58,6 +62,62 @@ macro_rules! status_rows {
             $emit!("area", "Area", Text, Arc::clone(&$data.area)),
             $emit!("target", "Target", Text, Arc::clone(&$data.target)),
             $emit!("tool", "Tool", Text, Arc::clone(&$data.tool)),
+            $emit!(
+                "tick_method",
+                "Tick method",
+                Text,
+                Arc::clone(&$data.tick_method)
+            ),
+            $emit!("tick_cycle", "Tick cycle", Integer, $data.tick_cycle),
+            $emit!(
+                "tick_verified",
+                "Tick verified",
+                Integer,
+                $data.tick_stats.verified
+            ),
+            $emit!(
+                "tick_unobserved",
+                "Tick unobserved",
+                Integer,
+                $data.tick_stats.unobserved
+            ),
+            $emit!(
+                "tick_slips",
+                "Tick slips",
+                Integer,
+                $data.tick_stats.slipped
+            ),
+            $emit!("tick_lost", "Tick lost", Integer, $data.tick_stats.lost),
+            $emit!(
+                "tick_delayed",
+                "Tick delayed",
+                Integer,
+                $data.tick_stats.delayed
+            ),
+            $emit!(
+                "tick_paused",
+                "Tick paused",
+                Integer,
+                $data.tick_stats.paused
+            ),
+            $emit!(
+                "tick_fallbacks",
+                "Tick fallbacks",
+                Integer,
+                $data.tick_stats.fallback_clicks
+            ),
+            $emit!(
+                "tick_fallback_failed",
+                "Tick fallback failed",
+                Integer,
+                $data.tick_stats.fallback_failed
+            ),
+            $emit!(
+                "tick_events",
+                "Tick events",
+                Integer,
+                $data.tick_stats.wire_events
+            ),
             $emit!("bait", "Bait", Integer, $data.bait),
             $emit!("food", "Food", Integer, $data.food),
             $emit!("coins", "Coins", Integer, $data.coins),
@@ -240,6 +300,9 @@ mod tests {
             zone_gated: 0,
             excluded_targets: Arc::from(""),
             last_event: Arc::from("gathered"),
+            tick_method: Arc::from("Off"),
+            tick_cycle: -1,
+            tick_stats: Default::default(),
         };
         let mut out = Capture { status: None };
         publish(
@@ -329,6 +392,9 @@ mod tests {
             zone_gated: 0,
             excluded_targets: Arc::from(""),
             last_event: Arc::from(""),
+            tick_method: Arc::from("Off"),
+            tick_cycle: -1,
+            tick_stats: Default::default(),
         };
         let frame = paint(&data);
         let ids: Vec<(&str, &str)> = frame
@@ -339,8 +405,8 @@ mod tests {
         assert_eq!(
             ids,
             vec![
-                (crate::shim::HOST_PAUSE_CONTROL_ID, "Pause"),
-                (crate::shim::HOST_STOP_CONTROL_ID, "Stop"),
+                (crate::paint::HOST_PAUSE_CONTROL_ID, "Pause"),
+                (crate::paint::HOST_STOP_CONTROL_ID, "Stop"),
             ]
         );
     }

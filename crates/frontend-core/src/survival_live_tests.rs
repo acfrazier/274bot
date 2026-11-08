@@ -514,8 +514,10 @@ fn walk_request(required_after: api::quest_progress::EvidenceStamp) -> WalkReque
         required_after,
         evidence: None,
         cross: Box::default(),
+        avoid: Box::default(),
         protect: false,
         food_guard: true,
+        cure_guard: false,
         allow: WalkAllow {
             prayer: true,
             food: true,
@@ -612,15 +614,6 @@ fn run_survival_live_cell(scenario: &str, evidence_prefix: &str, stop_after_mirr
         oracle_result.err(),
     );
 }
-fn live_endpoint_port(name: &str, default: u16) -> Result<u16, String> {
-    match std::env::var(name) {
-        Ok(value) => value
-            .parse::<u16>()
-            .map_err(|error| format!("{name} must be a valid port: {error}")),
-        Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(error) => Err(format!("{name} is not valid UTF-8: {error}")),
-    }
-}
 
 fn run_guard_cure_live(
     account: &str,
@@ -637,8 +630,8 @@ fn run_guard_cure_live(
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(live_endpoint_port("BOT_GAME_PORT", 44594)?),
-        http_port: Some(live_endpoint_port("BOT_HTTP_PORT", 1080)?),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         engine_dir: Some(required_path("ENGINE_DIR")?),
         cache_dir: Some(required_path("BOT_CACHE_DIR")?),
         unpack_dir: Some(vault_path.with_extension("runtime-cache")),

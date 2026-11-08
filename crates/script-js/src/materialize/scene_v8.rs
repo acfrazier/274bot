@@ -1,12 +1,12 @@
 //! Typed local V8 marshalling for v2 `sceneLocs` / `sceneNpcs` / `questStatus`.
 //! Not a rustyscript `register_function` JSON op and not a journal machine.
 
-use crate::scene_query::{self, QuestStatusError, Region, SceneProjection, SceneQueryError};
+use crate::scene::scene_query::{self, QuestStatusError, Region, SceneProjection, SceneQueryError};
 use rustyscript::Runtime;
 
 const PENDING: &str = "__pending__";
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);

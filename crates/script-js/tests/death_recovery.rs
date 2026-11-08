@@ -1,5 +1,5 @@
-use script::shim::InteractReq;
-use script_js::wire::{ChatLineInput, ReachViewInput, SnapshotInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{ChatLineInput, ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;
@@ -141,6 +141,8 @@ fn walk_near_anchor() -> InteractReq {
         request_id: 0,
         avoid: Vec::new(),
         cross: Vec::new(),
+        allow_prereq_dialogue: None,
+        allow_quest_start: None,
     }
 }
 

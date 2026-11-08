@@ -16,8 +16,11 @@ pub struct ReleaseIndex {
 #[serde(rename_all = "lowercase")]
 pub enum ReleasePathStatus {
     Draft,
+    Qualified,
 }
 
+/// Refusal shown when a Path has not passed live qualification.
+pub const UNQUALIFIED_PATH_REASON: &str = "Path has not been qualified by live testing.";
 /// One release roster row. A released row names its Path `file`. An
 /// unavailable row names the quest and an end-user reason instead; it is never
 /// compiled or started, and may keep a `file` so the authored Path stays
@@ -33,16 +36,16 @@ pub struct ReleasePath {
     pub name: Option<String>,
     #[serde(default)]
     pub unavailable: Option<String>,
-    /// Draft rows are opt-in for an empty selection; explicit picks are preserved.
+    /// Only Qualified rows enter release selection; test-hooks can admit drafts.
     #[serde(default)]
     pub status: Option<ReleasePathStatus>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct QueueSettings {
-    /// Empty selects every available row except drafts unless draft guides are enabled.
+    /// Empty selects every available qualified row.
     pub quests: Vec<String>,
-    /// Include draft rows in the default selection when no quests are picked.
+    /// Saved harness setting; release policy ignores it.
     pub include_draft_guides: bool,
     /// Explicit priority rows; remaining picked rows retain release-index order.
     pub order_override: Vec<String>,
@@ -75,6 +78,16 @@ impl QueueStatus {
     }
 }
 
+/// Where a run stopped when it parked, kept after the executor is dropped so
+/// the queue-level Blocked status can still name the stage and step.
+#[derive(Debug)]
+pub struct ParkedRun {
+    pub quest: Arc<str>,
+    pub stage: Option<Arc<str>>,
+    pub step: Arc<str>,
+    pub failure: Arc<str>,
+}
+
 #[derive(Debug, Clone)]
 pub struct QueueRow {
     /// Original release-index ordinal, independent of vector position.
@@ -82,6 +95,10 @@ pub struct QueueRow {
     pub picked: bool,
     pub skipped: bool,
     pub status: QueueStatus,
+    /// The last parked run, set only while `status` is `Parked`. Every string
+    /// is shared with the compiled Path or the failure, so a park allocates
+    /// one `ParkedRun` and nothing else.
+    pub parked: Option<Arc<ParkedRun>>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,8 +112,15 @@ pub struct Queue {
     pub gang: Option<Gang>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueConfigErrorKind {
+    InvalidSetting,
+    UnqualifiedPath,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueConfigError {
+    pub kind: QueueConfigErrorKind,
     pub field: &'static str,
     pub message: Arc<str>,
 }
@@ -104,8 +128,17 @@ pub struct QueueConfigError {
 impl QueueConfigError {
     fn new(field: &'static str, message: impl Into<Arc<str>>) -> Self {
         Self {
+            kind: QueueConfigErrorKind::InvalidSetting,
             field,
             message: message.into(),
+        }
+    }
+
+    fn unqualified_path(field: &'static str) -> Self {
+        Self {
+            kind: QueueConfigErrorKind::UnqualifiedPath,
+            field,
+            message: Arc::from(UNQUALIFIED_PATH_REASON),
         }
     }
 }
@@ -131,6 +164,14 @@ impl Queue {
         source: PathRegistry,
         settings: QueueSettings,
     ) -> Result<Self, QueueConfigError> {
+        Self::from_registry_with_policy(source, settings, cfg!(feature = "test-hooks"))
+    }
+
+    fn from_registry_with_policy(
+        source: PathRegistry,
+        settings: QueueSettings,
+        allow_unqualified: bool,
+    ) -> Result<Self, QueueConfigError> {
         let index = source.index();
         validate_index(index)?;
         let positions = index
@@ -152,18 +193,32 @@ impl Queue {
             }
         }
 
+        if !allow_unqualified {
+            for (field, ids) in [
+                ("quests", settings.quests.as_slice()),
+                ("order_override", settings.order_override.as_slice()),
+            ] {
+                for id in ids {
+                    let path = &index.paths[positions[id.as_str()]];
+                    if path.unavailable.is_none()
+                        && path.status != Some(ReleasePathStatus::Qualified)
+                    {
+                        return Err(QueueConfigError::unqualified_path(field));
+                    }
+                }
+            }
+        }
+
         let mut rows = Vec::with_capacity(index.paths.len());
         let mut reasons = Vec::with_capacity(index.paths.len());
         for (ordinal, path) in index.paths.iter().enumerate() {
             let explicit = picked_ids.contains(path.id.as_str());
             let skipped = skipped_ids.contains(path.id.as_str());
-            // Empty selections exclude drafts unless opted in or explicitly prioritized.
+            let qualified = path.status == Some(ReleasePathStatus::Qualified);
+            let admit_unqualified = allow_unqualified
+                && (settings.include_draft_guides || order_ids.contains(path.id.as_str()));
             let picked = explicit
-                || (pick_all
-                    && path.unavailable.is_none()
-                    && (path.status != Some(ReleasePathStatus::Draft)
-                        || settings.include_draft_guides
-                        || order_ids.contains(path.id.as_str())));
+                || (pick_all && path.unavailable.is_none() && (qualified || admit_unqualified));
             let status = if path.unavailable.is_some() {
                 QueueStatus::Blocked
             } else if !picked || skipped {
@@ -178,6 +233,7 @@ impl Queue {
                 picked,
                 skipped,
                 status,
+                parked: None,
             });
             reasons.push(path.unavailable.as_deref().map(Arc::from));
         }
@@ -317,8 +373,19 @@ impl Queue {
         self.set_state(position, QueueStatus::Blocked, Some(reason));
     }
 
-    pub fn mark_parked(&mut self, position: usize, reason: Arc<str>) {
+    pub fn mark_parked(&mut self, position: usize, run: ParkedRun) {
+        let reason = Arc::clone(&run.failure);
         self.set_state(position, QueueStatus::Parked, Some(reason));
+        if let Some(row) = self.rows.get_mut(position) {
+            row.parked = Some(Arc::new(run));
+        }
+    }
+
+    /// The last parked run on `position`, for the queue-level Blocked status.
+    pub fn parked(&self, position: usize) -> Option<&ParkedRun> {
+        self.rows
+            .get(position)
+            .and_then(|row| row.parked.as_deref())
     }
 
     /// A changed quest/status/equipment observation may make an earlier
@@ -361,6 +428,9 @@ impl Queue {
             (self.rows.get_mut(position), self.reasons.get_mut(position))
         {
             row.status = status;
+            if status != QueueStatus::Parked {
+                row.parked = None;
+            }
             *reason_slot = reason;
         }
     }
@@ -446,7 +516,7 @@ mod tests {
 
     fn index() -> ReleaseIndex {
         serde_json::from_str(
-            r#"{"schema":1,"paths":[{"id":"cook","file":"cook.json"},{"id":"sheep","file":"sheep.json"},{"id":"runemysteries","file":"runemysteries.json"},{"id":"romeojuliet","file":"romeojuliet.json"}]}"#,
+            r#"{"schema":1,"paths":[{"id":"cook","file":"cook.json","status":"qualified"},{"id":"sheep","file":"sheep.json","status":"qualified"},{"id":"runemysteries","file":"runemysteries.json","status":"qualified"},{"id":"romeojuliet","file":"romeojuliet.json","status":"qualified"}]}"#,
         )
         .unwrap()
     }
@@ -461,81 +531,110 @@ mod tests {
     }
 
     #[test]
-    fn bundled_draft_guides_are_opt_in_for_empty_selection_but_explicit_picks_run() {
+    fn release_policy_admits_priest_and_refuses_explicit_unqualified_picks() {
         let index: ReleaseIndex =
             serde_json::from_str(crate::quester::compile::INDEX_JSON).unwrap();
-        let drafts = ["druid", "fluffs", "junglepotion", "seaslug", "totem"];
         let row_index = |id: &str| index.paths.iter().position(|path| path.id == id).unwrap();
+        let release_queue = |settings| {
+            Queue::from_registry_with_policy(
+                PathRegistry::from_index(index.clone()),
+                settings,
+                false,
+            )
+        };
 
-        let default = Queue::from_index(&index, QueueSettings::default()).unwrap();
-        for id in drafts {
-            let position = row_index(id);
-            assert!(
-                !default.rows()[position].picked,
-                "{id} should stay excluded"
-            );
-            assert!(
-                default.path_is_draft(position),
-                "{id} should carry draft status"
-            );
-            assert_eq!(default.status(position), Some(QueueStatus::Parked));
-        }
+        let priest_position = row_index("priest");
+        assert_eq!(
+            index.paths[priest_position].status,
+            Some(ReleasePathStatus::Qualified)
+        );
+        let priest = release_queue(settings(&["priest"], &[], &[])).unwrap();
+        let priest_candidate = priest.next_candidate().unwrap();
+        assert_eq!(priest.id(priest_candidate), Some("priest"));
 
-        let included = Queue::from_index(
-            &index,
-            QueueSettings {
-                include_draft_guides: true,
-                ..QueueSettings::default()
-            },
-        )
-        .unwrap();
-        for id in drafts {
-            assert!(
-                included.rows()[row_index(id)].picked,
-                "{id} should be included"
-            );
-        }
-        let default_order = included
-            .order
+        let draft_position = index
+            .paths
             .iter()
-            .filter_map(|position| included.id(usize::from(*position)))
-            .collect::<Vec<_>>();
-        let draft_start = default_order
+            .position(|path| {
+                path.unavailable.is_none() && path.status == Some(ReleasePathStatus::Draft)
+            })
+            .expect("bundled draft");
+        let draft_id = index.paths[draft_position].id.clone();
+
+        let explicit = release_queue(QueueSettings {
+            quests: vec![draft_id.clone()],
+            include_draft_guides: true,
+            ..QueueSettings::default()
+        })
+        .unwrap_err();
+        assert_eq!(explicit.kind, QueueConfigErrorKind::UnqualifiedPath);
+        assert_eq!(explicit.field, "quests");
+        assert_eq!(explicit.message.as_ref(), UNQUALIFIED_PATH_REASON);
+
+        let prioritized = release_queue(QueueSettings {
+            order_override: vec![draft_id.clone()],
+            include_draft_guides: true,
+            ..QueueSettings::default()
+        })
+        .unwrap_err();
+        assert_eq!(prioritized.kind, QueueConfigErrorKind::UnqualifiedPath);
+        assert_eq!(prioritized.field, "order_override");
+
+        let saved_opt_in = release_queue(QueueSettings {
+            include_draft_guides: true,
+            ..QueueSettings::default()
+        })
+        .unwrap();
+        assert!(!saved_opt_in.rows()[draft_position].picked);
+
+        let missing_status: ReleaseIndex = serde_json::from_str(
+            r#"{"schema":1,"paths":[{"id":"unmarked","file":"unmarked.json"}]}"#,
+        )
+        .unwrap();
+        let missing_status_error = Queue::from_registry_with_policy(
+            PathRegistry::from_index(missing_status.clone()),
+            settings(&["unmarked"], &[], &[]),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(
+            missing_status_error.kind,
+            QueueConfigErrorKind::UnqualifiedPath
+        );
+        let default = Queue::from_registry_with_policy(
+            PathRegistry::from_index(missing_status),
+            QueueSettings::default(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(default.next_candidate(), None);
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    fn test_hooks_load_and_admit_a_bundled_draft_path() {
+        let index = PathRegistry::Bundled.index();
+        let draft_position = index
+            .paths
             .iter()
-            .position(|id| *id == drafts[0])
-            .unwrap();
-        assert_eq!(
-            &default_order[draft_start..draft_start + drafts.len()],
-            &drafts[..]
-        );
-
-        let explicit = Queue::from_index(
-            &index,
+            .position(|path| {
+                path.unavailable.is_none() && path.status == Some(ReleasePathStatus::Draft)
+            })
+            .expect("bundled draft");
+        let draft_id = index.paths[draft_position].id.clone();
+        let queue = Queue::from_registry(
+            PathRegistry::Bundled,
             QueueSettings {
-                quests: vec!["druid".into()],
+                quests: vec![draft_id.clone()],
                 ..QueueSettings::default()
             },
         )
         .unwrap();
-        assert!(explicit.rows()[row_index("druid")].picked);
-        assert_eq!(
-            explicit.id(explicit.next_candidate().unwrap()),
-            Some("druid")
-        );
 
-        let prioritized = Queue::from_index(
-            &index,
-            QueueSettings {
-                order_override: vec!["druid".into()],
-                ..QueueSettings::default()
-            },
-        )
-        .unwrap();
-        assert!(prioritized.rows()[row_index("druid")].picked);
-        assert_eq!(
-            prioritized.id(prioritized.next_candidate().unwrap()),
-            Some("druid")
-        );
+        assert_eq!(queue.next_candidate(), Some(draft_position));
+        assert_eq!(queue.id(draft_position), Some(draft_id.as_str()));
+        assert!(queue.path_is_draft(draft_position));
+        assert!(queue.path_bytes(draft_position).is_some());
     }
 
     #[test]
@@ -547,7 +646,12 @@ mod tests {
         assert_eq!(queue.id(1), Some("sheep"));
         assert_eq!(queue.id(2), Some("runemysteries"));
         assert_eq!(queue.file(0), Some("cook.json"));
-        assert_eq!(std::mem::size_of::<QueueRow>(), 4);
+        // 4 -> 16 bytes: the row keeps `parked: Option<Arc<ParkedRun>>` so the
+        // Blocked status can name the stage and step after a park. One pointer
+        // per row; the 68-row index costs 1,088 B instead of 272 B, and each
+        // parked row adds one `Arc` header plus four shared fat pointers.
+        assert_eq!(std::mem::size_of::<QueueRow>(), 16);
+        assert_eq!(std::mem::size_of::<ParkedRun>(), 64);
         assert_eq!(queue.status_text(), "????");
         assert!(!queue.all_done());
     }
@@ -597,6 +701,33 @@ mod tests {
     }
 
     #[test]
+    fn leaving_parked_drops_the_retained_run_detail() {
+        for blocked in [false, true] {
+            let index = index();
+            let mut queue = Queue::from_index(&index, settings(&["cook"], &[], &[])).unwrap();
+            queue.mark_parked(
+                0,
+                ParkedRun {
+                    quest: Arc::from("cook"),
+                    stage: Some(Arc::from("not_started")),
+                    step: Arc::from("talk-cook"),
+                    failure: Arc::from("old parked failure"),
+                },
+            );
+            assert!(queue.parked(0).is_some());
+            if blocked {
+                queue.mark_blocked(0, Arc::from("new blocked failure"));
+                assert_eq!(queue.status(0), Some(QueueStatus::Blocked));
+                assert_eq!(queue.reason(0), Some("new blocked failure"));
+            } else {
+                queue.mark_done(0);
+                assert_eq!(queue.status(0), Some(QueueStatus::Done));
+            }
+            assert!(queue.parked(0).is_none());
+        }
+    }
+
+    #[test]
     fn order_and_selection_reject_unknown_or_repeated_ids() {
         let index = index();
         let error = Queue::from_index(&index, settings(&["cook", "cook"], &[], &[])).unwrap_err();
@@ -617,7 +748,15 @@ mod tests {
             Queue::from_index(&index, settings(&[], &["romeojuliet", "cook"], &[])).unwrap();
         queue.mark_done(0);
         queue.mark_blocked(1, Arc::from("blocked"));
-        queue.mark_parked(3, Arc::from("operator"));
+        queue.mark_parked(
+            3,
+            ParkedRun {
+                quest: Arc::from("romeojuliet"),
+                stage: Some(Arc::from("not_started")),
+                step: Arc::from("talk-juliet"),
+                failure: Arc::from("operator"),
+            },
+        );
         assert_eq!(queue.status_text(), "DB?P");
     }
 
@@ -643,10 +782,10 @@ mod tests {
     fn index_with_unavailable() -> ReleaseIndex {
         serde_json::from_str(
             r#"{"schema":1,"paths":[
-                {"id":"cook","file":"cook.json"},
+                {"id":"cook","file":"cook.json","status":"qualified"},
                 {"id":"fortress","file":"fortress.json","name":"Black Knights' Fortress","unavailable":"Can't be completed on this server: the grill can't be reached"},
                 {"id":"hauntedmine","name":"Haunted Mine","unavailable":"Not on this server"},
-                {"id":"sheep","file":"sheep.json"}
+                {"id":"sheep","file":"sheep.json","status":"qualified"}
             ]}"#,
         )
         .unwrap()

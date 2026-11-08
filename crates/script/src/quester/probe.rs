@@ -10,7 +10,7 @@ use api::bank_memory::{BankMemory, Origin};
 use api::game_data::SelectedGameData;
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, ProgressFlag, QuestProgress};
-use api::selected::{FactKey, Knowledge, RunKey, Truth};
+use api::selected::{ClientRevision, FactKey, Knowledge, RunKey, Truth};
 use api::snapshot::{GameSnapshot, SnapshotView};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -115,18 +115,24 @@ impl Probe<'_> {
         snapshot: &GameSnapshot,
         f: impl FnOnce(&PredicateContext<'_, '_>) -> R,
     ) -> R {
-        let pin = self.selected.selected_pin().expect("selected pin");
+        let revision = match self.selected.revision() {
+            274 => ClientRevision::R274,
+            289 => ClientRevision::R289,
+            revision => panic!("unsupported selected revision {revision}"),
+        };
         let evidence = probe_stamp();
         let mut retained = RetainedMemory::default();
         let mut ledger = None;
         let mut budget = TickBudget::default();
         budget.observe(evidence.tick);
         let cx = ActionContext {
+            stage_cross: None,
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
-            pin: &pin,
+            revision,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_bank_memory(Some(self.bank)),
             retained: &mut retained,
             action_id: 0,
@@ -138,6 +144,7 @@ impl Probe<'_> {
             eligible: true,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            wilderness: None,
         };
         f(&PredicateContext {
             cx: &cx,
@@ -155,7 +162,6 @@ impl Probe<'_> {
 /// rows, as the runner would adopt it.
 pub fn progress_for_stage(
     path: &CompiledPath,
-    selected: &SelectedGameData,
     stage: &str,
     flags: &[(&str, Truth, Option<u32>)],
 ) -> QuestProgress {
@@ -183,7 +189,6 @@ pub fn progress_for_stage(
         binding: path.progress.binding.clone(),
         role: path.progress.role.clone(),
         rule: Knowledge::Known(stage),
-        pin: selected.selected_pin().expect("selected pin"),
     }
 }
 

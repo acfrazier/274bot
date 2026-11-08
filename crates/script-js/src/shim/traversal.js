@@ -24,6 +24,12 @@ async function walkWorld(tile, opts = {}) {
             ...(typeof opts.useTeleportCatalog === 'boolean'
                 ? { useTeleportCatalog: opts.useTeleportCatalog }
                 : {}),
+            ...(typeof opts.allowPrereqDialogue === 'boolean'
+                ? { allowPrereqDialogue: opts.allowPrereqDialogue }
+                : {}),
+            ...(typeof opts.allowQuestStart === 'boolean'
+                ? { allowQuestStart: opts.allowQuestStart }
+                : {}),
             policy: {
                 ...(typeof policy.useTeleports === 'boolean' ? { useTeleports: policy.useTeleports } : {}),
                 ...(span ? { distanceBeforeTeleport: span.value } : {}),
@@ -67,6 +73,12 @@ export const Traversal = proxy('Traversal', {
                         : {}),
                     ...(typeof opts.useTeleportCatalog === 'boolean'
                         ? { useTeleportCatalog: opts.useTeleportCatalog }
+                        : {}),
+                    ...(typeof opts.allowPrereqDialogue === 'boolean'
+                        ? { allowPrereqDialogue: opts.allowPrereqDialogue }
+                        : {}),
+                    ...(typeof opts.allowQuestStart === 'boolean'
+                        ? { allowQuestStart: opts.allowQuestStart }
                         : {}),
                     policy: {
                         ...(typeof policy.useTeleports === 'boolean'

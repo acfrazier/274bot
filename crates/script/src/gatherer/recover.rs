@@ -18,7 +18,7 @@ impl Gatherer {
             && (self.retained.recovery != RecoveryState::Idle || !self.retained.haul_since_death);
         self.cancel_active();
         self.trip = TripStep::Idle;
-        self.selected_bank = None;
+        self.scratch.selected_bank = None;
         self.scratch.withdrawals = None;
         self.supply_missing = None;
         self.observed_progress = None;
@@ -31,6 +31,7 @@ impl Gatherer {
         self.respawn_settle = None;
         self.proving_runs = 0;
         self.recovery_reprovisions = 0;
+        self.scratch.return_stall_recovery.reset();
         self.needs_validate = true;
         self.retained.deaths = self.retained.deaths.saturating_add(1);
         self.retained.haul_since_death = false;

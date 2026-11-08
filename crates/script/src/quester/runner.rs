@@ -1,12 +1,16 @@
 //! §3.2 tick loop with colour-first, boundary-triggered journal evidence.
 use super::compile::{
-    AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepContext,
-    StepOutcome, StepRun, StepTraceEvent,
+    AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepAttemptBudget,
+    StepAttemptReceipt, StepContext, StepOutcome, StepRun, StepTraceEvent,
 };
 use super::families::combat::CombatReceipt;
-use super::families::dialogue::{Dialogue, DialogueArgs, DialogueOptions, DialogueTarget};
+use super::families::dialogue::{
+    page_open, Dialogue, DialogueArgs, DialogueOptions, DialogueTarget,
+};
 use super::progress::{quest_colour, resolve_colour, resolve_journal};
-use super::provision::{ProvisionEvent, ProvisionPhase, Provisioner};
+use super::provision::{
+    BankCloser, BankLease, Closed, ProvisionEvent, ProvisionPhase, Provisioner,
+};
 use super::queue::QueueStatus;
 use super::registry::PathSource;
 use super::select::{select_with_skips, sequence_for_stage, SelectionDecision};
@@ -33,6 +37,7 @@ use std::sync::Arc;
 use std::task::Poll;
 
 use std::fmt::{self, Write as _};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::Duration;
 
 // A read has at most three transactions (each can emit at most one row
@@ -160,20 +165,73 @@ struct ParkedStep {
     id: Arc<str>,
 }
 
-const RUN_TRACE_EVENT_LIMIT: usize = 32;
+/// Distinct trace lines a stage keeps before new lines are dropped. The floor
+/// covers the run start and stages with no steps; a stage with steps gets
+/// `RUN_TRACE_EVENT_PER_STEP × units + RUN_TRACE_EVENT_SLACK`, where a unit is
+/// one of its own steps or one step of a recipe its `acquire` steps run.
+const RUN_TRACE_EVENT_MIN: usize = 32;
+/// Lines one trace unit can log: begin, skip and settled/failed, plus one
+/// spare for a retried begin, a restart line or a skip predicate that waits.
+const RUN_TRACE_EVENT_PER_STEP: usize = 4;
+/// Lines for provisioning, the stage change itself and the run start.
+const RUN_TRACE_EVENT_SLACK: usize = 8;
 const RUN_TRACE_LINE_LIMIT: usize = 192;
 
+/// The distinct-line budget of one stage, from its compiled trace units
+/// (`CompiledSequence::trace_units`): every step line and every line of the
+/// recipes its acquire steps run fits, and a short stage keeps the 32-line
+/// floor.
+fn stage_event_limit(units: usize) -> usize {
+    RUN_TRACE_EVENT_MIN.max(
+        units
+            .saturating_mul(RUN_TRACE_EVENT_PER_STEP)
+            .saturating_add(RUN_TRACE_EVENT_SLACK),
+    )
+}
+
+/// One distinct trace line of the current stage: two independent 64-bit
+/// digests of the line and how many times it repeated. The line text is not
+/// kept here; only an entry that repeats keeps its text, in
+/// `RunTrace::repeated`. A hit needs both digests, so a collision in one
+/// cannot hide a different line or fold its count into another line's
+/// summary; a real collision in both is accepted rather than checked.
 struct TraceEntry {
-    line: String,
+    hash: u64,
+    /// An FNV-1a digest where `hash` is SipHash-1-3: two functions, so one
+    /// collision does not repeat in the other.
+    check: u64,
     repeats: u32,
 }
 
-#[derive(Default)]
+/// The text of a trace entry that repeated, kept so `flush_repeats` can print
+/// the line with its count. A stage of distinct lines keeps none.
+struct RepeatedLine {
+    entry: usize,
+    line: Box<str>,
+}
+
 struct RunTrace {
     entries: Vec<TraceEntry>,
+    /// Texts of the current stage's entries that repeated; see `TraceEntry`.
+    repeated: Vec<RepeatedLine>,
+    /// Distinct lines the current stage keeps; see `stage_event_limit`.
+    limit: usize,
     started: bool,
     truncated: bool,
     terminal_logged: bool,
+}
+
+impl Default for RunTrace {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            repeated: Vec::new(),
+            limit: RUN_TRACE_EVENT_MIN,
+            started: false,
+            truncated: false,
+            terminal_logged: false,
+        }
+    }
 }
 
 struct TraceLineWriter<'a> {
@@ -218,6 +276,26 @@ fn trace_line(args: fmt::Arguments<'_>, limit: usize) -> (String, bool) {
     (line, truncated)
 }
 
+/// The table's identity for one trace line. `DefaultHasher` is deterministic
+/// for a run, so equal lines always meet the same entry.
+fn trace_hash(line: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    line.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The second, independent digest of a trace line: 64-bit FNV-1a, where
+/// `trace_hash` is SipHash-1-3. A repeat needs both to match, so neither
+/// function's collision alone can hide a different line.
+fn trace_check(line: &str) -> u64 {
+    let mut check: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in line.bytes() {
+        check ^= u64::from(byte);
+        check = check.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    check
+}
+
 impl RunTrace {
     fn record(
         &mut self,
@@ -227,27 +305,63 @@ impl RunTrace {
     ) {
         let (line, truncated) = trace_line(args, RUN_TRACE_LINE_LIMIT);
         self.truncated |= truncated;
-        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.line == line) {
-            entry.repeats = entry.repeats.saturating_add(1);
+        let hash = trace_hash(&line);
+        let check = trace_check(&line);
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.hash == hash && entry.check == check)
+        {
+            let repeats = self.entries[index].repeats.saturating_add(1);
+            self.entries[index].repeats = repeats;
+            if repeats == 1 {
+                // The first repeat keeps the line text this log call already
+                // built; both digests matched, so it is the first line's text,
+                // and `flush_repeats` prints it with the count.
+                self.repeated.push(RepeatedLine {
+                    entry: index,
+                    line: line.into_boxed_str(),
+                });
+            }
             return;
         }
-        if self.entries.len() >= RUN_TRACE_EVENT_LIMIT {
+        if self.entries.len() >= self.limit {
             self.truncated = true;
             return;
         }
         output.log(level, &line);
-        self.entries.push(TraceEntry { line, repeats: 0 });
+        self.entries.push(TraceEntry {
+            hash,
+            check,
+            repeats: 0,
+        });
+    }
+
+    /// Start a stage's fresh budget, sized from its compiled trace units. The
+    /// ending stage's folded repeats and truncation warning are emitted first;
+    /// then its lines are dropped, so one bot's memory stays bounded by its
+    /// largest stage and a later stage logs its lines even when an earlier
+    /// one was truncated.
+    fn begin_stage(&mut self, output: &mut dyn NativeOutput, units: usize) {
+        self.flush_repeats(output);
+        self.entries.clear();
+        self.limit = stage_event_limit(units);
     }
 
     fn flush_repeats(&mut self, output: &mut dyn NativeOutput) {
-        for entry in &mut self.entries {
+        self.repeated
+            .sort_unstable_by_key(|repeated| repeated.entry);
+        for repeated in std::mem::take(&mut self.repeated) {
+            let Some(entry) = self.entries.get_mut(repeated.entry) else {
+                continue;
+            };
             if entry.repeats == 0 {
                 continue;
             }
             let (line, _) = trace_line(
                 format_args!(
                     "{} (repeated {} additional times)",
-                    entry.line, entry.repeats
+                    repeated.line, entry.repeats
                 ),
                 RUN_TRACE_LINE_LIMIT + 64,
             );
@@ -323,6 +437,42 @@ fn trace_error_reason(error: &ActionError) -> &str {
         _ => "step error",
     }
 }
+fn quest_gate_evidence_detail(gates: &[api::selected::QuestGate]) -> Arc<str> {
+    let mut detail = String::from("needs evidence:");
+    for (index, gate) in gates.iter().enumerate() {
+        if index > 0 {
+            detail.push(';');
+        }
+        detail.push_str(" quest ");
+        match gate {
+            api::selected::QuestGate::Complete(quest) => {
+                let _ = write!(detail, "{}; completion; evidence state unknown", quest.0);
+            }
+            api::selected::QuestGate::Window(window) => {
+                let _ = write!(
+                    detail,
+                    "{}; signal {}; window; minimum ",
+                    window.quest.0, window.signal.0
+                );
+                match window.values.min {
+                    Some(minimum) => {
+                        let _ = write!(detail, "{minimum}");
+                    }
+                    None => detail.push_str("none"),
+                }
+                detail.push_str("; maximum ");
+                match window.values.max {
+                    Some(maximum) => {
+                        let _ = write!(detail, "{maximum}");
+                    }
+                    None => detail.push_str("none"),
+                }
+                detail.push_str("; evidence state unknown");
+            }
+        }
+    }
+    Arc::from(detail)
+}
 
 pub struct Quester {
     run: RunKey,
@@ -378,6 +528,7 @@ pub struct Quester {
     /// (design-combat.md:664).
     last_combat: Option<StepOutcome>,
     published_receipt: Option<Arc<dyn super::compile::FamilyReceipt>>,
+    last_attempt_receipt: Option<Arc<dyn super::compile::FamilyReceipt>>,
     advances: bool,
     in_prelude: bool,
     settling: bool,
@@ -388,6 +539,10 @@ pub struct Quester {
     unreadable_reads: u8,
     journal_attempts: u8,
     journal_retry_pending: bool,
+    /// The step that last failed with a dialogue page still open, as
+    /// `(in_prelude, sequence, step)`. Its next begin continues that page
+    /// from the current tile; every begin takes the value.
+    open_page_retry: Option<(bool, usize, usize)>,
     journal_quiet_since: Option<NonZeroU32>,
     empty_reads: u8,
     park_reason: &'static str,
@@ -398,6 +553,8 @@ pub struct Quester {
     prior_deaths: u16,
     max_deaths: u8,
     attempts: u8,
+    step_attempts: u32,
+    attempt_step: Option<FactKey>,
     fail_streak: u8,
     parked: bool,
     journal_opened: bool,
@@ -494,6 +651,11 @@ fn append_combat_status(fields: &mut Vec<StatusField>, outcome: Option<&StepOutc
         key: "combat_target_gone_restarts",
         label: "Combat target-gone restarts",
         value: StatusValue::Integer(i64::from(receipt.target_gone_restarts)),
+    });
+    fields.push(StatusField {
+        key: "combat_kills",
+        label: "Confirmed kills in step",
+        value: StatusValue::Integer(i64::from(receipt.kills)),
     });
     if let Some(mode) = report.melee_mode_fallback {
         static MODES: std::sync::LazyLock<[Arc<str>; 4]> = std::sync::LazyLock::new(|| {
@@ -712,6 +874,7 @@ impl Quester {
             last_outcome: None,
             last_combat: None,
             published_receipt: None,
+            last_attempt_receipt: None,
             advances: false,
             in_prelude: false,
             settling: false,
@@ -722,6 +885,7 @@ impl Quester {
             unreadable_reads: 0,
             journal_attempts: 0,
             journal_retry_pending: false,
+            open_page_retry: None,
             journal_quiet_since: None,
             empty_reads: 0,
             park_reason: "no progress",
@@ -735,6 +899,8 @@ impl Quester {
             max_deaths: default_max_deaths(),
             prior_deaths: 0,
             attempts: 0,
+            step_attempts: 0,
+            attempt_step: None,
             fail_streak: 0,
             parked: false,
             journal_opened: false,
@@ -752,6 +918,16 @@ impl Quester {
             begun: Vec::new(),
         }
     }
+
+    /// The current sequence's trace units, or zero (the 32-line floor) when
+    /// the runner has no sequence yet.
+    fn stage_units(&self) -> usize {
+        self.path
+            .sequences
+            .get(self.seq_index)
+            .map_or(0, |sequence| sequence.trace_units)
+    }
+
     fn trace_start(&mut self, output: &mut dyn NativeOutput) {
         if self.trace.started {
             return;
@@ -816,6 +992,16 @@ impl Quester {
                     ),
                 ),
             },
+            StepTraceEvent::WalkRetry {
+                attempt,
+                failure_detail,
+            } => self.trace.record(
+                output,
+                api::hostlog::Level::Info,
+                format_args!(
+                    "quester {quest}: stage {stage} retrying walk attempt {attempt}: {failure_detail}"
+                ),
+            ),
             StepTraceEvent::CombatSubOperationEnd { target, end } => self.trace.record(
                 output,
                 api::hostlog::Level::Info,
@@ -882,7 +1068,9 @@ impl Quester {
                     if !tick.cx.may_continue_this_tick() {
                         return false;
                     }
-                    if self.step.is_some() {
+                    // A step waiting on its scan polls only after provisioning
+                    // closed the bank its own trips opened.
+                    if self.step.is_some() && !self.provisioner.session_open() {
                         return true;
                     }
                 }
@@ -938,6 +1126,7 @@ impl Quester {
                 ProvisionPhase::Scanning => "scan",
                 ProvisionPhase::Spillover => "deposit-capacity",
                 ProvisionPhase::Withdrawing => "withdraw",
+                ProvisionPhase::Closing => "close",
                 _ => "other",
             };
             self.trace.record(
@@ -1028,6 +1217,11 @@ impl Quester {
 
     fn finish_quest(&mut self, tick: &mut NativeTick<'_>) -> ScriptFlow {
         self.selected_hazard.clear();
+        self.step_index = self
+            .path
+            .sequences
+            .get(self.seq_index)
+            .map_or(self.path.prelude.len(), |sequence| sequence.steps.len());
         self.trace.flush_repeats(tick.output);
         self.trace.terminal(
             tick.output,
@@ -1036,6 +1230,15 @@ impl Quester {
         );
         self.emit_status(tick.output, NativePhase::Complete);
         ScriptFlow::Complete
+    }
+
+    pub(super) fn bank_lease(&self) -> Option<BankLease> {
+        self.provisioner.bank_lease()
+    }
+
+    /// The lease of a provisioning session that has ended with its bank open.
+    pub(super) fn take_unowned_bank_lease(&mut self) -> Option<BankLease> {
+        self.provisioner.take_unowned_lease()
     }
 
     pub fn journal_opened(&self) -> bool {
@@ -1113,7 +1316,7 @@ impl Quester {
                         None => Arc::from("needs evidence: no current wait detail"),
                     }
                 } else {
-                    Arc::from("walk needs authoritative quest-gate evidence")
+                    quest_gate_evidence_detail(gates.as_ref())
                 };
                 self.set_last_error(QuesterFailureKind::NeedsEvidence, message);
                 return;
@@ -1283,7 +1486,10 @@ impl Quester {
             "blocked"
         } else if matches!(
             provision.phase,
-            ProvisionPhase::Scanning | ProvisionPhase::Spillover | ProvisionPhase::Withdrawing
+            ProvisionPhase::Scanning
+                | ProvisionPhase::Spillover
+                | ProvisionPhase::Withdrawing
+                | ProvisionPhase::Closing
         ) {
             "banking"
         } else if self.waiting.is_some() || self.needs_read || self.settling {
@@ -1368,6 +1574,28 @@ impl Quester {
                 value: StatusValue::Integer(value),
             });
         }
+        let budget_stop_spent = parked_step.is_some()
+            && current
+                .and_then(|step| step.attempt_budget.as_ref())
+                .is_some_and(|budget| self.step_attempts >= budget.max_attempts);
+        if let Some(receipt) = self.last_attempt_receipt.as_deref() {
+            if let Some(attempts) = receipt.attempt_count() {
+                fields.push(StatusField {
+                    key: "step_attempts",
+                    label: "Step attempts",
+                    value: StatusValue::Integer(i64::from(attempts)),
+                });
+            }
+            if budget_stop_spent {
+                if let Some(stop) = receipt.attempt_stop() {
+                    fields.push(StatusField {
+                        key: "step_stop",
+                        label: "Step stop",
+                        value: StatusValue::Text(Arc::clone(stop)),
+                    });
+                }
+            }
+        }
         fields.extend_from_slice(&self.queue_fields);
         fields.extend_from_slice(&self.required_vs_live);
         fields.push(StatusField {
@@ -1376,20 +1604,9 @@ impl Quester {
             value: StatusValue::Text(Arc::clone(&self.tested_stats_warning)),
         });
         fields.push(StatusField {
-            key: "pin",
-            label: "Selected pin",
-            value: StatusValue::Text(self.selected.selected_pin().map_or_else(
-                |_| Arc::from("unavailable"),
-                |pin| {
-                    Arc::from(format!(
-                        "r{} engine:{} content:{} nav:{:02x?}",
-                        pin.revision.as_i32(),
-                        pin.engine_commit,
-                        pin.content_commit,
-                        pin.nav_sha256
-                    ))
-                },
-            )),
+            key: "selected_revision",
+            label: "Selected revision",
+            value: StatusValue::Integer(i64::from(self.selected.revision())),
         });
         fields.push(StatusField {
             key: "tactic",
@@ -1491,6 +1708,29 @@ impl Quester {
             });
         }
         append_combat_status(&mut fields, combat_status);
+        if let Some(receipt) = outcome
+            .and_then(|outcome| outcome.receipt.as_ref())
+            .and_then(|receipt| {
+                receipt
+                    .as_any()
+                    .downcast_ref::<super::families::timed_ground::TimedGroundReceipt>()
+            })
+        {
+            fields.extend([
+                StatusField {
+                    key: "ground_waited_ticks",
+                    label: "Ground pickup observed ticks",
+                    value: StatusValue::Integer(
+                        i64::try_from(receipt.waited_ticks).unwrap_or(i64::MAX),
+                    ),
+                },
+                StatusField {
+                    key: "ground_held",
+                    label: "Ground pickup held",
+                    value: StatusValue::Integer(i64::from(receipt.held)),
+                },
+            ]);
+        }
         if let Some(progress) = &self.progress {
             fields.push(StatusField {
                 key: "quest",
@@ -1965,12 +2205,71 @@ impl Quester {
         self.gang_reader.cancel();
         self.advances = false;
         self.attempts = 0;
+        self.step_attempts = 0;
+        self.attempt_step = None;
+        self.last_attempt_receipt = None;
         self.settling = false;
         self.settle_deadline = Duration::ZERO;
         if self.waiting.take().is_some() {
             self.dirty = true;
         }
         self.clear_last_error();
+    }
+
+    /// The guardian hold teleported the player, which clears the player's
+    /// interaction and moves them off the tile the step planned from: drop the
+    /// step handle and its native owners, and read the journal again. Progress
+    /// and the ordered cursor stay, so selection resumes at the same step and
+    /// its own `skip_if`. A step that had already finished (`settling`) keeps
+    /// `settling`, `last_outcome`, `advances` and `settle_deadline`, so it goes
+    /// on from its own settle predicate, not from cursor 0. Partner work
+    /// pending keeps the step: the pair's protocol owns it.
+    fn drop_step_for_teleport(&mut self) {
+        if self.pair_work_pending() {
+            api::host_log!(
+                api::hostlog::Category::ScriptLifecycle,
+                api::hostlog::Level::Info,
+                "quester {}: the player was teleported during a guardian hold; partner work is pending, so the step stays (cursor {})",
+                self.path.id.0,
+                self.cursor
+            );
+            return;
+        }
+        api::host_log!(
+            api::hostlog::Category::ScriptLifecycle,
+            api::hostlog::Level::Info,
+            "quester {}: the player was teleported during a guardian hold; dropping the in-flight step, keeping progress and cursor {} (settling: {})",
+            self.path.id.0,
+            self.cursor,
+            self.settling
+        );
+        let settling = self.settling;
+        self.pair_admission = None;
+        self.pair_admission_since = None;
+        // Dropping these guards revokes their native owners before the host can dispatch them.
+        self.capture_prayer_cleanup();
+        self.step = None;
+        self.provisioner.cancel();
+        self.clear_prayers = None;
+        self.journal = None;
+        self.journal_drain = None;
+        self.needs_read = true;
+        self.last_combat = None;
+        self.attempts = 0;
+        if !settling {
+            self.last_outcome = None;
+            self.advances = false;
+            self.settle_deadline = Duration::ZERO;
+        }
+        self.unreadable_since = None;
+        self.journal_attempts = 0;
+        self.journal_drains = 0;
+        self.journal_drain_since = None;
+        self.journal_retry_pending = false;
+        self.journal_quiet_since = None;
+        self.selection_since = None;
+        self.waiting = None;
+        self.dirty = true;
     }
 
     fn current_step(&self) -> Option<&CompiledStep> {
@@ -1983,6 +2282,17 @@ impl Quester {
                 .steps
                 .get(self.step_index)
         }
+    }
+
+    fn scope_stage_cross(&self, tick: &mut NativeTick<'_>) {
+        static EMPTY: std::sync::LazyLock<Arc<[Arc<str>]>> =
+            std::sync::LazyLock::new(|| Arc::from([]));
+        let cross = self
+            .stage
+            .as_ref()
+            .and_then(|stage| sequence_for_stage(&self.path, &stage.0))
+            .map_or(&*EMPTY, |index| &self.path.sequences[index].cross);
+        tick.cx.stage_cross = Some(Arc::clone(cross));
     }
 
     /// Re-targets the sequence after a settle outcome. The ordered cursor moves
@@ -2360,12 +2670,7 @@ impl Quester {
                 }
                 return false;
             }
-            resolve_colour(
-                &self.path,
-                colour,
-                tick.cx.evidence(),
-                Arc::new(tick.cx.pin().clone()),
-            )
+            resolve_colour(&self.path, colour, tick.cx.evidence())
         };
         self.adopt_progress(tick, Arc::new(progress), retarget)
     }
@@ -2387,8 +2692,8 @@ impl Quester {
         self.journal_quiet_since = None;
         if self.progress.is_none() {
             // Progress is dropped on every restart (Start, Resume, session
-            // change, death, an unpaired random event), so the first adoption
-            // after a drop replays an ordered sequence from its first step.
+            // change, run key change, death), never by a random event, so the
+            // first adoption after a drop replays an ordered sequence from its first step.
             // The reset precedes storing the read: an Unknown or Partial first
             // read must not spend it, or the Known read that follows would
             // resume at the stale cursor.
@@ -2417,6 +2722,11 @@ impl Quester {
                 .stage
                 .as_ref()
                 .map_or("unknown", |previous| previous.0.as_ref());
+            // Each stage keeps its own trace budget, sized from its compiled
+            // steps and the recipe steps its acquire steps run, so a long
+            // quest logs every later step line too.
+            self.trace
+                .begin_stage(tick.output, self.path.sequences[sequence].trace_units);
             self.trace.record(
                 tick.output,
                 api::hostlog::Level::Info,
@@ -2457,7 +2767,6 @@ impl Quester {
         progress.quest == self.path.id
             && progress.binding == self.path.progress.binding
             && progress.role == self.path.role
-            && progress.pin.as_ref() == tick.cx.pin()
             && progress.evidence.meets(after)
             && progress.evidence != after
             && tick.cx.evidence().meets(progress.evidence)
@@ -2688,16 +2997,174 @@ impl Quester {
         }
     }
 
-    fn record_step_failure(&mut self, error: ActionError, tick: &NativeTick<'_>) {
-        self.fail_streak = self.fail_streak.saturating_add(1);
+    fn current_attempt_budget(&self) -> Option<StepAttemptBudget> {
+        let budget = self.current_step()?.attempt_budget.as_ref()?;
+        Some(StepAttemptBudget {
+            max_attempts: budget.max_attempts,
+            stop: Arc::clone(&budget.stop),
+        })
+    }
+
+    fn reset_attempt_scope_if_needed(&mut self, step: &FactKey) {
+        if self.attempt_step.as_ref() != Some(step) {
+            self.attempt_step = Some(step.clone());
+            self.step_attempts = 0;
+            self.last_attempt_receipt = None;
+        }
+    }
+
+    fn record_budgeted_attempt(&mut self, budget: &StepAttemptBudget, include_outcome: bool) {
+        self.step_attempts = self.step_attempts.saturating_add(1);
+        let inner = if include_outcome {
+            self.last_outcome
+                .as_mut()
+                .and_then(|outcome| outcome.receipt.take())
+        } else {
+            None
+        };
+        let receipt: Arc<dyn super::compile::FamilyReceipt> = Arc::new(StepAttemptReceipt::new(
+            inner,
+            self.step_attempts,
+            Arc::clone(&budget.stop),
+        ));
+        if include_outcome {
+            if let Some(outcome) = self.last_outcome.as_mut() {
+                outcome.receipt = Some(Arc::clone(&receipt));
+            }
+        }
+        self.last_attempt_receipt = Some(receipt);
+    }
+
+    fn park_at_attempt_budget(&mut self, budget: &StepAttemptBudget) {
+        if self.step_attempts < budget.max_attempts {
+            return;
+        }
+        let Some((sequence_index, step_index, in_prelude, step_id)) =
+            self.current_step().map(|step| {
+                (
+                    self.seq_index,
+                    self.step_index,
+                    self.in_prelude,
+                    Arc::clone(&step.id.0),
+                )
+            })
+        else {
+            return;
+        };
+        let reason = self
+            .last_error
+            .as_deref()
+            .map(Arc::<str>::from)
+            .unwrap_or_else(|| Arc::from("step failed"));
+        self.parked_step = Some(ParkedStep {
+            sequence_index,
+            step_index,
+            in_prelude,
+            id: Arc::clone(&step_id),
+        });
+        self.parked = true;
+        self.last_error = Some(Arc::from(format!(
+            "{}: step {} stopped after {} attempts: {}",
+            budget.stop, step_id, self.step_attempts, reason
+        )));
+        self.dirty = true;
+    }
+
+    fn park_at_run_retry_limit(&mut self) {
+        let Some((sequence_index, step_index, in_prelude, step_id)) =
+            self.current_step().map(|step| {
+                (
+                    self.seq_index,
+                    self.step_index,
+                    self.in_prelude,
+                    Arc::clone(&step.id.0),
+                )
+            })
+        else {
+            return;
+        };
+        let reason = self
+            .last_error
+            .as_deref()
+            .map(Arc::<str>::from)
+            .unwrap_or_else(|| Arc::from("step failed"));
+        self.parked_step = Some(ParkedStep {
+            sequence_index,
+            step_index,
+            in_prelude,
+            id: step_id,
+        });
+        self.parked = true;
+        self.last_error = Some(Arc::from(format!(
+            "run retry limit reached after {} consecutive failures: {}",
+            self.fail_streak, reason
+        )));
+        self.dirty = true;
+    }
+
+    fn record_step_begin_failure(&mut self, error: ActionError) {
+        if matches!(&error, ActionError::UserInput) {
+            self.record_failure(error);
+            self.parked = true;
+            return;
+        }
+        self.attempts = self.attempts.saturating_add(1);
         self.record_failure(error);
-        if self.fail_streak >= 5 {
+        if let Some(budget) = self.current_attempt_budget() {
+            self.fail_streak = self.fail_streak.saturating_add(1);
+            self.record_budgeted_attempt(&budget, false);
+            self.park_at_attempt_budget(&budget);
+            if !self.parked && u32::from(self.fail_streak) >= super::path::MAX_STEP_ATTEMPTS {
+                self.park_at_run_retry_limit();
+            }
+        } else if self.attempts >= 5 {
             self.parked = true;
         }
-        self.on_step_boundary(tick);
+    }
+
+    fn record_step_success(&mut self) {
+        if let Some(budget) = self.current_attempt_budget() {
+            self.record_budgeted_attempt(&budget, true);
+        }
+        self.attempt_step = None;
+        self.step_attempts = 0;
+    }
+
+    fn record_step_failure(&mut self, error: ActionError, tick: &NativeTick<'_>) {
+        self.record_step_failure_with_outcome(error, tick, false);
+    }
+
+    fn record_step_failure_with_outcome(
+        &mut self,
+        error: ActionError,
+        tick: &NativeTick<'_>,
+        include_outcome: bool,
+    ) {
+        let user_input = matches!(&error, ActionError::UserInput);
+        if !user_input {
+            self.fail_streak = self.fail_streak.saturating_add(1);
+        }
+        self.record_failure(error);
+        let budget = self.current_attempt_budget();
+        if !user_input {
+            if let Some(budget) = &budget {
+                self.record_budgeted_attempt(budget, include_outcome);
+                self.park_at_attempt_budget(budget);
+                if !self.parked && u32::from(self.fail_streak) >= super::path::MAX_STEP_ATTEMPTS {
+                    self.park_at_run_retry_limit();
+                }
+            } else if self.fail_streak >= 5 {
+                self.parked = true;
+            }
+        }
+        self.on_step_boundary_with_watchdog(tick, true);
     }
 
     fn on_step_boundary(&mut self, tick: &NativeTick<'_>) {
+        self.on_step_boundary_with_watchdog(tick, true);
+    }
+
+    fn on_step_boundary_with_watchdog(&mut self, tick: &NativeTick<'_>, observe_watchdog: bool) {
         let mut inv = [(0, 0); 28];
         let mut inv_len = 0usize;
         if let Some(rows) = tick.cx.snapshot().inventory() {
@@ -2724,16 +3191,18 @@ impl Quester {
             .stats()
             .map(|stats| stats.value.iter().map(|s| s.xp).sum())
             .unwrap_or(0);
-        if matches!(
-            self.watchdog.observe(
-                self.stage.as_ref(),
-                tile,
-                &inv[..inv_len],
-                &worn[..worn_len],
-                xp,
-            ),
-            WatchdogAction::Park
-        ) {
+        if observe_watchdog
+            && matches!(
+                self.watchdog.observe(
+                    self.stage.as_ref(),
+                    tile,
+                    &inv[..inv_len],
+                    &worn[..worn_len],
+                    xp,
+                ),
+                WatchdogAction::Park
+            )
+        {
             self.parked = true;
             self.dirty = true;
         }
@@ -2775,6 +3244,7 @@ impl Quester {
         tick: &mut NativeTick<'_>,
         pass: u8,
     ) -> Result<ScriptFlow, ScriptFailure> {
+        self.scope_stage_cross(tick);
         if self.step.is_none() && !self.settling && !self.needs_read {
             self.request_contradicted_read(tick);
         }
@@ -2799,6 +3269,7 @@ impl Quester {
             self.provisioner
                 .progress_read_completed(tick.cx.active_now());
         }
+        self.scope_stage_cross(tick);
         if self
             .path
             .sequences
@@ -2855,6 +3326,7 @@ impl Quester {
                 self.settling = false;
                 self.settle_deadline = Duration::ZERO;
                 self.fail_streak = 0;
+                self.record_step_success();
                 self.retarget_after_settle(true);
                 self.on_step_boundary(tick);
                 // Select on the snapshot that proved the settle instead of a
@@ -2880,7 +3352,6 @@ impl Quester {
             } else {
                 if tick.cx.active_now() >= self.settle_deadline {
                     self.settling = false;
-                    self.fail_streak = self.fail_streak.saturating_add(1);
                     let error = ActionError::Failed(Arc::from("step settle timeout"));
                     let step = if self.in_prelude {
                         self.path.prelude.get(self.step_index)
@@ -2911,11 +3382,10 @@ impl Quester {
                             format_args!("failed: step settle timeout"),
                         );
                     }
-                    self.record_failure(error);
-                    if self.fail_streak >= 5 {
-                        self.parked = true;
-                    }
-                    self.on_step_boundary(tick);
+                    self.record_step_failure_with_outcome(error, tick, true);
+                    // Progress may land after the earlier read while an advancing step settles.
+                    self.needs_read = !self.parked && (self.needs_read || self.advances);
+                    self.dirty = true;
                     if self.parked {
                         self.parked_step = failed_step;
                     }
@@ -3056,9 +3526,6 @@ impl Quester {
                 }
             };
             self.selection_since = None;
-            if selected.is_none() {
-                self.last_outcome = None;
-            }
             let Some((index, advances, prelude)) = selected else {
                 self.selected_hazard.clear();
                 if self
@@ -3069,6 +3536,7 @@ impl Quester {
                 {
                     return Ok(self.finish_quest(tick));
                 }
+                self.last_outcome = None;
                 if self
                     .path
                     .sequences
@@ -3090,6 +3558,13 @@ impl Quester {
                 }
                 self.empty_reads += 1;
                 if self.empty_reads >= 2 {
+                    self.in_prelude = false;
+                    self.step_index = self
+                        .path
+                        .sequences
+                        .get(self.seq_index)
+                        .map_or(0, |sequence| sequence.steps.len());
+                    self.parked_step = None;
                     self.parked = true;
                     self.park_reason = "no step for stage";
                     self.clear_last_error();
@@ -3120,6 +3595,12 @@ impl Quester {
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Continue);
             }
+            let step_id = if prelude {
+                self.path.prelude[index].id.clone()
+            } else {
+                self.path.sequences[self.seq_index].steps[index].id.clone()
+            };
+            self.reset_attempt_scope_if_needed(&step_id);
             let step = if prelude {
                 &self.path.prelude[index]
             } else {
@@ -3215,6 +3696,7 @@ impl Quester {
             }
             #[cfg(test)]
             self.begun.push(Arc::clone(&step.id.0));
+            let resume_page = self.open_page_retry.take() == Some((prelude, self.seq_index, index));
             let result = {
                 let mut step_cx = StepContext {
                     tick,
@@ -3224,7 +3706,11 @@ impl Quester {
                     banks: &self.banks,
                     choices: &self.choices,
                 };
-                step.plan.begin(&mut step_cx)
+                if resume_page {
+                    step.plan.begin_open_page(&mut step_cx)
+                } else {
+                    step.plan.begin(&mut step_cx)
+                }
             };
             match result {
                 Ok(run) => {
@@ -3264,11 +3750,7 @@ impl Quester {
                     );
                     self.pair_begin_since = None;
                     self.waiting = None;
-                    self.attempts = self.attempts.saturating_add(1);
-                    self.record_failure(error);
-                    if self.attempts >= 5 {
-                        self.parked = true;
-                    }
+                    self.record_step_begin_failure(error);
                 }
             }
             // A begun step is polled on its begin tick unless the begin
@@ -3437,11 +3919,20 @@ impl Quester {
                 }
                 self.capture_prayer_cleanup();
                 self.capture_failed_acquisition_child();
+                let budget = self.current_attempt_budget();
+                if let Some(budget) = &budget {
+                    if !matches!(&error, ActionError::UserInput) {
+                        self.record_budgeted_attempt(budget, false);
+                    }
+                }
                 self.record_failure(error);
                 self.step = None;
                 self.last_outcome = None;
                 self.prayer_cleanup_pending = !self.prayer_cleanup_owned.is_empty();
                 self.parked = true;
+                if let Some(budget) = &budget {
+                    self.park_at_attempt_budget(budget);
+                }
                 self.update_wait();
                 self.publish(tick.output);
                 return Ok(ScriptFlow::Blocked(self.blocked_failure()));
@@ -3474,6 +3965,13 @@ impl Quester {
                 self.capture_failed_acquisition_child();
                 self.step = None;
                 self.last_outcome = None;
+                // A page that is still open belongs to this step: its retry
+                // continues the page where the content left the player.
+                self.open_page_retry = page_open(&tick.cx).then_some((
+                    self.in_prelude,
+                    self.seq_index,
+                    self.step_index,
+                ));
                 self.record_step_failure(error, tick);
             }
         }
@@ -3494,9 +3992,25 @@ impl Script for Quester {
         })
     }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        tick.cx.walk_prereq = self.path.prereq;
         if tick.cx.run() != self.run {
+            api::host_log!(
+                api::hostlog::Category::ScriptLifecycle,
+                api::hostlog::Level::Info,
+                "quester {}: run key changed from {:?} to {:?}; dropping the step and progress",
+                self.path.id.0,
+                self.run,
+                tick.cx.run()
+            );
             self.run = tick.cx.run();
+            // A new run starts a fresh trace: print the ending run's pending
+            // repeat counts first, then give the current stage its own budget.
+            // `stage` does not change here, so the stage hook will not run
+            // again for it and this is the only place the new run is sized.
+            self.trace.flush_repeats(tick.output);
+            let units = self.stage_units();
             self.trace = RunTrace::default();
+            self.trace.begin_stage(tick.output, units);
             self.watchdog = Watchdog::default();
             self.cancel_step(tick);
             self.survival = crate::survival::SurvivalStep::default();
@@ -3521,6 +4035,13 @@ impl Script for Quester {
             self.publish(tick.output);
             return Ok(ScriptFlow::Continue);
         }
+        if self.prayer_cleanup_pending && self.step.is_some() {
+            self.cancel_step(tick);
+            self.dirty = true;
+        }
+        if tick.cx.take_hold_teleport() {
+            self.drop_step_for_teleport();
+        }
         if self.anchor.is_none() {
             self.anchor = tick.cx.snapshot().here().map(|here| here.value);
         }
@@ -3531,6 +4052,13 @@ impl Script for Quester {
             retained.death_seq = self.death.watermark();
         }
         if died {
+            api::host_log!(
+                api::hostlog::Category::ScriptLifecycle,
+                api::hostlog::Level::Info,
+                "quester {}: the player died; dropping the step and progress (deaths so far {})",
+                self.path.id.0,
+                self.prior_deaths.saturating_add(self.deaths)
+            );
             let exceeded = death_cap_exceeded(
                 self.prior_deaths.saturating_add(self.deaths),
                 self.max_deaths,
@@ -3693,7 +4221,10 @@ impl Script for Quester {
             return Ok(ScriptFlow::Continue);
         }
         let guarded_survival_step = self.survival_deferred && self.guarded_survival_step();
-        let flow = self.advance(tick, 0)?;
+        let previous_cross = tick.cx.stage_cross.take();
+        let flow = self.advance(tick, 0);
+        tick.cx.stage_cross = previous_cross;
+        let flow = flow?;
         let transfer_boundary = self.finish_survival_transfer(tick);
         let guarded_step_finished = guarded_survival_step && self.step.is_none();
         if transfer_boundary || guarded_step_finished {
@@ -3736,6 +4267,12 @@ impl Script for Quester {
         self.dirty = true;
         match event {
             Interrupt::Resume | Interrupt::SessionReady => {
+                api::host_log!(
+                    api::hostlog::Category::ScriptLifecycle,
+                    api::hostlog::Level::Info,
+                    "quester {}: {event:?} interrupt; dropping the step and progress so the operator's takeover or the new session re-reads from the top",
+                    self.path.id.0
+                );
                 if !preserve_survival_park {
                     self.survival = crate::survival::SurvivalStep::default();
                 }
@@ -3764,6 +4301,12 @@ impl Script for Quester {
                 self.waiting = None;
             }
             Interrupt::SessionEnded => {
+                api::host_log!(
+                    api::hostlog::Category::ScriptLifecycle,
+                    api::hostlog::Level::Info,
+                    "quester {}: session ended; dropping the step and progress",
+                    self.path.id.0
+                );
                 self.survival = crate::survival::SurvivalStep::default();
                 self.survival_action = None;
                 self.survival_deferred = false;
@@ -3792,44 +4335,52 @@ impl Script for Quester {
             Interrupt::Pause | Interrupt::Hold(_) => {}
         }
     }
-    fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
-        let preserve_pair_work = self.pair_work_pending();
+    /// A random event keeps the quest's own progress and its in-flight step.
+    /// The engine spawns the event NPC beside the player on a login timer
+    /// (`login.rs2:40` sets `general_macro_events` to 500 ticks;
+    /// `macro_events.rs2:2-12` spawns it), so every bot meets one about 500
+    /// ticks after login, in the middle of whatever step it runs. Dropping the
+    /// step and progress there made the next journal read restart the step
+    /// from cursor 0 with no failure (QUESTER-READ-KEEPS-STEP). The guardian
+    /// holds the script while it answers the event
+    /// (`RandomStatus::hold`, only with `settings.random_events` on), and the
+    /// step's own checks decide what a held tick did, as they already do for
+    /// partner work.
+    ///
+    /// Nothing here depends on the event's name. Two things follow the hold,
+    /// both by observation:
+    /// - A step whose action was interrupted (the guardian sent its own
+    ///   interaction, or the host dropped its queued request during the hold)
+    ///   re-issues that request once, after one observed tick and only if its
+    ///   goal is not already met ([`crate::native::NativeMachine::after_hold`]).
+    /// - If the player was teleported while the hold lasted
+    ///   ([`crate::native::is_teleport`]), the step handle is dropped
+    ///   ([`Self::drop_step_for_teleport`]); progress and the ordered cursor
+    ///   stay.
+    ///
+    /// With `settings.random_events` off the guardian neither holds nor acts
+    /// (`guardian.rs`: `hold` and `ours` need the setting), so the event is not
+    /// answered and the guardian does not interrupt the step. The Quester
+    /// keeps the step, progress and cursor exactly as with the setting on and
+    /// no teleport; it does not classify a teleport that no hold surrounds,
+    /// and the step's own checks judge whatever the ignored event does to the
+    /// player (an attack, a content teleport, a trapped square).
+    fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
         self.watchdog = Watchdog::default();
         self.custom_reader = None;
         self.custom_read_after = None;
         self.gang_reader.cancel();
-        // Dropping progress makes the next adoption fresh, which replays an
-        // ordered sequence from step 1. While paired work is pending (partner
-        // admission, a partner begin, or an active partner step) the
-        // progress, step and ordered cursor are kept instead: replaying a
-        // partnered sequence mid-pairing would desync the partners.
-        if !preserve_pair_work {
-            self.pair_admission = None;
-            self.pair_admission_since = None;
-            // Dropping these guards revokes their native owners before the host can dispatch them.
-            self.capture_prayer_cleanup();
-            self.step = None;
-            self.provisioner.cancel();
-            self.clear_prayers = None;
-            self.journal = None;
-            self.journal_drain = None;
-            self.needs_read = true;
-            self.last_outcome = None;
-            self.last_combat = None;
-            self.advances = false;
-            self.attempts = 0;
-            self.progress = None;
-            self.settling = false;
-            self.settle_deadline = Duration::ZERO;
-            self.unreadable_since = None;
-            self.journal_attempts = 0;
-            self.journal_drains = 0;
-            self.journal_drain_since = None;
-            self.journal_retry_pending = false;
-            self.journal_quiet_since = None;
-            self.selection_since = None;
-            self.waiting = None;
-        }
+        api::host_log!(
+            api::hostlog::Category::ScriptLifecycle,
+            api::hostlog::Level::Info,
+            "quester {}: random event {:?} {:?} keeps the step, progress and cursor {} (step in flight: {}, partner work pending: {})",
+            self.path.id.0,
+            event.kind,
+            event.name,
+            self.cursor,
+            self.step.is_some(),
+            self.pair_work_pending()
+        );
         self.dirty = true;
         RandomClaim::Host
     }
@@ -3920,6 +4471,10 @@ pub struct QueuedQuester {
     fields: Arc<[StatusField]>,
     gate_fields: Arc<[StatusField]>,
     quest_status_since: Option<Duration>,
+    /// An open bank that this run's provisioning left, owed a close before
+    /// anything else acts. Ended sessions hand their lease here.
+    owed_bank: Option<BankLease>,
+    owed_closer: BankCloser,
     dirty: bool,
 }
 
@@ -3961,6 +4516,8 @@ impl QueuedQuester {
             fields: Arc::from([]),
             gate_fields: Arc::from([]),
             quest_status_since: None,
+            owed_bank: None,
+            owed_closer: BankCloser::default(),
             dirty: true,
         };
         this.refresh_fields();
@@ -3978,6 +4535,7 @@ impl QueuedQuester {
         self.anchor = retained.anchor;
         self.deaths = retained.deaths;
         self.completed = retained.completed;
+        self.owed_bank = retained.bank_lease;
         self.refresh_fields();
     }
 
@@ -3986,6 +4544,57 @@ impl QueuedQuester {
         retained.anchor = self.anchor;
         retained.deaths = self.deaths;
         retained.completed = self.completed;
+    }
+
+    /// Takes the lease of an ended provisioning session from the active
+    /// Quester. It then owes the close. Called after anything that can end a
+    /// session without a close: an error, a cancel, a resume, a random event.
+    /// Never called on Stop: a Stop sends no close.
+    fn reclaim_bank(&mut self) {
+        if let Some(lease) = self
+            .active
+            .as_mut()
+            .and_then(|active| active.take_unowned_bank_lease())
+        {
+            self.owed_bank = Some(lease);
+        }
+    }
+
+    /// Closes the bank provisioning left open, through the bank kernel's
+    /// close. `true` while the close runs. This runs after the held-tick check
+    /// and before any journal read, Path compile or step, so a resumed or
+    /// restarted run does not read under the bank. It sends nothing at zero
+    /// hitpoints, and nothing unless this frame still shows the leased bank
+    /// open. A close the kernel gives up on is logged and dropped, which
+    /// bounds it.
+    fn settle_owed_bank(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        self.reclaim_bank();
+        if self.owed_bank.is_none() && !self.owed_closer.active() {
+            return false;
+        }
+        if crate::native::death::hitpoints_zero(tick.cx.snapshot().stats().map(|stats| stats.value))
+        {
+            return false;
+        }
+        match self.owed_closer.drive(tick, &mut self.owed_bank) {
+            Closed::Done => false,
+            Closed::Pending => true,
+            Closed::Failed(error) => {
+                tick.output.log(
+                    api::hostlog::Level::Warn,
+                    &format!("quester queue: the open bank was not closed: {error}"),
+                );
+                false
+            }
+        }
+    }
+
+    /// Keeps the lease in the slot's retained cell, so an automatic restart
+    /// can close the bank. Operator Stop discards that cell.
+    fn sync_bank_lease(&self, tick: &mut NativeTick<'_>) {
+        tick.cx.retained().quester().bank_lease = self
+            .owed_bank
+            .or_else(|| self.active.as_ref().and_then(|active| active.bank_lease()));
     }
 
     fn refresh_fields(&mut self) {
@@ -4092,6 +4701,48 @@ impl QueuedQuester {
                     value: StatusValue::Text(Arc::clone(&failure.message)),
                 });
             }
+            // The active executor is gone by now. The row keeps where it
+            // stopped, so a Blocked status names the quest, stage and step
+            // instead of only the queue reason.
+            if let Some(parked) = self
+                .blocked_row()
+                .and_then(|index| self.queue.parked(index))
+            {
+                static UNKNOWN_STAGE: std::sync::LazyLock<Arc<str>> =
+                    std::sync::LazyLock::new(|| Arc::from("unknown"));
+                static BLOCKED_ACTION: std::sync::LazyLock<Arc<str>> =
+                    std::sync::LazyLock::new(|| Arc::from("blocked"));
+                fields.extend([
+                    StatusField {
+                        key: "stage",
+                        label: "Stage",
+                        value: StatusValue::Text(match &parked.stage {
+                            Some(stage) => Arc::clone(stage),
+                            None => Arc::clone(&UNKNOWN_STAGE),
+                        }),
+                    },
+                    StatusField {
+                        key: "quest_id",
+                        label: "Quest ID",
+                        value: StatusValue::Text(Arc::clone(&parked.quest)),
+                    },
+                    StatusField {
+                        key: "step_id",
+                        label: "Step",
+                        value: StatusValue::Text(Arc::clone(&parked.step)),
+                    },
+                    StatusField {
+                        key: "last_failure",
+                        label: "Last failure",
+                        value: StatusValue::Text(Arc::clone(&parked.failure)),
+                    },
+                    StatusField {
+                        key: "action_state",
+                        label: "Action",
+                        value: StatusValue::Text(Arc::clone(&BLOCKED_ACTION)),
+                    },
+                ]);
+            }
         }
         if phase == NativePhase::Waiting {
             fields.push(StatusField {
@@ -4121,12 +4772,25 @@ impl QueuedQuester {
         });
     }
 
+    /// The row `blocked()` reports: the first picked, unskipped row with a
+    /// reason. The Blocked status reads its parked detail, so the published
+    /// fields and the failure message describe the same row.
+    fn blocked_row(&self) -> Option<usize> {
+        self.queue
+            .rows()
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.picked && !row.skipped)
+            .find(|(index, _)| self.queue.reason(*index).is_some())
+            .map(|(index, _)| index)
+    }
+
     fn blocked(&self) -> ScriptFailure {
         if self.quest_status_since.is_some() {
             return ScriptFailure {
                 code: Arc::from("quest-status-unobserved"),
                 message: Arc::from(
-                    "quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester",
+                    "quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then start the Quester again",
                 ),
             };
         }
@@ -4139,24 +4803,23 @@ impl QueuedQuester {
             return ScriptFailure {
                 code: Arc::from("empty-queue"),
                 message: Arc::from(
-                    "no quests selected: review Quests and Skip in Script prefs; empty Quests selects all released quests, then Stop/Start Quester",
+                    "no quests selected: review Quests and Skip in Script prefs; empty Quests selects all released quests, then start the Quester again",
                 ),
             };
         }
-        let (reason, status) = self
-            .queue
-            .rows()
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| row.picked && !row.skipped)
-            .find_map(|(index, row)| self.queue.reason(index).map(|reason| (reason, row.status)))
-            .unwrap_or(("no eligible selected quest", QueueStatus::Blocked));
+        let reported = self.blocked_row();
+        let reason = reported
+            .and_then(|index| self.queue.reason(index))
+            .unwrap_or("no eligible selected quest");
+        let status = reported
+            .and_then(|index| self.queue.status(index))
+            .unwrap_or(QueueStatus::Blocked);
         // A requirement block can be changed in Script prefs; a parked run
         // (a refused walk, a failed action) can't, so don't send the user there.
         let recovery = if status == QueueStatus::Blocked {
-            "review Quests/Skip and requirements in Script prefs, resolve the condition, then Stop/Start Quester"
+            "review Quests/Skip and requirements in Script prefs, resolve the condition, then start the Quester again"
         } else {
-            "resolve the condition, then Stop/Start Quester"
+            "resolve the condition, then start the Quester again"
         };
         ScriptFailure {
             code: Arc::from("queue-blocked"),
@@ -4317,10 +4980,18 @@ impl Script for QueuedQuester {
             baseline.observe(tick.cx.snapshot());
             tick.cx.retained().quester().death_seq = baseline.watermark();
         }
+        let closing = self.settle_owed_bank(tick);
+        self.sync_bank_lease(tick);
+        if closing {
+            self.publish(tick.output, NativePhase::Waiting);
+            return Ok(ScriptFlow::Continue);
+        }
         if let Some(active) = self.active.as_mut() {
             let flow = active.tick(tick)?;
             self.anchor = active.anchor;
             tick.cx.retained().quester().anchor = self.anchor;
+            self.reclaim_bank();
+            self.sync_bank_lease(tick);
             match &flow {
                 ScriptFlow::Continue => return Ok(ScriptFlow::Continue),
                 ScriptFlow::Blocked(failure)
@@ -4340,7 +5011,29 @@ impl Script for QueuedQuester {
                             self.queue.refresh_blocked();
                         }
                         ScriptFlow::Blocked(failure) => {
-                            self.queue.mark_parked(index, failure.message)
+                            // The executor is dropped here; keep where it
+                            // stopped so the queue-level Blocked status still
+                            // names the stage and step that parked it.
+                            self.queue.mark_parked(
+                                index,
+                                super::queue::ParkedRun {
+                                    quest: Arc::clone(&active.path.id.0),
+                                    stage: active.stage.as_ref().map(|stage| Arc::clone(&stage.0)),
+                                    step: active
+                                        .parked_step
+                                        .as_ref()
+                                        .map(|parked| Arc::clone(&parked.id))
+                                        .or_else(|| {
+                                            active.current_step().map(|step| Arc::clone(&step.id.0))
+                                        })
+                                        .unwrap_or_else(|| {
+                                            static EMPTY_STEP: std::sync::LazyLock<Arc<str>> =
+                                                std::sync::LazyLock::new(|| Arc::from(""));
+                                            Arc::clone(&EMPTY_STEP)
+                                        }),
+                                    failure: Arc::clone(&failure.message),
+                                },
+                            );
                         }
                         ScriptFlow::Continue => unreachable!(),
                     }
@@ -4452,6 +5145,7 @@ impl Script for QueuedQuester {
             let bytes = self.queue.path_bytes(index);
             let selected = Arc::clone(&self.selected);
             let quests = Arc::clone(&self.quests);
+            let nav = tick.frame().compiled().nav.cloned();
             self.active_index = Some(index);
             let input = PreparationInput::new(
                 self.run.run,
@@ -4475,6 +5169,8 @@ impl Script for QueuedQuester {
                             cap,
                             gang,
                             &operator,
+                            nav.as_ref()
+                                .and_then(nav_planner::contract::NavLease::zones),
                         );
                         compiled.map_err(|error| {
                             let detail =
@@ -4538,9 +5234,13 @@ impl Script for QueuedQuester {
     fn interrupt(&mut self, event: Interrupt) {
         self.gang_reader.cancel();
         self.pair_selection = None;
+        if !matches!(event, Interrupt::Hold(_)) {
+            self.owed_closer.cancel();
+        }
         if let Some(active) = self.active.as_mut() {
             active.interrupt(event);
         }
+        self.reclaim_bank();
     }
 
     fn on_stop(&mut self, reason: StopReason) {
@@ -4562,9 +5262,12 @@ impl Script for QueuedQuester {
     fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
         self.gang_reader.cancel();
         self.pair_selection = None;
-        self.active
+        let claim = self
+            .active
             .as_mut()
-            .map_or(RandomClaim::Host, |active| active.on_random(event))
+            .map_or(RandomClaim::Host, |active| active.on_random(event));
+        self.reclaim_bank();
+        claim
     }
 
     fn recovery_anchor(&self) -> Option<api::WorldTile> {
@@ -4602,13 +5305,16 @@ mod tests {
 
     #[test]
     fn queue_status_is_nonterminal_and_journal_payload_is_published_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         #[derive(Default)]
         struct Capture(Vec<ScriptStatus>);
         impl NativeOutput for Capture {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -4658,6 +5364,9 @@ mod tests {
 
     #[test]
     fn authored_and_synthetic_family_failures_share_the_bounded_retry_policy() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut script, snapshot) = fixture();
         let mut ledger = None;
         for attempt in 1..=5 {
@@ -4674,6 +5383,177 @@ mod tests {
             script.blocked_failure().message.as_ref(),
             "interact target not reached"
         );
+    }
+
+    #[test]
+    fn budget_counts_begin_and_poll_failures_together() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut script, snapshot) = fixture();
+        {
+            let path = Arc::get_mut(&mut script.path).expect("unshared path");
+            path.sequences[0].steps[0].attempt_budget = Some(StepAttemptBudget {
+                max_attempts: 2,
+                stop: Arc::from("retry-stop"),
+            });
+        }
+        let attempt_step = script.path.sequences[0].steps[0].id.clone();
+        script.reset_attempt_scope_if_needed(&attempt_step);
+
+        script.record_step_begin_failure(ActionError::Failed(Arc::from("begin failed")));
+        assert_eq!(script.step_attempts, 1);
+        assert!(!script.parked);
+
+        let mut ledger = None;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            script.record_step_failure(ActionError::Failed(Arc::from("poll failed")), tick);
+        });
+        assert_eq!(script.step_attempts, 2);
+        assert!(script.parked);
+        assert!(script
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("retry-stop")));
+        let receipt = script
+            .last_attempt_receipt
+            .as_deref()
+            .expect("the exhausted attempt has a receipt");
+        assert_eq!(receipt.attempt_count(), Some(2));
+        assert_eq!(
+            receipt.attempt_stop().map(|stop| stop.as_ref()),
+            Some("retry-stop")
+        );
+    }
+
+    #[test]
+    fn begin_user_input_parks_without_spending_the_step_budget() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut script, _) = fixture();
+        {
+            let path = Arc::get_mut(&mut script.path).expect("unshared path");
+            path.sequences[0].steps[0].attempt_budget = Some(StepAttemptBudget {
+                max_attempts: 1,
+                stop: Arc::from("retry-stop"),
+            });
+        }
+        let attempt_step = script.path.sequences[0].steps[0].id.clone();
+        script.reset_attempt_scope_if_needed(&attempt_step);
+
+        script.record_step_begin_failure(ActionError::UserInput);
+
+        assert_eq!(script.step_attempts, 0);
+        assert_eq!(script.fail_streak, 0);
+        assert!(script.parked);
+        assert!(script.last_attempt_receipt.is_none());
+        assert_eq!(script.blocked_failure().code.as_ref(), "manual-movement");
+    }
+
+    #[test]
+    fn alternating_budgeted_steps_hit_the_runwide_failure_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut script, snapshot) = fixture();
+        let sequence_index = script
+            .path
+            .sequences
+            .iter()
+            .position(|sequence| sequence.steps.len() >= 2)
+            .expect("Cook has a sequence with two steps");
+        let mut step_ids = Vec::with_capacity(2);
+        {
+            let path = Arc::get_mut(&mut script.path).expect("unshared path");
+            for step in path.sequences[sequence_index].steps.iter_mut().take(2) {
+                step.attempt_budget = Some(StepAttemptBudget {
+                    max_attempts: 32,
+                    stop: Arc::from("retry-stop"),
+                });
+                step_ids.push(step.id.clone());
+            }
+        }
+        script.seq_index = sequence_index;
+
+        let mut ledger = None;
+        for failed_attempt in 0..32u8 {
+            let step_index = usize::from(failed_attempt % 2);
+            script.step_index = step_index;
+            script.stage = Some(FactKey::new(if step_index == 0 {
+                "alternating-stage-a"
+            } else {
+                "alternating-stage-b"
+            }));
+            script.reset_attempt_scope_if_needed(&step_ids[step_index]);
+            super::super::families::tests::with_tick(
+                &snapshot,
+                &mut ledger,
+                u64::from(failed_attempt) + 1,
+                |tick| {
+                    script.record_step_failure(
+                        ActionError::Failed(Arc::from("alternating failure")),
+                        tick,
+                    );
+                },
+            );
+            assert_eq!(script.fail_streak, failed_attempt + 1);
+            assert_eq!(script.parked, failed_attempt == 31);
+            if failed_attempt < 31 {
+                assert_eq!(script.step_attempts, 1);
+            }
+        }
+        assert!(script
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("run retry limit")));
+        assert_eq!(script.step_attempts, 1);
+    }
+
+    #[test]
+    fn budgeted_failures_still_observe_the_no_progress_watchdog() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut script, snapshot) = fixture();
+        let sequence_index = script
+            .path
+            .sequences
+            .iter()
+            .position(|sequence| !sequence.steps.is_empty())
+            .expect("Cook has a nonempty sequence");
+        {
+            let path = Arc::get_mut(&mut script.path).expect("unshared path");
+            path.sequences[sequence_index].steps[0].attempt_budget = Some(StepAttemptBudget {
+                max_attempts: 32,
+                stop: Arc::from("retry-stop"),
+            });
+        }
+        script.seq_index = sequence_index;
+        script.step_index = 0;
+        script.stage = Some(FactKey::new("watchdog-stage"));
+        let step_id = script.current_step().expect("current step").id.clone();
+        script.reset_attempt_scope_if_needed(&step_id);
+
+        let mut ledger = None;
+        for tick in 1..=9 {
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, tick, |native| {
+                script.record_step_failure(
+                    ActionError::Failed(Arc::from("unchanged failure")),
+                    native,
+                );
+            });
+            if script.parked {
+                break;
+            }
+        }
+
+        assert!(
+            script.parked,
+            "the no-progress watchdog still parks the run"
+        );
+        assert_eq!(script.watchdog.unchanged(), 8);
+        assert_eq!(script.step_attempts, 9);
     }
 
     /// The Quester holds no bank table of its own (design-bank-snapshot D8):
@@ -4701,7 +5581,17 @@ mod tests {
         assert!(bytes < 4096, "Quester is {bytes} bytes");
     }
     #[test]
-    fn combat_report_is_exposed_in_quester_status() {
+    fn quester_capability_status_field_size_is_bounded() {
+        let bytes = std::mem::size_of::<StatusField>();
+        eprintln!("Quester capability StatusField={bytes}; combat adds one, timed take adds two");
+        assert!(bytes <= 56, "capability status field grew to {bytes} bytes");
+    }
+
+    #[test]
+    fn family_receipts_are_exposed_in_quester_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::combat::{CombatEnd, CombatReport};
         use api::quest_progress::EvidenceStamp;
 
@@ -4711,7 +5601,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -4745,6 +5635,12 @@ mod tests {
             flick_resets: 0,
             flick_misses: 0,
             flick_fallback: false,
+            pvp_blocked: 0,
+            pvp_source: None,
+            kill_line_seen: false,
+            switches: 0,
+            switch_failed: 0,
+            active_style: crate::combat::Style::Melee,
         };
         script.last_outcome = Some(StepOutcome {
             progress: None,
@@ -4752,6 +5648,7 @@ mod tests {
             receipt: Some(Arc::new(CombatReceipt {
                 report,
                 target_gone_restarts: 1,
+                kills: 0,
             })),
         });
         let mut output = Capture::default();
@@ -4809,6 +5706,7 @@ mod tests {
             receipt: Some(Arc::new(CombatReceipt {
                 report: killed,
                 target_gone_restarts: 1,
+                kills: 1,
             })),
         });
         script.publish(&mut output);
@@ -4816,6 +5714,9 @@ mod tests {
         assert!(output.0[1].fields.iter().any(|field| {
             field.key == "combat_end"
                 && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "Killed")
+        }));
+        assert!(output.0[1].fields.iter().any(|field| {
+            field.key == "combat_kills" && matches!(field.value, StatusValue::Integer(1))
         }));
         script.last_outcome = None;
         script.publish(&mut output);
@@ -4831,6 +5732,7 @@ mod tests {
             receipt: Some(Arc::new(CombatReceipt {
                 report,
                 target_gone_restarts: 1,
+                kills: 0,
             })),
         });
         script.publish(&mut output);
@@ -4839,10 +5741,46 @@ mod tests {
             field.key == "combat_end"
                 && matches!(&field.value, StatusValue::Text(value) if value.as_ref() == "TargetGone")
         }));
+        assert!(output.0[3].fields.iter().any(|field| {
+            field.key == "combat_kills" && matches!(field.value, StatusValue::Integer(0))
+        }));
+        script.last_combat = None;
+        script.last_outcome = Some(StepOutcome {
+            progress: None,
+            evidence: report.evidence,
+            receipt: Some(Arc::new(
+                super::super::families::timed_ground::TimedGroundReceipt {
+                    waited_ticks: 100,
+                    held: 1,
+                },
+            )),
+        });
+        script.publish(&mut output);
+        assert_eq!(output.0.len(), 5);
+        for (key, expected) in [("ground_waited_ticks", 100), ("ground_held", 1)] {
+            assert!(output.0[4].fields.iter().any(|field| {
+                field.key == key
+                    && matches!(field.value, StatusValue::Integer(value) if value == expected)
+            }));
+        }
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..200 {
+                script.publish(&mut output);
+            }
+        });
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(
+            output.0.len(),
+            5,
+            "unchanged timed receipts are not republished"
+        );
     }
 
     #[test]
     fn no_food_abort_walks_then_parks_with_receipt_without_advancing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{HostEffect, WalkEnd, WalkReceipt};
         use api::quest_progress::EvidenceStamp;
         use api::selected::ClientRevision;
@@ -4854,7 +5792,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -4912,6 +5850,7 @@ mod tests {
                     &quests,
                     cap,
                     &crate::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             }
         })
@@ -5016,6 +5955,7 @@ mod tests {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         });
         assert!(matches!(
             super::super::families::tests::with_tick_output(
@@ -5066,6 +6006,9 @@ mod tests {
 
     #[test]
     fn message_settle_uses_step_begin_chat_not_tick_sequence() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         use api::snapshot::{ChatLineView, GameSnapshot, QuestStatusView};
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -5132,6 +6075,9 @@ mod tests {
 
     #[test]
     fn completed_step_settles_and_hands_over_on_its_ready_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use api::snapshot::{GameSnapshot, QuestStatusView};
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -5185,13 +6131,16 @@ mod tests {
             .unwrap_or_else(|| panic!("the wait step settles on tick 5000: {lines:#?}"));
         assert!(first < settled);
         // The authored sequence selects the same wait again; the run trace
-        // folds that repeated `begin` line into its entry's repeat count.
+        // folds that repeated `begin` line into its entry's repeat count and
+        // keeps the line text for it.
         let begins = script
             .trace
-            .entries
+            .repeated
             .iter()
-            .find(|entry| entry.line.ends_with("(wait) begin"))
-            .map_or(0, |entry| entry.repeats + 1);
+            .find(|repeated| repeated.line.ends_with("(wait) begin"))
+            .map_or(0, |repeated| {
+                script.trace.entries[repeated.entry].repeats + 1
+            });
         assert!(
             begins >= 2,
             "the next step begins on the settle tick: {begins} begin(s), {lines:#?}"
@@ -5203,6 +6152,9 @@ mod tests {
     /// or Talk-to) is already queued when that tick ends.
     #[test]
     fn begun_root_step_acts_on_its_begin_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         let (mut script, snapshot) = status_fixture(super::super::compile::decode_cook().unwrap());
         let mut ledger = None;
@@ -5218,6 +6170,9 @@ mod tests {
 
     #[test]
     fn same_tick_receipt_and_settle_do_not_fail_the_next_step_begin() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{with_tick, with_tick_snapshots};
         use super::super::path::{PredicateDocument, SequenceOrder, StepDocument};
         use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, VarpView};
@@ -5234,6 +6189,8 @@ mod tests {
                 args: serde_json::json!({ "retaliate": retaliate }),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
@@ -5307,9 +6264,9 @@ mod tests {
             assert_eq!(queued.len(), 1);
             assert!(matches!(
                 queued[0].effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::SetRetaliate {
-                    on: true
-                })
+                crate::native::HostEffect::Interaction(
+                    crate::interact::InteractReq::SetRetaliate { on: true }
+                )
             ));
         });
         assert_eq!(script.attempts, 4);
@@ -5318,6 +6275,9 @@ mod tests {
 
     #[test]
     fn scene_entry_defers_fresh_step_selection() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_snapshots;
         use super::super::path::{PredicateDocument, SequenceOrder, StepDocument};
         use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, VarpView};
@@ -5334,6 +6294,8 @@ mod tests {
                 args: serde_json::json!({ "retaliate": retaliate }),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
@@ -5440,6 +6402,9 @@ mod tests {
 
     #[test]
     fn budget_exhausted_root_begin_retries_without_failing_the_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{with_tick, with_tick_snapshots};
         use super::super::path::{PredicateDocument, SequenceOrder, StepDocument};
         use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, VarpView};
@@ -5456,6 +6421,8 @@ mod tests {
                 args: serde_json::json!({ "retaliate": retaliate }),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
@@ -5536,6 +6503,46 @@ mod tests {
         });
     }
 
+    #[test]
+    fn stage_cross_follows_observed_stage_and_never_the_previous_cursor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut script, snapshot) = status_fixture(super::super::compile::decode_cook().unwrap());
+        let path = Arc::get_mut(&mut script.path).unwrap();
+        path.sequences[0].cross = Arc::from([Arc::from("first-zone")]);
+        path.sequences[1].cross = Arc::from([Arc::from("second-zone")]);
+        let stages = [
+            path.sequences[0].stage.clone(),
+            path.sequences[1].stage.clone(),
+        ];
+        let mut ledger = None;
+        let mut output = StatusCapture::default();
+        super::super::families::tests::with_tick_output(
+            &snapshot,
+            &mut ledger,
+            1,
+            &mut output,
+            |tick| {
+                script.stage = Some(stages[0].clone());
+                script.scope_stage_cross(tick);
+                assert_eq!(
+                    tick.cx.stage_cross.as_deref().unwrap(),
+                    &[Arc::<str>::from("first-zone")]
+                );
+                script.stage = Some(stages[1].clone());
+                script.scope_stage_cross(tick);
+                assert_eq!(
+                    tick.cx.stage_cross.as_deref().unwrap(),
+                    &[Arc::<str>::from("second-zone")]
+                );
+                script.stage = None;
+                script.scope_stage_cross(tick);
+                assert!(tick.cx.stage_cross.as_deref().unwrap().is_empty());
+            },
+        );
+    }
+
     pub(super) struct SurvivalTestCounts {
         pub(super) began: std::sync::atomic::AtomicUsize,
         pub(super) cancelled: std::sync::atomic::AtomicUsize,
@@ -5553,6 +6560,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         }
@@ -5740,7 +6748,7 @@ mod tests {
                     .last()
                     .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::CloseModal
+                    crate::interact::InteractReq::CloseModal
                 ))
             ));
             snapshot.seed_main_modal(-1, Vec::new());
@@ -5782,7 +6790,7 @@ mod tests {
             assert!(matches!(
                 ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::Held { action, .. }
+                    crate::interact::InteractReq::Held { action, .. }
                 )) if action == "Drink"
             ));
             return;
@@ -5797,7 +6805,7 @@ mod tests {
         assert!(matches!(
             ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::Held { action, .. }
+                crate::interact::InteractReq::Held { action, .. }
             )) if action == "Drink"
         ));
 
@@ -5835,6 +6843,9 @@ mod tests {
 
     #[test]
     fn quester_polls_survival_inside_gather_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         quester_survival_cancels_step_and_restarts("gather");
     }
 
@@ -5843,6 +6854,9 @@ mod tests {
     /// no retained progress, so `advance` restarts the step.
     #[test]
     fn quester_cancel_through_resume_path_restarts_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
         use std::sync::atomic::Ordering;
@@ -5885,6 +6899,9 @@ mod tests {
     /// the un-park failed the step with "step settle timeout".
     #[test]
     fn quester_park_ends_a_settle_wait_and_unpark_rereads() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
 
@@ -5940,6 +6957,9 @@ mod tests {
 
     #[test]
     fn quester_closes_dialogue_page_before_drink() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         quester_survival_cancels_step_and_restarts("talk");
     }
 
@@ -5950,6 +6970,9 @@ mod tests {
     /// tick the close settles.
     #[test]
     fn quester_closes_count_dialog_before_drink() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
 
@@ -5980,7 +7003,7 @@ mod tests {
                 .last()
                 .map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::CloseModal
+                crate::interact::InteractReq::CloseModal
             ))
         ));
 
@@ -5994,7 +7017,7 @@ mod tests {
         assert!(matches!(
             ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::Held { action, .. }
+                crate::interact::InteractReq::Held { action, .. }
             )) if action == "Drink"
         ));
         assert!(!script.parked);
@@ -6002,6 +7025,9 @@ mod tests {
 
     #[test]
     fn quester_never_cancels_walk_or_combat_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         quester_survival_cancels_step_and_restarts("walk");
         quester_survival_cancels_step_and_restarts("combat");
     }
@@ -6013,6 +7039,9 @@ mod tests {
     /// ends, not one tick later and not after the generic eight-tick bound.
     #[test]
     fn quester_resends_a_dropped_drink_after_the_drink_lock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
 
@@ -6031,7 +7060,7 @@ mod tests {
             let is_drink = matches!(
                 &action.effect,
                 crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::Held { action, .. }
+                    crate::interact::InteractReq::Held { action, .. }
                 ) if action == "Drink"
             );
             let request = action.authority().request_id().get();
@@ -6099,6 +7128,9 @@ mod tests {
     /// would end (tick 5).
     #[test]
     fn quester_late_drink_effect_moves_the_drink_lock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
         use std::sync::atomic::Ordering;
@@ -6157,6 +7189,9 @@ mod tests {
     /// the next-food clock holds only bites.
     #[test]
     fn quester_resumes_work_in_the_tick_its_bite_settles() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
         use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
@@ -6233,6 +7268,9 @@ mod tests {
     /// count drop, so the next-food clock is not anchored on the rise.
     #[test]
     fn quester_natural_regeneration_does_not_settle_a_bite() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::PoisonState;
         use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
@@ -6402,6 +7440,9 @@ mod tests {
 
     #[test]
     fn quester_drinks_while_clear_prayers_pending() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::combat::{ClearPrayers, ClearPrayersArgs, RaisedPrayers};
         use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
@@ -6531,6 +7572,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -6556,7 +7598,7 @@ mod tests {
         assert!(matches!(
             ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::Held { action, .. }
+                crate::interact::InteractReq::Held { action, .. }
             )) if action == "Drink"
         ));
 
@@ -6621,7 +7663,7 @@ mod tests {
                 .last()
                 .map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::IfButton { .. }
+                crate::interact::InteractReq::IfButton { .. }
             ))
         ));
     }
@@ -6690,6 +7732,59 @@ mod tests {
         (script, snapshot)
     }
 
+    #[test]
+    fn jailer_terminal_status_uses_the_completed_sequence_cursor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use super::super::path::PathDocument;
+
+        let document: PathDocument =
+            serde_json::from_slice(include_bytes!("../../paths/289/scorpcatcher.json")).unwrap();
+        let (mut script, snapshot) = status_fixture(document);
+        let stage = FactKey::new("scorpcatcher:2");
+        script.seq_index =
+            sequence_for_stage(&script.path, stage.0.as_ref()).expect("Jailer sequence");
+        script.stage = Some(stage);
+        script.step_index = 1;
+        let sequence_len = script.path.sequences[script.seq_index].steps.len();
+        let mut ledger = None;
+        let mut output = StatusCapture::default();
+        super::super::families::tests::with_tick_output(
+            &snapshot,
+            &mut ledger,
+            1,
+            &mut output,
+            |tick| assert_eq!(script.finish_quest(tick), ScriptFlow::Complete),
+        );
+
+        let status = output.0.last().expect("terminal status");
+        assert_eq!(status.phase, NativePhase::Complete);
+        assert_eq!(
+            status
+                .fields
+                .iter()
+                .find(|field| field.key == "step_index")
+                .and_then(|field| match &field.value {
+                    StatusValue::Integer(value) => Some(*value),
+                    _ => None,
+                }),
+            Some(sequence_len as i64)
+        );
+        assert_eq!(
+            status
+                .fields
+                .iter()
+                .find(|field| field.key == "remaining_steps")
+                .and_then(|field| match &field.value {
+                    StatusValue::Integer(value) => Some(*value),
+                    _ => None,
+                }),
+            Some(0)
+        );
+        assert_eq!(status_text(status, "step_id"), "");
+    }
+
     fn accept_last_interaction(tick: &mut crate::native::NativeTick<'_>) {
         let evidence = tick.cx.evidence();
         let authority = tick
@@ -6714,6 +7809,9 @@ mod tests {
 
     #[test]
     fn quester_resume_drops_step_and_cancels_provisioner_unchanged() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::Interrupt;
 
         struct PendingStep;
@@ -6744,6 +7842,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison: PoisonState::Clear,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -6773,6 +7872,9 @@ mod tests {
 
     #[test]
     fn quester_prayer_cleanup_park_still_blocks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
 
         let (mut script, snapshot) = fixture();
@@ -6942,6 +8044,9 @@ mod tests {
 
     #[test]
     fn quester_survival_cancels_provisioner_acquire_run() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
 
@@ -6954,6 +8059,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -7003,13 +8109,16 @@ mod tests {
         assert!(matches!(
             ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::Held { action, .. }
+                crate::interact::InteractReq::Held { action, .. }
             )) if action == "Drink"
         ));
     }
 
     #[test]
     fn quester_parks_during_provisioning_and_restarts_trip_after_unpark() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::{ItemActionFamily, ItemContainer};
@@ -7024,6 +8133,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -7132,6 +8242,9 @@ mod tests {
 
     #[test]
     fn quester_survival_during_provisioning_with_transfer_in_flight() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::survival::CurePoison;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::{ItemActionFamily, ItemContainer};
@@ -7145,6 +8258,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -7180,12 +8294,12 @@ mod tests {
                 crate::bank::BankPickReceipt {
                     request_id,
                     evidence,
-                    selected: crate::bank::SelectedBank {
+                    outcome: crate::bank::BankPickOutcome::Selected(crate::bank::SelectedBank {
                         bank_index: 0,
                         access_tile: stand,
                         kind: crate::bank::PickKind::Reachable,
                         access: Some(Arc::clone(&access)),
-                    },
+                    }),
                 },
             );
         };
@@ -7195,7 +8309,7 @@ mod tests {
                     matches!(
                         &action.effect,
                         crate::native::HostEffect::Interaction(
-                            crate::shim::InteractReq::OpenStand { .. }
+                            crate::interact::InteractReq::OpenStand { .. }
                         )
                     )
                 })?;
@@ -7234,7 +8348,7 @@ mod tests {
                             matches!(
                                 last,
                                 Some(crate::native::HostEffect::Interaction(
-                                    crate::shim::InteractReq::WithdrawX { .. }
+                                    crate::interact::InteractReq::WithdrawX { .. }
                                 ))
                             ),
                             matches!(last, Some(crate::native::HostEffect::Interaction(_))),
@@ -7280,7 +8394,7 @@ mod tests {
                                         && matches!(
                                             last,
                                             Some(crate::native::HostEffect::Interaction(
-                                                crate::shim::InteractReq::WithdrawX { .. }
+                                                crate::interact::InteractReq::WithdrawX { .. }
                                             ))
                                         ),
                                     new_action
@@ -7332,7 +8446,7 @@ mod tests {
         assert!(!matches!(
             ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::Held { action, .. }
+                crate::interact::InteractReq::Held { action, .. }
             )) if action == "Drink"
         ));
 
@@ -7400,7 +8514,7 @@ mod tests {
                 .last()
                 .map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::CloseModal
+                crate::interact::InteractReq::CloseModal
             ))
         ));
 
@@ -7453,7 +8567,7 @@ mod tests {
         assert!(matches!(
             ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::Held { action, .. }
+                crate::interact::InteractReq::Held { action, .. }
             )) if action == "Drink"
         ));
 
@@ -7512,6 +8626,9 @@ mod tests {
 
     #[test]
     fn parked_runner_keeps_eating_and_unparks_when_need_clears() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         use crate::native::{HostEffect, ScriptFlow};
         use crate::survival::CurePoison;
@@ -7540,6 +8657,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food,
             cures: CureDoses::default(),
         };
@@ -7597,7 +8715,7 @@ mod tests {
             assert!(matches!(
                 tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
                 Some(HostEffect::Interaction(
-                    crate::shim::InteractReq::Held { action, .. }
+                    crate::interact::InteractReq::Held { action, .. }
                 )) if action == "Eat"
             ));
             accept_last_interaction(tick);
@@ -7621,6 +8739,9 @@ mod tests {
 
     #[test]
     fn parked_quester_publishes_waiting_continue_status_and_resumes_parked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use crate::native::{Interrupt, NativePhase, ScriptFlow};
         use crate::survival::CurePoison;
@@ -7641,6 +8762,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -7684,7 +8806,7 @@ mod tests {
         fn status(&mut self, status: ScriptStatus) {
             self.0.push(status);
         }
-        fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+        fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
         fn log(&mut self, _: api::hostlog::Level, _: &str) {}
         fn settings_applied(&mut self, _: u64) {}
     }
@@ -7698,25 +8820,29 @@ mod tests {
         fn status(&mut self, status: ScriptStatus) {
             self.statuses.push(status);
         }
-        fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+        fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
         fn log(&mut self, level: api::hostlog::Level, message: &str) {
             self.logs.push((level, message.to_owned()));
         }
         fn settings_applied(&mut self, _: u64) {}
     }
 
+    /// A stage caps its distinct lines at its own budget (the 32-line floor
+    /// for a stage with no steps), warns once, and the next stage starts over.
     #[test]
     fn run_trace_caps_distinct_events() {
         let mut trace = RunTrace::default();
         let mut output = TraceCapture::default();
-        for event in 0..=RUN_TRACE_EVENT_LIMIT {
+        trace.begin_stage(&mut output, 0);
+        for event in 0..=RUN_TRACE_EVENT_MIN {
             trace.record(
                 &mut output,
                 api::hostlog::Level::Info,
                 format_args!("event {event}"),
             );
         }
-        assert_eq!(output.logs.len(), RUN_TRACE_EVENT_LIMIT);
+        assert_eq!(output.logs.len(), RUN_TRACE_EVENT_MIN);
+        assert!(trace.truncated);
         trace.flush_repeats(&mut output);
         assert!(output
             .logs
@@ -7724,6 +8850,582 @@ mod tests {
             .unwrap()
             .1
             .contains("truncated after the event limit"));
+    }
+
+    /// The budget is `4 × units + 8` above the floor, where a unit is one of
+    /// the stage's steps or one step of a recipe its acquire steps run; one
+    /// stage keeps a begin, skip and settled/failed line for each of them.
+    #[test]
+    fn run_trace_stage_budget_is_sized_from_the_stage() {
+        assert_eq!(stage_event_limit(0), RUN_TRACE_EVENT_MIN);
+        assert_eq!(stage_event_limit(6), RUN_TRACE_EVENT_MIN);
+        assert_eq!(stage_event_limit(7), 36);
+        assert_eq!(stage_event_limit(27), 116);
+        assert_eq!(stage_event_limit(13 + 32), 188);
+        assert_eq!(stage_event_limit(107), 436);
+        assert_eq!(stage_event_limit(usize::MAX), usize::MAX);
+    }
+
+    /// A stage longer than the old run-wide 32-line budget keeps every step
+    /// line: more than 32 distinct lines are logged, not dropped.
+    #[test]
+    fn run_trace_keeps_every_line_of_a_long_stage() {
+        let mut trace = RunTrace::default();
+        let mut output = TraceCapture::default();
+        let steps = 24;
+        trace.begin_stage(&mut output, steps);
+        assert_eq!(trace.limit, stage_event_limit(steps));
+        for step in 0..steps {
+            for event in ["begin", "skipped", "settled"] {
+                trace.record(
+                    &mut output,
+                    api::hostlog::Level::Info,
+                    format_args!("quester test: stage long:0 step {step} (wait) {event}"),
+                );
+            }
+        }
+        assert!(
+            steps * 3 > RUN_TRACE_EVENT_MIN,
+            "the stage must need more lines than the old run budget"
+        );
+        assert_eq!(output.logs.len(), steps * 3);
+        assert!(!trace.truncated, "every step line fits: {:#?}", output.logs);
+    }
+
+    /// A truncated stage warns when it ends, then hands the next stage a
+    /// fresh budget: its lines are logged again, including lines the ending
+    /// stage had to drop.
+    #[test]
+    fn run_trace_new_stage_after_truncation_logs_its_lines_again() {
+        let mut trace = RunTrace::default();
+        let mut output = TraceCapture::default();
+        trace.begin_stage(&mut output, 0);
+        for event in 0..40 {
+            trace.record(
+                &mut output,
+                api::hostlog::Level::Info,
+                format_args!("event {event}"),
+            );
+        }
+        assert!(trace.truncated);
+        assert_eq!(output.logs.len(), RUN_TRACE_EVENT_MIN);
+        let before = output.logs.len();
+        trace.begin_stage(&mut output, 7);
+        assert!(trace.limit > RUN_TRACE_EVENT_MIN);
+        assert_eq!(
+            output.logs[before..]
+                .iter()
+                .map(|(_, line)| line.as_str())
+                .collect::<Vec<_>>(),
+            vec!["quester trace truncated after the event limit"]
+        );
+        assert!(!trace.truncated);
+        assert!(trace.entries.is_empty());
+        assert!(trace.repeated.is_empty());
+        for event in 0..trace.limit {
+            trace.record(
+                &mut output,
+                api::hostlog::Level::Info,
+                format_args!("event {event}"),
+            );
+        }
+        assert_eq!(
+            output.logs.len(),
+            before + 1 + trace.limit,
+            "the new stage logs every line, including ones the ending stage dropped"
+        );
+        assert!(output.logs[before + 1..]
+            .iter()
+            .any(|(_, line)| line == "event 32"));
+        assert!(!trace.truncated);
+    }
+
+    /// Repeated identical lines still fold into one line plus a count, and
+    /// only then is the line text kept for the summary.
+    #[test]
+    fn run_trace_folds_repeated_lines() {
+        let mut trace = RunTrace::default();
+        let mut output = TraceCapture::default();
+        trace.begin_stage(&mut output, 4);
+        for _ in 0..3 {
+            trace.record(
+                &mut output,
+                api::hostlog::Level::Info,
+                format_args!("quester test: stage long:0 step retry (wait) begin"),
+            );
+        }
+        assert_eq!(
+            output.logs.len(),
+            1,
+            "identical lines log once: {:?}",
+            output.logs
+        );
+        assert_eq!(trace.entries.len(), 1);
+        assert_eq!(trace.entries[0].repeats, 2);
+        assert_eq!(
+            trace.repeated.len(),
+            1,
+            "only the repeated entry keeps its text"
+        );
+        assert_eq!(
+            &*trace.repeated[0].line,
+            "quester test: stage long:0 step retry (wait) begin"
+        );
+        trace.flush_repeats(&mut output);
+        assert_eq!(output.logs.len(), 2);
+        assert!(output.logs[1].1.ends_with("(repeated 2 additional times)"));
+        assert!(
+            trace.repeated.is_empty(),
+            "the flushed summary drops the text it printed"
+        );
+    }
+
+    /// A line logged once keeps no text: the table holds only its hash and a
+    /// zero repeat count until the same line repeats.
+    #[test]
+    fn run_trace_keeps_no_text_until_a_line_repeats() {
+        let mut trace = RunTrace::default();
+        let mut output = TraceCapture::default();
+        trace.begin_stage(&mut output, 4);
+        for event in ["begin", "settled"] {
+            trace.record(
+                &mut output,
+                api::hostlog::Level::Info,
+                format_args!("quester test: stage long:0 step once (wait) {event}"),
+            );
+        }
+        assert_eq!(trace.entries.len(), 2);
+        assert!(trace.repeated.is_empty(), "distinct lines keep no text");
+        trace.record(
+            &mut output,
+            api::hostlog::Level::Info,
+            format_args!("quester test: stage long:0 step once (wait) begin"),
+        );
+        assert_eq!(
+            trace.repeated.len(),
+            1,
+            "the first repeat keeps the line text"
+        );
+        assert_eq!(trace.entries[trace.repeated[0].entry].repeats, 1);
+        assert_eq!(
+            &*trace.repeated[0].line,
+            "quester test: stage long:0 step once (wait) begin"
+        );
+    }
+
+    /// The worst bundled stage by trace units: its own steps plus every step
+    /// of the recipes its acquire steps run, nested recipes included.
+    fn worst_bundled_stage_units() -> (usize, String) {
+        use super::super::registry::PathRegistry;
+        let empty = std::collections::BTreeMap::new();
+        let mut worst = (0, String::new());
+        for id in PathRegistry::Bundled.ids() {
+            let Some(bytes) = super::super::compile::path_bytes(&id) else {
+                continue;
+            };
+            let document: super::super::path::PathDocument =
+                serde_json::from_slice(bytes).expect("bundled Path document");
+            let recipes = document
+                .quest
+                .as_ref()
+                .map_or(&empty, |quest| &quest.acquire);
+            for sequence in document.roles.iter().flat_map(|role| &role.sequences) {
+                let units = super::super::compile::sequence_trace_units(&sequence.steps, recipes);
+                if units > worst.0 {
+                    worst = (units, sequence.stage.0.to_string());
+                }
+            }
+        }
+        worst
+    }
+
+    /// The worst bundled stage (`prince:30`: 7 steps and 100 recipe steps)
+    /// sets the table's ceiling: 107 units, so 436 distinct lines. A distinct
+    /// line keeps two digests and a count and no text, so the retained heap is
+    /// the entry vector alone.
+    #[test]
+    fn run_trace_worst_bundled_stage_table_stays_under_sixteen_kib() {
+        let (worst, stage) = worst_bundled_stage_units();
+        assert_eq!(
+            (worst, stage.as_str()),
+            (107, "prince:30"),
+            "the bundled guides changed their worst stage; re-measure the trace ceiling"
+        );
+        let mut trace = RunTrace::default();
+        // `StatusCapture` ignores log lines, so the measured closure counts
+        // only the trace's own allocations.
+        let mut output = StatusCapture::default();
+        trace.begin_stage(&mut output, worst);
+        assert_eq!(trace.limit, 436);
+        let measured = allocation_counter::measure(|| {
+            for line in 0..trace.limit {
+                trace.record(
+                    &mut output,
+                    api::hostlog::Level::Info,
+                    format_args!("quester test: stage {stage} step {line} (walk) begin"),
+                );
+            }
+        });
+        let retained = usize::try_from(measured.bytes_current).unwrap();
+        let table = trace.entries.capacity() * std::mem::size_of::<TraceEntry>()
+            + trace.repeated.capacity() * std::mem::size_of::<RepeatedLine>();
+        println!(
+            "RunTrace worst stage: {} distinct lines, {}B retained, {} entries x {}B + {} repeats x {}B",
+            trace.entries.len(),
+            retained,
+            trace.entries.capacity(),
+            std::mem::size_of::<TraceEntry>(),
+            trace.repeated.capacity(),
+            std::mem::size_of::<RepeatedLine>()
+        );
+        assert_eq!(trace.entries.len(), 436);
+        assert!(trace.repeated.is_empty(), "no line repeats in this stage");
+        assert_eq!(
+            retained, table,
+            "the retained heap is the table's own buffers"
+        );
+        assert!(
+            retained < 16 * 1024,
+            "a 436-line stage keeps {retained}B, over the 16 KiB budget"
+        );
+    }
+
+    /// A stage whose acquire recipe has 32 children logs every child's begin
+    /// and settled line and every later step line. The step-only budget held
+    /// 60 lines here, fewer than the 64 child lines alone, so later lines were
+    /// dropped; the budget now counts the recipe's steps too.
+    #[test]
+    fn wide_acquire_recipe_logs_every_child_and_later_step_line() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let wait = || serde_json::json!({"until":{"All":[]},"max_ticks":10});
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().acquire.insert(
+            "test:wide".to_owned(),
+            (1..=32)
+                .map(|n| {
+                    test_step(
+                        &format!("wide-{n}"),
+                        "wait",
+                        wait(),
+                        PredicateDocument::Any(vec![]),
+                        PredicateDocument::All(vec![]),
+                    )
+                })
+                .collect(),
+        );
+        let mut steps = vec![test_step(
+            "wide-acquire",
+            "acquire",
+            serde_json::json!({"recipe":"test:wide"}),
+            PredicateDocument::Any(vec![]),
+            PredicateDocument::All(vec![]),
+        )];
+        steps.extend((1..=12).map(|n| {
+            test_step(
+                &format!("after-{n}"),
+                "wait",
+                wait(),
+                PredicateDocument::Any(vec![]),
+                PredicateDocument::All(vec![]),
+            )
+        }));
+        let units = steps.len() + 32;
+        assert_eq!(units, 45, "13 sequence steps and 32 recipe children");
+        document.roles[0].sequences[0].steps = steps;
+        document.roles[0].sequences[0].order = super::super::path::SequenceOrder::Ordered;
+        let (mut script, mut snapshot) = status_fixture(document);
+        // Start before the first stage is known so the run adopts `cook:0` and
+        // sizes its trace budget from this sequence.
+        script.stage = None;
+        script.needs_read = true;
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        for tick in 1..=300 {
+            // Real steps move the player or train a skill. The synthetic waits
+            // change nothing observable, so give the no-progress watchdog a
+            // fresh xp total at every step boundary.
+            snapshot.seed_stats(vec![api::snapshot::StatView {
+                index: 0,
+                name: api::snapshot::stat_name(0).to_owned(),
+                effective: 1,
+                base: 1,
+                xp: i32::try_from(tick).unwrap_or(i32::MAX),
+                used: true,
+            }]);
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if tick == 1 {
+                assert_eq!(
+                    script.stage.as_ref().map(|stage| stage.0.as_ref()),
+                    Some("cook:0"),
+                    "the run adopts the first stage on its first tick"
+                );
+                assert_eq!(
+                    script.trace.limit,
+                    stage_event_limit(units),
+                    "the stage budget counts its 32 recipe children"
+                );
+            }
+            let done = output
+                .logs
+                .iter()
+                .any(|(_, line)| line.ends_with("step after-12 (wait) settled"));
+            if done || script.parked {
+                break;
+            }
+        }
+        let lines: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        for n in 1..=32 {
+            for event in ["begin", "settled"] {
+                let expected =
+                    format!("quester cook: stage cook:0 recipe test:wide child wide-{n} {event}");
+                assert!(
+                    lines.iter().any(|line| *line == expected),
+                    "missing {expected}: {lines:#?}"
+                );
+            }
+        }
+        for n in 1..=12 {
+            for event in ["begin", "settled"] {
+                let expected = format!("quester cook: stage cook:0 step after-{n} (wait) {event}");
+                assert!(
+                    lines.iter().any(|line| *line == expected),
+                    "missing {expected}: {lines:#?}"
+                );
+            }
+        }
+        assert!(
+            lines.iter().any(|line| {
+                *line == "quester cook: stage cook:0 step wide-acquire (acquire) settled"
+            }),
+            "the acquire step settles after its recipe: {lines:#?}"
+        );
+        let last_child = lines
+            .iter()
+            .rposition(|line| {
+                *line == "quester cook: stage cook:0 recipe test:wide child wide-32 settled"
+            })
+            .expect("the last child settles");
+        assert!(
+            !lines[..last_child].contains(&"quester trace truncated after the event limit"),
+            "the stage truncated before its last child line: {lines:#?}"
+        );
+    }
+
+    /// A new run key prints the ending run's pending repeat counts and starts
+    /// the current stage's budget. Without it the new run kept the 32-line
+    /// floor, because the unchanged stage never enters the stage hook again.
+    #[test]
+    fn new_run_key_flushes_repeats_and_sizes_the_current_stage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::PredicateDocument;
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.roles[0].sequences[0].steps = (1..=10)
+            .map(|n| {
+                test_step(
+                    &format!("pending-{n}"),
+                    "wait",
+                    serde_json::json!({"until":{"Any":[]},"max_ticks":1000}),
+                    PredicateDocument::Any(vec![]),
+                    PredicateDocument::All(vec![]),
+                )
+            })
+            .collect();
+        let steps = document.roles[0].sequences[0].steps.len();
+        let (mut script, snapshot) = status_fixture(document);
+        script.stage = None;
+        script.needs_read = true;
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+            script.tick(native).unwrap();
+        });
+        assert_eq!(
+            script.stage.as_ref().map(|stage| stage.0.as_ref()),
+            Some("cook:0")
+        );
+        assert_eq!(
+            script.trace.limit,
+            stage_event_limit(steps),
+            "the stage budget is sized from its own steps"
+        );
+        assert!(script.trace.limit > RUN_TRACE_EVENT_MIN);
+        // A line that repeated in the ending run still owes its count.
+        for _ in 0..2 {
+            script.trace.record(
+                &mut output,
+                api::hostlog::Level::Info,
+                format_args!("quester cook: pending"),
+            );
+        }
+        let before = output.logs.len();
+        // The queue forwards a new run key to the existing Quester.
+        script.run = RunKey {
+            slot: 1,
+            run: 2,
+            session: 1,
+        };
+        with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+            script.tick(native).unwrap();
+        });
+        let fresh: Vec<&str> = output.logs[before..]
+            .iter()
+            .map(|(_, line)| line.as_str())
+            .collect();
+        assert_eq!(
+            fresh.first().copied(),
+            Some("quester cook: pending (repeated 1 additional times)"),
+            "the ending run's count is printed before the new trace: {fresh:#?}"
+        );
+        assert_eq!(
+            script.trace.limit,
+            stage_event_limit(steps),
+            "the new run keeps the current stage's budget, not the 32-line floor"
+        );
+        assert!(
+            fresh.contains(&"quester cook: run start stage=cook:0"),
+            "the new run starts its own trace: {fresh:#?}"
+        );
+    }
+
+    /// A first-digest collision with a different line logs that line as its own
+    /// entry instead of hiding it and naming the wrong line in a summary; the
+    /// same line still folds into its new entry.
+    #[test]
+    fn run_trace_hash_collision_logs_the_different_line() {
+        let mut trace = RunTrace::default();
+        let mut output = TraceCapture::default();
+        trace.begin_stage(&mut output, 4);
+        trace.record(
+            &mut output,
+            api::hostlog::Level::Info,
+            format_args!("first line"),
+        );
+        assert_eq!(output.logs.len(), 1);
+        // Make the stored first line collide with a line that is not in the
+        // table in the first digest only: its second digest stays its own.
+        trace.entries[0].hash = trace_hash("second line");
+        trace.entries[0].check = trace_check("first line");
+        trace.record(
+            &mut output,
+            api::hostlog::Level::Info,
+            format_args!("second line"),
+        );
+        assert_eq!(
+            output.logs.len(),
+            2,
+            "a different line is logged, not skipped: {:?}",
+            output.logs
+        );
+        assert_eq!(trace.entries.len(), 2, "it counts as a new entry");
+        assert_eq!(
+            trace.entries[0].repeats, 0,
+            "the colliding entry's count is untouched"
+        );
+        assert!(trace.repeated.is_empty(), "no summary was started");
+        // The same line again folds into its own entry, not the colliding one.
+        trace.record(
+            &mut output,
+            api::hostlog::Level::Info,
+            format_args!("second line"),
+        );
+        assert_eq!(output.logs.len(), 2, "the same line folds");
+        assert_eq!(trace.entries[1].repeats, 1);
+        assert_eq!(
+            trace.repeated[0].entry, 1,
+            "the summary names the line's own entry"
+        );
+        assert_eq!(&*trace.repeated[0].line, "second line");
+    }
+
+    /// A stage longer than the old 32-line run budget logs every step line in
+    /// a real run: 20 steps keep their begin and settled lines.
+    #[test]
+    fn long_stage_logs_every_step_line_across_the_old_run_cap() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use super::super::families::tests::with_tick_output;
+        use super::super::path::{PredicateDocument, SequenceOrder};
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let first = &mut document.roles[0].sequences[0];
+        first.order = SequenceOrder::Ordered;
+        first.steps = (1..=20)
+            .map(|n| {
+                test_step(
+                    &format!("long-{n}"),
+                    "wait",
+                    serde_json::json!({"until":{"All":[]},"max_ticks":10}),
+                    PredicateDocument::Any(vec![]),
+                    PredicateDocument::All(vec![]),
+                )
+            })
+            .collect();
+        let (mut script, mut snapshot) = status_fixture(document);
+        // Start before the first stage is known so the run adopts `cook:0` and
+        // sizes its trace budget from this sequence.
+        script.stage = None;
+        script.needs_read = true;
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        for tick in 1..=200 {
+            // Real steps move the player or train a skill. The synthetic waits
+            // change nothing observable, so give the no-progress watchdog a
+            // fresh xp total at every step boundary.
+            snapshot.seed_stats(vec![api::snapshot::StatView {
+                index: 0,
+                name: api::snapshot::stat_name(0).to_owned(),
+                effective: 1,
+                base: 1,
+                xp: i32::try_from(tick).unwrap_or(i32::MAX),
+                used: true,
+            }]);
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                script.tick(native).unwrap();
+            });
+            if script.parked {
+                break;
+            }
+        }
+        assert!(
+            script.parked,
+            "the ordered sequence runs off its end: {:#?}",
+            output.logs
+        );
+        let lines: Vec<&str> = output.logs.iter().map(|(_, line)| line.as_str()).collect();
+        for n in 1..=20 {
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.ends_with(&format!("step long-{n} (wait) begin"))),
+                "step long-{n} keeps its begin line: {lines:#?}"
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.ends_with(&format!("step long-{n} (wait) settled"))),
+                "step long-{n} keeps its settled line: {lines:#?}"
+            );
+        }
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("step long-") && line.contains(" begin"))
+                .count(),
+            20,
+            "each of the 20 begins is logged: {lines:#?}"
+        );
     }
 
     fn test_step(
@@ -7740,6 +9442,8 @@ mod tests {
             args,
             comment: None,
             advances: Some(false),
+            max_attempts: None,
+            stop: None,
             hazard: None,
             skip_if,
             settle,
@@ -7818,6 +9522,9 @@ mod tests {
 
     #[test]
     fn acquisition_settle_timeout_keeps_child_in_parked_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::PredicateDocument;
 
         let child = test_step(
@@ -7838,6 +9545,9 @@ mod tests {
 
     #[test]
     fn acquisition_skip_evidence_timeout_keeps_child_in_parked_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::PredicateDocument;
 
         let child = test_step(
@@ -7862,6 +9572,9 @@ mod tests {
 
     #[test]
     fn root_skip_evidence_timeout_names_the_unknown_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::PredicateDocument;
 
         let mut document = super::super::compile::decode_cook().unwrap();
@@ -7898,6 +9611,9 @@ mod tests {
 
     #[test]
     fn acquisition_child_begin_failure_keeps_child_in_parked_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::{PathDocument, PredicateDocument};
 
         let mut document: PathDocument =
@@ -7936,6 +9652,9 @@ mod tests {
 
     #[test]
     fn later_begin_failure_does_not_publish_stale_acquisition_child() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::{PathDocument, PredicateDocument};
 
@@ -8030,6 +9749,9 @@ mod tests {
 
     #[test]
     fn runner_trace_records_skip_settle_failure_park_and_collapsed_retries() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -8119,6 +9841,16 @@ mod tests {
             .collect();
         assert_eq!(messages[0], "quester cook: run start stage=unknown");
         assert_eq!(messages[1], "quester cook: stage unknown → cook:0");
+        assert_eq!(
+            script.trace.entries.first().map(|entry| entry.hash),
+            Some(trace_hash("quester cook: stage unknown → cook:0")),
+            "a stage change starts a fresh trace table with its own line"
+        );
+        assert_eq!(
+            script.trace.limit,
+            stage_event_limit(script.path.sequences[script.seq_index].trace_units),
+            "the stage's budget comes from its compiled steps and recipe steps"
+        );
         assert!(messages.iter().any(|line| {
             line.contains("step skip-not-started skipped:")
                 && line.contains("quest_colour")
@@ -8165,6 +9897,9 @@ mod tests {
 
     #[test]
     fn acquisition_child_failure_is_visible_in_parked_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::{PredicateDocument, StepDocument};
 
@@ -8178,6 +9913,8 @@ mod tests {
                 args: serde_json::json!({"until":{"Any":[]},"max_ticks":1}),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
@@ -8190,6 +9927,8 @@ mod tests {
             args: serde_json::json!({"recipe":"test:child-failure"}),
             comment: None,
             advances: Some(false),
+            max_attempts: None,
+            stop: None,
             hazard: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::All(vec![]),
@@ -8368,6 +10107,9 @@ mod tests {
 
     #[test]
     fn acquire_restarts_recipe_after_lost_product_then_succeeds() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -8436,6 +10178,9 @@ mod tests {
 
     #[test]
     fn acquire_restart_bound_parks_with_the_attempt_count() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -8476,6 +10221,9 @@ mod tests {
 
     #[test]
     fn acquire_that_succeeds_first_time_does_not_restart() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -8516,6 +10264,9 @@ mod tests {
     /// the parent settle window instead of looping on skips.
     #[test]
     fn acquire_pass_that_only_skips_does_not_restart() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -8549,6 +10300,9 @@ mod tests {
     /// selected: once its `skip_if` holds, the runner's settle window decides.
     #[test]
     fn acquire_does_not_restart_once_its_skip_holds() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::PredicateDocument;
 
@@ -8585,6 +10339,9 @@ mod tests {
 
     #[test]
     fn settle_timeout_park_keeps_timed_out_step_in_status() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick_output;
         use super::super::path::{PredicateDocument, StepDocument};
 
@@ -8596,6 +10353,8 @@ mod tests {
             args: serde_json::json!({"until":{"All":[]},"max_ticks":100}),
             comment: None,
             advances: Some(false),
+            max_attempts: None,
+            stop: None,
             hazard: None,
             skip_if,
             settle,
@@ -8674,20 +10433,41 @@ mod tests {
 
     #[test]
     fn quester_reports_walk_evidence_as_a_terminal_block() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut script, _) = fixture();
-        let gates: Arc<[api::selected::QuestGate]> =
-            Arc::from([api::selected::QuestGate::Complete(FactKey::new(
-                "test-quest",
-            ))]);
+        let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Window(
+            api::selected::StageWindow {
+                quest: FactKey::new("biohazard"),
+                signal: FactKey::new("biohazard"),
+                values: api::selected::InclusiveRange {
+                    min: None,
+                    max: Some(9),
+                },
+            },
+        )]);
         script.record_failure(ActionError::NeedsEvidence(gates));
         assert_eq!(script.blocked_failure().code.as_ref(), "needs-evidence");
+        let detail = script.blocked_failure().message;
+        assert!(detail.contains("biohazard"), "{detail}");
+        assert!(detail.contains("signal biohazard"), "{detail}");
+        assert!(detail.contains("window"), "{detail}");
+        assert!(detail.contains("minimum none"), "{detail}");
+        assert!(detail.contains("maximum 9"), "{detail}");
+        assert!(detail.contains("evidence state unknown"), "{detail}");
         script.clear_last_error();
         assert!(script.last_error.is_none());
     }
 
     #[test]
     fn combat_interrupted_talk_parks_without_advancing_or_reading() {
-        use super::super::families::tests::{seed_dialogue_combat, with_tick, with_tick_output};
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use super::super::families::tests::{
+            seed_dialogue_attacker, seed_dialogue_combat, with_tick, with_tick_output,
+        };
         use api::snapshot::{GameSnapshot, QuestStatusView};
         #[derive(Default)]
         struct Capture(Vec<ScriptStatus>);
@@ -8695,7 +10475,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -8744,6 +10524,7 @@ mod tests {
         let progress_evidence = script.progress.as_ref().unwrap().evidence;
         snapshot.seed_chat_modal(-1, vec![]);
         seed_dialogue_combat(&mut snapshot, true);
+        seed_dialogue_attacker(&mut snapshot, api::snapshot::ActorKind::Npc);
         let mut output = Capture::default();
         for tick in 4..=9 {
             if tick > 4 {
@@ -8790,6 +10571,9 @@ mod tests {
 
     #[test]
     fn unreadable_start_never_dispatches_start_and_retargets_when_ready() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         let (mut script, mut s) = fixture();
         let mut ledger = None;
@@ -8812,6 +10596,9 @@ mod tests {
 
     #[test]
     fn unavailable_colour_and_unselectable_stage_park_instead_of_spinning() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::with_tick;
         let (mut script, s) = fixture();
         script.record_failure(ActionError::Unavailable("stale walk failure".into()));
@@ -8845,18 +10632,33 @@ mod tests {
             }],
             true,
         );
+        let mut output = StatusCapture::default();
         for tick in 1..10 {
-            with_tick(&s, &mut ledger, tick, |t| script.tick(t).unwrap());
+            super::super::families::tests::with_tick_output(
+                &s,
+                &mut ledger,
+                tick,
+                &mut output,
+                |t| script.tick(t).unwrap(),
+            );
         }
         assert!(script.parked);
+        assert!(script.current_step().is_none());
+        assert!(script.parked_step.is_none());
         assert_eq!(
             script.blocked_failure().message.as_ref(),
             "no step for stage"
         );
+        let status = output.0.last().expect("parked status was published");
+        assert_eq!(status_text(status, "step_id"), "");
+        assert_eq!(status_text(status, "block_reason"), "no step for stage");
     }
 
     #[test]
     fn missing_spawn_status_names_the_wait_and_retains_the_park_cause() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{with_tick, with_tick_output};
         use api::snapshot::{GameSnapshot, QuestStatusView};
         #[derive(Default)]
@@ -8865,7 +10667,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -8949,7 +10751,82 @@ mod tests {
     }
 
     #[test]
+    fn path_header_false_preserves_global_consent_on_the_real_walk_request() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use super::super::families::tests::with_tick;
+        use crate::native::{HostEffect, WalkBit};
+        use api::snapshot::{GameSnapshot, QuestStatusView};
+
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+        let mut document = super::super::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        document.prereq.quest_start = Some(false);
+        document.prereq.dialogue = Some(false);
+        let step = &mut document.roles[0].sequences[0].steps[0];
+        step.kind = "walk".into();
+        step.args = serde_json::json!({
+            "tile": [3103, 3163, 2], "source": "header consent fixture"
+        });
+        step.skip_if = super::super::path::PredicateDocument::Any(vec![]);
+        step.settle = super::super::path::PredicateDocument::All(vec![]);
+        let path =
+            super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+        let mut script = Quester::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            path,
+            data,
+            quests,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 0,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut ledger = None;
+        let mut checked = false;
+        for tick in 1..=8 {
+            with_tick(&snapshot, &mut ledger, tick, |native| {
+                assert_eq!(script.tick(native).unwrap(), ScriptFlow::Continue);
+            });
+            if let Some(request) = ledger.as_ref().and_then(|ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .find_map(|action| match &action.effect {
+                        HostEffect::Walk(request) => Some(request),
+                        _ => None,
+                    })
+            }) {
+                assert_eq!(request.options.allow_prereq_dialogue, WalkBit::Inherit);
+                assert_eq!(request.options.allow_quest_start, WalkBit::Inherit);
+                checked = true;
+                break;
+            }
+        }
+        assert!(
+            checked,
+            "the real Path runner must submit its narrowed walk"
+        );
+    }
+
+    #[test]
     fn unprotectable_walk_publishes_its_cause_and_keeps_working() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{with_tick, with_tick_output};
         use crate::native::{HostEffect, WalkEvent, WalkEventKind};
         use api::snapshot::{GameSnapshot, QuestStatusView};
@@ -8959,7 +10836,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -9051,6 +10928,9 @@ mod tests {
 
     #[test]
     fn user_input_walk_blocks_without_attempts_or_repeated_work() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::families::tests::{post_user_input_walk_receipt, with_tick};
         use api::snapshot::{GameSnapshot, QuestStatusView};
 
@@ -9129,6 +11009,9 @@ mod tests {
     }
     #[test]
     fn missing_partner_admission_expires_with_clear_stop_start_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::pair::{
             AccountKey, Gang, PairError, PairFrame, PairRegistration, PairRequest, PairSettings,
             PairStep, PairToken, PartnerDeclaration, PartnerRole, QuestPairPort, RoleReceipt,
@@ -9249,6 +11132,7 @@ mod tests {
                     worker,
                     Some(Gang::Phoenix),
                     &crate::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             }
         })
@@ -9302,6 +11186,9 @@ mod tests {
 
     #[test]
     fn quest_pair_r2_phase_begin_busy_wait_has_an_active_time_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::compile::StepPlan;
         struct BusyPhase;
         impl StepPlan for BusyPhase {
@@ -9381,8 +11268,16 @@ mod tests {
                     matches!(
                         &action.effect,
                         crate::native::HostEffect::Interaction(
-                            crate::shim::InteractReq::OpenStand { .. }
+                            crate::interact::InteractReq::OpenStand { .. }
                         )
+                    )
+                })
+            });
+            let close_pending = self.ledger.as_ref().is_some_and(|ledger| {
+                ledger.outbox.first().is_some_and(|action| {
+                    matches!(
+                        &action.effect,
+                        crate::native::HostEffect::Interaction(crate::interact::InteractReq::Close)
                     )
                 })
             });
@@ -9398,19 +11293,21 @@ mod tests {
                             tick,
                             sequence: tick,
                         },
-                        selected: crate::bank::SelectedBank {
-                            bank_index: 0,
-                            access_tile: self.bank_tile,
-                            kind: crate::bank::PickKind::Reachable,
-                            access: Some(Arc::new(crate::bank::BankStandAccess {
-                                bank: self.bank_fixture,
-                                stand_tile: self.bank_tile,
-                                kind: crate::bank::AccessKind::Booth,
-                                stand_op: 1,
-                                name: None,
-                                choose: None,
-                            })),
-                        },
+                        outcome: crate::bank::BankPickOutcome::Selected(
+                            crate::bank::SelectedBank {
+                                bank_index: 0,
+                                access_tile: self.bank_tile,
+                                kind: crate::bank::PickKind::Reachable,
+                                access: Some(Arc::new(crate::bank::BankStandAccess {
+                                    bank: self.bank_fixture,
+                                    stand_tile: self.bank_tile,
+                                    kind: crate::bank::AccessKind::Booth,
+                                    stand_op: 1,
+                                    name: None,
+                                    choose: None,
+                                })),
+                            },
+                        ),
                     },
                 );
                 self.selected_bank = true;
@@ -9433,6 +11330,24 @@ mod tests {
                 self.snapshot
                     .seed_bank_observation(1, tick, Some(self.stock.clone()), Vec::new());
                 self.opened_bank = true;
+            } else if close_pending {
+                let action = self.ledger.as_mut().unwrap().outbox.remove(0);
+                let authority = action.authority();
+                self.ledger.as_mut().unwrap().complete_interaction(
+                    &authority,
+                    crate::native::InteractionReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: api::quest_progress::EvidenceStamp {
+                            run: authority.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        accepted: true,
+                        chat_since: 0,
+                    },
+                );
+                self.snapshot
+                    .seed_bank_observation(-1, tick, None, Vec::new());
             } else if self
                 .ledger
                 .as_ref()
@@ -9562,6 +11477,9 @@ mod tests {
 
     #[test]
     fn nested_bank_has_skip_starts_real_scan_and_receipt_selects_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (bank_count, expected_step) in [
             (0, "skip-if-bank-has-logs"),
             (1, "fallback-if-bank-has-logs"),
@@ -9611,6 +11529,9 @@ mod tests {
 
     #[test]
     fn nested_acquire_bank_has_skip_starts_real_scan_and_receipt_selects_child() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (bank_count, expected_step) in [
             (0, "skip-if-bank-has-logs"),
             (1, "fallback-if-bank-has-logs"),
@@ -9658,6 +11579,9 @@ mod tests {
 
     #[test]
     fn non_bank_unknown_skip_keeps_waiting_without_starting_bank_scan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use super::super::path::PredicateDocument;
 
         let mut document = super::super::compile::decode_cook().unwrap();
@@ -9737,3 +11661,5 @@ mod squire_portrait_tests;
 #[cfg(test)]
 #[path = "upkeep_runner_tests.rs"]
 mod upkeep_tests;
+#[path = "open_page_retry_runner_tests.rs"]
+mod open_page_retry_tests;

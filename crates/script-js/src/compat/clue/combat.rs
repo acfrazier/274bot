@@ -2,7 +2,7 @@ use super::*;
 use api::WorldTile;
 use script::combat::{
     AbortReason, Allowances, CombatEnd, CombatReport, CombatRequest, Fallback, IntruderPolicy,
-    Pick, PrayerMode, PrepReadiness, Style, Tactic, Target, Unprotected,
+    Pick, PrayerMode, PrepReadiness, Style, StyleKits, SwitchPolicy, Tactic, Target, Unprotected,
 };
 use script::native::ActionError;
 use std::sync::Arc;
@@ -106,7 +106,8 @@ impl Delegation {
             style: Style::Melee,
             melee_mode: None,
             ranged_style: Default::default(),
-            kit: None,
+            kits: StyleKits::default(),
+            switch: SwitchPolicy::default(),
             spells: None,
             fallback_spells: false,
             stand: Some(WorldTile {
@@ -115,6 +116,7 @@ impl Delegation {
                 level: self.stand.level,
             }),
             search_bounds: None,
+            cross: None,
             engage_radius,
             lost_radius,
             budget_ticks: 500,
@@ -124,6 +126,7 @@ impl Delegation {
             retaliate: true,
             prayer_mode: PrayerMode::Hold,
             until_ticks: 0,
+            pvp: false,
         }
     }
 }
@@ -281,7 +284,9 @@ fn abort_reason(reason: AbortReason) -> u8 {
         AbortReason::Unprotected(Unprotected::Dragonfire) => REASON_DRAGONFIRE,
         AbortReason::Unprotected(Unprotected::NoAmmo) => REASON_NO_AMMO,
         AbortReason::Unprotected(Unprotected::NoRunes) => REASON_NO_RUNES,
-        AbortReason::Unattackable => REASON_UNATTACKABLE,
+        // A player intruder that stops being attackable ends the fight like
+        // any target that cannot be attacked.
+        AbortReason::Unattackable | AbortReason::PvpRefused(_) => REASON_UNATTACKABLE,
         AbortReason::PrepFailed(_) => REASON_PREP_FAILED,
         AbortReason::PrepReadiness(PrepReadiness::CombatRootMissing) => {
             REASON_PREP_COMBAT_ROOT_MISSING

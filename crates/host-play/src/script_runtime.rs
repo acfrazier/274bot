@@ -18,7 +18,7 @@ pub(super) fn dispatch_observed_bank_op_for_test(
     driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
     obj_names: Option<&api::obj_names::ObjNames>,
-    req: &script::shim::InteractReq,
+    req: &script::interact::InteractReq,
 ) -> Option<script::slot::PendingBankOp> {
     dispatch_observed_bank_op(driver, snapshot, obj_names, None, req)
 }
@@ -31,14 +31,15 @@ pub(super) use script_nav::CarriedWalk;
 pub(super) use script_nav::PostedWalkOutcome;
 #[cfg(test)]
 pub(super) use script_nav::{
-    approach_tiles, publish_route_owner_refusal, resolve_route_exclusions, route_world_state,
-    RouteDemandKind, ScriptRouteRequest,
+    approach_tiles, drain_route_work_for_test, publish_route_owner_refusal,
+    resolve_route_exclusions, route_world_state, RouteDemandKind, ScriptRouteRequest,
 };
 pub(super) use script_nav::{
     blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, ScriptRouteExclusions,
     ScriptWalkArm,
 };
 use script_nav::{log_walk_arm_bot, take_carried_walk};
+pub(crate) use script_nav::{manual_route_state, route_prereq_content, RoutePrereqContent};
 
 /// Resolve live-fixture crossing grants through the script walk product path.
 #[cfg(feature = "test-support")]
@@ -68,8 +69,8 @@ mod script_walk;
 #[cfg(not(test))]
 use script_walk::apply_watchdog_nav_action;
 pub(super) use script_walk::{
-    abort_script_walk, pause_script, session_freezes_follow, step_bank_fetch_on_bot, step_nav_bot,
-    take_manual_walk_ownership,
+    abort_script_walk, observe_compat_walk, pause_script, session_freezes_follow,
+    step_bank_fetch_on_bot, step_nav_bot, step_poison_hold_on_bot, take_manual_walk_ownership,
 };
 #[cfg(test)]
 pub(super) use script_walk::{
@@ -118,6 +119,7 @@ mod script_observe;
 pub(super) use script_observe::deliver_channel_events;
 #[cfg(all(test, feature = "js"))]
 pub(super) use script_observe::post_script_snapshot;
+use script_observe::try_clone_world_state;
 #[cfg(test)]
 pub(super) use script_observe::{
     delay_ordered_drain_for_test, install_dispatch_barrier, install_ordered_dispatch_hook,
@@ -130,7 +132,7 @@ pub(super) use script_observe::{
 };
 pub(super) use script_observe::{
     nav_world_state_for_observe, observe_script_inv, script_observe_cached_with_channels,
-    ScriptObservation,
+    NavWorldStateCache, ScriptObservation,
 };
 #[cfg(any(feature = "js", test))]
 pub(super) use script_observe::{project_npc_boxes_for_isolate_snapshot, projected_npc_boxes};
@@ -152,7 +154,7 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
             static NEXT_INCARNATION: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(1);
             let incarnation = NEXT_INCARNATION
-                .fetch_update(
+                .try_update(
                     std::sync::atomic::Ordering::Relaxed,
                     std::sync::atomic::Ordering::Relaxed,
                     |next| next.checked_add(1),
@@ -353,6 +355,7 @@ pub(super) struct ScriptFrame {
     pub(super) frozen: bool,
     /// The watchdog has seen no game packets for 10 s.
     pub(super) no_game_packets: bool,
+    pub(super) runtime_generation: u64,
 }
 
 /// Capture one script-state projection for the frame's ownership, inventory
@@ -365,6 +368,7 @@ pub(super) fn script_frame(scripts: &ScriptWall, name: &str) -> ScriptFrame {
                 state: Some(slot.state()),
                 frozen: slot.watchdog().frozen(),
                 no_game_packets: slot.watchdog().no_game_packets(),
+                runtime_generation: slot.runtime_generation(),
             })
         })
         .unwrap_or_default()
@@ -386,14 +390,17 @@ pub(super) fn script_movement_owned(state: Option<script::RunState>) -> bool {
 /// `AutoRelogin.ts:138-141`): started and not stopping. An offline slot's
 /// started script reads Paused.
 pub(super) fn script_active(scripts: &ScriptWall, name: &str) -> bool {
-    script_slot(scripts, name)
-        .and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
-        .is_some_and(|state| {
-            matches!(
-                state,
-                script::RunState::Starting | script::RunState::Running | script::RunState::Paused
-            )
-        })
+    script_state_is_active(
+        script_slot(scripts, name).and_then(|slot| slot.lock().ok().map(|slot| slot.state())),
+    )
+}
+
+/// [`script_active`] for a run state already read.
+pub(super) fn script_state_is_active(state: Option<script::RunState>) -> bool {
+    matches!(
+        state,
+        Some(script::RunState::Starting | script::RunState::Running | script::RunState::Paused)
+    )
 }
 
 /// Puzzle-board post tests: the production observe path

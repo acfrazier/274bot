@@ -1,7 +1,7 @@
 //! Typed local V8 marshalling for selected compatibility facts.
 //! This is isolate-local calculation, not an isolate-to-host transport.
 
-use crate::supply_v2;
+use crate::scene::supply_v2;
 use api::game_data::SelectedGameData;
 use api::snapshot::WorldTile;
 use rustyscript::Runtime;
@@ -19,12 +19,12 @@ thread_local! {
     static OBJ_RECORDS: RefCell<Option<CachedObjRecords>> = const { RefCell::new(None) };
 }
 
-pub(super) fn reset_obj_records_cache() {
+pub(crate) fn reset_obj_records_cache() {
     let stale = OBJ_RECORDS.with(|cache| cache.borrow_mut().take());
     drop(stale);
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -121,7 +121,7 @@ fn worth_stocking<'s>(
     name: v8::Local<'s, v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let name = js_to_string(scope, name)?;
-    Ok(v8::Boolean::new(scope, crate::market_catalog::worth_stocking(&name)).into())
+    Ok(v8::Boolean::new(scope, crate::compat::market_catalog::worth_stocking(&name)).into())
 }
 
 fn item_db<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
@@ -255,8 +255,8 @@ fn cert_link<'s>(
         return Ok(v8::null(scope).into());
     };
     let linked = match direction.as_str() {
-        "noted" => crate::market_catalog::noted_id(&data, id),
-        "unnoted" => Some(crate::market_catalog::unnoted_id(&data, id)),
+        "noted" => crate::compat::market_catalog::noted_id(&data, id),
+        "unnoted" => Some(crate::compat::market_catalog::unnoted_id(&data, id)),
         _ => return Err("invalid selected facts op".into()),
     };
     match linked {
@@ -281,7 +281,7 @@ fn obj_record_row<'s>(
         scope,
         row,
         "equippable",
-        crate::market_catalog::equippable(item),
+        crate::compat::market_catalog::equippable(item),
     );
     set_i32(scope, row, "certlink", item.certificate_link);
     set_i32(scope, row, "certtemplate", item.certificate_template);
@@ -300,7 +300,7 @@ fn obj_records_cache<'s>(
             .and_then(|cached| cached.data.upgrade())
             .is_some_and(|cached| Arc::ptr_eq(&cached, data));
         if !matches {
-            let mut items: Vec<_> = crate::market_catalog::records(data.items()).collect();
+            let mut items: Vec<_> = crate::compat::market_catalog::records(data.items()).collect();
             items.sort_unstable_by_key(|(item, _)| item.id);
             let length = i32::try_from(items.len())
                 .map_err(|_| "selected facts object-record count".to_string())?;
@@ -346,7 +346,7 @@ fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
         return Ok(catalog.into());
     };
     let mut records = std::collections::HashMap::with_capacity(data.items().len());
-    for (item, name) in crate::market_catalog::records(data.items()) {
+    for (item, name) in crate::compat::market_catalog::records(data.items()) {
         let row = obj_record_row(scope, item, name)?;
         let id = v8::Integer::new(scope, item.id);
         by_id
@@ -354,7 +354,7 @@ fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
             .ok_or_else(|| "selected facts catalog byId".to_string())?;
         records.insert(item.id, row);
     }
-    let listed = crate::market_catalog::listed(data.items());
+    let listed = crate::compat::market_catalog::listed(data.items());
     let items = v8::Array::new(scope, i32::try_from(listed.len()).unwrap_or(i32::MAX));
     for (index, (item, _)) in listed.iter().enumerate() {
         let row = records[&item.id];
@@ -362,7 +362,7 @@ fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
             .set_index(scope, index as u32, row.into())
             .ok_or_else(|| "selected facts catalog items".to_string())?;
     }
-    for (id, alias) in crate::market_catalog::aliases(&data).iter() {
+    for (id, alias) in crate::compat::market_catalog::aliases(&data).iter() {
         let row = v8::Object::new(scope);
         let words = string_array(scope, &alias.words)?;
         set_key(scope, row, "words", words);
@@ -387,7 +387,8 @@ fn item_tradeable<'s>(
     let Some(data) = supply_v2::selected_data() else {
         return Ok(v8::undefined(scope).into());
     };
-    let tradeable = js_i32(scope, id)?.is_none_or(|id| crate::market_catalog::tradeable(&data, id));
+    let tradeable =
+        js_i32(scope, id)?.is_none_or(|id| crate::compat::market_catalog::tradeable(&data, id));
     Ok(v8::Boolean::new(scope, tradeable).into())
 }
 
@@ -403,12 +404,15 @@ fn item_name<'s>(
         return Ok(v8::undefined(scope).into());
     };
     match (which.as_str(), js_i32(scope, id)?) {
-        ("client", Some(id)) => match crate::market_catalog::client_name(&data, id) {
+        ("client", Some(id)) => match crate::compat::market_catalog::client_name(&data, id) {
             Some(name) => v8_str(scope, name),
             None => Ok(v8::null(scope).into()),
         },
         ("client", None) => Ok(v8::null(scope).into()),
-        ("display", Some(id)) => v8_str(scope, &crate::market_catalog::display_name(&data, id)),
+        ("display", Some(id)) => v8_str(
+            scope,
+            &crate::compat::market_catalog::display_name(&data, id),
+        ),
         ("display", None) => {
             let raw = js_to_string(scope, id)?;
             v8_str(scope, &format!("item {raw}"))
@@ -661,7 +665,7 @@ fn cow_bank_tile_value<'s>(
     name: &str,
     fallback: WorldTile,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let tile = crate::bank_select::bank_tile(name).unwrap_or(fallback);
+    let tile = crate::scene::bank_select::bank_tile(name).unwrap_or(fallback);
     tile_instance(scope, tile_constructor, tile)
 }
 
@@ -783,7 +787,7 @@ fn thieving_ready<'s>(
         return Ok(v8::Boolean::new(scope, true).into());
     };
     let required = data.required_thieving_npc(npc_id).unwrap_or(1);
-    let effective = crate::observed::with(|scene| {
+    let effective = crate::scene::observed::with(|scene| {
         scene
             .latest()
             .stats()

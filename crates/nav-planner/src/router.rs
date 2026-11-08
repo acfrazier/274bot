@@ -35,6 +35,7 @@ use std::task::{Context, Poll, Waker};
 use std::time::Instant;
 
 use api::identity::Cancellation;
+use api::prereq_steps::{ActionableGate, CrossingId};
 use api::selected::{QuestGate, Truth};
 use api::snapshot::WorldTile;
 use api::work::{Checkpoint, StepContext, WorkPhase};
@@ -43,7 +44,6 @@ use crate::collision::WorldCollision;
 use crate::contract::{ContractError, NavLease, PackId, RouteView};
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
 use crate::movement::step_ok;
-use crate::quest_gates::QuestFamilyMismatch;
 use crate::transport::{select_web_action, TransportEdge, TransportGraph};
 use crate::world_state::WorldState;
 use crate::zones::{ZoneExempt, ZoneFilter, ZoneFilterOwned, ZoneKey, ZoneTable};
@@ -897,6 +897,22 @@ pub enum BlockerDiagnosis {
     FirstGoal,
 }
 
+/// Quest truth that a diagnostic search may relax. Neither mode admits a route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GateRelaxation {
+    /// Preserve the existing catalog-backed diagnosis of unknown or false gates.
+    EstablishableFalse,
+    /// Read-only evidence diagnosis. A proven-false gate always remains closed.
+    UnknownOnly,
+}
+
+impl GateRelaxation {
+    fn allows(self, state: &WorldState, edge: &TransportEdge) -> bool {
+        (self == Self::EstablishableFalse || state.quest_gates(edge) != Truth::False)
+            && state.quest_gates_actionable(edge)
+    }
+}
+
 /// Owned request for one cooperative route search or route diagnosis. Input
 /// arrays and compact routes move into the cursor without cloning.
 pub enum SearchRequest {
@@ -949,6 +965,14 @@ pub enum SearchRequest {
         options: FindOptions,
         avoid: Box<[AvoidRect]>,
         max_settles: usize,
+    },
+    ActionableQuestGates {
+        from: WorldTile,
+        targets: Box<[WorldTile]>,
+        options: FindOptions,
+        avoid: Box<[AvoidRect]>,
+        max_settles: usize,
+        relaxation: GateRelaxation,
     },
     EntranceRequirements {
         from: WorldTile,
@@ -1007,6 +1031,13 @@ pub enum SearchRequestShape {
         options: FindOptions,
         avoid_capacity: usize,
         max_settles: usize,
+    },
+    ActionableQuestGates {
+        target_capacity: usize,
+        options: FindOptions,
+        avoid_capacity: usize,
+        max_settles: usize,
+        relaxation: GateRelaxation,
     },
     EntranceRequirements {
         target_capacity: usize,
@@ -1104,6 +1135,20 @@ impl SearchRequestShape {
                 avoid_capacity: avoid.len(),
                 max_settles: *max_settles,
             },
+            SearchRequest::ActionableQuestGates {
+                targets,
+                options,
+                avoid,
+                max_settles,
+                relaxation,
+                ..
+            } => Self::ActionableQuestGates {
+                target_capacity: targets.len(),
+                options: *options,
+                avoid_capacity: avoid.len(),
+                max_settles: *max_settles,
+                relaxation: *relaxation,
+            },
             SearchRequest::EntranceRequirements {
                 targets,
                 options,
@@ -1140,6 +1185,7 @@ impl SearchRequestShape {
             | Self::MissingItemReqs { options, .. }
             | Self::BlockingZones { options, .. }
             | Self::UnresolvedQuestGates { options, .. }
+            | Self::ActionableQuestGates { options, .. }
             | Self::EntranceRequirements { options, .. } => options,
         }
     }
@@ -1152,6 +1198,7 @@ impl SearchRequestShape {
             | Self::MissingItemReqs { max_settles, .. }
             | Self::BlockingZones { max_settles, .. }
             | Self::UnresolvedQuestGates { max_settles, .. }
+            | Self::ActionableQuestGates { max_settles, .. }
             | Self::EntranceRequirements { max_settles, .. } => max_settles,
             Self::MissingItemReqsForRoute { .. } => 0,
         }
@@ -1280,6 +1327,28 @@ impl SearchRequestShape {
                     && max_settles >= actual_settles
             }
             (
+                Self::ActionableQuestGates {
+                    target_capacity,
+                    options,
+                    avoid_capacity,
+                    max_settles,
+                    relaxation,
+                },
+                Self::ActionableQuestGates {
+                    target_capacity: actual_targets,
+                    options: actual_options,
+                    avoid_capacity: actual_avoid,
+                    max_settles: actual_settles,
+                    relaxation: actual_relaxation,
+                },
+            ) => {
+                options == actual_options
+                    && relaxation == actual_relaxation
+                    && target_capacity >= actual_targets
+                    && avoid_capacity >= actual_avoid
+                    && max_settles >= actual_settles
+            }
+            (
                 Self::EntranceRequirements {
                     target_capacity,
                     options,
@@ -1337,6 +1406,9 @@ impl SearchRequestShape {
             | Self::UnresolvedQuestGates {
                 target_capacity, ..
             }
+            | Self::ActionableQuestGates {
+                target_capacity, ..
+            }
             | Self::EntranceRequirements {
                 target_capacity, ..
             } => Some(target_capacity),
@@ -1363,6 +1435,11 @@ impl SearchRequestShape {
                 ..
             }
             | Self::UnresolvedQuestGates {
+                target_capacity,
+                avoid_capacity,
+                ..
+            }
+            | Self::ActionableQuestGates {
                 target_capacity,
                 avoid_capacity,
                 ..
@@ -1462,6 +1539,7 @@ impl SearchRequest {
             | Self::MissingItemReqs { max_settles, .. }
             | Self::BlockingZones { max_settles, .. }
             | Self::UnresolvedQuestGates { max_settles, .. }
+            | Self::ActionableQuestGates { max_settles, .. }
             | Self::EntranceRequirements { max_settles, .. } => *max_settles,
             Self::MissingItemReqsForRoute { .. } => 0,
         }
@@ -1507,7 +1585,8 @@ pub enum SearchOutcome {
         missing: MissingRequirements,
     },
     BlockingZones(Option<Box<[ZoneKey]>>),
-    UnresolvedQuestGates(Result<Option<Box<[QuestGate]>>, QuestFamilyMismatch>),
+    UnresolvedQuestGates(Option<Box<[QuestGate]>>),
+    ActionableQuestGates(Option<Box<[ActionableGate]>>),
     /// First real exclusion on the relaxed route, if the route contains one.
     /// The diagnosis does not return or retain a route.
     EntranceRequirements(Option<crate::world_state::EntranceRequirement>),
@@ -2076,7 +2155,11 @@ fn search_worst_case_reservation(
     let carry_rows = envelope.carry_rows;
     let return_rows = envelope.return_rows;
     let max_worn_ids_per_edge = envelope.max_worn_ids_per_edge;
-    let max_quest_gates = if matches!(shape, SearchRequestShape::UnresolvedQuestGates { .. }) {
+    let max_quest_gates = if matches!(
+        shape,
+        SearchRequestShape::UnresolvedQuestGates { .. }
+            | SearchRequestShape::ActionableQuestGates { .. }
+    ) {
         envelope.max_quest_gates
     } else {
         0
@@ -2119,16 +2202,25 @@ fn search_worst_case_reservation(
                 | SearchRequestShape::MissingItemReqs { .. }
                 | SearchRequestShape::BlockingZones { .. }
                 | SearchRequestShape::UnresolvedQuestGates { .. }
+                | SearchRequestShape::ActionableQuestGates { .. }
                 | SearchRequestShape::EntranceRequirements { .. }
         ) {
-        // Each partition and its goal/index arrays reserve their exact input
-        // capacities once. A key can contain only IDs from one spatial bucket.
+        // First-family partitions use per-target indices and key offsets
+        // into one flat arena. Use u32 words only when the target-index and
+        // maximum aggregate key-offset bounds fit; otherwise use usize.
+        // Both sorts are in place, with no duplicate key/index buffers.
+        let zone_ids = graph.zones.as_ref()?.max_zones_per_tile();
+        let index_width = first_zone_index_width(target_count, zone_ids);
+        let word_bytes = match index_width {
+            FirstZoneIndexWidth::Compact => std::mem::size_of::<u32>(),
+            FirstZoneIndexWidth::Native => std::mem::size_of::<usize>(),
+        };
         let row_bytes = match shape {
             SearchRequestShape::Many { .. } => std::mem::size_of::<IndexedZoneGoal>(),
             SearchRequestShape::BlockingZones { .. } => {
                 std::mem::size_of::<(Vec<u16>, usize, WorldTile)>()
             }
-            _ => std::mem::size_of::<FirstZoneGoal>(),
+            _ => word_bytes.checked_mul(2)?,
         };
         let goal_bytes = std::mem::size_of::<WorldTile>().checked_add(
             if matches!(shape, SearchRequestShape::Many { .. }) {
@@ -2137,12 +2229,19 @@ fn search_worst_case_reservation(
                 0
             },
         )?;
-        let zone_ids = graph.zones.as_ref()?.max_zones_per_tile();
-        target_count.checked_mul(
+        let bytes = target_count.checked_mul(
             row_bytes
                 .checked_add(zone_ids.checked_mul(std::mem::size_of::<u16>())?)?
                 .checked_add(goal_bytes)?,
-        )?
+        )?;
+        if matches!(
+            shape,
+            SearchRequestShape::Many { .. } | SearchRequestShape::BlockingZones { .. }
+        ) {
+            bytes
+        } else {
+            bytes.checked_add(word_bytes)?
+        }
     } else {
         0
     };
@@ -2169,7 +2268,8 @@ fn search_worst_case_reservation(
             .checked_add(target_set_bytes(fallback_capacity)?)?
             .checked_add(std::mem::size_of::<FirstGoals<'_>>())?,
         SearchRequestShape::BlockingZones { .. }
-        | SearchRequestShape::UnresolvedQuestGates { .. } => {
+        | SearchRequestShape::UnresolvedQuestGates { .. }
+        | SearchRequestShape::ActionableQuestGates { .. } => {
             target_set_bytes(target_count)?.checked_add(std::mem::size_of::<FirstGoals<'_>>())?
         }
         SearchRequestShape::EntranceRequirements {
@@ -2312,6 +2412,12 @@ fn search_worst_case_reservation(
                 vector_storage_bound::<QuestGate>(max_quest_gates)?,
             )?;
         }
+        SearchRequestShape::ActionableQuestGates { .. } => {
+            add_reserved(
+                &mut result_bytes,
+                vector_storage_bound::<ActionableGate>(max_quest_gates)?,
+            )?;
+        }
         SearchRequestShape::EntranceRequirements { .. } => {}
         SearchRequestShape::MissingItemReqsForRoute { .. } => {
             unreachable!("route-only diagnostics return before search reservation")
@@ -2349,6 +2455,7 @@ fn search_worst_case_reservation(
         }
         SearchRequestShape::BlockingZones { .. }
         | SearchRequestShape::UnresolvedQuestGates { .. }
+        | SearchRequestShape::ActionableQuestGates { .. }
         | SearchRequestShape::EntranceRequirements { .. } => {
             add_reserved(&mut materialization_phase, route_result_bytes(settles)?)?;
         }
@@ -3067,6 +3174,218 @@ struct IndexedZoneGoal {
     index: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FirstZoneIndexWidth {
+    Compact,
+    Native,
+}
+
+fn first_zone_index_width(target_count: usize, max_zones_per_tile: usize) -> FirstZoneIndexWidth {
+    let largest_target_index = target_count.saturating_sub(1);
+    let max_zone_key_count = target_count.checked_mul(max_zones_per_tile);
+    if usize::BITS >= u32::BITS
+        && u32::try_from(largest_target_index).is_ok()
+        && max_zone_key_count.is_some_and(|count| u32::try_from(count).is_ok())
+    {
+        FirstZoneIndexWidth::Compact
+    } else {
+        FirstZoneIndexWidth::Native
+    }
+}
+
+trait FirstZoneWord: Copy {
+    fn from_usize(value: usize) -> Option<Self>;
+    fn into_usize(self) -> usize;
+}
+
+impl FirstZoneWord for u32 {
+    fn from_usize(value: usize) -> Option<Self> {
+        u32::try_from(value).ok()
+    }
+
+    fn into_usize(self) -> usize {
+        usize::try_from(self).expect("compact first-zone word fits usize")
+    }
+}
+
+impl FirstZoneWord for usize {
+    fn from_usize(value: usize) -> Option<Self> {
+        Some(value)
+    }
+
+    fn into_usize(self) -> usize {
+        self
+    }
+}
+
+struct FirstZonePartitionData<I> {
+    indices: Vec<I>,
+    key_offsets: Vec<I>,
+}
+
+impl<I: FirstZoneWord> FirstZonePartitionData<I> {
+    fn try_new(index_capacity: usize, offset_capacity: usize) -> Result<Self, SearchCursorError> {
+        let mut indices = Vec::new();
+        indices
+            .try_reserve_exact(index_capacity)
+            .map_err(|_| SearchCursorError::Allocation)?;
+        let mut key_offsets = Vec::new();
+        key_offsets
+            .try_reserve_exact(offset_capacity)
+            .map_err(|_| SearchCursorError::Allocation)?;
+        key_offsets.push(I::from_usize(0).ok_or(SearchCursorError::ResultNotRepresentable)?);
+        Ok(Self {
+            indices,
+            key_offsets,
+        })
+    }
+
+    fn push_index(&mut self, index: usize) -> Result<(), SearchCursorError> {
+        self.indices
+            .push(I::from_usize(index).ok_or(SearchCursorError::ResultNotRepresentable)?);
+        Ok(())
+    }
+
+    fn push_key_offset(&mut self, offset: usize) -> Result<(), SearchCursorError> {
+        self.key_offsets
+            .push(I::from_usize(offset).ok_or(SearchCursorError::ResultNotRepresentable)?);
+        Ok(())
+    }
+
+    fn target_index_at(&self, position: usize) -> Result<usize, SearchCursorError> {
+        self.indices
+            .get(position)
+            .copied()
+            .map(|word| word.into_usize())
+            .ok_or(SearchCursorError::ResultNotRepresentable)
+    }
+
+    fn target_key_range(
+        &self,
+        target_index: usize,
+    ) -> Result<std::ops::Range<usize>, SearchCursorError> {
+        let next_index = target_index
+            .checked_add(1)
+            .ok_or(SearchCursorError::ResultNotRepresentable)?;
+        let start = self
+            .key_offsets
+            .get(target_index)
+            .copied()
+            .map(|word| word.into_usize())
+            .ok_or(SearchCursorError::ResultNotRepresentable)?;
+        let end = self
+            .key_offsets
+            .get(next_index)
+            .copied()
+            .map(|word| word.into_usize())
+            .ok_or(SearchCursorError::ResultNotRepresentable)?;
+        if start > end {
+            return Err(SearchCursorError::ResultNotRepresentable);
+        }
+        Ok(start..end)
+    }
+
+    fn len(&self) -> usize {
+        self.indices.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
+
+    async fn sort_by_key(&mut self, keys: &[u16]) {
+        let key_offsets = &self.key_offsets;
+        sort_unstable_by_cooperative(&mut self.indices, |left, right| {
+            let left_index = left.into_usize();
+            let right_index = right.into_usize();
+            let left_start = key_offsets[left_index].into_usize();
+            let left_end = key_offsets[left_index + 1].into_usize();
+            let right_start = key_offsets[right_index].into_usize();
+            let right_end = key_offsets[right_index + 1].into_usize();
+            keys[left_start..left_end]
+                .cmp(&keys[right_start..right_end])
+                .then_with(|| left_index.cmp(&right_index))
+        })
+        .await;
+    }
+}
+
+enum FirstZonePartitions {
+    Compact(FirstZonePartitionData<u32>),
+    Native(FirstZonePartitionData<usize>),
+}
+
+impl FirstZonePartitions {
+    fn try_new(
+        width: FirstZoneIndexWidth,
+        index_capacity: usize,
+        offset_capacity: usize,
+    ) -> Result<Self, SearchCursorError> {
+        match width {
+            FirstZoneIndexWidth::Compact => Ok(Self::Compact(FirstZonePartitionData::try_new(
+                index_capacity,
+                offset_capacity,
+            )?)),
+            FirstZoneIndexWidth::Native => Ok(Self::Native(FirstZonePartitionData::try_new(
+                index_capacity,
+                offset_capacity,
+            )?)),
+        }
+    }
+
+    fn push_index(&mut self, index: usize) -> Result<(), SearchCursorError> {
+        match self {
+            Self::Compact(data) => data.push_index(index),
+            Self::Native(data) => data.push_index(index),
+        }
+    }
+
+    fn push_key_offset(&mut self, offset: usize) -> Result<(), SearchCursorError> {
+        match self {
+            Self::Compact(data) => data.push_key_offset(offset),
+            Self::Native(data) => data.push_key_offset(offset),
+        }
+    }
+
+    fn target_index_at(&self, position: usize) -> Result<usize, SearchCursorError> {
+        match self {
+            Self::Compact(data) => data.target_index_at(position),
+            Self::Native(data) => data.target_index_at(position),
+        }
+    }
+
+    fn target_key_range(
+        &self,
+        target_index: usize,
+    ) -> Result<std::ops::Range<usize>, SearchCursorError> {
+        match self {
+            Self::Compact(data) => data.target_key_range(target_index),
+            Self::Native(data) => data.target_key_range(target_index),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Compact(data) => data.len(),
+            Self::Native(data) => data.len(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Compact(data) => data.is_empty(),
+            Self::Native(data) => data.is_empty(),
+        }
+    }
+
+    async fn sort_by_key(&mut self, keys: &[u16]) {
+        match self {
+            Self::Compact(data) => data.sort_by_key(keys).await,
+            Self::Native(data) => data.sort_by_key(keys).await,
+        }
+    }
+}
+
 async fn consider_many_best(
     best: &mut Option<(usize, RouteTrace)>,
     indices: Option<&[usize]>,
@@ -3655,11 +3974,8 @@ async fn first_search_core_compact(
     })
 }
 
-struct FirstZoneGoal {
-    key: Box<[u16]>,
-    /// Index into preferred goals followed by fallback goals.
-    index: usize,
-}
+// First-zone partition indices address the source goal slices; their key
+// offsets and sorted IDs live in contiguous vectors owned by the search.
 
 #[expect(
     clippy::too_many_arguments,
@@ -3782,36 +4098,41 @@ async fn first_cursor_search_with_output(
         .len()
         .checked_add(fallback.len())
         .ok_or(SearchCursorError::ResultNotRepresentable)?;
-    let mut partitions = Vec::new();
-    partitions
-        .try_reserve_exact(partition_capacity)
+    let offset_capacity = partition_capacity
+        .checked_add(1)
+        .ok_or(SearchCursorError::ResultNotRepresentable)?;
+    let max_zone_ids = graph
+        .zones
+        .as_ref()
+        .map_or(0, |table| table.max_zones_per_tile());
+    let mut partitions = FirstZonePartitions::try_new(
+        first_zone_index_width(partition_capacity, max_zone_ids),
+        partition_capacity,
+        offset_capacity,
+    )?;
+    let mut key_count = 0usize;
+    for (index, &target) in targets.iter().chain(fallback.iter()).enumerate() {
+        work_unit().await;
+        let key_len = goal_zone_key_len_cooperative(graph, filter, target).await?;
+        key_count = key_count
+            .checked_add(key_len)
+            .ok_or(SearchCursorError::ResultNotRepresentable)?;
+        partitions.push_key_offset(key_count)?;
+        if key_len != 0 || options.zones != ZoneExempt::NONE {
+            partitions.push_index(index)?;
+        }
+    }
+    let mut zone_keys = Vec::new();
+    zone_keys
+        .try_reserve_exact(key_count)
         .map_err(|_| SearchCursorError::Allocation)?;
-    for (index, &target) in targets.iter().enumerate() {
+    zone_keys.resize(key_count, 0);
+    for (index, &target) in targets.iter().chain(fallback.iter()).enumerate() {
         work_unit().await;
-        let key = goal_zone_key_cooperative(graph, filter, target).await?;
-        if !key.is_empty() || options.zones != ZoneExempt::NONE {
-            partitions.push(FirstZoneGoal {
-                key: key.into_boxed_slice(),
-                index,
-            });
-        }
+        let range = partitions.target_key_range(index)?;
+        fill_goal_zone_key_cooperative(graph, filter, target, &mut zone_keys[range]).await?;
     }
-    for (index, &target) in fallback.iter().enumerate() {
-        work_unit().await;
-        let key = goal_zone_key_cooperative(graph, filter, target).await?;
-        if !key.is_empty() || options.zones != ZoneExempt::NONE {
-            partitions.push(FirstZoneGoal {
-                key: key.into_boxed_slice(),
-                index: targets.len() + index,
-            });
-        }
-    }
-    sort_unstable_by_cooperative(&mut partitions, |left, right| {
-        left.key
-            .cmp(&right.key)
-            .then_with(|| left.index.cmp(&right.index))
-    })
-    .await;
+    partitions.sort_by_key(&zone_keys).await;
     if partitions.is_empty() {
         let pass = first_search_core_compact(
             collision,
@@ -3869,20 +4190,30 @@ async fn first_cursor_search_with_output(
         let mut start = 0usize;
         while start < partitions.len() {
             work_unit().await;
+            let first_index = partitions.target_index_at(start)?;
+            let first_key_range = partitions.target_key_range(first_index)?;
+            let first_key = &zone_keys[first_key_range];
             let mut end = start + 1;
-            while end < partitions.len() && partitions[end].key == partitions[start].key {
+            while end < partitions.len() {
                 work_unit().await;
+                let index = partitions.target_index_at(end)?;
+                let key_range = partitions.target_key_range(index)?;
+                let key = &zone_keys[key_range];
+                if key != first_key {
+                    break;
+                }
                 end += 1;
             }
-            if partitions[start].key.is_empty() && granted == ZoneExempt::NONE {
+            if first_key.is_empty() && granted == ZoneExempt::NONE {
                 start = end;
                 continue;
             }
             let mut preferred_count = 0usize;
             let mut fallback_count = 0usize;
-            for goal in &partitions[start..end] {
+            for position in start..end {
                 work_unit().await;
-                if goal.index < targets.len() {
+                let index = partitions.target_index_at(position)?;
+                if index < targets.len() {
                     preferred_count += 1;
                 } else {
                     fallback_count += 1;
@@ -3896,12 +4227,13 @@ async fn first_cursor_search_with_output(
             fallbacks
                 .try_reserve_exact(fallback_count)
                 .map_err(|_| SearchCursorError::Allocation)?;
-            for goal in &partitions[start..end] {
+            for position in start..end {
                 work_unit().await;
-                if goal.index < targets.len() {
-                    preferred.push(targets[goal.index]);
+                let index = partitions.target_index_at(position)?;
+                if index < targets.len() {
+                    preferred.push(targets[index]);
                 } else {
-                    fallbacks.push(fallback[goal.index - targets.len()]);
+                    fallbacks.push(fallback[index - targets.len()]);
                 }
             }
             let endpoint = preferred
@@ -4046,7 +4378,7 @@ const SYNC_FIRST_TABLE_INITIAL_SETTLES: usize = 6;
 /// of 3 let Dijkstra "use" a door through a fence (Lumbridge cow pen:
 /// inside tile to the north-west road gate) and the walker then walked
 /// into the wall. The approach is derived at expansion time, never baked.
-const INTERACT_RADIUS: i32 = 1;
+pub const INTERACT_RADIUS: i32 = 1;
 
 /// The eight step deltas (client coordinates: +x east, +z north).
 const STEPS: [(i32, i32); 8] = [
@@ -4163,16 +4495,11 @@ pub fn find_with_avoid_bounded(
 /// Native bank-search cap: 500,000 non-goal expansions precede an accepted
 /// goal, which has 1-based settle ordinal 500,001.
 pub const BANK_TARGET_BUDGET: usize = 500_001;
-/// Settles a first-goal search's goal set keeps the search going while the
-/// set's backward proof has not shown any of its goals reachable. A proof of
-/// reachability lifts the set to [`find_with`]'s full budget; a proof of
-/// unreachability stops it at once.
-/// Only a goal set unreachable from a large region whose own backward region
-/// is also large spends all of it: on the 289 bake, stands fed through
-/// ladders by the unstamped upper planes. Measured reachable in-scene stands
-/// need at most ~347,000 settles (a 599-tick Wilderness detour; ~279,000
-/// with every teleport usable), and 2^19 settles hold about 90 MB of search
-/// tables.
+/// Initial first-goal settle cap while the backward proof is open.
+/// A reachable goal or an abandoned proof lifts this to the caller's full
+/// budget (normally [`NODE_BUDGET`]). Only a completed proof of
+/// unreachability stops the search early. The reverse proof has its own
+/// bounded scratch and cannot rule out a route merely by reaching its cap.
 pub const FIRST_TARGET_BUDGET: usize = 1 << 19;
 /// Tiles the backward proof may admit before it leaves the answer to the
 /// forward search alone. It takes one step per settled node, so this only
@@ -4247,10 +4574,9 @@ pub enum FallbackRoute {
     /// No fallback goal can settle: the set's own proof shows it
     /// unreachable, or everything reachable settled
     /// ([`RouteError::NoPath`]); or a settle past its own budget exists
-    /// without its proof showing a goal reachable
     /// ([`RouteError::BudgetExhausted`]).
     Failed(RouteError),
-    /// Only more settles could decide it: its proof shows a goal reachable,
+    /// Only more settles could decide it: its proof permits the full budget,
     /// or the preferred proof stopped the search within the fallback's
     /// budget. A search over the fallback set alone decides it.
     Undecided,
@@ -4316,8 +4642,8 @@ impl FirstRouteSearch {
 /// closure from the targets ([`ReverseProof`]) runs one step per settled
 /// node: a goal set sealed in a small region (a dead-end pocket, a gated
 /// room) is proven unreachable after about twice that region's size. The
-/// search spends at most [`FIRST_TARGET_BUDGET`] settles unless the closure
-/// proves a goal reachable, and then keeps [`find_with`]'s full budget.
+/// search initially allows [`FIRST_TARGET_BUDGET`] settles. A reachable goal
+/// or an abandoned closure keeps [`find_with`]'s full [`NODE_BUDGET`] bound.
 /// Small goal sets are scanned inline without allocation; larger fallback
 /// sets build one membership map instead of scanning every target for every
 /// settled node.
@@ -4345,7 +4671,7 @@ pub fn find_first_with_avoid(
     find_first_with_fallback_avoid(collision, graph, from, targets, &[], opts, state, avoid)
 }
 
-/// First-goal search with explicit unproven and reachable settle caps.
+/// First-goal search with explicit initial and full settle caps.
 #[expect(
     clippy::too_many_arguments,
     reason = "The first-goal route inputs plus the two explicit settle caps."
@@ -4387,11 +4713,9 @@ pub(crate) fn find_first_with_avoid_budgets(
 /// or the preferred set stops without a goal, caught up to one step per
 /// settle spent (so a fallback goal within that budget, or a preferred goal,
 /// costs it nothing, and only one proof's scratch is live at a time). A
-/// goal settling past the budget counts only if the proof showed a goal
-/// reachable within it; proven unreachable, or past its budget without
-/// proving a goal reachable, the set has failed; otherwise it is
-/// [`FallbackRoute::Undecided`] for the caller to search alone. Of the two
-/// searches, at most one then stops at the unproven budget.
+/// reachable goal or abandoned proof permits the caller's full budget. A
+/// proven unreachable set, or one past that full budget, has failed;
+/// otherwise it is [`FallbackRoute::Undecided`] for the caller to search alone.
 pub fn find_first_with_fallback(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4493,6 +4817,45 @@ async fn goal_zone_key_cooperative(
     }
     sort_unstable_by_cooperative(&mut key, |left, right| left.cmp(right)).await;
     Ok(key)
+}
+
+async fn goal_zone_key_len_cooperative(
+    graph: &TransportGraph,
+    filter: &ZoneFilter<'_>,
+    goal: WorldTile,
+) -> Result<usize, SearchCursorError> {
+    let mut key_len = 0usize;
+    for index in filter.blocking_at(&graph.wilderness, goal) {
+        work_unit().await;
+        if !filter.origin_active(&graph.wilderness, index) {
+            key_len = key_len
+                .checked_add(1)
+                .ok_or(SearchCursorError::ResultNotRepresentable)?;
+        }
+    }
+    Ok(key_len)
+}
+
+async fn fill_goal_zone_key_cooperative(
+    graph: &TransportGraph,
+    filter: &ZoneFilter<'_>,
+    goal: WorldTile,
+    key: &mut [u16],
+) -> Result<(), SearchCursorError> {
+    let mut key_len = 0usize;
+    for index in filter.blocking_at(&graph.wilderness, goal) {
+        work_unit().await;
+        if !filter.origin_active(&graph.wilderness, index) {
+            *key.get_mut(key_len)
+                .ok_or(SearchCursorError::ResultNotRepresentable)? = index;
+            key_len += 1;
+        }
+    }
+    if key_len != key.len() {
+        return Err(SearchCursorError::ResultNotRepresentable);
+    }
+    sort_unstable_by_cooperative(key, |left, right| left.cmp(right)).await;
+    Ok(())
 }
 
 /// Bound the goal-side proof, not the safe route. Deep zone goals usually
@@ -4845,8 +5208,8 @@ fn merge_fallback(current: &mut Option<FallbackRoute>, candidate: FallbackRoute)
 /// (strict gates) and the single-target diagnoses ([`Relax`]). The
 /// backward closures honor the same gates as the
 /// forward search, so a strict proof never hides a relaxed route. Each goal
-/// set's `budget` holds until its own proof shows it reachable, then
-/// `reachable_budget` applies ([`FirstGoals`]).
+/// set's `budget` holds while its proof is open. A reachable goal or an
+/// abandoned proof permits `reachable_budget` ([`FirstGoals`]).
 #[expect(
     clippy::too_many_arguments,
     reason = "Keeps collision, transports, targets, policy, and search limits separate."
@@ -5719,26 +6082,6 @@ async fn blocking_cursor_search(
         )
         .await;
     }
-    let strict = first_cursor_search(
-        collision,
-        graph,
-        from,
-        targets,
-        &[],
-        options,
-        state,
-        Relax::Strict,
-        avoid,
-        FIRST_TARGET_BUDGET.min(budget),
-        budget,
-        progress,
-    )
-    .await?;
-    let mut forward_settled = strict.settled();
-    let (strict_preferred, _) = strict.into_routes();
-    if !matches!(strict_preferred, Err(RouteError::NoPath)) {
-        return Ok((None, forward_settled));
-    }
     let relaxed = FindOptions {
         zones: ZoneExempt::all(),
         ..options
@@ -5758,9 +6101,10 @@ async fn blocking_cursor_search(
         progress,
     )
     .await?;
-    forward_settled = forward_settled
-        .checked_add(relaxed_search.settled())
-        .ok_or(SearchCursorError::ResultNotRepresentable)?;
+    // The frontier below proves strict failure while collecting its blockers.
+    // Repeating the failed strict search first spends time and budget without
+    // adding evidence. A reachable strict goal makes that frontier return None.
+    let mut forward_settled = relaxed_search.settled();
     let (relaxed_preferred, _) = relaxed_search.into_routes();
     if relaxed_preferred.is_err() {
         return Ok((None, forward_settled));
@@ -5960,11 +6304,11 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
 /// fallback alone only when the shared search leaves it
 /// [`FallbackRoute::Undecided`]. The diagnosis is the chosen route's: the
 /// cheapest preferred goal's when one routes relaxed, else the fallback
-/// set's. The searches keep the strict first-goal budgets
-/// ([`FIRST_TARGET_BUDGET`] unless the backward proof shows a goal
-/// reachable), so a goal set costs what its strict search may, never one
-/// diagnosis per goal. The `Unknown` stage-gate retry and the `None` cases
-/// are [`find_missing_item_reqs`]'s.
+/// set's. Each relaxed search keeps the strict first-goal budget policy:
+/// an unreachable proof stops it early, while a reachable goal or abandoned
+/// proof permits the full caller budget. A goal set costs what its strict
+/// search may, never one diagnosis per goal. The `Unknown` stage-gate retry
+/// and the `None` cases are [`find_missing_item_reqs`]'s.
 #[expect(
     clippy::too_many_arguments,
     reason = "Keeps collision, transports, targets, policy, and search limits separate."
@@ -6870,6 +7214,30 @@ async fn run_search_request(
             .await?;
             (SearchOutcome::UnresolvedQuestGates(gates), settled)
         }
+        SearchRequest::ActionableQuestGates {
+            from,
+            targets,
+            options,
+            avoid,
+            max_settles,
+            relaxation,
+        } => {
+            let (gates, settled) = actionable_quest_cursor_search(
+                collision,
+                graph,
+                from,
+                &targets,
+                options,
+                &state,
+                &avoid,
+                max_settles,
+                reservation.max_quest_gates,
+                relaxation,
+                progress,
+            )
+            .await?;
+            (SearchOutcome::ActionableQuestGates(gates), settled)
+        }
         SearchRequest::EntranceRequirements {
             from,
             targets,
@@ -6981,18 +7349,7 @@ async fn unresolved_quest_cursor_search(
     budget: usize,
     max_quest_gates: usize,
     progress: Option<&AtomicUsize>,
-) -> Result<(Result<Option<Box<[QuestGate]>>, QuestFamilyMismatch>, usize), SearchCursorError> {
-    if let (Some(evidence), Some(pack)) = (&state.quest_evidence, graph.quest_family) {
-        if *evidence.family() != pack {
-            return Ok((
-                Err(QuestFamilyMismatch {
-                    pack: Some(pack),
-                    expected: *evidence.family(),
-                }),
-                0,
-            ));
-        }
-    }
+) -> Result<(Option<Box<[QuestGate]>>, usize), SearchCursorError> {
     let mut forward_settled = 0usize;
     let mut selected = None;
     for relax in [Relax::UnknownQuest, Relax::CarryWornUnknownQuest] {
@@ -7021,7 +7378,7 @@ async fn unresolved_quest_cursor_search(
         }
     }
     let Some(route) = selected else {
-        return Ok((Ok(None), forward_settled));
+        return Ok((None, forward_settled));
     };
     let mut unresolved = Vec::new();
     unresolved
@@ -7038,18 +7395,7 @@ async fn unresolved_quest_cursor_search(
         let Some(gates) = &edge.quest_gates else {
             continue;
         };
-        let evidence = match &state.quest_evidence {
-            Some(evidence) if evidence.family() != gates.family() => {
-                return Ok((
-                    Err(QuestFamilyMismatch {
-                        pack: Some(*gates.family()),
-                        expected: *evidence.family(),
-                    }),
-                    forward_settled,
-                ));
-            }
-            evidence => evidence.as_ref(),
-        };
+        let evidence = state.quest_evidence.as_ref();
         for gate in gates.gates() {
             work_unit().await;
             let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
@@ -7073,28 +7419,96 @@ async fn unresolved_quest_cursor_search(
         }
     }
     Ok((
-        Ok((!unresolved.is_empty()).then(|| unresolved.into_boxed_slice())),
+        (!unresolved.is_empty()).then(|| unresolved.into_boxed_slice()),
+        forward_settled,
+    ))
+}
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cooperative kernel borrows the unchanged quest search inputs"
+)]
+async fn actionable_quest_cursor_search(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    options: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+    max_quest_gates: usize,
+    relaxation: GateRelaxation,
+    progress: Option<&AtomicUsize>,
+) -> Result<(Option<Box<[ActionableGate]>>, usize), SearchCursorError> {
+    let search = first_cursor_search(
+        collision,
+        graph,
+        from,
+        targets,
+        &[],
+        options,
+        state,
+        Relax::ActionableQuest(relaxation),
+        avoid,
+        FIRST_TARGET_BUDGET.min(budget),
+        budget,
+        progress,
+    )
+    .await?;
+    let forward_settled = search.settled();
+    let (preferred, _) = search.into_routes();
+    let Ok(route) = preferred else {
+        return Ok((None, forward_settled));
+    };
+    let mut actionable = Vec::new();
+    actionable
+        .try_reserve_exact(max_quest_gates)
+        .map_err(|_| SearchCursorError::Allocation)?;
+    for (leg_index, leg) in route.cursor(graph).enumerate() {
+        work_unit().await;
+        let CompactRouteLeg::Transport(step) = leg else {
+            continue;
+        };
+        let Some(edge) = step.source() else {
+            continue;
+        };
+        let Some(gates) = &edge.quest_gates else {
+            continue;
+        };
+        let evidence = state.quest_evidence.as_ref();
+        for gate in gates.gates() {
+            work_unit().await;
+            let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
+            if truth == Truth::True
+                || (relaxation == GateRelaxation::UnknownOnly && truth == Truth::False)
+                || !state.gate_actionable(gate)
+            {
+                continue;
+            }
+            let leg =
+                u16::try_from(leg_index).map_err(|_| SearchCursorError::ResultNotRepresentable)?;
+            let crossing = crossing_id(edge).ok_or(SearchCursorError::ResultNotRepresentable)?;
+            if actionable.len() == max_quest_gates {
+                return Err(SearchCursorError::ResultNotRepresentable);
+            }
+            actionable.push(ActionableGate {
+                gate: gate.clone(),
+                truth,
+                leg,
+                crossing,
+            });
+        }
+    }
+    Ok((
+        (!actionable.is_empty()).then(|| actionable.into_boxed_slice()),
         forward_settled,
     ))
 }
 
-/// Diagnose a strict search that could not route through a quest-stage
-/// gate: search again crossing every gate the state's evidence leaves
-/// `Unknown` (a `False` gate still closes, every other requirement stays
-/// strict), and name those gates on the cheapest such route. When that
-/// search fails too, a crossing may need an `Unknown` gate *and* a
-/// carry/wear fact the state lacks: the search runs once more also ignoring
-/// `item_req`/`worn_req`, and names only the undecided gates on that route
-/// ([`find_missing_item_reqs`] names its items), so neither diagnosis hides
-/// behind the other's gate. `Ok(Some)` is what the caller's action owner
-/// must resolve — read the named journals, refresh its provider, search
-/// again; the gates come back as values, never as a diagnostic string.
-/// `Ok(None)`: no evidence can open a route (no relaxed search routes, or
-/// its route needs no undecided gate). `Err`: the state's evidence was
-/// prepared from another quest family than the pack's gates, so no evidence
-/// it supplies can decide them; the caller refuses rather than re-reading
-/// journals. A search that routes never crosses an `Unknown` gate. Runs only
-/// after a failure: the strict searches never collect anything.
+/// Diagnose a strict search that could not route through a quest-stage gate:
+/// search again crossing every gate the state's evidence leaves `Unknown`,
+/// keeping all other requirements strict, and return undecided gates on the
+/// cheapest such route. The search never routes through an `Unknown` gate.
 pub fn find_unresolved_quest_gates(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -7103,15 +7517,7 @@ pub fn find_unresolved_quest_gates(
     opts: FindOptions,
     state: &WorldState,
     avoid: &[AvoidRect],
-) -> Result<Option<Arc<[QuestGate]>>, QuestFamilyMismatch> {
-    if let (Some(evidence), Some(pack)) = (&state.quest_evidence, graph.quest_family) {
-        if *evidence.family() != pack {
-            return Err(QuestFamilyMismatch {
-                pack: Some(pack),
-                expected: *evidence.family(),
-            });
-        }
-    }
+) -> Option<Arc<[QuestGate]>> {
     let search = |relax| {
         first_search(
             collision,
@@ -7129,26 +7535,15 @@ pub fn find_unresolved_quest_gates(
         .into_route()
         .ok()
     };
-    let Some(route) = search(Relax::UnknownQuest).or_else(|| search(Relax::CarryWornUnknownQuest))
-    else {
-        return Ok(None);
-    };
+    let route = search(Relax::UnknownQuest).or_else(|| search(Relax::CarryWornUnknownQuest))?;
     let mut unresolved: Vec<QuestGate> = Vec::new();
+    let evidence = state.quest_evidence.as_ref();
     for leg in &route.legs {
         let Leg::Transport { edge } = leg else {
             continue;
         };
         let Some(gates) = &edge.quest_gates else {
             continue;
-        };
-        let evidence = match &state.quest_evidence {
-            Some(evidence) if evidence.family() != gates.family() => {
-                return Err(QuestFamilyMismatch {
-                    pack: Some(*gates.family()),
-                    expected: *evidence.family(),
-                });
-            }
-            evidence => evidence.as_ref(),
         };
         for gate in gates.gates() {
             let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
@@ -7157,7 +7552,112 @@ pub fn find_unresolved_quest_gates(
             }
         }
     }
-    Ok((!unresolved.is_empty()).then(|| unresolved.into()))
+    (!unresolved.is_empty()).then(|| unresolved.into())
+}
+/// Diagnose a strict `NoPath` by allowing only gates for which an API-owned
+/// prerequisite window proves an establishment implication. Every snapshot
+/// requirement remains strict, and this search is never used to route.
+pub fn find_actionable_quest_gates(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> Option<Arc<[ActionableGate]>> {
+    let route = first_search(
+        collision,
+        graph,
+        from,
+        targets,
+        &[],
+        opts,
+        state,
+        Relax::ActionableQuest(GateRelaxation::EstablishableFalse),
+        avoid,
+        NODE_BUDGET,
+        NODE_BUDGET,
+    )
+    .into_route()
+    .ok()?;
+
+    let mut actionable = Vec::new();
+    let evidence = state.quest_evidence.as_ref();
+    for (leg_index, leg) in route.legs.iter().enumerate() {
+        let Leg::Transport { edge } = leg else {
+            continue;
+        };
+        let Some(gates) = &edge.quest_gates else {
+            continue;
+        };
+        for gate in gates.gates() {
+            let truth = evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate));
+            if truth == Truth::True || !state.gate_actionable(gate) {
+                continue;
+            }
+            let leg = u16::try_from(leg_index).ok()?;
+            let crossing = crossing_id(edge)?;
+            actionable.push(ActionableGate {
+                gate: gate.clone(),
+                truth,
+                leg,
+                crossing,
+            });
+        }
+    }
+    (!actionable.is_empty()).then(|| actionable.into())
+}
+
+/// Capture every API-establishable quest gate on the accepted route, in
+/// original route-leg and canonical edge-gate order.
+///
+/// Unlike [`find_actionable_quest_gates`], this retains gates whose current
+/// evidence is already `True`: a live refusal can contradict that evidence.
+/// `None` means the route has no such gates or cannot be represented exactly.
+pub fn route_establishable_quest_gates(
+    route: RouteView<'_>,
+    state: &WorldState,
+) -> Option<Arc<[ActionableGate]>> {
+    let windows = state.establishable.as_deref()?;
+    let evidence = state.quest_evidence.as_ref();
+    let mut result = Vec::new();
+    for (leg_index, leg) in route.legs().enumerate() {
+        let Some(transport) = leg.transport() else {
+            continue;
+        };
+        let Some(gates) = transport.quest_gates() else {
+            continue;
+        };
+        if !gates.iter().any(|gate| {
+            windows
+                .iter()
+                .any(|window| api::prereq_steps::proves(window, gate))
+        }) {
+            continue;
+        }
+        let leg = u16::try_from(leg_index).ok()?;
+        let crossing = transport.crossing_id()?;
+        for gate in gates {
+            if !windows
+                .iter()
+                .any(|window| api::prereq_steps::proves(window, gate))
+            {
+                continue;
+            }
+            result.push(ActionableGate {
+                gate: gate.clone(),
+                truth: evidence.map_or(Truth::Unknown, |evidence| evidence.test(gate)),
+                leg,
+                crossing,
+            });
+        }
+    }
+    (!result.is_empty()).then(|| result.into())
+}
+
+fn crossing_id(edge: &TransportEdge) -> Option<CrossingId> {
+    edge.crossing_id()
 }
 
 /// [`find`] with an explicit per-search cost model (the run-vs-walk rate).
@@ -7411,7 +7911,7 @@ impl Goals<'_> {
                 }
                 *remaining == 0
             }
-            Goals::Frontier { .. } => return Settle::Continue,
+            Goals::Frontier { targets, .. } => targets.contains(&tile),
         };
         if done {
             Settle::Stop
@@ -7447,8 +7947,8 @@ struct GoalSet<'a> {
     found: Option<(WorldTile, TargetCost)>,
     ordered: bool,
     found_rank: Option<usize>,
-    /// The unproven budget until the proof shows a goal reachable, then the
-    /// reachable budget.
+    /// The initial budget while the proof is open, then the full budget
+    /// after reachability or abandonment.
     budget: usize,
     proof: ReverseRun<'a>,
     /// Why no goal of the set can settle within its budget.
@@ -7516,8 +8016,8 @@ impl<'a> GoalSet<'a> {
         true
     }
 
-    /// Runs the proof to one backward step per settle so far: reachability
-    /// lifts the budget, unreachability closes the set.
+    /// Run one backward step per settle so far. Reachability or abandonment
+    /// permits the full bounded search. Only unreachability closes the set.
     async fn prove_to(
         &mut self,
         gates: ProofGates<'a>,
@@ -7525,7 +8025,9 @@ impl<'a> GoalSet<'a> {
         reachable_budget: usize,
     ) -> Result<(), SearchCursorError> {
         match self.proof.run_to(gates, self.seeds, steps).await? {
-            Some(ReverseProof::Reachable) => self.budget = self.budget.max(reachable_budget),
+            Some(ReverseProof::Reachable | ReverseProof::Abandoned) => {
+                self.budget = self.budget.max(reachable_budget);
+            }
             Some(ReverseProof::Unreachable) => self.close(RouteError::NoPath),
             _ => {}
         }
@@ -7637,10 +8139,9 @@ impl<'a> FirstGoals<'a> {
     /// Decides the fallback set, where that needs no further settle, after
     /// `spent` settles with settle ordinal `known` known to exist. Its proof
     /// is caught up to one step per settle spent, up to its budget, as a
-    /// search over it alone would have stepped it: shown unreachable, the
-    /// set has failed; not shown reachable while a settle past its budget
-    /// exists, that search stopped at the budget. Otherwise it stays
-    /// undecided.
+    /// search over it alone would have stepped it. A proof of unreachability
+    /// fails the set. A settle past its applicable budget also fails it.
+    /// Otherwise it stays undecided.
     async fn decide_fallback(
         &mut self,
         spent: usize,
@@ -7763,6 +8264,10 @@ enum Relax {
     /// The quest-evidence diagnosis ([`find_unresolved_quest_gates`]): a
     /// stage gate the evidence leaves `Unknown` is crossed; `False` closes.
     UnknownQuest,
+    /// The actionable-quest diagnosis: every snapshot requirement stays
+    /// strict; each non-`True` stage gate must be implied by an
+    /// API-established window.
+    ActionableQuest(GateRelaxation),
     /// Entrance diagnosis names exclusions, unknown absence observations,
     /// and missing conjunctive worn items. Other positive gates stay strict.
     EntranceExclusions,
@@ -7780,6 +8285,9 @@ fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax: Relax) -> bool 
         Relax::CarryWorn => state.allows_without_carry_worn(edge),
         Relax::UnknownQuest => {
             state.snapshot_allows(edge) && state.quest_gates(edge) != Truth::False
+        }
+        Relax::ActionableQuest(relaxation) => {
+            state.snapshot_allows(edge) && relaxation.allows(state, edge)
         }
         Relax::EntranceExclusions => {
             state.snapshot_allows_ignoring_exclusions(edge)
@@ -7805,7 +8313,10 @@ fn proof_edge_allowed(
     if inventory_can_grow
         && matches!(
             relax,
-            Relax::Strict | Relax::UnknownQuest | Relax::EntranceExclusions
+            Relax::Strict
+                | Relax::UnknownQuest
+                | Relax::ActionableQuest(_)
+                | Relax::EntranceExclusions
         )
     {
         resources::fixed_allowed(state, edge, relax)
@@ -7823,8 +8334,10 @@ fn prefer_worn_slash_for_web(
     state: &WorldState,
     relax: Relax,
 ) -> bool {
-    if !matches!(relax, Relax::Strict | Relax::EntranceExclusions)
-        || !edge.is_slashable_web()
+    if !matches!(
+        relax,
+        Relax::Strict | Relax::ActionableQuest(_) | Relax::EntranceExclusions
+    ) || !edge.is_slashable_web()
         || edge.option != 0
         || edge.item_req.is_empty()
     {

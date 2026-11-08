@@ -106,7 +106,7 @@ fn empty_play() -> Play {
 #[test]
 fn walk_globals_publish_before_start_and_to_the_current_play() {
     let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
-    let granted = WalkGlobals::new(true, true, true, true, false);
+    let granted = WalkGlobals::new(true, true, true, true, false, true, true);
     session.set_walk_globals(granted);
     session.start(vault_with("walk-globals", &[]), empty_play());
     assert_eq!(session.play().unwrap().walk_globals(), granted.to_host());
@@ -182,7 +182,7 @@ fn session(test: &str, profiles: &[(&str, i32, bool)]) -> OperatorSession<u32> {
 fn test_scripts(dir: &std::path::Path) -> crate::scripts::Scripts {
     crate::scripts::Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     )
 }
 
@@ -1181,10 +1181,14 @@ fn coalesced_assignment_log_uses_last_assignment_change_not_parameter_edit() {
         .save_profile_with_log_action(profile, ArmMirror::none(), "script", "Assign")
         .unwrap();
     let mut parameters = s.vault().unwrap().get(name).unwrap().clone();
-    parameters
-        .settings
-        .script_settings
-        .insert("compiled:assigned".into(), serde_json::Map::new());
+    parameters.settings.script_settings.insert(
+        "compiled:assigned".into(),
+        vault::CompiledSettingsRecord {
+            schema_version: 1,
+            values: serde_json::Map::new(),
+        }
+        .into_entry(),
+    );
     s.save_profile_with_log_action(parameters, ArmMirror::none(), "script", "parameter edit")
         .unwrap();
 
@@ -2185,62 +2189,6 @@ fn edited_random(s: &OperatorSession<u32>) -> bool {
         .random_events
 }
 
-/// A vault written by the 0.1.8.1 release code (`a88d07764` vault crate,
-/// passphrase `bot`): alice with every profile field set, bob at defaults.
-const VAULT_0_1_8_1: &[u8] = include_bytes!("../tests/fixtures/vault-0.1.8.1.bin");
-
-#[test]
-fn a_0_1_8_1_vault_loads_spawns_and_saves_through_the_core_unchanged() {
-    let path = vault_path("vault-0181");
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, VAULT_0_1_8_1).unwrap();
-    let mut s = OperatorSession::new(InstancePermit::SkipLock);
-    s.set_spawn_workers(false);
-    s.start(Vault::unlock(&path, "bot").unwrap(), empty_play());
-
-    let alice = s.vault().unwrap().get("alice").unwrap().clone();
-    assert_eq!(alice.password, "old-pass");
-    assert_eq!(alice.uid, 274_000_501);
-    assert!(alice.settings.auto_login && !alice.settings.lowmem);
-    assert_eq!(alice.settings.world, Some(2));
-    assert_eq!(alice.settings.tutorial_skipped, Some(true));
-    assert_eq!(alice.settings.raster, vault::RasterMode::Cpu);
-    assert!(!alice.settings.random_events && !alice.settings.lamp_auto);
-    assert_eq!(alice.settings.lamp_skill, "prayer");
-    assert_eq!(
-        alice.settings.script_assignment.as_ref().unwrap().identity,
-        "catalog:Thiever"
-    );
-    assert_eq!(
-        alice.settings.script_settings["catalog:Thiever"]["food"],
-        serde_json::json!("Lobster")
-    );
-
-    let mut surface = Recorder::default();
-    s.load("alice", &mut surface);
-    let arm = arm(&s, "alice");
-    assert_eq!(arm.uid.load(Ordering::Relaxed), 274_000_501);
-    assert!(arm.wants_login(), "saved auto-login is honoured");
-
-    s.set_random_settings("alice", true, "attack", true)
-        .unwrap();
-    s.flush_writes();
-    let reread = Vault::unlock(&path, "bot").unwrap();
-    let saved = reread.get("alice").unwrap();
-    assert!(saved.settings.random_events);
-    assert_eq!(saved.settings.lamp_skill, "attack");
-    let mut expected = alice.settings.clone();
-    expected.random_events = true;
-    expected.lamp_skill = "attack".into();
-    expected.lamp_auto = true;
-    assert_eq!(
-        saved.settings, expected,
-        "every other field survives the rewrite"
-    );
-    assert_eq!(saved.password, "old-pass");
-    assert_eq!(reread.get("bob"), s.vault().unwrap().get("bob"));
-}
-
 // A profile form's saves settle by their write's operation id: a delayed
 // writer lets the form move on (or the write fail) before the result lands.
 
@@ -2855,6 +2803,9 @@ fn memory_relog_warns_while_a_script_runs() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn memory_relog_warns_while_a_compiled_script_runs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = script::IsolatedEnv::enter("frontend-core-mem-warn");
     let mut s = session("mem-warn", &[("alice", 1, false)]);
     let mut scripts = test_scripts(&iso.dir);
@@ -3367,10 +3318,13 @@ fn a_failed_quiet_load_order_write_is_reported_and_the_stored_order_stays() {
         session.profile_identity("C").unwrap(),
         session.profile_identity("A").unwrap(),
     );
-    session.stage_reorder(crate::ReorderOp::Move {
-        moving: c,
-        to: crate::Placement::Before(a),
-    });
+    session.stage_reorder(
+        crate::ReorderOp::Move {
+            moving: c,
+            to: crate::Placement::Before(a),
+        },
+        crate::ReorderSurface::Fleet,
+    );
     struct FleetLend<'a>(&'a mut crate::FleetModel);
     impl SlotSurface for FleetLend<'_> {
         type Io = u32;

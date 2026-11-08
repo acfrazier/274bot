@@ -713,10 +713,10 @@ test('the real generator rejects a walking backend without callback rows', { ski
         fs.symlinkSync(path.join(here, 'node_modules'), path.join(crateCopy, 'compat-js/node_modules'), 'dir');
         const fire = path.join(crateCopy, 'src/compat/fire.rs');
         const source = fs.readFileSync(fire, 'utf8');
-        assert.doesNotMatch(source, /use crate::walk::Resilient;/);
+        assert.doesNotMatch(source, /use crate::compat::walk::Resilient;/);
         const seeded = source.replace(
             'use crate::machine::{Begin, Cx, Family, Step};',
-            'use crate::walk::Resilient;\nuse crate::machine::{Begin, Cx, Family, Step};',
+            'use crate::compat::walk::Resilient;\nuse crate::machine::{Begin, Cx, Family, Step};',
         );
         assert.notEqual(seeded, source);
         fs.writeFileSync(fire, seeded);

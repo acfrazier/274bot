@@ -9,17 +9,17 @@
 //! `retry` (close-in) or goes on to the talk (stand). The talk is frozen
 //! `reachThroughDoors` (`Reach.ts:156–211, 288–300`: up to eight rounds,
 //! retry after a timeout, the scene probe and door clearing, a dialogue the
-//! click produced), [`crate::reach_entity::NpcReach`]. Game actions reuse the
+//! click produced), [`crate::compat::reach_entity::NpcReach`]. Game actions reuse the
 //! existing FlatBuffer walk, loc and npc verbs.
 
+use crate::compat::reach_entity::{NpcReach, NpcReachOpts, TalkExpect};
+use crate::compat::walk::Resilient;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::observed::{self, Ops, Scene, Text};
-use crate::reach_entity::{NpcReach, NpcReachOpts, TalkExpect};
-use crate::walk::Resilient;
-use crate::walk_wait;
+use crate::scene::observed::{self, Ops, Scene, Text};
+use crate::scene::walk_wait;
 use crate::wire::Snapshot;
 use api::snapshot::WorldTile;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::Cell;
@@ -487,11 +487,14 @@ fn json_i32(value: &Value) -> i32 {
 mod tests {
     use super::*;
     use crate::machine::{self, Called, Handle, Outcome, Pending, Reply, Started, Take};
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_with_native, ChatLineInput, NativeFactsInput,
-        ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    use script::interact::InteractReq;
+    use {
+        crate::wire::{encode_snapshot, encode_snapshot_with_native},
+        script::native::snapshot_source::{
+            ChatLineInput, NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput,
+            TileInput,
+        },
     };
-    use script::shim::InteractReq;
 
     fn npc<'a>(
         name: &'a str,
@@ -625,7 +628,7 @@ mod tests {
 
         fn call(
             &mut self,
-            _hook: Option<&crate::callback_v8::HeldCallback>,
+            _hook: Option<&crate::materialize::callback_v8::HeldCallback>,
             _args: &[Value],
         ) -> Called {
             panic!("reach calls no script callback");
@@ -736,7 +739,7 @@ mod tests {
     fn reset() {
         machine::on_reset();
         walk_wait::on_reset();
-        crate::inspect_wait::on_reset();
+        crate::scene::inspect_wait::on_reset();
         observed::on_reset();
         let bytes = encode_snapshot(&base());
         let snap = Snapshot::from_bytes(&bytes).expect("base");
@@ -1188,7 +1191,7 @@ mod tests {
         observe(&far, NativeFactsInput::default());
         let walk = begin_named("Traiborn", 20, 20, None);
         let probe = passes_to_probe(walk, &mut far);
-        crate::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), false);
+        crate::scene::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), false);
         assert_eq!(next_token(&probe)["status"], "unreachable");
     }
 
@@ -1204,7 +1207,7 @@ mod tests {
         observe(&far, NativeFactsInput::default());
         let walk = begin_named("Traiborn", 20, 20, None);
         let probe = passes_to_probe(walk, &mut far);
-        crate::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), true);
+        crate::scene::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), true);
         let after = next_token(&probe);
         assert_eq!(
             after["kind"], "wait",
@@ -1229,7 +1232,7 @@ mod tests {
         let walk = begin_named("Traiborn", 20, 20, None);
         assert_eq!(walk["radius"], 1);
         let probe = passes_to_probe(walk, &mut snap);
-        crate::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), false);
+        crate::scene::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), false);
         let done = next_token(&probe);
         assert_eq!(done["status"], "unreachable");
         assert_ne!(done["kind"], "npc");

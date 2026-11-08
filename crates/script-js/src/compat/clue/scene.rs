@@ -1,5 +1,5 @@
 use super::*;
-use crate::clue::ARRIVE_RADIUS;
+use crate::compat::clue::ARRIVE_RADIUS;
 
 /// What this call's posted `here` says about the decoded tile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

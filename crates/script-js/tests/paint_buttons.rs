@@ -1,7 +1,7 @@
 //! Native one-shot `Paint.buttons` seam. No packet opcode, no fabricated click.
 
-use script::shim::{ScriptPaint, ScriptPaintButton};
-use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
+use script::paint::{ScriptPaint, ScriptPaintButton};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;
@@ -397,11 +397,11 @@ fn paint_controls_helper_advertises_host_controls_instead_of_hint_text() {
                 label: "Go bank".into(),
             },
             ScriptPaintButton {
-                id: script::shim::HOST_PAUSE_CONTROL_ID.into(),
+                id: script::paint::HOST_PAUSE_CONTROL_ID.into(),
                 label: "Pause".into(),
             },
             ScriptPaintButton {
-                id: script::shim::HOST_STOP_CONTROL_ID.into(),
+                id: script::paint::HOST_STOP_CONTROL_ID.into(),
                 label: "Stop".into(),
             },
         ],

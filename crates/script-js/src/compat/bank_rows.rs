@@ -1,4 +1,4 @@
-use crate::observed::{EntityRow, ItemRow, SceneRow};
+use crate::scene::observed::{EntityRow, ItemRow, SceneRow};
 use api::snapshot::WorldTile;
 use script::bank::ops::{op_index, BankRow, LocRow, NpcRow, OpLabels};
 
@@ -185,7 +185,7 @@ mod tests {
             ops: actions
                 .iter()
                 .map(|action| Rc::from(action.unwrap_or_default()))
-                .collect::<crate::observed::Ops>(),
+                .collect::<crate::scene::observed::Ops>(),
             component_id,
             slot,
             ..ItemRow::default()

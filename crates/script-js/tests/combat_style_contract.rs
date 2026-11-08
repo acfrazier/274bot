@@ -19,7 +19,7 @@ export default class T extends LoopingBot {
     let isolate = LoadIsolate::spawn(source.into(), LoadShape::CompatClass, vec![]).unwrap();
     // This checks the two JS API shapes together; the resolution reads the
     // decoded scene, so the combat-tab rows arrive as one FlatBuffer post.
-    let styles = [script_js::wire::CombatStyleInput {
+    let styles = [script::native::snapshot_source::CombatStyleInput {
         mode: 1,
         label: "Aggressive",
         component_id: 77,
@@ -64,29 +64,29 @@ export default class T extends LoopingBot {
 "#;
     let isolate = LoadIsolate::spawn(source.into(), LoadShape::CompatClass, vec![]).unwrap();
     let styles = [
-        script_js::wire::CombatStyleInput {
+        script::native::snapshot_source::CombatStyleInput {
             mode: 0,
             label: "Accurate",
             component_id: 70,
         },
-        script_js::wire::CombatStyleInput {
+        script::native::snapshot_source::CombatStyleInput {
             mode: 1,
             label: "Aggressive",
             component_id: 71,
         },
         // Duplicate mode: the first label for a mode wins.
-        script_js::wire::CombatStyleInput {
+        script::native::snapshot_source::CombatStyleInput {
             mode: 1,
             label: "Defensive",
             component_id: 72,
         },
-        script_js::wire::CombatStyleInput {
+        script::native::snapshot_source::CombatStyleInput {
             mode: 2,
             label: "Defensive",
             component_id: 73,
         },
         // Unusable label: not a mode at all.
-        script_js::wire::CombatStyleInput {
+        script::native::snapshot_source::CombatStyleInput {
             mode: 3,
             label: "(Slam)",
             component_id: 74,

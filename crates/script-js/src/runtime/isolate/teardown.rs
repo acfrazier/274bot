@@ -78,6 +78,9 @@ pub(super) struct TeardownState {
     /// Producer evidence generation. Independent of native input identity
     /// and execution lifecycle; shared only to publish the host's delta key.
     pub(super) snapshot_evidence_sequence: u64,
+    /// Test seam: `SeatPage` commands that passed the early gate and ran.
+    #[cfg(feature = "test-hooks")]
+    pub(super) executed_seat_pages: u64,
 }
 
 impl TeardownState {
@@ -102,6 +105,8 @@ impl TeardownState {
             pause_requested: false,
             execution_interrupt: None,
             snapshot_evidence_sequence: 0,
+            #[cfg(feature = "test-hooks")]
+            executed_seat_pages: 0,
         }
     }
 }
@@ -227,7 +232,7 @@ pub(super) fn finish_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState
 
 pub(super) fn drain_bot_log(runtime: &mut Runtime, out: &Sender<ThreadMsg>) {
     let bot_log: Result<Vec<String>, rustyscript::Error> =
-        super::super::lineage_v8::call_function_immediate(
+        crate::materialize::lineage_v8::call_function_immediate(
             runtime,
             None,
             "__rs2b0t_drain_log",
@@ -326,7 +331,7 @@ pub(super) fn teardown_once(
         .invoked
         .store(true, std::sync::atomic::Ordering::SeqCst);
     let threw: Result<Option<String>, rustyscript::Error> =
-        super::super::lineage_v8::call_function_immediate(
+        crate::materialize::lineage_v8::call_function_immediate(
             runtime,
             None,
             "__rs2b0t_invoke_on_stop",
@@ -342,7 +347,7 @@ pub(super) fn teardown_once(
         }
     }
     drain_bot_log(runtime, out);
-    let _ = super::super::lineage_v8::eval::<()>(
+    let _ = crate::materialize::lineage_v8::eval::<()>(
         runtime,
         "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
     );

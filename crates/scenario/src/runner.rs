@@ -145,6 +145,14 @@ struct LootTripObservation {
     progress_xp: Option<i32>,
 }
 
+/// Bounded continuation for [`StepKind::ObserveCombatAcrossBankReturns`].
+#[derive(Debug, Clone, Copy, Default)]
+struct CombatBankReturnObservation {
+    bank_open_seen: bool,
+    bank_generation: u64,
+    restarts: u8,
+}
+
 const PROTECT_MAGIC_VARP: i32 = 95;
 const ZAMORAK_WIZARD: usize = 1007;
 
@@ -438,7 +446,16 @@ pub struct ScenarioRunner {
     /// changed; the old session can already satisfy the step's tab proof.
     relog_session: Option<u64>,
     relog_left_session: bool,
+    /// The Relog step sent its logout and the host has not yet posted the
+    /// slot's explicit Login: a bot with no script stays logged out after
+    /// its exit, so the step's own logout cannot rely on a reconnect. The
+    /// driver that ticks this runner consumes the request with
+    /// [`ScenarioRunner::take_relog_login`] and posts the operator Login
+    /// intent (host-play's `SlotArm::arm_explicit_login`).
+    relog_login_wanted: bool,
     engine_speed_ms: Option<u32>,
+    /// Whether terminal cleanup restores the scenario's requested world speed.
+    restore_world_speed: bool,
     /// Endpoint reported when the initial world-speed command is sent.
     tick_speed_endpoint: Option<(String, u16)>,
     engine_speed_sent: bool,
@@ -477,6 +494,8 @@ pub struct ScenarioRunner {
     stall_combat: Option<StallCombatObservation>,
     /// Pre-style Loot-count trips for the current style watch.
     loot_trips: Option<LootTripObservation>,
+    /// Fresh combat windows anchored on completed bank returns.
+    combat_bank_returns: Option<CombatBankReturnObservation>,
     /// Random-event Guardian episode, armed by an
     /// [`StepKind::ObserveRandomEvent`] step and kept for the terminal receipt.
     random_event: Option<RandomEventEpisode>,
@@ -540,6 +559,14 @@ impl ScenarioRunner {
         self.map_members = map_members;
     }
 
+    /// Control terminal restoration to the teardown world speed.
+    ///
+    /// Defaults to `true`; setting `false` leaves the initial requested
+    /// world-speed command unchanged but skips restoration during cleanup.
+    pub fn set_restore_world_speed(&mut self, restore: bool) {
+        self.restore_world_speed = restore;
+    }
+
     /// Record the endpoint for diagnostics when the world-wide speed command fires.
     /// This is logging metadata only; it does not restrict command dispatch.
     pub fn set_tick_speed_endpoint(&mut self, host: &str, port: u16) {
@@ -583,7 +610,9 @@ impl ScenarioRunner {
             relog_logout_sent: false,
             relog_session: None,
             relog_left_session: false,
+            relog_login_wanted: false,
             engine_speed_ms,
+            restore_world_speed: true,
             tick_speed_endpoint: None,
             speed_chat_baseline: None,
             engine_speed_sent: false,
@@ -599,6 +628,7 @@ impl ScenarioRunner {
             maze_episode: None,
             stall_combat: None,
             loot_trips: None,
+            combat_bank_returns: None,
             random_event: None,
             protect_window: None,
             death_chat_baseline: None,
@@ -641,8 +671,9 @@ impl ScenarioRunner {
 
     /// Recording sidecar position: `(step_index, total_steps, step_name)`.
     /// Pre-start reads `seeding`, the proof tail reads `proving`, terminal
-    /// speed restoration reads `cleaning`, and a finished run reads `done`.
-    /// Every video timestamp lines up with the step trace even outside run steps.
+    /// speed restoration reads `cleaning` when enabled, and a finished run
+    /// reads `done`. Every video timestamp lines up with the step trace even
+    /// outside run steps.
     pub fn record_step(&self) -> (usize, usize, &'static str) {
         let total = self.scenario.steps.len();
         match self.phase {
@@ -786,9 +817,27 @@ impl ScenarioRunner {
     }
 
     /// Run companion `index`'s hook once per client cycle on `client`. The
-    /// caller delivers one frame per call, exactly like [`tick`].
-    pub fn companion_tick(&mut self, index: usize, client: &mut Client) {
-        (self.scenario.companions[index].per_frame)(client);
+    /// caller delivers one frame per call, exactly like [`tick`]. `true`
+    /// means the hook pressed this slot's logout and needs the host's
+    /// explicit Login (the operator Login intent) posted for it, because a
+    /// bot with no script stays parked after its exit.
+    pub fn companion_tick(&mut self, index: usize, client: &mut Client) -> bool {
+        (self.scenario.companions[index].per_frame)(client)
+    }
+
+    /// Whether the current Relog step sent its logout and still needs the
+    /// host's explicit Login. The driver that ticks this runner consumes the
+    /// request with [`Self::take_relog_login`] and posts the operator Login
+    /// intent for the driven slot; a bot with no script does not reconnect by
+    /// itself, so the relog would otherwise wait out its budget.
+    pub fn relog_login_wanted(&self) -> bool {
+        self.relog_login_wanted
+    }
+
+    /// Consume the pending host-login request of the current Relog step.
+    /// One-shot: a second call is false until another relog logout goes out.
+    pub fn take_relog_login(&mut self) -> bool {
+        std::mem::take(&mut self.relog_login_wanted)
     }
 
     /// True while the runner is on [`StepKind::StartScript`]: panel/TUI
@@ -1112,6 +1161,17 @@ impl ScenarioRunner {
                 ));
                 return;
             }
+            let bank_return_ready = match self.observe_combat_bank_returns(arm) {
+                Ok(ready) => ready,
+                Err(message) => {
+                    self.finish_fail(&format!(
+                        "step {} ({}): {message}",
+                        self.step + 1,
+                        self.current_step().name
+                    ));
+                    return;
+                }
+            };
             let waited_game_ticks = if matches!(arm, Proof::GroundItemIdsAbsentNear { .. }) {
                 self.ground_guard
                     .as_ref()
@@ -1152,7 +1212,8 @@ impl ScenarioRunner {
             let native_episode_holds = random_event_holds
                 && self.observe_lamp_redemption(hold).unwrap_or(true)
                 && self.observe_maze_completion(hold).unwrap_or(true)
-                && stall_combat_holds;
+                && stall_combat_holds
+                && bank_return_ready;
             let arm_holds = match &self.current_step().kind {
                 StepKind::Await { ready, .. } => ready(&self.snapshot),
                 StepKind::Relog => {
@@ -1228,6 +1289,10 @@ impl ScenarioRunner {
                                 trips.steals
                             )
                         })
+                    })
+                    .or_else(|| {
+                        self.combat_bank_returns
+                            .map(|s| format!("{} [bank_return={s:?}]", arm.name()))
                     })
                     .or_else(|| {
                         matches!(
@@ -1306,6 +1371,7 @@ impl ScenarioRunner {
         self.relog_logout_sent = false;
         self.relog_session = None;
         self.relog_left_session = false;
+        self.relog_login_wanted = false;
         self.game_ticks_waited = 0;
         self.traveller.clear();
         self.route = None;
@@ -1366,6 +1432,14 @@ impl ScenarioRunner {
             StepKind::ObserveStyleAcrossLootTrips { .. }
         )
         .then(LootTripObservation::default);
+        self.combat_bank_returns = matches!(
+            self.current_step().kind,
+            StepKind::ObserveCombatAcrossBankReturns { .. }
+        )
+        .then_some(CombatBankReturnObservation {
+            bank_generation: self.snapshot.bank_session_generation(),
+            ..CombatBankReturnObservation::default()
+        });
         if let StepKind::ObserveRandomEvent { cell } = self.current_step().kind {
             // The cells run on the 289 engine (`tools/engine-patches/289`);
             // missing content data leaves the evade range unknown, which the
@@ -1537,6 +1611,56 @@ impl ScenarioRunner {
             self.game_ticks_waited = 0;
         }
         Ok(())
+    }
+
+    fn observe_combat_bank_returns(&mut self, arm: Proof) -> Result<bool, &'static str> {
+        let StepKind::ObserveCombatAcrossBankReturns {
+            stand,
+            radius,
+            max_restarts,
+        } = self.current_step().kind
+        else {
+            return Ok(true);
+        };
+        let Proof::FreshStatXpGain { id, .. } = arm else {
+            return Err("bank-return combat watch requires a fresh XP arm");
+        };
+        let at_stand = Proof::ArrivedNear {
+            x: stand.x,
+            z: stand.z,
+            level: stand.level,
+            radius,
+        }
+        .check(&self.snapshot, None);
+        let fresh_bank = Proof::BankOpen.check(&self.snapshot, None);
+        let bank_closed = Proof::BankClosed.check(&self.snapshot, None);
+        let bank_generation = self.snapshot.bank_session_generation();
+        let xp = self.stat_xp(id);
+        let Some(state) = self.combat_bank_returns.as_mut() else {
+            return Ok(false);
+        };
+        if !state.bank_open_seen
+            && fresh_bank
+            && !at_stand
+            && bank_generation > state.bank_generation
+        {
+            if state.restarts >= max_restarts {
+                return Err("bank-return restart limit spent without fresh combat XP");
+            }
+            state.bank_open_seen = true;
+            state.bank_generation = bank_generation;
+            self.game_ticks_waited = 0;
+        }
+        if state.bank_open_seen {
+            if bank_closed && at_stand && bank_generation > state.bank_generation {
+                state.bank_open_seen = false;
+                state.restarts += 1;
+                self.fresh_xp_baseline = xp.map(|xp| (id, xp));
+                self.game_ticks_waited = 0;
+            }
+            return Ok(false);
+        }
+        Ok(bank_closed)
     }
 
     fn observe_stall_combat(&mut self, xp_gained: bool) -> Result<bool, &'static str> {
@@ -2024,6 +2148,7 @@ impl ScenarioRunner {
             | StepKind::ObserveLampRedemption { .. }
             | StepKind::ObserveStallCombat { .. }
             | StepKind::ObserveStyleAcrossLootTrips { .. }
+            | StepKind::ObserveCombatAcrossBankReturns { .. }
             | StepKind::ObserveRandomEvent { .. } => Ok(()),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);
@@ -2035,6 +2160,12 @@ impl ScenarioRunner {
                         );
                     }
                     self.relog_logout_sent = true;
+                    // The bot has no script at a pre-Start relog, so the
+                    // approved scriptless policy parks it after this exit;
+                    // the driver posts the operator Login (a no-op wait here
+                    // would time out). A scripted bot ignores the request:
+                    // its own demand already relogs it.
+                    self.relog_login_wanted = true;
                 }
                 Ok(())
             }
@@ -2257,6 +2388,12 @@ impl ScenarioRunner {
     }
 
     fn begin_terminal_cleanup(&mut self, speed_ms: u32, outcome: TerminalOutcome) {
+        // Terminal cleanup is shared by pass, failure and unavailable
+        // outcomes. The opt-out skips only the teardown command.
+        if !self.restore_world_speed {
+            self.complete_terminal(outcome);
+            return;
+        }
         self.phase = Phase::Cleaning;
         self.terminal_cleanup = Some(TerminalCleanup {
             speed_ms,

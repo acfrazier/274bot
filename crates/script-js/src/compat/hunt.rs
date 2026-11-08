@@ -40,10 +40,10 @@ pub(crate) use wait::WaitFed;
 #[allow(unused_imports)]
 pub(crate) use wait::WaitFedArgs;
 
-use crate::hunt_fight::{Area, Tile};
+use crate::compat::hunt_fight::{Area, Tile};
 use crate::machine::{AbortReason, Begin, Call, Cx, Ended, Family, Reply, Step, Thrown};
-use crate::observed;
-use script::shim::InteractReq;
+use crate::scene::observed;
+use script::interact::InteractReq;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::any::Any;
@@ -300,7 +300,7 @@ fn put_site<K: Kind>(token: u64, proj: K::Proj) {
 /// Stop: the sites and the fee proof go with the isolate thread's scripts.
 pub(crate) fn on_stop() {
     SITES.with(|sites| sites.borrow_mut().clear());
-    crate::hunt_lair::on_stop();
+    crate::compat::hunt_lair::on_stop();
 }
 
 /// A session's synchronous read (`validate`, `blocksLoot`): refresh the
@@ -385,11 +385,11 @@ enum Waiting {
 
 /// A nested machine the row runs before its stepper resumes.
 enum Child {
-    Leave(Box<Hunt<crate::hunt_leave::Leave>>),
-    Key(Box<Hunt<crate::hunt_key::Key>>),
-    Bank(Box<Hunt<crate::hunt_bank::Bank>>),
-    Cell(Box<Hunt<crate::hunt_cell::Cell>>),
-    Teleport(crate::teleport::Teleport),
+    Leave(Box<Hunt<crate::compat::hunt_leave::Leave>>),
+    Key(Box<Hunt<crate::compat::hunt_key::Key>>),
+    Bank(Box<Hunt<crate::compat::hunt_bank::Bank>>),
+    Cell(Box<Hunt<crate::compat::hunt_cell::Cell>>),
+    Teleport(crate::compat::teleport::Teleport),
     BankOpen(crate::machine::NativeBankChild),
 }
 
@@ -418,7 +418,7 @@ impl<K: Kind> Family for Hunt<K> {
 
     fn begin(args: HuntArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
         // One API foreground per slot: a live `api.combat` session owns it.
-        if crate::api_session::combat_live() {
+        if crate::api_v2::api_session::combat_live() {
             return Begin::Refuse("busy".into());
         }
         if K::SESSION {
@@ -673,7 +673,7 @@ impl<K: Kind> Hunt<K> {
                 let name = string(effect, "name");
                 let args = serde_json::from_value(json!({ "name": name }))
                     .expect("teleport arguments are a name");
-                match <crate::teleport::Teleport as Family>::begin(args, cx) {
+                match <crate::compat::teleport::Teleport as Family>::begin(args, cx) {
                     Begin::Run(teleport) => {
                         self.child = Some(Child::Teleport(teleport));
                         return Ok(Some(Step::Wait));
@@ -726,7 +726,7 @@ impl<K: Kind> Hunt<K> {
     /// A world walk the walk wait tracks; the stepper reads its token.
     fn walk(&mut self, effect: &Value, exact: bool, radius: i32, cx: &mut Cx<'_>) {
         let (x, z, level) = (int(effect, "x"), int(effect, "z"), int(effect, "level"));
-        let token = crate::walk_wait::dispatch(&json!({
+        let token = crate::scene::walk_wait::dispatch(&json!({
             "op": "begin",
             "x": x,
             "z": z,
@@ -749,6 +749,8 @@ impl<K: Kind> Hunt<K> {
                 request_id: token,
                 avoid: Vec::new(),
                 cross: Vec::new(),
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
             }
         } else {
             InteractReq::WalkNear {
@@ -763,6 +765,8 @@ impl<K: Kind> Hunt<K> {
                 request_id: token,
                 avoid: Vec::new(),
                 cross: Vec::new(),
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
             }
         });
         self.reply = Some(json!({ "queued": true, "walkToken": token }));
@@ -777,7 +781,7 @@ pub(crate) fn characterize_effect(
     effect: &Value,
     cx: &mut Cx<'_>,
 ) -> Result<Option<Step<Value>>, Ended> {
-    let mut row = Hunt::<crate::hunt_leave::Leave>::run(json!({}));
+    let mut row = Hunt::<crate::compat::hunt_leave::Leave>::run(json!({}));
     let result = row.apply(effect, cx);
     row.finish();
     result
@@ -924,12 +928,12 @@ fn game_op(kind: &str, effect: &Value) -> Option<InteractReq> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hunt_key::{KeyGround, KeyObservation};
+    use crate::compat::hunt_key::{KeyGround, KeyObservation};
 
     #[test]
     fn key_take_effect_conversion_keeps_the_selected_ground_id() {
-        crate::hunt_key::on_reset();
-        crate::hunt_key::set_observation(KeyObservation {
+        crate::compat::hunt_key::on_reset();
+        crate::compat::hunt_key::set_observation(KeyObservation {
             here: Some(Tile {
                 x: 2900,
                 z: 9690,
@@ -951,10 +955,10 @@ mod tests {
             npcs: vec![],
             locs: vec![],
         });
-        let token = crate::hunt_key::dispatch(&json!({ "op": "begin" }))["token"]
+        let token = crate::compat::hunt_key::dispatch(&json!({ "op": "begin" }))["token"]
             .as_u64()
             .unwrap();
-        let effect = crate::hunt_key::dispatch(&json!({
+        let effect = crate::compat::hunt_key::dispatch(&json!({
             "op": "next",
             "token": token,
             "key": "taverley-blue",
@@ -973,6 +977,6 @@ mod tests {
                 action: "Take".into(),
             }),
         );
-        crate::hunt_key::on_reset();
+        crate::compat::hunt_key::on_reset();
     }
 }

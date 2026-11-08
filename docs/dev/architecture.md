@@ -7,7 +7,7 @@
 and runtime boundaries, not a line-count budget and not a copy of a TypeScript
 lint stack.
 
-0.2.7 Beta 2 is the current release. Revision 289 is the production revision: the product is
+0.2.8 Beta 2 is the current release. Revision 289 is the production revision: the product is
 built, tested and claimed for it. Revision 274 is best-effort: it may run,
 but it is neither tested nor claimed.
 
@@ -30,13 +30,13 @@ for its runtime pins and rule-change process. This repo holds the
 local-convenience-only runner `tools/architecture/run.sh`, which fetches
 `274bot-arch` `main` into a local cache and runs it against a tree. CI
 does not use the runner and never executes a candidate-tree script. The
-fine data the checker reads — exactly `tools/architecture/ownership.json`,
-`tools/architecture/inventories.json`, and
-`tools/architecture/foreign_types.json` — stays in this repo beside the
-runner and is reviewed like code. Everything that creates or activates the
-graph stays protected: workspace members, edges/kinds/migrations, the
-configuration feature/activation fields (including optional-dependency
-activation), and the graph provenance baseline.
+only candidate-side rule input is semantic foreign-type classification in
+`tools/architecture/foreign_types.json`, reviewed like code. The checker derives
+seam ownership classes from syntax. Exact existing seam/import exceptions live
+in protected `seam-exceptions.json`; candidate code cannot add an exception.
+There is no file-owner ledger, exhaustive type/test registry, `thread_local!`
+inventory or graph-provenance baseline. Workspace members, edges, kinds,
+per-kind feature limits and supported feature configurations stay protected.
 Agents and Main use the same runner locally.
 
 ```bash
@@ -102,7 +102,7 @@ Unicode look-alike names are outside this refusal because Cargo on Linux does no
 One limit stays with review. A product build script can rewrite a vendored
 manifest on disk during a CI job, between steps.
 The checker reads committed manifests only. It does not run build scripts.
-A new `build.rs` needs an ownership row, so a reviewer sees it.
+Build-script behavior remains a review requirement; no file-owner row is required.
 Dependency aliases are tracked by package name, not by alias or version.
 Default-feature and dev-dependency activation is checked for every protected
 member and listed path package, even when no named configuration reaches it.
@@ -124,14 +124,14 @@ candidate-tree script (including `tools/architecture/run.sh`) and has no
 `clippy`, or `test`. Those gates stay as they are.
 
 The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml):
-workspace members, edges with their kinds and migrations, and the
-configuration feature/activation fields, all protected. The fine data lives
-beside the runner and is reviewed like code:
-[`tools/architecture/ownership.json`](../../tools/architecture/ownership.json),
-[`tools/architecture/inventories.json`](../../tools/architecture/inventories.json),
+workspace members, edges with their kinds and migrations, dependency feature
+limits and supported feature configurations are protected. A feature-limited
+edge must disable dependency defaults and may request only its listed features.
+The tooling-only bake and planner normal API edges request no embedding; their
+test-only API edges may enable `embedded-game-data`, not raw packet recorders.
+Semantic foreign-type classification stays in
 [`tools/architecture/foreign_types.json`](../../tools/architecture/foreign_types.json).
-The checker loads that data from the checked tree, refuses malformed or
-stale data, and cannot widen the protected edge policy.
+No candidate ownership, seam-type or test-exception inventory is loaded.
 Every workspace member must appear in protected `policy.toml`. Every edge
 the manifests declare needs an `[[allow]]` or migration with its kind.
 Unknown members and unlisted edges fail closed. crates.io and other
@@ -146,11 +146,11 @@ workspace member; it is listed as an architecture external.
 | `vault` | Encrypted profile store, secret strings, owner-only file helpers | A dependant of api/host/ui |
 | `api` | Host-facing read/act/settle types mapped onto `client`; selected game facts | A dependant of host, nav, script, or UI |
 | `host` | Native slot/tick APIs, login FIFO, guardian | A dependant of nav, script, host-play, or UI |
-| `nav` | Packed world, router, map data | Script isolate or operator UI |
+| `nav-planner` | Packed world, router, map data | Script isolate or operator UI |
 | `nav-executor` | Pollable `Traveller` follow run, walk and transport hops | Planner search, script isolate, or operator UI |
  | `script` | Native card machines (Quester, Gatherer, Combat), slot lifecycle and typed native facades over the packed world | A production dependant of `client`; a JS runtime owner |
  | `script-js` | JS runtime: V8 isolate, compat machines (including Sherlock and the clue machine), catalog and library, isolate wire schema and JS assets | A native card owner; a production dependant of `client` except through dev fixtures |
-| `host-play` | Shared `Play` lifecycle over host/script/nav/vault | A second panel or client renderer |
+| `host-play` | Shared `Play` lifecycle over host/script/nav/vault; stages locally generated navigation payloads during product builds | A second panel or client renderer |
 | `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results, the structured operator log; script coordination (catalog, per-profile assignment and parameters, Start all/Stop all, reload, Apply to all); fleet marks and the commands on marked bots (Assign, log in/out, group walk); the fleet/detail projections (phase, queue place, retained errors, newest operation) and the one process resource sampler both front ends render | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries; a per-row or per-bot sampler |
 | `scenario` | Shared headed/headless live scenario runner and Quester fixtures | Panel/TUI chrome |
 | `panel` | Native ImGui UI, winit/wgpu window, game blit | The client 3D renderer or isolate runtime |
@@ -168,9 +168,9 @@ graph, derived from the manifests:
 - `nav-executor` → `api`, `nav`, `client`; `nav` also **dev** for planner test-support fixtures
  - `script` → `api`, `nav`, `vault` (runtime); `client` **dev-only**
  - `script-js` → `script`, `api`, `vault` (runtime); `client` **dev-only**; `nav-planner` **dev-only** (test fixtures only; production JS code uses the Core `script` nav facade)
- - `host-play` → `api`, `client`, `host`, `script`, `script-js`, `vault`; `nav` runtime and **build**; `nav-bake` **build and dev**; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**; `script-js` also **dev**
+ - `host-play` → `api`, `client`, `host`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `nav` runtime; `nav-bake` **dev-only** for fixtures; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
  - `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
- - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `script-js`, `vault`; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
+ - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
  - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
  - `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host`, `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
  - `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `nav-bake`, `scenario`, `vault`; `host-play` also **dev**
@@ -214,30 +214,32 @@ graph, derived from the manifests:
   from the **member** table. `[workspace.dependencies]` cannot set
   `optional` (Cargo: "workspace dependencies cannot be optional"); that
   form is rejected rather than inherited.
- - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
-   (bake/stage nav identity). Both kinds are listed.
+ - **`host-play` → `nav-planner`** is a runtime edge. The std-only host build
+   stages local nav payloads; it neither builds nor invokes the bake tool.
  - **`script-js` → `client` and `script-js` → `nav-planner` are `[dev-dependencies]` only.** Production JS code uses the Core `script` nav facade. Promoting either to a normal dependency fails the checker.
- - **`host-play` → `script-js` and `frontend-core` → `script-js` are normal edges.** `host-play` also declares a dev edge for test hooks. The slot binds the JS surface factory from `script-js`; hosts install its cards with `script_js::install_cards()`.
+ - **`host-play` → `script-js` and `frontend-core` → `script-js` are optional production edges enabled by `js`.** Both consumers also declare dev edges for test fixtures. With `js`, the slot binds the JS surface factory and hosts install its cards with `script_js::install_cards()`. Native-only builds do not construct a JS library or bind that factory.
 
 For a new edge, kind, migration, optional-dependency activation, vendored path
 package, or checker change, follow [Changing a boundary](#changing-a-boundary).
-Include the regenerated baseline in the same arch commit as the protected
-rule change. Outside the pinned client manifests, purely local features without
-optional or cross-crate activation need no operator commit. Ownership, inventory, and foreign-type rows remain
-ordinary product diffs. Do not add a second hidden graph.
+Propose the protected rule change with its reason and semantic test evidence.
+There is no generated provenance baseline to refresh. Outside the pinned client
+manifests, purely local features without optional or cross-crate activation need
+no operator commit. Semantic foreign-type classification is ordinary reviewed
+product data; candidate inventory exceptions are not. Do not add a hidden graph.
 
 ## Cargo features
 
 | Crate | Features |
 | --- | --- |
- | `script` | `canvas-raster`: raster, fonts and composition; `path-schema`: Path JSON Schema generation; `test-hooks`: integration-only seams. No `load` feature and no JS dependencies. |
+ | `script` | `canvas-raster`: raster, fonts and composition; `path-schema`: Path JSON Schema generation; `test-hooks`: integration-only seams. No JS dependencies. |
  | `script-js` | JS runtime crate: V8 isolate, compat machines, catalog and library, isolate wire schema. `test-hooks`: integration-only isolate seams; `memory-profile`: V8 heap and snapshot counters for the host-play harness. |
 | `api` | `path-schema`, `debug-catalog`, `test-hooks` |
 | `host` | `render-diagnostics`, `performance-profile`, `journal-paint-proof` |
-| `host-play` | `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
-| `panel` | `render-diagnostics`, `memory-profile`, `memory-profile-no-alloc` |
-| `tui` | `memory-profile`, `memory-profile-no-alloc` |
-| `frontend-core` | `test-support` (arm-only spawn fixtures for front-end tests) |
+| `host-play` | `js` (default); `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the JS-enabled fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
+| `panel` | `js` (default, forwarded to `frontend-core`), `render-diagnostics`, `memory-profile`, `memory-profile-no-alloc` |
+| `tui` | `js` (default, forwarded to `frontend-core`), `memory-profile`, `memory-profile-no-alloc` |
+| `frontend-core` | `js` (default, enables the host JS runtime and `canvas-raster`), `canvas-raster`, `test-support` (arm-only spawn fixtures for front-end tests) |
+| `e2e` | `js` (default, forwarded to `host-play`) |
 
 ## Per-crate module ownership
 
@@ -274,8 +276,9 @@ reasons to change.
 | `interact.rs` | send vocabulary and dispatch | `Driver` seam, accepted-send semantics |
 | `interact/driver.rs` | client transport mapping | `doAction`, `tryMove`, `out`, ISAAC intact |
 | `hostlog.rs` | host logging facade | `host_log!` categories, slot-log allowlist, stderr under `BOT_DEBUG`, one process sink |
-| `../build.rs` | compact embedded revision inputs | deterministic gzip of generated JSON into `OUT_DIR`; no generator or pin changes |
-| `game_data.rs` | generated game facts by revision | buffered streaming decode and original-byte digest, indexes, lookups |
+| `../build.rs` | compact embedded revision inputs | deterministic gzip and static catalogue outputs in `OUT_DIR`; no generator execution |
+| `../build_support/catalog_codegen.rs` | build-time bank and cook catalogue conversion | JSON decoding and Rust constant emission; no runtime parser or catalogue copy |
+| `game_data.rs` | generated game facts by revision | buffered streaming decode, indexes and lookups |
 | `selected.rs` | shared selected-fact values | loading is off-pump; gates never guess missing facts |
 | `content.rs` | shared rock names and loot predicate | revision facts stay in `game_data` |
 | `ent.rs` | Ent NPC identity facts | revision-independent ids and lifetime |
@@ -296,11 +299,10 @@ reasons to change.
 | `clue_puzzle.rs` | sliding-puzzle plan | frozen grouped search over caller rows |
 | `cake_stall.rs` | Baker-stall pins | posted facts, selection in `script` |
 | `cook_locations.rs` | cook-location inputs | curated bank cook surfaces and pairing constants |
-| `family_asset.rs` | checked selected family assets | one manifest/digest/schema admission, run once when a family is prepared |
 | `gather_methods.rs` | gather JSON query adapters | rows and coverage over the typed catalog; absence is a token |
 | `gather_methods/catalog.rs` | typed gathering catalog and queries | spot regions, pages, nearest, zones, rocks; unknown never empty |
 | `gather_methods/wire.rs` | `gathering.json` decode | fail-closed schema-1 decode into the catalog |
-| `gather_methods/cache.rs` | prepared-catalog lifecycle | embedded family, weak shared cache, off-pump preparation |
+| `gather_methods/cache.rs` | prepared-catalog lifecycle | revision-keyed shared cache, off-pump preparation |
 | `gather_tools.rs` | gather-tool identity, use, wield | posted facts |
 | `named_banks.rs` | frozen bank catalog, eligibility and selected-content access rows | stand resolution lives in `nav` |
 | `bank_memory.rs` | last-seen whole bank of one account | the type alone; the host fills it from the open bank |
@@ -346,11 +348,10 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `arrival.rs` | arrival detection | on tile or adjacent to solid |
 | `bank_fetch.rs` | BankBudget fetch-and-wear plan | plan only, router stays fail-closed |
 | `camera.rs` | path-facing orbit yaw | pure, host writes yaw per observe |
-| `canlight.rs` | canlight lookup and identity binding | static policy and checked sidecar identity |
+| `canlight.rs` | canlight lookup and decoding | static policy and sidecar data |
 | `collision.rs` | runtime collision models | four planes, walk words, and shared packing primitives |
 | `essence.rs` | essence-mine return latch | session-gated return hop |
 | `grid.rs` | walkability grids | step-grid surface |
-| `manifest.rs` | runtime manifest and identity schemas | hashes, verification, and `NavIdentityRow` |
 | `map.rs` | bounded map-data boundary | errors, capped records/text and header-first checks; no UI or game actions |
 | `map/identity.rs` | map identity byte layouts | independent image/catalogue keys; exact encoder/dependency policy |
 | `map/poi.rs` | source-tagged discovery evidence | classifier, physical placements and separate nav-bound stands; not account eligibility |
@@ -362,16 +363,16 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `map/catalogue.rs` | client-only POI derivation | isolated from terrain policy so classifier changes do not invalidate baked imagery |
 | `map/raster.rs` | terrain raster and PNG pyramid | deterministic, sparse, bounded mapsquare neighbourhoods |
 | `map/producer.rs` | pure producer entry points | host owns leases, locking, cancellation and publication |
-| `map/services.rs` | navpois policy identity | one shared digest formula |
+| `map/services.rs` | navpois derivation | shared POI rules |
 | `named_banks.rs` | selected-world bank stand resolution | captured account eligibility stays with the caller, no `script` dep |
-| `pack.rs` | runtime pack decoding | version, geometry, length and identity checks |
+| `pack.rs` | runtime pack decoding | format version, geometry, length and structural checks |
 | `pack/banks.rs` | bank schema and decoding | booth/NPC access data |
-| `pack/sidecars.rs` | sidecar decoding and binding | flags, paint-reach, canlight |
+| `pack/sidecars.rs` | sidecar decoding | flags, paint-reach, canlight |
 | `pack/zones.rs` | zone table decoding | validated exclusion geometry |
 | `paint.rs` | nav-paint buffers | no imgui, no client draw |
 | `quest_gates.rs` | quest-stage gates on transport edges | typed gates over selected progress signals |
 | `router.rs` | world-space Dijkstra | exact-coordinate compact storage, shared synchronous/cooperative kernel, total-ticks cost and gated edges |
-| `movement.rs` | shared directional step rule | router and release producer use the same `step_ok` |
+| `movement.rs` | shared directional step rule | router and local producer use the same `step_ok` |
 | `router/grid.rs` | compatibility step-grid A-star | retained for fixture tests; production travel uses the collision+transport router |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
 | `tile.rs` | tile coords and distance | x, z, level |
@@ -380,52 +381,45 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `executor_adapter.rs` | raw forwarding surface for `nav-executor` only | plan-count/leg helpers, web/door predicates, shared constants; not part of `contract` |
 | `test_support.rs`, `test_support/source_scan.rs` | planner fixture builders and source scanner | test scope plus `test-support` feature gates |
 | `walk_destinations.rs` | shared walk-destination pins | town tiles for WalkTo confirm |
-| `required-content-{274,289}.tsv` | shared canonical content inputs | Quester coverage, nightly staging, and the baker use the same data |
+| `required-content-{274,289}.tsv` | semantic navigation coverage inputs | Quester coverage and nav-coverage facts |
 | `world.rs` | bound world handle | packed collision plus transport graph |
 | `world_state.rs` | search gating facts | fail-closed edge requirements |
 | `zones.rs`, `zones/curated.rs` | exclusion data, spatial index and search exemptions | shared runtime hazard facts |
 
 ### nav-bake
 
-This producer depends on the planner. Runtime planning never depends on this crate.
-The combined future v18 schema is in the [baked reachability contract](baked-reachability.md).
-BR1 retains v17 and makes one generator-identity change to `nav-bake-3`.
+`nav-bake` owns local navigation payload generation and schema-3 crossings
+export. It uses API game-data types and pure decoders with embedded game-data
+disabled. Runtime planning does not depend on this tool.
 
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
-| `bake.rs` | release bake orchestration and zone derivation | shared by the CLI and application build |
-| `bundle.rs` | staging, fingerprints, stamps and required inputs | runtime identity schemas remain in planner |
-| `manifest.rs` | generated navigation manifest assembly | no runtime schema copy |
-| `collision.rs` | collision construction and stamping | shared runtime models remain in planner |
-| `pack/` and `pack.rs` | source parsers, bank derivation and encoding | pack and sidecar output bytes |
-| `canlight.rs` | static canlight producer | reads shared runtime policy identity |
-| `services.rs` | navpois and hunter inputs | jm2 placements, handlers and labels |
-| `zones.rs` | curated group generation inputs | shared hazard facts remain in planner |
-| `transport/` and `transport.rs` | transport derivation and parser support | all 26 source families, nested helpers and embedded procedures |
-| `bin/nav-pack.rs` | custom-input bake CLI | explicit output paths |
-| `bin/nav-input-audit.rs` | offline input audit | developer tool, not runtime routing |
-| `bin/cache-content-id.rs` | offline identity export | reads the selected cache and snapshot |
+| `bake.rs` | local navigation derivation | reads local engine content and the revision's client cache |
+| `canlight.rs` | static canlight producer | writes feature data |
+| `services.rs` | POI derivation | writes feature data |
+| `transport/` and `transport.rs` | transport derivation and parser support | reads content and engine procedures |
+| `pack/` and `pack.rs` | pack and sidecar encoding | writes the current navigation payload formats |
+| `bin/nav-pack.rs` | local bake and crossings export CLI | explicit inputs and outputs |
 
-`host-play` admits build and dev dependencies on the baker. Panel, frontend-core,
-and TUI admit only producer-fixture dev edges. The latter two include host-play's
-shared map and upgrade fixtures. The e2e tool admits its input-audit edge.
-The host retains its planner build dependency for schemas, hashes and `FORMAT_ID`.
-An environment skip flag does not remove nonoptional Cargo build dependencies.
+`nav-bake` remains a workspace member and a tooling dependency. The product
+host has no build dependency on it and does not run it. The host stages the
+five existing files from `target/local-data/nav/<revision>/`. The
+`host-play` fixture edge remains dev-only, and `e2e` retains its normal
+tooling edge.
 
 
-The planner's and baker's `clippy.toml` files deny action types, functions, methods, and
-macros by compiler identity. `tools/architecture/nav_clippy.py --write`
-generates the lists and their inventory from rustdoc JSON.
-`python3 -B tools/architecture/nav_clippy.py --check` checks the inventory
-and runs the external-crate probes. The Clippy CI job runs this check.
-The inventory reads `api` with default features and `client` with default and
-`test-support` features. This includes feature-gated seed items such as
-`client::io::client_stream::connect_ws_plain` in the generated deny list.
+The planner's and baker's `clippy.toml` files deny action types, functions,
+methods and macros by compiler identity. `tools/architecture/nav_clippy.py
+--write` derives those lists from Rustdoc JSON.
+`python3 -B tools/architecture/nav_clippy.py --check` derives the current deny
+surface, compares the actual Clippy files and runs the external-crate probes.
+The CI step stays in place. There is no stored public-item or source-hash
+baseline, so a source-only edit does not need a baseline refresh.
 
-The inventory includes public constants and statics, which Clippy cannot
-deny as values. The compiler check rejects new wrappers of denied types
-that these lints cannot detect. Source hashes also detect changes to
-inactive, feature-gated seed code.
+The compiler profiles read `api` with default features and `client` with
+default plus `test-support` features. This includes gated methods such as
+`client::io::client_stream::connect_ws_plain`. The probes retain their actual
+denial assertions and documented value-read limits.
 
 The exact compiler-lint limit is a value-only read of an external constant
 or static: `let _ = &api::S`, `let _ = api::C`, or
@@ -442,19 +436,12 @@ World-state unit tests use import- and function-level expects to construct
 a cache-less client and populate snapshot families. These method expects
 are test-only. The production planner has no method-lint exception.
 
-Both scans read the standard Cargo roots: `build.rs`, `src/main.rs`,
-`src/lib.rs`, each direct `src/bin/*.rs`, each direct `examples/*.rs`, and
-each direct `tests/*.rs`. They also follow attached modules and `include!`
-files. They report unsupported source forms and unattached Rust files under
-`src`.
-
-The `nav` scan rejects production paths to const, static, and associated-
-constant values in the generated `api` and `client` seed inventory. It
-ignores those value paths in test scope. It does not replace Clippy's
-compiler-resolved action checks.
-
-The `nav-executor` scan enforces separate production and test allowlists for
-`nav` paths in executor source. It does not scan planner source in `nav`.
+The protected source checker enforces the retained script and frontend-core
+navigation/client boundaries and owning/borrowed/scalar seams. These syntax
+checks complement, but do not replace, the compiler-resolved Clippy action
+denials. Neither a source hash nor a per-file inventory claims coverage of
+inactive cfg items; the compiler profiles and explicit probes define that
+coverage.
 
 ### nav-executor
 
@@ -476,6 +463,13 @@ the carry and worn bounds. Bank planners use this effective item bound, not
 the full search budget. Captured bank rows remain a separate dimension.
 Cursor construction does not allocate. Cursor growth uses checked limits and
 fallible reservations.
+Per-job admission uses the largest diagnosed requirement count admitted for
+the request, capped by the unchanged graph bound. Undo storage and post-bank
+inventory and worn reservations use that same admitted count. A smaller
+later diagnosis never reduces the bound during the request, even when no
+Hint overlay rows exist. A new diagnosis ends the current search job before
+bank buffers grow. The production continuation must pass fresh admission
+before work resumes. A larger reservation that exceeds the limit is refused.
 
 Route execution separates completed searches into private jobs in the existing
 Route family. A later job charges retained routes, diagnosis and plan storage
@@ -556,11 +550,11 @@ Image/catalogue schema 1 identities use domain-separated SHA-256 binary preimage
 (documented in `map/identity.rs`), with decoded client identity rather than
 transfer CRCs. Image policy includes exact encoder/compression-library versions.
 Nav/service changes affect the merged catalogue key, not terrain identity.
-`274bot.navpois` uses a 77-byte `274P`/1 header (length, record count, identity
-binding, payload hash) followed by bounded typed JSON. Nav bake generates the
-sidecar from jm2 NPC rows, rs2 bank-service handlers and `maps/labels.txt`;
-its whole-file digest is stamped on `NavManifest` / `BakeStamp` / identity rows.
-Packaging copies the data-only file with nav resources. Frozen bank APIs stay.
+`274bot.navpois` carries bounded typed feature records generated from jm2 NPC
+rows, rs2 bank-service handlers and `maps/labels.txt`. Its producer and
+decoder enforce the sidecar format and record structure; it has no file digest
+or nav-manifest binding. Packaging copies it with nav resources. Frozen bank
+APIs stay.
 
 Disk consumers use `ClientPois::decode`, `ImageManifest::decode`,
 `ServicePois::decode_navpois`, `ReadyCatalogue::open` and `ReadyImages::open`,
@@ -600,13 +594,21 @@ the operator's consent and adopts the tiles already verified).
 
 ### script
 
+Core interaction and paint types use `script::interact` and `script::paint`.
+The seat and snapshot DTOs use `script::native::seat_rows` and
+`script::native::snapshot_source`; the JS wire module does not re-export them.
+The JS implementation uses the `api_v2`, `compat`, `library`, `materialize`,
+`runtime`, `scene`, and `tooling` directory namespaces. Its crate root keeps
+the curated JS entry points, not aliases for Core types.
+
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
- | `lib.rs` | crate facade: `ScriptCtx`, `SlotScript`, registry descriptors | no `load` feature and no JS dependencies |
+ | `lib.rs` | crate facade: `ScriptCtx`, `SlotScript`, registry descriptors | runtime-neutral API; no JS dependencies |
  | `ctx.rs` | host-owned per-tick input and shared walk options | compiled cards receive `native::NativeTick`, not this driver |
  | `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata, native request kind, preparer and factory. Hosts install the JS cards with `script_js::install_cards()`. Slots refresh their static card view when the publication generation changes |
 | `native/actions.rs`, `native/ledger.rs`, `native/owner.rs`, `native/walk.rs`, `native/walk_wait.rs` | host action ledger and native walk correlation | receipts, revocation identities, route terminal versus arrival |
 | `native/death.rs`, `native/thieve.rs`, `native/thieving_core.rs` | shared death latch; native thieving machine and its core | content-derived respawn square |
+| `native/tickcycle.rs` | allocation-free observed-tick technique core | interval evidence, animation serials, checked obligations and the run-level slip policy; host receipts are not server acknowledgements |
 | `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, wear/remove, production, shop purchase and player-trade screen |
 | `slot.rs` | per-uid runner lifecycle | intent and presence gates, tick edge |
 | `surface.rs`, `surface/test_support.rs` | runtime-neutral surface cards, run contract and core test factory | slot lifecycle owns trait objects and typed facts, not JS or wire state |
@@ -619,7 +621,7 @@ the operator's consent and adopts the tiles already verified).
 | `machine.rs` | step-machine host | one multi-tick behavior in Rust |
 | `acquire/` | shared acquisition planning, typed block evidence and one bank-trip runner | `plan.rs` pure per-need decisions; `run.rs` native bank, walk and wear execution; authored Quester sequences retain their existing order and refusal text |
 | `quester/` | Quester card, Path types and compiler, runner, queue, pair and gang, eligibility, provisioning, watchdog, quest handlers and step families | `card.rs` card; `path.rs`, `compile.rs`, `schema.rs` Path values, lazy compile and JSON Schema; `runner.rs` colour-first tick loop with journal evidence; `registry.rs` bundled documents plus optional folder; `families/` one step family each (combat, dialogue, gather, partner, reach, thieve, ...) |
-| `gatherer/` | Gatherer card and runner | woodcutting, mining and fishing from live observation: `select.rs` target choice, `gather.rs`, `drop.rs` power drops, `supply.rs`, `recover.rs` death recovery, `area.rs`, `widen.rs`, `settings.rs`, `status.rs`, `oneop.rs` |
+| `gatherer/` | Gatherer card and runner | woodcutting, mining and fishing from live observation: `select.rs` target choice, `gather.rs` resource actions, `gather_timing.rs` knife-cycle signals and emissions, `runner_timing.rs` parked cycle and run policy, `drop.rs` power drops, `supply.rs`, `recover.rs` death recovery, `area.rs`, `widen.rs`, `settings.rs`, `status.rs`, `oneop.rs` |
 | `combat/` | shared observed-state combat machine | melee, ranged and magic on one planner (`machine.rs`, `style/`); `policy.rs`, `prayer.rs`, `guard.rs` WalkGuard, `threats.rs`, `schedule.rs`, `select.rs`, `tables.rs`, `request.rs` |
 | `combat/risk.rs`, `combat/risk/{facts,geometry,input,replay}.rs` | pure conservative route assessment | shared combat facts and food picker; complete route geometry; persistent poison input; no admission, route-worker or runtime escape wiring |
 | `api_gather.rs`, `api_progress.rs`, `api_session.rs` | JS API v2 session wire and output types | Gatherer sessions and quest progress for Load scripts |
@@ -660,7 +662,7 @@ the operator's consent and adopts the tiles already verified).
  | `shop.rs`, `market_catalog.rs` | shop and market descriptors | preset and catalog tables |
  | `loadout_plan.rs`, `loadouts_store.rs`, `settings_store.rs` | loadout and settings stores | operator-facing descriptors |
  | `library/rs2b0t_registry.rs`, `library/rs2b0t_registry/paths.rs`, `rs2b0t_registry/settings.rs`, `tooling/declared_abi.rs`, `module_imports.rs`, `identity.rs` | catalog card registration and identity (JS runtime library) | live in `script-js`; import scan, paths, ABI names |
- | `runtime/isolated_env.rs`, `library/js_cache.rs`, `runtime/memory_profile.rs`, `scene/events.rs` | isolate env, cache, and diagnostics (JS runtime) | live in `script-js`; support, no game actions. The profiling module keeps its root public path |
+ | `runtime/isolated_env.rs`, `library/js_cache.rs`, `runtime/memory_profile.rs`, `scene/events.rs` | isolate env, cache, and diagnostics (JS runtime) | live in `script-js`; support, no game actions. Profiling uses `script_js::runtime::memory_profile` |
  | `runtime/` | Load facade, shapes, cards and isolate (JS runtime) | lives in `script-js` as `src/runtime/` plus `src/library/`, `src/materialize/` and `src/api_v2/`; feature-gated library and isolate |
  | `runtime/platform.rs` | process-wide V8 platform bootstrap (JS runtime) | lives in `script-js`; protected on embedder main; unprotected only in tests |
  | `runtime/bindings.rs` | isolate bootstrap registration (JS runtime) | lives in `script-js`; register order and wrappers |
@@ -672,7 +674,7 @@ the operator's consent and adopts the tiles already verified).
  | `runtime/paint_chrome.rs`, `runtime/paint_jive.rs` | paint payload builders (JS runtime) | live in `script-js`; chrome and jive paints |
  | `canvas/mod.rs` | canvas recorder | state and recording API |
  | `canvas/geom.rs`, `canvas/raster.rs`, `canvas/style.rs`, `canvas/compose.rs` | canvas geometry, raster, style, composition | geometry and parsers are always available. Raster, fonts and composition require `canvas-raster`, which `frontend-core` enables by default |
- | `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
+ | `shim/mod.rs` (JS runtime) | JS module remapping and source assembly | lives in `script-js`; imports Core vocabulary without re-exporting it |
  | `interact.rs`, `paint.rs` | runtime-neutral interaction and paint vocabulary | shared by native and loaded scripts |
  | `shim/content.rs`, `shim/rows.rs`, `shim/modules.rs` | shim Rust producers (JS runtime) | live in `script-js`; content, V8 rows, and module remapping |
  | `shim/*.js` | embedded JS sources (JS runtime) | live in `script-js` as `src/shim/*.js`; name maps, coercion, await plumbing only |
@@ -733,11 +735,9 @@ libtest exception.
 | `evidence_writer.rs` | background live-evidence PNG and JSON writer | one thread per cell; the slot thread only hands over pixels and receipts |
 | `route_inspect.rs` | inspect cooperative-work adapter and owner | Captures one shared `WorldState` and `NavLease`. It runs strict search, borrowed `MissingRequirementsView`, bank-fetch planning, stand and post-bank routing, and zone diagnosis within the 192 MiB job charge. It transfers terminal custody to the shared 256 MiB owner ledger before WorkService consumes the result. It keeps one admitted job, one replaceable pending demand, two replay terminals and one held terminal. It uses acknowledgement, eviction and identity/revision-bound cancellation. |
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
-| `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
 | `walk_map.rs`, `walk_map/{actions,catalogue,observations,routes}.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
 | `map_cache.rs`, `map_cache/shipped.rs`, `map_cache/fixture.rs` (`test` / `test-support` fixtures), `map_producer.rs` | WalkTo map cache lifecycle | one `WorkService` MapBake family with resumable bounded producer cursors; demand, bake/publication, installing release-shipped terrain that matches the bound image identity; no private bake worker |
 | `map_bind.rs` | process-wide map demand | manager at first open (shipped terrain under the install root's `map/`), packaging bake, bounded shared-worker terrain PNG decode (258×258 RGBA8; 512 KiB input plus inline job, Arc refcounts and refcount-alignment padding; `png::Limits` allowance of one additional raw RGBA row, 2 MiB scratch covering the overlapping ≤512 KiB eXIf buffer and metadata copy, ≤128 KiB raster buffer, row scratch and bounded inflater tables; 266,256-byte result; text/ICC metadata is skipped) |
-| `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
 | `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
 | `memory_diagnostics.rs` | memory-run diagnostics | bounded, never drains logs |
@@ -897,7 +897,7 @@ retained by a consumer.
 | `fleet.rs` | fleet membership and the fleet model | ordered members, logout latch, focus neighbour; `FleetModel`: one row per profile identity in the saved Load order (`profile_order.rs`), loaded or not, each with an explicit loaded flag, the marks (mark operations over the shown rows and status predicates: `MarkOp`, `MarkPredicate`, the tri-state `ShownMarks`), the filter and order, the fleet card (`FleetCard`: each bot's own, the focused bot's, or a pinned card, with a label rebuilt only when the card, focus or heading changes), the shown rows and their counts, rebuilt only when the core's rows or the vault's profiles moved. Each front end holds one and lends it through `Models::with_fleet`; the panel's Fleet window, rail and Grid and the TUI fleet pane read it |
 | `fleet_plan.rs`, `session/fleet_plan.rs` | fleet decisions | `PlanFleetAction` freezes a fleet action (`FleetAction`) into a `FleetPlan`: one staged profile (`stage_plan_target`, a world bubble or the TUI cursor), else the marked identities (hidden ones too) or, with no marks, the loaded shown rows; the resolved card; the bots it would interrupt; the skipped rows with reasons; one prompt text; and whether it asks first (no-marks scope, an interruption, a settings copy or a world switch). One plan waits; a newer one replaces it and says so. The plan's own command with `Targets::Plan` runs over the frozen identities and card (never the live marks or Browse pick); `CancelFleetPlan` drops it and releases a copy's prepared scope. `FleetResult` follows the run's command record (failures, skips, done, pending) and logs one line when it settles |
 | `session/world_switch.rs` | Switch world | the owner of each `SwitchWorld` member: the world save first (the profile's world field), then, only once it is durable, the existing `SwitchWorld` intent, whose turnover relogs the bot through the login queue; the member settles from the relog (a new session in game on the requested world), fails with what happened and is cancelled by a later Log in, Log out or Remove; the choices are the bound server's public worlds, read once at play start (none on a one-world server). One small record per switching bot, only while its switch runs. A switch plan (`FleetAction::SwitchWorld`, one staged bot or the marks) always asks first |
-| `profile_order.rs` | saved Load order | the saved order in the shared preferences (`profile_order`), stored as one small member per profile keyed by its vault uid with a sort key (`"<uid>": <key>`, about 25 bytes per profile; a value holds at most 4,096 bytes, so the preferences service holds a large order one member per row, and one save replaces every changed or removed member in one file replacement, all or none): seeded in vault (alphabetical) order without a write, reconciled on each vault change (append new; a deleted profile's member stays stored, unordered, while its deletion is not durable, so a failed deletion gets its place back, and is removed by the next save once durable; a rename keeps the identity and so the place, whether it commits or fails); `OperatorSession::fresh_uid` allocates above every uid the vault and the order have held, so a new profile never takes a deleted one's place; a move changes only the moved profiles' keys (gaps; renumbered when spent, when a key would leave `±2^52`, or when a stored key is outside it); `ReorderOp` moves profiles by identity before or after a target in the full order, or puts the marked ones on top in their order. The session orders members, Load all and marked targets by it and writes it through the preferences service (`ReorderProfiles`: pending until durable, one audit line, the last durable order back on a failure) |
+| `profile_order.rs` | saved Load order | the one saved order serving the Fleet and the Profiles window in both front ends, in the shared preferences (`profile_order`), stored as one small member per profile keyed by its vault uid with a sort key (`"<uid>": <key>`, about 25 bytes per profile; a value holds at most 4,096 bytes, so the preferences service holds a large order one member per row, and one save replaces every changed or removed member in one file replacement, all or none): seeded in vault (alphabetical) order without a write, reconciled on each vault change (append new — profiles created since the last reconcile in their creation sequence, so an imported batch keeps its file's sequence; a deleted profile's member stays stored, unordered, while its deletion is not durable, so a failed deletion gets its place back, and is removed by the next save once durable; a rename keeps the identity and so the place, whether it commits or fails); `OperatorSession::fresh_uid` allocates above every uid the vault and the order have held, so a new profile never takes a deleted one's place; a move changes only the moved profiles' keys (gaps; renumbered when spent, when a key would leave `±2^52`, or when a stored key is outside it); `ReorderOp` moves profiles by identity before or after a target in the full order, or puts the marked ones on top in their order, staged with its `ReorderSurface` (a Fleet-list reorder needs the fleet model in Load order and reads its marks; a Profiles-list move needs neither and never touches the Fleet's view sort). The session orders members, Load all and marked targets by it and writes it through the preferences service (`ReorderProfiles`: pending until durable, one audit line, the last durable order back on a failure); front ends render `entries()` (name and identity in order) without copying |
 | `selection.rs`, `marked.rs`, `bulk.rs` | marked-bot selection and commands | marks keyed by profile identity; Assign, Assign & restart, log in/out on marked rows; one outcome per marked row |
 | `group_walk.rs` | group walk | one WalkTo destination for every marked bot; panel picker and TUI map both call it |
 | `walk_permissions.rs`, `nav_prefs.rs`, `map_bake.rs` | durable walk and nav preferences; terrain-bake consent | shared by both front ends; read fail closed |
@@ -1058,13 +1058,13 @@ host API run through the same isolate as JS API v2 ([`api/js-api-v2.md`](../api/
 
 ## Navigation pack and server profiles
 
-The nav pack is format v17 (magic `274V`). Decoding rejects v16 and older as
-`BadVersion`: rebake custom packs with `nav-pack`. Three sidecars ride beside
-the pack: raw flags (`274F`/1), paint-reach (`274R`/1) and static canlight
-(`274L`/1); `274bot.navpois` (`274P`/1) is the fourth. Application builds bake
-and stage the selected revision's navigation automatically
-(`BOT_NAV_REVISION`, default 289; `BOT_NAV_BUILD=require|skip`); `nav-pack` is
-only for deliberate custom-input bakes, selected with `--nav-pack`.
+The current pack format is `274V19` (magic `274V`). Older incompatible
+versions fail with `BadVersion`; runtime decoding keeps geometry, length, and
+structural checks. Its four sidecars carry flags, reachability, canlight, and
+POI data. Product builds stage the five existing files from
+`target/local-data/nav/<revision>/`; they do not bake them.
+`BOT_NAV_BUILD=skip` stages nothing. `BOT_NAV_REVISION` selects the staged
+revision, and `NAV_PACK` is a runtime override only.
 
 `--profile NAME` picks a server profile from `~/.274bot/servers.json`,
 created on first use with `local-274`, `local-289` and `rs2b2t`. `--rs2b2t`
@@ -1080,6 +1080,8 @@ need nothing. Profile files and the instance lock are owned by `host-play`
 - Per-bot state is bounded and inline: fixed-size structs with asserted
   size budgets (for example `Combat`, `WalkGuard`, `Threat`), no per-tick or
   per-frame allocation on hot paths.
+- Warm the once-per-process combat tables before measuring an API Gatherer seat.
+  Report their allocation separately. Do not charge their first initialization to one bot.
 - Measurement never equates allocation counts with RSS. The opt-in
   `BOT_MEMORY_N` harness (see [harness.md](harness.md)) reports RSS per
   additional bot; sample fields are separate domains and are never summed.
@@ -1181,9 +1183,14 @@ in the root `Cargo.toml` holds the set: `undocumented_unsafe_blocks` and
 firing is an error) and `allow_attributes_without_reason`, plus the six
 approved lints `redundant_clone`, `significant_drop_in_scrutinee`,
 `unchecked_time_subtraction`, `needless_collect`,
-`large_types_passed_by_value` and `assigning_clones` (deny). A crate opts
+`large_types_passed_by_value` and `assigning_clones` (deny), plus `todo`
+and `unimplemented` (deny), which stop a `todo!()` or `unimplemented!()`
+stub from shipping as a runtime panic. A crate opts
 in with `[lints] workspace = true` in its manifest when a refactor reaches
-it and stays opted in; `vault` is the first. Only `unwrap_used` is scoped
+it and stays opted in; `vault` is the first. The two stub lints also hold in
+every crate that has not opted in: CI passes `-D clippy::todo -D
+clippy::unimplemented` to every main-workspace clippy command (the client
+fork is a separate workspace and is not covered). Only `unwrap_used` is scoped
 to non-test code (via `allow-unwrap-in-tests` in `clippy.toml`): clippy
 1.98 offers no per-lint test exemption for the other lints, so opted-in
 crates keep their tests clean too.
@@ -1242,23 +1249,19 @@ edge (including a new target cfg or cross-crate feature request), an edge kind,
 a migration, an optional-dependency activation, a vendored path package, a client manifest change, a root patch or replacement entry, or a checker change.
 The operator edits `policy.toml` where the rule change needs it.
 First merge current `dev` into the branch being merged.
-Regenerate the baseline from that merged branch tree in the same arch commit:
-
-```bash
-python3 -B check.py --emit-provenance-baseline /path/to/merged-branch > graph-provenance.json
-```
-
-Review removed records. Retain records that other active branches still need.
+Review the protected policy against that merged branch.
+The checker derives crate identities and ownership from the checked tree.
+It does not emit or refresh a graph-provenance baseline.
 
 The operator publishes first; the product change lands after. Only the
 operator can push `274bot-arch`; agents cannot. Propose the policy edit as
 a patch or branch bundle for the operator to review and push.
 Outside the pinned client manifests, purely local features with no optional dependency or cross-crate edge need no operator commit.
-Fine ownership/seam/inventory data also needs no operator commit. Fine-data
-changes (ownership rows, inventory rows, foreign-type rows) are ordinary
-product diffs in `tools/architecture/`, reviewed like code — the checker
-loads them from the checked tree, refuses malformed or stale data, and
-cannot widen the protected edge policy.
+Semantic foreign-type classification in `tools/architecture/foreign_types.json`
+remains ordinary reviewed product data. Ownership classes come from syntax,
+not candidate-side ownership or inventory rows.
+Existing seam and import exceptions stay protected. Candidate changes cannot
+add or widen an exception.
 
 1. Update the tables on this page so the public description matches.
 2. Run the local command above (point local-only `ARCH_REPO` at a local

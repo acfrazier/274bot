@@ -359,8 +359,12 @@ pub(super) struct CommandDesk {
     quester_game_data: Option<Arc<api::game_data::SelectedGameData>>,
     /// The rows the next MarkAll marks (reused buffer).
     mark_all: Vec<crate::selection::ProfileIdentity>,
-    /// The reorder the next ReorderProfiles applies.
-    reorder: Option<crate::profile_order::ReorderOp>,
+    /// The reorder the next ReorderProfiles applies, and the list it came
+    /// from.
+    reorder: Option<(
+        crate::profile_order::ReorderOp,
+        crate::profile_order::ReorderSurface,
+    )>,
     /// What the next vault row commits.
     vault: Option<super::vault_rows::StagedVault>,
     /// The next Select also brings the member's worker up (the panel's
@@ -409,11 +413,20 @@ impl CommandDesk {
         &mut self.mark_all
     }
 
-    pub(super) fn stage_reorder(&mut self, op: crate::profile_order::ReorderOp) {
-        self.reorder = Some(op);
+    pub(super) fn stage_reorder(
+        &mut self,
+        op: crate::profile_order::ReorderOp,
+        surface: crate::profile_order::ReorderSurface,
+    ) {
+        self.reorder = Some((op, surface));
     }
 
-    pub(super) fn take_reorder(&mut self) -> Option<crate::profile_order::ReorderOp> {
+    pub(super) fn take_reorder(
+        &mut self,
+    ) -> Option<(
+        crate::profile_order::ReorderOp,
+        crate::profile_order::ReorderSurface,
+    )> {
         self.reorder.take()
     }
 
@@ -664,6 +677,11 @@ impl<Io> OperatorSession<Io> {
         if let Err(error) = &submitted {
             let bots = self.refused_bots(targets);
             self.record_refusal(command, &bots, &error.to_string());
+            if command == OperatorCommand::Quit {
+                // A refused Quit has no report to dispatch, but must still
+                // retire Play (including workers without a status row).
+                self.close_play();
+            }
         }
         submitted
     }
@@ -775,11 +793,14 @@ impl<Io> OperatorSession<Io> {
         let command = self.route_paint_control(command, targets, surface);
         // A planned command runs over the plan's frozen marks, never the
         // lent ones.
-        let plan = if matches!(targets, Targets::Plan) {
+        let mut plan = if matches!(targets, Targets::Plan) {
             Some(self.take_plan_for(command)?)
         } else {
             None
         };
+        if let Some(plan) = plan.as_mut() {
+            self.validate_quester_start_zones(plan, surface);
+        }
         let targets = if plan.is_some() {
             Targets::Marked
         } else {
@@ -1807,6 +1828,10 @@ impl<Io> OperatorSession<Io> {
             }
             OperatorCommand::SetSessionLog(on) => {
                 let row = super::prefs::PrefRow::SessionLog(on);
+                self.pref_row(row, request, application_admitted, surface, submitted)
+            }
+            OperatorCommand::SetPvpStartFights(on) => {
+                let row = super::prefs::PrefRow::PvpStartFights(on);
                 self.pref_row(row, request, application_admitted, surface, submitted)
             }
             OperatorCommand::SetMapBakeChoice(choice) => {

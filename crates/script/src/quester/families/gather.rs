@@ -21,8 +21,8 @@ use crate::gatherer::select::{
 use crate::gatherer::settings::{admit_quest_method, GathererSettings};
 use crate::gatherer::supply::method_ready;
 use crate::gatherer::{AreaMode, WorkArea};
-use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions};
+use crate::quester::prereq::walk::PrereqWalk;
 use api::gather_methods::{GatherCatalog, GatherSkill};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
@@ -248,6 +248,7 @@ impl StepPlan for Plan {
             fishing: FishingSurvey::default(),
             gather: None,
             walk: None,
+            walk_retry: crate::native::WalkRetryState::default(),
             last_attempt: None,
         }))
     }
@@ -269,18 +270,28 @@ struct Run {
     deadline: Duration,
     fishing: FishingSurvey,
     gather: Option<ActionHandle<GatherRun>>,
-    walk: Option<ActionHandle<Walk>>,
+    walk: Option<PrereqWalk>,
+    walk_retry: crate::native::WalkRetryState,
     last_attempt: Option<u64>,
 }
 
 impl StepRun for Run {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        let walk_pending = if let Some(handle) = &self.walk {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        let walk_pending = if let Some(walk) = self.walk.as_mut() {
+            match walk.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => true,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
+                    if self
+                        .walk_retry
+                        .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
+                    {
+                        self.walk = None;
+                        return Poll::Pending;
+                    }
                     super::walk_step_evidence(receipt)?;
+                    self.walk_retry.reset();
+                    self.approach = None;
                     self.walk = None;
                     false
                 }
@@ -288,6 +299,12 @@ impl StepRun for Run {
         } else {
             false
         };
+        if self
+            .walk_retry
+            .waiting_for_next_tick(cx.tick.cx.evidence().tick)
+        {
+            return Poll::Pending;
+        }
         if cx.tick.cx.active_now() >= self.deadline {
             return Poll::Ready(Err(ActionError::Failed("gather deadline exhausted".into())));
         }
@@ -354,13 +371,16 @@ impl StepRun for Run {
         };
         if let Some(anchor) = self.approach {
             if !super::reach::within(here.value, anchor, i32::from(self.radius)) {
-                self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick.actions.begin::<Walk>(
-                        super::reach::walk_request(anchor, self.radius, None, cx.required_after),
-                        &mut cx.tick.cx,
-                    ),
+                let mut request =
+                    super::reach::walk_request(anchor, self.radius, None, cx.required_after);
+                // The approach gate is the authored anchor radius; any
+                // standable tile inside the gather area is enough.
+                request.arrival = nav_planner::contract::ArrivalKind::Area;
+                self.walk = Some(std::task::ready!(super::begin_approach_walk(
+                    &mut self.walk_retry,
+                    request,
+                    cx,
                 ))?);
-                self.approach = None;
                 return Poll::Pending;
             }
             self.approach = None;
@@ -432,8 +452,10 @@ impl StepRun for Run {
                 ActionError::Unavailable(format!("safe resource access goals: {error}").into())
             })?
         {
-            self.walk = Some(std::task::ready!(crate::native::defer_budget(
-                cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx),
+            self.walk = Some(std::task::ready!(super::begin_approach_walk(
+                &mut self.walk_retry,
+                request,
+                cx,
             ))?);
             return Poll::Pending;
         }
@@ -447,6 +469,7 @@ impl StepRun for Run {
                     catalog: Arc::clone(&self.catalog),
                     stall_ticks: DEFAULT_STALL_TICKS,
                     quest_owned: true,
+                    timing: None,
                 },
                 &mut cx.tick.cx,
             ),
@@ -456,6 +479,9 @@ impl StepRun for Run {
     }
 
     fn cancel(&mut self, _actions: &mut NativeActions) {
+        if let Some(walk) = self.walk.as_mut() {
+            walk.cancel();
+        }
         self.gather = None;
         self.walk = None;
     }
@@ -464,7 +490,7 @@ impl StepRun for Run {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quester::families::tests::{def, local_player, with_tick};
+    use crate::quester::families::tests::{def, local_player, post_walk_receipt, with_tick};
     use api::snapshot::{
         GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView, StatView,
         WorldStateView,
@@ -837,16 +863,70 @@ mod tests {
 
     #[test]
     fn quest_gather_denied_permissions_restrict_mixed_resource_stands() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_quest_mixed_resource_walk(true);
     }
 
     #[test]
     fn quest_gather_allowed_permissions_keep_resource_approach_unchanged() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_quest_mixed_resource_walk(false);
+    }
+    #[test]
+    fn gather_arrival_clears_authored_approach_before_stale_tile_can_rewalk() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut plan = plan("mining.copper", 1);
+        let snapshot = snapshot(&plan, 1);
+        let here = snapshot.local_player().unwrap().player.actor.tile;
+        let anchor = WorldTile {
+            x: here.x + 20,
+            ..here
+        };
+        plan.anchor = Some(anchor);
+        plan.radius = 2;
+
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let walk_count = |ledger: &Option<Box<crate::native::ledger::Ledger>>| {
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+                .count()
+        };
+        assert_eq!(walk_count(&ledger), 1);
+
+        post_walk_receipt(&mut ledger, 3, crate::native::WalkEnd::Arrived, None);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert_eq!(
+            walk_count(&ledger),
+            1,
+            "arrival clears the authored approach even if the snapshot tile lags"
+        );
     }
 
     #[test]
     fn gather_uses_native_resource_action_and_finishes_only_at_exact_goal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan("mining.copper", 2);
         let mut snapshot = snapshot(&plan, 1);
         let mut ledger = None;
@@ -859,7 +939,7 @@ mod tests {
             .is_pending()
         );
         assert!(ledger.as_ref().is_some_and(|ledger| ledger.outbox.iter().any(|interaction| {
-            matches!(&interaction.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. }) if action == "Mine")
+            matches!(&interaction.effect, crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. }) if action == "Mine")
         })));
         snapshot.seed_inventory(
             vec![held(1265, 1, 0), held(438, 99, 1), held(436, 1, 2)],
@@ -880,6 +960,9 @@ mod tests {
 
     #[test]
     fn same_tick_gather_and_authored_approach_admissions_keep_their_plan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for approach in [false, true] {
             let mut plan = plan("mining.copper", 2);
             let snapshot = snapshot(&plan, 1);
@@ -914,13 +997,55 @@ mod tests {
                     if request.target.x == anchor.x + 20));
             } else {
                 assert!(matches!(effect, crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::Loc { action, .. }) if action == "Mine"));
+                    crate::interact::InteractReq::Loc { action, .. }) if action == "Mine"));
             }
         }
     }
 
+    /// The approach gate is `reach::within` against the authored anchor and
+    /// radius, so the approach walk must accept any standable tile inside
+    /// that area rather than demand a path onto the anchor tile.
+    #[test]
+    fn authored_gather_approach_walks_the_anchor_area() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut plan = plan("mining.copper", 2);
+        let snapshot = snapshot(&plan, 1);
+        let origin = snapshot.local_player().unwrap().player.actor.tile;
+        let anchor = WorldTile {
+            x: origin.x + 20,
+            ..origin
+        };
+        plan.anchor = Some(anchor);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let crate::native::HostEffect::Walk(request) =
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+        else {
+            panic!("an authored anchor must approach before gathering");
+        };
+        assert_eq!(request.target, anchor);
+        assert_eq!(request.radius, 12);
+        assert_eq!(request.loc_id, None);
+        assert_eq!(
+            request.arrival,
+            nav_planner::contract::ArrivalKind::Area,
+            "the authored anchor radius accepts any standable tile inside it"
+        );
+    }
+
     #[test]
     fn ordinary_gatherer_defers_supply_refusal_to_server_for_revalidation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan("mining.copper", 1);
         let mut snapshot = snapshot(&plan, 1);
         let loc = snapshot.locs()[0].clone();
@@ -945,13 +1070,14 @@ mod tests {
                         catalog: Arc::clone(&plan.catalog),
                         stall_ticks: DEFAULT_STALL_TICKS,
                         quest_owned: false,
+                        timing: None,
                     },
                     &mut tick.cx,
                 )
                 .expect("ordinary Gatherer waits for server refusal")
         });
         assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
-            &op.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+            &op.effect, crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })
                 if action == "Mine"
         )));
         snapshot.seed_chat_lines(vec![api::snapshot::ChatLineView {
@@ -973,6 +1099,9 @@ mod tests {
 
     #[test]
     fn gather_observed_fishing_npc_owns_approach_without_a_walk() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = plan("fishing.saltfish.op1", 1);
         plan.skill = Skill::Fishing;
         plan.item_id = 317;
@@ -1051,7 +1180,7 @@ mod tests {
             .iter()
             .any(|op| matches!(op.effect, crate::native::HostEffect::Walk(_))));
         assert!(outbox.iter().any(|op| matches!(
-            &op.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Npc { action, index, .. })
+            &op.effect, crate::native::HostEffect::Interaction(crate::interact::InteractReq::Npc { action, index, .. })
                 if action == "Net" && *index == Some(7)
         )));
     }
@@ -1060,6 +1189,9 @@ mod tests {
     // Retain the reviewer's copper qty=2 probe through continue and resumed yield.
     #[test]
     fn review_probe_level_up_modal_mid_goal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan("mining.copper", 2);
         let mut snapshot = snapshot(&plan, 1);
         let mut ledger = None;
@@ -1082,7 +1214,9 @@ mod tests {
         .is_pending());
         assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
             op.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog { .. })
+            crate::native::HostEffect::Interaction(
+                crate::interact::InteractReq::ContinueDialog { .. }
+            )
         )));
         snapshot.seed_chat_modal(-1, vec![]);
         snapshot.seed_chat_options(vec![], -1);
@@ -1092,7 +1226,7 @@ mod tests {
         .is_pending());
         assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
             &op.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })
                 if action == "Mine"
         )));
         snapshot.seed_inventory(vec![held(1265, 1, 0), held(436, 2, 1)], 28);
@@ -1106,6 +1240,9 @@ mod tests {
 
     #[test]
     fn gather_takes_a_usable_method_even_when_another_method_is_level_gated() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = plan("mining.copper", 1);
         let snapshot = snapshot(&plan, 1);
         let iron = plan
@@ -1126,13 +1263,16 @@ mod tests {
         .is_pending());
         assert!(ledger.as_ref().unwrap().outbox.iter().any(|op| matches!(
             &op.effect,
-            crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+            crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })
                 if action == "Mine"
         )));
     }
 
     #[test]
     fn gather_arrives_at_a_loc_footprint_not_its_origin() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan("mining.copper", 1);
         let mut snapshot = snapshot(&plan, 1);
         let mut loc = snapshot.locs()[0].clone();
@@ -1156,13 +1296,16 @@ mod tests {
             .iter()
             .any(|op| matches!(op.effect, crate::native::HostEffect::Walk(_))));
         assert!(outbox.iter().any(|op| matches!(
-            &op.effect, crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+            &op.effect, crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })
                 if action == "Mine"
         )));
     }
 
     #[test]
     fn gather_level_gate_emits_nothing_and_missing_evidence_has_a_fixed_deadline() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let iron = plan("mining.iron", 1);
         let snapshot = snapshot(&iron, 1);
         let mut ledger = None;
@@ -1194,6 +1337,9 @@ mod tests {
 
     #[test]
     fn late_inventory_growth_cannot_extend_the_gather_deadline() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = plan("mining.copper", 1);
         let mut snapshot = snapshot(&plan, 1);
         let mut ledger = None;
@@ -1216,6 +1362,9 @@ mod tests {
 
     #[test]
     fn manual_approach_cancellation_wins_over_an_inventory_goal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = plan("mining.copper", 1);
         let mut snapshot = snapshot(&plan, 1);
         let tile = snapshot.local_player().unwrap().player.actor.tile;
@@ -1242,6 +1391,9 @@ mod tests {
     }
     #[test]
     fn compiled_woodcutting_gather_runs_until_three_bundled_normal_logs() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (plan, catalog, method_index, axe_id, op) = compiled_woodcutting_step();
         let mut snapshot = woodcutting_snapshot(&catalog, method_index, axe_id, &op);
         let mut ledger = None;
@@ -1256,7 +1408,7 @@ mod tests {
             ledger.outbox.iter().any(|operation| {
             matches!(
                 &operation.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })
                     if action.as_str() == &*op
             )
         })

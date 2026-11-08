@@ -3,6 +3,8 @@
 pub use obj_names::{ItemDefView, LocDefView, LocDefs, ObjNames};
 pub use random::{DetectedRandom, RandomClaim, RandomKind};
 pub use snapshot::{LocalTile, WorldTile};
+/// Maximum further bank returns accepted by the ChickenKiller bank check.
+pub const CHICKEN_BANK_MAX_RESTARTS: u8 = 3;
 
 pub mod bank_memory;
 pub mod cake_stall;
@@ -15,7 +17,6 @@ pub mod content;
 pub mod cook_locations;
 pub mod debug_commands;
 pub mod ent;
-mod family_asset;
 pub mod game_data;
 pub mod gather_methods;
 pub mod gather_tools;
@@ -31,6 +32,8 @@ pub mod named_banks;
 pub mod native_input;
 pub mod obj_names;
 pub mod prayer;
+pub mod prereq_knowledge;
+pub mod prereq_steps;
 pub mod process_condition;
 pub mod prot;
 pub mod query;
@@ -44,4 +47,6 @@ pub mod settle;
 pub mod shop_facts;
 pub mod snapshot;
 pub mod stock;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod work;

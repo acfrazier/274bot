@@ -63,7 +63,11 @@ fn panel_exit_status_child() {
             let repeated_failure = live.tick(&mut session, &ShotStatus::Missing, None, 0);
             assert!(repeated_failure.is_none());
             assert_eq!(live_exit_code(&live, repeated_failure.as_deref()), Some(1));
-            let result = finish_panel_run(Ok(()), live.failure().map(str::to_owned));
+            let result = finish_panel_run(
+                Ok(()),
+                live.failure()
+                    .map(|failure| crate::window::PanelError::LiveHarnessFailure(failure.into())),
+            );
             std::process::exit(if result.is_ok() { 0 } else { 1 });
         }
         Ok("pass") => {
@@ -97,6 +101,152 @@ fn panel_exit_status_child() {
                 soak_capture: SoakCapture::NotNeeded,
             });
             std::process::exit(live_exit_code(&live, None).expect("PASS exits immediately"));
+        }
+        Ok("startup_fail") => {
+            let mut session = crate::session::Session::new();
+            let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 1,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            });
+            let exited = play
+                .attach_stop_observed_worker_for_test("startup", host_play::SlotArm::new(1, false));
+            session.core.fleet_mut().add("startup");
+            session.core.set_play(Some(play));
+            let error = super::fail_startup(&mut session, true, "synthetic boot error".into())
+                .expect("fatal boot must report its error to the event loop");
+            assert!(matches!(
+                &error,
+                crate::window::PanelError::StartupFailure(_)
+            ));
+            assert!(!session.core.has_play(), "fatal startup must retire Play");
+            assert!(
+                exited.try_recv().is_ok(),
+                "fatal startup must join its worker"
+            );
+            assert!(
+                session.core.commands().reports().any(|report| {
+                    report.command() == frontend_core::OperatorCommand::Quit && report.is_settled()
+                }),
+                "fatal startup must settle Quit before window teardown"
+            );
+            assert!(finish_panel_run(Ok(()), Some(error)).is_err());
+            eprintln!("startup worker retired before window teardown");
+        }
+        #[cfg(feature = "memory-profile")]
+        Ok("memory_pass") => {
+            let mut state = PanelState::default();
+            let config = frontend_core::bench::BenchConfig::from_env()
+                .expect("benchmark configuration")
+                .expect("memory benchmark enabled");
+            let mut run =
+                frontend_core::bench::BenchRun::prepare(config, "panel").expect("benchmark run");
+            let name = run.names()[0].clone();
+            run.finish_for_test();
+            let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 1,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            });
+            let exited =
+                play.attach_stop_observed_worker_for_test(&name, host_play::SlotArm::new(1, false));
+            state.session.core.fleet_mut().add(&name);
+            state.session.core.set_play(Some(play));
+            state.memory = Some(run);
+            let mut ctx = crate::test_support::imgui_context();
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            let _ui = ctx.frame();
+            let failure = std::sync::Mutex::new(None);
+            assert!(super::frame_pumps(&mut state, &failure));
+            assert!(!state.session.core.has_play(), "PASS must retire Play");
+            assert!(
+                exited.try_recv().is_ok(),
+                "PASS must join its worker before frame_pumps returns"
+            );
+            assert!(
+                failure.lock().unwrap().is_none(),
+                "PASS must exit successfully"
+            );
+            assert!(
+                state
+                    .session
+                    .core
+                    .commands()
+                    .reports()
+                    .any(
+                        |report| report.command() == frontend_core::OperatorCommand::Quit
+                            && report.is_settled()
+                    ),
+                "PASS must use the Quit settlement before window teardown"
+            );
+            ctx.render();
+            eprintln!("PASS worker joined before window teardown");
+        }
+        #[cfg(feature = "memory-profile")]
+        Ok("memory_fail") => {
+            let mut state = PanelState::default();
+            let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 1,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            });
+            // A worker without a fleet or status row has no Quit target.
+            let exited = play.attach_stop_observed_worker_for_test(
+                "unreported",
+                host_play::SlotArm::new(1, false),
+            );
+            state.session.core.set_play(Some(play));
+            let config = frontend_core::bench::BenchConfig::from_env()
+                .expect("benchmark configuration")
+                .expect("memory benchmark enabled");
+            state.memory = Some(
+                frontend_core::bench::BenchRun::prepare(config, "panel")
+                    .expect("unseeded benchmark"),
+            );
+            let mut ctx = crate::test_support::imgui_context();
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            let _ui = ctx.frame();
+            let failure = std::sync::Mutex::new(None);
+            assert!(super::frame_pumps(&mut state, &failure));
+            assert!(
+                !state.session.core.has_play(),
+                "slot threads must retire before the window GPU is released"
+            );
+            assert!(
+                exited.try_recv().is_ok(),
+                "FAIL must join workers even if Quit has no targets"
+            );
+            let failure = failure
+                .lock()
+                .unwrap()
+                .take()
+                .expect("memory error latched");
+            assert!(
+                matches!(
+                    &failure,
+                    crate::window::PanelError::MemoryRunFailure(error)
+                        if error.contains("missing seed for")
+                ),
+                "benchmark errors must remain typed memory failures"
+            );
+            assert!(finish_panel_run(Ok(()), Some(failure)).is_err());
+            ctx.render();
+            eprintln!("memory workers retired before window teardown");
         }
         other => panic!("unknown child mode {other:?}"),
     }
@@ -133,6 +283,85 @@ fn live_pass_exits_the_process_successfully() {
 #[test]
 fn normal_interactive_window_close_remains_successful() {
     assert!(finish_panel_run(Ok(()), None).is_ok());
+}
+
+#[test]
+fn fatal_startup_retires_play_before_the_gpu_window_is_released() {
+    let output = live_exit_child("startup_fail");
+    assert!(
+        output.status.success(),
+        "fatal startup must return to the frame before process exit:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("startup worker retired before window teardown"),
+        "the worker must finish before the window closes"
+    );
+}
+
+#[cfg(feature = "memory-profile")]
+#[test]
+fn successful_memory_run_joins_worker_before_frame_returns() {
+    let dir = TestDir::new("memory-panel-pass");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "--nocapture",
+                "app::tests::panel_exit_status_child",
+            ])
+            .env("PANEL_EXIT_CHILD", "memory_pass")
+            .env("BOT_MEMORY_N", "1")
+            .env("BOT_MEMORY_WORKLOAD", "idle")
+            .env("BOT_MEMORY_OUTPUT", dir.join("samples.jsonl"))
+            .env("BOT_LIVE_NAME_PREFIX", "pex")
+            .env_remove("RS2B0T")
+            .output()
+            .expect("run memory pass child");
+    assert!(
+        output.status.success(),
+        "PASS must join its worker and settle Quit:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("PASS worker joined before window teardown"),
+        "the worker must finish before the window closes"
+    );
+}
+
+#[cfg(feature = "memory-profile")]
+#[test]
+fn failed_memory_run_retires_play_before_the_gpu_window_is_released() {
+    let dir = TestDir::new("memory-panel-exit");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "--nocapture",
+                "app::tests::panel_exit_status_child",
+            ])
+            .env("PANEL_EXIT_CHILD", "memory_fail")
+            .env("BOT_MEMORY_N", "1")
+            .env("BOT_MEMORY_WORKLOAD", "seeded-idle")
+            .env("BOT_MEMORY_OUTPUT", dir.join("samples.jsonl"))
+            .env("BOT_LIVE_NAME_PREFIX", "pex")
+            .env_remove("RS2B0T")
+            .output()
+            .expect("run memory exit child");
+    assert!(
+        output.status.success(),
+        "terminal memory run must return to the caller before process exit:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("memory workers retired before window teardown"),
+        "the child must observe the owned Play retire before window teardown"
+    );
 }
 
 fn live_exit_child(mode: &str) -> std::process::Output {
@@ -522,7 +751,7 @@ fn logout_retry_the_drawn_side_panel_button_reaches_a_retrying_login() {
     );
 }
 
-fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
+fn profile_fixture(revision: u16) -> (TestDir, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
     let root = TestDir::new(&format!("profile-{revision}"));
@@ -540,8 +769,7 @@ fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
     ] {
         std::fs::copy(fixture.join(jag), cache.join(jag)).unwrap();
     }
-    let manifest = fixture.join(format!("manifest-{revision}.json"));
-    (root, cache, manifest)
+    (root, cache)
 }
 
 const JAG_SLOTS: [&str; 8] = [
@@ -606,6 +834,8 @@ fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
 }
 
 fn plant_snapshot(unpack: &std::path::Path, revision: u16, packs: &[(String, Vec<u8>)]) {
+    use sha2::Digest;
+
     struct FixtureEntries(Vec<(i32, i32)>);
     impl client::unpack::EntrySource for FixtureEntries {
         fn request_entry(&mut self, archive: i32, file: i32) -> Result<(), String> {
@@ -635,8 +865,8 @@ fn plant_snapshot(unpack: &std::path::Path, revision: u16, packs: &[(String, Vec
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let transfer = nav_planner::manifest::hash_bytes(versionlist);
-    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let transfer = format!("{:x}", sha2::Sha256::digest(versionlist));
+    let negotiated = format!("{:x}", sha2::Sha256::digest(&crc_body(packs)[..36]));
     let input = unpack.join("fixture-input");
     std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {
@@ -722,29 +952,25 @@ fn ephemeral_port() -> u16 {
         .port()
 }
 
-fn runtime_checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf, u16) {
-    let (root, cache, _) = checked_fixture(revision);
+fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, u16) {
+    let (root, cache) = profile_fixture(revision);
     let packs = identity_packs();
     for (name, bytes) in &packs {
         std::fs::write(cache.join(name), bytes).unwrap();
     }
-    let manifest_path = root.join("cache-manifest.json");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec(&host_play::profile::CacheManifest::capture(revision, &cache).unwrap())
-            .unwrap(),
-    )
-    .unwrap();
     let unpack = root.join("unpack");
     plant_snapshot(&unpack, revision, &packs);
     let port = serve_fixture_crc(packs);
-    (root, cache, manifest_path, unpack, port)
+    (root, cache, unpack, port)
 }
 
 #[test]
-fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
+fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [274_u16, 289] {
-        let (root, cache, manifest) = checked_fixture(revision);
+        let (root, cache) = profile_fixture(revision);
         // OnDemand hubs are keyed by (game_host, game_port); parallel panel
         // tests must not share the default local ports with different caches.
         let game_port = ephemeral_port();
@@ -756,8 +982,6 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
                 format!("local-{revision}"),
                 "--cache".to_string(),
                 cache.display().to_string(),
-                "--cache-manifest".to_string(),
-                manifest.display().to_string(),
                 "--port".to_string(),
                 game_port.to_string(),
                 "--http-port".to_string(),
@@ -852,11 +1076,10 @@ fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
 }
 
 fn startup_profile_inputs() -> (TestDir, host_play::ProfileOptions, ProfileEnvironment) {
-    let (root, cache, manifest, unpack, port) = runtime_checked_fixture(274);
+    let (root, cache, unpack, port) = runtime_profile_fixture(274);
     let options = host_play::ProfileOptions {
         profile: Some("local-274".into()),
         cache_dir: Some(cache),
-        cache_manifest: Some(manifest),
         unpack_dir: Some(unpack),
         port: Some(ephemeral_port()),
         http_port: Some(port),
@@ -1068,7 +1291,7 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     use frontend_core::launch::{PreparationJob, ProgressStage, ProgressView};
     let _work_service_guard = crate::work_service_test_lock();
 
-    let (root, cache, manifest) = checked_fixture(274);
+    let (root, cache) = profile_fixture(274);
     let mut state = PanelState::default();
     state
         .session
@@ -1076,7 +1299,6 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
             frontend_core::launch::ProfileArgs::from_host(host_play::ProfileOptions {
                 profile: Some("local-274".into()),
                 cache_dir: Some(cache),
-                cache_manifest: Some(manifest),
                 ..host_play::ProfileOptions::default()
             }),
             frontend_core::launch::ProfileEnv::from_host(ProfileEnvironment {
@@ -1179,7 +1401,7 @@ fn legacy_log_detached_is_ignored_without_losing_other_preferences() {
     .unwrap();
     preferences.reload().unwrap();
 
-    let loaded = crate::ui_state::load_from(&preferences);
+    let loaded = crate::ui_state::load_from(&preferences).unwrap();
     assert_eq!(loaded.last_focus.as_deref(), Some("alice"));
     assert!(!loaded.collapsed["alice"]["status"]);
     assert!(!loaded.capture);
@@ -1218,7 +1440,8 @@ fn loadout_combo_lists_store_names() {
         &serde_json::Map::new(),
         &loadouts,
         None,
-    );
+    )
+    .unwrap();
     assert_eq!(
         options.values(),
         vec!["guard".to_string(), "stall".to_string()]
@@ -4176,6 +4399,86 @@ fn script_prefs_labels_wrap_inside_the_normal_and_narrow_window() {
 }
 
 #[test]
+fn script_section_discloses_only_the_selected_quester_queue() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let dir = TestDir::new("quester-start-zone-disclosure");
+    let mut session = crate::session::Session::new();
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
+    let compiled_settings = serde_json::json!({
+        "schema_version": 3,
+        "values": {
+            "quests": ["arthur"],
+            "include_draft_guides": true
+        }
+    })
+    .as_object()
+    .unwrap()
+    .clone();
+    vault.put(frontend_core::test_support::session::with_settings_bag(
+        frontend_core::test_support::FixtureProfile::new("alice", "pw").uid(1),
+        &format!(
+            "compiled:{}",
+            frontend_core::scripts::CompiledCardId::QUESTER.as_str()
+        ),
+        compiled_settings,
+    ));
+    frontend_core::test_support::session::install_vault(&mut session.core, vault);
+    session.set_focus_for_test("alice");
+    session.script_sel = Some(ScriptChoice::compiled(
+        frontend_core::scripts::CompiledCardId::QUESTER,
+    ));
+    session
+        .ui
+        .collapsed
+        .entry("alice".into())
+        .or_default()
+        .insert("script".into(), false);
+
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1600.0, 1600.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("Selected Quester zone disclosure")
+            .size([1400.0, 1500.0], dear_imgui_rs::Condition::Always)
+            .build(|| super::script_section(ui, &mut session));
+        ui.log_finish();
+    }
+    ctx.render();
+
+    let text = drawn.0.take();
+    assert!(text.contains("Start zone scope"), "{text}");
+    assert!(
+        text.contains("Merlin's Crystal (arthur) · stage arthur:3"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Keep Le Faye Renegade Knight (2773,3399,0)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Cross the keep's ground floor to reach Sir Mordred."),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Prince Ali Rescue"),
+        "only the selected Arthur queue is disclosed: {text}"
+    );
+    let disclosure = text.find("Start zone scope").unwrap();
+    let start_button = text.rfind("[ Start ]").expect("the Start control is drawn");
+    assert!(
+        disclosure < start_button,
+        "zone consent appears before Start: {text}"
+    );
+}
+
+#[test]
 fn script_prefs_draw_number_bounds_and_invalid_text_at_the_field() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = dock_host_context();
@@ -4241,6 +4544,127 @@ fn script_prefs_draw_number_bounds_and_invalid_text_at_the_field() {
         "the field displays its validation error: {text}"
     );
 }
+
+#[test]
+fn panel_parameter_rows_show_the_real_draft_priority_refusal() {
+    let _guard = crate::test_support::imgui_context_guard();
+    frontend_core::test_support::scripts::reset_quester_registry();
+    let mut session = crate::session::Session::new();
+    let mut schema = frontend_core::test_support::scripts::TestSchema::setting(
+        "order_override",
+        "string[]",
+        None,
+        Some("Order override"),
+        &[],
+    );
+    schema.set_options_from("released-path-order");
+    let selection = ScriptChoice::compiled(frontend_core::scripts::CompiledCardId::QUESTER);
+    let qualified = "priest";
+    let draft = "druid";
+    let mut bag = serde_json::Map::new();
+    bag.insert("quests".into(), serde_json::json!([qualified]));
+    bag.insert("order_override".into(), serde_json::json!([draft]));
+    let loadouts = frontend_core::scripts::Loadouts::default();
+    let def = schema.schema_ref().get("order_override").unwrap();
+    let priorities =
+        frontend_core::scripts::resolve_parameter_options(def, &bag, &loadouts, None).unwrap();
+    assert!(priorities
+        .selectable()
+        .iter()
+        .any(|value| value == qualified));
+    assert!(!priorities.selectable().iter().any(|value| value == draft));
+    let refused_label = priorities.label_for(draft).to_owned();
+    assert!(
+        refused_label.contains("Path has not been qualified by live testing."),
+        "{refused_label}"
+    );
+
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([800.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("Draft Path parameter refusal")
+            .size([360.0, 500.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                super::script_parameter_rows(
+                    ui,
+                    &mut session,
+                    &selection,
+                    None,
+                    schema.schema_ref(),
+                    bag.clone(),
+                );
+            });
+        ui.log_finish();
+    }
+    ctx.render();
+    let text = drawn.0.take();
+    let compact = |text: &str| {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+    };
+    assert!(
+        compact(&text).contains(&compact(&refused_label)),
+        "the panel's Order override row displays the stored draft refusal: {text}"
+    );
+}
+
+#[test]
+fn panel_parameter_rows_show_fact_errors_and_keep_saved_values() {
+    let _guard = crate::test_support::imgui_context_guard();
+    if api::game_data::local_game_data_available() {
+        return;
+    }
+
+    let mut session = crate::session::Session::new();
+    let mut schema = frontend_core::test_support::scripts::TestSchema::setting(
+        "bank",
+        "string",
+        Some(""),
+        Some("Bank"),
+        &[],
+    );
+    schema.set_options_from("named-banks");
+    let selection = ScriptChoice::compiled(frontend_core::scripts::CompiledCardId::QUESTER);
+    let mut bag = serde_json::Map::new();
+    bag.insert("bank".into(), serde_json::json!("saved-bank"));
+
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([800.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("Unavailable fact-backed parameter")
+            .size([360.0, 500.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                super::script_parameter_rows(
+                    ui,
+                    &mut session,
+                    &selection,
+                    None,
+                    schema.schema_ref(),
+                    bag.clone(),
+                );
+            });
+        ui.log_finish();
+    }
+    ctx.render();
+    let text = drawn.0.take();
+    assert!(text.contains("FamilyUnavailable"), "{text}");
+    assert!(text.contains("saved-bank"), "{text}");
+    assert_eq!(bag.get("bank"), Some(&serde_json::json!("saved-bank")));
+}
+
 #[test]
 fn discarding_invalid_script_parameter_removes_its_dock_banner() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -4880,6 +5304,24 @@ impl ProfilesUi {
         self.draw(None)
     }
 
+    /// One frame with no text log and no colour readback: for allocation
+    /// counts, where the harness's own capture must not count.
+    fn raw_frame(&mut self) {
+        self.session.pump_status();
+        self.ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new(self.display_size, 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        let window_pos = self.window_pos;
+        let window_size = self.window_size;
+        {
+            let ui = self.ctx.frame();
+            ui.with_bound_context(|| pin_profiles_geometry_at(window_pos, window_size));
+            super::chooser_window(ui, &mut self.session, None);
+        }
+        self.ctx.render();
+    }
+
     /// Click `label` (its id lives `at`): ImGui presses it on the next
     /// frame; the frame after that shows the result.
     fn click(&mut self, at: At, label: &str) -> Shown {
@@ -4996,6 +5438,30 @@ impl ProfilesUi {
             .io_mut()
             .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
         self.frame();
+        self.ctx
+            .io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+        self.frame();
+        self.frame()
+    }
+
+    /// Press at `from`, move over several frames, release at `to`, as a
+    /// mouse drag makes it; the last frame shows the result.
+    fn drag_at(&mut self, from: [f32; 2], to: [f32; 2]) -> Shown {
+        self.ctx.io_mut().add_mouse_pos_event(from);
+        self.frame();
+        self.ctx
+            .io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+        self.frame();
+        for step in 1..=4 {
+            let t = step as f32 / 4.0;
+            self.ctx.io_mut().add_mouse_pos_event([
+                from[0] + (to[0] - from[0]) * t,
+                from[1] + (to[1] - from[1]) * t,
+            ]);
+            self.frame();
+        }
         self.ctx
             .io_mut()
             .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
@@ -5337,6 +5803,417 @@ fn close_needs_no_prompt_once_the_save_settled() {
 
     let closed = ui.click(At::Window, "#CLOSE");
     assert!(closed.text.trim().is_empty(), "the ✕ shut Profiles");
+}
+
+/// The Profiles list shows the one saved order, not the vault's
+/// alphabetical order: after a saved move, the rows follow it.
+#[test]
+fn the_profiles_list_shows_the_saved_order_not_the_vaults() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-saved-order");
+    let mut ui = ProfilesUi::new(
+        "profiles-saved-order",
+        &[
+            ("zed", "zpass", 1),
+            ("anna", "apass", 2),
+            ("mike", "mpass", 3),
+        ],
+    );
+    ui.frame();
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["anna", "mike", "zed"],
+        "seeded in vault order"
+    );
+    let op = ui
+        .session
+        .core
+        .profile_order()
+        .drop_op(
+            ui.session.core.profile_identity("zed").unwrap(),
+            ui.session.core.profile_identity("anna").unwrap(),
+        )
+        .expect("a Profiles drop");
+    ui.session
+        .reorder_profiles(op, frontend_core::ReorderSurface::Profiles);
+    ui.finish_writes();
+    let shown = ui.frame();
+    let at = |name: &str| {
+        shown
+            .text
+            .find(name)
+            .unwrap_or_else(|| panic!("{name} in {}", shown.text))
+    };
+    assert!(
+        at("zed") < at("anna") && at("anna") < at("mike"),
+        "saved order, not alphabetical:\n{}",
+        shown.text
+    );
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["zed", "anna", "mike"]
+    );
+}
+
+/// A real drag of a Profiles row's name onto another reorders the one
+/// saved order (the Fleet's rows follow it), and the drop neither picks
+/// or loads a profile nor opens its edit form.
+#[test]
+fn dragging_a_profiles_row_reorders_the_saved_order_only() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-drag-order");
+    let mut ui = ProfilesUi::new(
+        "profiles-drag-order",
+        &[
+            ("alice", "apass", 1),
+            ("bob", "bpass", 2),
+            ("carol", "cpass", 3),
+        ],
+    );
+    ui.frame();
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["alice", "bob", "carol"]
+    );
+    let (carol, _) = ui.item_rect(At::List, "carol");
+    let (alice, _) = ui.item_rect(At::List, "alice");
+    let members = ui.session.core.members().to_vec();
+    let focused = ui.session.focused_name();
+    let before = crate::session::reorders_submitted();
+    crate::fleet::take_drop_markers();
+    ui.drag_at(rect_center(carol), rect_center(alice));
+    let markers = crate::fleet::take_drop_markers();
+    assert!(!markers.is_empty(), "the hover showed an insertion marker");
+    let (lands_before, min, max) = *markers.last().unwrap();
+    assert!(
+        lands_before,
+        "carol lands before alice: the marker sits on alice's top edge"
+    );
+    assert!(
+        (min[1] - alice[0][1]).abs() < 1.0 && (max[1] - alice[1][1]).abs() < 1.0,
+        "the marker spans alice's row: {min:?} {max:?} vs {alice:?}"
+    );
+    ui.finish_writes();
+    ui.frame();
+    assert_eq!(
+        crate::session::reorders_submitted(),
+        before + 1,
+        "one reorder submitted"
+    );
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["carol", "alice", "bob"],
+        "the saved order moved"
+    );
+    assert_eq!(ui.session.core.members(), members, "a drop loads nothing");
+    assert_eq!(ui.session.focused_name(), focused, "a drop picks nothing");
+    assert!(
+        !ui.session.profile_editor.is_open(),
+        "a drop opens no edit form"
+    );
+    assert!(ui.session.error.is_none(), "{:?}", ui.session.error);
+    ui.session.fleet_model.refresh(&ui.session.core);
+    let rows: Vec<&str> = ui
+        .session
+        .fleet_model
+        .rows()
+        .iter()
+        .map(|row| row.name())
+        .collect();
+    assert_eq!(rows, ["carol", "alice", "bob"], "the Fleet follows");
+}
+
+/// The Profiles window shows a Load-order save's state with the Fleet
+/// window closed, read from the core's setting: "Saving…" while the
+/// write waits, the failure and the durable order when it fails, and
+/// nothing once a later drag saves.
+#[test]
+fn a_profiles_order_save_shows_saving_then_the_failure_then_clears() {
+    use frontend_core::{Setting, SettingStatus};
+    use std::sync::atomic::Ordering;
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-order-feedback");
+    let mut ui = ProfilesUi::new(
+        "profiles-order-feedback",
+        &[
+            ("alice", "apass", 1),
+            ("bob", "bpass", 2),
+            ("carol", "cpass", 3),
+        ],
+    );
+    ui.session.persist_ui = false;
+    ui.frame();
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["alice", "bob", "carol"]
+    );
+    assert!(!ui.session.fleet_open, "the Fleet window stays closed");
+
+    // A drag whose write waits on the disk says so in Profiles.
+    let (release, failing) = hold_writes(&ui.session);
+    let (carol, _) = ui.item_rect(At::List, "carol");
+    let (alice, _) = ui.item_rect(At::List, "alice");
+    let shown = ui.drag_at(rect_center(carol), rect_center(alice));
+    assert!(
+        shown.has("Saving…"),
+        "the held save says so in Profiles: {}",
+        shown.text
+    );
+
+    // The disk fails it: the message and the durable order show.
+    drop(release);
+    patiently(|| {
+        ui.session.pump_status();
+        ui.session.poll_panel_preferences();
+        match ui.session.core.setting_status(Setting::ProfileOrder) {
+            SettingStatus::Failed(_) => Ok(()),
+            other => Err(format!(
+                "not durable within the wait: the order setting is {other:?}, not failed"
+            )),
+        }
+    })
+    .expect("the failed write settles");
+    let shown = ui.frame();
+    assert!(
+        shown.has("Not saved:"),
+        "the failure shows in Profiles: {}",
+        shown.text
+    );
+    assert!(!shown.has("Saving…"), "nothing still saves: {}", shown.text);
+    let at = |name: &str| {
+        shown
+            .text
+            .find(name)
+            .unwrap_or_else(|| panic!("{name} in {}", shown.text))
+    };
+    assert!(
+        at("alice") < at("bob") && at("bob") < at("carol"),
+        "the rows are the durable order again:\n{}",
+        shown.text
+    );
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["alice", "bob", "carol"]
+    );
+
+    // A later drag that saves is the action that resolves the message.
+    failing.store(false, Ordering::SeqCst);
+    let (carol, _) = ui.item_rect(At::List, "carol");
+    let (alice, _) = ui.item_rect(At::List, "alice");
+    ui.drag_at(rect_center(carol), rect_center(alice));
+    patiently(|| {
+        ui.session.pump_status();
+        ui.session.poll_panel_preferences();
+        match ui.session.core.setting_status(Setting::ProfileOrder) {
+            SettingStatus::Saved => Ok(()),
+            other => Err(format!(
+                "not durable within the wait: the order setting is {other:?}, not saved"
+            )),
+        }
+    })
+    .expect("the retry saves");
+    let shown = ui.frame();
+    assert!(
+        !shown.has("Not saved:") && !shown.has("Saving…"),
+        "the resolved message is gone: {}",
+        shown.text
+    );
+    assert_eq!(
+        ui.session.core.profile_order().names(),
+        ["carol", "alice", "bob"],
+        "the later move saved"
+    );
+}
+
+/// A profile name too wide for its slot shows a visible "…" where it is
+/// cut (never the whole clipped name), and hovering the row shows the
+/// whole name in its tooltip.
+#[test]
+fn a_cut_profile_name_shows_an_ellipsis_and_the_whole_name_on_hover() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-long-name");
+    const LONG: &str = "averyverylongprofilenameindeed";
+    let mut ui = ProfilesUi::with_geometry(
+        "profiles-long-name",
+        &[(LONG, "lpass", 1), ("bob", "bpass", 2)],
+        [900.0, 700.0],
+        [0.0, 0.0],
+        [220.0, BASE_WINDOW_H],
+    );
+    let shown = ui.frame();
+    assert!(shown.has("…"), "the cut is marked: {}", shown.text);
+    assert!(
+        !shown.has(LONG),
+        "the whole name does not fit and is not drawn clipped: {}",
+        shown.text
+    );
+    assert!(
+        shown.has("aver"),
+        "the visible prefix shows: {}",
+        shown.text
+    );
+
+    // Hover the long row (found by its Edit button, whose rect is on the
+    // same row): the tooltip carries the whole name.
+    let (edit, _) = ui.item_rect(At::List, &format!("Edit##edit-{LONG}"));
+    let hover = [edit[0][0] - 20.0, (edit[0][1] + edit[1][1]) / 2.0];
+    ui.ctx.io_mut().add_mouse_pos_event(hover);
+    let mut tooltip = false;
+    for _ in 0..90 {
+        if ui.frame().has(LONG) {
+            tooltip = true;
+            break;
+        }
+    }
+    assert!(tooltip, "the hover tooltip shows the whole name");
+}
+
+/// Warm frames of the open Profiles window — the list's rows, one of
+/// them a cut name, and a drag hovering its target with the insertion
+/// marker drawn — allocate no more than the same frames with the
+/// window closed: the list borrows its rows and reuses its label
+/// buffer.
+#[test]
+fn the_profiles_list_adds_no_allocation_to_a_warm_frame() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("profiles-warm-frame");
+    const LONG: &str = "averyverylongprofilenameindeed";
+    // The 220 px window cuts LONG, as in the ellipsis test above: the
+    // measured frames must run the cut-name branch.
+    let mut ui = ProfilesUi::with_geometry(
+        "profiles-warm-frame",
+        &[
+            ("alice", "apass", 1),
+            (LONG, "lpass", 2),
+            ("carol", "cpass", 3),
+        ],
+        [900.0, 700.0],
+        [0.0, 0.0],
+        [220.0, BASE_WINDOW_H],
+    );
+    ui.session.persist_ui = false;
+    let shown = ui.frame();
+    assert!(
+        shown.has("…") && !shown.has(LONG),
+        "the drawn row cuts the long name before any counting: {}",
+        shown.text
+    );
+    let (carol, _) = ui.item_rect(At::List, "carol");
+    let (alice, _) = ui.item_rect(At::List, "alice");
+    let frame_calls = |ui: &mut ProfilesUi, frames: usize, drag: bool| {
+        let step = |ui: &mut ProfilesUi, i: usize| {
+            if drag {
+                // Held over alice without release: a hover frame, the
+                // insertion marker's frame.
+                let t = i as f32 / frames.max(1) as f32;
+                ui.ctx.io_mut().add_mouse_pos_event([
+                    rect_center(carol)[0] + (rect_center(alice)[0] - rect_center(carol)[0]) * t,
+                    rect_center(carol)[1] + (rect_center(alice)[1] - rect_center(carol)[1]) * t,
+                ]);
+            }
+            ui.raw_frame();
+        };
+        for i in 0..5 {
+            step(ui, i);
+        }
+        // Markers from the warm-up steps prove nothing about the counted
+        // frames: the record starts empty here, at the count.
+        crate::fleet::take_drop_markers();
+        let before = crate::test_alloc::alloc_calls();
+        for i in 0..frames {
+            step(ui, i);
+        }
+        crate::test_alloc::alloc_calls() - before
+    };
+    // Baseline: the same frames with Profiles closed.
+    ui.session.wall.chooser_open = false;
+    let closed = frame_calls(&mut ui, 10, false);
+    ui.session.wall.chooser_open = true;
+    assert_eq!(
+        frame_calls(&mut ui, 10, false),
+        closed,
+        "the open list costs a warm frame allocations"
+    );
+    // Press on carol and drag toward alice, holding the button.
+    ui.ctx.io_mut().add_mouse_pos_event(rect_center(carol));
+    ui.raw_frame();
+    ui.ctx
+        .io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+    ui.raw_frame();
+
+    assert_eq!(
+        frame_calls(&mut ui, 10, true),
+        closed,
+        "a drag-hover frame of the list costs allocations"
+    );
+    assert!(
+        !crate::fleet::take_drop_markers().is_empty(),
+        "the measured drag frames drew the insertion marker"
+    );
+    ui.ctx
+        .io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+    ui.raw_frame();
+}
+
+/// Profiles opened with no edit form (the Profiles button, the dock tab)
+/// closes at once from `item` (its ✕ or Close). The close command used to be
+/// refused as "not applicable" while no form was open, so nothing closed
+/// (regressed in 0.2.5 by the command seam, 05658356f).
+fn assert_profiles_without_a_form_closes_from(label: &str, item: &str) {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(label, &[("alice", "apass", 42)]);
+    let open = ui.frame();
+    assert!(
+        open.has("Close") && !open.has("Editing"),
+        "Profiles is open on its list: {}",
+        open.text
+    );
+    let closed = ui.click(At::Window, item);
+    assert!(closed.text.trim().is_empty(), "{item} shut Profiles");
+    assert!(!ui.session.wall.chooser_open, "{item} cleared the flag");
+}
+
+#[test]
+fn the_x_closes_profiles_with_no_form() {
+    assert_profiles_without_a_form_closes_from("profiles-close-noform-x", "#CLOSE");
+}
+
+#[test]
+fn close_closes_profiles_with_no_form() {
+    assert_profiles_without_a_form_closes_from("profiles-close-noform-button", "Close");
+}
+
+/// The same with a clean edit form open (nothing typed, nothing saving):
+/// `item` shuts Profiles and the form with it, with no prompt.
+fn assert_profiles_with_a_clean_form_closes_from(label: &str, item: &str) {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ui = ProfilesUi::new(label, &[("alice", "apass", 42)]);
+    let editing = ui.click(At::List, "Edit##edit-alice");
+    assert!(editing.has("Editing alice"), "{}", editing.text);
+    assert!(!ui.session.edit_dirty(), "the form is clean");
+    let closed = ui.click(At::Window, item);
+    assert!(
+        closed.text.trim().is_empty(),
+        "{item} shut Profiles: {}",
+        closed.text
+    );
+    assert!(!ui.session.wall.chooser_open, "{item} cleared the flag");
+    assert!(
+        !ui.session.profile_editor.is_open(),
+        "the form closed with the window"
+    );
+}
+
+#[test]
+fn the_x_closes_profiles_with_a_clean_form() {
+    assert_profiles_with_a_clean_form_closes_from("profiles-close-clean-x", "#CLOSE");
+}
+
+#[test]
+fn close_closes_profiles_with_a_clean_form() {
+    assert_profiles_with_a_clean_form_closes_from("profiles-close-clean-button", "Close");
 }
 
 /// A save whose write fails after it was accepted shows in the form it came
@@ -6155,8 +7032,9 @@ fn the_vault_buttons_are_greyed_out_until_the_passphrase_can_be_sent() {
 /// review's screenshot clipped the Danger routing button at.
 const NAV_ROUTING_CONTENT_W: f32 = 330.0;
 /// Row of the Danger routing drop-down in the Routing group: after the scope
-/// note, the three checkboxes, the bank-fetch scope, and the drop-down's label.
-const DANGER_ROUTING_COMBO_ROW: usize = 6;
+/// note, the three checkboxes, the bank-fetch scope, the prerequisite note,
+/// the two prerequisite checkboxes, and the drop-down's label.
+const DANGER_ROUTING_COMBO_ROW: usize = 9;
 
 /// One headless frame of the Routing group in a window whose content area is
 /// [`NAV_ROUTING_CONTENT_W`] wide. Returns the group as drawn and the content
@@ -6368,12 +7246,13 @@ fn nav_routing_rows_fit_the_docked_width_at_every_danger_level() {
             "the test window's content is the docked width, got {}",
             right - left
         );
-        // The scope note, three checkboxes, the bank-fetch scope, the drop-down's
-        // label and the drop-down, plus the note under a held level and the
-        // Always warning.
+        // The scope note, three checkboxes, the bank-fetch scope, the
+        // prerequisite note, the two prerequisite checkboxes, the
+        // drop-down's label and the drop-down, plus the note under a held
+        // level and the Always warning.
         let notes = usize::from(frontend_core::walk_permissions::danger_routing_held(level))
             + usize::from(level == frontend_core::DangerLevel::Always);
-        assert_eq!(routing.items.len(), 7 + notes, "routing rows at {level:?}");
+        assert_eq!(routing.items.len(), 10 + notes, "routing rows at {level:?}");
         for (index, item) in routing.items.iter().enumerate() {
             let [min_x, _, max_x, _] = *item;
             assert!(
@@ -6527,7 +7406,9 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
         "the durable acknowledgement does what OK does"
     );
     assert!(
-        crate::ui_state::load(&session.preferences).render_all_warning_ack,
+        crate::ui_state::load(&session.preferences)
+            .unwrap()
+            .render_all_warning_ack,
         "the choice is written to the preferences"
     );
 
@@ -6988,7 +7869,11 @@ fn settings_feedback_render_all_dont_show_again_failure_shows_in_the_dialog_unti
     );
     assert!(session.wall.render_all_warn_open, "the dialog stays open");
     assert!(!session.ui.render_all_warning_ack, "nothing was saved");
-    assert!(!crate::ui_state::load(&session.preferences).render_all_warning_ack);
+    assert!(
+        !crate::ui_state::load(&session.preferences)
+            .unwrap()
+            .render_all_warning_ack
+    );
     assert!(session
         .core
         .setting_failure(notice)
@@ -7009,7 +7894,11 @@ fn settings_feedback_render_all_dont_show_again_failure_shows_in_the_dialog_unti
     }
     assert_eq!(session.core.setting_failure(notice), None);
     assert!(session.ui.render_all_warning_ack);
-    assert!(crate::ui_state::load(&session.preferences).render_all_warning_ack);
+    assert!(
+        crate::ui_state::load(&session.preferences)
+            .unwrap()
+            .render_all_warning_ack
+    );
 }
 
 /// One panel frame: the session pumps and polls its preference writes, then
@@ -7267,7 +8156,11 @@ fn render_all_ok_applies_for_this_launch_only() {
     assert!(!session.wall.render_all_warn_open);
     assert!(!session.focus.lock().unwrap().only_render_selected);
     assert!(!session.ui.render_all_warning_ack);
-    assert!(!crate::ui_state::load(&session.preferences).render_all_warning_ack);
+    assert!(
+        !crate::ui_state::load(&session.preferences)
+            .unwrap()
+            .render_all_warning_ack
+    );
 
     let mut next = crate::session::Session::new();
     assert!(next.focus.lock().unwrap().only_render_selected);
@@ -7320,6 +8213,63 @@ fn fleet_frame(
     };
     ctx.render();
     layout
+}
+
+/// Accent-coloured vertices of one rendered frame, each with the clip
+/// rect of its draw command.
+type AccentVertices = Vec<([f32; 2], [f32; 4])>;
+
+/// One Fleet frame as in [`fleet_frame`], plus every accent-coloured
+/// vertex the rendered draw data holds, each with the clip rect of the
+/// draw command that carries it: a vertex renders only inside that rect.
+fn fleet_frame_accent_vertices(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    size: [f32; 2],
+    point: [f32; 2],
+    pressed: bool,
+) -> (crate::fleet::FleetLayout, AccentVertices) {
+    let io = ctx.io_mut();
+    io.add_mouse_pos_event(point);
+    io.add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    let layout = {
+        let ui = ctx.frame();
+        ui.window(crate::session::PanelWindow::Fleet.title())
+            .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+            .size(size, dear_imgui_rs::Condition::Always)
+            .build(|| {});
+        crate::fleet::draw_test_window(ui, session)
+    };
+    let draw_data = ctx.render();
+    let mut accent = Vec::new();
+    for list in draw_data.draw_lists() {
+        let vertices = list.vtx_buffer();
+        let indices = list.idx_buffer();
+        for command in list.commands() {
+            let dear_imgui_rs::DrawCmd::Elements {
+                count, cmd_params, ..
+            } = command
+            else {
+                continue;
+            };
+            for index in &indices[cmd_params.idx_offset..cmd_params.idx_offset + count] {
+                let vertex = &vertices[cmd_params.vtx_offset + *index as usize];
+                let colour = dear_imgui_rs::Color::from_imgui_u32(vertex.col).to_array();
+                if colour
+                    .into_iter()
+                    .zip(crate::theme::ACCENT)
+                    .all(|(actual, expected)| (actual - expected).abs() <= 1.0 / 255.0)
+                {
+                    accent.push((vertex.pos, cmd_params.clip_rect));
+                }
+            }
+        }
+    }
+    (layout, accent)
 }
 
 /// The Fleet window's table shares the window's width: no sideways scroll and
@@ -7528,11 +8478,24 @@ fn fleet_row_drag_reorders_the_saved_order_around_a_hidden_marked_profile() {
     let before = crate::session::reorders_submitted();
 
     // ax (first shown row) onto dx (last shown row).
+    crate::fleet::take_drop_markers();
     fleet_drag(
         &mut ctx,
         &mut session,
         rect_centre(layout.names[0]),
         rect_centre(layout.names[2]),
+    );
+    let markers = crate::fleet::take_drop_markers();
+    assert!(!markers.is_empty(), "the hover showed an insertion marker");
+    let (lands_before, min, max) = *markers.last().unwrap();
+    assert!(
+        !lands_before,
+        "ax lands after dx: the marker sits on dx's bottom edge"
+    );
+    assert!(
+        min[1] <= layout.names[2][3] && max[1] >= layout.names[2][1],
+        "the marker is on dx's row: {min:?} {max:?} vs {:?}",
+        layout.names[2]
     );
     assert_eq!(crate::session::reorders_submitted(), before + 1);
     assert_eq!(
@@ -7550,13 +8513,88 @@ fn fleet_row_drag_reorders_the_saved_order_around_a_hidden_marked_profile() {
 
     // And back up: dx (now second shown) onto cx (first shown) goes
     // before it.
+    crate::fleet::take_drop_markers();
     fleet_drag(
         &mut ctx,
         &mut session,
         rect_centre(layout.names[1]),
         rect_centre(layout.names[0]),
     );
+    let markers = crate::fleet::take_drop_markers();
+    assert!(
+        markers.last().is_some_and(|(before, _, _)| *before),
+        "dx lands before cx: the marker sits on cx's top edge: {markers:?}"
+    );
     assert_eq!(saved_order(&session), ["bob", "dx", "cx", "ax"]);
+}
+
+/// The Fleet insertion line renders across its target row, not only
+/// across the Profile column: in the rendered draw data, the accent
+/// vertices at the line's right end are carried by a draw command whose
+/// clip rect reaches that end. (Inside the table each column draws
+/// under its own clip; the recorded marker geometry alone cannot show
+/// what the renderer keeps.)
+#[test]
+fn the_fleet_insertion_line_renders_across_the_target_row() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let (mut session, _dir) = fleet_test_session(&["alice", "bob", "carol", "dave"]);
+    session.persist_ui = false;
+    session.pump_status();
+    let layout = fleet_reorder_setup(&mut ctx, &mut session);
+    assert_eq!(layout.names.len(), 4);
+    let (from, to) = (rect_centre(layout.names[0]), rect_centre(layout.names[3]));
+
+    // Press on alice and hold the drag over dave; the last held frame is
+    // the one whose draw data is read back.
+    crate::fleet::take_drop_markers();
+    fleet_reorder_frame(&mut ctx, &mut session, from, false);
+    fleet_reorder_frame(&mut ctx, &mut session, from, true);
+    for step in 1..=4 {
+        let t = step as f32 / 4.0;
+        fleet_reorder_frame(
+            &mut ctx,
+            &mut session,
+            [
+                from[0] + (to[0] - from[0]) * t,
+                from[1] + (to[1] - from[1]) * t,
+            ],
+            true,
+        );
+    }
+    let (layout, accent) =
+        fleet_frame_accent_vertices(&mut ctx, &mut session, [760.0, 460.0], to, true);
+    session.pump_status();
+    fleet_reorder_frame(&mut ctx, &mut session, to, false);
+
+    let markers = crate::fleet::take_drop_markers();
+    let &(lands_before, min, max) = markers
+        .last()
+        .expect("the held drag drew an insertion marker");
+    assert!(!lands_before, "alice lands after dave: {markers:?}");
+    let y = max[1];
+    let cells_per_row = layout.cells.len() / layout.names.len();
+    let profile_right = layout.cells[3 * cells_per_row + 1][1];
+    assert!(
+        max[0] > profile_right + 20.0,
+        "the marker rect {min:?}..{max:?} spans past the Profile column's right edge {profile_right}"
+    );
+    let right_end: Vec<_> = accent
+        .iter()
+        .filter(|(pos, _)| (pos[1] - y).abs() <= 2.5 && pos[0] >= max[0] - 3.0)
+        .collect();
+    assert!(
+        !right_end.is_empty(),
+        "the rendered draw data holds the line's right end at x={} y={y}: {accent:?}",
+        max[0]
+    );
+    assert!(
+        right_end.iter().any(|(_, clip)| clip[2] >= max[0] - 1.5),
+        "the line's right end renders: its vertices' clips end at {:?}, the Profile column at {profile_right}, the row at {}",
+        right_end.iter().map(|(_, clip)| clip[2]).collect::<Vec<_>>(),
+        max[0]
+    );
 }
 
 /// With the sort set to Name the same drag does nothing and the Marks
@@ -8086,4 +9124,75 @@ fn the_panel_top_line_keeps_a_login_notice_through_retry_states_until_it_expires
         "the error is history now:\n{status}"
     );
     println!("LOGIN_NOTICE_PANEL_TOP {seen:#?}\nLOGIN_NOTICE_PANEL_EXPIRED {banner}");
+}
+
+/// IDLEFIX-028: a bot with no script whose connection dropped stays logged
+/// out, and the banner and the status rows say why (the same words as the
+/// terminal app, which reads the same `frontend-core` state line).
+#[test]
+fn the_panel_says_why_a_bot_with_no_script_is_logged_out() {
+    panel_shows_the_park(
+        host_play::SlotArm::exit_while_idle_for_test,
+        "ogged out: disconnected while idle (Log in to connect)",
+    );
+}
+
+/// Only the client's own idle request makes a server logout an idle logout;
+/// any other one reads as a logout by the server.
+#[test]
+fn the_panel_calls_only_a_requested_logout_an_idle_logout() {
+    panel_shows_the_park(
+        |arm| arm.exit_by_server_logout_for_test(true),
+        "ogged out: idle logout by the server (Log in to connect)",
+    );
+    panel_shows_the_park(
+        |arm| arm.exit_by_server_logout_for_test(false),
+        "ogged out by the server (Log in to connect)",
+    );
+}
+
+fn panel_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str) {
+    use crate::session::{Session, SlotIo};
+    use frontend_core::surface::{FrameBuf, SlotInput};
+    use host_play::{SlotArm, StartupPhase};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut s = Session::new();
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 1,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    let arm = SlotArm::new(2, true);
+    play.attach_arm("bob", Arc::clone(&arm));
+    s.core.fleet_mut().add("bob");
+    s.core.insert_slot_io(
+        "bob",
+        SlotIo {
+            input: SlotInput::new(),
+            pixels: FrameBuf::new(),
+        },
+    );
+    s.set_focus_for_test("bob");
+    s.core.set_play(Some(play));
+    arm.complete_login_for_test();
+    exit(&arm);
+    {
+        let play = s.core.play_for_test().unwrap();
+        play.statuses.lock().unwrap().push(host_play::SlotStatus {
+            username: "bob".into(),
+            login_latched: true,
+            login_latch_reason: arm.login_latch_reason(),
+            startup_phase: StartupPhase::Queueing,
+            startup_phase_started: Instant::now(),
+            ..host_play::SlotStatus::default()
+        });
+    }
+    s.core.poll_at(Instant::now());
+    let (banner, status) = draw_banner_and_status(&s);
+    assert!(banner.contains(state), "{banner}");
+    assert!(status.contains(state), "{status}");
 }

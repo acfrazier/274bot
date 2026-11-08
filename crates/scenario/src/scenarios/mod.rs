@@ -51,7 +51,9 @@ pub(crate) use guardian_events::{
 };
 pub(crate) use survival_need::survival_need_scenario;
 
-pub(crate) use boat_fare::{boat_fare_reconnect_v1_scenario, boat_fare_v1_scenario};
+pub(crate) use boat_fare::{
+    boat_fare_far_start_v1_scenario, boat_fare_reconnect_v1_scenario, boat_fare_v1_scenario,
+};
 pub(crate) use combat::{
     ardy_fighter_bank_scenario, ardy_fighter_bank_seeded_scenario, ardy_fighter_scenario,
     auto_fighter_bank_scenario, auto_fighter_food_override_scenario, auto_fighter_mage_scenario,

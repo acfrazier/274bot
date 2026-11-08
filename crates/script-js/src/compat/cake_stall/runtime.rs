@@ -6,13 +6,13 @@
 //! awaits its completion.
 
 use crate::machine::{AbortReason, Begin, Call, Cx, Family, Reply, Step};
-use crate::observed::{self, Scene, SceneRow};
+use crate::scene::observed::{self, Scene, SceneRow};
 use api::cake_stall::{StallLoc, BAKER_STALL};
 use script::cake_stall::{
     counts_as_stall_food, needs_cake_restock, select_baker_stall, LOCKOUT_TICKS,
     RESET_AFTER_REFUSALS,
 };
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;

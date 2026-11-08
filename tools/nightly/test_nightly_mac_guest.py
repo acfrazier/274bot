@@ -109,11 +109,14 @@ def make_source(root: Path) -> Path:
 
 class SourcePinTests(unittest.TestCase):
     def test_defaults_to_configured_release_then_dev(self):
+        # Parses the branch file format (comments and blank lines skipped, order kept), not the
+        # current release line, so the release roll-over does not need a test edit.
         self.assertIsNone(nightly.parse_args([]).branch)
-        self.assertEqual(
-            nightly.read_branches(HERE / "branches.conf", None),
-            ["release/0.2.7", "dev"],
-        )
+        with tempfile.TemporaryDirectory() as temporary:
+            conf = Path(temporary) / "branches.conf"
+            conf.write_text("# fix line first\n\nrelease/9.9.9\n  # indented comment\ndev\n", encoding="utf-8")
+            self.assertEqual(nightly.read_branches(conf, None), ["release/9.9.9", "dev"])
+        self.assertEqual(nightly.read_branches(HERE / "branches.conf", None)[-1], "dev")
 
     def test_pins_each_branch_to_the_fetched_commit(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -593,7 +596,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
             (root / engine / script).write_text("#!/bin/sh\n", encoding="utf-8")
         fixtures = root / "nightly-root/fixtures"
         fixtures.mkdir(parents=True)
-        (fixtures / "274bot-289-v17.navpack").write_text("fixture\n", encoding="utf-8")
+        (fixtures / "274bot-289-v18.navpack").write_text("fixture\n", encoding="utf-8")
         (fixtures / "inspect.fb").write_text("inspect fixture\n", encoding="utf-8")
         isohome = root / "isohome"
         isohome.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")

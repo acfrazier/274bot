@@ -679,6 +679,9 @@ scene_pages! {
         user_move_intent_seq: u64,
         /// Host-published fingerprint of the current chat-modal page.
         chat_page_fingerprint: u64,
+        /// The local player's packed `api::snapshot::AttackMarks`; 0 is no
+        /// observation.
+        local_attack_marks: u64,
         side_tab: i32,
         main_modal_id: i32,
         chat_modal_id: i32,
@@ -703,7 +706,7 @@ scene_pages! {
         trade_decline_id: i32,
         shop_open: bool,
         walk_outcome: WalkOutcome,
-        bank_selection: crate::wire::BankSelectionInput,
+        bank_selection: script::native::snapshot_source::BankSelectionInput,
         walk_outcome_cancel_reason: crate::wire::WalkCancelReason,
         /// The posted root of side tab 0, or `-1` when a posted side-tab
         /// table has no row for it.
@@ -916,6 +919,7 @@ fn read_combat_outcome(page: ApiCombatOutcome<'_>) -> Option<CombatOutcomeObserv
                     boost_doses: page.boost_doses(),
                     antifire_doses: page.antifire_doses(),
                     protect_switches: page.protect_switches(),
+                    pvp_source: script::combat::PvpSource::from_code(page.pvp_source()),
                 },
             }
         }
@@ -1198,6 +1202,9 @@ impl Scene {
         }
         if snap.has_chat_page_fingerprint() {
             p.chat_page_fingerprint(snap.chat_page_fingerprint());
+        }
+        if let Some(marks) = snap.local_attack_marks() {
+            p.local_attack_marks(marks);
         }
 
         if snap.has_self_target_index() {
@@ -1706,11 +1713,15 @@ impl Interner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_delta, encode_snapshot_delta_with_native,
-        encode_snapshot_with_native, BankStandInput, ItemRowInput, NativeFactsInput,
-        QuestStatusInput, ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
-        StatInput, TileInput,
+    use {
+        crate::wire::{
+            encode_snapshot, encode_snapshot_delta, encode_snapshot_delta_with_native,
+            encode_snapshot_with_native,
+        },
+        script::native::snapshot_source::{
+            BankStandInput, ItemRowInput, NativeFactsInput, QuestStatusInput, ReachViewInput,
+            SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
+        },
     };
 
     fn empty(tick: u64) -> SnapshotInput<'static> {

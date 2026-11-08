@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parsePack, parseParamDefinitions, parseRows, requireGatherText, walkContentFiles } from './common.ts';
+import { stripComments } from './gathering-content.ts';
 
 export const STYLE = {
     MELEE: 0x01,
@@ -24,6 +25,7 @@ export type CombatNpcFacts = {
     forced_max_hit: number | null;
     dragonfire: DragonfireKind | null;
     bespoke: boolean;
+    ordinary_melee: boolean;
     counter_protect: boolean;
 };
 
@@ -44,64 +46,22 @@ export type CombatScripts = {
 type CombatObject = {
     id: number;
     category?: number;
+    wearpos?: number;
+    wearpos2?: number;
+    wearpos3?: number;
     params?: ReadonlyMap<number, number | string> | null;
 };
 type CombatDbRow = { name: string; values: Record<string, string[][]> };
+type WeaponStyleMetadata = { obj_id: number; style: number; attackrate: number; category: number; tab: number | null };
+type WeaponStyleFactWire = WeaponStyleMetadata & {
+    style_slot: number;
+    damagetype: number;
+    damagestyle: number;
+    style_bonus: [number, number, number];
+};
+type CombatStyleSlot = Pick<WeaponStyleFactWire, 'style_slot' | 'damagetype' | 'damagestyle' | 'style_bonus'>;
 
 const AI_KINDS = new Set(['ai_applayer2', 'ai_opplayer2', 'ai_queue1']);
-
-function stripComments(text: string) {
-    let out = '';
-    let string = false;
-    let escaped = false;
-    let lineComment = false;
-    let blockComment = false;
-    for (let i = 0; i < text.length; i++) {
-        const c = text[i]!;
-        const next = text[i + 1];
-        if (lineComment) {
-            if (c === '\n') {
-                lineComment = false;
-                out += c;
-            } else {
-                out += ' ';
-            }
-            continue;
-        }
-        if (blockComment) {
-            if (c === '*' && next === '/') {
-                out += '  ';
-                i++;
-                blockComment = false;
-            } else {
-                out += c === '\n' ? '\n' : ' ';
-            }
-            continue;
-        }
-        if (string) {
-            out += c;
-            if (escaped) escaped = false;
-            else if (c === '\\') escaped = true;
-            else if (c === '"') string = false;
-            continue;
-        }
-        if (c === '"') {
-            string = true;
-            out += c;
-        } else if (c === '/' && next === '/') {
-            lineComment = true;
-            out += '  ';
-            i++;
-        } else if (c === '/' && next === '*') {
-            blockComment = true;
-            out += '  ';
-            i++;
-        } else {
-            out += c;
-        }
-    }
-    return out;
-}
 
 function parseSections(text: string) {
     const sections: ScriptSection[] = [];
@@ -161,11 +121,15 @@ function matchingTriggers(config: string, category: string | null, scripts: Comb
 }
 
 
-function referencedProcedures(body: string) {
-    const names = new Set<string>();
-    for (const match of body.matchAll(/(?:~|@)([A-Za-z][A-Za-z0-9_]*)\s*(?=\(|;|$)/g)) names.add(match[1]!);
-    for (const match of body.matchAll(/\b(?:gosub|gosub_with_params|goto|jump)\s*\(\s*([A-Za-z][A-Za-z0-9_]*)/g)) names.add(match[1]!);
+function procedureReferences(body: string) {
+    const names: string[] = [];
+    for (const match of body.matchAll(/(?:~|@)([A-Za-z][A-Za-z0-9_]*)\s*(?=\(|;|$)/g)) names.push(match[1]!);
+    for (const match of body.matchAll(/\b(?:gosub|gosub_with_params|goto|jump)\s*\(\s*([A-Za-z][A-Za-z0-9_]*)/g)) names.push(match[1]!);
     return names;
+}
+
+function referencedProcedures(body: string) {
+    return new Set(procedureReferences(body));
 }
 
 const GENERIC_ATTACK_PROCEDURES = new Set([
@@ -201,6 +165,139 @@ function expandSections(body: string, script: CombatScript, scripts: CombatScrip
 function expandBody(body: string, script: CombatScript, scripts: CombatScripts, skipGenericAttack = false) {
     return expandSections(body, script, scripts, skipGenericAttack).map((section) => section.body).join('\n');
 }
+export type NpcCombatTransformTarget =
+    | { kind: 'known'; config: string }
+    | { kind: 'unknown' };
+
+type NpcTypeChangeCalls = { found: boolean; targets: string[]; unsupported: boolean };
+
+function parseCallArguments(body: string, open: number): string[] | null {
+    const args: string[] = [];
+    let start = open + 1;
+    let depth = 0;
+    let string = false;
+    let escaped = false;
+    for (let index = start; index < body.length; index++) {
+        const character = body[index]!;
+        if (string) {
+            if (escaped) escaped = false;
+            else if (character === '\\') escaped = true;
+            else if (character === '"') string = false;
+            continue;
+        }
+        if (character === '"') {
+            string = true;
+        } else if (character === '(') {
+            depth++;
+        } else if (character === ')') {
+            if (depth === 0) {
+                args.push(body.slice(start, index).trim());
+                return args;
+            }
+            depth--;
+        } else if (character === ',' && depth === 0) {
+            args.push(body.slice(start, index).trim());
+            start = index + 1;
+        }
+    }
+    return null;
+}
+
+function npcTypeChangeCalls(body: string): NpcTypeChangeCalls {
+    const targets: string[] = [];
+    let found = false;
+    let unsupported = false;
+    let string = false;
+    let escaped = false;
+    for (let index = 0; index < body.length; index++) {
+        const character = body[index]!;
+        if (string) {
+            if (escaped) escaped = false;
+            else if (character === '\\') escaped = true;
+            else if (character === '"') string = false;
+            continue;
+        }
+        if (character === '"') {
+            string = true;
+            continue;
+        }
+        if (/[A-Za-z0-9_]/.test(body[index - 1] ?? '')) continue;
+        const name = body.startsWith('npc_changetype_keepall', index)
+            ? 'npc_changetype_keepall'
+            : body.startsWith('npc_changetype', index) ? 'npc_changetype' : null;
+        if (!name) continue;
+        let open = index + name.length;
+        if (/[A-Za-z0-9_]/.test(body[open] ?? '')) continue;
+        while (/\s/.test(body[open] ?? '')) open++;
+        if (body[open] !== '(') continue;
+        found = true;
+        const args = parseCallArguments(body, open);
+        const target = args?.[0];
+        if (args?.length !== 2 || !/^[A-Za-z][A-Za-z0-9_]*$/.test(target ?? '')) {
+            unsupported = true;
+        } else {
+            targets.push(target);
+        }
+        if (args) {
+            let close = open + 1;
+            let depth = 0;
+            let inString = false;
+            let inEscape = false;
+            for (; close < body.length; close++) {
+                const current = body[close]!;
+                if (inString) {
+                    if (inEscape) inEscape = false;
+                    else if (current === '\\') inEscape = true;
+                    else if (current === '"') inString = false;
+                } else if (current === '"') inString = true;
+                else if (current === '(') depth++;
+                else if (current === ')' && depth-- === 0) break;
+            }
+            index = close;
+        }
+    }
+    return { found, targets, unsupported };
+}
+
+function directApproachAwakeningTarget(section: ScriptSection) {
+    if (section.kind !== 'ai_applayer2') return null;
+    const normalized = section.body.replace(/\s+/g, ' ').trim();
+    const match = /^npc_changetype\(\s*([A-Za-z][A-Za-z0-9_]*)\s*,\s*(\d+)\s*\)\s*;\s*npc_setmode\(\s*opplayer2\s*\)\s*;?$/.exec(normalized);
+    if (!match) return null;
+    const duration = Number(match[2]);
+    if (!Number.isSafeInteger(duration) || duration < 1) return null;
+    return match[1]!;
+}
+
+/** Derive only the straight-line attack-approach awakening contract; broader transforms fail closed. */
+export function extractNpcCombatTransformTarget(
+    config: string,
+    category: string | null,
+    scripts: CombatScripts,
+): NpcCombatTransformTarget | null {
+    const handlers = matchingTriggers(config, category, scripts)
+        .filter(({ section }) => section.kind === 'ai_applayer2' || section.kind === 'ai_opplayer2');
+    let found = false;
+    let unsupported = false;
+    const targets = new Set<string>();
+    for (const { script, section } of handlers) {
+        const handlerCalls = expandSections(section.body, script, scripts)
+            .map(({ body }) => npcTypeChangeCalls(body));
+        if (!handlerCalls.some((calls) => calls.found)) continue;
+        found = true;
+        const supportedTarget = directApproachAwakeningTarget(section);
+        if (supportedTarget === null
+            || handlerCalls.some((calls) => calls.unsupported || calls.targets.some((target) => target !== supportedTarget))) {
+            unsupported = true;
+        } else {
+            targets.add(supportedTarget);
+        }
+    }
+    if (!found) return null;
+    if (unsupported || targets.size !== 1) return { kind: 'unknown' };
+    return { kind: 'known', config: targets.values().next().value! };
+}
+
 
 const SHARED_ATTACK_PROCEDURES = new Set([
     'npc_default_attack',
@@ -212,16 +309,22 @@ const SHARED_ATTACK_PROCEDURES = new Set([
     'npc_default_retaliate',
     'npc_default_retaliate_ap',
 ]);
+const DEFAULT_MELEE_DISPATCH_PROCEDURES = new Set(['npc_default_attack']);
+const ORDINARY_RETALIATION_PROCEDURES = new Set(['npc_default_retaliate', 'npc_default_retaliate_ap']);
 
-function isSharedAttackBody(body: string) {
+function onlySharedAttackBody(body: string, allowedProcedures: ReadonlySet<string>) {
     let found = false;
     const call = /(?:~([A-Za-z][A-Za-z0-9_]*)\s*(?:\([^;]*\))?\s*;?|gosub(?:_with_params)?\s*\(\s*([A-Za-z][A-Za-z0-9_]*)\s*(?:,[^)]*)?\)\s*;?)/g;
     const rest = body.replace(call, (source, tildeName: string | undefined, gosubName: string | undefined) => {
-        if (!SHARED_ATTACK_PROCEDURES.has(tildeName ?? gosubName ?? '')) return source;
+        if (!allowedProcedures.has(tildeName ?? gosubName ?? '')) return source;
         found = true;
         return '';
     });
     return found && /^[\s{};]*$/.test(rest);
+}
+
+function isSharedAttackBody(body: string) {
+    return onlySharedAttackBody(body, SHARED_ATTACK_PROCEDURES);
 }
 
 function dragonfireKind(relative: string): DragonfireKind {
@@ -271,6 +374,197 @@ function bodyAttackFacts(body: string, maxHits: ReadonlyMap<string, number>) {
     return { ranged, magic, forcedMaxHit: forced.length ? Math.max(...forced) : null };
 }
 
+const ORDINARY_MELEE_SAFE_CALLS = new Set([
+    'anim',
+    'gosub',
+    'gosub_with_params',
+    'if',
+    'npc_anim',
+    'npc_param',
+    'npc_say',
+    'npc_setmode',
+    'random',
+    'sound_synth',
+    'switch_int',
+]);
+
+// These normalized bodies pin the content routines' complete attack semantics.
+// A call-name whitelist alone would miss changed argument flow or extra effects.
+const STANDARD_MELEE_MAX_HIT_BODY = [
+    'def_int $strengthbonus = npc_param(strengthbonus);',
+    'def_int $effective_strength = ~combat_effective_stat(npc_stat(strength), 100);',
+    '$effective_strength = add($effective_strength, 9);',
+    'def_int $melee_strength = ~combat_stat($effective_strength, $strengthbonus);',
+    'return(~combat_maxhit($melee_strength));',
+].join(' ');
+
+const STANDARD_MELEE_ATTACK_BODY = [
+    'def_int $attack_roll = ~npc_melee_attack_roll;',
+    'def_int $defence_roll = ~player_defence_roll_specific(npc_param(damagetype));',
+    'def_int $maxhit = ~npc_melee_maxhit;',
+    'if (randominc($attack_roll) > randominc($defence_roll)) {',
+    '~playerhit_n_melee(true, randominc($maxhit), npc_param(attackrate));',
+    '~npc_poison_player;',
+    'return;',
+    '}',
+    '~playerhit_n_melee(true, 0, npc_param(attackrate));',
+].join(' ');
+
+function standardMeleeMaxHitRoutineExists(scripts: CombatScripts) {
+    const routines = scripts.procedures.get('npc_melee_maxhit') ?? [];
+    if (routines.length !== 1) return false;
+    // The parser retains the content procedure's zero-argument int signature in its body.
+    const body = routines[0]!.body
+        .replace(/^\s*\(\)\s*\(\s*int\s*\)\s*/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return body === STANDARD_MELEE_MAX_HIT_BODY;
+}
+
+function standardMeleeRoutineExists(scripts: CombatScripts) {
+    const routines = scripts.procedures.get('npc_meleeattack') ?? [];
+    return routines.length === 1
+        && standardMeleeMaxHitRoutineExists(scripts)
+        && routines[0]!.body.replace(/\s+/g, ' ').trim() === STANDARD_MELEE_ATTACK_BODY;
+}
+
+function ordinaryMeleeBodyIsSafe(
+    body: string,
+    script: CombatScript,
+    scripts: CombatScripts,
+    active = new Set<string>(),
+    depth = 0,
+): boolean {
+    if (depth >= 16) return false;
+    if (/(?<![~@])\b(?:npc_meleeattack|npc_default_attack)\s*\(/.test(body)) return false;
+
+    const modeCalls = [...body.matchAll(/\bnpc_setmode\s*\(\s*\^?([A-Za-z][A-Za-z0-9_]*)\s*\)/g)];
+    if ((body.match(/\bnpc_setmode\b/g) ?? []).length !== modeCalls.length
+        || modeCalls.some((match) => !['null', 'opplayer2', 'applayer2'].includes(match[1]!))) {
+        return false;
+    }
+
+    const procedureIsSafe = (name: string): boolean => {
+        if (ORDINARY_MELEE_SAFE_CALLS.has(name)) return true;
+        if (name === 'npc_meleeattack') {
+            return !script.procedures.has(name) && standardMeleeRoutineExists(scripts);
+        }
+        if (name === 'npc_default_attack') {
+            return !script.procedures.has(name) && defaultAttackUsesMelee(scripts);
+        }
+        if (GENERIC_ATTACK_PROCEDURES.has(name)) return false;
+
+        const candidates = script.procedures.get(name) ?? [];
+        if (candidates.length !== 1 || active.has(candidates[0]!.key)) return false;
+        const nextActive = new Set(active);
+        nextActive.add(candidates[0]!.key);
+        return ordinaryMeleeBodyIsSafe(candidates[0]!.body, script, scripts, nextActive, depth + 1);
+    };
+
+    for (const name of referencedProcedures(body)) {
+        if (!procedureIsSafe(name)) return false;
+    }
+    for (const match of body.matchAll(/\b([A-Za-z][A-Za-z0-9_]*)\s*\(/g)) {
+        if (!procedureIsSafe(match[1]!)) return false;
+    }
+    return true;
+}
+
+function ordinaryMeleeDispatchCount(
+    body: string,
+    script: CombatScript,
+    scripts: CombatScripts,
+    active = new Set<string>(),
+    depth = 0,
+): number | null {
+    if (depth >= 16) return null;
+    let count = 0;
+    for (const name of procedureReferences(body)) {
+        if (ORDINARY_MELEE_SAFE_CALLS.has(name)) continue;
+        if (name === 'npc_meleeattack') {
+            if (script.procedures.has(name) || !standardMeleeRoutineExists(scripts)) return null;
+            count += 1;
+            continue;
+        }
+        if (name === 'npc_default_attack') {
+            if (script.procedures.has(name) || !defaultAttackUsesMelee(scripts)) return null;
+            count += 1;
+            continue;
+        }
+        if (GENERIC_ATTACK_PROCEDURES.has(name)) return null;
+
+        const candidates = script.procedures.get(name) ?? [];
+        if (candidates.length !== 1 || active.has(candidates[0]!.key)) return null;
+        const nextActive = new Set(active);
+        nextActive.add(candidates[0]!.key);
+        const nestedCount = ordinaryMeleeDispatchCount(candidates[0]!.body, script, scripts, nextActive, depth + 1);
+        if (nestedCount === null) return null;
+        count += nestedCount;
+    }
+    return count;
+}
+
+function defaultAttackUsesMelee(scripts: CombatScripts) {
+    const routines = scripts.procedures.get('npc_default_attack') ?? [];
+    if (routines.length !== 1 || !referencedProcedures(routines[0]!.body).has('npc_meleeattack')) return false;
+    const routine = routines[0]!;
+    const script = scripts.files.find((file) =>
+        file.procedures.get('npc_default_attack')?.some((candidate) => candidate.key === routine.key),
+    );
+    return script !== undefined
+        && ordinaryMeleeBodyIsSafe(routine.body, script, scripts, new Set([routine.key]))
+        && ordinaryMeleeDispatchCount(routine.body, script, scripts, new Set([routine.key])) === 1;
+}
+
+function defaultOpAttackUsesMelee(scripts: CombatScripts) {
+    const handlers = (scripts.triggers.get('_') ?? []).filter(({ section }) => section.kind === 'ai_opplayer2');
+    return handlers.length === 1
+        && onlySharedAttackBody(handlers[0]!.section.body, DEFAULT_MELEE_DISPATCH_PROCEDURES)
+        && defaultAttackUsesMelee(scripts);
+}
+
+function hasModeRoute(modes: string[], target: 'applayer2' | 'opplayer2') {
+    return modes.includes(target) && modes.every((mode) => mode === target || mode === 'null');
+}
+
+function ordinaryMeleeAttackHandlers(relevant: { script: CombatScript; section: ScriptSection }[], scripts: CombatScripts) {
+    const attackHandlers = relevant.filter(({ section }) => section.kind === 'ai_applayer2' || section.kind === 'ai_opplayer2');
+    if (attackHandlers.length === 0) return false;
+    if (relevant.some(({ section }) =>
+        section.kind === 'ai_queue1' && !onlySharedAttackBody(section.body, ORDINARY_RETALIATION_PROCEDURES))) {
+        return false;
+    }
+
+    const hasOpHandler = attackHandlers.some(({ section }) => section.kind === 'ai_opplayer2');
+    const hasApHandler = attackHandlers.some(({ section }) => section.kind === 'ai_applayer2');
+    const defaultOpMelee = !hasOpHandler && defaultOpAttackUsesMelee(scripts);
+    let hasMeleeDispatch = false;
+
+    for (const { script, section } of attackHandlers) {
+        if (!ordinaryMeleeBodyIsSafe(section.body, script, scripts)) return false;
+        const dispatchCount = ordinaryMeleeDispatchCount(section.body, script, scripts);
+        if (dispatchCount === null || dispatchCount > 1) return false;
+        if (dispatchCount === 1) {
+            hasMeleeDispatch = true;
+            continue;
+        }
+        const expanded = expandSections(section.body, script, scripts, true);
+        const modes = expanded.flatMap(({ body }) =>
+            [...body.matchAll(/\bnpc_setmode\s*\(\s*\^?([A-Za-z][A-Za-z0-9_]*)\s*\)/g)].map((match) => match[1]!),
+        );
+        if (section.kind === 'ai_opplayer2' && hasApHandler && hasModeRoute(modes, 'applayer2')) continue;
+        if (section.kind === 'ai_applayer2' && hasOpHandler && hasModeRoute(modes, 'opplayer2')) continue;
+        if (section.kind === 'ai_applayer2' && defaultOpMelee && hasModeRoute(modes, 'opplayer2')) {
+            hasMeleeDispatch = true;
+            continue;
+        }
+        return false;
+    }
+
+    return hasMeleeDispatch && standardMeleeRoutineExists(scripts);
+}
+
+
 export function extractNpcCombatFacts(config: string, category: string | null, scripts: CombatScripts, maxHits: ReadonlyMap<string, number>): CombatNpcFacts {
     const matched = matchingTriggers(config, category, scripts);
     const relevant = matched.filter(({ section }) => AI_KINDS.has(section.kind));
@@ -304,7 +598,13 @@ export function extractNpcCombatFacts(config: string, category: string | null, s
     const counterProtect = [...apTriggers, ...opTriggers].some(({ section }) =>
         /~check_protect_prayer\s*(?:\(|;)/.test(section.body));
     const forced = attacks.flatMap((attack) => attack.forcedMaxHit === null ? [] : [attack.forcedMaxHit]);
-    return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke, counter_protect: counterProtect };
+    const ordinaryMelee = bespoke
+        && attackKind === null
+        && forced.length === 0
+        && dragonfire === null
+        && !counterProtect
+        && ordinaryMeleeAttackHandlers(relevant, scripts);
+    return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke, ordinary_melee: ordinaryMelee, counter_protect: counterProtect };
 }
 
 function sourceValueId(value: string | number | undefined, pack: ReadonlyMap<string, number>, label: string): number | null {
@@ -502,6 +802,133 @@ function weaponStyleTables(content: string) {
     }
     return { byCategory, fallback: fallbackSeen ? fallback : null };
 }
+export function combatConstantCodes(content: string, file: string, label: string) {
+    const source = stripComments(requireGatherText(content, file));
+    const codes = new Map<string, number | null>();
+    for (const match of source.matchAll(/^\s*\^([A-Za-z][A-Za-z0-9_]*)\s*=\s*(-?\d+)\s*$/gm)) {
+        const name = match[1]!;
+        const code = Number(match[2]);
+        const prior = codes.get(name);
+        if (!Number.isInteger(code) || code < 0 || code > 255) {
+            throw new Error(`${label}: constant ^${name} code ${code} is out of range`);
+        }
+        if (prior !== undefined) throw new Error(`${label}: duplicate constant ^${name}`);
+        codes.set(name, code);
+    }
+    return codes;
+}
+
+function combatStyleBonuses(content: string) {
+    const source = stripComments(requireGatherText(content, 'scripts/skill_combat/scripts/combat.rs2'));
+    const procedure = parseSections(source).find((section) => section.kind === 'proc'
+        && section.target?.replace(/^\./, '') === 'combat_get_damagestyle_bonuses');
+    const body = procedure && bracedBody(procedure.body, /\bswitch_int\s*\(\s*\$damagestyle\s*\)\s*\{/);
+    if (body === null || body === undefined) throw new Error('combat styles: missing combat_get_damagestyle_bonuses switch');
+
+    const bonuses = new Map<string, [number, number, number] | null>();
+    let fallback: [number, number, number] | null = null;
+    for (const match of body.matchAll(/^\s*case\s+(default|\^[A-Za-z][A-Za-z0-9_]*(?:\s*,\s*\^[A-Za-z][A-Za-z0-9_]*)*)\s*:\s*return\s*\(([^)]*)\)\s*;/gm)) {
+        const values = match[2]!.split(',').map((value) => Number(value.trim()));
+        if (values.length !== 4 || values.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
+            throw new Error(`combat styles: malformed bonus tuple ${match[2]}`);
+        }
+        const bonus: [number, number, number] = [values[0]!, values[1]!, values[2]!];
+        if (match[1] === 'default') {
+            if (fallback !== null) throw new Error('combat styles: duplicate default style bonus');
+            fallback = bonus;
+            continue;
+        }
+        for (const rawName of match[1]!.split(',')) {
+            const name = rawName.trim().replace(/^\^/, '');
+            if (bonuses.has(name)) bonuses.set(name, null);
+            else bonuses.set(name, bonus);
+        }
+    }
+    if (fallback === null) throw new Error('combat styles: missing default style bonus');
+    return { bonuses, fallback };
+}
+
+function combatStyleSlots(content: string) {
+    const schema = parseSections(stripComments(requireGatherText(content, 'scripts/skill_combat/configs/combat.dbtable')))
+        .filter((section) => section.kind === 'combat_style_table' && section.target === null);
+    if (schema.length !== 1
+        || !/^\s*column=damagestyle,int,LIST\s*$/m.test(schema[0]!.body)
+        || !/^\s*column=damagetype,int,LIST\s*$/m.test(schema[0]!.body)) {
+        throw new Error('combat styles: combat_style_table must declare damagestyle and damagetype lists');
+    }
+
+    const modeCodes = combatConstantCodes(content, 'scripts/skill_combat/configs/combat_damagestyles.constant', 'damagestyle');
+    const damageCodes = combatConstantCodes(content, 'scripts/skill_combat/configs/combat_damagetypes.constant', 'damagetype');
+    const bonuses = combatStyleBonuses(content);
+    const dbrowText = requireGatherText(content, 'scripts/skill_combat/configs/combat.dbrow');
+    const rows = new Map<string, CombatDbRow | null>();
+    for (const row of parseRows(dbrowText)) {
+        if (rows.has(row.name)) rows.set(row.name, null);
+        else rows.set(row.name, row);
+    }
+    const sections = new Map<string, ScriptSection | null>();
+    for (const section of parseSections(stripComments(dbrowText))) {
+        if (section.target !== null) continue;
+        if (sections.has(section.kind)) sections.set(section.kind, null);
+        else sections.set(section.kind, section);
+    }
+
+    const slots = new Map<string, CombatStyleSlot[] | null>();
+    for (const [name, row] of rows) {
+        const section = sections.get(name);
+        if (!section || !/^\s*table=combat_style_table\s*$/m.test(section.body)) continue;
+        const styles = row?.values.damagestyle;
+        const damageTypes = row?.values.damagetype;
+        if (!row || !styles || !damageTypes || styles.length === 0 || styles.length > 4
+            || damageTypes.length !== styles.length) {
+            slots.set(name, null);
+            continue;
+        }
+        const styleRows: CombatStyleSlot[] = [];
+        for (let style_slot = 0; style_slot < styles.length; style_slot++) {
+            const damagestyleName = styles[style_slot]?.[0]?.replace(/^\^/, '');
+            const damagetypeName = damageTypes[style_slot]?.[0]?.replace(/^\^/, '');
+            const damagestyle = damagestyleName === undefined ? undefined : modeCodes.get(damagestyleName);
+            const damagetype = damagetypeName === undefined ? undefined : damageCodes.get(damagetypeName);
+            if (damagestyleName === undefined || damagetypeName === undefined
+                || damagestyle === undefined || damagestyle === null
+                || damagetype === undefined || damagetype === null) {
+                throw new Error(`combat styles: ${name} slot ${style_slot} has an unresolved damage type/style`);
+            }
+            const bonus = bonuses.bonuses.get(damagestyleName);
+            if (bonus === null) throw new Error(`combat styles: ${damagestyleName} has conflicting style bonuses`);
+            styleRows.push({
+                style_slot,
+                damagetype,
+                damagestyle,
+                style_bonus: bonus ?? bonuses.fallback,
+            });
+        }
+        slots.set(name, styleRows);
+    }
+    return slots;
+}
+
+function uniqueWeaponStyleMetadata<T extends WeaponStyleMetadata>(rows: readonly T[], label: string): T[] {
+    const byId = new Map<number, T>();
+    for (const row of rows) {
+        const prior = byId.get(row.obj_id);
+        if (prior && (prior.style !== row.style || prior.attackrate !== row.attackrate
+            || prior.category !== row.category || prior.tab !== row.tab)) {
+            throw new Error(`${label}: obj ${row.obj_id} has inconsistent per-slot weapon metadata`);
+        }
+        if (!prior) byId.set(row.obj_id, row);
+    }
+    return [...byId.values()].sort((a, b) => a.obj_id - b.obj_id);
+}
+
+type CombatBonusName = 'stabattack' | 'slashattack' | 'crushattack' | 'magicattack' | 'rangeattack'
+    | 'stabdefence' | 'slashdefence' | 'crushdefence' | 'magicdefence' | 'rangedefence';
+const ITEM_COMBAT_BONUS_NAMES: readonly CombatBonusName[] = [
+    'stabattack', 'slashattack', 'crushattack', 'magicattack', 'rangeattack',
+    'stabdefence', 'slashdefence', 'crushdefence', 'magicdefence', 'rangedefence',
+];
+
 
 function combatModeFacts(
     content: string,
@@ -691,7 +1118,9 @@ function rangedObjectFacts(
     return { rangedWeapons, rangedAmmo };
 }
 
-export function extractCombatStyleFacts(content: string, objects: readonly CombatObject[], npcs: readonly CombatNpcSource[], scripts: CombatScripts) {
+export function extractCombatStyleFacts(content: string, objects: readonly CombatObject[], npcs: readonly CombatNpcSource[], scripts: CombatScripts, includePvpV0 = true) {
+    const styleTablesByCategory = weaponStyleTables(content);
+    const styleSlots = combatStyleSlots(content);
     const seqPack = parsePack(requireGatherText(content, 'pack/seq.pack'));
     const spotanimPack = parsePack(requireGatherText(content, 'pack/spotanim.pack'));
     const categoryPack = parsePack(requireGatherText(content, 'pack/category.pack'));
@@ -700,11 +1129,20 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
     const meleeModes = combatModeFacts(content, interfacePack, combatTabs, MELEE_MODE_CONSTANTS);
     const rangedModes = combatModeFacts(content, interfacePack, combatTabs, RANGED_MODE_CONSTANTS, RANGED_MODE_CODES);
     const paramIds = packParameterIds(content);
+    if (!paramIds.has('attackrate')) throw new Error('combat styles: pack/param.pack is missing attackrate');
+    const rateDefinition = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param')).get('attackrate');
+    const rawDefaultRate = rateDefinition?.default;
+    const defaultAttackrate = rawDefaultRate !== undefined && /^-?\d+$/.test(rawDefaultRate)
+        ? Number(rawDefaultRate) : Number.NaN;
+    if (rateDefinition?.type?.toLowerCase() !== 'int'
+        || !Number.isSafeInteger(defaultAttackrate) || defaultAttackrate < 0 || defaultAttackrate > 255) {
+        throw new Error('combat styles: attackrate has no valid content default');
+    }
     const categoryNames = new Map([...categoryPack.entries()].map(([name, id]) => [id, name]));
     const ranged = rangedObjectFacts(content, objects, categoryNames, paramIds);
     const sequences = new Map<number, number>();
     const spotanims = new Map<number, { style: number; where: SpotanimWhere }>();
-    const weaponStyles: { obj_id: number; style: number; attackrate: number; category: number; tab: number | null }[] = [];
+    const weaponStyles: WeaponStyleFactWire[] = [];
     const seqId = (value: string | number | undefined, label: string) => sourceValueId(value, seqPack, label);
     const spotId = (value: string | number | undefined, label: string) => sourceValueId(value, spotanimPack, label);
     const addSpot = (id: number | null, style: number, where: SpotanimWhere, label: string) => {
@@ -731,12 +1169,23 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         const style = categoryCode >= 1 && categoryCode <= 4 ? STYLE.RANGED : categoryCode === 5 ? STYLE.MAGIC : STYLE.MELEE;
         const rawRate = parameterValue(object.params, paramIds, 'attackrate');
         if (rawRate !== undefined && typeof rawRate !== 'number') throw new Error(`obj ${object.id}: attackrate is not numeric`);
-        const attackrate = rawRate ?? 4;
+        const attackrate = rawRate ?? defaultAttackrate;
         if (!Number.isInteger(attackrate) || attackrate < 0 || attackrate > 255) throw new Error(`obj ${object.id}: attackrate ${attackrate} is out of range`);
         const tab = combatTabs.byCategory.has(category)
             ? combatTabs.byCategory.get(category) ?? null
             : combatTabs.fallback;
-        weaponStyles.push({ obj_id: object.id, style, attackrate, category: categoryCode, tab });
+        const table = styleTablesByCategory.byCategory.has(category)
+            ? styleTablesByCategory.byCategory.get(category) ?? null
+            : styleTablesByCategory.fallback;
+        if (table === null) throw new Error(`obj ${object.id}: ${category} has no combat style table`);
+        const styles = styleSlots.get(table);
+        if (!styles || styles.length === 0) throw new Error(`obj ${object.id}: combat style table ${table} has no usable slots`);
+        for (const styleSlot of styles) {
+            weaponStyles.push({
+                obj_id: object.id, style, attackrate, category: categoryCode, tab,
+                ...styleSlot,
+            });
+        }
     }
     for (const npc of npcs) {
         const attackAnim = npc.params.get('attack_anim');
@@ -765,7 +1214,7 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
     // `quest_regicide.npc:57-58`) merge with the same style and location.
     // The halberd's `spotanim_282..285` are map spotanims, not attributed;
     // the halberd attack is attributed by its animation through `style_seq`.
-    for (const [name, style, where] of [
+    const pvpSpecialSpotanims = [
         // C`skill_combat/scripts/pvp/specs/scripts/pvp_rune_thrownaxe.rs2:86`.
         ['sp_attack_chainhit_travel_spotanim', STYLE.RANGED, 'projectile'],
         // C`pvp_dragon_dagger.rs2:4`.
@@ -786,8 +1235,12 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         ['sp_attack_chainhit_launch_spotanim', STYLE.RANGED, 'attacker'],
         // C`pvp_magic_shortbow.rs2:24-25`; C`pvp_magic_longbow.rs2:17`.
         ['sp_attack_glow_arrow_travel', STYLE.RANGED, 'projectile'],
-    ] as const) {
-        addSpot(spotId(name, `pvp special ${name}`), style, where, name);
+    ] as const;
+    // A pre-V0 revision omits these rows from `style_spotanims`.
+    if (includePvpV0) {
+        for (const [name, style, where] of pvpSpecialSpotanims) {
+            addSpot(spotId(name, `pvp special ${name}`), style, where, name);
+        }
     }
     for (const [name, where] of [
         ['failedspell_impact', 'on_us'],
@@ -807,7 +1260,7 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         style_seqs: [...sequences.entries()].sort((a, b) => a[0] - b[0]).map(([seq_id, style]) => ({ seq_id, style })),
         style_spotanims: makeSpotanimRows(spotanims),
         combat_tabs: combatTabs.roots,
-        weapon_styles: weaponStyles.sort((a, b) => a.obj_id - b.obj_id),
+        weapon_styles: weaponStyles.sort((a, b) => a.obj_id - b.obj_id || a.style_slot - b.style_slot),
         melee_modes: meleeModes.rows,
         melee_mode_varp: meleeModes.varp,
         ranged_weapons: ranged.rangedWeapons,
@@ -980,7 +1433,7 @@ const SPECIAL_SPECS: Record<string, SpecialSpec> = {
 export function extractSpecialWeaponFacts(
     content: string,
     objects: readonly CombatObject[],
-    weaponStyles: readonly { obj_id: number; style: number; tab: number | null }[],
+    weaponStyles: readonly WeaponStyleMetadata[],
     aliasToId: ReadonlyMap<string, number>,
 ): SpecialWeaponFactWire[] {
     const paramIds = packParameterIds(content);
@@ -1002,7 +1455,7 @@ export function extractSpecialWeaponFacts(
         throw new Error(`special facts: bad sa_energy default ${paramDefaults.get('sa_energy')?.default}`);
     }
     const byId = new Map(objects.map((object) => [object.id, object]));
-    const styleById = new Map(weaponStyles.map((row) => [row.obj_id, row]));
+    const styleById = new Map(uniqueWeaponStyleMetadata(weaponStyles, 'special facts').map((row) => [row.obj_id, row]));
     const rows: SpecialWeaponFactWire[] = [];
     for (const [alias, id] of [...aliasToId.entries()].sort((a, b) => a[1] - b[1])) {
         const object = byId.get(id);
@@ -1039,24 +1492,44 @@ export function extractSpecialWeaponFacts(
     return rows.sort((a, b) => a.obj_id - b.obj_id);
 }
 
-export type ItemCombatBonusWire = { obj_id: number; strengthbonus: number; rangebonus: number };
+export type ItemCombatBonusWire = { obj_id: number; strengthbonus: number; rangebonus: number } & Record<CombatBonusName, number>;
 
 export function extractItemCombatBonus(
     content: string,
     objects: readonly CombatObject[],
 ): ItemCombatBonusWire[] {
     const paramIds = packParameterIds(content);
+    const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
+    const names = [...ITEM_COMBAT_BONUS_NAMES, 'strengthbonus', 'rangebonus'] as const;
+    const defaults = new Map<string, number>();
+    for (const name of names) {
+        if (!paramIds.has(name)) throw new Error(`combat bonus: pack/param.pack is missing ${name}`);
+        const definition = definitions.get(name);
+        if (definition?.type?.toLowerCase() !== 'int') throw new Error(`combat bonus: ${name} is not an integer parameter`);
+        const value = definition.default === undefined ? Number.NaN : Number(definition.default);
+        if (!Number.isSafeInteger(value)) throw new Error(`combat bonus: ${name} has no valid content default`);
+        defaults.set(name, value);
+    }
     const rows: ItemCombatBonusWire[] = [];
     for (const object of objects) {
-        const strength = parameterValue(object.params, paramIds, 'strengthbonus');
-        const range = parameterValue(object.params, paramIds, 'rangebonus');
-        if (strength === undefined && range === undefined) continue;
-        const strengthbonus = strength === undefined ? 0 : Number(strength);
-        const rangebonus = range === undefined ? 0 : Number(range);
-        if (!Number.isInteger(strengthbonus) || !Number.isInteger(rangebonus)) {
-            throw new Error(`combat bonus: obj ${object.id} has non-integer bonus ${strength}/${range}`);
-        }
-        rows.push({ obj_id: object.id, strengthbonus, rangebonus });
+        if (![object.wearpos, object.wearpos2, object.wearpos3].some((position) => position !== undefined && position >= 0)) continue;
+        const read = (name: typeof names[number], signed = false) => {
+            const raw = parameterValue(object.params, paramIds, name);
+            const value = raw === undefined ? defaults.get(name)! : Number(raw);
+            if (!Number.isSafeInteger(value)) throw new Error(`combat bonus: obj ${object.id} has non-integer ${name} ${raw}`);
+            if (signed && (value < -32768 || value > 32767)) {
+                throw new Error(`combat bonus: obj ${object.id} ${name} ${value} is out of i16 range`);
+            }
+            return value;
+        };
+        const bonuses = {} as Record<CombatBonusName, number>;
+        for (const name of ITEM_COMBAT_BONUS_NAMES) bonuses[name] = read(name, true);
+        rows.push({
+            obj_id: object.id,
+            strengthbonus: read('strengthbonus'),
+            rangebonus: read('rangebonus'),
+            ...bonuses,
+        });
     }
     return rows.sort((a, b) => a.obj_id - b.obj_id);
 }
@@ -1116,7 +1589,7 @@ function meleeTierGate(handler: string, args: string): { tier: number; quest_gat
 
 export function extractMeleeWeaponTiers(
     content: string,
-    weaponStyles: readonly { obj_id: number; category: number }[],
+    weaponStyles: readonly WeaponStyleMetadata[],
     idToAlias: ReadonlyMap<number, string>,
 ): MeleeWeaponTierWire[] {
     // `weapon_styles` category 0 is melee; bows, crossbows, thrown, javelins
@@ -1124,8 +1597,9 @@ export function extractMeleeWeaponTiers(
     // Only aliases of melee weapons are gated here; every other wield row
     // (armour, staves, ammo) is out of scope and ignored, while an
     // unexpected attack gate on a melee weapon fails closed.
+    const uniqueWeaponStyles = uniqueWeaponStyleMetadata(weaponStyles, 'melee tier');
     const meleeAliases = new Set<string>();
-    for (const weapon of weaponStyles) {
+    for (const weapon of uniqueWeaponStyles) {
         if (weapon.category !== 0) continue;
         const alias = idToAlias.get(weapon.obj_id);
         if (alias !== undefined) meleeAliases.add(alias);
@@ -1191,7 +1665,7 @@ export function extractMeleeWeaponTiers(
         }
     }
     const rows: MeleeWeaponTierWire[] = [];
-    for (const weapon of weaponStyles) {
+    for (const weapon of uniqueWeaponStyles) {
         if (weapon.category !== 0) continue;
         const alias = idToAlias.get(weapon.obj_id);
         const gate = alias === undefined ? undefined : gates.get(alias);

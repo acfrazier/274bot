@@ -1,0 +1,233 @@
+{
+  "schema": 3,
+  "id": "blackarmgang",
+  "display_name": "Shield of Arrav",
+  "required": [],
+  "tested_stats": null,
+  "partner": {
+    "protocol": "arrav",
+    "roles": [
+      {
+        "id": "phoenix",
+        "gang": "Phoenix"
+      },
+      {
+        "id": "blackarm",
+        "gang": "BlackArm"
+      }
+    ]
+  },
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 20,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:phoenixkey2",
+      "obj:phoenix_crossbow",
+      "obj:intelligence_report",
+      "obj:the_shield_of_arrav",
+      "obj:arravshield1",
+      "obj:arravshield2",
+      "obj:arravcertificate"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": "phoenix",
+      "progress_binding": "journal:blackarmgang",
+      "progress": {
+        "colour": {
+          "not_started": "p:9",
+          "in_progress": "p:9",
+          "complete": "p:done"
+        },
+        "rules": [
+          {
+            "stage": "p:9",
+            "all": [
+              "allowed me to join the phoenix gang"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "p:9",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "p-key",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "arrav-key",
+                "give": [
+                  {
+                    "obj": "phoenixkey2",
+                    "qty": 1
+                  }
+                ],
+                "take": [],
+                "rendezvous": {
+                  "tile": [
+                    3208,
+                    3391,
+                    0
+                  ],
+                  "source": "maps/m50_52.jm2:8228; public Tramp spawn"
+                },
+                "timeout_ticks": 300
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "phoenixkey2"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "phoenixkey2"
+                    }
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:134-142,154-166; scripts/areas/area_varrock/scripts/curator.rs2:7-22"
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "p:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    },
+    {
+      "role": "blackarm",
+      "progress_binding": "journal:blackarmgang",
+      "progress": {
+        "colour": {
+          "not_started": "b:2",
+          "in_progress": "b:2",
+          "complete": "b:done"
+        },
+        "rules": [
+          {
+            "stage": "b:2",
+            "all": [
+              "she offered to let me join the gang in return for"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "b:2",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "b-key",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "arrav-key",
+                "give": [],
+                "take": [
+                  {
+                    "obj": "phoenixkey2",
+                    "qty": 1
+                  }
+                ],
+                "rendezvous": {
+                  "tile": [
+                    3208,
+                    3391,
+                    0
+                  ],
+                  "source": "maps/m50_52.jm2:8228; public Tramp spawn"
+                },
+                "timeout_ticks": 300
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "phoenixkey2"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "phoenix_crossbow",
+                        "qty": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "phoenixkey2"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:134-142,154-166; scripts/areas/area_varrock/scripts/curator.rs2:7-22"
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "b:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

@@ -1214,17 +1214,29 @@ fn revision_289_typed_packets_match_primary_wire_goldens() {
         Send::friendlist_add(name),
         &[0, 0, 0, 0, 0, 0, 0, 1]
     );
-    let catalog = api::debug_commands::DebugCatalog::decode(
-        include_bytes!("../data/game-data/289/debug.json"),
-        ClientRevision::R289,
-        api::game_data::for_revision(ClientRevision::R289).unwrap(),
-    )
-    .unwrap();
-    golden!(
-        ClientProt::CLIENT_CHEAT,
-        Send::client_cheat(&catalog, "~cat").unwrap(),
-        b"~cat\n"
-    );
+    let mut has_client_cheat = false;
+    if let (Some(path), true) = (
+        api::test_support::local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289/debug.json"),
+            "revision 289 debug catalog for packet golden test",
+        ),
+        api::test_support::embedded_game_data_available(),
+    ) {
+        let bytes = std::fs::read(path).expect("read real revision 289 debug catalog");
+        let catalog = api::debug_commands::DebugCatalog::decode(
+            &bytes,
+            ClientRevision::R289,
+            api::game_data::for_revision(ClientRevision::R289).unwrap(),
+        )
+        .unwrap();
+        golden!(
+            ClientProt::CLIENT_CHEAT,
+            Send::client_cheat(&catalog, "~cat").unwrap(),
+            b"~cat\n"
+        );
+        has_client_cheat = true;
+    }
     golden!(
         ClientProt::MESSAGE_PUBLIC,
         Send::message_public(11, 5, "hello!").unwrap(),
@@ -1236,8 +1248,14 @@ fn revision_289_typed_packets_match_primary_wire_goldens() {
         &[0, 0x12, 0x34, 0x56, 0x78, 0xff, 2]
     );
 
-    let expected: Vec<_> = ALL_CLIENT_PROTS_289.iter().map(|(prot, _)| *prot).collect();
-    assert_eq!(seen, expected, "one golden for every named R289 row");
+    let mut expected: Vec<_> = ALL_CLIENT_PROTS_289.iter().map(|(prot, _)| *prot).collect();
+    if !has_client_cheat {
+        expected.retain(|prot| *prot != ClientProt::CLIENT_CHEAT);
+    }
+    assert_eq!(
+        seen, expected,
+        "one golden for every available named R289 row"
+    );
 }
 
 #[test]
@@ -1480,72 +1498,88 @@ fn typed_packet_builders_refuse_invalid_domains_and_shapes() {
     .is_err());
     assert!(Send::event_mouse_move(&[MouseMoveRecord::Outside { duplicates: 2048 }]).is_err());
 
-    let catalog = api::debug_commands::DebugCatalog::decode(
-        include_bytes!("../data/game-data/289/debug.json"),
-        ClientRevision::R289,
-        api::game_data::for_revision(ClientRevision::R289).unwrap(),
-    )
-    .unwrap();
-    assert!(matches!(
-        Send::client_cheat(&catalog, "not-a-catalog-command"),
-        Err(PacketError::InvalidCheat(_))
-    ));
-    assert!(matches!(
-        Send::client_cheat(&catalog, "café"),
-        Err(PacketError::InvalidCheat(_))
-    ));
-    assert!(matches!(
-        Send::client_cheat(&catalog, "~cat\n"),
-        Err(PacketError::InvalidCheat(_))
-    ));
-    assert!(matches!(
-        Send::client_cheat(&catalog, "~addxp attack"),
-        Err(PacketError::InvalidCheat(_))
-    ));
-    assert!(matches!(
-        Send::client_cheat(&catalog, "~addxp attack 42 extra"),
-        Err(PacketError::InvalidCheat(_))
-    ));
-    assert!(matches!(
-        Send::client_cheat(&catalog, &format!("~cat {}", "x".repeat(81))),
-        Err(PacketError::BodyTooLong { .. })
-    ));
-
-    let catalog274 = api::debug_commands::DebugCatalog::decode(
-        include_bytes!("../data/game-data/274/debug.json"),
-        ClientRevision::R274,
-        api::game_data::for_revision(ClientRevision::R274).unwrap(),
-    )
-    .unwrap();
-    let mismatched = Send::client_cheat(&catalog274, "~cat").unwrap();
-    let seed = [1, 2, 3, 4];
-    let mut packet = Packet::new(vec![0xa5; 32]);
-    packet.pos = 5;
-    packet.random = Some(Isaac::new(&seed));
-    let prefix = packet.data()[..packet.pos].to_vec();
-    assert_eq!(
-        mismatched.write_for_revision(ClientRevision::R289, &mut packet),
-        Err(PacketError::RevisionMismatch)
-    );
-    assert_eq!(packet.pos, 5);
-    assert_eq!(&packet.data()[..packet.pos], prefix);
-
-    Send::if_button(0x1234)
-        .unwrap()
-        .write_for_revision(ClientRevision::R289, &mut packet)
+    if let (Some(path289), Some(path274), true) = (
+        api::test_support::local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289/debug.json"),
+            "revision 289 debug catalog for invalid packet test",
+        ),
+        api::test_support::local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/274/debug.json"),
+            "revision 274 debug catalog for revision mismatch test",
+        ),
+        api::test_support::embedded_game_data_available(),
+    ) {
+        let bytes289 = std::fs::read(path289).expect("read real revision 289 debug catalog");
+        let catalog = api::debug_commands::DebugCatalog::decode(
+            &bytes289,
+            ClientRevision::R289,
+            api::game_data::for_revision(ClientRevision::R289).unwrap(),
+        )
         .unwrap();
-    let mut control = Packet::new(vec![0xa5; 32]);
-    control.pos = 5;
-    control.random = Some(Isaac::new(&seed));
-    Send::if_button(0x1234)
-        .unwrap()
-        .write_for_revision(ClientRevision::R289, &mut control)
+        assert!(matches!(
+            Send::client_cheat(&catalog, "not-a-catalog-command"),
+            Err(PacketError::InvalidCheat(_))
+        ));
+        assert!(matches!(
+            Send::client_cheat(&catalog, "café"),
+            Err(PacketError::InvalidCheat(_))
+        ));
+        assert!(matches!(
+            Send::client_cheat(&catalog, "~cat\n"),
+            Err(PacketError::InvalidCheat(_))
+        ));
+        assert!(matches!(
+            Send::client_cheat(&catalog, "~addxp attack"),
+            Err(PacketError::InvalidCheat(_))
+        ));
+        assert!(matches!(
+            Send::client_cheat(&catalog, "~addxp attack 42 extra"),
+            Err(PacketError::InvalidCheat(_))
+        ));
+        assert!(matches!(
+            Send::client_cheat(&catalog, &format!("~cat {}", "x".repeat(81))),
+            Err(PacketError::BodyTooLong { .. })
+        ));
+
+        let bytes274 = std::fs::read(path274).expect("read real revision 274 debug catalog");
+        let catalog274 = api::debug_commands::DebugCatalog::decode(
+            &bytes274,
+            ClientRevision::R274,
+            api::game_data::for_revision(ClientRevision::R274).unwrap(),
+        )
         .unwrap();
-    assert_eq!(
-        &packet.data()[..packet.pos],
-        &control.data()[..control.pos],
-        "revision mismatch consumes neither cursor nor ISAAC"
-    );
+        let mismatched = Send::client_cheat(&catalog274, "~cat").unwrap();
+        let seed = [1, 2, 3, 4];
+        let mut packet = Packet::new(vec![0xa5; 32]);
+        packet.pos = 5;
+        packet.random = Some(Isaac::new(&seed));
+        let prefix = packet.data()[..packet.pos].to_vec();
+        assert_eq!(
+            mismatched.write_for_revision(ClientRevision::R289, &mut packet),
+            Err(PacketError::RevisionMismatch)
+        );
+        assert_eq!(packet.pos, 5);
+        assert_eq!(&packet.data()[..packet.pos], prefix);
+
+        Send::if_button(0x1234)
+            .unwrap()
+            .write_for_revision(ClientRevision::R289, &mut packet)
+            .unwrap();
+        let mut control = Packet::new(vec![0xa5; 32]);
+        control.pos = 5;
+        control.random = Some(Isaac::new(&seed));
+        Send::if_button(0x1234)
+            .unwrap()
+            .write_for_revision(ClientRevision::R289, &mut control)
+            .unwrap();
+        assert_eq!(
+            &packet.data()[..packet.pos],
+            &control.data()[..control.pos],
+            "revision mismatch consumes neither cursor nor ISAAC"
+        );
+    }
 }
 
 #[test]
@@ -2224,6 +2258,103 @@ fn configured_client_revision(revision: ClientRevision) -> Client {
     c.map_build_base_x = 3200;
     c.map_build_base_z = 3200;
     c
+}
+
+#[cfg(feature = "embedded-game-data")]
+#[test]
+fn builtin_gatherer_knife_dispatch_refuses_non_knife_request_with_invalid_shape() {
+    if api::test_support::local_asset_path(
+        "",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
+        "revision 289 game data for built-in Gatherer Knife dispatch test",
+    )
+    .is_none()
+    {
+        return;
+    }
+    use api::interact::server_ordered::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Default)]
+    struct Observer(AtomicU64);
+    impl client::io::PacketObserver for Observer {
+        fn packet_body_length(&self, opcode: u8) -> i16 {
+            i16::try_from(
+                api::prot::packet_metadata(ClientRevision::R289, opcode)
+                    .unwrap()
+                    .length,
+            )
+            .unwrap()
+        }
+        fn packet_committed(&self, _: u8, _: usize) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+        fn committed_packet_count(&self) -> Option<u64> {
+            Some(self.0.load(Ordering::Relaxed))
+        }
+    }
+
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let catalog = selected.server_ordered_catalog().unwrap();
+    let request = ServerOrderedRequest::CloseModal {
+        expected_root: ExpectedModalRoot::Bank,
+        reason: CloseModalReason::TerminalBankExit,
+    };
+    // The same valid content request passes through generic dispatch. Only the
+    // built-in KnifeArm entry point must reject it, before changing the cipher.
+    for builtin in [false, true] {
+        let mut scene = scene_revision(ClientRevision::R289);
+        let client = &mut scene.client;
+        let seed = [17, 29, 41, 53];
+        client.out.set_observer(Some(Arc::new(Observer::default())));
+        client.out.random = Some(Isaac::new(&seed));
+        client.gens.player_info = 1;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(client);
+        let mut input = ServerOrderedInputState::default();
+        input.observe_tick(1);
+        let mut authority = || Ok(());
+        let context = ServerOrderedDispatchContext {
+            request_id: 1,
+            dispatch_tick: 1,
+            input: input.snapshot(),
+            debug: None,
+            authority: &mut authority,
+        };
+        let receipt = if builtin {
+            ServerOrderedInputs::dispatch_builtin_gatherer_knife(
+                catalog,
+                ClientRevision::R289,
+                &snapshot,
+                client,
+                &request,
+                context,
+            )
+        } else {
+            ServerOrderedInputs::dispatch(
+                catalog,
+                ClientRevision::R289,
+                &snapshot,
+                client,
+                &request,
+                context,
+            )
+        };
+        if builtin {
+            assert_eq!(receipt.terminal, Some(ServerOrderedError::InvalidShape));
+            assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+            assert_eq!(client.out.pos, 0);
+            let mut actual = client.out.random.clone().unwrap();
+            let mut expected = Isaac::new(&seed);
+            for _ in 0..16 {
+                assert_eq!(actual.next_int(), expected.next_int());
+            }
+        } else {
+            assert_eq!(receipt.terminal, None);
+            assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (1, 1));
+            assert_eq!(client.out.pos, 1);
+        }
+    }
 }
 
 fn scene() -> Scene {

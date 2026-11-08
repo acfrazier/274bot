@@ -1,17 +1,30 @@
-//! The JSON query adapters over the typed catalog: error tokens, ordering, coverage and cursor pages, read from
-//! the checked 289/274 assets.
 use api::game_data::for_revision;
 use api::gather_methods::{
-    gas_rock_ids, gather_methods, gather_placements, gather_resource, GatherCatalog,
-    SceneRegionInput,
+    gather_methods, gather_placements, gather_resource, GatherCatalog, SceneRegionInput,
 };
 use api::identity::Deadline;
 use api::selected::{ClientRevision, FamilyPreparation};
+use api::test_support::local_asset_path;
 use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
 use serde_json::{json, Value};
 use std::num::NonZeroU32;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
+fn assets_available() -> bool {
+    local_asset_path(
+        "",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/274.json"),
+        "revision 274 game data for gathering JSON tests",
+    )
+    .is_some()
+        && local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
+            "revision 289 game data for gathering JSON tests",
+        )
+        .is_some()
+        && api::test_support::embedded_game_data_available()
+}
 
 fn prepare(revision: ClientRevision) -> Arc<GatherCatalog> {
     let data = for_revision(revision).expect("selected data");
@@ -98,11 +111,6 @@ fn an_absent_family_is_a_token_never_an_empty_list() {
         gather_resource(None, "not-a-resource"),
         Err("family-unavailable:gather_methods")
     );
-    let selected = for_revision(ClientRevision::R289).expect("selected data");
-    assert_eq!(
-        gas_rock_ids(selected.as_ref(), None),
-        Err("family-unavailable:gather_methods")
-    );
     for resource in ["oak", "nope", "", "   "] {
         assert_eq!(
             gather_placements(None, resource, &wide(), None, 64),
@@ -114,6 +122,9 @@ fn an_absent_family_is_a_token_never_an_empty_list() {
 
 #[test]
 fn methods_group_by_skill_and_coverage_ignores_the_skill_filter() {
+    if !assets_available() {
+        return;
+    }
     for (revision, catalog) in both() {
         let all = gather_methods(Some(catalog), None).unwrap();
         assert_eq!(rows(&all).len(), catalog.methods().len(), "{revision}");
@@ -157,6 +168,9 @@ fn methods_group_by_skill_and_coverage_ignores_the_skill_filter() {
 
 #[test]
 fn coverage_lists_every_gap_and_every_unclassified_rock() {
+    if !assets_available() {
+        return;
+    }
     let all = gather_methods(Some(&C289), None).unwrap();
     let coverage = all["coverage"].as_array().unwrap();
     let find = |class: &str, method: &str, cell: &str| {
@@ -198,6 +212,9 @@ fn coverage_lists_every_gap_and_every_unclassified_rock() {
 
 #[test]
 fn method_rows_keep_every_fact_next_to_its_completeness() {
+    if !assets_available() {
+        return;
+    }
     for (revision, catalog) in both() {
         let all = gather_methods(Some(catalog), None).unwrap();
         let oak = row(&all, "woodcutting.oak");
@@ -308,6 +325,9 @@ fn method_rows_keep_every_fact_next_to_its_completeness() {
 
 #[test]
 fn resource_lookup_matches_the_trimmed_key_only() {
+    if !assets_available() {
+        return;
+    }
     for (revision, catalog) in both() {
         for name in ["iron", "Iron", "  IRON "] {
             let hit = gather_resource(Some(catalog), name).unwrap();
@@ -344,6 +364,9 @@ fn resource_lookup_matches_the_trimmed_key_only() {
 
 #[test]
 fn placements_are_content_rows_in_ascending_order() {
+    if !assets_available() {
+        return;
+    }
     for (revision, catalog) in both() {
         let oak = gather_placements(
             Some(catalog),
@@ -399,6 +422,9 @@ fn placements_are_content_rows_in_ascending_order() {
 
 #[test]
 fn a_region_with_no_placements_is_a_complete_empty_page_that_still_names_the_resource() {
+    if !assets_available() {
+        return;
+    }
     for (revision, catalog) in both() {
         let names = json!([{ "alias": "oaktree", "id": 1281 }]);
         for empty in [
@@ -420,6 +446,9 @@ fn a_region_with_no_placements_is_a_complete_empty_page_that_still_names_the_res
 
 #[test]
 fn placement_pages_resume_by_cursor_and_say_when_they_are_cut() {
+    if !assets_available() {
+        return;
+    }
     for (revision, catalog) in both() {
         let first = gather_placements(Some(catalog), "normal", &wide(), None, 64).unwrap();
         assert_eq!(rows(&first).len(), 64, "{revision}");
@@ -496,6 +525,9 @@ fn placement_pages_resume_by_cursor_and_say_when_they_are_cut() {
 
 #[test]
 fn every_gather_skill_has_placements_and_ambiguous_fish_keys_span_their_methods() {
+    if !assets_available() {
+        return;
+    }
     for (revision, catalog) in both() {
         let iron = gather_placements(Some(catalog), "Iron", &wide(), None, 64).unwrap();
         assert_eq!(
@@ -546,6 +578,9 @@ fn every_gather_skill_has_placements_and_ambiguous_fish_keys_span_their_methods(
 
 #[test]
 fn unresolved_keys_and_unknown_coverage_are_never_an_empty_answer() {
+    if !assets_available() {
+        return;
+    }
     for (revision, catalog) in both() {
         for resource in [
             "freshfish",

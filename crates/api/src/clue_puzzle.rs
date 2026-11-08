@@ -353,10 +353,10 @@ mod tests {
     use client::io::ClientRevision;
     use std::sync::Arc;
 
-    const PINS: [ClientRevision; 2] = [ClientRevision::R274, ClientRevision::R289];
+    const REVISIONS: [ClientRevision; 2] = [ClientRevision::R274, ClientRevision::R289];
 
-    fn data(revision: ClientRevision) -> Arc<SelectedGameData> {
-        crate::game_data::for_revision(revision).expect("selected data")
+    fn data(revision: ClientRevision) -> Option<Arc<SelectedGameData>> {
+        crate::game_data::test_data(revision)
     }
 
     /// The solved board: the piece belonging in `slot` stands there, and the
@@ -439,8 +439,10 @@ mod tests {
 
     #[test]
     fn a_board_read_from_the_posted_page_needs_all_but_one_slot() {
-        for revision in PINS {
-            let data = data(revision);
+        for revision in REVISIONS {
+            let Some(data) = data(revision) else {
+                return;
+            };
             let board = solved();
             let rows = sparse(&data, &board);
             assert_eq!(rows.len(), PUZZLE_BLANK_SLOT);
@@ -466,15 +468,17 @@ mod tests {
             let mut unknown = rows.clone();
             unknown[0].id = -1;
             assert_eq!(read_puzzle_board(&unknown, Some(&data)), None);
-            // No selected pin at all: every piece is unplaceable.
+            // Without selected game data, every piece is unplaceable.
             assert_eq!(read_puzzle_board(&rows, None), None);
         }
     }
 
     #[test]
     fn the_piece_map_is_the_selected_three_runs() {
-        for revision in PINS {
-            let data = data(revision);
+        for revision in REVISIONS {
+            let Some(data) = data(revision) else {
+                return;
+            };
             let mut placed = 0;
             for item in data.items() {
                 let alias = item.alias.as_deref().unwrap_or_default();
@@ -495,8 +499,8 @@ mod tests {
             // Three sets of 24: every target slot is covered exactly three
             // times, one per picture set.
             assert_eq!(placed, 72);
-            // The one puzzle box of this family, an id the pin does not hold,
-            // and no pin at all: no piece, so no slot.
+            // The puzzle-box id, an unrelated item id, and absent selected data
+            // each produce no slot.
             let box_id = data
                 .item_by_alias("trail_clue_hard_riddle014_puzzlebox")
                 .expect("box item")
@@ -509,7 +513,9 @@ mod tests {
 
     #[test]
     fn a_mixed_picture_set_is_unsolvable_as_read() {
-        let data = data(ClientRevision::R274);
+        let Some(data) = data(ClientRevision::R274) else {
+            return;
+        };
         let board = solved();
         let rows = sparse(&data, &board);
         // The piece belonging on 5 is posted a second time in place of the one
@@ -562,17 +568,21 @@ mod tests {
 
     #[test]
     fn the_grouped_plan_replays_to_solved_from_a_shuffled_board() {
-        let data = data(ClientRevision::R274);
-        for moves in [1u32, 2, 5, 17, 41, 101, 101] {
+        let boards = [1u32, 2, 5, 17, 41, 101, 101].map(|moves| {
             let board = shuffled(moves);
             let plan = solve_puzzle(&board).expect("a shuffled board is solvable");
             if is_puzzle_solved(&board) {
                 assert!(plan.is_empty(), "{moves} moves: {plan:?}");
-                continue;
+            } else {
+                assert!(!plan.is_empty(), "{moves} moves");
+                assert!(replays(&board, &plan), "{moves} moves: {plan:?}");
             }
-            assert!(!plan.is_empty(), "{moves} moves");
-            assert!(replays(&board, &plan), "{moves} moves: {plan:?}");
-            // The plan is the caller's own page again once read back.
+            board
+        });
+        let Some(data) = data(ClientRevision::R274) else {
+            return;
+        };
+        for board in boards {
             let rows = sparse(&data, &board);
             let read = read_puzzle_board(&rows, Some(&data)).expect("read back");
             assert_eq!(read, board);
@@ -586,8 +596,12 @@ mod tests {
         // Each of the three runs numbers the same 24 targets, so a board built
         // from any one of them reads and solves — and a board that takes one
         // cell from another run is the mixed set no plan exists for.
-        let data = data(ClientRevision::R274);
         let board = shuffled(23);
+        let plan = solve_puzzle(&board).expect("one set solves");
+        assert!(replays(&board, &plan));
+        let Some(data) = data(ClientRevision::R274) else {
+            return;
+        };
         for base in [2749, 3619, 3643] {
             let rows: Vec<PuzzleRow> = board
                 .iter()
@@ -600,8 +614,6 @@ mod tests {
                 })
                 .collect();
             assert_eq!(read_puzzle_board(&rows, Some(&data)), Some(board));
-            let plan = solve_puzzle(&board).expect("one set solves");
-            assert!(replays(&board, &plan), "{base}: {plan:?}");
 
             // One cell taken from another run with a different number: two
             // pieces for one target and none for another, so the read fills a

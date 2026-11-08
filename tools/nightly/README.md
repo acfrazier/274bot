@@ -676,9 +676,9 @@ administrator, once.
    `node_modules`, account database or player saves: the clients read its pack, config
    and content; it is never started), `rs2b0t\` (the catalog, as on the Linux VM),
    `nav-snapshot\<16-hex>\` (a decoded client-cache snapshot; the runner makes it again
-   when it is missing or stale), `fixtures\274bot-289-v17.navpack` with its sidecars
+   when it is missing or stale), `fixtures\274bot-289-v18.navpack` with its sidecars
    (`.navpack.json`, `.navflags`, `.navreach`, `.navcanlight`, `.navpois`; each test
-   lane's `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK`, the v17 reference pack
+   lane's `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK`, the v18 reference pack
    named in `docs/api/nav.md`), `fixtures\inspect.fb` (the old inspection capture
    `T5W_INSPECT_CAPTURE_BASELINE` for the host-play route-inspect test) and
    `fixtures\rusty_v8_release_x86_64-pc-windows-msvc.lib.gz` (the platform gate's
@@ -750,7 +750,7 @@ What differs from the 289 lane:
   scripts, the `unpack` decoded-cache folder, the 274 nav bake
   (`BOT_NAV_REVISION=274`) and the `-274` run suffix. Runs are
   `<date>-dev-<commit>-274`.
-- Cells: [`cells-274.conf`](cells-274.conf), 103 of 244. Its header
+- Cells: [`cells-274.conf`](cells-274.conf), 104 of 244. Its header
   states the breadth rule, the R289-only quester and random-event
   oracle exclusions, and the known 289 non-PASS exclusions. The runner
   fails if a listed name leaves the catalog. It never drops a name silently.
@@ -926,7 +926,7 @@ error in it. If the task is stopped during that step, the missed night has no su
    desktop-only `ime_frame`), `test-panel-render-diagnostics`, `test-tui-memory`, and
    `cargo fmt --check` per crate (a workspace-root fmt hits OS error 206 on Windows).
    Each test lane gets the Linux CI test inputs: the three nav pack names set to
-   the v17 fixture, `ENGINE_DIR` and `WORLD_ENGINE_DIR` set to the pristine engine
+   the v18 fixture, `ENGINE_DIR` and `WORLD_ENGINE_DIR` set to the pristine engine
    copy, `BOT_NAV_SNAPSHOT_ROOT` set to the decoded snapshot folder, and
    `T5W_INSPECT_CAPTURE_BASELINE` set to the inspection fixture when the host holds
    it. Each lane gets its own throwaway

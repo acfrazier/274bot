@@ -1,0 +1,53 @@
+[proc,coord_direction](coord $coord1, coord $coord2)(int)
+def_int $x1 = coordx($coord1);
+def_int $z1 = coordz($coord1);
+def_int $x2 = coordx($coord2);
+def_int $z2 = coordz($coord2);
+def_int $dx = sub($x2, $x1);
+def_int $dz = sub($z2, $z1);
+if ($dx > 0) {
+    if (abs($dz) > abs($dx)) {
+        if ($dz > 0) {
+            return(^exact_north);
+        } else {
+            return(^exact_south);
+        }
+    }
+    return(^exact_east);
+} else {
+    if (abs($dz) > abs($dx)) {
+        if ($dz > 0) {
+            return(^exact_north);
+        } else {
+            return(^exact_south);
+        }
+    }
+    return(^exact_west);
+}
+return(null);
+[proc,movecoord_indirection](coord $coord, int $direction, int $distance)(coord)
+if ($direction = ^exact_north) {
+    return(movecoord($coord, 0, 0, $distance));
+}
+if ($direction = ^exact_east) {
+    return(movecoord($coord, $distance, 0, 0));
+}
+if ($direction = ^exact_south) {
+    return(movecoord($coord, 0, 0, calc(0 - $distance)));
+}
+if ($direction = ^exact_west) {
+    return(movecoord($coord, calc(0 - $distance), 0, 0));
+}
+if ($direction = ^exact_northeast) {
+    return(movecoord($coord, $distance, 0, $distance));
+}
+if ($direction = ^exact_southeast) {
+    return(movecoord($coord, $distance, 0, calc(0 - $distance)));
+}
+if ($direction = ^exact_southwest) {
+    return(movecoord($coord, calc(0 - $distance), 0, calc(0 - $distance)));
+}
+if ($direction = ^exact_northwest) {
+    return(movecoord($coord, calc(0 - $distance), 0, $distance));
+}
+return($coord);

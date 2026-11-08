@@ -169,6 +169,7 @@ pub struct ScriptStartHandle {
     navs: Arc<Mutex<HashMap<String, NavBot>>>,
     statuses: Arc<Mutex<Vec<crate::SlotStatus>>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    world: Option<Arc<nav_planner::world::NavWorld>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
     /// The Play's state composition: a Start without caller-owned loadouts
     /// leases the operator's rows from it. `None` for the legacy direct
@@ -191,6 +192,10 @@ pub(crate) enum StartRequest<'a> {
         #[cfg(not(feature = "js"))]
         _lifetime: std::marker::PhantomData<&'a ()>,
     },
+    WalkHandover {
+        handover: script::native::WalkHandover,
+        route_run: api::selected::RunKey,
+    },
 }
 fn validate_script_loadout_setting(
     rows: &[api::loadout::Loadout],
@@ -210,6 +215,51 @@ impl ScriptStartHandle {
             Some(state) => state.operator_loadouts(name),
             None => Ok(Vec::new()),
         }
+    }
+    pub(crate) fn manual_route_state(
+        &self,
+        name: &str,
+        snapshot: &api::snapshot::GameSnapshot,
+        base: &nav_planner::WorldState,
+    ) -> Option<(
+        api::selected::RunKey,
+        Option<Arc<api::prereq_steps::PrereqCatalog>>,
+        nav_planner::WorldState,
+    )> {
+        let slot = script_slot(&self.scripts, name)?;
+        let mut slot = slot.lock().ok()?;
+        script_runtime::manual_route_state(&mut slot, snapshot, base, self.game_data.as_ref())
+    }
+
+    pub(crate) fn record_gate_refusal(
+        &self,
+        name: &str,
+        run: api::selected::RunKey,
+        observation: &api::prereq_knowledge::RefusalObservation,
+    ) -> bool {
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return false;
+        };
+        slot.lock()
+            .ok()
+            .is_some_and(|slot| slot.record_gate_refusal(run, observation))
+    }
+
+    pub(crate) fn start_manual_walk_to(
+        &self,
+        name: &str,
+        handover: script::native::WalkHandover,
+        route_run: api::selected::RunKey,
+    ) -> Result<(), String> {
+        self.dispatch_start(
+            name,
+            || StartRequest::WalkHandover {
+                handover,
+                route_run,
+            },
+            || Ok(()),
+        )
+        .map_err(|error| error.to_string())
     }
 
     #[cfg(feature = "js")]
@@ -317,8 +367,10 @@ impl ScriptStartHandle {
         let slot = match &request {
             #[cfg(feature = "js")]
             StartRequest::Load { .. } => script_slot_or_insert(&self.scripts, name),
-            StartRequest::Compiled { .. } => script_slot(&self.scripts, name)
-                .ok_or_else(|| Refused(format!("no slot: {name}")))?,
+            StartRequest::Compiled { .. } | StartRequest::WalkHandover { .. } => {
+                script_slot(&self.scripts, name)
+                    .ok_or_else(|| Refused(format!("no slot: {name}")))?
+            }
         };
         let mut slot = slot
             .lock()
@@ -359,10 +411,40 @@ impl ScriptStartHandle {
                 } else if script::compiled_card(id).is_none() {
                     Err(Refused(format!("not ported: {}", id.0)))
                 } else if let Some(selected) = self.game_data.clone() {
+                    let nav = (id == script::quester::card::CARD.id)
+                        .then(|| {
+                            self.world
+                                .as_ref()
+                                .and_then(|world| nav_planner::producer::lease(world).ok())
+                        })
+                        .flatten();
                     slot.start_compiled(
                         name,
                         id,
                         Arc::new(bag),
+                        selected,
+                        Arc::clone(&self.named_banks),
+                        nav,
+                    )
+                    .map_err(|error| Refused(error.to_string()))
+                } else {
+                    Err(Refused("selected game data unavailable".into()))
+                }
+            }
+            StartRequest::WalkHandover {
+                handover,
+                route_run,
+            } => {
+                let preserve_run = matches!(
+                    &handover.entry,
+                    script::native::HandoverEntry::GateRefused(_)
+                ) || slot.manual_route_run() == Some(route_run);
+                let route_run = preserve_run.then_some(route_run);
+                if let Some(selected) = self.game_data.clone() {
+                    slot.start_manual_walk_handover(
+                        name,
+                        handover,
+                        route_run,
                         selected,
                         Arc::clone(&self.named_banks),
                     )
@@ -424,6 +506,27 @@ impl ScriptStartHandle {
             .lock()
             .map_err(|_| format!("script slot retiring: {name}"))?;
         slot.start_test_script(script, selected)?;
+        slot.native_run()
+            .ok_or_else(|| format!("test script did not publish a run: {name}"))
+    }
+
+    /// Start a native fixture and bind session-local state before the slot
+    /// lock is released, so its first host tick observes the supplied state.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn start_test_script_with_local_state(
+        &self,
+        name: &str,
+        script: Box<dyn script::native::Script>,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+        state: Arc<script::local_state::SlotState>,
+    ) -> Result<api::selected::RunKey, String> {
+        let slot = script_slot_or_insert(&self.scripts, name);
+        let mut slot = slot
+            .lock()
+            .map_err(|_| format!("script slot retiring: {name}"))?;
+        slot.start_test_script(script, selected)?;
+        slot.bind_local_state(state);
         slot.native_run()
             .ok_or_else(|| format!("test script did not publish a run: {name}"))
     }
@@ -493,7 +596,7 @@ impl ScriptStartHandle {
 
     /// `name`'s latest recorded paint frame (the frame its status row
     /// publishes), for the live pump's File-card receipt watches.
-    pub fn paint(&self, name: &str) -> Option<Arc<script::shim::ScriptPaint>> {
+    pub fn paint(&self, name: &str) -> Option<Arc<script::paint::ScriptPaint>> {
         script_runtime::script_paint_of(&self.scripts, name)
     }
 }
@@ -587,6 +690,18 @@ impl Play {
         retire_script_run_status(&self.statuses, name);
     }
 
+    /// Publish the slot's script demand to its login mailbox after a Stop.
+    /// The slot thread syncs the demand only between its own steps: while it
+    /// is inside a handshake it cannot, so a login that the script owed
+    /// would complete for a bot that no longer has a script. The mailbox
+    /// row cancels that attempt now, and parks the bot instead. Call only
+    /// after releasing the script-slot guard.
+    fn publish_script_demand(&self, name: &str) {
+        if let Some(arm) = self.arms.get(name) {
+            crate::play_slots::sync_script_login(arm, &self.scripts, name);
+        }
+    }
+
     /// Start the same off-pump compiled preparation transaction as live/scenario
     /// handles. Assignment owners commit only after `script_poll_start` is Ready.
     pub fn script_start(
@@ -661,6 +776,13 @@ impl Play {
         })?;
         let banks = Arc::clone(&self.named_banks);
         let quester = id == script::quester::card::CARD.id;
+        let nav = quester
+            .then(|| {
+                self.world
+                    .as_ref()
+                    .and_then(|world| nav_planner::producer::lease(world).ok())
+            })
+            .flatten();
         let cold_gathering =
             id == script::CompiledId("Gatherer") && selected.try_gathering().is_none();
         let settings_input = script::preparation::PreparationInput::for_settings(revision, &bag)?;
@@ -713,23 +835,26 @@ impl Play {
                                 )
                                 .map_err(script::native::StartError::Facts)?,
                             );
-                            registry_preparation = Some(
+                            let source =
+                                folder_source.take().expect("Quester folder source captured");
+                            let preparation =
                                 script::quester::registry::RegistryPreparation::from_source(
-                                    folder_source.take().expect("Quester folder source captured"),
+                                    source,
                                     Arc::clone(&selected),
                                     Arc::clone(&quests),
+                                    nav.clone(),
                                 )
-                                .map_err(|error| {
-                                    script::native::StartError::Unavailable(
-                                        format!(
-                                            "{}: {}",
-                                            error.code,
-                                            error.detail.as_deref().unwrap_or("Path reload failed")
-                                        )
-                                        .into(),
+                            .map_err(|error| {
+                                script::native::StartError::Unavailable(
+                                    format!(
+                                        "{}: {}",
+                                        error.code,
+                                        error.detail.as_deref().unwrap_or("Path reload failed")
                                     )
-                                })?,
-                            );
+                                    .into(),
+                                )
+                            })?;
+                            registry_preparation = Some(preparation);
                             registry_quests = Some(quests);
                         }
                         registry_preparation
@@ -889,7 +1014,7 @@ impl Play {
         })
     }
 
-    pub fn script_paint(&self, name: &str) -> Option<Arc<script::shim::ScriptPaint>> {
+    pub fn script_paint(&self, name: &str) -> Option<Arc<script::paint::ScriptPaint>> {
         script_runtime::script_paint_of(&self.scripts, name)
     }
 
@@ -938,6 +1063,7 @@ impl Play {
         reset_script_nav(&self.navs, name, None);
         drop(slot);
         self.retire_script_run_status(name);
+        self.publish_script_demand(name);
         self.wake(name);
         true
     }
@@ -1005,6 +1131,7 @@ impl Play {
             navs: Arc::clone(&self.navs),
             statuses: Arc::clone(&self.statuses),
             game_data: self.game_data.clone(),
+            world: self.world.clone(),
             named_banks: Arc::clone(&self.named_banks),
             state: self.local_state.clone(),
         }
@@ -1053,6 +1180,7 @@ impl Play {
         reset_script_nav(&self.navs, name, None);
         drop(guard);
         self.retire_script_run_status(name);
+        self.publish_script_demand(name);
         self.wake(name);
     }
 
@@ -1087,6 +1215,7 @@ impl Play {
             reset_script_nav(&self.navs, name, None);
         }
         self.retire_script_run_status(name);
+        self.publish_script_demand(name);
         self.wake(name);
         true
     }

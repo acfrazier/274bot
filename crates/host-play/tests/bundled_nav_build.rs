@@ -1,199 +1,176 @@
-//! Real build output: the staged navigation bundle, the compiled identity
-//! table and the canonical cache must agree, and the bundled fast path must
-//! read + decode the staged pack without hashing it.
+//! Real build output: the staged revision-keyed navigation payloads decode and
+//! the host binds the staged pack through the ordinary resource-root path.
 //!
 //!   cargo test -p host-play --test bundled_nav_build -- --ignored --nocapture
 //!
-//! Prerequisites: a default application build in this target profile
-//! (`cargo build -p panel --bin panel-play`, i.e. `BOT_NAV_BUILD=require`)
-//! and `BOT_NAV_ENGINE_DIR` or `ENGINE_DIR` pointing at the local engine used
-//! for that build. The test is `#[ignore]`d because the cached cargo test
-//! binary for the same target profile is what it reads.
+//! Prerequisite: a default application build that stages local navigation
+//! payloads. The test reads that build's resource directory.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use host_play::profile::{CacheManifest, NavAvailability, ProfileEnvironment, ProfileOptions};
-use host_play::{bundled_nav_identities, NavOrigin, SharedClientTemplate};
+use host_play::cache::CacheAvailability;
+use host_play::profile::{NavAvailability, ProfileEnvironment, ProfileOptions};
+use host_play::progress::ProfileProgressObserver;
+use host_play::{nav_assets, SharedClientTemplate};
 
-/// Same rule as the build script: `BOT_NAV_ENGINE_DIR`, else `ENGINE_DIR`.
-fn engine_dir() -> PathBuf {
-    ["BOT_NAV_ENGINE_DIR", "ENGINE_DIR"]
-        .into_iter()
-        .find_map(|key| std::env::var_os(key).map(PathBuf::from))
-        .unwrap_or_else(|| panic!("set BOT_NAV_ENGINE_DIR or ENGINE_DIR to the local engine root"))
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+const ARCHIVES: [&str; 8] = [
+    "title",
+    "config",
+    "interface",
+    "media",
+    "versionlist",
+    "textures",
+    "wordenc",
+    "sounds",
+];
+
+struct TempRoot(PathBuf);
+
+impl TempRoot {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "274bot-bundled-nav-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&path).expect("temporary fixture root");
+        Self(path)
+    }
 }
 
-fn known_identities() -> Vec<CacheManifest> {
-    serde_json::from_str(include_str!("../src/known-cache-identities.json"))
-        .expect("known cache identities")
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn revision() -> u16 {
+    match std::env::var("BOT_NAV_REVISION").as_deref() {
+        Ok("274") => 274,
+        Ok("289") | Err(_) => 289,
+        Ok(other) => panic!("BOT_NAV_REVISION must be 274 or 289, got {other:?}"),
+    }
+}
+
+fn resource_root() -> PathBuf {
+    std::env::var_os("BOT_NAV_RESOURCE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let exe = std::env::current_exe().expect("test binary path");
+            host_play::install_resource_root(&exe)
+        })
 }
 
 #[test]
-#[ignore = "needs a default application build and the canonical cache for its revision"]
-fn staged_bundle_selects_the_install_layout_without_runtime_hashing() {
-    let table = bundled_nav_identities();
-    assert!(
-        !table.is_empty(),
-        "no compiled navigation identity: run `cargo build -p panel --bin panel-play` \
-         (default BOT_NAV_BUILD=require) before this check"
+#[ignore = "requires staged local navigation payloads"]
+fn staged_bundle_uses_revision_layout_and_ordinary_decoders() {
+    let revision = revision();
+    let layout = nav_assets::artifact_layout(revision);
+    let resource_root = resource_root();
+    let expected_pack = resource_root.join(&layout.relative_pack);
+    let description = format!("staged revision-{revision} navigation pack");
+    let Some(_) =
+        api::test_support::local_asset_path("", &expected_pack.to_string_lossy(), &description)
+    else {
+        return;
+    };
+    let resource_root = resource_root.canonicalize().expect("staged resource root");
+    let pack_path = resource_root.join(&layout.relative_pack);
+    let flags_path = resource_root.join(&layout.relative_flags);
+    let reach_path = resource_root.join(&layout.relative_reach);
+    let canlight_path = resource_root.join(&layout.relative_canlight);
+    let pois_path = resource_root.join(&layout.relative_pois);
+
+    let pack_bytes = std::fs::read(&pack_path).expect("staged navpack");
+    let world = nav_planner::world::NavWorld::from_bytes(&pack_bytes).expect("decode navpack");
+    let (flags_origin, flags_width, flags_height, flags) = nav_planner::pack::decode_flags_sidecar(
+        &std::fs::read(&flags_path).expect("staged navflags"),
+    )
+    .expect("decode navflags");
+    assert_eq!(flags_origin, world.collision.origin);
+    assert_eq!(
+        (flags_width, flags_height),
+        (world.collision.width, world.collision.height)
     );
-    // The test binary runs from `<profile>/deps`; the install resource root a
-    // plain executable resolves is the profile directory holding it.
-    let exe = std::env::current_exe().expect("test binary path");
-    let profile_dir = exe
-        .parent()
-        .and_then(Path::parent)
-        .expect("test binary lives in the cargo profile directory")
-        .to_path_buf();
-    let known = known_identities();
+    assert_eq!(flags.len(), flags_width * flags_height);
 
-    for row in table {
-        let engine = engine_dir();
-        let cache_dir = engine.join("data/pack/client");
-        let declared = known
-            .iter()
-            .find(|manifest| manifest.revision == row.revision)
-            .unwrap_or_else(|| panic!("no known cache identity for revision {}", row.revision));
-        let actual = CacheManifest::capture(row.revision, &cache_dir)
-            .unwrap_or_else(|e| panic!("canonical cache {}: {e}", cache_dir.display()));
-        assert_eq!(
-            actual.identity(),
-            row.cache_id,
-            "the published identity is not this cache's identity; rebuild after the cache changes"
-        );
-        assert_eq!(&actual, declared, "the canonical cache is a known identity");
+    let reach = nav_planner::pack::decode_reach_sidecar(
+        &std::fs::read(&reach_path).expect("staged navreach"),
+    )
+    .expect("decode navreach");
+    assert_eq!(reach.origin, world.collision.origin);
+    assert_eq!(
+        (reach.width, reach.height),
+        (world.collision.width, world.collision.height)
+    );
+    assert_eq!(
+        reach.bits,
+        nav_planner::paint::bake_reach(&world.collision, &world.graph),
+        "staged reach data equals the decoded world bake"
+    );
 
-        let root = std::env::temp_dir().join(format!(
-            "274bot-bundled-nav-{}-{}",
-            std::process::id(),
-            row.revision
-        ));
-        std::fs::create_dir_all(&root).expect("temp root");
-        let manifest_path = root.join("cache-manifest.json");
-        std::fs::write(
-            &manifest_path,
-            serde_json::to_vec(declared).expect("manifest json"),
-        )
-        .expect("manifest write");
+    let canlight = nav_planner::pack::decode_canlight_sidecar(
+        &std::fs::read(&canlight_path).expect("staged navcanlight"),
+    )
+    .expect("decode navcanlight");
+    assert_eq!(canlight.origin, world.collision.origin);
+    assert_eq!(
+        (canlight.width, canlight.height),
+        (world.collision.width, world.collision.height)
+    );
+    let pois_bytes = std::fs::read(&pois_path).expect("staged navpois");
+    let pois = nav_planner::map::formats::ServicePois::decode_navpois(&pois_bytes)
+        .expect("decode navpois");
+    pois.validate().expect("validate navpois");
 
-        let options = ProfileOptions {
-            revision: Some(row.revision.to_string()),
-            engine_dir: Some(engine),
-            cache_dir: Some(cache_dir),
-            unpack_dir: Some(root.join("unpack")),
-            cache_manifest: Some(manifest_path),
-            ..ProfileOptions::default()
-        };
-        let environment = ProfileEnvironment {
-            home: Some(root.clone()),
+    let fixture = TempRoot::new();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profile");
+    let cache = fixture.0.join("cache");
+    std::fs::create_dir_all(&cache).expect("fixture cache");
+    for name in ARCHIVES {
+        std::fs::copy(source.join(name), cache.join(name))
+            .unwrap_or_else(|error| panic!("copy fixture archive {name}: {error}"));
+    }
+    let selection = ProfileOptions {
+        profile: Some(format!("local-{revision}")),
+        revision: Some(revision.to_string()),
+        host: Some("127.0.0.1".into()),
+        port: Some(9),
+        asset_host: Some("127.0.0.1".into()),
+        http_port: Some(9),
+        cache_dir: Some(cache),
+        unpack_dir: Some(fixture.0.join("unpack")),
+        ..ProfileOptions::default()
+    }
+    .resolve_with_env(
+        None,
+        &ProfileEnvironment {
+            home: Some(fixture.0.clone()),
+            engine_dir: Some(fixture.0.join("engine")),
             rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
-        };
-        let profile = options
-            .resolve_with_env(None, &environment)
-            .and_then(|selection| {
-                selection.bind_with_nav_identities(
-                    &host_play::progress::ProfileProgressObserver::default(),
-                    table,
-                    Some(profile_dir.as_path()),
-                )
-            })
-            .unwrap_or_else(|e| panic!("bind: {e}"));
-
-        match profile.nav_origin() {
-            NavOrigin::Bundled { path, identity } => {
-                assert_eq!(path, &profile_dir.join(&row.relative_path));
-                assert!(path.is_file(), "staged pack {} is missing", path.display());
-                assert_eq!(identity.nav_sha256, row.nav_sha256);
-                let reach_path = path.with_extension("navreach");
-                assert!(
-                    reach_path.is_file(),
-                    "staged reach {} is missing",
-                    reach_path.display()
-                );
-                let canlight_path = path.with_extension("navcanlight");
-                assert!(
-                    canlight_path.is_file(),
-                    "staged canlight {} is missing",
-                    canlight_path.display()
-                );
-                assert!(
-                    row.canlight_sha256.as_ref().is_some_and(|h| h.len() == 64),
-                    "bundled canlight identity is required"
-                );
-                assert!(
-                    row.canlight_identity
-                        .as_ref()
-                        .is_some_and(|h| h.len() == 64),
-                    "bundled canlight policy identity is required"
-                );
-                let pack_bytes = std::fs::read(path).expect("staged pack");
-                let world =
-                    nav_planner::world::NavWorld::from_bytes(&pack_bytes).expect("decode pack");
-                let expected = nav_planner::paint::bake_reach(&world.collision, &world.graph);
-                let side = nav_planner::pack::decode_reach_sidecar(
-                    &std::fs::read(&reach_path).expect("staged reach"),
-                )
-                .expect("decode reach");
-                assert_eq!(side.bits, expected, "staged reach must equal bake_reach");
-                assert_eq!(
-                    nav_planner::pack::sha256_hex(&side.binding),
-                    row.nav_sha256,
-                    "reach binding is the pack identity"
-                );
-                let canlight_bytes = std::fs::read(&canlight_path).expect("staged canlight");
-                let canlight = nav_planner::pack::decode_canlight_sidecar(&canlight_bytes)
-                    .expect("decode canlight");
-                let policy = row
-                    .canlight_identity
-                    .as_deref()
-                    .expect("canlight policy identity");
-                let expected =
-                    nav_planner::canlight::expected_header_binding(&row.nav_sha256, policy)
-                        .expect("canlight binding");
-                assert_eq!(
-                    canlight.binding, expected,
-                    "canlight binding is pack+policy identity"
-                );
-                assert_eq!(canlight.origin, world.collision.origin);
-                assert_eq!(canlight.width, world.collision.width);
-                assert_eq!(canlight.height, world.collision.height);
-                println!(
-                    "bundled nav: revision {} pack {} ({}) in {}",
-                    row.revision,
-                    row.nav_sha256,
-                    row.format,
-                    path.display()
-                );
-            }
-            other => panic!("expected the staged bundle, selected {other:?}"),
-        }
-        assert_eq!(profile.nav_availability(), &NavAvailability::Bound);
-        let counters = profile.nav_load_counters();
-        assert_eq!(
-            (
-                counters.pack_reads,
-                counters.pack_hashes,
-                counters.pack_decodes
-            ),
-            (1, 0, 1),
-            "the bundled path reads and decodes the staged pack exactly once and never hashes it"
-        );
-        assert_eq!(
-            (counters.reach_reads, counters.reach_hashes),
-            (1, 0),
-            "bundled reach is read once and never content-hashed"
-        );
-        assert_eq!(
-            (counters.canlight_reads, counters.canlight_hashes),
-            (1, 0),
-            "bundled canlight is read once and never content-hashed"
-        );
-        assert!(profile.reach().is_some());
-        assert!(profile.canlight().is_some());
-        let template = SharedClientTemplate::load(profile).expect("shared template");
-        assert!(template.world().is_some(), "bundled world decoded");
-        std::fs::remove_dir_all(&root).ok();
-    }
+        },
+    )
+    .expect("resolve navigation-only fixture");
+    let profile = selection
+        .bind_with_resource_root(&ProfileProgressObserver::default(), Some(&resource_root))
+        .expect("bind staged navigation");
+    assert_eq!(profile.nav_pack(), pack_path.as_path());
+    assert_eq!(profile.nav_flags(), flags_path.as_path());
+    assert_eq!(profile.nav_availability(), &NavAvailability::Bound);
+    assert!(matches!(
+        profile.cache_availability(),
+        CacheAvailability::Degraded(_)
+    ));
+    assert_eq!(profile.nav_load_counters().pack_reads, 1);
+    assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+    let template = SharedClientTemplate::load(profile.clone()).expect("shared template");
+    assert!(template.world().is_some(), "staged world decoded");
+    assert!(std::sync::Arc::ptr_eq(
+        &template.world().unwrap(),
+        &profile.world().unwrap()
+    ));
 }

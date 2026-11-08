@@ -1,15 +1,17 @@
 use super::*;
 use api::script_contract::{AbortReason, CallbackCancelReason, ChildOrigin};
 use script::api_progress::ProgressPage;
+use script::interact::InteractReq;
 use script::native::request::NativeKind;
 use script::native::seat::{SeatEntry, SeatResult, SeatTerminal};
-use script::shim::InteractReq;
-use script_js::wire::{
-    NativeFactsInput, SeatLiveDetails, SeatPageInput, SeatResultValue, SeatStartArgs,
-    SeatStartInput, TileInput,
-};
-use script_js::QueuedSeatBatch;
+use script::native::seat_rows::QueuedSeatBatch;
 use std::sync::Arc;
+use {
+    script::native::seat_rows::{
+        SeatLiveDetails, SeatPageInput, SeatResultValue, SeatStartArgs, SeatStartInput,
+    },
+    script::native::snapshot_source::{NativeFactsInput, TileInput},
+};
 fn seat_execution() -> api::identity::ExecutionId {
     api::identity::ExecutionId::first(api::selected::RunKey {
         slot: 94,
@@ -54,7 +56,7 @@ fn root_seat_details(id: api::identity::RequestId) -> SeatLiveDetails<'static> {
 
 fn post_test_tick_with_native(
     iso: &LoadIsolate,
-    snapshot: &mut script_js::wire::SnapshotInput<'_>,
+    snapshot: &mut script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     native: NativeFactsInput<'_>,
 ) {
@@ -68,7 +70,11 @@ fn post_test_tick_with_native(
         .expect("posted owner-bound product tick completes");
 }
 
-fn post_test_tick(iso: &LoadIsolate, snapshot: &mut script_js::wire::SnapshotInput<'_>, tick: u64) {
+fn post_test_tick(
+    iso: &LoadIsolate,
+    snapshot: &mut script::native::snapshot_source::SnapshotInput<'_>,
+    tick: u64,
+) {
     snapshot.tick = tick;
     post_snapshot_input(iso, snapshot);
     iso.on_game_tick(tick);
@@ -77,7 +83,7 @@ fn post_test_tick(iso: &LoadIsolate, snapshot: &mut script_js::wire::SnapshotInp
 
 fn post_test_snapshot_with_native(
     iso: &LoadIsolate,
-    snapshot: &mut script_js::wire::SnapshotInput<'_>,
+    snapshot: &mut script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     evidence_sequence: u64,
     native: NativeFactsInput<'_>,
@@ -94,7 +100,7 @@ fn post_test_snapshot_with_native(
 
 fn seat_reqs(
     batches: &[QueuedSeatBatch],
-) -> impl Iterator<Item = &script_js::wire::SeatInteractDecoded> {
+) -> impl Iterator<Item = &script::native::seat_rows::SeatInteractDecoded> {
     batches.iter().flat_map(|batch| batch.batch.reqs.iter())
 }
 

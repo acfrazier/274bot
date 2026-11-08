@@ -21,7 +21,7 @@ text = """Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk
   report `not impl`; moving existing banking into the native seat does not
   implement them."""
 first = "0.2.4"
-target = "none"
+target = "0.2.9"
 severity = "low"
 owner = "scripts-misc"
 
@@ -47,7 +47,7 @@ text = """The JiveKBD hunting script (King Black Dragon) does not yet bring back
   dragon dies and return to the bank without the bones. A fix is planned with
   the native hunting rewrite."""
 first = "0.2.4"
-target = "none"
+target = "0.3.0"
 severity = "medium"
 owner = "T2.rest hunt"
 
@@ -94,7 +94,8 @@ text = """on a desktop with two graphics chips (for example a Ryzen with built-i
   starts with "importing the supplied dmabufs failed". Start it with
   `WGPU_POWER_PREF=high ./panel-play` until this is fixed."""
 first = "0.2.0.2"
-target = "none"
+target = "0.2.8"
+fixed = "0.2.8"
 severity = "high"
 owner = "dual-gpu"
 
@@ -111,7 +112,7 @@ text = """With the default Danger routing setting, **When survivable**, bots can
   monsters on the route."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "none"
+target = "0.2.9"
 severity = "medium"
 owner = "S2c"
 
@@ -119,13 +120,96 @@ owner = "S2c"
 id = "quester-route-coverage"
 kind = "known-issue"
 area = "Quester"
-text = """The Quester has routes for 20 of the 68 quests. Routes for the other
-  quests are planned in waves."""
+text = """The following Quester guides are drafts. Release builds do not support them:
+  - Cook's Assistant
+  - Sheep Shearer
+  - Rune Mysteries
+  - Romeo & Juliet
+  - Imp Catcher
+  - Vampire Slayer
+  - Doric's Quest
+  - Goblin Diplomacy
+  - Witch's Potion
+  - Prince Ali Rescue
+  - Pirate's Treasure
+  - Demon Slayer
+  - The Knight's Sword
+  - Death Plateau
+  - The Tourist Trap
+  - Priest in Peril
+  - Clock Tower
+  - Monk's Friend
+  - Hazeel Cult
+  - Plague City
+  - Druidic Ritual
+  - Gertrude's Cat
+  - Jungle Potion
+  - Sea Slug Quest
+  - Tribal Totem
+  - Black Knight's Fortress
+  - Ernest the Chicken
+  - Fishing Contest
+  - Elemental Workshop
+  - Merlin's Crystal
+  - Lost City
+  - Tree Gnome Village
+  - Scorpion Catcher
+  - Observatory Quest
+  - Shield of Arrav
+  - Hero's Quest
+  - Temple of Ikov
+  - Holy Grail
+  - Watch Tower
+  - Digsite Quest
+  - Biohazard
+  - Murder Mystery
+  - Witch's House
+  - Big Chompy Bird Hunting
+  - Dwarf Cannon
+  - Family Crest
+  - Fight Arena
+  - The Grand Tree
+  - Dragon Slayer
+  - Horror from the Deep
+  - Shilo Village
+  - Tai Bwo Wannai Trio
+  - Nature Spirit
+  - In Search of the Myreque
+  - Troll Stronghold
+  - Eadgar's Ruse
+  - Troll Romance
+  - Throne of Miscellania
+  - Waterfall Quest
+  - Legends Quest
+  - Sheep Herder
+  - Underground Pass
+  - Regicide
+  - Shades of Mort'ton
+  - The Fremennik Trials
+  - Monkey Madness"""
 first = "0.2.0"
 listed = "0.2.5"
-target = "none"
+target = "0.2.9"
 severity = "medium"
-owner = "Quester waves"
+owner = "Quest campaign qualification"
+
+[[item.earlier]]
+until = "0.2.8"
+text = """The Quester has routes for 20 of the 68 quests. Routes for the other
+  quests are planned in waves."""
+
+[[item]]
+id = "quester-walk-step-first-failure"
+kind = "known-issue"
+area = "Quester"
+text = """When the Quester cannot start a walk between quest steps, it can stop
+  the quest at once instead of trying again, and asks you to resolve the
+  condition and restart the Quester."""
+first = "0.2.0"
+listed = "0.2.8"
+target = "0.2.9"
+severity = "medium"
+owner = "Quester walk step"
 
 [[item]]
 id = "brimhaven-agility-obstacles"
@@ -135,7 +219,7 @@ text = """The Brimhaven Agility Arena script can stop at a plank or pillar it
   cannot use. The cause is under investigation."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "none"
+target = "0.2.9"
 severity = "medium"
 owner = "T2.rest agility"
 
@@ -147,6 +231,7 @@ text = """`Bank.depositAllMatching` checks about one item per game tick, so larg
   deposits can be slow. A fix is planned for a later release."""
 first = "0.2.4"
 listed = "0.2.5"
+fixed = "0.2.9"
 target = "none"
 severity = "medium"
 owner = "event-driven runtime endpoint"
@@ -163,6 +248,7 @@ area = "Scripts"
 text = """When Grinch banks, it uses the shared bank trip, which still waits up to a
   fixed time for some bank steps. These waits are planned to become game-timed."""
 first = "0.2.5"
+fixed = "0.2.9"
 target = "none"
 severity = "low"
 owner = "shared bank trip (event-driven runtime endpoint)"
@@ -177,7 +263,7 @@ text = """A bot can't get through a door that another player closes again on eve
   another way around, changing worlds when allowed, and a clear "door held
   shut" result are planned for a later release."""
 first = "0.2.5"
-target = "none"
+target = "0.2.9"
 severity = "medium"
 owner = "nav"
 
@@ -199,7 +285,7 @@ text = """Sherlock was meant to be a native clue solver. In practice it runs on 
   native clue solver is planned."""
 first = "0.1.8"
 listed = "0.2.5"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2.rest clues"
 
@@ -212,7 +298,7 @@ text = """The rs2b0t Thiever script waits about three game ticks longer than the
   could. A fix is planned with the native thieving rework."""
 first = "0.2.4"
 listed = "0.2.5"
-target = "none"
+target = "0.3.0"
 severity = "medium"
 owner = "T2.rest thieving"
 
@@ -224,7 +310,7 @@ text = """The northern Desert Mining Camp mine stays hidden. Its minecart needs
   dialogue and a chance-gated crossing that the bot does not yet support.
   There are still 85 hidden gathering sites on revision 289 and 66 on 274."""
 first = "0.2.5"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "nav-gated-entrances"
 
@@ -236,7 +322,7 @@ text = """The lower Desert Mining Camp mine supports Power mode only and require
   The Tourist Trap complete. Bank mode refuses this site because the bot
   cannot remove the slave kit to leave the camp."""
 first = "0.2.5"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "nav-gated-entrances"
 
@@ -267,7 +353,7 @@ text = """With "Pause script on manual movement" off, a script that acts in plac
   fights. With the setting on, any running rs2b0t script pauses. A built-in
   script pauses while it walks or acts, but not between actions."""
 first = "0.2.6"
-target = "none"
+target = "0.3.0"
 severity = "medium"
 owner = "T2.rest native family rewrites"
 
@@ -329,7 +415,7 @@ text = """After a super antipoison the bot counts only the ordinary immunity
   needed. It is still immune for the real time. Counting the super immunity
   is planned for a later release."""
 first = "0.2.7"
-target = "none"
+target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -478,9 +564,9 @@ id = "survival-cure-waits-for-bank-transfer"
 kind = "known-issue"
 area = "Scripts"
 text = """A native script that needs a cure while a bank deposit or withdrawal is in
-  flight lets that one transfer settle or time out first: at least eight game
-  ticks and at least 4.8 seconds of active play, whichever ends later (twice
-  that for a deposit the game did not apply the first time). Then it closes
+  flight lets that one transfer settle or time out first: eight observed game
+  ticks, without an elapsed-time minimum (twice that for a deposit the game did
+  not apply the first time). Then it closes
   the bank and drinks. The Quester's own provisioning trips follow the same
   rule."""
 first = "0.2.9"
@@ -564,6 +650,7 @@ text = """If WalkTo is open while you change Fleet marks, WalkTo keeps the earli
   selection until you click **Walk N bots**. **Workaround:** after changing
   Fleet marks, click **Walk N bots**, or close and reopen WalkTo."""
 first = "0.2.6"
+fixed = "0.2.8"
 target = "none"
 severity = "low"
 owner = "panel"
@@ -579,7 +666,37 @@ text = """When a script walks from Karamja to the mainland without the 30 coins 
   fare is not paid and the bot does not cross."""
 first = "0.2.6"
 listed = "0.2.7"
-target = "none"
+target = "0.2.8"
+fixed = "0.2.8"
+severity = "medium"
+owner = "T2.rest walking"
+
+[[item]]
+id = "boat-fare-post-payout-unreachable"
+kind = "known-issue"
+area = "Scripts"
+text = """During a Karamja trip to the mainland without the 30-coin boat fare,
+  the bot earns the fare by working for Luthas. You may see "I can't reach
+  that!" when the bot approaches Luthas or after he pays and before the boat
+  boards. The bot makes up to three attempts each time the bot goes to talk to
+  Luthas. If all three fail, the fare is not paid and the trip does not cross.
+  After payment, the fare is paid. In observed cases, the bot still boards.
+  No workaround is known."""
+first = "0.2.8"
+target = "0.3.0"
+severity = "medium"
+owner = "T2.rest walking"
+
+[[item]]
+id = "boat-fare-brimhaven-start"
+kind = "known-issue"
+area = "Scripts"
+text = """When a script starts a trip to the mainland without the boat fare from
+  some places on Karamja, for example near the Brimhaven cart, the first walk
+  can fail at once. The bot then does not earn the fare and does not cross.
+  No workaround is known."""
+first = "0.2.8"
+target = "0.3.0"
 severity = "medium"
 owner = "T2.rest walking"
 
@@ -594,6 +711,7 @@ text = """If you use **Copy settings** for a built-in card and rename one of the
   the rename. Found by code reading; not yet seen in a running app."""
 first = "0.2.0"
 listed = "0.2.7"
+fixed = "0.2.8"
 target = "none"
 severity = "low"
 owner = "panel"
@@ -609,7 +727,7 @@ text = """The rs2b0t FireGiant script can keep fighting after it eats its last
   the script is fixed upstream."""
 first = "0.2.6"
 listed = "0.2.7"
-target = "none"
+target = "0.2.9"
 severity = "medium"
 owner = "upstream rs2b0t FireGiant / survival phase 3"
 
@@ -653,3 +771,186 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "SURVIVAL-P2-DESIGN"
+
+[[item]]
+id = "gnome-magic-chopper-full-pack-fruit"
+kind = "known-issue"
+area = "Scripts"
+text = """The rs2b0t GnomeMagicChopper script can stop chopping when a Strange
+  fruit from a random event fills the last free backpack slot before it holds
+  a Magic log: it only goes to the bank when it holds logs. Clear one backpack
+  slot and the script resumes. The fix is in review upstream; update your
+  rs2b0t folder once it is merged."""
+first = "0.2.7"
+listed = "0.2.8"
+target = "0.2.9"
+severity = "low"
+owner = "upstream rs2b0t GnomeMagicChopper (rs2b2t/rs2b0t#897)"
+
+[[item]]
+id = "compat-catalog-members-missing"
+kind = "known-issue"
+area = "Scripts"
+text = """Some rs2b0t catalog scripts call script API members that 274bot does
+  not implement yet: `SettingsStore.save` and `onChange`, `Bank.backpackReady`
+  and `normalBackpackSnapshot`, `Reachability.probeable`, `ScriptRunner.pause`,
+  `resume`, `state` and `ctx`, and `BotHost.addFrameListener`. Such a script
+  stops with "not implemented" when it reaches that call; for example, the
+  current AutoFighter cannot start fighting. Support is planned for 0.2.9."""
+first = "0.2.0"
+listed = "0.2.8"
+target = "0.2.9"
+severity = "medium"
+owner = "compat (UPSTREAM-MEMBERS-1023 census)"
+
+[[item]]
+id = "background-work-stops-after-slow-disk"
+kind = "known-issue"
+area = "Host"
+text = """Background work can stop for the rest of the session after one disk
+  operation takes longer than 60 seconds. Restart 274bot to recover. A fix is
+  planned for 0.2.9."""
+first = "0.2.4"
+listed = "0.2.8"
+target = "0.2.9"
+severity = "medium"
+owner = "host background work (WorkAdmission)"
+
+[[item]]
+id = "music-first-song-font-read"
+kind = "known-issue"
+area = "Audio"
+text = """When music is on, a bot reads the music font once, at its first song.
+  Music is off in the default low-memory mode."""
+first = "0.1.0"
+listed = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "T1 shared audio resource admission"
+
+[[item]]
+id = "runtime-serialization-upgrade-held"
+kind = "not-in-release"
+area = "Source builds"
+text = """The serialization and date libraries retain compatibility versions
+  until the JavaScript runtime libraries can be updated together. The recorded
+  date-parser advisory is not reachable: the calendar dependency does not
+  enable date parsing or formatting."""
+first = "0.2.9"
+target = "0.3.0"
+severity = "low"
+owner = "runtime track: deno_ast >=0.50.2 needs a rustyscript move; lift the serde =1.0.219 hold, the client serde_json =1.0.143 development pin (vendor/fr-client-rust/crates/client/Cargo.toml) and the seed-calc serde_json =1.0.143 pin (tools/seed-calc/Cargo.toml) together, along with the RUSTSEC-2026-0009 exception that crates/tui/tests/audit_exception.rs guards"
+
+[[item]]
+id = "risk-zone-reach-pruning"
+kind = "deferred"
+area = "nav/admission"
+text = """Reach-to-route pruning of risk zones stays deferred. The model sums
+  every exposed zone, including a monster that collision might prevent from
+  reaching the route. Revisit this only when the frozen-route and end-to-end
+  corpora show a realistic quest route at its seed policy's level that is
+  refused solely because of that sum, and that reach pruning would admit.
+  No reach data is stored in the pack. Any future section needs a hard byte
+  budget, bake-reported bytes, a sound collision check, and summed-count
+  fallback for zones that exceed the budget."""
+first = "0.2.9"
+target = "0.2.9"
+severity = "low"
+owner = "Main backlog review"
+
+[[item]]
+id = "tick-normal-trees"
+kind = "not-in-release"
+area = "Gatherer"
+text = """The Knife tick technique is offered for oak and higher trees only.
+  Normal trees still use the ordinary gathering cadence."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-karambwan"
+kind = "not-in-release"
+area = "Gatherer"
+text = """Karambwan fishing uses a fixed delay rather than the skill delay.
+  No Knife arm applies; the Gatherer fishes it at the ordinary cadence."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-flinch"
+kind = "not-in-release"
+area = "Gatherer"
+text = """A sustained tick schedule based on auto-retaliate flinches is not
+  offered. An NPC hit can change the skill delay, but that schedule has not
+  been traced or designed."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-reclick"
+kind = "not-in-release"
+area = "Gatherer"
+text = """The rs2b0t four-tick fly re-click and iron-cadence re-click methods
+  give no gain in revision 289 and are not offered."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-rune-pickaxe"
+kind = "not-in-release"
+area = "Gatherer"
+text = """A rune pickaxe already mines every three ticks, which matches the
+  Knife cycle. Knife turns itself off with no-gain for that tool; ordinary
+  mining continues."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+
+[[item]]
+id = "tick-eat-arm"
+kind = "not-in-release"
+area = "Gatherer"
+text = """Eating uses the existing checked eat action and pauses the Knife
+  technique for one cycle. A food-based tick arm is not offered; it needs
+  per-food delay facts and a live probe before its design is complete."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "gatherer-tick-manip"
+[[item]]
+id = "combat-prep-weapon-in-flight"
+kind = "known-issue"
+area = "Combat"
+text = """A combat step can end at its start with `prep-failed:weapon` even though
+  the weapon is in the pack. The server moves a worn weapon in one step, but
+  the game client applies the pack update and the worn update in separate
+  packets, so one frame can show the weapon in neither place. The machine reads
+  that frame as a missing weapon. A live run of the style switch showed the same
+  client behaviour; preparation has the same exposure and has not been seen to
+  fail yet. **Workaround:** run the combat step again; the weapon is worn by then."""
+first = "0.2.0"
+listed = "0.2.8"
+target = "none"
+severity = "low"
+owner = "combat (PvP slices)"
+
+[[item]]
+id = "tui-paired-duel-clean-logout"
+kind = "known-issue"
+area = "Terminal app"
+text = """Stopping the two bots after a paired Duel Arena fight can time out
+  before both clean logouts are acknowledged. The fight can work before this
+  stop failure. No verified workaround is recorded."""
+first = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "M3 clean logout"

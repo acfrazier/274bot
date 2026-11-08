@@ -16,7 +16,7 @@ pub fn validate_case_baseline_with_preparation(
             near(baseline.tile, FALADOR_CHICKENS, 8)
                 && baseline.level("attack") >= 30
                 && baseline.level("strength") >= 30
-                && baseline.item_id(catalog_item_id("feather")) == 0
+                && baseline.item_id(catalog_item_id("bones")) == 0
         }
         CoreCase::Thiever => {
             near(baseline.tile, (2661, 3306, 0), 10)
@@ -635,7 +635,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::BoneBurier => "Lumbridge mainland and five Bones",
         CoreCase::ChickenKiller => "Lumbridge chicken pen",
         CoreCase::ChickenKillerBank => {
-            "Falador south chickens (3029,3294,0), Attack/Strength 30 and no Feather 314"
+            "Falador south chickens (3029,3294,0), Attack/Strength 30 and no Bones 526"
         }
         CoreCase::Thiever => "Ardougne guard stand, ten Lobsters, and prepared stats",
         CoreCase::Alcher | CoreCase::AlcherCustom

@@ -8,7 +8,7 @@ use crate::native::seat_rows::QueuedSeatBatch;
 use crate::native::snapshot_source::{BankSelectionInput, NativeFactsInput, SnapshotInput};
 use crate::native::{recovery_hints::RecoveryHintsCell, ActionContext, ActionError, SettingsBag};
 use crate::paint::ScriptPaint;
-use api::identity::ExecutionId;
+use api::identity::{ExecutionId, RequestId};
 use api::interact::server_ordered::ServerOrderedRequest;
 use api::prot::Send as PacketSend;
 use api::selected::RunKey;
@@ -174,6 +174,17 @@ pub enum SurfaceError {
     ForeignCard(SurfaceKind),
 }
 
+/// One live compatibility journal read. `token` counts every journal begin
+/// of the run; `generation` is the work generation it began in. Together they
+/// are the read's transaction identity: each new read has its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalWait {
+    pub token: u64,
+    pub generation: u64,
+    /// The lease's own wall bound: the read stops hiding the page here.
+    pub deadline: Instant,
+}
+
 /// One running surface. The slot owns lifecycle transitions, and `stop`
 /// transfers the run to its retirement worker.
 pub trait SurfaceRun: Send {
@@ -235,6 +246,13 @@ pub trait SurfaceRun: Send {
     fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64);
     /// Report a snapshot change and its input identity.
     fn on_snapshot_change_at(&self, snap_tick: u64, input_identity: u64);
+    /// Dispatch the posted seat page to the rows it changed. Steps, resumes
+    /// and settles those rows only. Releases only terminals whose seat result
+    /// sequence is above `release_floor`. Records no tick and carries every
+    /// budget. Returns whether the surface accepted the dispatch: the slot
+    /// clears its seat-answer obligation only on `true`, and an accepted
+    /// dispatch executes or its page is delivered by a named later dispatch.
+    fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool;
 
     // decoded effects
     /// Drain stamped interactions queued by the surface.
@@ -271,6 +289,13 @@ pub trait SurfaceRun: Send {
     fn paint_select(&self, key: &str, name: &str);
     /// Return whether the compatibility journal paint is hidden at `now`.
     fn journal_paint_hidden(&self, now: Instant) -> bool;
+    /// Return the live compatibility journal read at `now`: its transaction
+    /// identity and its lease's own wall bound.
+    fn journal_wait(&self, now: Instant) -> Option<JournalWait>;
+    /// Return the in-isolate owners whose interaction hold has expired at
+    /// `now` (finding N1 of `HOLD-MODEL-AB`): every queued row whose
+    /// `mirror_owner` is one of them is stale, and the host's drain drops it.
+    fn expired_hold_owners(&self, now: Instant) -> [Option<RequestId>; 2];
     /// Evaluate a probe expression.
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError>;
     /// Drain log lines.
@@ -380,7 +405,7 @@ impl ScriptPacketOpsContext<'_, '_> {
         if self.context.run() != self.permit.run {
             return Err(ActionError::Stale);
         }
-        ServerOrderedRequest::validate_advanced_shape(self.context.pin.revision, &operations)
+        ServerOrderedRequest::validate_advanced_shape(self.context.revision, &operations)
             .map_err(ActionError::ServerOrdered)?;
         self.context
             .emit_server_ordered_envelope(ServerOrderedEnvelope {

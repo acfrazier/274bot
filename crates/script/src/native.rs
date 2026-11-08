@@ -7,14 +7,49 @@ use std::sync::{Arc, LazyLock};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
+use crate::interact::InteractReq;
+use crate::paint::ScriptPaint;
 use crate::quester::pair::QuestPairPort;
-use crate::shim::{InteractReq, ScriptPaint};
 use crate::{CompiledId, SettingDef};
 use api::game_data::SelectedGameData;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestProgress};
-use api::selected::{FactError, FamilyPreparation, QuestGate, RunKey, SelectedPin, Truth};
+use api::selected::{ClientRevision, FactError, FamilyPreparation, QuestGate, RunKey, Truth};
 use api::snapshot::SnapshotView;
 use api::{DetectedRandom, RandomClaim, WorldTile};
+
+/// Minimal revision-289 data for synthetic slot tests that do not read game facts.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn minimal_selected_data_for_test() -> Arc<SelectedGameData> {
+    static SELECTED: LazyLock<Arc<SelectedGameData>> = LazyLock::new(|| {
+        let selected = serde_json::from_str(
+            r#"{"schema_version":5,"revision":289,"items":[],"consumption":[],"pickpocket":[]}"#,
+        )
+        .expect("minimal selected game data fixture");
+        Arc::new(selected)
+    });
+    Arc::clone(&SELECTED)
+}
+
+/// Check the generated source for a real revision-data test before loading it.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn has_local_game_data_for_test(revision: ClientRevision) -> bool {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../api/data/game-data")
+        .join(format!("{}.json", revision.as_i32()));
+    let path = path.to_string_lossy();
+    api::test_support::local_asset_path("", &path, &format!("R{} game data", revision.as_i32()))
+        .is_some()
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+#[macro_export]
+macro_rules! require_local_game_data_for_test {
+    ($revision:expr) => {
+        if !$crate::native::has_local_game_data_for_test($revision) {
+            return;
+        }
+    };
+}
 
 pub mod abi;
 mod actions;
@@ -34,13 +69,22 @@ pub use services::{
 pub mod death;
 pub mod ledger;
 mod owner;
+mod prereq;
 mod server_ordered;
 pub mod thieve;
+pub use prereq::{
+    HandoverEntry, OuterIdentity, OuterWalk, PrereqAllow, PrereqFailure, PrereqMissing,
+    PrereqRefusal, PrereqStepIdentity, PrereqSwitch, PrereqWaitName, TalkReachCause, WalkHandover,
+};
 pub mod thieving_core;
 pub use server_ordered::ServerOrderedCompletion;
+pub mod tickcycle;
 pub mod walk;
 pub mod walk_wait;
-pub use ledger::{BankDepositTrace, HostAction, HostAuthority, HostEffect, QuietReadOwner};
+pub use ledger::{
+    is_teleport, AfterHold, BankDepositTrace, HostAction, HostAuthority, HostEffect,
+    QuietReadOwner, WALK_TILES_PER_TICK,
+};
 /// Static avoid-catalog identities shared with external runtime adapters.
 pub use nav_planner::contract::AVOID_CATALOG_IDS;
 
@@ -124,6 +168,26 @@ pub struct WalkOptions {
     pub allow_teleports: WalkBit,
     pub allow_wilderness: WalkBit,
     pub allow_danger_zones: WalkBit,
+    pub allow_prereq_dialogue: WalkBit,
+    pub allow_quest_start: WalkBit,
+}
+
+/// Path-level grants; an explicit walk-request `Forbid` is the only restriction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PrereqOptions {
+    pub dialogue: bool,
+    pub quest_start: bool,
+}
+
+impl PrereqOptions {
+    fn apply(self, options: &mut WalkOptions) {
+        if self.dialogue && options.allow_prereq_dialogue == WalkBit::Inherit {
+            options.allow_prereq_dialogue = WalkBit::Allow;
+        }
+        if self.quest_start && options.allow_quest_start == WalkBit::Inherit {
+            options.allow_quest_start = WalkBit::Allow;
+        }
+    }
 }
 
 /// The validated, per-script permission bits frozen into a prepared card.
@@ -132,6 +196,28 @@ pub struct WalkPermissions {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
     pub allow_danger_zones: bool,
+    pub allow_prereq_dialogue: bool,
+    pub allow_quest_start: bool,
+}
+
+/// The operator's global PvP setting, projected by the host from the shared
+/// preferences document (`pvp.start_fights`, PVP-DESIGN-1026 §2.7). The combat
+/// machine reads it once, at `begin`, and only for a request that starts a
+/// fight with a named player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PvpGlobals {
+    /// Whether any script may start a fight with a player without asking.
+    pub start_fights: bool,
+}
+
+impl PvpGlobals {
+    /// The setting a cold, refused or malformed preference store reads as:
+    /// no global permission.
+    pub const fn fail_closed() -> Self {
+        Self {
+            start_fights: false,
+        }
+    }
 }
 
 /// The host's danger decision for a candidate's actual walk access tiles.
@@ -140,6 +226,14 @@ pub enum WalkDanger<'a> {
     Allowed,
     Denied { zone: &'a str },
     Unavailable,
+}
+
+/// The Wilderness level of a tile (content `~wilderness_level(coord)`: 0
+/// outside every zone, `areas/area_wilderness/scripts/wilderness_levels.rs2`),
+/// lent by the host from the selected nav pack. The script crate owns this
+/// shape so the combat machine reads no navigation implementation type.
+pub trait WildernessLevels: std::fmt::Debug {
+    fn level(&self, tile: WorldTile) -> i32;
 }
 
 /// A tick-borrowed query over the host's effective native walk permissions.
@@ -210,6 +304,10 @@ impl WalkPermissions {
             allow_teleports: read(teleports),
             allow_wilderness: read(wilderness),
             allow_danger_zones: read(danger_zones),
+            allow_prereq_dialogue: read("allow_prereq_dialogue")
+                || (card == CompiledId("Gatherer") && read("allowPrereqDialogue")),
+            allow_quest_start: read("allow_quest_start")
+                || (card == CompiledId("Gatherer") && read("allowQuestStart")),
         }
     }
 }
@@ -308,9 +406,10 @@ impl std::fmt::Debug for PreparedConfig {
 
 pub struct PrepareContext<'a> {
     pub selected: Arc<SelectedGameData>,
-    pub pin: Arc<SelectedPin>,
+    pub revision: ClientRevision,
     pub banks: Arc<api::named_banks::NamedBankFacts>,
     pub families: &'a mut FamilyPreparation,
+    pub zones: Option<nav_planner::contract::ZoneTableView<'a>>,
 }
 
 pub type PrepareCard =
@@ -394,6 +493,12 @@ pub struct RetainedMemory {
     gather: crate::gatherer::GatherRetained,
     quester: crate::quester::QuesterRetained,
     sherlock: SherlockRetained,
+    walk_handover: Option<Box<RetainedWalkHandover>>,
+}
+
+struct RetainedWalkHandover {
+    run: RunKey,
+    handover: WalkHandover,
 }
 
 /// Watchdog-retained death state; active clue tokens and action ownership stay card-local.
@@ -436,6 +541,28 @@ impl RetainedMemory {
 
     pub fn sherlock(&mut self) -> &mut SherlockRetained {
         &mut self.sherlock
+    }
+
+    /// Reserve a one-shot factory input for this exact compiled run.
+    pub fn set_walk_handover(
+        &mut self,
+        run: RunKey,
+        handover: WalkHandover,
+    ) -> Result<(), StartError> {
+        if self.walk_handover.is_some() {
+            return Err(StartError::Busy);
+        }
+        self.walk_handover = Some(Box::new(RetainedWalkHandover { run, handover }));
+        Ok(())
+    }
+
+    /// A stale preparation cannot consume a newer run's input.
+    /// The start owner also takes this value when preparation is cancelled.
+    pub fn take_walk_handover(&mut self, run: RunKey) -> Option<WalkHandover> {
+        if self.walk_handover.as_ref()?.run != run {
+            return None;
+        }
+        self.walk_handover.take().map(|pending| pending.handover)
     }
 }
 
@@ -540,6 +667,10 @@ pub struct NativeTick<'a> {
     pub prompt_port: Option<&'a mut dyn SeatPromptPort>,
     /// Read-only danger admission for target selection, borrowed from the host.
     pub walk_danger: Option<&'a dyn WalkDangerQuery>,
+    /// The operator's global PvP setting for this tick (`pvp.start_fights`,
+    /// PVP-DESIGN-1026 §2.7). `None` when the host has no ready preferences;
+    /// a caller then uses [`PvpGlobals::fail_closed`].
+    pub pvp_globals: Option<PvpGlobals>,
     pub(crate) frame: HostFrame<'a>,
 }
 
@@ -668,7 +799,7 @@ impl<'a> HostFrame<'a> {
 pub fn with_test_tick<R>(
     frame: HostFrame<'_>,
     evidence: EvidenceStamp,
-    pin: &SelectedPin,
+    revision: ClientRevision,
     clock: (Duration, Instant),
     ledger: &mut Option<Box<ledger::Ledger>>,
     output: &mut dyn NativeOutput,
@@ -682,19 +813,22 @@ pub fn with_test_tick<R>(
     let eligible = !frame.compiled().hold;
     let mut tick = NativeTick {
         walk_danger: None,
+        pvp_globals: None,
         state: None,
         service_authority: None,
         prompt_port: None,
         actions: &mut actions,
         cx: ActionContext {
+            stage_cross: None,
+            walk_prereq: PrereqOptions::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: WalkCancelReason::None,
-            pin,
             snapshot,
+            revision,
             retained: &mut retained,
             action_id: 0,
             active_now: clock.0,
@@ -703,6 +837,7 @@ pub fn with_test_tick<R>(
             pending_note_progress: None,
             budget: &mut budget,
             eligible,
+            wilderness: None,
         },
         output,
         pairs: None,
@@ -774,8 +909,11 @@ pub struct NativeActions {
 /// Host-only frame context; deliberately no public constructor or family preparation.
 pub struct ActionContext<'a> {
     pub(crate) evidence: EvidenceStamp,
-    pub(crate) pin: &'a SelectedPin,
+    pub(crate) walk_prereq: PrereqOptions,
+    pub(crate) revision: ClientRevision,
     pub(crate) snapshot: SnapshotView<'a>,
+    /// Frame-local stage consent. Every route keeps the existing named `cross` path.
+    pub(crate) stage_cross: Option<Arc<[Arc<str>]>>,
     pub(crate) condition: Option<api::condition::BotCondition>,
     pub(crate) poison_unknown_pulse: u8,
     pub(crate) cure_poison: crate::survival::CurePoison,
@@ -790,6 +928,10 @@ pub struct ActionContext<'a> {
     pub(crate) observed_walk_outcome_seq: u64,
     /// The host's cancel reason for `observed_walk_outcome_seq`.
     pub(crate) observed_walk_cancel_reason: WalkCancelReason,
+    /// The Wilderness levels the host lends for this frame; `None` when the
+    /// host has no nav pack. The combat machine's zone gate treats `None` as
+    /// "outside the wilderness".
+    pub(crate) wilderness: Option<&'a dyn WildernessLevels>,
 }
 /// Track manual takeover outcomes relative to one native step's begin.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -816,6 +958,79 @@ impl ManualTakeoverWatch {
 pub struct QuietReadLease {
     owner: Arc<owner::Owner>,
     lease_id: NonZeroU64,
+}
+
+/// The owner waits for the page its own interaction opens. While one is live
+/// the host holds its auto-run press (the run button's script begins with
+/// `if_close`, `player_controls.rs2:34-35`). Dropping the lease, completing
+/// or dropping the machine, and revoking the owner all release it.
+/// Revocable owner identity; no caller can mint a lease.
+pub struct ModalWaitLease {
+    owner: Arc<owner::Owner>,
+    lease_id: NonZeroU64,
+}
+
+/// The bound that the owner of a script wait enforces itself, in the
+/// owner's own clock. The host ends its auto-run hold only when the owner
+/// ends the wait, or, as a logged failure, after this deadline plus a stated
+/// margin (an owner that stopped polling). A renewed wait carries its new
+/// deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitDeadline {
+    /// The request has not been dispatched, so its owner's page deadline
+    /// has not started. Acceptance replaces this with the owner's bound;
+    /// revocation still releases the lease.
+    AwaitingDispatch,
+    /// The observed game tick (`ActionContext::evidence().tick`) on which
+    /// the owner ends the wait (`tick >= deadline`).
+    Tick(u64),
+    /// The active time (`ActionContext::active_now`) from which the owner
+    /// ends the wait at its next poll. Pause, hold, not-ready and Blocked
+    /// stop the active clock, so they do not spend this bound.
+    Active(Duration),
+}
+
+impl WaitDeadline {
+    /// The observed tick by which a polled owner has ended its wait, read in
+    /// the host sample of `tick`. `active_now` is the owner's active clock at
+    /// that sample. The owner checks its bound in that frame's poll, before
+    /// the sample.
+    ///
+    /// An undispatched request has no terminal release yet, so it remains
+    /// not due at every sample until its owner installs the accepted bound.
+    ///
+    /// An active-clock bound is converted at each sample, from the owner's
+    /// remaining active time then: its wall equivalent is `now + (deadline -
+    /// active_now)`. While that is still ahead, the answer is the current
+    /// tick (not yet due). While the owner is paused, its active clock does
+    /// not advance, so the bound moves forward with wall time and stays not
+    /// due. The first sample with `active_now >= deadline` fixes the deadline
+    /// at that tick: the owner's own deadline has then passed in its own
+    /// clock. The owner's poll in that frame read its clock before the
+    /// sample, so it sees the bound at its next poll; the host's margin
+    /// covers that one tick.
+    pub fn owner_tick(&mut self, active_now: Duration, tick: u64) -> u64 {
+        match *self {
+            WaitDeadline::AwaitingDispatch => tick,
+            WaitDeadline::Tick(deadline) => deadline,
+            WaitDeadline::Active(at) if active_now < at => tick,
+            WaitDeadline::Active(_) => {
+                *self = WaitDeadline::Tick(tick);
+                tick
+            }
+        }
+    }
+
+    /// The observed tick for a lease that ends itself at the wall time `at`,
+    /// in the read itself. A live read before `at` is not yet due; a live
+    /// read after it is already past its deadline.
+    pub fn self_ending_tick(at: Instant, now: Instant, tick: u64) -> u64 {
+        if now < at {
+            tick
+        } else {
+            tick.saturating_sub(1)
+        }
+    }
 }
 
 /// Owner allowances for a followed walk. Prayer must be allowed or
@@ -938,6 +1153,7 @@ impl WalkGoals {
     }
 }
 
+#[derive(Clone)]
 pub struct WalkRequest {
     pub target: WorldTile,
     /// Exact alternatives for a native Area walk with radius zero and no loc.
@@ -958,18 +1174,26 @@ pub struct WalkRequest {
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,
     pub cross: Box<[Arc<str>]>,
+    pub avoid: Box<[Arc<str>]>,
     /// Create a [`crate::combat::WalkGuard`] for this followed route.
     pub protect: bool,
     /// Create a food-only [`crate::combat::WalkGuard`] when `protect` is
-    /// false. Only combat abort walks set this; ordinary walks run no host
-    /// guard. Requires `allow.food`, or the walk is refused.
+    /// false. A declared danger crossing arms this guard for ordinary walks.
+    /// Food use still follows `allow.food`.
     pub food_guard: bool,
+    /// Retain held-cure upkeep without requesting protection or food upkeep.
+    /// Crossing normalization preserves this request's food allowance.
+    /// Only the exhausted combat escape sets this flag.
+    pub cure_guard: bool,
     /// Represented on the request so a protect walk can still be refused
     /// when the owner disallows prayer.
     pub allow: WalkAllow,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkRefusal {
+    SearchIncomplete {
+        nodes_settled: Option<usize>,
+    },
     NoRouteWithinBounds {
         tried: u8,
         last: Option<crate::combat::risk::Verdict>,
@@ -979,14 +1203,24 @@ pub enum WalkRefusal {
         maximum_bytes: usize,
     },
     Unsurvivable,
-    FixableWith,
+    PoisonUnsettled {
+        waited: u8,
+        cause: api::condition::WindowReset,
+    },
     Unknown(crate::combat::risk::UnknownWhy),
     EscapeInProgress,
+    Prerequisite(Arc<PrereqRefusal>),
 }
 
 impl std::fmt::Display for WalkRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::SearchIncomplete {
+                nodes_settled: Some(settled),
+            } => write!(f, "route search incomplete after {settled} settled nodes"),
+            Self::SearchIncomplete {
+                nodes_settled: None,
+            } => f.write_str("route search incomplete"),
             Self::NoRouteWithinBounds { tried, last } => {
                 write!(f, "no route within bounds after {tried} search attempts")?;
                 if let Some(last) = last {
@@ -1002,9 +1236,13 @@ impl std::fmt::Display for WalkRefusal {
                 "route result needs {required_bytes} bytes, above the {maximum_bytes}-byte limit",
             ),
             Self::Unsurvivable => f.write_str("route is unsurvivable"),
-            Self::FixableWith => f.write_str("route needs additional supplies"),
-            Self::Unknown(why) => write!(f, "route risk is unknown: {why:?}"),
+            Self::PoisonUnsettled { waited, cause } => write!(
+                f,
+                "poison state remained unsettled after {waited} observed ticks ({cause:?})",
+            ),
+            Self::Unknown(why) => write!(f, "route risk is unknown: {why}"),
             Self::EscapeInProgress => f.write_str("escape in progress"),
+            Self::Prerequisite(refusal) => std::fmt::Display::fmt(refusal, f),
         }
     }
 }
@@ -1056,27 +1294,198 @@ pub enum WalkEnd {
     Aborted,
     Cancelled,
     NeedsEvidence(Arc<[QuestGate]>),
+    NeedsStep(Arc<[api::prereq_steps::ActionableGate]>),
+    GateRefused(Arc<api::prereq_knowledge::RefusalObservation>),
 }
 // USER-0.2.3-GATHERER §1 records a progressed return ending Expired at the
 // Traveller's 60-call bound (equal to observed ticks in the current host);
 // §3 records the normal content-derived stand succeeding. One fresh plan
 // from the observed position is the supported recovery.
-const MAX_RETURN_RECOVERY_ACTIONS: u8 = 1;
+const MAX_RETURN_RECOVERY_ATTEMPTS: u8 = 2;
 
-#[derive(Default)]
+/// Shared bounded-recovery policy, not a content timer: one initial route and
+/// two fresh replans. Quester walk first set this cap in b26097813.
+pub(crate) const QUEST_WALK_MAX_ATTEMPTS: u8 = 3;
+
+/// Shares Quester's walk-step retry budget and next-tick recovery state with
+/// every family that owns an approach walk.
+pub(crate) struct WalkRetryState {
+    recovery: ReturnStallRecovery,
+    // Read only while recovery is pending; that state owns whether this tick is set.
+    retry_after_tick: u64,
+}
+
+impl Default for WalkRetryState {
+    fn default() -> Self {
+        Self {
+            recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
+            retry_after_tick: 0,
+        }
+    }
+}
+
+impl WalkRetryState {
+    pub(crate) fn observe_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
+        if self.recovery.observe_receipt(receipt) {
+            self.retry_after_tick = tick;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn observe_approach_failure(&mut self, receipt: &WalkReceipt, tick: u64) -> bool {
+        self.observe_approach_retry(receipt, tick, Self::retryable_receipt(receipt))
+    }
+
+    pub(crate) fn observe_wall_approach_failure(
+        &mut self,
+        receipt: &WalkReceipt,
+        tick: u64,
+        has_wall_fallback: bool,
+    ) -> bool {
+        let retryable = if has_wall_fallback
+            && receipt.end == WalkEnd::Refused
+            && matches!(receipt.refusal, Some(WalkRefusal::SearchIncomplete { .. }))
+        {
+            receipt
+                .blocked
+                .as_deref()
+                .is_none_or(|blocked| blocked.is_empty())
+        } else {
+            Self::retryable_receipt(receipt)
+        };
+        self.observe_approach_retry(receipt, tick, retryable)
+    }
+
+    fn observe_approach_retry(
+        &mut self,
+        receipt: &WalkReceipt,
+        tick: u64,
+        retryable: bool,
+    ) -> bool {
+        if !self.recovery.observe_retryable(retryable) {
+            return false;
+        }
+        self.retry_after_tick = tick;
+        let attempt = self.retry_attempt_number();
+        let detail = receipt.failure_detail();
+        api::host_log!(
+            api::hostlog::Category::NavTrace,
+            api::hostlog::Level::Debug,
+            "quester-approach-retry tick={tick} attempt={attempt}/{} end={:?} detail={detail:?}",
+            QUEST_WALK_MAX_ATTEMPTS,
+            receipt.end,
+        );
+        true
+    }
+
+    pub(crate) fn retryable_receipt(receipt: &WalkReceipt) -> bool {
+        let has_blocked_zones = receipt
+            .blocked
+            .as_deref()
+            .is_some_and(|blocked| !blocked.is_empty());
+        receipt.refusal.is_none()
+            && !has_blocked_zones
+            && matches!(
+                &receipt.end,
+                WalkEnd::NoPath | WalkEnd::RouteEnded | WalkEnd::Stalled(_) | WalkEnd::Failed
+            )
+    }
+
+    pub(crate) fn pending(&self) -> bool {
+        self.recovery.pending()
+    }
+
+    pub(crate) fn waiting_for_next_tick(&self, tick: u64) -> bool {
+        self.pending() && tick <= self.retry_after_tick
+    }
+
+    pub(crate) fn defer_until_next_tick(&mut self, tick: u64) {
+        if self.pending() {
+            self.retry_after_tick = tick;
+        }
+    }
+
+    pub(crate) fn action_submitted(&mut self) {
+        self.recovery.action_submitted();
+        self.retry_after_tick = 0;
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.recovery.reset();
+        self.retry_after_tick = 0;
+    }
+
+    pub(crate) fn retry_attempt_number(&self) -> u8 {
+        self.recovery.retry_attempt_number()
+    }
+}
+
+/// Counts recovery submissions separately from the initial action.
+/// `max_attempts` includes that initial action.
 pub(crate) struct ReturnStallRecovery {
     actions: u8,
+    max_attempts: u8,
     pending: bool,
 }
 
+impl Default for ReturnStallRecovery {
+    fn default() -> Self {
+        Self {
+            actions: 0,
+            max_attempts: MAX_RETURN_RECOVERY_ATTEMPTS,
+            pending: false,
+        }
+    }
+}
+
 impl ReturnStallRecovery {
+    /// Set a total request limit, including the initial request.
+    pub(crate) fn with_max_attempts(max_attempts: u8) -> Self {
+        Self {
+            max_attempts: max_attempts.max(1),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn observe(&mut self, end: &WalkEnd) -> bool {
         let transient = matches!(
             end,
             WalkEnd::Stalled(stall)
                 if matches!(stall.why, WalkStallReason::Expired | WalkStallReason::Dropped)
         );
-        if transient && self.actions < MAX_RETURN_RECOVERY_ACTIONS && !self.pending {
+        self.observe_retryable(transient)
+    }
+
+    pub(crate) fn observe_receipt(&mut self, receipt: &WalkReceipt) -> bool {
+        self.observe_retryable(WalkRetryState::retryable_receipt(receipt))
+    }
+
+    /// Dialogue also retries expired assessments, which have no walk receipt.
+    pub(crate) fn observe_retryable(&mut self, retryable: bool) -> bool {
+        retryable && self.admit(self.max_attempts.saturating_sub(1))
+    }
+
+    /// Admits one more recovery action for an ordinary walk failure: no
+    /// route, a failed or blocked walk, a route that ended short, or any
+    /// stall. User input, cancellation, a safety or permission refusal, an
+    /// escape abort and a quest-gate need stay terminal at once; the owner
+    /// must not retry them. `budget` is the caller's own bound on actions.
+    pub(crate) fn observe_failure(&mut self, end: &WalkEnd, budget: u8) -> bool {
+        let ordinary = matches!(
+            end,
+            WalkEnd::NoPath
+                | WalkEnd::Failed
+                | WalkEnd::Blocked
+                | WalkEnd::RouteEnded
+                | WalkEnd::Stalled(_)
+        );
+        ordinary && self.admit(budget)
+    }
+
+    fn admit(&mut self, budget: u8) -> bool {
+        if self.actions < budget && !self.pending {
             self.pending = true;
             true
         } else {
@@ -1100,11 +1509,17 @@ impl ReturnStallRecovery {
         self.pending = false;
     }
 
-    #[cfg(test)]
+    /// Number of the next request after the initial request.
+    pub(crate) fn retry_attempt_number(&self) -> u8 {
+        self.actions.saturating_add(2)
+    }
+
+    /// Recovery actions already submitted; the owner picks the next kind.
     pub(crate) fn actions(&self) -> u8 {
         self.actions
     }
 }
+
 #[derive(Debug, Clone)]
 pub struct WalkReceipt {
     pub request_id: u64,
@@ -1118,10 +1533,12 @@ pub struct WalkReceipt {
     pub refusal: Option<WalkRefusal>,
     pub assessment: Option<Arc<crate::combat::risk::RouteAssessment>>,
     pub escape: Option<crate::combat::guard::Escape>,
+    /// Effective prerequisite grants captured by host admission. Missing means denied.
+    pub prereq_allow: Option<PrereqAllow>,
 }
 impl WalkReceipt {
-    /// Prefer host detail and a typed stall over an advisory's model reason,
-    /// then a typed refusal. Callers use this before generic fallbacks.
+    /// Prefer host detail and a typed stall over an applicable model reason,
+    /// then a typed refusal. A route assessment is not a reason for early end.
     pub fn failure_detail(&self) -> Option<Arc<str>> {
         self.detail
             .as_ref()
@@ -1134,15 +1551,29 @@ impl WalkReceipt {
                 _ => None,
             })
             .or_else(|| {
-                self.assessment
-                    .as_ref()
-                    .map(|assessment| Arc::clone(&assessment.reason))
+                if matches!(&self.end, WalkEnd::RouteEnded) {
+                    None
+                } else {
+                    self.assessment
+                        .as_ref()
+                        .map(|assessment| Arc::clone(&assessment.reason))
+                }
             })
             .or_else(|| {
                 self.refusal
                     .as_ref()
                     .map(|refusal| Arc::from(refusal.to_string()))
             })
+    }
+    /// Return the host or typed detail, with the same fallback used by `into_arrival`.
+    pub(crate) fn failure_detail_or_fallback(&self) -> Arc<str> {
+        self.failure_detail().unwrap_or_else(|| {
+            Arc::from(match &self.end {
+                WalkEnd::NoPath => "walk has no route",
+                WalkEnd::RouteEnded => "walk route ended before arrival",
+                _ => "walk failed",
+            })
+        })
     }
 
     /// Accept a walk only when the adapter proved its requested arrival.
@@ -1153,6 +1584,8 @@ impl WalkReceipt {
             WalkEnd::Arrived => Ok(self.evidence),
             WalkEnd::UserInput => Err(ActionError::UserInput),
             WalkEnd::NeedsEvidence(gates) => Err(ActionError::NeedsEvidence(gates)),
+            WalkEnd::NeedsStep(gates) => Err(ActionError::NeedsStep(gates)),
+            WalkEnd::GateRefused(observation) => Err(ActionError::GateRefused(observation)),
             WalkEnd::Cancelled => Err(ActionError::Cancelled),
             WalkEnd::NoPath => Err(ActionError::Blocked(failure_detail.unwrap_or_else(|| {
                 static REASON: LazyLock<Arc<str>> =
@@ -1173,6 +1606,63 @@ impl WalkReceipt {
                 Arc::clone(&REASON)
             }))),
         }
+    }
+}
+#[cfg(test)]
+mod walk_receipt_tests {
+    use super::*;
+
+    #[test]
+    fn route_ended_walk_uses_arrival_failure_instead_of_risk_reason() {
+        let risk_reason: Arc<str> = Arc::from("survivable route assessment");
+        let assessment = Arc::new(crate::combat::risk::RouteAssessment {
+            verdict: crate::combat::risk::Verdict::Survivable,
+            bound: 0.0,
+            poison_test: crate::combat::risk::PoisonTest::NotNeeded,
+            plan: crate::combat::risk::RoutePlan::default(),
+            crossings: Box::new([]),
+            more: 0,
+            supplies: Box::new([]),
+            hp_after: 10,
+            volley: 0,
+            input: crate::combat::risk::RiskInput::default(),
+            generation: 1,
+            reason: Arc::clone(&risk_reason),
+        });
+        let receipt = WalkReceipt {
+            request_id: 7,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            goal: None,
+            end: WalkEnd::RouteEnded,
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: Some(assessment),
+            escape: None,
+            prereq_allow: None,
+        };
+        assert_eq!(
+            receipt
+                .assessment
+                .as_ref()
+                .map(|assessment| assessment.reason.as_ref()),
+            Some(risk_reason.as_ref())
+        );
+        assert_eq!(receipt.failure_detail(), None);
+        assert_eq!(
+            receipt.into_arrival(),
+            Err(ActionError::Blocked(Arc::from(
+                "walk route ended before arrival"
+            )))
+        );
     }
 }
 
@@ -1205,6 +1695,29 @@ pub struct InteractionReceipt {
     pub chat_since: i32,
 }
 
+/// Where one single interaction request is in the host's dispatch lifecycle
+/// ([`ActionContext::interaction_dispatch`]). The host takes queued native
+/// work only in an observation pass that may dispatch: connected, not held,
+/// the slot's dispatch open (`script_observe.rs:1344-1363`,
+/// `SlotScript::take_native_action`). It records the receipt of every
+/// interaction it takes in that same pass (`script_observe.rs:1649-1664`).
+/// A held pass does not dispatch: it drops queued gameplay instead
+/// (`SlotScript::seat_held_tick`, `GameplaySeat::hold` and `held_tick`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteractionDispatch<'a> {
+    /// The host still holds the request: no pass that may dispatch has run
+    /// since it was queued. The wait belongs to the host's lifecycle.
+    Queued,
+    /// The host dropped the request without sending it (a held tick, a
+    /// guardian hold, a seat refusal, a session reset), or this action no
+    /// longer owns it (cancelled, or superseded by a later request) and has
+    /// no receipt for it. No receipt will come.
+    Unsent,
+    /// The host took the request in a pass that could dispatch it and
+    /// settled it: `accepted` is the dispatch result.
+    Settled(&'a InteractionReceipt),
+}
+
 impl<'a> ActionContext<'a> {
     pub fn run(&self) -> RunKey {
         self.evidence.run
@@ -1218,11 +1731,16 @@ impl<'a> ActionContext<'a> {
     pub fn evidence(&self) -> EvidenceStamp {
         self.evidence
     }
-    pub fn pin(&self) -> &SelectedPin {
-        self.pin
+    pub fn revision(&self) -> ClientRevision {
+        self.revision
     }
     pub fn snapshot(&self) -> SnapshotView<'a> {
         self.snapshot
+    }
+    /// The Wilderness levels the host lends for this frame, when it has a nav
+    /// pack.
+    pub fn wilderness(&self) -> Option<&'a dyn WildernessLevels> {
+        self.wilderness
     }
     /// The host's complete live condition, checked against the frame at entry.
     pub fn condition(&self) -> Option<&api::condition::BotCondition> {
@@ -1265,18 +1783,73 @@ pub struct ActionHandle<M: NativeMachine> {
 /// Revocation only: a Play-owned pair lease can fence queued work without
 /// taking the actor's slot lock or accessing its machine.
 #[derive(Clone)]
-pub struct ActionRevoker(Arc<owner::Owner>);
+pub struct ActionRevoker(RevokerTarget);
+#[derive(Clone)]
+enum RevokerTarget {
+    Owner(Arc<owner::Owner>),
+    Logical(Arc<parking_lot::Mutex<LogicalRevocation>>),
+}
+struct LogicalRevocation {
+    run: RunKey,
+    revoked: bool,
+    current: Option<ActionRevoker>,
+}
+
+/// A lazily allocated revocation link for a logical action whose native owner
+/// changes. Installing after a concurrent revoke fences the new owner too.
+pub(crate) struct ActionLink(Arc<parking_lot::Mutex<LogicalRevocation>>);
+impl ActionLink {
+    pub(crate) fn new(current: ActionRevoker) -> Self {
+        Self(Arc::new(parking_lot::Mutex::new(LogicalRevocation {
+            run: current.run(),
+            revoked: false,
+            current: Some(current),
+        })))
+    }
+    pub(crate) fn revoker(&self) -> ActionRevoker {
+        ActionRevoker(RevokerTarget::Logical(Arc::clone(&self.0)))
+    }
+    pub(crate) fn revoked(&self) -> bool {
+        self.0.lock().revoked
+    }
+    pub(crate) fn replace(&self, current: Option<ActionRevoker>) {
+        let mut state = self.0.lock();
+        if state.revoked {
+            drop(state);
+            if let Some(current) = current {
+                current.revoke();
+            }
+        } else {
+            state.current = current;
+        }
+    }
+}
 impl ActionRevoker {
     pub fn run(&self) -> RunKey {
-        self.0.run
+        match &self.0 {
+            RevokerTarget::Owner(owner) => owner.run,
+            RevokerTarget::Logical(state) => state.lock().run,
+        }
     }
     pub fn revoke(&self) {
-        self.0.revoke();
+        match &self.0 {
+            RevokerTarget::Owner(owner) => owner.revoke(),
+            RevokerTarget::Logical(state) => {
+                let current = {
+                    let mut state = state.lock();
+                    state.revoked = true;
+                    state.current.take()
+                };
+                if let Some(current) = current {
+                    current.revoke();
+                }
+            }
+        }
     }
 }
 impl<M: NativeMachine> ActionHandle<M> {
     pub fn revoker(&self) -> ActionRevoker {
-        ActionRevoker(Arc::clone(&self.owner))
+        ActionRevoker(RevokerTarget::Owner(Arc::clone(&self.owner)))
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -1310,9 +1883,19 @@ pub enum ActionError {
     /// The action requires typed quest evidence before it can continue.
     #[error("the native action needs quest evidence: {0:?}")]
     NeedsEvidence(Arc<[QuestGate]>),
+    #[error("the native action needs a navigation prerequisite: {0:?}")]
+    NeedsStep(Arc<[api::prereq_steps::ActionableGate]>),
+    #[error("a navigation crossing refused the account: {0:?}")]
+    GateRefused(Arc<api::prereq_knowledge::RefusalObservation>),
+    #[error(transparent)]
+    Prerequisite(Arc<PrereqRefusal>),
     /// Typed capacity or duplicate refusal from exact ground-item Take.
     #[error("ground-item Take was refused: {0:?}")]
     GroundTake(api::ground_take::GroundRefusal),
+    /// A typed permanent refusal of a player-combat request at `begin`
+    /// (PVP-DESIGN-1026 §2.1).
+    #[error("player combat was refused: {0:?}")]
+    PvpRefused(crate::combat::PvpRefusal),
     /// Invalid bounded candidate-goal request, rejected before host admission.
     #[error("walk goals were refused: {0}")]
     WalkGoals(WalkGoalsError),
@@ -1330,13 +1913,85 @@ pub fn defer_budget<T>(result: Result<T, ActionError>) -> Poll<Result<T, ActionE
     }
 }
 
+/// What a machine did when it resumed after a guardian hold
+/// ([`NativeMachine::after_hold`]). [`NativeActions::poll`] logs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoldResume {
+    /// The request needs nothing: its goal is already met, or the host still
+    /// holds it, or the machine has none in flight. The text says which.
+    Kept(&'static str),
+    /// The machine sent its request again, once. The text names the request.
+    Reissued(&'static str),
+    /// The host dropped the request unsent, and the machine ends so that its
+    /// owner, which holds the goal, checks the goal before it sends another.
+    /// The text names the request.
+    Returned(&'static str),
+}
+
+/// The one `info` line for a resume after a guardian hold, logged by whoever
+/// consumed it ([`ActionContext::take_hold_resume`]).
+pub fn log_hold_resume(action: &str, resume: HoldResume) {
+    let (what, text) = match resume {
+        HoldResume::Kept(text) => ("kept its request", text),
+        HoldResume::Reissued(text) => ("re-issued its request once", text),
+        HoldResume::Returned(text) => ("returned its dropped request to its owner", text),
+    };
+    #[cfg(test)]
+    RESUME_LOG.with(|lines| {
+        lines.borrow_mut().push(format!(
+            "native action {action} resumed after a guardian hold and {what}: {text}"
+        ));
+    });
+    api::host_log!(
+        api::hostlog::Category::ScriptLifecycle,
+        api::hostlog::Level::Info,
+        "native action {action} resumed after a guardian hold and {what}: {text}"
+    );
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESUME_LOG: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The resume lines this test thread has logged ([`log_hold_resume`]).
+#[cfg(test)]
+pub(crate) fn take_resume_log() -> Vec<String> {
+    RESUME_LOG.with(|lines| std::mem::take(&mut *lines.borrow_mut()))
+}
+
 pub trait NativeMachine: Send + 'static {
     type Args: Send;
     type Output: Send;
+    /// A machine that keeps a request in flight across a guardian hold sets
+    /// this and implements [`Self::after_hold`]. The hold drops queued host
+    /// work and the guardian sends its own interactions, so such a request can
+    /// be lost, or taken over, with no failure the machine would see. The
+    /// owner layer ([`NativeActions::poll`]) then leaves the machine alone for
+    /// the first observed tick after the hold, so an in-flight server effect
+    /// can land, and calls [`Self::after_hold`] once on the next.
+    const RESUMES_AFTER_HOLD: bool = false;
     fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError>
     where
         Self: Sized;
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>>;
+    /// Called once, before the machine's next [`Self::poll`], on the first
+    /// observed tick that follows the settle tick of a guardian hold. The
+    /// machine re-checks its own goal first (the page is open, the item count
+    /// rose, the receipt arrived) and re-issues its request at most once only
+    /// when the goal is not met and the request was lost or taken over. A
+    /// machine that does not know the goal (it is its owner's) does not send
+    /// again: it returns [`HoldResume::Returned`] and its next poll ends it,
+    /// so the owner checks the goal first. A `BudgetExhausted` error retries
+    /// on the next tick.
+    fn after_hold(&mut self, _cx: &mut ActionContext<'_>) -> Result<HoldResume, ActionError> {
+        Ok(HoldResume::Kept(
+            "this machine keeps no request across a hold",
+        ))
+    }
+    /// Cancel an unfinished machine before abandoning it.
+    /// After cancellation, the owner must not call `poll` or `after_hold`.
+    /// Nested owners obey the same rule as the native action slot.
     fn cancel(&mut self) {}
     fn interrupt(&mut self) {}
     fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
@@ -1398,6 +2053,8 @@ mod walk_permission_tests {
                 allow_teleports: WalkBit::Inherit,
                 allow_wilderness: WalkBit::Inherit,
                 allow_danger_zones: WalkBit::Inherit,
+                allow_prereq_dialogue: WalkBit::Inherit,
+                allow_quest_start: WalkBit::Inherit,
             }
         );
     }
@@ -1483,12 +2140,21 @@ mod walk_permission_tests {
     #[test]
     fn refusal_variants_preserve_distinct_typed_kinds() {
         let refusals = [
+            WalkRefusal::SearchIncomplete {
+                nodes_settled: Some(524_288),
+            },
+            WalkRefusal::SearchIncomplete {
+                nodes_settled: None,
+            },
             WalkRefusal::NoRouteWithinBounds {
                 tried: 2,
                 last: Some(crate::combat::risk::Verdict::Unsurvivable),
             },
             WalkRefusal::Unsurvivable,
-            WalkRefusal::FixableWith,
+            WalkRefusal::PoisonUnsettled {
+                waited: 18,
+                cause: api::condition::WindowReset::Modal,
+            },
             WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::MissingFacts),
             WalkRefusal::EscapeInProgress,
             WalkRefusal::RouteTooLarge {
@@ -1501,6 +2167,21 @@ mod walk_permission_tests {
                 assert_ne!(refusals[left], refusals[right]);
             }
         }
+        assert_eq!(
+            WalkRefusal::Unknown(crate::combat::risk::UnknownWhy::MissingFacts).to_string(),
+            "route risk is unknown: required combat facts are unavailable"
+        );
+    }
+    #[test]
+    fn poison_unsettled_display_names_wait_and_reset_cause() {
+        assert_eq!(
+            WalkRefusal::PoisonUnsettled {
+                waited: 18,
+                cause: api::condition::WindowReset::Modal,
+            }
+            .to_string(),
+            "poison state remained unsettled after 18 observed ticks (Modal)",
+        );
     }
 
     #[test]
@@ -1523,12 +2204,46 @@ mod walk_permission_tests {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         };
         assert_eq!(
             receipt.into_arrival(),
             Err(ActionError::Blocked(Arc::from(
                 "retreated from the danger zone"
             )))
+        );
+    }
+    #[test]
+    fn incomplete_search_stays_within_the_compat_blocked_result() {
+        let detail: Arc<str> = Arc::from(
+            "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)",
+        );
+        let receipt = WalkReceipt {
+            goal: None,
+            request_id: 7,
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            end: WalkEnd::Refused,
+            blocked: None,
+            detail: Some(Arc::clone(&detail)),
+            refusal: Some(WalkRefusal::SearchIncomplete {
+                nodes_settled: None,
+            }),
+            assessment: None,
+            escape: None,
+            prereq_allow: None,
+        };
+        assert_eq!(
+            receipt.into_arrival(),
+            Err(ActionError::Blocked(detail)),
+            "script callers still receive the compat Blocked error variant",
         );
     }
 
@@ -1552,6 +2267,7 @@ mod walk_permission_tests {
             refusal: Some(WalkRefusal::EscapeInProgress),
             assessment: None,
             escape: None,
+            prereq_allow: None,
         };
         assert_eq!(
             receipt.failure_detail().as_deref(),
@@ -1565,6 +2281,8 @@ mod walk_permission_tests {
             "allow_teleports": true,
             "allow_wilderness": false,
             "allow_danger_zones": true,
+            "allow_prereq_dialogue": true,
+            "allow_quest_start": false,
         }))
         .unwrap();
         let roundtrip: SettingsBag =
@@ -1582,6 +2300,8 @@ mod walk_permission_tests {
                 allow_teleports: true,
                 allow_wilderness: false,
                 allow_danger_zones: true,
+                allow_prereq_dialogue: true,
+                allow_quest_start: false,
             }
         );
         assert_eq!(config.bag(), &roundtrip);
@@ -1596,6 +2316,8 @@ mod walk_permission_tests {
             "allowTeleports": true,
             "allowWilderness": true,
             "allowDangerZones": false,
+            "allowPrereqDialogue": false,
+            "allowQuestStart": true,
         }))
         .unwrap();
         let config = PreparedConfig::new(CompiledId("Gatherer"), 4, 1, Arc::new(bag), ());
@@ -1605,6 +2327,8 @@ mod walk_permission_tests {
                 allow_teleports: true,
                 allow_wilderness: true,
                 allow_danger_zones: false,
+                allow_prereq_dialogue: false,
+                allow_quest_start: true,
             }
         );
     }

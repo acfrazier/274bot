@@ -1961,6 +1961,9 @@ mod tests {
 
     #[test]
     fn exposure_from_real_tables() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::condition::Exposure;
         use api::selected::ClientRevision;
 

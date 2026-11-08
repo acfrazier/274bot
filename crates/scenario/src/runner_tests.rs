@@ -601,6 +601,9 @@ impl SeededState {
 /// count.
 #[test]
 fn clean_stop_scenarios_are_not_satisfied_by_their_own_seed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let items = GameItems::load();
     let names = Arc::clone(&items.names);
     let mut checked = Vec::new();
@@ -1020,6 +1023,51 @@ fn world_speed_resets_after_failed_run() {
         }
         other => panic!("expected failed run after speed reset, got {other:?}"),
     }
+}
+
+#[test]
+fn world_speed_opt_out_skips_restore_after_pass() {
+    let mut runner = ScenarioRunner::new(fast_speed_scenario(
+        Proof::WorldSpeedChanged { ms: 300 },
+        10,
+    ));
+    runner.set_restore_world_speed(false);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+
+    runner.tick(&mut client);
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    push_system_chat(&mut client, "World speed was changed to 300ms");
+    runner.tick(&mut client);
+    runner.tick(&mut client);
+
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    assert_eq!(
+        outgoing_ascii_count(&client, "speed 600"),
+        0,
+        "the opt-out skips only the terminal restoration command"
+    );
+}
+
+#[test]
+fn world_speed_opt_out_skips_restore_after_failure() {
+    let mut runner = ScenarioRunner::new(fast_speed_scenario(Proof::Stat { id: 16, min: 999 }, 1));
+    runner.set_restore_world_speed(false);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+
+    runner.tick(&mut client);
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    runner.tick(&mut client);
+
+    assert!(
+        matches!(runner.status(), RunnerStatus::Failed(message) if message.contains("not seen within 1 game tick")),
+        "the original terminal failure is preserved: {:?}",
+        runner.status()
+    );
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    assert_eq!(outgoing_ascii_count(&client, "speed 600"), 0);
 }
 
 #[test]
@@ -1610,6 +1658,7 @@ fn companion_slots_tick_their_hook_while_the_driven_slot_runs() {
             profile: 1,
             per_frame: Box::new(move |_| {
                 hook.store(true, Ordering::Relaxed);
+                false
             }),
         }],
         settings: ScenarioSettings::default(),
@@ -1635,6 +1684,47 @@ fn companion_slots_tick_their_hook_while_the_driven_slot_runs() {
         .expect("the companion slot resolves by profile name");
     runner.companion_tick(index, &mut c);
     assert!(flipped.load(Ordering::Relaxed));
+}
+
+/// A companion hook's `true` is a one-shot host-login request: the driver
+/// reads it from the tick and posts the slot's operator Login, which the
+/// scriptless park policy needs after a prep relog's logout.
+#[test]
+fn companion_tick_surfaces_a_one_shot_host_login_request() {
+    let scenario = Scenario {
+        name: "companion-login",
+        seed: Seed {
+            profiles: vec![("test", "test"), ("test2", "test2")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "set run energy",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    c.runenergy = 99;
+                    true
+                }),
+            },
+            wait: wait(Proof::Stat { id: 16, min: 1 }, 10),
+        }],
+        proof: Proof::Stat { id: 16, min: 1 },
+        companions: vec![Companion {
+            profile: 1,
+            per_frame: {
+                let mut pending = true;
+                Box::new(move |_| std::mem::take(&mut pending))
+            },
+        }],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::new(scenario);
+    let mut c = seeded_client();
+    let index = runner.companion_for("test2").expect("companion slot");
+    assert!(runner.companion_tick(index, &mut c));
+    assert!(
+        !runner.companion_tick(index, &mut c),
+        "the fixture consumes its request, exactly like pair_companion_hook"
+    );
 }
 
 /// Live boots mint per-run usernames: the runner drives/companions the
@@ -1666,6 +1756,7 @@ fn live_names_replace_the_seed_names_for_dispatch() {
             profile: 1,
             per_frame: Box::new(move |_| {
                 hook.store(true, Ordering::Relaxed);
+                false
             }),
         }],
         settings: ScenarioSettings::default(),
@@ -2026,6 +2117,18 @@ fn relog_presses_the_logout_button_while_ingame() {
     assert!(
         matches!(runner.status(), RunnerStatus::Running { .. }),
         "still waiting to come back; we do not DC-wait"
+    );
+    assert!(
+        runner.relog_login_wanted(),
+        "a scriptless relog needs the host's explicit Login"
+    );
+    assert!(
+        runner.take_relog_login(),
+        "the host consumes the one-shot Login request"
+    );
+    assert!(
+        !runner.take_relog_login(),
+        "the request is posted once per relog step"
     );
 }
 
@@ -3872,6 +3975,208 @@ const ROCK_SEEDED_ORACLE: OracleCell = OracleCell {
     xp_step: "watch fresh Strength XP after the seeded bank return",
     selects_style: false,
 };
+
+const CHICKEN_ORACLE: OracleCell = OracleCell {
+    name: "chicken_killer_bank",
+    field: WorldTile {
+        x: 3029,
+        z: 3294,
+        level: 0,
+    },
+    bank: WorldTile {
+        x: 3013,
+        z: 3355,
+        level: 0,
+    },
+    carried: &[],
+    supplied: &[(526, 1)],
+    bank_rows: &[(526, 1)],
+    restocked: &[],
+    deposited: Some((526, 1)),
+    supply_step: "watch exact Bones 526 looted after Start",
+    visit_step: "watch script-looted Bones enter a fresh bank",
+    return_step: "watch return to the Falador chicken anchor within radius 6",
+    xp_step: "watch fresh Strength XP after the bank return",
+    selects_style: false,
+};
+
+#[test]
+fn chicken_bank_oracle_passes_without_feathers() {
+    oracle_assert_passes(&CHICKEN_ORACLE, Flaw::Correct);
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_pickup() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::NoSupplyEvent,
+        CHICKEN_ORACLE.supply_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_deposit() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::NotDeposited,
+        CHICKEN_ORACLE.visit_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_a_stalled_outbound_route() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::OutboundStall,
+        CHICKEN_ORACLE.visit_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_a_stalled_return_route() {
+    oracle_assert_fails_at(
+        &CHICKEN_ORACLE,
+        Flaw::ReturnStall,
+        CHICKEN_ORACLE.return_step,
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_fresh_xp() {
+    oracle_assert_fails_at(&CHICKEN_ORACLE, Flaw::StaleXp, CHICKEN_ORACLE.xp_step);
+}
+
+fn chicken_bank_at_first_return() -> (ScenarioRunner, Client) {
+    let cell = &CHICKEN_ORACLE;
+    let (mut runner, mut c) = from_start(cell.name);
+    set_inv(&mut c, cell.carried);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_gain_strength(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_inv(&mut c, cell.supplied);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, cell.bank);
+    oracle_open_bank(&mut c, cell.bank_rows);
+    set_inv(&mut c, &[]);
+    oracle_settle(&mut runner, &mut c, 3);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, cell.field);
+    oracle_settle(&mut runner, &mut c, 2);
+    assert_eq!(runner.current_step().name, cell.xp_step);
+    (runner, c)
+}
+
+fn chicken_bank_extra_return(runner: &mut ScenarioRunner, c: &mut Client, count: i32) {
+    set_inv(c, &[(526, 1)]);
+    set_world_tile(c, CHICKEN_ORACLE.bank);
+    oracle_open_bank(c, &[(526, count)]);
+    set_inv(c, &[]);
+    oracle_settle(runner, c, 1);
+    oracle_close_bank(c);
+    oracle_settle(runner, c, 1);
+    set_world_tile(c, CHICKEN_ORACLE.field);
+    oracle_settle(runner, c, 1);
+}
+
+#[test]
+fn chicken_bank_oracle_restarts_after_an_extra_bank_return_then_accepts_fresh_xp() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    oracle_settle(&mut runner, &mut c, 100);
+    set_world_tile(&mut c, CHICKEN_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(526, 2)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 100);
+    set_world_tile(&mut c, CHICKEN_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 1);
+    assert_eq!(runner.game_ticks_waited, 0);
+    assert_eq!(runner.combat_bank_returns.unwrap().restarts, 1);
+    let budget = runner.current_step().wait.budget_ticks;
+    oracle_settle(&mut runner, &mut c, (budget - 2) as usize);
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    oracle_gain_strength(&mut c);
+    assert_eq!(oracle_finish(&mut runner, &mut c), RunnerStatus::Passed);
+}
+
+#[test]
+fn chicken_bank_oracle_accepts_fresh_combat_after_chasing_outside_the_return_radius() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    set_world_tile(
+        &mut c,
+        WorldTile {
+            x: 3019,
+            z: 3288,
+            level: 0,
+        },
+    );
+    oracle_gain_strength(&mut c);
+    assert_eq!(oracle_finish(&mut runner, &mut c), RunnerStatus::Passed);
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_no_xp_after_the_last_bank_return() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    chicken_bank_extra_return(&mut runner, &mut c, 2);
+    let RunnerStatus::Failed(message) = oracle_finish(&mut runner, &mut c) else {
+        panic!("the latest return must still require fresh XP");
+    };
+    assert!(
+        message.contains("not seen within 150 game ticks"),
+        "{message}"
+    );
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_xp_first_observed_at_the_latest_return() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    set_world_tile(&mut c, CHICKEN_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(526, 2)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 1);
+    oracle_gain_strength(&mut c);
+    set_world_tile(&mut c, CHICKEN_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 1);
+    assert!(matches!(
+        oracle_finish(&mut runner, &mut c),
+        RunnerStatus::Failed(_)
+    ));
+}
+
+#[test]
+fn chicken_bank_oracle_rejects_banking_past_the_restart_limit() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    for count in 2..=4 {
+        chicken_bank_extra_return(&mut runner, &mut c, count);
+        assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    }
+    assert_eq!(runner.combat_bank_returns.unwrap().restarts, 3);
+    set_world_tile(&mut c, CHICKEN_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(526, 5)]);
+    oracle_gain_strength(&mut c);
+    oracle_settle(&mut runner, &mut c, 1);
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("a fourth restart must fail even if XP rises at the bank");
+    };
+    assert!(message.contains("restart limit spent"), "{message}");
+}
+
+#[test]
+fn chicken_bank_oracle_does_not_restart_on_an_unfinished_bank_return() {
+    let (mut runner, mut c) = chicken_bank_at_first_return();
+    set_world_tile(&mut c, CHICKEN_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(526, 2)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    let RunnerStatus::Failed(message) = oracle_finish(&mut runner, &mut c) else {
+        panic!("an unfinished bank return must fail");
+    };
+    assert!(
+        message.contains("bank_return=CombatBankReturnObservation { bank_open_seen: true"),
+        "{message}"
+    );
+    assert_eq!(runner.combat_bank_returns.unwrap().restarts, 0);
+}
 
 #[test]
 fn rock_crab_seeded_bank_oracle_passes_deposit_return_and_fresh_combat() {

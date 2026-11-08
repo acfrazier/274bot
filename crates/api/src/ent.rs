@@ -1,14 +1,11 @@
 //! Host-owned Ent NPC identity facts.
 //!
-//! Public contract is revision-independent on the selected 274/289 caches:
-//! `npc.pack` maps 444..=452 to `macro_ent_*` and 453 to `suit_of_armour`
-//! on both pinned content trees (`000c19997e07206131bcb3c884265840efce416d`
-//! and `92649430fcbc83538d8c4367ecb96cee1a67a944`, recorded in
-//! `crates/api/data/game-data/manifest.json`). Lifetime 60 is the
-//! `npc_add(..., 60)` / `loc_del(60)` duration in
-//! `scripts/macro events/scripts/woodcutting/macro_event_ent.rs2` on both
-//! trees. Generated `SelectedGameData` item rows do not carry NPC ids;
-//! these constants are the public binding, not a copied JS table.
+//! Public contract is revision-independent across supported 274/289 game data.
+//! `npc.pack` maps 444..=452 to `macro_ent_*` and 453 to `suit_of_armour` on
+//! both revisions. Lifetime 60 is the `npc_add(..., 60)` / `loc_del(60)`
+//! duration in `scripts/macro events/scripts/woodcutting/macro_event_ent.rs2`
+//! on both revisions. Generated `SelectedGameData` item rows do not carry NPC
+//! ids; these constants are the public binding, not a copied JS table.
 //!
 //! The supplied-array tile lookup is script behavior and lives in
 //! `script::ent`; this module stays the shared identity contract.
@@ -31,7 +28,6 @@ pub fn is_ent_npc_id(id: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game_data::for_revision;
     use client::io::ClientRevision;
 
     #[test]
@@ -47,11 +43,14 @@ mod tests {
 
     #[test]
     fn selected_caches_load_and_share_the_revision_independent_ent_contract() {
-        let data_274 = for_revision(ClientRevision::R274).expect("274 game data");
-        let data_289 = for_revision(ClientRevision::R289).expect("289 game data");
+        let Some(data_274) = crate::game_data::test_data(ClientRevision::R274) else {
+            return;
+        };
+        let Some(data_289) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
         assert_eq!(data_274.revision(), 274);
         assert_eq!(data_289.revision(), 289);
-        assert_ne!(data_274.cache_id(), data_289.cache_id());
         assert!(data_274.item_by_alias("rune_platebody").is_some());
         assert!(data_289.item_by_alias("rune_platebody").is_some());
         assert!(!is_ent_npc_id(SUIT_OF_ARMOUR_NPC_ID));

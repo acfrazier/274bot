@@ -22,12 +22,14 @@ pub mod evidence;
 pub mod fixture;
 pub mod proof;
 mod quest_fast;
+pub mod quest_watch;
 pub mod quester;
 pub mod random_episode;
 mod render_betty_views;
 mod runner;
 mod scenarios;
 pub mod shot;
+pub mod teardown;
 pub mod tutorial;
 
 use std::path::PathBuf;
@@ -545,6 +547,17 @@ pub enum StepKind {
         stand: WorldTile,
         guard_ready: Proof,
     },
+    /// Observe fresh XP after a bank return. A fresh bank visit starts a
+    /// bounded return leg; its closed-bank arrival at `stand` restarts the
+    /// XP baseline and the same game-tick budget. At most `max_restarts`
+    /// further bank returns may restart the watch. Each bank/return phase
+    /// has the same finite budget. Sends no actions.
+    /// The scenario's whole-run wall-clock deadline remains the outer limit.
+    ObserveCombatAcrossBankReturns {
+        stand: WorldTile,
+        radius: i32,
+        max_restarts: u8,
+    },
     /// Wait for the card's selected combat style (`wait.arm`, a varp proof)
     /// across the Loot-count bank trips that may come before it. A card that
     /// selects its style only out of combat, after its restock and its bank
@@ -615,7 +628,12 @@ pub struct Scenario {
 /// `per_frame` hook runs once per client cycle, like the driven slot's hook.
 pub struct Companion {
     pub profile: usize,
-    pub per_frame: Box<dyn FnMut(&mut Client) + Send>,
+    /// The client-cycle hook. `true` requests the host's explicit Login for
+    /// this slot: a bot with no script stays parked after its logout, so a
+    /// fixture that relogs (the shared tutorial seed) must be logged in by
+    /// the operator's own intent. The request is one-shot; the driver reads
+    /// it through [`ScenarioRunner::companion_tick`].
+    pub per_frame: Box<dyn FnMut(&mut Client) -> bool + Send>,
 }
 
 /// Gold script cells run on the engine's documented 600 ms default game tick

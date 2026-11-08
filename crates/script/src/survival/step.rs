@@ -398,7 +398,10 @@ impl SurvivalStep {
             OneOpKind::Drink { item_id, .. } => (ClickKind::Drink, item_id),
             OneOpKind::CureFruit { item_id, .. } => (ClickKind::Fruit, item_id),
             OneOpKind::Eat { item_id, .. } => (ClickKind::Food, item_id),
-            OneOpKind::Wear { .. } | OneOpKind::CloseModal | OneOpKind::ContinueDialog => {
+            OneOpKind::Wear { .. }
+            | OneOpKind::CloseModal
+            | OneOpKind::CloseChat { .. }
+            | OneOpKind::ContinueDialog => {
                 if let Some(sent) = &mut self.sent {
                     sent.awaiting = false;
                 }
@@ -645,6 +648,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         }
@@ -753,6 +757,9 @@ mod tests {
 
     #[test]
     fn survival_step_parks_on_need_not_on_cure_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let condition = condition(
             5,
             PoisonState::Onset {
@@ -780,6 +787,9 @@ mod tests {
 
     #[test]
     fn survival_step_drink_precedes_emergency_bite() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = dose_id();
         let condition = condition(
             5,
@@ -807,6 +817,9 @@ mod tests {
 
     #[test]
     fn survival_step_lethal_waits_for_latch() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut condition = condition(
             60,
             PoisonState::Onset {
@@ -875,6 +888,9 @@ mod tests {
     /// held click while delayed (`OpHeldHandler.ts:16-19`).
     #[test]
     fn survival_step_holds_the_bite_through_the_drink_lock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = dose_id();
         let cured = condition(5, PoisonState::Immune { until_lower: 80 });
         let snapshot = low_hp_snapshot(vec![lobster()]);
@@ -923,6 +939,9 @@ mod tests {
     /// `%eat_delay >= map_clock`), and the step holds the runner meanwhile.
     #[test]
     fn survival_step_holds_a_second_bite_for_the_next_food_clock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let food = lobster();
         let delay = crate::combat::guard::shared_tables()
             .unwrap()
@@ -981,6 +1000,9 @@ mod tests {
     /// finding 12).
     #[test]
     fn survival_step_eats_strange_fruit_as_a_count_settled_cure() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let fruit = crate::combat::guard::shared_tables()
             .unwrap()
             .selected()
@@ -1014,6 +1036,9 @@ mod tests {
 
     #[test]
     fn survival_step_never_policy_reports_only() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = dose_id();
         let condition = condition(
             5,
@@ -1035,6 +1060,9 @@ mod tests {
     }
     #[test]
     fn survival_need_uses_poison_raised_eat_line_for_food_credit() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut condition = condition(
             13,
             PoisonState::Poisoned {

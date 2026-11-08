@@ -370,7 +370,7 @@ fn off_cpu(wall: Duration, cpu: Duration, own_waits: Duration) -> Duration {
 /// CPU time this thread has run (user + system).
 #[cfg(unix)]
 #[allow(unsafe_code)]
-fn thread_cpu_time() -> Option<Duration> {
+pub(crate) fn thread_cpu_time() -> Option<Duration> {
     let mut ts = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -388,7 +388,7 @@ fn thread_cpu_time() -> Option<Duration> {
 /// CPU time this thread has run (kernel + user, 100 ns units).
 #[cfg(windows)]
 #[allow(unsafe_code)]
-fn thread_cpu_time() -> Option<Duration> {
+pub(crate) fn thread_cpu_time() -> Option<Duration> {
     use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
     let zero = FILETIME {
@@ -412,7 +412,7 @@ fn thread_cpu_time() -> Option<Duration> {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn thread_cpu_time() -> Option<Duration> {
+pub(crate) fn thread_cpu_time() -> Option<Duration> {
     None
 }
 

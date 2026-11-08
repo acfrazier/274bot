@@ -159,6 +159,18 @@ fn safe_catalog_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     Ok(root.join(relative))
 }
 
+fn frozen_catalog_roots(repo: &Path) -> Option<[PathBuf; 2]> {
+    let root_for = |commit: &str| {
+        let root = repo.join(format!(".superpowers/inputs/rs2b0t-{commit}"));
+        api::test_support::local_asset_path(
+            "",
+            &root.to_string_lossy(),
+            "frozen rs2b0t catalog checkout",
+        )
+    };
+    Some([root_for(CATALOG_COMMIT_A)?, root_for(CATALOG_COMMIT_B)?])
+}
+
 fn hash_file(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     Ok(script_js::JsCache::origin_sha(&bytes))
@@ -421,8 +433,14 @@ fn selected_profile(
         revision: Some(revision.to_string()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(if revision == 289 { 44594 } else { 43594 }),
-        http_port: Some(if revision == 289 { 1080 } else { 80 }),
+        port: Some(host_play::live_ports::env_port(
+            "WORLD_GAME_PORT",
+            if revision == 289 { 44594 } else { 43594 },
+        )),
+        http_port: Some(host_play::live_ports::env_port(
+            "WORLD_HTTP_PORT",
+            if revision == 289 { 1080 } else { 80 },
+        )),
         nav_pack: Some(nav_pack),
         nav_flags: std::env::var_os("CATALOG_NAV_FLAGS").map(PathBuf::from),
         engine_dir: std::env::var_os("CATALOG_ENGINE_DIR").map(PathBuf::from),
@@ -713,7 +731,13 @@ fn run_cell() -> Result<(), String> {
     if !matches!(revision, 274 | 289) {
         return Err("CATALOG_REVISION must be 274 or 289".into());
     }
-    let root = PathBuf::from(required("CATALOG_ROOT")?);
+    let Some(root) = api::test_support::local_asset_path(
+        "CATALOG_ROOT",
+        "",
+        "real frozen script catalog for the catalog boundary live proof",
+    ) else {
+        return Ok(());
+    };
     if !root.is_dir() {
         return Err(format!(
             "CATALOG_ROOT is not a directory: {}",
@@ -727,7 +751,13 @@ fn run_cell() -> Result<(), String> {
     if reference_catalog && (revision != 289 || case != CoreCase::CookBot) {
         return Err("the 964 reference live path is limited to R289 CookBot".into());
     }
-    let nav_pack = PathBuf::from(required("CATALOG_NAV_PACK")?);
+    let Some(nav_pack) = api::test_support::local_asset_path(
+        "CATALOG_NAV_PACK",
+        "",
+        "real navigation pack for the catalog boundary live proof",
+    ) else {
+        return Ok(());
+    };
     let matrix = support_matrix()?;
     let ledger_commit = if reference_catalog {
         CATALOG_COMMIT_B
@@ -834,7 +864,6 @@ fn run_cell() -> Result<(), String> {
         state.runner.set_obj_names(obj_names);
         state.start_handle = Some(play.script_start_handle());
     }
-    let nav_sha256 = hash_file(profile.nav_pack())?;
 
     println!(
         "{}",
@@ -842,9 +871,7 @@ fn run_cell() -> Result<(), String> {
             "phase": "identity",
             "revision": profile.revision().as_i32(),
             "profile": profile.label(),
-            "cache_id": profile.cache_id(),
             "nav_pack": profile.nav_pack(),
-            "nav_sha256": nav_sha256,
             "catalog_commit": commit,
             "catalog_identity": if reference_catalog {
                 "current frozen 96410ec5 reference (CookBot-only)"
@@ -974,6 +1001,9 @@ fn run_cell() -> Result<(), String> {
 #[test]
 #[ignore = "requires LIVE=1, CATALOG_REVISION/ROOT/COMMIT/SCENARIO/NAV_PACK, and local engine"]
 fn catalog_boundary_live() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run_cell));
     match result {
         Ok(Ok(())) => {}
@@ -1100,6 +1130,9 @@ mod tests {
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn checked_in_frozen_core_sources_match_both_catalog_ledgers() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let Some(_roots) = frozen_catalog_roots(&repo) else {
+            return;
+        };
         let matrix = support_matrix().unwrap();
         for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
             let root = repo.join(format!(".superpowers/inputs/rs2b0t-{commit}"));
@@ -1247,6 +1280,9 @@ mod tests {
 
     #[test]
     fn chicken_killer_bank_requires_combat_loot_fresh_deposit_return_and_further_work() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(chicken_killer_bank_requires_combat_loot_fresh_deposit_return_and_further_work_checks)
@@ -1262,19 +1298,19 @@ mod tests {
         baseline.levels.insert("strength".into(), 30);
         validate_case_baseline(CoreCase::ChickenKillerBank, &baseline).unwrap();
 
-        let looted = chicken_bank_obs(FALADOR_CHICKENS, &[(r289_item_id("feather"), 5)], &[], 104);
+        let looted = chicken_bank_obs(FALADOR_CHICKENS, &[(r289_item_id("bones"), 1)], &[], 104);
         let mut deposited =
-            chicken_bank_obs((3012, 3355, 0), &[], &[(r289_item_id("feather"), 5)], 104);
+            chicken_bank_obs((3012, 3355, 0), &[], &[(r289_item_id("bones"), 1)], 104);
         deposited.bank_open = true;
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
         let mut returned =
-            chicken_bank_obs(FALADOR_CHICKENS, &[], &[(r289_item_id("feather"), 5)], 104);
+            chicken_bank_obs(FALADOR_CHICKENS, &[], &[(r289_item_id("bones"), 1)], 104);
         returned.bank_generation = 2;
-        let mut further =
-            chicken_bank_obs(FALADOR_CHICKENS, &[(r289_item_id("feather"), 3)], &[], 108);
+        let mut further = chicken_bank_obs(FALADOR_CHICKENS, &[], &[], 108);
         further.bank_generation = 2;
 
+        // No Feather drop is needed for the guaranteed Bones bank trip.
         assert!(witness(
             CoreCase::ChickenKillerBank,
             &baseline,
@@ -1282,6 +1318,64 @@ mod tests {
         )
         .qualify()
         .is_ok());
+        let mut second_deposit = deposited.clone();
+        second_deposit.bank_generation = 3;
+        let mut second_return = returned.clone();
+        second_return.bank_generation = 4;
+        second_return.xp.insert("strength".into(), 108);
+        let mut after_second_return = further.clone();
+        after_second_return.bank_generation = 4;
+        after_second_return.xp.insert("strength".into(), 112);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [
+                &looted,
+                &deposited,
+                &returned,
+                &second_deposit,
+                &second_return,
+                &after_second_return
+            ]
+        )
+        .qualify()
+        .is_ok());
+        after_second_return.xp.insert("strength".into(), 108);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [
+                &looted,
+                &deposited,
+                &returned,
+                &second_deposit,
+                &second_return,
+                &after_second_return
+            ]
+        )
+        .qualify()
+        .is_err());
+        let mut too_many_trips = vec![looted.clone(), deposited.clone(), returned.clone()];
+        for trip in 1..=4 {
+            let mut next_deposit = deposited.clone();
+            next_deposit.bank_generation = trip * 2 + 1;
+            too_many_trips.push(next_deposit);
+            let mut next_return = returned.clone();
+            next_return.bank_generation = trip * 2 + 2;
+            too_many_trips.push(next_return);
+        }
+        too_many_trips
+            .last_mut()
+            .unwrap()
+            .xp
+            .insert("strength".into(), 112);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            too_many_trips.iter()
+        )
+        .qualify()
+        .is_err());
         assert!(witness(CoreCase::ChickenKillerBank, &baseline, [&baseline])
             .qualify()
             .is_err());
@@ -1292,6 +1386,35 @@ mod tests {
             CoreCase::ChickenKillerBank,
             &baseline,
             [&looted, &deposited, &returned]
+        )
+        .qualify()
+        .is_err());
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut no_fresh_xp = returned.clone();
+        no_fresh_xp.item_ids.insert(r289_item_id("bones"), 1);
+        no_fresh_xp.item_ids.insert(r289_item_id("feather"), 3);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &deposited, &returned, &no_fresh_xp]
+        )
+        .qualify()
+        .is_err());
+
+        // XP earned before the return cannot qualify as further combat.
+        let mut xp_before_return = returned.clone();
+        xp_before_return.xp.insert("strength".into(), 108);
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &deposited, &xp_before_return, &further]
         )
         .qualify()
         .is_err());
@@ -1320,7 +1443,7 @@ mod tests {
 
         let mut name_only = looted.clone();
         name_only.item_ids.clear();
-        name_only.items.insert("Feather".into(), 5);
+        name_only.items.insert("Bones".into(), 1);
         assert!(witness(
             CoreCase::ChickenKillerBank,
             &baseline,
@@ -1348,7 +1471,7 @@ mod tests {
         .qualify()
         .is_err());
 
-        let mut far = chicken_bank_obs((3185, 3440, 0), &[], &[(r289_item_id("feather"), 5)], 104);
+        let mut far = chicken_bank_obs((3185, 3440, 0), &[], &[(r289_item_id("bones"), 1)], 104);
         far.bank_generation = 2;
         let mut further_far = further.clone();
         further_far.tile = Some((3185, 3440, 0));
@@ -1361,7 +1484,7 @@ mod tests {
         .is_err());
 
         let mut seeded = baseline.clone();
-        seeded.item_ids.insert(r289_item_id("feather"), 1);
+        seeded.item_ids.insert(r289_item_id("bones"), 1);
         assert!(validate_case_baseline(CoreCase::ChickenKillerBank, &seeded).is_err());
 
         let lumbridge = chicken_bank_obs((3235, 3295, 0), &[], &[], 100);
@@ -1742,6 +1865,9 @@ mod tests {
 
     #[test]
     fn remaining_production_options_require_exact_ordered_native_outcomes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let defaults = CoreCase::parse("alcher_defaults").unwrap();
         let mut baseline = alcher_generated_obs(&[], 10_000);
         baseline.bank_generation = 1;
@@ -1833,6 +1959,9 @@ mod tests {
 
     #[test]
     fn coal_trucks_requires_the_documented_native_combat_level() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut baseline = observation_ids(
             &[
                 (steel_pickaxe_id(), 1),
@@ -1872,6 +2001,9 @@ mod tests {
 
     #[test]
     fn alcher_generated_custom_requires_noted_id_then_exact_consumption() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for case in [CoreCase::AlcherCustomAlias, CoreCase::AlcherCustomName] {
             let mut baseline = alcher_generated_obs(&[], 10_000);
             baseline.bank_generation = 1;
@@ -1967,6 +2099,9 @@ mod tests {
 
     #[test]
     fn alcher_spell_rows_require_selected_spell_equipment_and_reject_seeded_casts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut low_base = alcher_spell_obs(&[], &[], 10_000, 25, 1);
         low_base.bank_generation = 1;
         validate_case_baseline(CoreCase::AlcherLow, &low_base).unwrap();
@@ -2172,6 +2307,9 @@ mod tests {
 
     #[test]
     fn alcher_swarm_drain_requires_ordered_hit_guardian_resume_and_poor_consumption() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(
@@ -2952,6 +3090,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn dart_fletcher_requires_two_observed_actions_and_both_inputs() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (case, tips, product, wrong) in [
             (
                 CoreCase::DartFletcher,
@@ -3031,6 +3172,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn herb_cleaner_requires_deposit_restock_and_exact_unid_ids() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (case, named) in [
             (CoreCase::HerbCleaner, false),
             (CoreCase::HerbCleanerNamed, true),
@@ -3146,6 +3290,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn herb_cleaner_empty_bank_requires_cleaning_fresh_exhaustion_and_script_stop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::parse("herb_cleaner_empty_bank").expect("empty-bank core case");
         let mut baseline = herb_obs(&[], &[(r289_item_id("unidentified_guam"), 20)], 1_000);
         baseline.levels.insert("herblore".into(), 20);
@@ -3245,6 +3392,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn gem_cutter_requires_chisel_preservation_and_no_crush() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(gem_cutter_requires_chisel_preservation_and_no_crush_checks)
@@ -3430,6 +3580,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn wildy_agility_requires_the_ordered_lap_bonus_and_second_pipe() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut baseline = wildy_obs(WILDY_START, 1_000);
         baseline.levels.insert("agility".into(), 52);
         baseline.item_ids.insert(r289_item_id("lobster"), 5);
@@ -3574,6 +3727,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn brimhaven_agility_requires_fee_movement_tag_ticket_and_subsequent_work() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let baseline = brimhaven_obs(
             BRIMHAVEN_START,
             1_000,
@@ -3801,6 +3957,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn flax_picker_requires_full_pack_deposit_return_and_further_pick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let baseline = flax_obs(FLAX_FIELD, &[], &[]);
         validate_case_baseline(CoreCase::FlaxPicker, &baseline).unwrap();
 
@@ -3881,6 +4040,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn superheater_requires_exact_ids_staff_and_bank_cycle() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(superheater_requires_exact_ids_staff_and_bank_cycle_checks)
@@ -4121,6 +4283,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn vial_filler_requires_fountain_fill_deposit_restock_and_further_fill() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (case, bank) in [
             (CoreCase::VialFiller, FALADOR_WEST_BANK),
             (CoreCase::VialFillerEast, FALADOR_EAST_BANK),
@@ -4242,6 +4407,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn potion_maker_requires_staged_unf_finished_deposit_and_further_product() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(potion_maker_requires_staged_unf_finished_deposit_and_further_product_checks)
@@ -4421,6 +4589,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn tanner_bot_requires_widget_conversion_deposit_restock_and_further_tan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(tanner_bot_requires_widget_conversion_deposit_restock_and_further_tan_checks)
@@ -4646,6 +4817,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn rune_crafter_requires_temple_conversion_portal_deposit_restock_and_further_craft() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(rune_crafter_requires_temple_conversion_portal_deposit_restock_and_further_craft_checks)
@@ -4873,6 +5047,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn catalog_failure_emits_accumulated_core_witness_and_latest_observation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert_eq!(
             accumulated_core(None),
             json!({"error": "no Start baseline"})
@@ -4949,6 +5126,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn ardy_cakes_requires_stall_food_xp_fresh_deposit_return_and_further_steal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(ardy_cakes_requires_stall_food_xp_fresh_deposit_return_and_further_steal_checks)
@@ -5120,6 +5300,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn ardy_thiever_requires_coins_xp_fresh_deposit_return_and_further_pickpocket() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(
@@ -5347,6 +5530,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn flax_pick_failure_facts_include_all_scoped_locs_and_native_reachability() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut failure = resource_obs(
             SEERS_BANK,
             &[],
@@ -5402,6 +5588,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn gnome_chop_requires_log_xp_upstairs_deposit_ground_return_and_further_chop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(
@@ -5667,6 +5856,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn gnome_fletch_requires_unstrung_product_xp_deposit_return_and_further_chop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (case, fletching, product, other) in [
             (
                 CoreCase::GnomeFletchShort,
@@ -5850,6 +6042,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn coal_trucks_requires_mining_xp_truck_deposit_not_bank_and_further_mine() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let levels = [("mining", 60)];
         let mut baseline = resource_obs(
             COAL_MINE,
@@ -6006,6 +6201,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn station_production_requires_xp_product_deposit_restock_return_and_further() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(station_production_requires_xp_product_deposit_restock_return_and_further_checks)
@@ -6705,6 +6903,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn flax_aio_and_secondary_cycles_require_exact_ids_deposit_return_and_further() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(
@@ -7153,6 +7354,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn prepared_remaining_combat_cases_keep_branch_specific_strict_specs() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let special = CoreCase::parse("green_dragon_special_prepared").unwrap();
         assert_eq!(special.card_name(), "GreenDragon");
         let special_spec = combat_spec(special).unwrap();
@@ -7284,6 +7488,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn prepared_remaining_combat_baselines_fail_closed_on_exact_profile_and_branch_trigger() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let armour = [
             (r289_item_id("rune_chainbody"), 1),
             (r289_item_id("rune_platelegs"), 1),
@@ -7547,6 +7754,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn enabled_combat_option_observers_reject_false_positive_witnesses() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(enabled_combat_option_observers_reject_false_positive_witnesses_checks)
@@ -7901,6 +8111,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn default_green_loot_requires_both_earned_drops_not_bones_or_hide() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let or_spec = combat_spec(CoreCase::GreenDragonBankPrepared).unwrap();
         let and_spec = combat_spec(CoreCase::GreenDragonBankDefaultPrepared).unwrap();
         assert_eq!(or_spec.loot, CombatLoot::DragonBonesOrHide);
@@ -7963,6 +8176,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn green_teleport_rejects_a_death_recovery_cycle() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::GreenDragonTele;
         let spec = combat_spec(case).unwrap();
         let bank = combat_bank_spec(case).unwrap();
@@ -8035,6 +8251,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn prepared_fire_giant_keeps_strict_earned_trip_gates_and_exact_restock_space() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::FireGiantBankPrepared;
         let armour_and_weapon = [
             (r289_item_id("rune_chainbody"), 1),
@@ -8154,6 +8373,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn prepared_fire_giant_camelot_accepts_exact_24_restock_and_rejects_incomplete_return() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::FireGiantCamelotPrepared;
         let bank = combat_bank_spec(case).unwrap();
         assert_eq!(
@@ -8420,6 +8642,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn auto_fighter_mage_requires_armed_rune_casts_on_selected_guard_lives() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::parse("auto_fighter_mage").expect("mage case registered");
         assert_eq!(case.scenario_name(), "auto_fighter_mage");
         assert_eq!(case.card_name(), "AutoFighter");
@@ -8682,6 +8907,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn combat_observer_does_not_turn_unknown_zero_health_into_a_sticky_death() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let baseline = combat_obs(
             ARDY_THIEVER_STAND,
             &[(r289_item_id("trout"), AUTO_FIGHTER_FOOD)],
@@ -8724,6 +8952,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn combat_observer_does_not_count_disappearance_reappearance_as_a_new_life() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let baseline = combat_obs(
             ARDY_THIEVER_STAND,
@@ -8764,6 +8995,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn combat_observer_rejects_other_actors_combat_and_stale_global_loot() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let baseline = combat_obs(
             MOSS_GIANT_SAFESPOT,
@@ -8818,6 +9052,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn combat_observer_requires_a_fresh_matching_drop_for_disappearance() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let baseline = combat_obs(
             MOSS_GIANT_SAFESPOT,
@@ -8867,6 +9104,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn combat_observer_clears_death_on_respawn_and_needs_a_later_work_frame() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let baseline = combat_obs(
             ARDY_THIEVER_STAND,
@@ -8935,6 +9175,9 @@ export default class NativeStop extends LoopingBot {{
     /// can.
     #[test]
     fn combat_observer_rejects_corpse_frames_as_further_work_on_same_defeated_target() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
         let baseline = combat_obs(
             ARDY_THIEVER_STAND,
@@ -9090,6 +9333,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn combat_success_receipt_preserves_nonempty_ground_counts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let witness = combat_witness_with_ground_drop(true);
         let receipt = witness
             .qualify()
@@ -9105,6 +9351,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn combat_failure_receipt_preserves_nonempty_ground_counts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let witness = combat_witness_with_ground_drop(false);
         assert!(witness.qualify().is_err());
         let receipt = accumulated_core(Some(&witness));
@@ -9128,6 +9377,9 @@ export default class NativeStop extends LoopingBot {{
     /// spawned crab that was never a rock is not.
     #[test]
     fn rock_crab_activation_needs_the_projected_dormant_rock_not_a_bare_crab() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use client::client::{Client, ClientConfig, ClientNpc};
         use client::config::{Cache, NpcType};
         use client::dash3d::ClientPlayer;
@@ -9271,6 +9523,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(
@@ -10037,6 +10292,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn prepared_combat_baselines_fail_closed_on_defence_food_weapon_and_armour() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for name in ["green_dragon_prepared", "fire_giant_prepared"] {
             let (case, baseline) = prepared_combat_baseline(name);
             assert_eq!(case.scenario_name(), name);
@@ -10110,6 +10368,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn prepared_special_baseline_is_exact_and_preserves_original_special_case() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::GreenDragonSpecialPrepared;
         assert_eq!(
             CoreCase::parse("green_dragon_special_prepared").unwrap(),
@@ -10183,6 +10444,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn prepared_special_reuses_paid_special_defeat_further_work_and_style_gates() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::GreenDragonSpecialPrepared;
         let baseline = prepared_special_baseline();
         let gear = [
@@ -10272,6 +10536,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn prepared_combat_reuses_strict_defeat_loot_and_further_work_qualification() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (name, target, loot) in [
             (
                 "green_dragon_prepared",
@@ -10514,6 +10781,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn ranged_branches_need_the_sources_own_mode_and_projectile_spend() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (name, card) in [
             ("auto_fighter_range", "AutoFighter"),
             ("rock_crab_range", "RockCrab"),
@@ -10672,6 +10942,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn special_branch_needs_an_armed_bar_and_a_paid_pool() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::GreenDragonSpecial;
         let baseline = branch_obs(
             GREEN_DRAGON_FIELD,
@@ -10780,6 +11053,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn potion_branch_needs_a_dose_and_its_native_boost() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::GreenDragonPotions;
         let baseline = branch_obs(
             GREEN_DRAGON_FIELD,
@@ -10891,6 +11167,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn green_dragon_base_requires_the_full_ordinary_trip_food() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::GreenDragon;
         let baseline = branch_obs(
             GREEN_DRAGON_FIELD,
@@ -10945,6 +11224,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn alternate_druid_camps_need_their_own_field_prereqs_and_target_identity() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let levels = [
             ("attack", 40),
             ("strength", 40),
@@ -11138,6 +11420,9 @@ export default class NativeStop extends LoopingBot {{
     /// stack in a debug build, so the checks run on a thread with a larger one.
     #[test]
     fn fight_guard_response_needs_a_kill_and_rejects_the_flee_kite() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(fight_guard_response_checks)
@@ -11461,6 +11746,9 @@ export default class NativeStop extends LoopingBot {{
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn camp_and_fight_option_injects_match_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let Some(_roots) = frozen_catalog_roots(&repo) else {
+            return;
+        };
         for (name, card, path_tail) in [
             (
                 "chaos_druid_tower",
@@ -11523,6 +11811,9 @@ export default class NativeStop extends LoopingBot {{
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn option_branch_injects_match_both_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let Some(_roots) = frozen_catalog_roots(&repo) else {
+            return;
+        };
         let matrix = support_matrix().unwrap();
         for (name, card) in [
             ("auto_fighter_range", "AutoFighter"),
@@ -11613,6 +11904,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn combat_bank_restock_requires_same_session_pack_gain_and_loaded_bank_decrease() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let case = CoreCase::GreenDragonBankPrepared;
         let spec = combat_spec(case).expect("prepared GreenDragon combat spec");
         let bank = combat_bank_spec(case).expect("prepared GreenDragon bank spec");
@@ -11717,6 +12011,9 @@ export default class NativeStop extends LoopingBot {{
     /// wrong-stand booths and dropped stages must all fail.
     #[test]
     fn bank_cells_require_their_own_deposit_restock_close_return_and_further_work() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(
@@ -12738,6 +13035,9 @@ export default class NativeStop extends LoopingBot {{
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn bank_cell_injects_match_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let Some(_roots) = frozen_catalog_roots(&repo) else {
+            return;
+        };
         for (name, card, path_tail) in [
             (
                 "auto_fighter_bank",
@@ -12838,6 +13138,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn hazard_camp_cells_require_source_trips_and_refuse_seed_only_paths() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let levels = [
             ("attack", COMBAT_ATTACK_LEVEL),
             ("strength", COMBAT_ATTACK_LEVEL),
@@ -13102,6 +13405,9 @@ export default class NativeStop extends LoopingBot {{
     /// teleport evidence, a leftover bank, a 1-of-N deposit, or a partial cycle.
     #[test]
     fn climbing_boots_cells_require_the_real_purchase_and_the_selected_branch() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let walk = CoreCase::parse("climbing_boots").unwrap();
         let teleport = CoreCase::parse("climbing_boots_teleport").unwrap();
         assert_eq!(walk.card_name(), "ClimbingBoots");
@@ -13517,6 +13823,9 @@ export default class NativeStop extends LoopingBot {{
     /// negatives. Independent of the noncombat mega-test Firemaker failure.
     #[test]
     fn shop_buyout_cycle_requires_peak_earned_load_and_same_tick_progress() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(shop_buyout_cycle_requires_peak_earned_load_and_same_tick_progress_checks)
@@ -13832,6 +14141,9 @@ export default class NativeStop extends LoopingBot {{
 
     #[test]
     fn noncombat_core_cells_require_source_cycles_and_refuse_seed_only_paths() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(noncombat_core_cells_require_source_cycles_and_refuse_seed_only_paths_checks)
@@ -14249,6 +14561,9 @@ export default class NativeStop extends LoopingBot {{
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn noncombat_core_injects_match_frozen_card_schemas() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let Some(_roots) = frozen_catalog_roots(&repo) else {
+            return;
+        };
         for (name, card, path_tail) in [
             (
                 "aio_teleport",
@@ -14364,6 +14679,17 @@ export default class NativeStop extends LoopingBot {{
     #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
     fn climbing_boots_injects_match_the_frozen_reference_card_schema() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        if api::test_support::local_asset_path(
+            "",
+            &repo
+                .join(format!(".superpowers/inputs/rs2b0t-{REFERENCE_COMMIT_964}"))
+                .to_string_lossy(),
+            "frozen 964 rs2b0t catalog checkout",
+        )
+        .is_none()
+        {
+            return;
+        }
         for (name, use_teleport) in [("climbing_boots", false), ("climbing_boots_teleport", true)] {
             let case = CoreCase::parse(name).expect("noncombat case registered");
             assert_eq!(case.card_name(), "ClimbingBoots");

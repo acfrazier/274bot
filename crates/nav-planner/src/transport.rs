@@ -5,10 +5,11 @@
 
 use std::collections::HashMap;
 
+use api::prereq_steps::{CrossingId, CrossingKind};
 use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
-use crate::quest_gates::{QuestFamilyId, QuestGates};
+use crate::quest_gates::QuestGates;
 
 mod static_routes;
 mod webs;
@@ -106,9 +107,9 @@ pub struct TransportEdge {
     /// Unlike `worn_req`, this cannot be satisfied by an alternative, a
     /// carried item, or a banked item.
     pub worn_all_req: Vec<i32>,
-    /// Each listed obj must be absent from an observed held inventory.
+    /// Sorted object ids that must be absent from an observed held inventory.
     pub forbidden_held: Vec<i32>,
-    /// Each listed obj must be absent from observed worn equipment.
+    /// Sorted object ids that must be absent from observed worn equipment.
     /// Carried or banked copies do not violate this gate.
     pub forbidden_worn: Vec<i32>,
     /// WORLD membership required (`MAP_MEMBERS`). Set from the edge's source
@@ -123,12 +124,9 @@ pub struct TransportEdge {
     /// (`~wilderness_level(coord) > cap` refuses). `None` = no wilderness cap.
     /// Packed as i32le on the v10 wire after `members_req` (`-1` = None).
     pub wildy_cap: Option<i32>,
-    /// Quest-stage gates ([`QuestGates`]: a completed quest or a closed
-    /// stage window over a selected progress signal), bound to the quest
-    /// family the pack was baked against. `None` = no stage gate. Only
-    /// resolved progress evidence from that family can open a gated edge;
-    /// snapshot varps and the quest list never do. Packed on the v11 wire
-    /// after `wildy_cap`.
+    /// Quest-stage gates: a completed quest or a closed stage window over a
+    /// selected progress signal. Only resolved progress evidence can open
+    /// a gated edge; snapshot varps and the quest list never do.
     pub quest_gates: Option<QuestGates>,
 }
 
@@ -181,6 +179,35 @@ impl TransportEdge {
         }
     }
 
+    /// Stable API identity: the loc anchor and exact directed takeoff stay separate.
+    ///
+    /// An option that cannot be represented by the shared `u8` identity is
+    /// unavailable rather than truncated.
+    pub fn crossing_id(&self) -> Option<CrossingId> {
+        Some(CrossingId {
+            loc_id: self.loc_id,
+            option: u8::try_from(self.option).ok()?,
+            at: self.at,
+            takeoff: self
+                .takeoff
+                .or_else(|| wall_door_takeoff_geometry(self))
+                .unwrap_or(self.at),
+            to: self.to,
+            kind: match self.kind {
+                TransportKind::Door => CrossingKind::Door,
+                TransportKind::Ladder => CrossingKind::Ladder,
+                TransportKind::Stairs => CrossingKind::Stairs,
+                TransportKind::Boat => CrossingKind::Boat,
+                TransportKind::Teleport => CrossingKind::Teleport,
+                TransportKind::AgilityShortcut => CrossingKind::AgilityShortcut,
+                TransportKind::Glider => CrossingKind::Glider,
+                TransportKind::SpiritTree => CrossingKind::SpiritTree,
+                TransportKind::Npc => CrossingKind::Npc,
+                TransportKind::EssenceExit => CrossingKind::EssenceExit,
+            },
+        })
+    }
+
     /// Whether this is one of the packed `bigweb_slashable` crossings.
     /// Revision 289 identifies the closed/slashed loc pair as 733/734.
     pub(crate) fn is_slashable_web(&self) -> bool {
@@ -213,10 +240,11 @@ pub struct TransportGraph {
     /// Optional packed exclusion-zone table. `None` for legacy grids and
     /// intentionally synthetic worlds.
     pub zones: Option<crate::zones::ZoneTable>,
-    /// The selected quest family the bake consumed stage signals from
-    /// (digest + extractor schema). `None` when it consumed none; then no
-    /// edge carries [`TransportEdge::quest_gates`].
-    pub quest_family: Option<QuestFamilyId>,
+
+    /// Sorted unique packed multiway 8×8 cell keys (`level << 28 | x << 14 | z`).
+    /// Empty on legacy grids and synthetic graphs that did not consume a
+    /// revision's `maps/multiway.csv`.
+    pub multiway: Box<[u32]>,
 }
 
 impl TransportGraph {
@@ -248,7 +276,7 @@ impl TransportGraph {
         }
     }
 
-    pub(crate) fn takeoff_bounds(&self, index: usize) -> (WorldTile, WorldTile) {
+    pub fn takeoff_bounds(&self, index: usize) -> (WorldTile, WorldTile) {
         let edge = &self.edges[index];
         if let Some(takeoff) = edge.takeoff {
             return (takeoff, takeoff);
@@ -326,6 +354,11 @@ impl TransportGraph {
 /// neighbour, `transport/doors.rs` `diagonal_door_crossings`).
 #[inline(always)]
 fn wall_door_takeoff(edge: &TransportEdge, collision: &WorldCollision) -> Option<WorldTile> {
+    let takeoff = wall_door_takeoff_geometry(edge)?;
+    (takeoff != edge.at || collision.standable(edge.at)).then_some(takeoff)
+}
+
+fn wall_door_takeoff_geometry(edge: &TransportEdge) -> Option<WorldTile> {
     if edge.kind != TransportKind::Door || edge.player_delta.is_some() {
         return None;
     }
@@ -340,7 +373,7 @@ fn wall_door_takeoff(edge: &TransportEdge, collision: &WorldCollision) -> Option
     let forward = edge.to.x == edge.at.x + dx
         && edge.to.z == edge.at.z + dz
         && edge.to.level == edge.at.level;
-    (forward && collision.standable(edge.at)).then_some(edge.at)
+    forward.then_some(edge.at)
 }
 /// The `(dx, dz)` tile step of a crossing direction.
 fn dir_delta(dir: DoorDir) -> (i32, i32) {

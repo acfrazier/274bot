@@ -1,8 +1,42 @@
-use super::ledger::{BankDepositTrace, HostAction, HostEffect};
+use super::ledger::{BankDepositTrace, HostAction, HostCustody, HostEffect};
 use super::owner::Owner;
 use super::*;
 use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+
+/// Add the stage's declared grants to this step's declared route grants.
+/// Named consent never enables the blanket danger opt-in.
+fn apply_stage_cross(request: &mut WalkRequest, stage: Option<&[Arc<str>]>) {
+    let has_stage_scope = stage.is_some();
+    if let Some(stage) = stage {
+        let duplicates = request
+            .cross
+            .iter()
+            .enumerate()
+            .filter(|(index, zone)| request.cross[..*index].contains(zone))
+            .count();
+        let missing = stage
+            .iter()
+            .filter(|zone| !request.cross.contains(zone))
+            .count();
+        if missing != 0 || duplicates != 0 {
+            let mut cross = Vec::with_capacity(request.cross.len() - duplicates + missing);
+            for zone in request.cross.iter().chain(stage) {
+                if !cross.contains(zone) {
+                    cross.push(Arc::clone(zone));
+                }
+            }
+            request.cross = cross.into_boxed_slice();
+        }
+    }
+    if has_stage_scope || !request.cross.is_empty() {
+        request.options.allow_danger_zones = WalkBit::Forbid;
+    }
+    if !request.cross.is_empty() && !request.cure_guard {
+        request.food_guard = true;
+        request.allow.food = true;
+    }
+}
 
 impl ActionContext<'_> {
     pub(super) fn owner(&self) -> Result<Arc<Owner>, ActionError> {
@@ -23,20 +57,84 @@ impl ActionContext<'_> {
         Ok(Arc::clone(owner))
     }
 
-    pub fn begin_quiet_read(&mut self, request_id: u64) -> Result<QuietReadLease, ActionError> {
+    /// Begin the quiet read of a page this owner opens. `deadline` is the
+    /// bound this owner enforces itself; renew it with
+    /// [`Self::renew_quiet_read`] when the owner arms a new window.
+    pub fn begin_quiet_read(
+        &mut self,
+        request_id: u64,
+        deadline: WaitDeadline,
+    ) -> Result<QuietReadLease, ActionError> {
         let owner = self.owner()?;
         let request_id = NonZeroU64::new(request_id).ok_or(ActionError::Stale)?;
+        let wall_now = self.wall_now;
         let ledger = self.ledger.as_mut().expect("owner checked");
         let lease_id = ledger.next_id()?;
         if !owner.acquire_quiet(lease_id) {
             return Err(ActionError::Busy);
         }
-        ledger.quiet_since = Some((request_id, lease_id, self.wall_now));
+        ledger.quiet_lease = Some(ledger::QuietRead {
+            request: request_id,
+            lease: lease_id,
+            since: wall_now,
+            hold_until: wall_now + ledger::QUIET_READ_WALL_BOUND,
+        });
+        ledger.quiet_deadline = Some((lease_id, deadline));
         Ok(QuietReadLease { owner, lease_id })
+    }
+
+    /// The owner armed a new window for its quiet read, as it sends its click
+    /// or its close, or captures the page. The lease's wall bound runs from
+    /// this poll, so the verb that the window follows never goes out against a
+    /// hold that ends in the same frame. The paint-hide cap does not move.
+    pub fn renew_quiet_read(&mut self, lease: &QuietReadLease, deadline: WaitDeadline) {
+        let wall_now = self.wall_now;
+        if let Some(ledger) = self.ledger.as_mut() {
+            if let Some(quiet) = ledger
+                .quiet_lease
+                .as_mut()
+                .filter(|quiet| quiet.lease == lease.lease_id)
+            {
+                quiet.hold_until = wall_now + ledger::QUIET_READ_WALL_BOUND;
+                ledger.quiet_deadline = Some((lease.lease_id, deadline));
+            }
+        }
     }
 
     pub fn end_quiet_read(&mut self, lease: QuietReadLease) {
         drop(lease);
+    }
+
+    /// Begin one wait for the page this owner's own interaction opens. A newer
+    /// lease of the same owner replaces the older one. Lease numbers come from
+    /// their own sequence, so request ids are unchanged. `deadline` is the
+    /// bound this owner enforces itself; renew it with
+    /// [`Self::renew_modal_wait`] when the owner's bound moves.
+    pub fn begin_modal_wait(
+        &mut self,
+        deadline: WaitDeadline,
+    ) -> Result<ModalWaitLease, ActionError> {
+        let owner = self.owner()?;
+        let ledger = self.ledger.as_mut().expect("owner checked");
+        ledger.modal_wait_seq = ledger.modal_wait_seq.wrapping_add(1);
+        let lease_id = NonZeroU64::new(ledger.modal_wait_seq).ok_or(ActionError::Cancelled)?;
+        ledger.modal_wait_deadline = Some((lease_id, deadline));
+        if !owner.set_modal_wait(lease_id) {
+            return Err(ActionError::Cancelled);
+        }
+        Ok(ModalWaitLease { owner, lease_id })
+    }
+
+    /// The owner's bound for its live modal wait moved.
+    pub fn renew_modal_wait(&mut self, lease: &ModalWaitLease, deadline: WaitDeadline) {
+        if let Some(ledger) = self.ledger.as_mut() {
+            if ledger
+                .modal_wait_deadline
+                .is_some_and(|(id, _)| id == lease.lease_id)
+            {
+                ledger.modal_wait_deadline = Some((lease.lease_id, deadline));
+            }
+        }
     }
 
     pub fn charge_transition(&mut self) -> bool {
@@ -86,18 +184,56 @@ impl ActionContext<'_> {
     /// resets `%bankcert` to 0 (`content/scripts/interface_bank/scripts/
     /// bank.rs2:18-19`), or it pressed Item in it. No native path presses Note.
     pub(crate) fn bank_item_mode(&self, generation: u64) -> bool {
-        let run = self.run();
-        self.ledger
-            .as_ref()
-            .is_some_and(|ledger| ledger.bank_item_session == Some((run, generation)))
+        self.bank_mark(generation)
+            .is_some_and(|mark| mark.item_mode)
     }
 
-    /// Record that bank session `generation` withdraws as items.
+    /// Record that bank session `generation` withdraws as items. A machine
+    /// that only pressed Item in a session it found open does not make that
+    /// session its own open.
     pub(crate) fn note_bank_item_mode(&mut self, generation: u64) {
         let run = self.run();
+        let opened_by_machine = self
+            .bank_mark(generation)
+            .is_some_and(|mark| mark.opened_by_machine);
         if let Some(ledger) = self.ledger.as_mut() {
-            ledger.bank_item_session = Some((run, generation));
+            ledger.bank_session = Some(ledger::BankSessionMark {
+                run,
+                generation,
+                item_mode: true,
+                opened_by_machine,
+            });
         }
+    }
+
+    /// Record that this account's native bank machine sent its own open
+    /// request and bank session `generation` appeared after it. That session
+    /// starts in Item mode (`bank.rs2:18-19`).
+    pub(crate) fn note_bank_opened_by_machine(&mut self, generation: u64) {
+        let run = self.run();
+        if let Some(ledger) = self.ledger.as_mut() {
+            ledger.bank_session = Some(ledger::BankSessionMark {
+                run,
+                generation,
+                item_mode: true,
+                opened_by_machine: true,
+            });
+        }
+    }
+
+    /// The open bank session `generation` of this login run is the one a
+    /// native bank machine of this account opened with its own open request.
+    pub(crate) fn bank_opened_by_machine(&self, generation: u64) -> bool {
+        self.bank_mark(generation)
+            .is_some_and(|mark| mark.opened_by_machine)
+    }
+
+    fn bank_mark(&self, generation: u64) -> Option<ledger::BankSessionMark> {
+        let run = self.run();
+        self.ledger
+            .as_ref()?
+            .bank_session
+            .filter(|mark| mark.run == run && mark.generation == generation)
     }
 
     /// Queue one game interaction. Walks go through [`Self::walk`], which owns
@@ -133,7 +269,7 @@ impl ActionContext<'_> {
         ledger.interaction = None;
         ledger.interaction_request = Some(request_id);
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::interaction(owner, request_id),
             request_id,
             batch: 0,
             effect: HostEffect::Interaction(request),
@@ -146,7 +282,7 @@ impl ActionContext<'_> {
     /// of its compact request prefix.
     pub fn emit_batch(&mut self, mut rows: [Option<InteractReq>; 5]) -> Result<u64, ActionError> {
         let owner = self.owner()?;
-        let len = validate_batch(&rows, self.pin.revision)?;
+        let len = validate_batch(&rows, self.revision)?;
         let ledger = self.ledger.as_ref().expect("owner checked");
         if self.budget.events != 0
             || ledger.outbox.capacity().saturating_sub(ledger.outbox.len()) < len
@@ -174,7 +310,7 @@ impl ActionContext<'_> {
             let request_id =
                 NonZeroU64::new(first_id.get() + offset as u64).expect("validated id range");
             ledger.outbox.push(HostAction {
-                owner: Arc::clone(&owner),
+                custody: HostCustody::owner(Arc::clone(&owner)),
                 request_id,
                 batch: first_id.get(),
                 effect: HostEffect::Interaction(request),
@@ -218,7 +354,7 @@ impl ActionContext<'_> {
         let ledger = self.ledger.as_mut().expect("owner checked");
         ledger.commit_id_range(request_id, 1);
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
             effect: HostEffect::Interaction(request),
@@ -240,7 +376,7 @@ impl ActionContext<'_> {
         ledger.bank_pick = None;
         ledger.bank_pick_request = Some(request_id);
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
             effect: HostEffect::BankPick(request),
@@ -267,7 +403,7 @@ impl ActionContext<'_> {
 
     /// Queue a compute-only walk assessment. It shares the owner's outbox but
     /// neither spends a game-event allowance nor claims movement authority.
-    pub fn assess_walk(&mut self, request: WalkRequest) -> Result<u64, ActionError> {
+    pub fn assess_walk(&mut self, mut request: WalkRequest) -> Result<u64, ActionError> {
         if !self.eligible {
             return Err(ActionError::Held);
         }
@@ -284,6 +420,7 @@ impl ActionContext<'_> {
                 super::WalkGoalsError::IncompatibleArrival,
             ));
         }
+        apply_stage_cross(&mut request, self.stage_cross.as_deref());
         let ledger = self.ledger.get_or_insert_with(Default::default);
         let owner = match ledger.assess_owner.as_ref() {
             Some(owner) if owner.run == run && owner.live() => Arc::clone(owner),
@@ -304,7 +441,7 @@ impl ActionContext<'_> {
             .outbox
             .retain(|action| !matches!(&action.effect, HostEffect::AssessWalk(_)));
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
             effect: HostEffect::AssessWalk(request),
@@ -337,7 +474,7 @@ impl ActionContext<'_> {
         Some(receipt)
     }
 
-    pub fn walk(&mut self, request: WalkRequest) -> Result<u64, ActionError> {
+    pub fn walk(&mut self, mut request: WalkRequest) -> Result<u64, ActionError> {
         let owner = self.owner()?;
         if request.required_after.run != self.run() {
             return Err(ActionError::Stale);
@@ -351,16 +488,18 @@ impl ActionContext<'_> {
                 super::WalkGoalsError::IncompatibleArrival,
             ));
         }
+        apply_stage_cross(&mut request, self.stage_cross.as_deref());
         if !self.budget.event(false) {
             return Err(ActionError::BudgetExhausted);
         }
+        self.walk_prereq.apply(&mut request.options);
         let ledger = self.ledger.as_mut().expect("owner checked");
         let request_id = ledger.next_id()?;
         owner.set_walk(request_id);
         ledger.walk = None;
         ledger.walk_events.clear();
         ledger.outbox.push(HostAction {
-            owner,
+            custody: HostCustody::walk(owner, request_id),
             request_id,
             batch: 0,
             effect: HostEffect::Walk(request),
@@ -392,6 +531,76 @@ impl ActionContext<'_> {
             .iter()
             .chain(ledger.batch_receipts.iter().flatten())
             .find(|receipt| receipt.request_id == request_id && receipt.evidence.run == self.run())
+    }
+
+    /// What the host's dispatch lifecycle has done with this action's single
+    /// interaction `request_id` ([`InteractionDispatch`]). The settled receipt
+    /// comes first. Without one, the request is `Queued` only while it is
+    /// still this action's current single interaction and the host has not
+    /// discarded it: a cancelled request (`cancel_request` cleared it) or a
+    /// superseded one (a later emit, pick or assessment replaced it) is
+    /// `Unsent`: its queued action, if one remains, has lost its authority
+    /// (`HostAction::live`), so the host drops it and no receipt will come.
+    pub fn interaction_dispatch(&self, request_id: u64) -> InteractionDispatch<'_> {
+        if let Some(receipt) = self.interaction_receipt(request_id) {
+            return InteractionDispatch::Settled(receipt);
+        }
+        let queued = self
+            .ledger
+            .as_ref()
+            .zip(NonZeroU64::new(request_id))
+            .is_some_and(|(ledger, request)| {
+                ledger.interaction_request == Some(request)
+                    && ledger.owner.as_ref().is_some_and(|owner| {
+                        owner.run == self.run()
+                            && owner.id.get() == self.action_id
+                            && owner.interaction_queued(request)
+                    })
+            });
+        if queued {
+            InteractionDispatch::Queued
+        } else {
+            InteractionDispatch::Unsent
+        }
+    }
+
+    /// Whether the host discarded this action's walk `request_id` before it
+    /// armed the route (a guardian hold, a held tick, a session reset dropped
+    /// its queued action). No walk receipt will come for it: the machine that
+    /// still wants the walk sends it again.
+    pub fn walk_unsent(&self, request_id: u64) -> bool {
+        let Some((ledger, request)) = self.ledger.as_ref().zip(NonZeroU64::new(request_id)) else {
+            return false;
+        };
+        ledger.owner.as_ref().is_some_and(|owner| {
+            owner.run == self.run()
+                && owner.id.get() == self.action_id
+                && owner.walk_unsent(request)
+        })
+    }
+
+    /// Where this tick stands after a guardian hold ([`AfterHold`]). Only a
+    /// machine that keeps a request in flight across a hold looks at it:
+    /// [`NativeActions::poll`] does for every machine that sets
+    /// [`NativeMachine::RESUMES_AFTER_HOLD`], and a step that waits on a
+    /// finished request's effect with no live handle does itself.
+    pub fn after_hold(&self) -> AfterHold {
+        self.budget.after_hold()
+    }
+
+    /// Consume the one resume that follows a guardian hold: `true` on the
+    /// first observed tick that is later than the hold's settle tick. The
+    /// caller then re-checks its goal and re-issues its request at most once,
+    /// and logs it ([`log_hold_resume`]).
+    pub fn take_hold_resume(&mut self) -> bool {
+        self.budget.take_hold_resume()
+    }
+
+    /// Consume the teleport that the last guardian hold observed: the player's
+    /// plane changed, or a jump between two observed frames was beyond what
+    /// running covers in their ticks ([`is_teleport`]). `true` once.
+    pub fn take_hold_teleport(&mut self) -> bool {
+        self.budget.take_hold_teleport()
     }
 
     pub fn cancel_request(&mut self, request_id: u64) {
@@ -438,10 +647,10 @@ impl ActionContext<'_> {
                 }
             }
             owner.cancel_walk(request_id);
-            if let Some((request, lease, _)) = ledger.quiet_since {
-                if request == request_id {
-                    owner.release_quiet(lease);
-                    ledger.quiet_since = None;
+            if let Some(quiet) = ledger.quiet_lease {
+                if quiet.request == request_id {
+                    owner.release_quiet(quiet.lease);
+                    ledger.quiet_lease = None;
                 }
             }
             ledger
@@ -602,6 +811,12 @@ impl Drop for QuietReadLease {
     }
 }
 
+impl Drop for ModalWaitLease {
+    fn drop(&mut self) {
+        self.owner.release_modal_wait(self.lease_id);
+    }
+}
+
 impl<M: NativeMachine> Drop for ActionHandle<M> {
     fn drop(&mut self) {
         // No user code runs until the host authority is invalidated. Contain a
@@ -627,13 +842,40 @@ impl<M: NativeMachine> ActionHandle<M> {
         }
     }
 
-    /// Read the live machine without polling it; `None` once it completed.
-    pub(crate) fn inspect<R>(&self, read: impl FnOnce(&M) -> R) -> Option<R> {
+    /// Read the live machine without polling it; `None` once it completed. A
+    /// live proof reads a machine's own state with it (the PvP V2 switch trace).
+    pub fn inspect<R>(&self, read: impl FnOnce(&M) -> R) -> Option<R> {
         self.machine.borrow().as_ref().map(read)
+    }
+
+    /// Observe a live machine's receipts under its existing owner. This does
+    /// not poll, send, or spend an observed-tick allowance.
+    pub(crate) fn inspect_in<R>(
+        &self,
+        cx: &mut ActionContext<'_>,
+        read: impl FnOnce(&M, &ActionContext<'_>) -> R,
+    ) -> Option<R> {
+        if self.owner.run != cx.run() || !self.owner.live() {
+            return None;
+        }
+        cx.action_id = self.owner.id.get();
+        cx.owner().ok()?;
+        self.machine
+            .borrow()
+            .as_ref()
+            .map(|machine| read(machine, cx))
     }
 }
 
 impl ActionHandle<crate::combat::Combat> {
+    /// Give this attempt the stand-approach walks its quest step already spent.
+    /// The step owns the count: a kill-budget end rebegins the fight inside it.
+    pub(crate) fn seed_stand_walk_failures(&self, failures: u8) {
+        if let Some(machine) = self.machine.borrow_mut().as_mut() {
+            machine.seed_stand_walk_failures(failures);
+        }
+    }
+
     /// Read accepted combat prayer-cleanup debt without polling the machine.
     pub fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         let machine = self.machine.borrow();
@@ -672,6 +914,8 @@ impl NativeActions {
         let owner = Owner::new(run, ledger.next_id()?);
         ledger.owner = Some(Arc::clone(&owner));
         cx.action_id = owner.id.get();
+        // A machine that begins now was not interrupted by an earlier hold.
+        cx.budget.clear_hold();
         let result = catch_unwind(AssertUnwindSafe(|| M::begin(args, cx)));
         match result {
             Ok(Ok(machine)) => Ok(ActionHandle {
@@ -725,6 +969,7 @@ impl NativeActions {
         let owner = Owner::new(run, ledger.next_id()?);
         ledger.owner = Some(Arc::clone(&owner));
         cx.action_id = owner.id.get();
+        cx.budget.clear_hold();
         handle.owner = owner;
         Ok(())
     }
@@ -754,6 +999,32 @@ impl NativeActions {
         let Some(active) = machine.as_mut() else {
             return Poll::Ready(Err(ActionError::Cancelled));
         };
+        if M::RESUMES_AFTER_HOLD {
+            match cx.after_hold() {
+                // The guardian's last request can still be taking effect.
+                AfterHold::Settling => return Poll::Pending,
+                AfterHold::Resume => {
+                    let resumed = catch_unwind(AssertUnwindSafe(|| active.after_hold(cx)));
+                    match resumed {
+                        Ok(Ok(resume)) => {
+                            cx.take_hold_resume();
+                            log_hold_resume(&handle.owner.id.to_string(), resume);
+                        }
+                        // The tick's event allowance is spent: try next tick.
+                        Ok(Err(ActionError::BudgetExhausted)) => return Poll::Pending,
+                        Ok(Err(error)) => {
+                            cx.take_hold_resume();
+                            return Poll::Ready(Err(error));
+                        }
+                        Err(panic) => {
+                            handle.owner.revoke();
+                            resume_unwind(panic)
+                        }
+                    }
+                }
+                AfterHold::None => {}
+            }
+        }
         let result = catch_unwind(AssertUnwindSafe(|| active.poll(cx)));
         match result {
             Ok(Poll::Pending) => Poll::Pending,
@@ -911,10 +1182,8 @@ mod tests {
         assert!(!owner.quiet(request));
     }
 
-    #[test]
-    fn cancelling_a_drained_interaction_revokes_its_host_authority() {
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let pin = selected.selected_pin().unwrap();
+    /// One live machine owner and its action context at tick 1.
+    fn with_live_owner(f: impl FnOnce(&mut ActionContext<'_>, &Arc<Owner>)) {
         let evidence = EvidenceStamp {
             run: RunKey {
                 slot: 1,
@@ -931,16 +1200,19 @@ mod tests {
         let mut budget = ledger::TickBudget::default();
         budget.observe(1);
         let mut cx = ActionContext {
+            stage_cross: None,
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
-            pin: &pin,
+            revision: api::selected::ClientRevision::R289,
             snapshot: SnapshotView::new(None, evidence),
             retained: &mut retained,
             action_id: owner.id.get(),
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            wilderness: None,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,
@@ -948,20 +1220,111 @@ mod tests {
             budget: &mut budget,
             eligible: true,
         };
-        let request = cx.emit(InteractReq::CloseModal).unwrap();
-        let drained = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
-        let authority = drained.authority();
-        assert!(drained.live());
-        cx.cancel_request(request);
-        assert!(!drained.live(), "cancelled input must not reach the host");
-        assert!(
-            !authority.live(),
-            "a captured continuation must lose authority"
-        );
-        assert!(
-            owner.live(),
-            "request cancellation must not cancel the machine"
-        );
+        f(&mut cx, &owner);
+    }
+
+    #[test]
+    fn cancelling_a_drained_interaction_revokes_its_host_authority() {
+        with_live_owner(|cx, owner| {
+            let request = cx.emit(InteractReq::CloseModal).unwrap();
+            let drained = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
+            let authority = drained.authority();
+            assert!(drained.live());
+            assert_eq!(
+                cx.interaction_dispatch(request),
+                InteractionDispatch::Queued
+            );
+            cx.cancel_request(request);
+            assert!(!drained.live(), "cancelled input must not reach the host");
+            assert!(
+                !authority.live(),
+                "a captured continuation must lose authority"
+            );
+            assert!(
+                owner.live(),
+                "request cancellation must not cancel the machine"
+            );
+            assert_eq!(
+                cx.interaction_dispatch(request),
+                InteractionDispatch::Unsent,
+                "a cancelled request is no longer queued while its action still exists"
+            );
+            drop(drained);
+            assert_eq!(
+                cx.interaction_dispatch(request),
+                InteractionDispatch::Unsent
+            );
+        });
+    }
+
+    #[test]
+    fn a_cancelled_queued_interaction_is_unsent_while_its_owner_stays_live() {
+        with_live_owner(|cx, owner| {
+            let request = cx.emit(InteractReq::CloseModal).unwrap();
+            assert_eq!(
+                cx.interaction_dispatch(request),
+                InteractionDispatch::Queued
+            );
+            // Cancelling clears the owner's current interaction before the
+            // queued action (and its armed custody) leaves the outbox.
+            cx.cancel_request(request);
+            assert!(cx.ledger.as_ref().unwrap().outbox.is_empty());
+            assert!(owner.live());
+            assert_eq!(
+                cx.interaction_dispatch(request),
+                InteractionDispatch::Unsent,
+                "no action and no receipt remain for a cancelled request"
+            );
+        });
+    }
+
+    #[test]
+    fn an_old_guard_dropping_after_a_new_request_starts_leaves_each_state_exact() {
+        with_live_owner(|cx, owner| {
+            let old = cx.emit(InteractReq::CloseModal).unwrap();
+            let old_action = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
+            cx.budget.observe(2);
+            let new = cx.emit(InteractReq::CloseModal).unwrap();
+            assert!(owner.live());
+            assert!(
+                !old_action.live(),
+                "the host must not send a superseded request"
+            );
+            assert_eq!(
+                cx.interaction_dispatch(old),
+                InteractionDispatch::Unsent,
+                "a superseded request that was never sent is not queued"
+            );
+            assert_eq!(cx.interaction_dispatch(new), InteractionDispatch::Queued);
+            // The old action leaves the host unsent after the new one started:
+            // its custody must not touch the new request.
+            drop(old_action);
+            assert_eq!(cx.interaction_dispatch(old), InteractionDispatch::Unsent);
+            assert_eq!(cx.interaction_dispatch(new), InteractionDispatch::Queued);
+            // The host takes the new request and settles it in the same pass.
+            let mut taken = cx.ledger.as_mut().unwrap().outbox.pop().unwrap();
+            assert!(taken.live());
+            taken.release_custody();
+            let authority = taken.authority();
+            drop(taken);
+            assert_eq!(cx.interaction_dispatch(new), InteractionDispatch::Queued);
+            let receipt = InteractionReceipt {
+                request_id: new,
+                evidence: cx.evidence,
+                accepted: true,
+                chat_since: 0,
+            };
+            cx.ledger
+                .as_mut()
+                .unwrap()
+                .complete_interaction(&authority, receipt);
+            assert_eq!(
+                cx.interaction_dispatch(new),
+                InteractionDispatch::Settled(&receipt),
+                "the receipt settles the request first"
+            );
+            assert_eq!(cx.interaction_dispatch(old), InteractionDispatch::Unsent);
+        });
     }
 
     #[test]
@@ -1338,8 +1701,6 @@ mod tests {
         snapshot: Option<&api::snapshot::GameSnapshot>,
         f: impl FnOnce(&mut ActionContext<'_>) -> R,
     ) -> R {
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let pin = selected.selected_pin().unwrap();
         let evidence = EvidenceStamp {
             run: RunKey {
                 slot: 1,
@@ -1353,16 +1714,19 @@ mod tests {
         let mut budget = ledger::TickBudget::default();
         budget.observe(1);
         let mut cx = ActionContext {
+            stage_cross: None,
+            walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
             evidence,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
-            pin: &pin,
+            revision: api::selected::ClientRevision::R289,
             snapshot: SnapshotView::new(snapshot, evidence),
             retained: &mut retained,
             action_id: 0,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            wilderness: None,
             active_now,
             wall_now: Instant::now(),
             ledger,
@@ -1629,6 +1993,9 @@ mod tests {
 
     #[test]
     fn batch_rejects_invalid_shapes_and_host_grammar_without_side_effects() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut ledger = Some(Box::new(ledger::Ledger::default()));
         with_frame(&mut ledger, Duration::ZERO, |cx| {
             let owner = install_owner(cx);
@@ -1747,6 +2114,9 @@ mod tests {
 
     #[test]
     fn selected_protect_pair_is_adjacent_and_capped_at_four_wire_events() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut ledger = Some(Box::new(ledger::Ledger::default()));
         with_frame(&mut ledger, Duration::ZERO, |cx| {
             install_owner(cx);
@@ -1881,8 +2251,10 @@ mod tests {
                 evidence: None,
                 loc_id: None,
                 cross: Box::new([]),
+                avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
             };
             assert_eq!(cx.walk(walk), Err(ActionError::BudgetExhausted));
@@ -2352,6 +2724,8 @@ mod tests {
                     allow_teleports: false,
                     allow_wilderness: false,
                     allow_bank_fetch: false,
+                    allow_prereq_dialogue: None,
+                    allow_quest_start: None,
                     request_id: 0,
                     avoid: Vec::new(),
                     cross: Vec::new(),
@@ -2393,8 +2767,10 @@ mod tests {
                 required_after: cx.evidence(),
                 evidence: None,
                 cross: Vec::new().into_boxed_slice(),
+                avoid: Box::new([]),
                 protect: false,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
             };
             let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
@@ -2493,8 +2869,10 @@ mod tests {
                             required_after: cx.evidence(),
                             evidence: None,
                             cross: Vec::new().into_boxed_slice(),
+                            avoid: Box::new([]),
                             protect: false,
                             food_guard: false,
+                            cure_guard: false,
                             allow: Default::default(),
                         };
                         let handle = actions.begin::<super::walk::Walk>(request, cx).unwrap();
@@ -2509,6 +2887,7 @@ mod tests {
                             refusal: None,
                             assessment: None,
                             escape: None,
+                            prereq_allow: None,
                         });
                         assert!(actions.poll(&handle, cx).is_pending(),
                         "radius {radius}: a still-moving final segment is not a stationary route end");
@@ -2555,8 +2934,10 @@ mod tests {
             required_after: evidence,
             evidence: None,
             cross: Vec::new().into_boxed_slice(),
+            avoid: Box::new([]),
             protect: false,
             food_guard: false,
+            cure_guard: false,
             allow: WalkAllow::default(),
         }
     }
@@ -2729,6 +3110,212 @@ mod tests {
                 .unwrap()
                 .complete_assess_walk(&revoked_authority, advisory_failure(revoked, evidence));
             assert!(cx.assess_receipt(revoked).is_none());
+        });
+    }
+
+    #[test]
+    fn plain_walk_under_stage_grant_arms_food_guard() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            cx.stage_cross = Some(Arc::from([Arc::from("declared-zone")]));
+            let mut actions = NativeActions { _private: () };
+            let handle = actions
+                .begin::<walk::Walk>(assessment_walk_request(cx.evidence()), cx)
+                .unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the stage-granted walk must use the native walk path");
+            };
+            assert_eq!(request.cross.as_ref(), &[Arc::<str>::from("declared-zone")]);
+            assert!(
+                request.food_guard,
+                "a declared crossing must arm the food guard"
+            );
+            assert!(request.allow.food);
+            assert!(!request.protect);
+            drop(handle);
+        });
+    }
+    #[test]
+    fn an_unscoped_walk_keeps_the_inherited_danger_policy() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            assert!(cx.stage_cross.is_none());
+            let mut actions = NativeActions { _private: () };
+            let handle = actions
+                .begin::<walk::Walk>(assessment_walk_request(cx.evidence()), cx)
+                .unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the unscoped walk must use the native walk path");
+            };
+            assert_eq!(
+                request.options.allow_danger_zones,
+                WalkBit::Inherit,
+                "an unscoped Quester walk retains the pre-consent admission policy"
+            );
+            drop(handle);
+        });
+    }
+    #[test]
+    fn plain_walk_under_step_grant_arms_food_guard_without_a_stage() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let mut request = assessment_walk_request(cx.evidence());
+            request.cross = vec![Arc::from("declared-step-zone")].into_boxed_slice();
+            let mut actions = NativeActions { _private: () };
+            let handle = actions.begin::<walk::Walk>(request, cx).unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the step-granted walk must use the native walk path");
+            };
+            assert_eq!(
+                request.cross.as_ref(),
+                &[Arc::<str>::from("declared-step-zone")]
+            );
+            assert!(
+                request.food_guard,
+                "a declared crossing must arm the food guard"
+            );
+            assert!(request.allow.food);
+            assert_eq!(
+                request.options.allow_danger_zones,
+                WalkBit::Forbid,
+                "a step grant must not permit unnamed danger zones"
+            );
+            assert!(!request.protect);
+            drop(handle);
+        });
+    }
+
+    #[test]
+    fn explicit_cure_guard_keeps_food_disabled_across_step_and_stage_crossings() {
+        for stage_cross in [false, true] {
+            for step_cross in [false, true] {
+                let mut ledger = None;
+                with_frame(&mut ledger, Duration::ZERO, |cx| {
+                    cx.stage_cross = stage_cross.then(|| Arc::from([Arc::from("stage-zone")]));
+                    let mut request = assessment_walk_request(cx.evidence());
+                    assert!(!request.cure_guard);
+                    request.cure_guard = true;
+                    request.allow.food = false;
+                    request.allow.prayer = false;
+                    if step_cross {
+                        request.cross = Box::from([Arc::from("step-zone")]);
+                    }
+                    let mut actions = NativeActions { _private: () };
+                    let handle = actions.begin::<walk::Walk>(request, cx).unwrap();
+                    let HostEffect::Walk(request) =
+                        &cx.ledger.as_ref().unwrap().outbox.last().unwrap().effect
+                    else {
+                        panic!("the explicit cure request must remain a walk");
+                    };
+                    assert!(request.cure_guard);
+                    assert!(!request.protect && !request.food_guard && !request.allow.food);
+                    assert_eq!(
+                        request.cross.len(),
+                        usize::from(stage_cross) + usize::from(step_cross)
+                    );
+                    if stage_cross || step_cross {
+                        assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+                    }
+                    drop(handle);
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn stage_cross_unions_step_grants_without_disabling_survival() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            cx.stage_cross = Some(Arc::from([Arc::from("declared-zone")]));
+            let mut request = assessment_walk_request(cx.evidence());
+            request.cross = vec![Arc::from("step-zone")].into_boxed_slice();
+            request.options.allow_danger_zones = WalkBit::Allow;
+            request.protect = true;
+            let mut actions = NativeActions { _private: () };
+            let handle = actions.begin::<walk::Walk>(request, cx).unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the native walk must reach the existing host route path");
+            };
+            assert_eq!(
+                request
+                    .cross
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<&str>>(),
+                ["step-zone", "declared-zone"]
+            );
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+            assert!(request.protect && request.food_guard);
+            let expected_allow = WalkAllow {
+                food: true,
+                ..WalkAllow::default()
+            };
+            assert_eq!(request.allow, expected_allow);
+            drop(handle);
+            actions
+                .assess_walk(assessment_walk_request(cx.evidence()), cx)
+                .unwrap();
+            let HostEffect::AssessWalk(request) =
+                &cx.ledger.as_ref().unwrap().outbox.last().unwrap().effect
+            else {
+                panic!("the advisory must use the same stage declaration");
+            };
+            assert_eq!(request.cross.as_ref(), &[Arc::<str>::from("declared-zone")]);
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+        });
+    }
+
+    #[test]
+    fn stage_cross_deduplicates_grants_and_preserves_prelude_step_consent() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            let stage = [Arc::<str>::from("declared-zone")];
+            let mut request = assessment_walk_request(cx.evidence());
+            request.cross = vec![Arc::clone(&stage[0]), Arc::clone(&stage[0])].into_boxed_slice();
+            apply_stage_cross(&mut request, Some(&stage));
+            assert_eq!(request.cross.as_ref(), &stage);
+            let mut prelude = assessment_walk_request(cx.evidence());
+            prelude.cross = vec![Arc::from("prelude-zone")].into_boxed_slice();
+            apply_stage_cross(&mut prelude, Some(&[]));
+            assert_eq!(prelude.cross.as_ref(), &[Arc::<str>::from("prelude-zone")]);
+            assert_eq!(prelude.options.allow_danger_zones, WalkBit::Forbid);
+            let mut next_step = assessment_walk_request(cx.evidence());
+            apply_stage_cross(&mut next_step, Some(&[]));
+            assert!(
+                next_step.cross.is_empty(),
+                "a fresh step inherits no earlier grants"
+            );
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+            let mut ordinary = assessment_walk_request(cx.evidence());
+            ordinary.options.allow_danger_zones = WalkBit::Allow;
+            apply_stage_cross(&mut ordinary, None);
+            assert_eq!(ordinary.options.allow_danger_zones, WalkBit::Allow);
+        });
+    }
+
+    #[test]
+    fn empty_declared_stage_forbids_zones_the_old_walk_bit_allowed() {
+        let mut ledger = None;
+        with_frame(&mut ledger, Duration::ZERO, |cx| {
+            cx.stage_cross = Some(Arc::<[Arc<str>]>::from([]));
+            let mut request = assessment_walk_request(cx.evidence());
+            request.options.allow_danger_zones = WalkBit::Allow;
+            let mut actions = NativeActions { _private: () };
+            let handle = actions.begin::<walk::Walk>(request, cx).unwrap();
+            let HostEffect::Walk(request) = &cx.ledger.as_ref().unwrap().outbox[0].effect else {
+                panic!("the scoped walk must use the native walk path");
+            };
+            assert!(request.cross.is_empty(), "the stage declares no zones");
+            assert_eq!(
+                request.options.allow_danger_zones,
+                WalkBit::Forbid,
+                "an empty declaration must not inherit a previous allow"
+            );
+            assert_eq!(
+                RiskPolicy::from(request.options.allow_danger_zones),
+                RiskPolicy::Avoid
+            );
+            drop(handle);
         });
     }
 }

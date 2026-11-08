@@ -26,7 +26,7 @@
 //! their tile or explicit-loc predicate in the native Walk adapter. Genuinely
 //! pending follow (`None`) keeps the caller timeout.
 
-use crate::observed::{self, Scene};
+use crate::scene::observed::{self, Scene};
 use crate::wire::Snapshot;
 use api::snapshot::WorldTile;
 use script::native::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
@@ -102,7 +102,7 @@ impl Observation for IsolateObservation {
     }
 
     fn cancelled(&self) -> bool {
-        crate::event_signal::pending()
+        crate::scene::event_signal::pending()
             || crate::machine::user_move_intent_seq() > self.intent_baseline
             || observed::with(|scene| {
                 let latest = scene.latest();
@@ -116,7 +116,7 @@ impl Observation for IsolateObservation {
 
     fn arrived(&self, key: WalkKey) -> bool {
         self.here.is_some_and(|here| {
-            crate::reach_query::with_view(|view| {
+            crate::materialize::reach_query::with_view(|view| {
                 api::query::is_arrived(here, key.tile, key.radius, || view)
             })
         })
@@ -226,7 +226,7 @@ pub(crate) fn dispatch(input: &Value) -> Value {
                 json!(slot.poll(
                     token,
                     &IsolateObservation {
-                        here: crate::reach_query::posted_here(),
+                        here: crate::materialize::reach_query::posted_here(),
                         token,
                         intent_baseline,
                     }
@@ -260,22 +260,24 @@ fn json_u64(value: Option<&Value>) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_with_native, NativeFactsInput, ReachViewInput,
-        SnapshotInput, TileInput,
+    use {
+        crate::wire::{encode_snapshot, encode_snapshot_with_native},
+        script::native::snapshot_source::{
+            NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
+        },
     };
 
     /// `ResetSession` as the isolate runs it: the scene and the wait.
     fn on_reset() {
-        crate::observed::on_reset();
-        crate::reach_query::on_reset();
+        crate::scene::observed::on_reset();
+        crate::materialize::reach_query::on_reset();
         super::on_reset();
     }
 
     /// One decoded post, applied the way the isolate applies it.
     fn post(snap: &Snapshot<'_>) {
-        crate::observed::apply(snap);
-        crate::reach_query::apply(snap);
+        crate::scene::observed::apply(snap);
+        crate::materialize::reach_query::apply(snap);
         on_snapshot(snap);
     }
 
@@ -432,13 +434,13 @@ mod tests {
         on_reset();
         let token = begin(2998, 3916, 0, 1, false);
         assert!(!settled(token));
-        crate::observed::post(2, |p| {
-            p.walk_outcome(crate::observed::WalkOutcome {
+        crate::scene::observed::post(2, |p| {
+            p.walk_outcome(crate::scene::observed::WalkOutcome {
                 seq: 1,
                 generation: 1,
                 request_id: token,
                 failed: true,
-                tile: crate::observed::Tile {
+                tile: crate::scene::observed::Tile {
                     x: 2998,
                     z: 3916,
                     level: 0,

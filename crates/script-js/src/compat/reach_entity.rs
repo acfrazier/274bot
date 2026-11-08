@@ -12,10 +12,10 @@
 //! through open passages, ladder hops and every wait. Game actions are
 //! the native loc and walk ops.
 
+use crate::compat::walk::{Resilient, BAKED_TIMEOUT_MS, HOP_ATTEMPTS};
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::observed::{self, SceneRow};
-use crate::walk::{Resilient, BAKED_TIMEOUT_MS, HOP_ATTEMPTS};
-use script::shim::InteractReq;
+use crate::scene::observed::{self, SceneRow};
+use script::interact::InteractReq;
 
 use api::query::SceneReachOptions;
 use api::snapshot::WorldTile;
@@ -28,7 +28,7 @@ const DOOR_ATTEMPTS: u32 = 8;
 /// Frozen `PROBE_RADIUS`.
 const PROBE_RADIUS: i32 = 10;
 /// Frozen `REACH_BFS_STEPS`.
-const BFS_STEPS: u32 = 400;
+pub(crate) const BFS_STEPS: u32 = 400;
 /// Frozen `towardDest` slack.
 const TOWARD_SLACK: i32 = 4;
 /// Door-open settle wait.
@@ -171,7 +171,7 @@ fn can_reach(tile: Tile, adjacent_ok: bool) -> bool {
         max_steps: Some(BFS_STEPS),
         adjacent_ok,
     };
-    crate::reach_query::with_view(|view| view.can_reach(tile.world(), &options))
+    crate::materialize::reach_query::with_view(|view| view.can_reach(tile.world(), &options))
 }
 
 /// Frozen `doorApproachable`: some tile on or beside the door is reachable.
@@ -194,7 +194,7 @@ fn door_wall_reachable(door: &SceneRow) -> bool {
     let Some(here) = here() else {
         return false;
     };
-    crate::reach_query::with_view(|view| {
+    crate::materialize::reach_query::with_view(|view| {
         api::query::straight_wall_reachable(
             here.world(),
             loc_tile(door).world(),
@@ -270,7 +270,8 @@ impl Clear {
                     let Some(shut) = shut_at(door) else {
                         return Some(true);
                     };
-                    if !crate::reach_query::arrived(door.world(), 1) && !door_wall_reachable(&shut)
+                    if !crate::materialize::reach_query::arrived(door.world(), 1)
+                        && !door_wall_reachable(&shut)
                     {
                         return Some(false);
                     }
@@ -1215,14 +1216,25 @@ pub(crate) struct NpcReach {
 
 /// The nearest posted `npc` row with a talk op (frozen
 /// `Npcs.query().name(n).where(talkOp !== null).nearest()`).
-struct TalkRow {
+pub(crate) struct TalkRow {
     name: String,
     action: String,
     index: i32,
     tile: Tile,
+    pub(crate) reachable_adj: bool,
 }
 
-fn talk_row(npc: &str) -> Option<TalkRow> {
+impl TalkRow {
+    pub(crate) fn world_tile(&self) -> WorldTile {
+        self.tile.world()
+    }
+}
+
+fn npc_name_matches(name: Option<&str>, want: &str) -> bool {
+    name.is_some_and(|name| name.trim().eq_ignore_ascii_case(want))
+}
+
+pub(crate) fn talk_row(npc: &str) -> Option<TalkRow> {
     let want = npc.trim();
     if want.is_empty() {
         return None;
@@ -1230,12 +1242,8 @@ fn talk_row(npc: &str) -> Option<TalkRow> {
     observed::with(|scene| {
         let rows = scene.since_login().npcs()?;
         rows.iter()
-            .filter(|row| {
-                row.name
-                    .as_deref()
-                    .is_some_and(|name| name.trim().eq_ignore_ascii_case(want))
-            })
-            .filter_map(|row| crate::dialog::talk_op(&row.actions).map(|op| (row, op)))
+            .filter(|row| npc_name_matches(row.name.as_deref(), want))
+            .filter_map(|row| crate::compat::dialog::talk_op(&row.actions).map(|op| (row, op)))
             .min_by_key(|(row, _)| row.distance)
             .map(|(row, op)| TalkRow {
                 name: row.name.as_deref().unwrap_or_default().to_string(),
@@ -1246,13 +1254,18 @@ fn talk_row(npc: &str) -> Option<TalkRow> {
                     z: row.z,
                     level: row.level,
                 },
+                reachable_adj: row.reachable_adj,
             })
     })
 }
 
+/// The nearest posted tile for an NPC with a talk operation.
+pub(crate) fn nearest_npc_tile(npc: &str) -> Option<WorldTile> {
+    talk_row(npc).map(|row| row.world_tile())
+}
 /// Whether a posted `npc` row has a talk op (frozen `openDialogue`'s `find()`).
 pub(crate) fn npc_talkable(npc: &str) -> bool {
-    talk_row(npc).is_some()
+    nearest_npc_tile(npc).is_some()
 }
 
 /// The posted chat modal id and Continue flag.
@@ -1718,9 +1731,9 @@ impl WalkHops {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::callback_v8::HeldCallback;
     use crate::machine::{self, Called, Pending, Started, Take};
-    use crate::walk_wait;
+    use crate::materialize::callback_v8::HeldCallback;
+    use crate::scene::walk_wait;
 
     /// No script callbacks are held here.
     struct NoJs;
@@ -1872,12 +1885,12 @@ mod tests {
 
     fn fresh() {
         observed::on_reset();
-        crate::reach_query::on_reset();
+        crate::materialize::reach_query::on_reset();
     }
 
     #[test]
     fn loc_op_fractional_expect_ms_stays_pending_before_its_rounded_deadline() {
-        let mut clock = crate::task_clock::InstantTaskClock::new();
+        let mut clock = crate::scene::task_clock::InstantTaskClock::new();
         clock.set_freeze(true, false);
         let window = loc_expect_window(&json!(0.5)).expect("positive fraction has a window");
         assert_eq!(window, 1);
@@ -1894,14 +1907,14 @@ mod tests {
 
     struct Driver {
         reach: NpcReach,
-        clock: crate::task_clock::InstantTaskClock,
+        clock: crate::scene::task_clock::InstantTaskClock,
     }
 
     impl Driver {
         fn new(opts: NpcReachOpts) -> Self {
             Self {
                 reach: NpcReach::new("Luthas", opts),
-                clock: crate::task_clock::InstantTaskClock::new(),
+                clock: crate::scene::task_clock::InstantTaskClock::new(),
             }
         }
 
@@ -2023,7 +2036,7 @@ mod tests {
     /// a dead verify probe is `'unreachable'`, without a click.
     #[test]
     fn loc_op_stand_walk_that_cannot_reach_is_unreachable() {
-        crate::walk::tests::reset();
+        crate::compat::walk::tests::reset();
         observed::post(1, |post| {
             post.session(true)
                 .here(observed::Tile {
@@ -2049,7 +2062,7 @@ mod tests {
         let Started::Running(h) = machine::start("reach-loc-op", args, Vec::new(), 0) else {
             panic!("reach-loc-op runs");
         };
-        crate::walk::tests::ladder_to_a_dead_probe(h, LOC_STAND_RADIUS);
+        crate::compat::walk::tests::ladder_to_a_dead_probe(h, LOC_STAND_RADIUS);
         machine::step(&mut NoJs);
         assert!(
             machine::merge_ops(Vec::new()).is_empty(),

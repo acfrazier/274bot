@@ -1,6 +1,7 @@
 use {
-    script_js::wire::IsolateBuf, script_js::wire::SceneEntityInput, script_js::wire::Snapshot,
-    script_js::wire::SnapshotInput,
+    script::native::snapshot_source::{SceneEntityInput, SnapshotInput},
+    script_js::wire::IsolateBuf,
+    script_js::wire::Snapshot,
 };
 use {script_js::LoadIsolate, script_js::LoadShape};
 

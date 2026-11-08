@@ -71,6 +71,42 @@ save a profile.
 | Write a script | [Scripts](docs/api/script.md) and [JS API v2](docs/api/js-api-v2.md) |
 | Build 274bot from source | [CONTRIBUTING.md](CONTRIBUTING.md) and [build notes](docs/dev/build-from-source.md) |
 
+## Build from source
+
+Generate game data and navigation from your own engine and content checkouts
+before you build a product. Set these variables to the 274 and 289 source
+roots, then run the canonical builder:
+
+```bash
+export GAME_DATA_274_ENGINE=/path/to/274-engine
+export GAME_DATA_274_CONTENT=/path/to/274-content
+export GAME_DATA_289_ENGINE=/path/to/289-engine
+export GAME_DATA_289_CONTENT=/path/to/289-content
+export RS2B0T=/path/to/rs2b0t
+python tools/local-data/build.py
+```
+
+The builder creates game data and navigation for both revisions. Then build
+the product:
+
+```bash
+cargo build --release -p panel --bin panel-play
+```
+
+To rebake navigation after a content change, use the generated game data:
+
+```bash
+cargo run --locked -p nav-bake --bin nav-pack -- \
+  --revision 289 \
+  --content "$GAME_DATA_289_CONTENT" \
+  --cache "$GAME_DATA_289_ENGINE/data/pack/client" \
+  --game-data-dir crates/api/data/game-data \
+  --out target/local-data/nav/289/274bot.navpack
+```
+
+See [the source build notes](docs/dev/selected-data-generation.md) for the
+full generation sequence and revision details.
+
 ## What works and what does not
 
 - Revision 289 is the tested version. Revision 274 may run, but it is not tested.

@@ -1673,46 +1673,70 @@ impl CombatApproachCycle {
         self.entered && self.style_xp
     }
 }
-/// Combat and exact feather loot, then a fresh deposit, return r6, further work.
+/// Combat and exact Bones loot, then a fresh deposit, return r6, fresh Strength XP.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ChickenKillerBankCycle {
     pub combat_loot: bool,
     pub deposited: Option<Observation>,
     pub returned: bool,
     pub further: bool,
+    pub return_xp: Option<i32>,
+    pub returns: u8,
+    pub restart_limit_spent: bool,
+    pub return_bank_generation: u64,
 }
 
 impl ChickenKillerBankCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         self.combat_loot |= now.skill_xp("strength") > baseline.skill_xp("strength")
-            && now.item_id(catalog_item_id("feather")) >= 1
-            && baseline.item_id(catalog_item_id("feather")) == 0;
+            && now.item_id(catalog_item_id("bones")) >= 1
+            && baseline.item_id(catalog_item_id("bones")) == 0;
         if self.combat_loot
             && self.deposited.is_none()
             && now.bank_open
             && now.bank_loaded
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(catalog_item_id("feather")) == 0
-            && now.bank_item_id(catalog_item_id("feather")) >= 1
+            && now.item_id(catalog_item_id("bones")) == 0
+            && now.bank_item_id(catalog_item_id("bones")) >= 1
         {
             self.deposited = Some(now.clone());
+            self.return_bank_generation = now.bank_generation;
         }
-        if let Some(deposited) = &self.deposited {
-            self.returned |= !now.bank_open
-                && !now.bank_loaded
-                // Closing the modal advances the bank session generation.
-                && now.bank_generation > deposited.bank_generation
-                && near(now.tile, FALADOR_CHICKENS, 6);
+        if self.returned
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > self.return_bank_generation
+        {
+            // Initial return plus at most CHICKEN_BANK_MAX_RESTARTS further returns.
+            if self.returns > api::CHICKEN_BANK_MAX_RESTARTS {
+                self.restart_limit_spent = true;
+                self.further = false;
+                return;
+            }
+            self.returned = false;
+            self.return_xp = None;
+            self.return_bank_generation = now.bank_generation;
+        }
+        if self.deposited.is_some()
+            && !self.returned
+            && !now.bank_open
+            && !now.bank_loaded
+            && now.bank_generation > self.return_bank_generation
+            && near(now.tile, FALADOR_CHICKENS, 6)
+        {
+            self.returned = true;
+            self.returns += 1;
+            self.return_xp = Some(now.skill_xp("strength"));
+            return;
         }
         if self.returned {
-            if let Some(deposited) = &self.deposited {
-                self.further |= now.skill_xp("strength") > deposited.skill_xp("strength")
-                    || now.item_id(catalog_item_id("feather")) >= 1;
-            }
+            let xp = now.skill_xp("strength");
+            let reference = *self.return_xp.get_or_insert(xp);
+            self.further |= !now.bank_open && !now.bank_loaded && xp > reference;
         }
     }
 
     pub fn qualified(&self) -> bool {
-        self.further
+        self.further && !self.restart_limit_spent
     }
 }

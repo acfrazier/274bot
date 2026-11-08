@@ -6,8 +6,8 @@ use super::*;
 use crate::api_combat::{CombatSessionRequest, InterruptCause, TargetSpec};
 use crate::combat_session::tests::World;
 use crate::ctx::test_support::NullDriver;
+use crate::interact::InteractReq;
 use crate::native::{HostEffect, InteractionReceipt};
-use crate::shim::InteractReq;
 use api::quest_progress::EvidenceStamp;
 
 fn selected() -> Arc<api::game_data::SelectedGameData> {
@@ -207,6 +207,9 @@ fn missing_game_data_refuses_and_a_duplicate_cannot_resurrect_it() {
 
 #[test]
 fn an_unresolvable_name_is_a_keyed_host_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new("imp");
     let mut slot = load_slot(302, true);
     fight(
@@ -226,6 +229,9 @@ fn an_unresolvable_name_is_a_keyed_host_refusal() {
 
 #[test]
 fn one_api_session_per_slot_refuses_busy_both_ways() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new("imp");
     let mut slot = load_slot(303, true);
     fight(&mut slot, 303, imp());
@@ -273,6 +279,9 @@ fn one_api_session_per_slot_refuses_busy_both_ways() {
 
 #[test]
 fn stop_hands_the_bot_raise_to_the_host_and_keeps_the_user_prayer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let skin = world.prayer("Thick Skin");
     let raised = world.prayer("Protect from Missiles");
@@ -330,6 +339,9 @@ fn stop_hands_the_bot_raise_to_the_host_and_keeps_the_user_prayer() {
 
 #[test]
 fn pause_settles_interrupted_after_the_scoped_clear() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let skin = world.prayer("Thick Skin");
     let raised = world.prayer("Protect from Missiles");
@@ -384,6 +396,9 @@ fn pause_settles_interrupted_after_the_scoped_clear() {
 
 #[test]
 fn death_settles_and_owes_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let raised = world.prayer("Protect from Missiles");
     world.attack();
@@ -420,6 +435,9 @@ fn death_settles_and_owes_nothing() {
 
 #[test]
 fn reset_ends_without_a_terminal_reconnect_keeps_and_teardown_drops_the_seat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new("imp");
     let mut slot = load_slot(313, true);
     fight(&mut slot, 313, imp());
@@ -441,6 +459,9 @@ fn reset_ends_without_a_terminal_reconnect_keeps_and_teardown_drops_the_seat() {
 
 #[test]
 fn operator_stop_mid_fight_hands_the_bot_raise_to_the_host() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let skin = world.prayer("Thick Skin");
     let raised = world.prayer("Protect from Missiles");
@@ -471,6 +492,9 @@ fn operator_stop_mid_fight_hands_the_bot_raise_to_the_host() {
 
 #[test]
 fn pause_while_preparing_settles_interrupted_without_installing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new("imp");
     let mut slot = load_slot(316, true);
     fight(&mut slot, 316, absent_cow());
@@ -491,6 +515,9 @@ fn pause_while_preparing_settles_interrupted_without_installing() {
 
 #[test]
 fn reconnect_while_preparing_settles_interrupted_without_installing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new("imp");
     let mut slot = load_slot(317, true);
     fight(&mut slot, 317, absent_cow());
@@ -511,6 +538,9 @@ fn reconnect_while_preparing_settles_interrupted_without_installing() {
 
 #[test]
 fn reconnect_after_install_before_begin_settles_interrupted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new("imp");
     let mut slot = load_slot(318, true);
     fight(&mut slot, 318, absent_cow());
@@ -534,6 +564,9 @@ fn reconnect_after_install_before_begin_settles_interrupted() {
 
 #[test]
 fn pause_after_install_before_begin_settles_interrupted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new("imp");
     let mut slot = load_slot(319, true);
     fight(&mut slot, 319, absent_cow());
@@ -553,6 +586,9 @@ fn pause_after_install_before_begin_settles_interrupted() {
 
 #[test]
 fn manual_movement_while_preparing_settles_interrupted_user_input() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new("imp");
     let mut slot = load_slot(320, true);
     fight(&mut slot, 320, absent_cow());
@@ -569,6 +605,9 @@ fn manual_movement_while_preparing_settles_interrupted_user_input() {
 
 #[test]
 fn manual_movement_without_a_walk_clears_the_bot_raise_and_settles_user_input() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = World::new("imp");
     let skin = world.prayer("Thick Skin");
     let raised = world.prayer("Protect from Missiles");
@@ -609,6 +648,9 @@ fn manual_movement_without_a_walk_clears_the_bot_raise_and_settles_user_input() 
 
 #[test]
 fn a_live_session_owns_manual_input_with_no_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = World::new("imp");
     let mut slot = load_slot(322, true);
     assert!(!slot.manual_input_owner());

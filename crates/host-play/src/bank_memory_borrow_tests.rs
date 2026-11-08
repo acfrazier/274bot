@@ -81,6 +81,9 @@ impl Driver for LockProbe {
 
 #[test]
 fn the_compiled_tick_borrow_is_released_before_queued_cheats_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -195,6 +198,9 @@ fn the_compiled_tick_borrow_is_released_before_queued_cheats_dispatch() {
 
 #[test]
 fn without_a_memory_the_tick_sees_none_and_cheats_still_dispatch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let seen = Arc::new(Mutex::new(Vec::new()));
     script_slot_or_insert(&scripts, "alice")

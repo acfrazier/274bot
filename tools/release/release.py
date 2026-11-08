@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Preflight, build, finalize, and verify pinned 274bot release packages.
+"""Preflight, build, finalize, and verify source-pinned 274bot release packages.
 
-The controller exports an exact host commit and its client gitlink, records
-SHA-256 tree digests for every native build input, and dispatches the same
+The controller exports an exact host commit and its client gitlink, records a
+SHA-256 receipt for the transported source archive, and dispatches the same
 worker to macOS, the Linux builder, or Windows through windows-ssh.py. It does
 not tag, push, publish, or create a GitHub release.
 """
@@ -40,7 +40,13 @@ NAV_NAMES = (
     "274bot.navreach",
     "274bot.navcanlight",
     "274bot.navpois",
-    "274bot.navpack.json",
+)
+GAME_DATA_ENV = (
+    "GAME_DATA_274_ENGINE",
+    "GAME_DATA_274_CONTENT",
+    "GAME_DATA_289_ENGINE",
+    "GAME_DATA_289_CONTENT",
+    "RS2B0T",
 )
 FULL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 NOTES_FOOTER = Path(__file__).resolve().parent / "notes-footer.md"
@@ -176,58 +182,8 @@ def validate_remote_root(value, label):
     return path.as_posix()
 
 
-def tree_digest(base):
-    """Hash a tree as sorted path/NUL/file-hash rows, excluding .git metadata."""
-    base = Path(base)
-    if not base.is_dir():
-        raise ReleaseError(f"input directory is missing: {base}")
-    rows = {}
-    for root, directories, files in os.walk(base):
-        directories[:] = sorted(name for name in directories if name != ".git")
-        for name in sorted(name for name in files if name != ".git"):
-            path = Path(root) / name
-            if path.is_symlink():
-                raise ReleaseError(f"input tree contains a symlink: {path}")
-            relative = path.relative_to(base).as_posix()
-            rows[relative] = sha256_file(path)
-    digest = hashlib.sha256()
-    for name in sorted(rows):
-        digest.update(name.encode("utf-8") + b"\0" + rows[name].encode("ascii") + b"\n")
-    return {"sha256": digest.hexdigest(), "files": len(rows)}
 
 
-def input_paths(inputs_root, expect):
-    root = Path(inputs_root)
-    return {
-        "pack": root / "engine/data/pack/client",
-        "content": root / "content",
-        "snapshot": root / "snapshots" / expect["snapshot_version"],
-    }
-
-
-def verify_expected_input_digests(paths, expect):
-    expected = expect.get("inputs")
-    if not isinstance(expected, dict):
-        raise ReleaseError("expect.json has no inputs object")
-    actual = {name: tree_digest(path) for name, path in paths.items()}
-    for name in ("pack", "content", "snapshot"):
-        if actual[name] != expected.get(name):
-            raise ReleaseError(
-                f"input digest mismatch for {name}: {actual[name]} != {expected.get(name)}"
-            )
-    return actual
-
-
-def verify_input_digests(inputs_root, expect):
-    return verify_expected_input_digests(input_paths(inputs_root, expect), expect)
-
-
-def verify_input_digests_from_roots(args, expect):
-    return verify_expected_input_digests({
-        "pack": Path(args.engine_dir) / "data/pack/client",
-        "content": Path(args.content_dir),
-        "snapshot": Path(args.snapshot_root) / expect["snapshot_version"],
-    }, expect)
 
 
 def safe_tar_members(archive):
@@ -346,20 +302,87 @@ def create_source_archive(repo, client_repo, commit, client_commit, output):
     return {"sha256": sha256_file(output), "bytes": Path(output).stat().st_size}
 
 
-def create_inputs_archive(engine_dir, content_dir, snapshot_root, snapshot_version, output):
-    pack = Path(engine_dir) / "data/pack/client"
-    content = Path(content_dir)
-    snapshot = Path(snapshot_root) / snapshot_version
-    inputs = {
-        "pack": tree_digest(pack),
-        "content": tree_digest(content),
-        "snapshot": tree_digest(snapshot),
-    }
+def create_inputs_archive(game_data_roots, rs2b0t, snapshot_root, snapshot_version, output):
+    """Transport local generator, navigation, and optional map-bake inputs."""
     with tarfile.open(output, "w:gz") as archive:
-        add_tree_to_tar(archive, pack, "engine/data/pack/client", exclude_git=True)
-        add_tree_to_tar(archive, content, "content", exclude_git=True)
-        add_tree_to_tar(archive, snapshot, f"snapshots/{snapshot_version}", exclude_git=True)
-    return inputs, {"sha256": sha256_file(output), "bytes": Path(output).stat().st_size}
+        for revision in ("274", "289"):
+            engine = Path(game_data_roots[f"GAME_DATA_{revision}_ENGINE"])
+            content = Path(game_data_roots[f"GAME_DATA_{revision}_CONTENT"])
+            add_tree_to_tar(
+                archive, engine, f"game-data/{revision}/engine", exclude_git=True
+            )
+            add_tree_to_tar(
+                archive, content, f"game-data/{revision}/content", exclude_git=True
+            )
+        add_tree_to_tar(archive, rs2b0t, "rs2b0t", exclude_git=True)
+        if snapshot_root is not None:
+            if not snapshot_version:
+                raise ReleaseError("--snapshot-version is required with --snapshot-root")
+            snapshot = Path(snapshot_root) / snapshot_version
+            add_tree_to_tar(
+                archive, snapshot, f"snapshots/{snapshot_version}", exclude_git=True
+            )
+        elif snapshot_version:
+            raise ReleaseError("--snapshot-root is required with --snapshot-version")
+
+def cargo_json_messages(path):
+    with Path(path).open() as source:
+        for line in source:
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(message, dict):
+                yield message
+
+
+def require_embedded_game_data(build_log):
+    """Refuse release artifacts unless Cargo reports the real API build cfgs."""
+    api_packages = set()
+    embedded = False
+    for message in cargo_json_messages(build_log):
+        if message.get("reason") != "compiler-artifact":
+            continue
+        target = message.get("target") or {}
+        kinds = target.get("kind") or []
+        if target.get("name") != "api" or not ({"lib", "rlib"} & set(kinds)):
+            continue
+        package_id = message.get("package_id")
+        if isinstance(package_id, str):
+            api_packages.add(package_id)
+        features = message.get("features")
+        if isinstance(features, list) and "embedded-game-data" in features:
+            embedded = True
+    if not api_packages:
+        raise ReleaseError("Cargo JSON did not report an API compiler artifact")
+
+    api_build_seen = False
+    no_local_game_data = False
+    for message in cargo_json_messages(build_log):
+        if (
+            message.get("reason") != "build-script-executed"
+            or message.get("package_id") not in api_packages
+        ):
+            continue
+        api_build_seen = True
+        cfgs = message.get("cfgs")
+        if isinstance(cfgs, list) and any(
+            isinstance(cfg, str) and cfg.split("=", 1)[0] == "no_local_game_data"
+            for cfg in cfgs
+        ):
+            no_local_game_data = True
+    if no_local_game_data:
+        raise ReleaseError(
+            "API was compiled with no_local_game_data; refusing a release build"
+        )
+    if not embedded:
+        raise ReleaseError(
+            "Cargo did not compile the API with embedded-game-data; refusing a release build"
+        )
+    if not api_build_seen:
+        raise ReleaseError(
+            "Cargo did not report executing the API build script; refusing a release build"
+        )
 
 
 def verify_file_record(path, record, label):
@@ -405,12 +428,15 @@ def render_build_plan(args, commit, client_commit, version):
             "package": f"274bot-{version}-{ARCH_NAME[platform]}",
             "steps": [
                 "transfer source.tar.gz, inputs.tar.gz, expect.json, and the worker",
-                "verify both archive SHA-256 records",
+                "verify the exact source archive SHA-256 receipt",
                 "extract into a fresh per-commit workspace",
-                "recompute pack/content/snapshot tree digests and compare expect.json",
+                "set both revisions' GAME_DATA roots and RS2B0T to the transported local inputs",
+                "run python tools/local-data/build.py before the product build",
                 "set GIT_DIRTY=0 and BOT_NAV_BUILD=require",
-                cargo,
-                "write a per-file build receipt and run package.py",
+                "clean the API target to force fresh compiled-cfg evidence",
+                cargo + " --message-format=json-render-diagnostics",
+                "require the API embedded-game-data feature and reject no_local_game_data",
+                "write the same-build per-file receipt and run package.py",
             ],
         })
     return {
@@ -422,10 +448,15 @@ def render_build_plan(args, commit, client_commit, version):
         "revision": int(args.revision),
         "source": "git archive of the exact host commit plus its exact client gitlink",
         "inputs": {
-            "pack": "${ENGINE_DIR}/data/pack/client",
-            "content": "${CONTENT_DIR} excluding .git",
-            "snapshot": "${SNAPSHOT_ROOT}/${SNAPSHOT_VERSION}",
-            "manifest": "expect.json records SHA-256 tree digest and file count for each",
+            "GAME_DATA_274_ENGINE": "game-data/274/engine",
+            "GAME_DATA_274_CONTENT": "game-data/274/content",
+            "GAME_DATA_289_ENGINE": "game-data/289/engine",
+            "GAME_DATA_289_CONTENT": "game-data/289/content",
+            "RS2B0T": "rs2b0t",
+            "snapshot": (
+                "${SNAPSHOT_ROOT}/${SNAPSHOT_VERSION} for the revision-289 map bundle"
+            ),
+            "identity": "local game inputs are transported without content digests or pins",
         },
         "platforms": platforms,
         "not_performed": ["build", "notarize", "tag", "push", "publish"],
@@ -433,12 +464,17 @@ def render_build_plan(args, commit, client_commit, version):
 
 
 def prepare_payload(args, repo, commit, client_commit, version):
-    missing = [
-        name for name in (
-            "work_dir", "engine_dir", "content_dir", "snapshot_root", "snapshot_version"
-        )
-        if not getattr(args, name)
+    required_args = [
+        "work_dir",
+        "game_data_274_engine",
+        "game_data_274_content",
+        "game_data_289_engine",
+        "game_data_289_content",
+        "rs2b0t",
     ]
+    if args.revision == "289":
+        required_args.extend(("snapshot_root", "snapshot_version"))
+    missing = [name for name in required_args if not getattr(args, name)]
     if missing:
         raise ReleaseError(
             "build requires "
@@ -457,6 +493,12 @@ def prepare_payload(args, repo, commit, client_commit, version):
     inputs_archive = prepared / "inputs.tar.gz"
     expect_path = prepared / "expect.json"
     payload = prepared / "payload.tar.gz"
+    game_data_roots = {
+        "GAME_DATA_274_ENGINE": args.game_data_274_engine,
+        "GAME_DATA_274_CONTENT": args.game_data_274_content,
+        "GAME_DATA_289_ENGINE": args.game_data_289_engine,
+        "GAME_DATA_289_CONTENT": args.game_data_289_content,
+    }
     if prepared.exists():
         required = (source_archive, inputs_archive, expect_path, payload)
         if not all(path.is_file() for path in required):
@@ -465,13 +507,17 @@ def prepare_payload(args, repo, commit, client_commit, version):
                 "use build --reset-prepared to recreate it"
             )
         expect = json.loads(expect_path.read_text())
+        if expect.get("schema") != 2:
+            raise ReleaseError(
+                f"prepared release {prepared} uses an obsolete schema; "
+                "use build --reset-prepared"
+            )
         identity = {
             "host_commit": commit,
             "client_commit": client_commit,
             "version": version,
             "release": release_name,
             "revision": int(args.revision),
-            "snapshot_version": args.snapshot_version,
             "jobs": args.jobs,
         }
         for key, value in identity.items():
@@ -482,35 +528,29 @@ def prepare_payload(args, repo, commit, client_commit, version):
                 )
         for name, record in expect["archives"].items():
             verify_file_record(prepared / name, record, name)
-        verify_input_digests_from_roots(args, expect)
         return commit_root, payload, expect
     prepared.mkdir(parents=True)
     try:
         source_record = create_source_archive(
             repo, client_repo, commit, client_commit, source_archive
         )
-        inputs, inputs_record = create_inputs_archive(
-            args.engine_dir,
-            args.content_dir,
+        create_inputs_archive(
+            game_data_roots,
+            args.rs2b0t,
             args.snapshot_root,
             args.snapshot_version,
             inputs_archive,
         )
         expect = {
-            "schema": 1,
+            "schema": 2,
             "host_commit": commit,
             "client_commit": client_commit,
             "version": version,
             "release": release_name,
             "revision": int(args.revision),
-            "snapshot_version": args.snapshot_version,
             "features": "default",
             "jobs": args.jobs,
-            "inputs": inputs,
-            "archives": {
-                "source.tar.gz": source_record,
-                "inputs.tar.gz": inputs_record,
-            },
+            "archives": {"source.tar.gz": source_record},
         }
         write_json(expect_path, expect)
         release_tool = Path(repo) / "tools/release/release.py"
@@ -538,7 +578,7 @@ def worker_expect(root, commit, platform):
     if not expect_path.is_file():
         raise ReleaseError(f"missing worker manifest: {expect_path}")
     expect = json.loads(expect_path.read_text())
-    if expect.get("schema") != 1:
+    if expect.get("schema") != 2:
         raise ReleaseError("unsupported expect.json schema")
     if expect.get("host_commit") != commit:
         raise ReleaseError("worker commit does not match expect.json")
@@ -643,19 +683,37 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
     else:
         environment = os.environ.copy()
         environment.pop("RUSTY_V8_ARCHIVE", None)
+    local_inputs = Path(root)
+    game_data = local_inputs / "game-data"
+    for revision in ("274", "289"):
+        environment[f"GAME_DATA_{revision}_ENGINE"] = str(
+            game_data / revision / "engine"
+        )
+        environment[f"GAME_DATA_{revision}_CONTENT"] = str(
+            game_data / revision / "content"
+        )
+    selected = str(expect["revision"])
     environment.update({
         "GIT_COMMIT": expect["host_commit"],
         "CLIENT_COMMIT": expect["client_commit"],
         "GIT_DIRTY": "0",
-        "BOT_NAV_REVISION": str(expect["revision"]),
+        "BOT_NAV_REVISION": selected,
         "BOT_NAV_BUILD": "require",
-        "BOT_NAV_ENGINE_DIR": str(root / "engine"),
-        "BOT_NAV_CONTENT_DIR": str(root / "content"),
-        "BOT_NAV_SNAPSHOT_ROOT": str(root / "snapshots"),
+        "BOT_NAV_SNAPSHOT_ROOT": str(local_inputs / "snapshots"),
+        "RS2B0T": str(local_inputs / "rs2b0t"),
         "CARGO_TARGET_DIR": str(target),
         "CARGO_BUILD_JOBS": str(expect["jobs"]),
         "CARGO_INCREMENTAL": "0",
     })
+    obsolete = (
+        "BOT_NAV_ENGINE_DIR",
+        "BOT_NAV_CONTENT_DIR",
+        "ENGINE_DIR",
+        "CONTENT_DIR",
+    )
+    for name in obsolete:
+        environment.pop(name, None)
+    environment.pop("GAME_DATA_289_PREREQ_CROSSINGS", None)
     if platform != "macos":
         environment["PATH"] = (
             str(Path.home() / ".cargo/bin") + os.pathsep + environment.get("PATH", "")
@@ -665,7 +723,6 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
             raise ReleaseError("Windows build requires --rusty-v8-archive")
         environment["RUSTY_V8_ARCHIVE"] = rusty_v8_archive
     return environment
-
 
 def build_worker(args):
     root = Path(args.worker_root).resolve()
@@ -682,23 +739,69 @@ def build_worker(args):
     inputs = root / "inputs"
     safe_extract_tar(root / "source.tar.gz", source)
     safe_extract_tar(root / "inputs.tar.gz", inputs)
-    actual_inputs = verify_input_digests(inputs, expect)
     target = root / "cache/target"
     environment = native_build_environment(
         expect, inputs, target, args.platform, args.rusty_v8_archive
     )
+
+    # Resolve Bun before the macOS linker environment removes package-manager
+    # directories from PATH. Cargo keeps that restricted PATH during bootstrap.
+    bootstrap_environment = environment.copy()
+    bun = shutil.which("bun")
+    if bun is not None:
+        bootstrap_environment["BUN_EXECUTABLE"] = str(Path(bun).resolve())
+
+    bootstrap_log = root / f"{args.platform}-local-data.log"
+    bootstrap_command = [
+        sys.executable,
+        source / "tools/local-data/build.py",
+    ]
+    with bootstrap_log.open("w") as log:
+        bootstrap = subprocess.run(
+            bootstrap_command,
+            cwd=source,
+            env=bootstrap_environment,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+    write_json(
+        root / f"{args.platform}-local-data-exit.json",
+        {"exit_code": bootstrap.returncode},
+    )
+    if bootstrap.returncode:
+        raise ReleaseError(f"local data bootstrap failed; see {bootstrap_log}")
+
     command = [
         "cargo", "build", "--locked", "--release",
         "-p", "panel", "--bin", "panel-play",
         "-p", "tui", "--bin", "tui-play",
+        "--message-format=json-render-diagnostics",
     ]
     log_path = root / f"{args.platform}-build.log"
     with log_path.open("w") as log:
-        result = subprocess.run(command, cwd=source, env=environment, stdout=log,
-                                stderr=subprocess.STDOUT, check=False)
+        clean = subprocess.run(
+            ["cargo", "clean", "-p", "api"],
+            cwd=source,
+            env=environment,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if clean.returncode:
+            raise ReleaseError(f"could not force a fresh API build; see {log_path}")
+        result = subprocess.run(
+            command,
+            cwd=source,
+            env=environment,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
     write_json(root / f"{args.platform}-build-exit.json", {"exit_code": result.returncode})
     if result.returncode:
         raise ReleaseError(f"native build failed; see {log_path}")
+    require_embedded_game_data(log_path)
     profile = target / "release"
     suffix = ".exe" if args.platform == "windows" else ""
     artifacts = [profile / (name + suffix) for name in ("panel-play", "tui-play")]
@@ -715,8 +818,9 @@ def build_worker(args):
         "rustc": rustc,
         "features": "default",
         "built_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "nav_inputs": actual_inputs,
-        "files": {path.relative_to(profile).as_posix(): sha256_file(path) for path in artifacts},
+        "files": {
+            path.relative_to(profile).as_posix(): sha256_file(path) for path in artifacts
+        },
     }
     receipt_path = root / f"{args.platform}-build-receipt.json"
     write_json(receipt_path, receipt)
@@ -729,9 +833,13 @@ def build_worker(args):
         "--output", output,
         "--build-receipt", receipt_path,
         "--revision", str(expect["revision"]),
-        "--map-cache", inputs / "engine/data/pack/client",
-        "--map-unpack", inputs / "snapshots",
     ]
+    if expect["revision"] == 289:
+        selected_engine = inputs / "game-data/289/engine"
+        package_command += [
+            "--map-cache", selected_engine / "data/pack/client",
+            "--map-unpack", inputs / "snapshots",
+        ]
     if args.platform == "macos":
         if not args.sign_identity:
             raise ReleaseError("macOS release build requires --sign-identity")
@@ -746,7 +854,6 @@ def build_worker(args):
     }
     write_json(root / f"{args.platform}-build-result.json", result_record)
     print(json.dumps(result_record, indent=2, sort_keys=True))
-
 
 def ssh_base(identity=None, known_hosts=None):
     command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
@@ -1643,22 +1750,6 @@ def verify_macos_linkage(base):
     return sorted(checked)
 
 
-def nav_digest_set(base, manifest):
-    revision = str(manifest["revision"])
-    nav = Path(base) / "nav" / revision
-    return {name: {"sha256": sha256_file(nav / name), "bytes": (nav / name).stat().st_size}
-            for name in NAV_NAMES}
-
-def compare_nav_sets(nav_sets):
-    if set(nav_sets) != set(PLATFORMS):
-        return "not compared (requires macos, linux, and windows)"
-    baseline = nav_sets["macos"]
-    for platform in ("linux", "windows"):
-        if nav_sets[platform] != baseline:
-            raise ReleaseError(f"navigation differs between macos and {platform}")
-    return "byte-identical across macos, linux, and windows"
-
-
 def discover_candidate_archives(artifact_dir):
     artifact_dir = Path(artifact_dir)
     candidates = {}
@@ -1737,7 +1828,6 @@ def verify_worker(args):
             "status": manifest["status"],
             "verified_files": len(manifest["files"]),
             "help": help_results,
-            "nav": nav_digest_set(base, manifest),
             "native_checks": native_checks,
         }
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -1761,7 +1851,6 @@ def render_verify_plan(args):
             }
             for platform in selected_platforms(args.platform)
         ],
-        "cross_platform": "require every shipped nav file to be byte-identical",
         "not_performed": ["tag", "push", "publish"],
     }
 
@@ -1785,17 +1874,17 @@ def verify_controller(args):
         )
     verify_sha256s(artifact_dir, candidates)
     integrity_platforms = PLATFORMS if set(candidates) == set(PLATFORMS) else selected
-    nav_sets = {}
     with tempfile.TemporaryDirectory(prefix="274bot-release-verify-") as temporary:
         for platform in integrity_platforms:
             archive = candidates[platform]
             destination = Path(temporary) / platform
-            base, manifest, _ = verify_package_archive(
-                archive, destination, expected_platform=platform,
-                expected_commit=args.commit, run_help=False,
+            verify_package_archive(
+                archive,
+                destination,
+                expected_platform=platform,
+                expected_commit=args.commit,
+                run_help=False,
             )
-            nav_sets[platform] = nav_digest_set(base, manifest)
-        nav_status = compare_nav_sets(nav_sets)
     native_archives = {platform: candidates[platform] for platform in selected}
     for platform, archive in native_archives.items():
         if platform == "macos":
@@ -1828,7 +1917,7 @@ def verify_controller(args):
                 "& " + " ".join(powershell_quote(value) for value in command),
             )
             windows_transport(args, "run", script)
-    print(json.dumps({"verified": sorted(native_archives), "nav": nav_status}, indent=2))
+    print(json.dumps({"verified": sorted(native_archives)}, indent=2))
 
 def retain_release_outputs(root, commit, platform):
     root = Path(root).resolve()
@@ -1978,15 +2067,20 @@ def parser():
     result = argparse.ArgumentParser(description=__doc__)
     commands = result.add_subparsers(dest="command", required=True)
 
-    build = commands.add_parser("build", help="export pinned inputs and build/package natively")
+    build = commands.add_parser("build", help="transport local inputs and build/package natively")
     build.add_argument("--commit", required=True)
     build.add_argument("--platform", choices=(*PLATFORMS, "all"), required=True)
     build.add_argument("--dry-run", action="store_true", help="print the complete plan; change nothing")
     build.add_argument("--repo-root", type=Path)
     build.add_argument("--client-root", type=Path)
     build.add_argument("--work-dir", type=Path)
-    build.add_argument("--engine-dir", type=Path)
-    build.add_argument("--content-dir", type=Path)
+    for name in GAME_DATA_ENV:
+        build.add_argument(
+            "--" + name.lower().replace("_", "-"),
+            dest=name.lower(),
+            type=Path,
+            default=os.environ.get(name),
+        )
     build.add_argument("--snapshot-root", type=Path)
     build.add_argument("--snapshot-version")
     build.add_argument("--revision", choices=("274", "289"), default="289")
@@ -2014,7 +2108,7 @@ def parser():
     finalize.add_argument("--worker-root", type=Path, help=argparse.SUPPRESS)
     add_transport_arguments(finalize)
 
-    verify = commands.add_parser("verify", help="verify extracted packages and cross-platform nav")
+    verify = commands.add_parser("verify", help="verify extracted packages and native requirements")
     verify.add_argument("--commit", required=True)
     verify.add_argument("--platform", choices=(*PLATFORMS, "all"), required=True)
     verify.add_argument("--dry-run", action="store_true", help="print the complete plan; change nothing")
@@ -2027,7 +2121,7 @@ def parser():
         "preflight", help="fail-closed release readiness checks (no builder needed)"
     )
     preflight.add_argument("--commit", required=True)
-    preflight.add_argument("--tag", required=True, help="release tag to check, e.g. 0.2.7")
+    preflight.add_argument("--tag", required=True, help="release tag to check, e.g. 0.2.8")
     preflight.add_argument("--repo-root", type=Path)
     preflight.add_argument("--worker-root", type=Path, help=argparse.SUPPRESS)
     clean = commands.add_parser(

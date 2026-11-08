@@ -267,6 +267,14 @@ fn seed_mainland_on_ready<D: api::interact::Driver>(
     }
 }
 
+struct LiveLogoutAccount {
+    name: String,
+    combat: frontend_core::live::CombatLogout,
+    error: Option<String>,
+}
+
+type LiveLogoutAccounts = Arc<Mutex<Vec<LiveLogoutAccount>>>;
+
 /// The TUI's per-frame client work on every slot. The core already
 /// publishes the frame and runs the shared live harness; this adds TUI-owned
 /// mainland seeding.
@@ -274,6 +282,7 @@ struct TuiFrameHook {
     /// Hop a fresh slot to the mainland once in a loaded scene.
     mainland: bool,
     mainland_sent: Mutex<HashSet<String>>,
+    live_logout: Option<LiveLogoutAccounts>,
 }
 
 impl frontend_core::frames::FrameHook for TuiFrameHook {
@@ -289,6 +298,7 @@ impl frontend_core::frames::FrameHook for TuiFrameHook {
         let Self {
             mainland,
             mainland_sent,
+            live_logout,
         } = self;
         if frame.session_boundary() {
             frame.mark_walk_clear();
@@ -307,6 +317,18 @@ impl frontend_core::frames::FrameHook for TuiFrameHook {
                 slot = name,
                 "mainland hop queued"
             );
+        }
+        if let Some(logouts) = live_logout {
+            let mut logouts = logouts.lock().unwrap();
+            if let Some(account) = logouts.iter_mut().find(|account| account.name == name) {
+                match account.combat.send_escape(c, Instant::now()) {
+                    Ok(true) => {
+                        eprintln!("[tui-play] live logout account-only safe tele account={name}");
+                    }
+                    Ok(false) => {}
+                    Err(error) => account.error = Some(error),
+                }
+            }
         }
     }
 }
@@ -397,6 +419,7 @@ pub struct TuiSession {
     core: OperatorSession<()>,
     auto_world: Option<u16>,
     pub error: Option<String>,
+    vault_refusal: Option<frontend_core::saved_data::SavedDataRefusal>,
     /// The banner message's expiry clock ([`Self::expire_error`]).
     error_expiry: frontend_core::ErrorExpiry<ErrorNeed>,
     /// All profile names (for the strip's slot list), in vault order.
@@ -419,6 +442,7 @@ pub struct TuiSession {
 
     /// The `--live` run's scenario name, for the PASS/FAIL label.
     live_name: Option<String>,
+    live_logout: Option<LiveLogoutAccounts>,
     /// `--catalog-core` / `--pair-core`: the shared witness the next
     /// `--live` prepare arms.
     live_catalog_core: bool,
@@ -596,7 +620,8 @@ pub(crate) mod seam {
             let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
             launcher.set_play_host("127.0.0.1");
             let session =
-                TuiSession::with_launcher(launcher, frontend_core::launch::InstancePermit::skip());
+                TuiSession::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
+                    .expect("isolated script settings are readable");
             Self { session }
         }
 
@@ -713,6 +738,7 @@ impl TuiSession {
         let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
         launcher.set_play_host(&options.host);
         Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
+            .expect("isolated script settings are readable")
     }
 
     /// A session bound to the prepared host `template`.
@@ -721,19 +747,18 @@ impl TuiSession {
         let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
         launcher.install_template(frontend_core::launch::ProfileTemplate::from_host(template));
         Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
+            .expect("isolated script settings are readable")
     }
 
     fn with_launcher(
         launcher: frontend_core::launch::ProfileLauncher,
         permit: frontend_core::launch::InstancePermit,
-    ) -> Self {
+    ) -> Result<Self, frontend_core::ScriptSettingsError> {
         #[cfg(test)]
         let _quester_paths_test_guard = seam::lock_quester_paths_test_state();
         #[cfg(test)]
         frontend_core::test_support::IsolatedStores::ensure_thread();
-        // A missing store is a first run; a refused or corrupt one is said out
-        // loud (and nothing is saved over a refused one).
-        let (scripts, restore_error) = frontend_core::Scripts::open_default();
+        let (scripts, restore_error) = frontend_core::Scripts::open_default()?;
         if let Some(error) = restore_error {
             eprintln!("tui-play: {error}");
         }
@@ -753,12 +778,13 @@ impl TuiSession {
         // This front end draws no game image: the capacity warning says so.
         core.declare_headless_render();
         let background_ack = frontend_core::resources::background_bots_acked(&preferences);
-        Self {
+        Ok(Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
             core,
             auto_world: None,
             error: None,
+            vault_refusal: None,
             error_expiry: frontend_core::ErrorExpiry::default(),
             names: Vec::new(),
             mainland: false,
@@ -768,6 +794,7 @@ impl TuiSession {
             last_focused: None,
             walk_reset: false,
             live_name: None,
+            live_logout: None,
             live_catalog_core: false,
             live_pair_core: false,
             live_core_deadline: None,
@@ -810,7 +837,7 @@ impl TuiSession {
             notice_feedback: None,
             #[cfg(test)]
             _quester_paths_test_guard,
-        }
+        })
     }
 
     /// The server profile this session is bound to, once bound.
@@ -878,6 +905,7 @@ impl TuiSession {
     /// run, when there is no vault file yet (`CreateVault`), and start the
     /// play.
     fn unlock_at(&mut self, path: &Path, pass: &str) -> Result<(), String> {
+        self.vault_refusal = None;
         let (launch, hook) = self.play_launch();
         let command = if path.is_file() {
             self.core
@@ -893,8 +921,11 @@ impl TuiSession {
         let submitted = core
             .submit(command, Targets::Application, &mut surface)
             .map_err(|error| error.to_string())?;
-        if let Some(reason) = self.core.command_failure(submitted.request()) {
-            return Err(reason.to_string());
+        let request = submitted.request();
+        let failure = self.core.command_failure(request).map(str::to_owned);
+        self.vault_refusal = self.core.take_vault_refusal(request);
+        if let Some(reason) = failure {
+            return Err(reason);
         }
         self.play_started();
         Ok(())
@@ -922,6 +953,7 @@ impl TuiSession {
         let hook = Arc::new(TuiFrameHook {
             mainland: self.mainland,
             mainland_sent: Mutex::new(HashSet::new()),
+            live_logout: self.live_logout.clone(),
         });
         let mut launch = self.launcher.take_launch();
         if let Some(number) = self.auto_world {
@@ -1450,6 +1482,7 @@ impl TuiSession {
         #[cfg(feature = "js")]
         let fleet_cards = scenario.fleet_cards(names)?;
         let path = profiles.tui_vault();
+        self.live_logout = Some(Arc::new(Mutex::new(Vec::new())));
         self.unlock_at(&path, profiles.passphrase())?;
         self.core.configure_live_core(names)?;
         self.live_name = Some(name);
@@ -1602,7 +1635,7 @@ impl TuiSession {
 
     fn map_context(&self, app: &TuiApp) -> Option<frontend_core::walk_map::WalkMapContext> {
         let name = app.focused_name()?;
-        let nav = self.bound()?.nav_identity()?;
+        let nav = self.bound()?.nav_pack_id()?;
         Some(self.core.walk_map_context(
             Some(&name),
             nav,
@@ -1722,12 +1755,12 @@ impl TuiSession {
             return;
         };
         let identity = ready.identity();
-        let Some(nav) = profile.nav_identity() else {
+        let Some(nav) = profile.nav_pack_id() else {
             return;
         };
         let data = profile.game_data().or_else(|| self.core.game_data());
         let same = app.map_catalogue.as_ref().is_some_and(|catalogue| {
-            catalogue.identity() == identity && catalogue.nav_identity() == nav
+            catalogue.identity() == identity && catalogue.nav_pack_id() == nav
         });
         if same && (self.map_catalogue_named || data.is_none()) {
             return;
@@ -3289,6 +3322,12 @@ impl TuiSession {
                 NavPreference::AllowBankFetch => {
                     OperatorCommand::SetNavPreference(*preference, now.allow_bank_fetch())
                 }
+                NavPreference::AllowPrereqDialogue => {
+                    OperatorCommand::SetNavPreference(*preference, now.allow_prereq_dialogue())
+                }
+                NavPreference::AllowQuestStart => {
+                    OperatorCommand::SetNavPreference(*preference, now.allow_quest_start())
+                }
                 NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
                     if danger_sent {
                         continue;
@@ -3326,6 +3365,54 @@ impl TuiSession {
                 }
             }
             Some(error) => app.error = Some(format!("settings: walk permissions: {error}")),
+        }
+    }
+
+    /// Submit the global "Start fights with players" setting
+    /// (`SetPvpStartFights`) the popup changed, then settle it in the shared
+    /// view rule. A refused or failed save (at once or later) shows its reason,
+    /// and the row shows the saved value again.
+    fn project_pvp_start_fights(&mut self, app: &mut TuiApp) {
+        if let Some(on) = app.pvp_start_fights_request.take() {
+            if !self.persist_ui {
+                // A `--live` run keeps its settings ephemeral: say so, once, at
+                // the shared command boundary, and show the saved value again.
+                const REASON: &str = "settings are not saved in a --live run";
+                self.core
+                    .refuse_unsubmitted(OperatorCommand::SetPvpStartFights(on), &[], REASON);
+                app.error = Some(format!("settings: start fights with players: {REASON}"));
+                app.pvp_start_fights.refuse();
+            } else {
+                match self.submit_raw_with(
+                    app,
+                    OperatorCommand::SetPvpStartFights(on),
+                    Targets::Application,
+                ) {
+                    Ok(submitted) => app.pvp_start_fights.submitted(submitted.request()),
+                    Err(error) => {
+                        app.error = Some(format!("settings: start fights with players: {error}"));
+                        app.pvp_start_fights.refuse();
+                    }
+                }
+            }
+        }
+        match app.pvp_start_fights.follow(&self.core) {
+            Some(frontend_core::PvpWrite::Failed) => {
+                app.error = Some(format!(
+                    "settings: {}",
+                    app.pvp_start_fights.failure(&self.core)
+                ));
+            }
+            Some(frontend_core::PvpWrite::Saved)
+                if app
+                    .error
+                    .as_deref()
+                    .is_some_and(frontend_core::is_start_fights_error) =>
+            {
+                app.error = None;
+            }
+            Some(frontend_core::PvpWrite::Saved) => {}
+            None => {}
         }
     }
 
@@ -3544,10 +3631,12 @@ impl TuiSession {
     /// which drafts are still the operator's own change.
     fn project_setting_feedback(&mut self, app: &mut TuiApp) {
         use frontend_core::{NavPreference as N, Setting as S, SettingStatus};
-        const SHOWN: [frontend_core::Setting; 12] = [
+        const SHOWN: [frontend_core::Setting; 14] = [
             S::Nav(N::AllowTeleports),
             S::Nav(N::AllowWilderness),
             S::Nav(N::AllowBankFetch),
+            S::Nav(N::AllowPrereqDialogue),
+            S::Nav(N::AllowQuestStart),
             S::DangerRouting,
             S::Nav(N::PauseScriptOnManualWalkAbort),
             S::Nav(N::ScriptScopeNoticeAck),
@@ -3580,6 +3669,8 @@ impl TuiSession {
             teleports: pending(S::Nav(N::AllowTeleports)),
             wilderness: pending(S::Nav(N::AllowWilderness)),
             bank_fetch: pending(S::Nav(N::AllowBankFetch)),
+            prereq_dialogue: pending(S::Nav(N::AllowPrereqDialogue)),
+            quest_start: pending(S::Nav(N::AllowQuestStart)),
             danger: pending(S::DangerRouting),
             scope_ack: pending(S::Nav(N::ScriptScopeNoticeAck)),
             survivable_ack: pending(S::Nav(N::SurvivableRoutingNoticeAck)),
@@ -3608,6 +3699,7 @@ impl TuiSession {
         self.project_preference_error(app);
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
+        self.project_pvp_start_fights(app);
         self.project_quester_paths(app);
         // The benchmark's focus follows its run: select the member it
         // moved to.
@@ -3635,7 +3727,7 @@ impl TuiSession {
                 Ok(false) => {}
                 Err(error) => {
                     restore_terminal();
-                    eprintln!("FAIL: memory tui: {error}");
+                    api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "FAIL: memory tui: {error}");
                     exit_after_work_shutdown(1);
                 }
             }
@@ -3830,6 +3922,18 @@ impl TuiSession {
                 }
             }
             None => app.params_schema.clear(),
+        }
+        let zone_view_changed = match app.script_sel.as_ref().and_then(ScriptChoice::compiled_id) {
+            Some(frontend_core::scripts::CompiledCardId::QUESTER) => {
+                let profile = self.core.selected();
+                self.scripts
+                    .refresh_quester_start_zones(&self.core, profile)
+            }
+            _ => self.scripts.clear_quester_start_zones(),
+        };
+        app.set_quester_start_zone_view(self.scripts.shared_quester_start_zone_view());
+        if zone_view_changed {
+            app.quester_start_zone_scroll = 0;
         }
         if app.params_state.open && app.params_schema.as_ref().is_empty() {
             app.params_state.open = false;
@@ -4122,6 +4226,169 @@ impl TuiSession {
         (code, lines)
     }
 
+    /// Finish a live run only after each account has cleanly disconnected.
+    fn finish_live_exit(
+        &mut self,
+        app: &mut TuiApp,
+        result: Result<i32, String>,
+    ) -> Result<i32, String> {
+        if self.live_name.is_none() {
+            return result;
+        }
+        self.core.live_runner().clear();
+        let logout = self.clean_logout_live(app);
+        self.quit(app);
+        match (result, logout) {
+            (result, Ok(())) => {
+                if let Some(name) = self.live_name.as_deref() {
+                    eprintln!(
+                        "PASS: live {name} clean logout accounts={}",
+                        self.names.join(", ")
+                    );
+                }
+                result
+            }
+            (Ok(_), Err(error)) => {
+                eprintln!("FAIL: live logout: {error}");
+                Ok(1)
+            }
+            (Err(run_error), Err(logout_error)) => {
+                eprintln!("FAIL: live logout: {logout_error}");
+                Err(format!("{run_error}; live logout failed: {logout_error}"))
+            }
+        }
+    }
+
+    fn clean_logout_live(&mut self, app: &mut TuiApp) -> Result<(), String> {
+        if self.live_name.is_none() {
+            return Ok(());
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        match self.submit_raw(OperatorCommand::StopScript, Targets::Everyone) {
+            Ok(_) | Err(SubmitError::NoTarget(_)) => {}
+            Err(error) => return Err(format!("script stop command failed: {error}")),
+        }
+        loop {
+            self.pump(app);
+            if self.names.iter().all(|account| {
+                !self.core.script_state(account).is_live() && !self.scripts.start_waiting(account)
+            }) {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("script stop timed out before live logout".into());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        for account in &self.names {
+            eprintln!(
+                "[tui-play] live logout script stopped account={account} tick={:?}",
+                self.core
+                    .with_slot_snapshot(account, |snapshot| snapshot.tick())
+            );
+        }
+        if self.names.iter().all(|account| {
+            self.core
+                .fleet_view()
+                .row(account)
+                .is_none_or(|row| !row.connected())
+        }) {
+            return Ok(());
+        }
+        let logouts = self
+            .live_logout
+            .as_ref()
+            .ok_or("live logout client hook is unavailable")?
+            .clone();
+        *logouts.lock().unwrap() = self
+            .names
+            .iter()
+            .map(|account| {
+                self.core
+                    .with_slot_snapshot(account, |snapshot| LiveLogoutAccount {
+                        name: account.clone(),
+                        combat: frontend_core::live::CombatLogout::new(snapshot, deadline),
+                        error: None,
+                    })
+                    .ok_or_else(|| format!("live logout snapshot unavailable for {account}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        match self.submit_raw(OperatorCommand::Logout, Targets::Everyone) {
+            Ok(_) | Err(SubmitError::NoTarget(_)) => {}
+            Err(error) => return Err(format!("logout command failed: {error}")),
+        }
+        let mut logout_ticks = self
+            .names
+            .iter()
+            .map(|account| {
+                self.core
+                    .with_slot_snapshot(account, |snapshot| snapshot.tick())
+            })
+            .collect::<Vec<_>>();
+        loop {
+            self.pump(app);
+            if self.names.iter().all(|account| {
+                self.core
+                    .fleet_view()
+                    .row(account)
+                    .is_none_or(|row| !row.connected())
+            }) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                let connected = self
+                    .names
+                    .iter()
+                    .filter(|account| {
+                        self.core
+                            .fleet_view()
+                            .row(account)
+                            .is_some_and(|row| row.connected())
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                return Err(format!(
+                    "logout timed out after 30 seconds for {}",
+                    connected.join(", ")
+                ));
+            }
+            for (index, last_tick) in logout_ticks.iter_mut().enumerate() {
+                let account = &self.names[index];
+                if !self
+                    .core
+                    .fleet_view()
+                    .row(account)
+                    .is_some_and(|row| row.connected())
+                {
+                    continue;
+                }
+                let tick = self
+                    .core
+                    .with_slot_snapshot(account, |snapshot| snapshot.tick());
+                let may_retry = self
+                    .core
+                    .with_slot_snapshot(account, |snapshot| {
+                        let mut accounts = logouts.lock().unwrap();
+                        let state = &mut accounts[index];
+                        if let Some(error) = &state.error {
+                            return Err(error.clone());
+                        }
+                        Ok(state.combat.allows_retry(snapshot, Instant::now()))
+                    })
+                    .unwrap_or(Ok(false))?;
+                if may_retry && live_logout_retry_due(last_tick, tick) {
+                    let account = account.clone();
+                    eprintln!("[tui-play] live logout retry account={account} tick={tick:?}");
+                    match self.submit_raw(OperatorCommand::Logout, Targets::Profile(&account)) {
+                        Ok(_) | Err(SubmitError::NoTarget(_)) => {}
+                        Err(error) => return Err(format!("logout retry failed: {error}")),
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     /// Return a producer-marked terminal asset-init failure for a slot owned
     /// by this scenario. Retryable login errors intentionally remain pending.
     fn terminal_startup_failure(&self) -> Option<String> {
@@ -4322,11 +4589,13 @@ impl TuiSession {
         app.error = Some(text.to_owned());
     }
 
-    /// Reorder the saved Load order (`ReorderProfiles`): stage the op, then
-    /// submit it with the fleet model lent. The core refuses it unless the
-    /// model shows Load order. The cursor follows its profile by identity.
+    /// Reorder the one saved Load order (`ReorderProfiles`) from the Fleet
+    /// list: stage the op, then submit it with the fleet model lent. The
+    /// core refuses it unless the model shows Load order. The cursor
+    /// follows its profile by identity.
     fn reorder_profiles(&mut self, app: &mut TuiApp, op: frontend_core::ReorderOp) {
-        self.core.stage_reorder(op);
+        self.core
+            .stage_reorder(op, frontend_core::ReorderSurface::Fleet);
         if let Err(error) =
             self.submit_with(app, OperatorCommand::ReorderProfiles, Targets::Application)
         {
@@ -4522,6 +4791,25 @@ enum ProofLine {
     Stderr(String),
 }
 
+/// R289 content `content/scripts/login_logout/logout.rs2:26-30` prevents
+/// logout for 16 game ticks after combat. Snapshot ticks count PLAYER_INFO,
+/// not render frames or elapsed wall time. A missing first snapshot starts
+/// the wait at the first observed tick; it never authorizes an early retry.
+fn live_logout_retry_due(last_tick: &mut Option<u32>, tick: Option<u32>) -> bool {
+    let Some(tick) = tick else {
+        return false;
+    };
+    let Some(previous) = *last_tick else {
+        *last_tick = Some(tick);
+        return false;
+    };
+    if tick.wrapping_sub(previous) < 16 {
+        return false;
+    }
+    *last_tick = Some(tick);
+    true
+}
+
 impl ProofLine {
     fn write(&self) {
         match self {
@@ -4611,6 +4899,14 @@ fn prompt_instance_conflict(conflict: &frontend_core::launch::InstanceConflict) 
         "c" | "C" | "continue" | "Continue" | "Continue anyway"
     )
 }
+fn prompt_saved_data(refusal: &str) -> bool {
+    eprintln!("{refusal}");
+    eprint!("Move these files aside and continue? [y/N]: ");
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    matches!(line.trim(), "y" | "Y" | "yes" | "Yes")
+}
 
 /// Run the interactive (or `--live`) TUI: unlock, load + log in, event loop.
 fn new_app(title: impl Into<String>, preferences: &UiPreferences) -> TuiApp {
@@ -4675,6 +4971,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
     };
     let skip_lock = !matches!(mode, RunMode::Interactive) || memory;
+    let interactive_saved_data = !skip_lock && std::io::IsTerminal::is_terminal(&std::io::stdin());
     let permit = match frontend_core::launch::acquire_instance(
         frontend_core::launch::InstanceKind::Tui,
         skip_lock,
@@ -4688,6 +4985,40 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
         Err(e) => return Err(format!("instance lock: {e}")),
     };
+    let root = frontend_core::saved_data::StateRoot::new(
+        frontend_core::scripts::paths::bot_home().join(".274bot"),
+    );
+    let startup = frontend_core::saved_data::SavedDataStartup::check(&root).map_err(|error| {
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+        message
+    })?;
+    let refusal_message = startup.refusal().map(ToString::to_string);
+    if let Some(message) = refusal_message {
+        if !interactive_saved_data || !prompt_saved_data(&message) {
+            let error = startup
+                .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
+                .expect_err("the preflight found refused saved data");
+            let message = error.to_string();
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+            return Err(message);
+        }
+        startup
+            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+            .map_err(|error| {
+                let message = error.to_string();
+                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+                message
+            })?;
+    } else {
+        startup
+            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+            .map_err(|error| {
+                let message = error.to_string();
+                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+                message
+            })?;
+    }
     let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
     launcher
         .configure(
@@ -4723,7 +5054,11 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             ));
         }
     }
-    let mut session = TuiSession::with_launcher(launcher, permit);
+    let mut session = TuiSession::with_launcher(launcher, permit).map_err(|error| {
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+        message
+    })?;
     session.auto_world = args.world;
     session
         .bound()
@@ -4768,7 +5103,18 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             session.mainland = scenario.view().mainland();
             session.live_catalog_core = args.catalog_core;
             session.live_pair_core = args.pair_core;
-            session.live_prepare_script(scenario)?;
+            if let Err(error) = session.live_prepare_script(scenario) {
+                if session.live_name.is_some() {
+                    let mut app = new_app(
+                        format!("tui-play --live {name} · {}", session.profile_label()),
+                        &session.preferences,
+                    );
+                    app.names = session.names.clone();
+                    app.focused = (!app.names.is_empty()).then_some(0);
+                    return session.finish_live_exit(&mut app, Err(error));
+                }
+                return Err(error);
+            }
             let mut app = new_app(
                 format!("tui-play --live {name} · {}", session.profile_label()),
                 &session.preferences,
@@ -4789,11 +5135,38 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
                     return Err(unknown_profile_error(name));
                 }
             }
-            let pass =
+            let mut pass =
                 frontend_core::launch::obtain_passphrase("tui-play", args.pass_stdin, vault_exists)
                     .map_err(|error| error.to_string())?;
-            if let Err(e) = session.unlock_at(&vault_path, &pass) {
-                return Err(format!("vault {}: {e}", vault_path.display()));
+            if let Err(error) = session.unlock_at(&vault_path, &pass) {
+                if let Some(refusal) = session.vault_refusal.take() {
+                    let message = refusal.to_string();
+                    api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play vault unlock: {message}");
+                    if interactive_saved_data && prompt_saved_data(&message) {
+                        refusal.resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+                            .map_err(|error| {
+                                let message = error.to_string();
+                                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play vault unlock: {message}");
+                                message
+                            })?;
+                        pass = frontend_core::launch::obtain_passphrase(
+                            "tui-play",
+                            args.pass_stdin,
+                            false,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        session
+                            .unlock_at(&vault_path, &pass)
+                            .map_err(|error| format!("vault {}: {error}", vault_path.display()))?;
+                    } else {
+                        return Err(refusal
+                            .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
+                            .expect_err("Keep returns the typed vault refusal")
+                            .to_string());
+                    }
+                } else {
+                    return Err(format!("vault {}: {error}", vault_path.display()));
+                }
             }
             // The passphrase has done its job; do not keep it through the run.
             drop(pass);
@@ -4922,28 +5295,37 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
     app.map_bake = session.map_desk.bake_gate().choice();
     if enable_raw_mode().is_err() {
         // No controlling terminal: pump the runner without drawing.
-        loop {
+        let result = loop {
             if let Some(code) = headless_step(&mut session, &mut app) {
-                return Ok(code);
+                break Ok(code);
             }
             std::thread::sleep(Duration::from_millis(50));
-        }
+        };
+        return session.finish_live_exit(&mut app, result);
     }
     RAW_MODE.store(true, Ordering::SeqCst);
-    let _guard = TerminalGuard;
+    let guard = TerminalGuard;
     let mut stdout = std::io::stdout();
-    crossterm::execute!(
+    ALT_SCREEN.store(true, Ordering::SeqCst);
+    let terminal = crossterm::execute!(
         stdout,
         EnterAlternateScreen,
         crossterm::event::EnableMouseCapture
     )
-    .map_err(|e| format!("terminal setup: {e}"))?;
-    ALT_SCREEN.store(true, Ordering::SeqCst);
-    install_tui_panic_hook();
-    crate::stderr_capture::capture();
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
-
+    .map_err(|e| format!("terminal setup: {e}"))
+    .and_then(|()| {
+        install_tui_panic_hook();
+        crate::stderr_capture::capture();
+        let backend = CrosstermBackend::new(stdout);
+        Terminal::new(backend).map_err(|e| e.to_string())
+    });
+    let mut terminal = match terminal {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            drop(guard);
+            return session.finish_live_exit(&mut app, Err(error));
+        }
+    };
     let mut deferred = Vec::new();
     let result = (|| loop {
         if let Some(code) = headed_frame(&mut session, &mut app, &mut terminal, &mut deferred)? {
@@ -4963,12 +5345,17 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
             dispatch(&mut session, &mut app, action);
         }
         if app.quit {
-            return Ok(0);
+            return if session.live_name.is_some() {
+                Err("live run stopped before completion".into())
+            } else {
+                Ok(0)
+            };
         }
     })();
 
     drop(terminal);
     restore_terminal();
+    let result = session.finish_live_exit(&mut app, result);
     write_proof_lines(&deferred);
     result
 }
@@ -4980,6 +5367,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
 /// on the next pump.
 fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
+        AppAction::Quit if session.live_name.is_some() => app.quit = true,
         AppAction::Quit => session.quit(app),
         AppAction::Refused(refusal) => {
             let bot = refusal.bot.as_deref();

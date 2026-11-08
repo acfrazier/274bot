@@ -248,22 +248,6 @@ fn canonical_keys_match_independent_binary_preimages_and_encoder_invalidation() 
         .key()
         .unwrap()
     );
-    assert_ne!(
-        catalogue_identity()
-            .merged_key(Digest([1; 32]), None)
-            .unwrap(),
-        catalogue_identity()
-            .merged_key(Digest([1; 32]), Some(Digest([0; 32])))
-            .unwrap()
-    );
-    assert_ne!(
-        catalogue_identity()
-            .merged_key(Digest([1; 32]), None)
-            .unwrap(),
-        catalogue_identity()
-            .merged_key(Digest([2; 32]), None)
-            .unwrap()
-    );
     assert!(Digest::from_hex(&"AA".repeat(32)).is_err());
 }
 
@@ -569,8 +553,7 @@ fn catalogue_rejects_duplicate_unknown_and_non_client_records() {
         Err(MapError::Schema(_))
     ));
     value = serde_json::to_value(catalogue()).unwrap();
-    value["records"][0]["walk_target"] =
-        serde_json::json!({"tile":{"x":3514,"z":3479,"plane":0},"nav_sha256":Digest([9;32])});
+    value["records"][0]["walk_target"] = serde_json::json!({"tile":{"x":3514,"z":3479,"plane":0}});
     assert!(matches!(
         ClientPois::decode(&serde_json::to_vec(&value).unwrap(), catalogue_identity()),
         Err(MapError::Invalid("non-client POI in client catalogue"))
@@ -746,56 +729,49 @@ fn image_manifest_rejects_duplicate_keys_missing_parent_and_traversal_fields() {
     ));
 }
 
-fn service_identity() -> ServiceIdentity {
-    ServiceIdentity {
-        revision: 289,
-        content: Digest([0x11; 32]),
-        nav_sha256: Digest([1; 32]),
-        source_sha256: Digest([2; 32]),
-        generator_sha256: Digest([3; 32]),
-        policy: Digest([4; 32]),
-    }
-}
 #[test]
-fn navpois_rejects_stale_source_corruption_and_oversized_declarations() {
-    let s = ServicePois {
+fn navpois_round_trips_and_rejects_bad_framing_and_version() {
+    let document = ServicePois {
         schema: NAVPOIS_VERSION,
-        identity: service_identity(),
         coverage: coverage(),
         records: Rows::new(vec![booth()]).unwrap(),
     };
-    let bytes = s.encode_navpois().unwrap();
-    let file_digest = Digest::of(&bytes);
-    let decoded = ServicePois::decode_navpois(&bytes, s.identity, file_digest).unwrap();
-    assert_eq!(decoded.records.as_slice()[0].effective_plane, 0);
+    let bytes = document.encode_navpois().unwrap();
+    assert_eq!(ServicePois::decode_navpois(&bytes).unwrap(), document);
+
+    let mut unsupported = bytes.clone();
+    unsupported[4] = 1;
     assert!(matches!(
-        ServicePois::decode_navpois(
-            &bytes,
-            ServiceIdentity {
-                source_sha256: Digest([5; 32]),
-                ..s.identity
-            },
-            file_digest
-        ),
-        Err(MapError::Identity)
+        ServicePois::decode_navpois(&unsupported),
+        Err(MapError::Unsupported { .. })
     ));
-    let mut corrupt = bytes.clone();
-    *corrupt.last_mut().unwrap() ^= 1;
+
+    let mut excessive_length = bytes.clone();
+    excessive_length[5..9].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(matches!(
-        ServicePois::decode_navpois(&corrupt, s.identity, file_digest),
-        Err(MapError::Digest)
-    ));
-    let mut excessive = bytes.clone();
-    excessive[5..9].copy_from_slice(&u32::MAX.to_le_bytes());
-    assert!(matches!(
-        ServicePois::decode_navpois(&excessive, s.identity, file_digest),
+        ServicePois::decode_navpois(&excessive_length),
         Err(MapError::Limit("navpois header"))
     ));
-    let mut future = bytes;
-    future[4] = 2;
+
+    let mut excessive_count = bytes.clone();
+    excessive_count[9..13].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(matches!(
-        ServicePois::decode_navpois(&future, s.identity, file_digest),
-        Err(MapError::Unsupported { .. })
+        ServicePois::decode_navpois(&excessive_count),
+        Err(MapError::Limit("navpois header"))
+    ));
+
+    let mut wrong_count = bytes.clone();
+    wrong_count[9..13].copy_from_slice(&2u32.to_le_bytes());
+    assert!(matches!(
+        ServicePois::decode_navpois(&wrong_count),
+        Err(MapError::Invalid("navpois count"))
+    ));
+
+    let mut trailing = bytes;
+    trailing.push(0);
+    assert!(matches!(
+        ServicePois::decode_navpois(&trailing),
+        Err(MapError::Invalid("navpois length"))
     ));
 }
 

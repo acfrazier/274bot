@@ -1,0 +1,20 @@
+{
+  "$schema":"../path.schema.json","schema":3,"id":"viking","display_name":"The Fremennik Trials","required":[],"tested_stats":null,"partner":null,
+  "quest":{"members":true,"quest_points":3,"requirements":[],"items":[],"acquire":{},"bank":"nearest","coin_float":0,"loadouts":{},"areas":{},"tools":[],"owns_inventory":true},
+  "roles":[{"role":null,"progress_binding":"journal:viking","progress":{"colour":{"not_started":"viking:0","in_progress":"viking:1","complete":"viking:complete"},"rules":[
+    {"stage":"viking:peer","all":["the seer will vote for me if i can pass his trial"],"any":[],"not":[],"varp":1},
+    {"stage":"viking:1","all":["i spoke to brundt the fremennik chieftan"],"any":[],"not":[],"varp":1}
+  ],"flags":[],"monotonic":false},"prelude":[],"sequences":[
+    {"stage":"viking:0","required":[],"terminal":false,"recovery_entry":null,"steps":[
+      {"id":"ask-brundt-to-start","kind":"talk","version":1,"advances":true,"args":{"npc":"viking_brundt","anchor":{"tile":[2659,3669,0],"source":"C:maps/m41_57.jm2:10574; C:pack/npc.pack:1295"},"leash":8,"prefer":["Do you have any quests?","Yes, I am interested.","I want to become a Fremennik!"],"strict":true},"comment":"C:scripts/quests/quest_viking/scripts/viking_brundt.rs2:33-35,114-146 starts the quest and requires seven votes.","skip_if":{"Any":[]},"settle":{"Fact":{"kind":"quest_colour","version":1,"args":{"quest":"viking","is":"in_progress"}}}}
+    ]},
+    {"stage":"viking:1","required":[],"terminal":false,"recovery_entry":null,"steps":[
+      {"id":"accept-peer-trial","kind":"talk","version":1,"advances":true,"args":{"npc":"viking_peer","anchor":{"tile":[2634,3668,0],"source":"C:maps/m41_57.jm2:10539; C:pack/npc.pack:1289"},"leash":8,"prefer":["Yes"],"strict":true},"comment":"C:scripts/quests/quest_viking/scripts/viking_peer.rs2:18-61 accepts the trial and randomly selects one of six riddles. Yes also accepts Peer's bank deposit: :163-172,185-223. The seed begins with empty inventory and equipment.","skip_if":{"Any":[]},"settle":{"Fact":{"kind":"stage_in","version":1,"args":{"quest":"viking","any":["viking:peer"]}}}}
+    ]},
+    {"stage":"viking:peer","required":[],"terminal":false,"recovery_entry":null,"steps":[
+      {"id":"walk-peer-door","kind":"walk","version":1,"args":{"tile":[2632,3667,0],"radius":1,"source":"C:maps/m41_57.jm2:6411; C:pack/loc.pack:4166"},"comment":"C:scripts/quests/quest_viking/scripts/viking_peer.rs2:280-305 presents the lock on the eastern entrance.","skip_if":{"Fact":{"kind":"near","version":1,"args":{"tile":[2632,3667,0],"radius":2}}},"settle":{"Fact":{"kind":"near","version":1,"args":{"tile":[2632,3667,0],"radius":1}}}},
+      {"id":"GAP-peer-riddle-ui","kind":"wait","version":1,"args":{"until":{"Fact":{"kind":"message","version":1,"args":{"any":["you have solved the riddle"]}}},"max_ticks":20,"park_on_timeout":true},"comment":"GAP UI: C:scripts/quests/quest_viking/scripts/viking_peer.rs2:299-305,315-393 offers six randomized riddles, four letter dials and a submit button. Read the actual riddle, select its answer, verify dial echoes and submit. This wait deliberately parks and does not operate the lock.","skip_if":{"Any":[]},"settle":{"Fact":{"kind":"message","version":1,"args":{"any":["you have solved the riddle"]}}}}
+    ]},
+    {"stage":"viking:complete","required":[],"terminal":true,"recovery_entry":null,"steps":[]}
+  ]}]
+}

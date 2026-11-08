@@ -1,4 +1,4 @@
-use crate::{render_betty_views, scenarios, Scenario};
+use crate::{quest_watch, render_betty_views, scenarios, Scenario};
 
 type ScenarioFactory = fn() -> Scenario;
 type FallibleScenarioFactory = fn() -> Result<Scenario, String>;
@@ -100,6 +100,10 @@ const REGISTRY: &[Entry] = &[
     Entry::new("prayer_v2_ts", scenarios::prayer_v2_scenario),
     Entry::new("prayer_v1_ts", scenarios::prayer_v1_scenario),
     Entry::new("boat_fare_v1_ts", scenarios::boat_fare_v1_scenario),
+    Entry::new(
+        "boat_fare_far_start_v1_ts",
+        scenarios::boat_fare_far_start_v1_scenario,
+    ),
     Entry::new(
         "boat_fare_reconnect_v1_ts",
         scenarios::boat_fare_reconnect_v1_scenario,
@@ -545,6 +549,14 @@ const REGISTRY: &[Entry] = &[
         scenarios::quester_romeo_and_juliet_scenario,
     ),
     Entry::fallible("quester_path", scenarios::quester_path_scenario),
+    Entry::fallible(
+        "quest_watch_seed",
+        quest_watch::quest_watch_seed_scenario_from_env,
+    ),
+    Entry::fallible(
+        "quest_watch_speed",
+        quest_watch::quest_watch_speed_scenario_from_env,
+    ),
     Entry::new("quester_queue", scenarios::quester_queue_scenario),
     Entry::new("sherlock_talk", scenarios::sherlock_talk_scenario),
     Entry::new("sherlock_search", scenarios::sherlock_search_scenario),

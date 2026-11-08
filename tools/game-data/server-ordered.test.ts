@@ -10,8 +10,6 @@ import {
     type ServerOrderedExtractInput,
 } from './extractors/server-ordered.ts';
 
-const ENGINE_COMMIT = 'a'.repeat(40);
-const CONTENT_COMMIT = 'b'.repeat(40);
 const BANKER_TEXT = "I'd like to access my bank account, please.";
 const PLAYER_ENGINE_SOURCE = 'src/engine/entity/Player.ts';
 const COUNT_RESUME_ENGINE_SOURCE = 'src/network/game/client/handler/ResumePCountDialogHandler.ts';
@@ -395,14 +393,7 @@ function fixture(split: (text: string, width: number) => string[] = text => [tex
     });
     const input: ServerOrderedExtractInput = {
         contentRoot: root,
-        selectedPack: {
-            revision: 289,
-            engine_commit: ENGINE_COMMIT,
-            content_commit: CONTENT_COMMIT,
-            cache_id: 'c'.repeat(64),
-            content_id: 'd'.repeat(64),
-        },
-        sourceCommits: { engine_commit: ENGINE_COMMIT, content_commit: CONTENT_COMMIT },
+        revision: 289,
         cache: {
             components,
             fonts: [{ alias: 'q8_full', id: 3, split }],
@@ -439,6 +430,7 @@ function assertBankerProofFailureKeepsIndependentEntries(sample: ServerOrderedTe
 const success = fixture();
 try {
     const catalog = extract(success);
+    assert.equal('revision' in catalog, false, 'the containing core selects the revision');
     assert.ok(catalog.banker_page);
     assert.equal(catalog.banker_page.page_count, 1);
     assert.equal(catalog.banker_page.page_root_alias, 'chat1');
@@ -512,8 +504,7 @@ try {
 }
 
 const refusals: readonly [string, (sample: ServerOrderedTestFixture) => void, RegExp][] = [
-    ['source pin disagreement', sample => { sample.input.sourceCommits.engine_commit = 'e'.repeat(40); }, /selected pin disagrees with source roots/],
-    ['unproved revision', sample => { sample.input.selectedPack.revision += 1; }, /ContractUnavailable for unproved revision/],
+    ['unproved revision', sample => { sample.input.revision += 1; }, /ContractUnavailable for unproved revision/],
     ['missing packed alias', sample => {
         sample.files.set('pack/interface.pack', sample.files.get('pack/interface.pack')!.replace(/^\d+=bank_main:inv\n/m, ''));
         sample.save();
@@ -651,4 +642,4 @@ for (const [label, mutate] of bankerPageFailures) {
     }
 }
 
-console.log('server_ordered source and selected-cache regressions passed');
+console.log('server_ordered fact and selected-revision regressions passed');

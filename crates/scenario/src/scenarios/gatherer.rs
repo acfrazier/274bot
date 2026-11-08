@@ -158,6 +158,9 @@ mod tests {
     /// facts whose absence made the old start unsatisfiable on 289.
     #[test]
     fn start_stands_in_draynor_with_a_proved_tree_in_reach() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let scenario = gatherer_scenario();
         let (id, x, z, level, radius) = scenario
             .steps

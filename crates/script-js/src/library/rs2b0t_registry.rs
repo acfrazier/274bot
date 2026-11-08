@@ -12,7 +12,7 @@ mod paths;
 #[path = "rs2b0t_registry/settings.rs"]
 mod settings;
 
-pub use script::card::{
+use script::card::{
     ItemOptionCandidate, ItemOptionSpec, RegistryCard, ScriptKind, ScriptSource, SettingDef,
 };
 
@@ -277,7 +277,7 @@ pub fn same_dir_import_rel(script_rel: &str, import_rel: &str) -> Option<String>
 /// module under `./`. Parent-dir and absolute imports are ignored.
 fn scan_imports(src: &str) -> HashMap<String, ImportBinding> {
     let mut imports = HashMap::new();
-    for import in crate::module_imports::module_imports(src) {
+    for import in crate::library::module_imports::module_imports(src) {
         if !import.specifier.starts_with("./") {
             continue;
         }

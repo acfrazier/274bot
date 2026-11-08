@@ -821,8 +821,8 @@ impl SlotDetail {
 }
 
 impl SlotDetail {
-    /// The retained native status of the focused slot; `None` for a slot
-    /// that runs no native script.
+    /// The focused slot's native status, including its last status after the run ends.
+    /// Returns `None` when the slot has no native status to retain.
     pub fn native_status(&self) -> Option<StatusView<'_>> {
         self.native_status.as_deref().map(StatusView::new)
     }
@@ -1467,6 +1467,15 @@ fn write_state(
                     out,
                     "logged out (repeat guard: {count} unexpected logouts in {window_seconds}s; Log in to retry)"
                 );
+            }
+            Some(host_play::LoginLatchReason::IdleLogout) => {
+                out.push_str("logged out: idle logout by the server (Log in to connect)");
+            }
+            Some(host_play::LoginLatchReason::ServerLogout) => {
+                out.push_str("logged out by the server (Log in to connect)");
+            }
+            Some(host_play::LoginLatchReason::IdleDisconnect) => {
+                out.push_str("logged out: disconnected while idle (Log in to connect)");
             }
             _ => out.push_str("logged out (Log in to connect)"),
         },

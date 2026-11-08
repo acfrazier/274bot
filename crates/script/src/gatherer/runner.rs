@@ -23,7 +23,11 @@ use crate::native::walk::Walk;
 use crate::native::{
     ActionError, ActionHandle, ConfigError, Interrupt, NativePhase, NativeTick, PreparedConfig,
     ReturnStallRecovery, Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkBit,
-    WalkEnd, WalkOptions, WalkReceipt, WalkRequest,
+    WalkEnd, WalkOptions, WalkReceipt, WalkRefusal, WalkRequest,
+};
+use crate::quester::prereq::{
+    reach::{PrereqSelect, PrereqSelectOther},
+    walk::PrereqWalk,
 };
 use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
@@ -35,10 +39,27 @@ use std::task::Poll;
 
 #[path = "recover.rs"]
 mod recover;
+#[path = "runner_timing.rs"]
+mod timing;
 
 const MAX_AVOID: usize = 8;
 const MAX_BANK_OPEN_ATTEMPTS: u8 = 3;
 const MAX_BANK_CLOSE_ATTEMPTS: u8 = 3;
+/// Session changes (relogs) one bank trip restarts across before it reports a
+/// failure. This is a policy constant, not an engine fact. Each restart is a
+/// fresh session with a fresh plan, and a bot that loses its session this many
+/// times inside one trip is not in a passing state, so the run stops with the
+/// last reason. It equals `MAX_BANK_OPEN_ATTEMPTS` by choice, not by derivation.
+const MAX_TRIP_SESSION_RESTARTS: u8 = 3;
+/// Recovery actions the access walk spends on an ordinary walk failure before
+/// the failure is terminal (AGENTS.md: a walk failure is never terminal until
+/// its bounded retries are spent). The first is a fresh plan to the same stand
+/// from the observed position, the return walk's bound
+/// (`MAX_RETURN_RECOVERY_ACTIONS`, `native.rs:1058-1062`). The second is a fresh
+/// pick that drops the failed bank where another is eligible, so a bank that
+/// refuses the walk twice does not hold the run. Two is a policy bound, like
+/// the restart limit above; the engine states no count.
+const MAX_ACCESS_RECOVERY_ACTIONS: u8 = 2;
 // Fishing's maximum movement timer is 529 ticks (280 + random(250)):
 // skill_fishing/scripts/fishing_movement.rs2:8-12. Add a 60-tick whirlpool
 // (macro events/scripts/fishing/macro_event_whirlpool.rs2:7); 800 exceeds both.
@@ -97,9 +118,11 @@ enum Active {
     None,
     Gather(ActionHandle<GatherRun>),
     Drop(ActionHandle<DropBatch>),
-    Walk(ActionHandle<Walk>),
+    Walk(PrereqWalk),
+    EscapeWalk(ActionHandle<Walk>),
     Tend(ActionHandle<OneOp>),
-    Select(ActionHandle<bank::Select>),
+    Select(PrereqSelect),
+    SelectOther(PrereqSelectOther),
     Open(ActionHandle<bank::Open>),
     Deposit(ActionHandle<bank::Deposit>),
     Withdraw(ActionHandle<bank::Withdraw>),
@@ -128,6 +151,12 @@ enum TripStep {
 }
 
 fn walk_failure_message(receipt: &WalkReceipt) -> String {
+    if matches!(receipt.refusal, Some(WalkRefusal::SearchIncomplete { .. })) {
+        return match receipt.failure_detail().filter(|detail| !detail.is_empty()) {
+            Some(detail) => format!("walk search incomplete: {detail}"),
+            None => "walk search incomplete".to_owned(),
+        };
+    }
     match receipt.failure_detail().filter(|detail| !detail.is_empty()) {
         Some(detail) => format!("walk ended with {:?}: {detail}", receipt.end),
         None => format!("walk ended with {:?}", receipt.end),
@@ -238,6 +267,7 @@ fn hazard_retreat_stand(
 struct GatherScratch {
     fishing: FishingSurvey,
     withdrawals: Option<Arc<[bank::Withdrawal]>>,
+    selected_bank: Option<SelectedBank>,
     bank_open_attempts: u8,
     bank_close_attempts: u8,
     /// Last tick a catch or XP was credited; bounds fishing surveys.
@@ -251,6 +281,17 @@ struct GatherScratch {
     withdrew_supplies: bool,
     /// Only the in-flight observation request needs its selected-goal receipt.
     observation_walk: bool,
+    /// Restarts of the current bank trip after a session change.
+    session_restarts: u8,
+    /// The access walk's bounded recovery after an ordinary walk failure
+    /// ([`MAX_ACCESS_RECOVERY_ACTIONS`]); the return walk's helper.
+    access_stall_recovery: ReturnStallRecovery,
+    /// The bank whose access walk failed and whose pick the second recovery
+    /// action drops, while that pick is under way.
+    access_avoid: Option<u16>,
+    /// The last reason a step of this trip recorded before retrying; kept for
+    /// the terminal message when the retries are spent.
+    trip_reason: Option<Arc<str>>,
 }
 
 pub struct Gatherer {
@@ -261,6 +302,11 @@ pub struct Gatherer {
     area: Option<WorkArea>,
     target: Option<TargetPlan>,
     active: Active,
+    tick_policy: crate::native::tickcycle::TickPolicy,
+    parked_cycle: Option<crate::native::tickcycle::TickCycle>,
+    tick_applicability: Option<crate::native::tickcycle::OffReason>,
+    tick_last_off: Option<crate::native::tickcycle::OffReason>,
+    tick_last_sequence: u32,
     tool: ToolState,
     avoid: [AvoidedTile; MAX_AVOID],
     scratch: Box<GatherScratch>,
@@ -269,7 +315,6 @@ pub struct Gatherer {
     tried_groups: [TriedGroup; 4],
     hazard_escape: Option<WorldTile>,
     trip: TripStep,
-    selected_bank: Option<SelectedBank>,
     supply_missing: Option<Arc<str>>,
     bank_label: Arc<str>,
     trips: u16,
@@ -322,6 +367,11 @@ impl Gatherer {
             area: None,
             target: None,
             active: Active::None,
+            tick_policy: Default::default(),
+            parked_cycle: None,
+            tick_applicability: None,
+            tick_last_off: None,
+            tick_last_sequence: 0,
             tool: ToolState {
                 id: -1,
                 worn: false,
@@ -333,7 +383,6 @@ impl Gatherer {
             tried_groups: [TriedGroup::default(); 4],
             hazard_escape: None,
             trip: TripStep::Idle,
-            selected_bank: None,
             supply_missing: None,
             bank_label: Arc::from("—"),
             trips: 0,
@@ -374,7 +423,7 @@ impl Gatherer {
 
     fn advance_trip(&mut self, step: TripStep) {
         self.trip = step;
-        if let Some(selected) = &self.selected_bank {
+        if let Some(selected) = &self.scratch.selected_bank {
             if let Some(bank) = self
                 .prepared
                 .banks
@@ -396,6 +445,8 @@ impl Gatherer {
     }
 
     fn start_trip(&mut self) {
+        self.capture_live_timing();
+        self.parked_cycle = None;
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
@@ -406,22 +457,81 @@ impl Gatherer {
         );
         self.target = None;
         self.wait_until = None;
-        self.selected_bank = None;
+        self.scratch.selected_bank = None;
         self.scratch.bank_open_attempts = 0;
         self.scratch.bank_close_attempts = 0;
         self.scratch.withdrawals = None;
         self.scratch.kept_unbankable = false;
         self.scratch.withdrew_supplies = false;
         self.scratch.return_stall_recovery.reset();
+        self.scratch.access_stall_recovery.reset();
+        self.scratch.access_avoid = None;
+        self.scratch.session_restarts = 0;
+        self.scratch.trip_reason = None;
         self.supply_missing = None;
         self.advance_trip(TripStep::Select);
         self.set_event("bank trip due");
     }
 
+    /// A new session inside a bank trip is information, not a failure
+    /// (AGENTS.md: a walk failure is never terminal until its bounded
+    /// retries are spent). The old session's child is gone with its walk,
+    /// modal and item table, and the reasons it recorded say nothing about
+    /// the new session. The trip restarts at Access with a fresh walk from
+    /// the observed position, against the bank it already selected. Deposit
+    /// and withdrawal are planned again from the new session's inventory and
+    /// table, so a withdrawal the old session half applied is not repeated
+    /// from a stale plan. Bounded by [`MAX_TRIP_SESSION_RESTARTS`]; once
+    /// spent, the failure keeps the last reason the trip recorded.
+    fn restart_trip_after_session(&mut self, session: u64) {
+        let step = self.trip;
+        if !matches!(
+            step,
+            TripStep::Access | TripStep::Open | TripStep::Deposit | TripStep::Withdraw
+        ) {
+            return;
+        }
+        if self.scratch.session_restarts >= MAX_TRIP_SESSION_RESTARTS {
+            let reason = self
+                .scratch
+                .trip_reason
+                .as_deref()
+                .unwrap_or("none recorded");
+            self.fail(
+                "bank-unavailable",
+                format!(
+                    "bank-unavailable: the session changed again at {step:?} after \
+                     {MAX_TRIP_SESSION_RESTARTS} restarts of the bank trip; last reason: {reason}"
+                ),
+            );
+            return;
+        }
+        self.scratch.session_restarts += 1;
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Info,
+            "gatherer-bank-trip-restart session={session} step={step:?} attempt={}/{MAX_TRIP_SESSION_RESTARTS}",
+            self.scratch.session_restarts,
+        );
+        self.target = None;
+        self.wait_until = None;
+        self.scratch.bank_open_attempts = 0;
+        self.scratch.bank_close_attempts = 0;
+        self.scratch.withdrawals = None;
+        self.scratch.kept_unbankable = false;
+        self.scratch.return_stall_recovery.reset();
+        self.scratch.access_stall_recovery.reset();
+        self.scratch.access_avoid = None;
+        self.supply_missing = None;
+        self.advance_trip(TripStep::Access);
+        self.set_event("session changed; restarting bank trip");
+    }
+
     /// The packed stand the current trip opened, for the transfer verbs'
     /// re-open (`native_bank::MAX_BANK_REOPENS`).
     fn selected_access(&self) -> Option<Arc<bank::BankStandAccess>> {
-        self.selected_bank
+        self.scratch
+            .selected_bank
             .as_ref()
             .and_then(|selected| selected.access.clone())
     }
@@ -471,23 +581,122 @@ impl Gatherer {
             required_after: tick.cx.evidence(),
             evidence: None,
             cross: Box::default(),
+            avoid: Box::new([]),
             protect: false,
             food_guard: true,
+            cure_guard: false,
             allow: crate::native::WalkAllow {
                 food: true,
                 ..Default::default()
             },
         };
-        match tick.actions.begin::<Walk>(request, &mut tick.cx) {
-            Ok(handle) => {
+        match PrereqWalk::begin(request, tick.actions, &mut tick.cx) {
+            Ok(walk) => {
                 self.scratch.observation_walk = observation_walk;
-                self.active = Active::Walk(handle);
+                self.active = Active::Walk(walk);
                 true
             }
             Err(error) => {
                 self.action_failure(error);
                 false
             }
+        }
+    }
+
+    /// The typed Traveller terminal includes its current server tile; rebuild
+    /// the content-derived observation stand from the fresh snapshot, not from
+    /// the route that stalled. Shared by the ordinary return trip and the
+    /// death-recovery return.
+    fn replan_return_after_stall(&mut self, tick: &mut NativeTick<'_>) {
+        self.target = None;
+        self.return_to_resources(tick);
+    }
+
+    /// An ordinary walk failure at Access is information first. The first
+    /// recovery walks again from the observed position to the same stand; the
+    /// second picks again with the failed bank dropped where another is
+    /// eligible (`SelectOther`). Each keeps the receipt's detail as the
+    /// trip's last reason, so the terminal failure after the budget is spent
+    /// names the last receipt.
+    fn recover_access_walk(&mut self, result: &WalkReceipt, tick: &mut NativeTick<'_>) {
+        let reason = walk_failure_message(result);
+        let attempt = self
+            .scratch
+            .access_stall_recovery
+            .actions()
+            .saturating_add(1);
+        let action = if attempt == 1 { "replan" } else { "reselect" };
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Info,
+            "gatherer-bank-access-recovery session={} step={:?} attempt={attempt}/{MAX_ACCESS_RECOVERY_ACTIONS} action={action} reason={reason}",
+            self.run.session,
+            self.trip,
+        );
+        self.scratch.trip_reason = Some(Arc::from(reason));
+        self.target = None;
+        if attempt > 1 {
+            self.scratch.access_avoid = self
+                .scratch
+                .selected_bank
+                .as_ref()
+                .map(|bank| bank.bank_index);
+            self.advance_trip(TripStep::Select);
+        }
+        self.begin_trip(tick);
+    }
+
+    /// The bank pick settled. A pick that found none ends the run through
+    /// [`Self::pick_found_none`], whether it settled as the selection's
+    /// no-candidate sentinel or as the host's typed negative receipt.
+    fn handle_pick(&mut self, selected: SelectedBank, tick: &mut NativeTick<'_>) {
+        let no_candidate =
+            selected.kind == PickKind::NoCandidate || selected.bank_index == u16::MAX;
+        if no_candidate {
+            self.pick_found_none(None, tick);
+        } else {
+            self.scratch.access_avoid = None;
+            self.scratch.selected_bank = Some(selected);
+            self.advance_trip(TripStep::Access);
+            self.set_event("bank selected");
+        }
+    }
+
+    /// A pick that left a bank out and found none picks again with that bank
+    /// allowed, as the first recovery would. A pick that finds none otherwise
+    /// ends the run; during an access recovery it keeps the last walk
+    /// failure's detail. `detail` is the typed receipt's reason, when the
+    /// host gave one.
+    fn pick_found_none(&mut self, detail: Option<Arc<str>>, tick: &mut NativeTick<'_>) {
+        if self.scratch.access_avoid.take().is_some() {
+            // The banks left after dropping the one that refused the walk
+            // have no route from here.
+            self.begin_trip(tick);
+            return;
+        }
+        self.bank_label = Arc::from(format!("{}; NoCandidate", self.settings().bank));
+        let mut message = detail.map_or_else(
+            || format!("bank-unavailable:{}", self.settings().bank),
+            |detail| detail.to_string(),
+        );
+        if self.scratch.access_stall_recovery.pending() {
+            if let Some(reason) = self.scratch.trip_reason.as_deref() {
+                message.push_str("; last reason: ");
+                message.push_str(reason);
+            }
+        }
+        self.fail("bank-unavailable", message);
+    }
+
+    fn pick_failure(&mut self, error: ActionError, tick: &mut NativeTick<'_>) {
+        match error {
+            // The pick's only `Failed` is the host's typed negative receipt
+            // (`Select::poll`).
+            ActionError::Failed(detail) => self.pick_found_none(Some(detail), tick),
+            error => self.fail(
+                "bank-unavailable",
+                format!("bank selection failed: {error:?}"),
+            ),
         }
     }
 
@@ -611,18 +820,34 @@ impl Gatherer {
                         .then(|| Arc::from(self.settings().bank.as_str())),
                     allow_air_fallback: false,
                 };
-                match tick.actions.begin::<bank::Select>(args, &mut tick.cx) {
-                    Ok(handle) => self.active = Active::Select(handle),
-                    Err(error) => self.action_failure(error),
+                if let Some(avoid) = self.scratch.access_avoid {
+                    let args = bank::SelectOtherArgs {
+                        select: args,
+                        avoid,
+                    };
+                    match PrereqSelectOther::begin(args, tick.actions, &mut tick.cx) {
+                        Ok(handle) => self.active = Active::SelectOther(handle),
+                        Err(error) => self.action_failure(error),
+                    }
+                } else {
+                    match PrereqSelect::begin(args, tick.actions, &mut tick.cx) {
+                        Ok(handle) => self.active = Active::Select(handle),
+                        Err(error) => self.action_failure(error),
+                    }
                 }
             }
             TripStep::Access => {
-                if let Some(selected) = &self.selected_bank {
-                    self.trip_walk(selected.access_tile, 1, ArrivalKind::Reach, None, tick);
+                if let Some(selected) = &self.scratch.selected_bank {
+                    let access_tile = selected.access_tile;
+                    let recovery = self.scratch.access_stall_recovery.pending();
+                    let submitted = self.trip_walk(access_tile, 1, ArrivalKind::Reach, None, tick);
+                    if recovery && submitted {
+                        self.scratch.access_stall_recovery.action_submitted();
+                    }
                 }
             }
             TripStep::Open => {
-                let Some(selected) = &self.selected_bank else {
+                let Some(selected) = &self.scratch.selected_bank else {
                     return;
                 };
                 let Some(access) = &selected.access else {
@@ -640,10 +865,15 @@ impl Gatherer {
                     return;
                 };
                 if self.scratch.bank_open_attempts >= MAX_BANK_OPEN_ATTEMPTS {
+                    let reason = self
+                        .scratch
+                        .trip_reason
+                        .as_deref()
+                        .unwrap_or("none recorded");
                     self.fail(
                         "bank-unavailable",
                         format!(
-                            "bank-unavailable: bank did not open after {MAX_BANK_OPEN_ATTEMPTS} attempts"
+                            "bank-unavailable: bank did not open after {MAX_BANK_OPEN_ATTEMPTS} attempts; last reason: {reason}"
                         ),
                     );
                     return;
@@ -834,6 +1064,8 @@ impl Gatherer {
     }
 
     fn cancel_active(&mut self) {
+        self.capture_live_timing();
+        self.parked_cycle = None;
         api::host_log!(
             api::hostlog::Category::NavTrace,
             api::hostlog::Level::Debug,
@@ -842,6 +1074,15 @@ impl Gatherer {
                 .as_ref()
                 .map(|target| (target.entity, target.tile)),
         );
+        if let Active::Select(select) = &mut self.active {
+            select.cancel();
+        }
+        if let Active::SelectOther(select) = &mut self.active {
+            select.cancel();
+        }
+        if let Active::Walk(walk) = &mut self.active {
+            walk.cancel();
+        }
         self.active = Active::None;
         self.scratch.observation_walk = false;
         self.survival_deferred = false;
@@ -1212,12 +1453,13 @@ impl Gatherer {
     }
 
     fn start_drop(&mut self, tick: &mut NativeTick<'_>) {
+        self.parked_cycle = None;
         let snapshot = tick.cx.snapshot();
         let Some(inventory) = snapshot.inventory() else {
             return;
         };
         let products = Arc::clone(&self.prepared.products);
-        let mut protected = [0; 8];
+        let mut protected = [0; super::drop::MAX_PROTECTED];
         let ids = supply::protected_ids(&self.prepared, self.tool.id);
         let protected_len = ids.as_slice().len();
         protected[..protected_len].copy_from_slice(ids.as_slice());
@@ -1326,10 +1568,10 @@ impl Gatherer {
                 }
             };
         if let Some(request) = approach {
-            match tick.actions.begin::<Walk>(request, &mut tick.cx) {
-                Ok(handle) => {
+            match PrereqWalk::begin(request, tick.actions, &mut tick.cx) {
+                Ok(walk) => {
                     self.scratch.observation_walk = selected.observation_goals.is_some();
-                    self.active = Active::Walk(handle);
+                    self.active = Active::Walk(walk);
                     self.set_event("approaching target");
                 }
                 Err(error) => self.action_failure(error),
@@ -1339,12 +1581,23 @@ impl Gatherer {
         let Some(plan) = self.target.clone() else {
             return;
         };
+        let timing = self.timing_for_target(&plan, &tick.cx);
+        self.begin_gather_target(plan, timing, tick);
+    }
+
+    fn begin_gather_target(
+        &mut self,
+        plan: TargetPlan,
+        timing: Option<super::gather::GatherTiming>,
+        tick: &mut NativeTick<'_>,
+    ) {
         match tick.actions.begin::<GatherRun>(
             GatherRunArgs {
                 target: plan,
                 stall_ticks: DEFAULT_STALL_TICKS,
                 catalog: Arc::clone(&self.prepared.catalog),
                 quest_owned: false,
+                timing,
             },
             &mut tick.cx,
         ) {
@@ -1418,6 +1671,10 @@ impl Gatherer {
     }
 
     fn handle_gather(&mut self, result: GatherResult, tick: &mut NativeTick<'_>) {
+        if let Some(timing) = result.timing {
+            self.tick_policy = timing.policy;
+            self.parked_cycle = Some(timing.cycle);
+        }
         self.needs_validate = true;
         if result.gained > 0 || result.xp > 0 {
             self.last_gameplay_tick = tick.cx.evidence().tick;
@@ -1549,6 +1806,14 @@ impl Gatherer {
             );
         }
         if self.retained.recovery == (RecoveryState::Pending { step: 5 }) {
+            // The death-recovery return shares the ordinary return trip's one
+            // bounded replan for a transient Traveller stall (AGENTS.md: a
+            // walk failure is never terminal until its retries are spent).
+            // The budget restarts with each latched death (recover.rs).
+            if self.scratch.return_stall_recovery.observe(&result.end) {
+                self.replan_return_after_stall(tick);
+                return;
+            }
             self.finish_recovery_return(result, tick);
             return;
         }
@@ -1567,11 +1832,16 @@ impl Gatherer {
         }
         if self.trip == TripStep::Return && self.scratch.return_stall_recovery.observe(&result.end)
         {
-            // The typed Traveller terminal includes its current server tile;
-            // rebuild the content-derived observation stand from the fresh
-            // snapshot, not from the route that stalled.
-            self.target = None;
-            self.return_to_resources(tick);
+            self.replan_return_after_stall(tick);
+            return;
+        }
+        if self.trip == TripStep::Access
+            && self
+                .scratch
+                .access_stall_recovery
+                .observe_failure(&result.end, MAX_ACCESS_RECOVERY_ACTIONS)
+        {
+            self.recover_access_walk(&result, tick);
             return;
         }
         if result.end == WalkEnd::RouteEnded && self.trip == TripStep::Idle {
@@ -1625,7 +1895,7 @@ impl Gatherer {
         }
         match self.trip {
             TripStep::Access => {
-                if self.selected_bank.is_some() {
+                if self.scratch.selected_bank.is_some() {
                     self.advance_trip(TripStep::Open);
                 }
                 return;
@@ -1700,8 +1970,8 @@ impl Gatherer {
                     }
                 }
             }
-            Active::Walk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Walk(handle),
+            Active::Walk(mut walk) => match walk.poll(tick.actions, &mut tick.cx, tick.state) {
+                Poll::Pending => self.active = Active::Walk(walk),
                 Poll::Ready(Ok(result)) => {
                     self.handle_walk(result, tick);
                 }
@@ -1712,6 +1982,11 @@ impl Gatherer {
                         self.action_failure(error);
                     }
                 }
+            },
+            Active::EscapeWalk(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
+                Poll::Pending => self.active = Active::EscapeWalk(handle),
+                Poll::Ready(Ok(result)) => self.handle_walk(result, tick),
+                Poll::Ready(Err(error)) => self.action_failure(error),
             },
             Active::Tend(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Tend(handle),
@@ -1749,29 +2024,20 @@ impl Gatherer {
                     self.action_failure(error);
                 }
             },
-            Active::Select(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
-                Poll::Pending => self.active = Active::Select(handle),
-                Poll::Ready(Ok(selected)) => {
-                    if selected.kind == PickKind::NoCandidate || selected.bank_index == u16::MAX {
-                        self.bank_label =
-                            Arc::from(format!("{}; NoCandidate", self.settings().bank));
-                        self.fail(
-                            "bank-unavailable",
-                            format!("bank-unavailable:{}", self.settings().bank),
-                        );
-                    } else {
-                        self.selected_bank = Some(selected);
-                        self.advance_trip(TripStep::Access);
-                        self.set_event("bank selected");
-                    }
+            Active::Select(mut select) => {
+                match select.poll(tick.actions, &mut tick.cx, tick.state) {
+                    Poll::Pending => self.active = Active::Select(select),
+                    Poll::Ready(Ok(selected)) => self.handle_pick(selected, tick),
+                    Poll::Ready(Err(error)) => self.pick_failure(error, tick),
                 }
-                Poll::Ready(Err(error)) => {
-                    self.fail(
-                        "bank-unavailable",
-                        format!("bank selection failed: {error:?}"),
-                    );
+            }
+            Active::SelectOther(mut select) => {
+                match select.poll(tick.actions, &mut tick.cx, tick.state) {
+                    Poll::Pending => self.active = Active::SelectOther(select),
+                    Poll::Ready(Ok(selected)) => self.handle_pick(selected, tick),
+                    Poll::Ready(Err(error)) => self.pick_failure(error, tick),
                 }
-            },
+            }
             Active::Open(handle) => match tick.actions.poll(&handle, &mut tick.cx) {
                 Poll::Pending => self.active = Active::Open(handle),
                 Poll::Ready(Ok(())) => {
@@ -1783,6 +2049,15 @@ impl Gatherer {
                         "bank did not open" | "bank item table unavailable"
                     ) =>
                 {
+                    api::host_log!(
+                        api::hostlog::Category::BankOp,
+                        api::hostlog::Level::Info,
+                        "gatherer-bank-open-retry session={} step={:?} attempt={}/{MAX_BANK_OPEN_ATTEMPTS} reason={message}",
+                        self.run.session,
+                        self.trip,
+                        self.scratch.bank_open_attempts,
+                    );
+                    self.scratch.trip_reason = Some(message);
                     self.begin_trip(tick);
                 }
                 Poll::Ready(Err(error)) => {
@@ -1940,6 +2215,9 @@ impl Gatherer {
         let kind = args.kind;
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
             Ok(handle) => {
+                if let Some(cycle) = &mut self.parked_cycle {
+                    cycle.pause(&mut self.tick_policy);
+                }
                 self.active = Active::Tend(handle);
                 self.survival_tend = true;
                 self.survival_deferred = false;
@@ -2335,8 +2613,10 @@ impl Gatherer {
             required_after: tick.cx.evidence(),
             evidence: None,
             cross: Vec::new().into_boxed_slice(),
+            avoid: Box::new([]),
             protect: false,
             food_guard: true,
+            cure_guard: false,
             allow: crate::native::WalkAllow {
                 food: true,
                 ..Default::default()
@@ -2345,7 +2625,7 @@ impl Gatherer {
         match tick.actions.begin::<Walk>(request, &mut tick.cx) {
             Ok(handle) => {
                 self.scratch.observation_walk = false;
-                self.active = Active::Walk(handle);
+                self.active = Active::EscapeWalk(handle);
                 self.set_event("walking away from hazard");
             }
             Err(error) => self.action_failure(error),
@@ -2403,7 +2683,9 @@ impl Gatherer {
         if matches!(self.retained.recovery, RecoveryState::Pending { .. }) {
             return ("recovering", NativePhase::Working);
         }
-        if self.trip != TripStep::Idle && !matches!(self.active, Active::Walk(_)) {
+        if self.trip != TripStep::Idle
+            && !matches!(self.active, Active::Walk(_) | Active::EscapeWalk(_))
+        {
             if self.wait_until.is_some() {
                 return ("waiting", NativePhase::Waiting);
             }
@@ -2421,7 +2703,7 @@ impl Gatherer {
             }
             Active::Gather(_) => ("gathering", NativePhase::Working),
             Active::Drop(_) => ("dropping", NativePhase::Working),
-            Active::Walk(_)
+            Active::Walk(_) | Active::EscapeWalk(_)
                 if self.settings().skill_kind() == Skill::Fishing
                     && self
                         .target
@@ -2430,9 +2712,10 @@ impl Gatherer {
             {
                 ("surveying", NativePhase::Waiting)
             }
-            Active::Walk(_) => ("walking", NativePhase::Working),
+            Active::Walk(_) | Active::EscapeWalk(_) => ("walking", NativePhase::Working),
             Active::Tend(_) => ("tending", NativePhase::Working),
             Active::Select(_)
+            | Active::SelectOther(_)
             | Active::Open(_)
             | Active::Deposit(_)
             | Active::Withdraw(_)
@@ -2519,6 +2802,9 @@ impl Gatherer {
             zone_gated: self.zone_gated,
             excluded_targets: Arc::clone(&self.prepared.excluded_targets),
             last_event: Arc::clone(&self.last_event),
+            tick_method: self.tick_method_status(),
+            tick_cycle: self.tick_policy.last_cycle_ticks().map_or(-1, i64::from),
+            tick_stats: self.tick_policy.stats(),
         }
     }
 
@@ -2547,6 +2833,7 @@ impl Gatherer {
     }
 
     fn publish(&mut self, tick: &mut NativeTick<'_>) {
+        self.refresh_tick_status();
         if !self.dirty {
             return;
         }
@@ -2579,9 +2866,14 @@ impl Script for Gatherer {
         }
         self.fence.observe(tick.cx.evidence().tick);
         if self.run != tick.cx.run() {
+            let session_changed = self.run.session != tick.cx.run().session;
             self.run = tick.cx.run();
             self.observed_progress = None;
             self.cancel_active();
+            self.tick_policy = Default::default();
+            self.tick_applicability = None;
+            self.tick_last_off = None;
+            self.tick_last_sequence = 0;
             self.needs_validate = true;
             self.rebaseline_gameplay = true;
             self.death = crate::native::death::DeathLatch::from_watermark(self.retained.death_seq);
@@ -2589,6 +2881,9 @@ impl Script for Gatherer {
             self.survival_deferred = false;
             self.survival_interrupting = false;
             self.set_event("run key changed; revalidating");
+            if session_changed {
+                self.restart_trip_after_session(self.run.session);
+            }
         }
         if !tick.cx.eligible {
             // The host posts guardian holds through eligibility, including
@@ -2763,6 +3058,7 @@ mod tests {
             hp_max: 99,
             hp_known: true,
             poison,
+            poison_window: None,
             food,
             cures: api::condition::CureDoses::default(),
         }
@@ -2811,7 +3107,171 @@ mod tests {
     }
 
     #[test]
+    fn gatherer_names_incomplete_search_as_non_risk_failure() {
+        let detail: Arc<str> = Arc::from(
+            "search_result=BudgetExhausted nodes_settled=unavailable (incomplete search)",
+        );
+        let receipt = WalkReceipt {
+            goal: None,
+            request_id: 1,
+            evidence: api::quest_progress::EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 1,
+                sequence: 1,
+            },
+            end: WalkEnd::Refused,
+            blocked: None,
+            detail: Some(Arc::clone(&detail)),
+            refusal: Some(WalkRefusal::SearchIncomplete {
+                nodes_settled: None,
+            }),
+            assessment: None,
+            escape: None,
+            prereq_allow: None,
+        };
+        assert_eq!(
+            walk_failure_message(&receipt),
+            format!("walk search incomplete: {detail}"),
+        );
+    }
+
+    #[test]
+    fn tick_kit_drop_copy_and_withdrawal_batch_hold_all_nine_supply_ids() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use crate::quester::families::tests::{def, with_tick};
+        use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView};
+
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let reserve = selected
+            .teleports()
+            .iter()
+            .find(|spell| spell.available() && spell.runes.len() == 3)
+            .unwrap();
+        let mut settings = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Fishing")),
+            ("fishingMethod", serde_json::json!("fishing.freshfish.op1")),
+            ("food", serde_json::json!("Lobster")),
+            ("foodTarget", serde_json::json!(1)),
+            ("coinTarget", serde_json::json!(1)),
+            ("reserveTeleport", serde_json::json!(reserve.name)),
+            ("reserveCasts", serde_json::json!(1)),
+            ("tickMethod", serde_json::json!("Knife")),
+        ] {
+            settings.insert(key.into(), value);
+        }
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(settings),
+                selected,
+                Arc::default(),
+                None,
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let prepared = Arc::clone(config.get::<Arc<Prepared>>().unwrap());
+        let tool = known_rows(&prepared.catalog.methods()[prepared.methods[0]].tools)[0].item;
+        let protected = supply::protected_ids(&prepared, tool);
+        assert_eq!(protected.as_slice().len(), 9);
+        let kit = prepared.supply.tick_kit.as_ref().unwrap();
+        let ordered = prepared.selected.server_ordered_catalog().unwrap();
+        assert_eq!(kit.knife.id, ordered.knife().knife().id());
+        assert!(ordered
+            .knife()
+            .logs()
+            .iter()
+            .any(|logs| logs.id() == kit.logs.id));
+        assert_eq!((kit.knife.id, kit.logs.id), (946, 1511));
+        assert!(protected.as_slice().contains(&kit.knife.id));
+        assert!(protected.as_slice().contains(&kit.logs.id));
+        let row = |id, count, container| ItemView {
+            def: def(
+                id,
+                prepared
+                    .selected
+                    .item_by_id(id)
+                    .unwrap()
+                    .name
+                    .as_deref()
+                    .unwrap(),
+            ),
+            container,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count,
+            actions: Vec::new(),
+            component_id: -1,
+        };
+        let bank: Vec<_> = protected
+            .as_slice()
+            .iter()
+            .map(|&id| row(id, 10_000, ItemContainer::Bank))
+            .collect();
+        let stats = [StatView {
+            index: 10,
+            name: "fishing".into(),
+            base: 99,
+            effective: 99,
+            xp: 0,
+            used: true,
+        }];
+        let supply::SupplyPlanResult::Ready(plan) =
+            supply::SupplyPlan::from_loaded_bank(&prepared, &stats, &[], &[], Some(&bank))
+        else {
+            panic!("the complete nine-item bank must produce a withdrawal batch");
+        };
+        assert_eq!(plan.iter().count(), 9);
+        assert!(!plan.kit_missing());
+        let product = prepared.products[0];
+        let mut inventory: Vec<_> = protected
+            .as_slice()
+            .iter()
+            .map(|&id| row(id, 1, ItemContainer::Inventory))
+            .collect();
+        inventory.push(row(product, 1, ItemContainer::Inventory));
+        assert_eq!(
+            supply::bank_deposit_ids(&prepared, tool, &inventory).as_ref(),
+            &[product]
+        );
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_inventory(inventory, 28);
+        let mut gatherer = Gatherer::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            config,
+            Arc::clone(&prepared),
+            GatherRetained::default(),
+        );
+        gatherer.tool = ToolState {
+            id: tool,
+            worn: false,
+        };
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.start_drop(tick));
+        assert!(matches!(gatherer.active, Active::Drop(_)));
+    }
+
+    #[test]
     fn gatherer_resource_validation_uses_effective_level() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{local_player, with_tick};
         use api::snapshot::{GameSnapshot, WorldStateView};
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -2899,11 +3359,19 @@ mod tests {
 
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
-        assert_eq!(size_of::<Walk>(), 136, "Walk inline layout changed");
-        // SURVIVAL-DESIGN-1022/design-final.md:A11:745 allows 192 B for
-        // SurvivalStep. The prior 1,024 B bound plus 192 B gives 1,216 B.
+        // 88 B inline plus the 112 B boxed replay, pinned in native/walk.rs.
+        // Quest-list retry state adds 24 B to the 64 B hold-resume adapter.
+        // Both resume paths reuse the same replay allocation.
+        assert_eq!(size_of::<Walk>(), 88, "Walk inline layout changed");
+        // Measured 1,176 -> 1,584 B: parked_cycle 120 + tick_policy 80 +
+        // sequence 4 + applicability 1 + last-off 1 = 206 B; Active 280 -> 480
+        // adds 200 B when Gather 472 becomes its largest variant; padding 2 -> 4
+        // adds 2 B. Main approves 1,592 B, leaving 8 B of headroom.
+        // Follow-up question: if policy/parked state can stay cold for users
+        // who never enable tick manipulation, Option<Box<...>> could save
+        // about 200 B per runner, at the cost of an activation allocation.
         assert!(
-            size_of::<Gatherer>() <= 1216,
+            size_of::<Gatherer>() <= 1592,
             "Gatherer={} exceeds its inline budget",
             size_of::<Gatherer>()
         );
@@ -2913,6 +3381,16 @@ mod tests {
             size_of::<crate::survival::SurvivalStep>()
         );
         assert!(size_of::<GatherRetained>() <= 80);
+        // One boxed `GatherScratch` per run: 56 bytes at the fix's base
+        // (1bc5c3868), 80 at the 0.2.9 batch head (the selected bank moved in),
+        // 104 with the bank relog fix. Its 24 bytes are the bank trip's
+        // session-restart count, its access recovery state, the avoided bank
+        // index and the last reason.
+        assert!(
+            size_of::<GatherScratch>() <= 104,
+            "GatherScratch={} exceeds 104 bytes",
+            size_of::<GatherScratch>()
+        );
         println!(
             "Gatherer={} Active={} GatherRun={} DropBatch={} OneOp={} GatherRetained={} GatherScratch={} TargetPlan={} Walk={} WalkGoals={} WalkRequest={} WalkReceipt={}",
             size_of::<Gatherer>(),
@@ -2928,9 +3406,19 @@ mod tests {
             size_of::<crate::native::WalkRequest>(),
             size_of::<crate::native::WalkReceipt>()
         );
+        println!(
+            "TickPolicy={} ParkedCycle={} GatherTiming={} TickStats={}",
+            size_of::<crate::native::tickcycle::TickPolicy>(),
+            size_of::<Option<crate::native::tickcycle::TickCycle>>(),
+            size_of::<crate::gatherer::gather::GatherTiming>(),
+            size_of::<crate::gatherer::status::TickStats>(),
+        );
     }
     #[test]
     fn gatherer_tickfix_validate_begins_resource_return_walk_same_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{local_player, with_tick};
         use api::snapshot::GameSnapshot;
 
@@ -3023,6 +3511,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -3067,6 +3556,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -3081,6 +3571,9 @@ mod tests {
 
     #[test]
     fn bank_return_failure_preserves_walk_receipt_detail() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         use api::snapshot::GameSnapshot;
 
@@ -3130,6 +3623,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 tick,
             );
@@ -3145,6 +3639,9 @@ mod tests {
 
     #[test]
     fn user_input_walk_blocks_gatherer_without_rearming() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         use api::snapshot::GameSnapshot;
 
@@ -3197,6 +3694,7 @@ mod tests {
                     refusal: None,
                     assessment: None,
                     escape: None,
+                    prereq_allow: None,
                 },
                 native,
             );
@@ -3233,10 +3731,21 @@ mod tests {
 
     impl BaitFixture {
         fn new() -> Self {
-            Self::with_eat_below(0)
+            Self::with_banks(Arc::default())
+        }
+
+        fn with_banks(banks: Arc<api::named_banks::NamedBankFacts>) -> Self {
+            Self::with_eat_below_and_banks(0, banks)
         }
 
         fn with_eat_below(eat_below: i32) -> Self {
+            Self::with_eat_below_and_banks(eat_below, Arc::default())
+        }
+
+        fn with_eat_below_and_banks(
+            eat_below: i32,
+            banks: Arc<api::named_banks::NamedBankFacts>,
+        ) -> Self {
             use crate::quester::families::tests::{def, local_player};
             use api::bank_memory::{BankMemory, ObservedAt};
             use api::snapshot::{
@@ -3262,7 +3771,7 @@ mod tests {
                     1,
                     Arc::new(bag),
                     selected,
-                    Arc::default(),
+                    banks,
                     None,
                 )
             })
@@ -3359,6 +3868,9 @@ mod tests {
 
     #[test]
     fn gatherer_eat_below_floor_unchanged() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::condition::{FoodSummary, PoisonState};
         use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
@@ -3436,7 +3948,7 @@ mod tests {
             assert!(matches!(
                 tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::Held { action, .. }
+                    crate::interact::InteractReq::Held { action, .. }
                 )) if action == "Eat"
             ));
         });
@@ -3562,6 +4074,9 @@ mod tests {
     /// deposits nothing and must continue to Withdraw, then withdraw the bait.
     #[test]
     fn supply_only_trip_with_strange_box_continues_to_withdraw() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::snapshot::{ItemActionFamily, ItemContainer};
         let fixture = BaitFixture::new();
@@ -3624,6 +4139,9 @@ mod tests {
 
     #[test]
     fn gatherer_tickfix_admitted_bank_trip_begins_select_same_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -3643,6 +4161,9 @@ mod tests {
 
     #[test]
     fn gatherer_tickfix_bank_ready_without_event_begins_next_child_same_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -3688,6 +4209,9 @@ mod tests {
 
     #[test]
     fn gatherer_tickfix_empty_withdraw_begins_close_without_withdraw() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -3712,6 +4236,9 @@ mod tests {
 
     #[test]
     fn gatherer_caps_timed_out_bank_open_attempts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let fixture = BaitFixture::new();
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -3729,7 +4256,7 @@ mod tests {
             choose: None,
         });
         gatherer.trip = TripStep::Open;
-        gatherer.selected_bank = Some(SelectedBank {
+        gatherer.scratch.selected_bank = Some(SelectedBank {
             bank_index: 0,
             access_tile: bank_tile,
             kind: PickKind::Reachable,
@@ -3748,7 +4275,13 @@ mod tests {
             });
             assert!(gatherer.failure.is_none());
             assert_eq!(gatherer.trip, TripStep::Open);
-            assert!(gatherer.selected_bank.as_ref().unwrap().access.is_some());
+            assert!(gatherer
+                .scratch
+                .selected_bank
+                .as_ref()
+                .unwrap()
+                .access
+                .is_some());
             assert!(matches!(gatherer.active, Active::Open(_)));
         }
         assert_eq!(gatherer.scratch.bank_open_attempts, MAX_BANK_OPEN_ATTEMPTS);
@@ -3760,11 +4293,983 @@ mod tests {
         assert_eq!(failure.code.as_ref(), "bank-unavailable");
         assert_eq!(
             failure.message.as_ref(),
-            "bank-unavailable: bank did not open after 3 attempts"
+            "bank-unavailable: bank did not open after 3 attempts; \
+             last reason: bank did not open"
+        );
+    }
+
+    const RELOG_BANK_TILE: WorldTile = WorldTile {
+        x: 3245,
+        z: 3423,
+        level: 0,
+    };
+
+    /// The Draynor booth the relog tests stand at, as the scene lists it.
+    fn relog_booth_locs() -> Vec<api::snapshot::LocView> {
+        vec![api::snapshot::LocView {
+            typecode: 2213,
+            info: 0,
+            id: 2213,
+            name: Some("Bank booth".to_owned()),
+            description: None,
+            actions: vec![Some("Use-quickly".to_owned())],
+            tile: RELOG_BANK_TILE,
+            distance: 0,
+            layer: api::snapshot::LocLayer::GroundDecoration,
+            shape: 0,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: false,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }]
+    }
+    /// A Gatherer that was in `step` of a bank trip when its session ended.
+    /// It still holds the old session's run key; the tick context of every
+    /// test carries session 1, so its next tick is the first of a new session.
+    /// The old session left an Open attempt count and a latched withdrawal
+    /// plan behind.
+    fn trip_after_relog(fixture: &BaitFixture, step: TripStep) -> Gatherer {
+        let access = Arc::new(crate::bank::BankStandAccess {
+            bank: api::named_banks::NamedBank::new("Draynor", RELOG_BANK_TILE),
+            stand_tile: RELOG_BANK_TILE,
+            kind: crate::bank::AccessKind::Booth,
+            stand_op: 2,
+            name: Some(Arc::from("Bank booth")),
+            choose: None,
+        });
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.run.session = 0;
+        gatherer.needs_validate = false;
+        gatherer.tool = ToolState {
+            id: 307,
+            worn: false,
+        };
+        gatherer.scratch.selected_bank = Some(SelectedBank {
+            bank_index: 0,
+            access_tile: RELOG_BANK_TILE,
+            kind: PickKind::Reachable,
+            access: Some(access),
+        });
+        gatherer.trip = step;
+        gatherer.scratch.bank_open_attempts = 2;
+        gatherer.scratch.withdrawals = Some(Arc::<[bank::Withdrawal]>::from([]));
+        gatherer
+    }
+
+    /// Ticks the Gatherer once in the new session; it must still be running.
+    fn first_tick_of_new_session(
+        gatherer: &mut Gatherer,
+        snapshot: &api::snapshot::GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        tick_number: u64,
+    ) {
+        use crate::quester::families::tests::with_tick;
+        with_tick(snapshot, ledger, tick_number, |tick| {
+            gatherer.tick(tick).unwrap()
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+    }
+
+    fn arrived(
+        gatherer: &mut Gatherer,
+        snapshot: &api::snapshot::GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        tick_number: u64,
+    ) {
+        use crate::quester::families::tests::with_tick;
+        gatherer.cancel_active();
+        with_tick(snapshot, ledger, tick_number, |tick| {
+            gatherer.handle_walk(
+                WalkReceipt {
+                    goal: None,
+                    request_id: 1,
+                    evidence: tick.cx.evidence(),
+                    end: WalkEnd::Arrived,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                    prereq_allow: None,
+                },
+                tick,
+            );
+        });
+    }
+
+    fn open_stand_clicks(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> usize {
+        ledger.as_ref().map_or(0, |ledger| {
+            ledger
+                .outbox
+                .iter()
+                .filter(|action| {
+                    matches!(
+                        action.effect,
+                        crate::native::HostEffect::Interaction(
+                            crate::interact::InteractReq::OpenStand { .. }
+                        )
+                    )
+                })
+                .count()
+        })
+    }
+
+    /// A relog inside the Access, Open or Deposit step of a bank trip is
+    /// information: the trip restarts at Access with a fresh walk from the
+    /// observed position, the old session's attempt count and withdrawal plan
+    /// are dropped, and the trip goes on to the withdrawal with a plan made
+    /// from the new session's bank. 0.2.8 kept the cursor and the old plan,
+    /// and an Open that adopted a modal without a table waited on it again.
+    fn relog_restarts_the_trip_and_it_finishes(step: TripStep, modal_without_table: bool) {
+        use crate::quester::families::tests::{def, with_tick};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+        let fixture = BaitFixture::new();
+        let mut gatherer = trip_after_relog(&fixture, step);
+        let bait = fixture.prepared.supply.bait.clone().unwrap();
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_locs(relog_booth_locs());
+        let mut ledger = None;
+        if modal_without_table {
+            // The relog kept the client's modal fields and dropped the table.
+            snapshot.seed_bank_observation(10, 1, None, Vec::new());
+        }
+
+        first_tick_of_new_session(&mut gatherer, &snapshot, &mut ledger, 1);
+        assert_eq!(
+            gatherer.trip,
+            TripStep::Access,
+            "{step:?} restarts at Access"
+        );
+        assert_eq!(gatherer.scratch.bank_open_attempts, 0);
+        assert!(
+            gatherer.scratch.withdrawals.is_none(),
+            "the old plan is dropped"
+        );
+        let (target, radius) = ledger
+            .as_ref()
+            .and_then(|ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .find_map(|action| match &action.effect {
+                        crate::native::HostEffect::Walk(request) => {
+                            Some((request.target, request.radius))
+                        }
+                        _ => None,
+                    })
+            })
+            .expect("a fresh access walk starts from the observed position");
+        assert_eq!(target, RELOG_BANK_TILE);
+        assert_eq!(radius, 1);
+
+        arrived(&mut gatherer, &snapshot, &mut ledger, 2);
+        assert_eq!(gatherer.trip, TripStep::Open);
+        with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.begin_trip(tick));
+        assert!(matches!(gatherer.active, Active::Open(_)));
+        with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
+        if modal_without_table {
+            with_tick(&snapshot, &mut ledger, 7, |tick| gatherer.poll_active(tick));
+            assert_eq!(
+                open_stand_clicks(&ledger),
+                0,
+                "no click inside the table bound"
+            );
+            with_tick(&snapshot, &mut ledger, 11, |tick| {
+                gatherer.poll_active(tick)
+            });
+        }
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert_eq!(
+            open_stand_clicks(&ledger),
+            1,
+            "the new session's open accesses the stand for real"
+        );
+
+        // The engine's open delivers a new session with the bank's table.
+        let banked_bait = ItemView {
+            def: def(bait.id, &bait.name),
+            container: ItemContainer::Bank,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 20,
+            actions: vec![Some("Withdraw-1".into())],
+            component_id: 3214,
+        };
+        snapshot.seed_bank_observation(10, 2, Some(vec![banked_bait]), Vec::new());
+        with_tick(&snapshot, &mut ledger, 12, |tick| {
+            gatherer.poll_active(tick)
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert_eq!(gatherer.trip, TripStep::Deposit);
+
+        with_tick(&snapshot, &mut ledger, 13, |tick| gatherer.begin_trip(tick));
+        with_tick(&snapshot, &mut ledger, 14, |tick| {
+            gatherer.poll_active(tick)
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert_eq!(gatherer.trip, TripStep::Withdraw);
+        with_tick(&snapshot, &mut ledger, 15, |tick| gatherer.begin_trip(tick));
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert!(matches!(gatherer.active, Active::Withdraw(_)));
+        let withdrawals = gatherer.scratch.withdrawals.as_ref().unwrap();
+        assert!(
+            withdrawals.iter().any(|row| row.id == bait.id),
+            "the withdrawal is planned again from the new session's bank: {withdrawals:?}"
+        );
+        finish_trip_from_withdraw(
+            &mut gatherer,
+            &mut snapshot,
+            &mut ledger,
+            16,
+            (bait.id, &bait.name),
+        );
+    }
+
+    /// The trip's tail after its withdrawal began, driven by the Gatherer's
+    /// own ticks: the withdrawal's clicks are acknowledged and applied to
+    /// the snapshot as the engine would, the bank closes, equipment
+    /// validation passes and the return walk arrives at the resource stand.
+    /// The trip ends in Idle, completed once.
+    fn finish_trip_from_withdraw(
+        gatherer: &mut Gatherer,
+        snapshot: &mut api::snapshot::GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        mut tick_number: u64,
+        bait: (i32, &str),
+    ) {
+        use crate::native::HostEffect;
+        use crate::quester::families::tests::{def, local_player, with_tick};
+        use api::snapshot::{ItemActionFamily, ItemContainer};
+        let item =
+            |id: i32, name: &str, count: i32, container: ItemContainer, slot: i32| ItemView {
+                def: def(id, name),
+                container,
+                action_family: ItemActionFamily::Held,
+                slot,
+                count,
+                actions: vec![Some("Withdraw-1".into())],
+                component_id: 3214,
+            };
+        let acknowledged = |ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+                            tick: u64|
+         -> Vec<crate::interact::InteractReq> {
+            let Some(ledger) = ledger.as_mut() else {
+                return Vec::new();
+            };
+            let mut effects = Vec::new();
+            while let Some(at) = ledger
+                .outbox
+                .iter()
+                .position(|action| matches!(action.effect, HostEffect::Interaction(_)))
+            {
+                let action = ledger.outbox.remove(at);
+                ledger.complete_interaction(
+                    &action.authority(),
+                    crate::native::InteractionReceipt {
+                        request_id: action.request_id.get(),
+                        evidence: api::quest_progress::EvidenceStamp {
+                            run: action.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        accepted: true,
+                        chat_since: 0,
+                    },
+                );
+                if let HostEffect::Interaction(request) = action.effect {
+                    effects.push(request);
+                }
+            }
+            effects
+        };
+
+        // The earlier walks were answered by hand; only the return walk counts.
+        take_walks(ledger);
+        let mut held = 0;
+        for _ in 0..12 {
+            if gatherer.trip != TripStep::Withdraw {
+                break;
+            }
+            tick_number += 1;
+            with_tick(snapshot, ledger, tick_number, |tick| {
+                gatherer.tick(tick).unwrap()
+            });
+            assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+            for request in acknowledged(ledger, tick_number) {
+                if let crate::interact::InteractReq::WithdrawX { count, .. } = request {
+                    held += count;
+                    snapshot.seed_inventory(
+                        vec![
+                            item(307, "Fishing rod", 1, ItemContainer::Inventory, 0),
+                            item(bait.0, bait.1, held, ItemContainer::Inventory, 1),
+                        ],
+                        28,
+                    );
+                    snapshot.seed_bank_observation(
+                        10,
+                        2,
+                        Some(vec![item(
+                            bait.0,
+                            bait.1,
+                            20 - held,
+                            ItemContainer::Bank,
+                            0,
+                        )]),
+                        Vec::new(),
+                    );
+                }
+            }
+        }
+        // One more tick lets the machine see the final count.
+        tick_number += 1;
+        with_tick(snapshot, ledger, tick_number, |tick| {
+            gatherer.tick(tick).unwrap()
+        });
+        assert!(held > 0, "the withdrawal took bait out of the bank");
+        assert!(
+            gatherer.scratch.withdrew_supplies,
+            "the withdrawal completed"
+        );
+        assert_eq!(gatherer.trip, TripStep::Close, "{}", gatherer.last_event);
+
+        for _ in 0..8 {
+            if gatherer.trip != TripStep::Close {
+                break;
+            }
+            tick_number += 1;
+            with_tick(snapshot, ledger, tick_number, |tick| {
+                gatherer.tick(tick).unwrap()
+            });
+            assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+            for request in acknowledged(ledger, tick_number) {
+                if matches!(request, crate::interact::InteractReq::Close) {
+                    snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+                    snapshot.seed_side_modal(-1);
+                }
+            }
+        }
+        assert!(
+            matches!(gatherer.trip, TripStep::Validate | TripStep::Return),
+            "the bank closed: {:?} {}",
+            gatherer.trip,
+            gatherer.last_event
+        );
+
+        for _ in 0..6 {
+            if gatherer.trip == TripStep::Return {
+                break;
+            }
+            tick_number += 1;
+            with_tick(snapshot, ledger, tick_number, |tick| {
+                gatherer.tick(tick).unwrap()
+            });
+            assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        }
+        assert_eq!(
+            gatherer.trip,
+            TripStep::Return,
+            "validation passes into the return walk: {}",
+            gatherer.last_event
+        );
+        let queued = ledger.as_ref().map_or(0, |ledger| ledger.outbox.len());
+        let goal = ledger
+            .as_ref()
+            .and_then(|ledger| {
+                ledger
+                    .outbox
+                    .iter()
+                    .find_map(|action| match &action.effect {
+                        HostEffect::Walk(request) => Some(
+                            request
+                                .candidate_goals
+                                .as_ref()
+                                .map_or(request.target, |goals| goals.as_slice()[0]),
+                        ),
+                        _ => None,
+                    })
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "the return walk toward the resource area ({queued} queued): {}",
+                    gatherer.last_event
+                )
+            });
+        take_walks(ledger);
+        snapshot.seed_local_player(local_player(goal));
+        tick_number += 1;
+        with_tick(snapshot, ledger, tick_number, |tick| {
+            gatherer.handle_walk(
+                WalkReceipt {
+                    goal: Some(goal),
+                    request_id: 1,
+                    evidence: tick.cx.evidence(),
+                    end: WalkEnd::Arrived,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                    prereq_allow: None,
+                },
+                tick,
+            );
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert_eq!(gatherer.trip, TripStep::Idle);
+        assert_eq!(gatherer.trips, 1, "the trip completed once");
+    }
+
+    #[test]
+    fn relog_during_access_restarts_the_trip_and_it_finishes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        relog_restarts_the_trip_and_it_finishes(TripStep::Access, false);
+    }
+
+    #[test]
+    fn relog_during_open_restarts_the_trip_and_it_finishes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        relog_restarts_the_trip_and_it_finishes(TripStep::Open, true);
+    }
+
+    #[test]
+    fn relog_during_deposit_restarts_the_trip_and_it_finishes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        relog_restarts_the_trip_and_it_finishes(TripStep::Deposit, false);
+    }
+
+    #[test]
+    fn relog_during_withdraw_restarts_the_trip_and_it_finishes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        relog_restarts_the_trip_and_it_finishes(TripStep::Withdraw, false);
+    }
+
+    /// Each session change inside the trip restarts it, within the budget. A
+    /// change after the budget is spent ends the run, and the failure keeps
+    /// the last reason the trip recorded.
+    #[test]
+    fn spent_session_restart_budget_ends_in_a_terminal_failure_with_the_last_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use crate::quester::families::tests::with_tick;
+        let fixture = BaitFixture::new();
+        let mut gatherer = trip_after_relog(&fixture, TripStep::Open);
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_locs(relog_booth_locs());
+        let mut ledger = None;
+        let mut tick_number = 0;
+        for restart in 1..=MAX_TRIP_SESSION_RESTARTS {
+            tick_number += 1;
+            first_tick_of_new_session(&mut gatherer, &snapshot, &mut ledger, tick_number);
+            assert_eq!(gatherer.trip, TripStep::Access, "restart {restart}");
+            tick_number += 1;
+            arrived(&mut gatherer, &snapshot, &mut ledger, tick_number);
+            assert_eq!(gatherer.trip, TripStep::Open);
+            // This session's open never settles: its stand is accessed and
+            // the table does not arrive, so the open reports its reason.
+            tick_number += 1;
+            with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                gatherer.begin_trip(tick);
+                gatherer.poll_active(tick);
+            });
+            tick_number += 9;
+            with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                gatherer.poll_active(tick)
+            });
+            assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+            // The next session change arrives mid-Open.
+            gatherer.run.session = 0;
+        }
+        tick_number += 1;
+        with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+            gatherer.tick(tick).unwrap()
+        });
+        let failure = gatherer
+            .failure
+            .as_ref()
+            .expect("the budget is spent, so the trip fails");
+        assert_eq!(failure.code.as_ref(), "bank-unavailable");
+        assert!(
+            failure.message.contains("bank item table unavailable"),
+            "the last reason is kept: {}",
+            failure.message
+        );
+        assert_eq!(gatherer.phase(), ("blocked", NativePhase::Blocked));
+    }
+
+    fn failed_walk(tick: &mut NativeTick<'_>, end: WalkEnd, detail: &str) -> WalkReceipt {
+        WalkReceipt {
+            goal: None,
+            request_id: 1,
+            evidence: tick.cx.evidence(),
+            end,
+            blocked: None,
+            detail: Some(Arc::from(detail)),
+            refusal: None,
+            assessment: None,
+            escape: None,
+            prereq_allow: None,
+        }
+    }
+
+    /// The bait fixture with a three-bank roster, Draynor first, so a pick
+    /// has banks to choose from (the plain fixture has an empty roster).
+    fn roster_fixture() -> BaitFixture {
+        let tile = |x, z| WorldTile { x, z, level: 0 };
+        BaitFixture::with_banks(Arc::new(api::named_banks::NamedBankFacts::from_banks(
+            vec![
+                api::named_banks::NamedBank::new("Draynor", RELOG_BANK_TILE),
+                api::named_banks::NamedBank::new("Varrock East", tile(3253, 3420)),
+                api::named_banks::NamedBank::new("Lumbridge", tile(3208, 3220)),
+            ],
+        )))
+    }
+
+    /// A Gatherer in the Access step of its own session, with the Draynor
+    /// stand selected and no old session state.
+    fn access_walker(fixture: &BaitFixture) -> Gatherer {
+        let mut gatherer = trip_after_relog(fixture, TripStep::Access);
+        gatherer.run.session = 1;
+        gatherer.scratch.bank_open_attempts = 0;
+        gatherer.scratch.withdrawals = None;
+        gatherer
+    }
+
+    /// The walk requests queued so far; the queue is emptied so the next
+    /// walk is the only one in it.
+    fn take_walks(
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    ) -> Vec<(WorldTile, u16)> {
+        let Some(ledger) = ledger.as_mut() else {
+            return Vec::new();
+        };
+        let walks = ledger
+            .outbox
+            .iter()
+            .filter_map(|action| match &action.effect {
+                crate::native::HostEffect::Walk(request) => Some((request.target, request.radius)),
+                _ => None,
+            })
+            .collect();
+        ledger
+            .outbox
+            .retain(|action| !matches!(action.effect, crate::native::HostEffect::Walk(_)));
+        walks
+    }
+
+    /// Answers the queued bank pick with `selected` and returns the banks the
+    /// pick was allowed to choose from.
+    fn answer_bank_pick(
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        tick: u64,
+        selected: SelectedBank,
+    ) -> Arc<[u16]> {
+        let ledger = ledger.as_mut().expect("a ledger");
+        let kinds: Vec<char> = ledger
+            .outbox
+            .iter()
+            .map(|action| match action.effect {
+                crate::native::HostEffect::Interaction(_) => 'I',
+                crate::native::HostEffect::Walk(_) => 'W',
+                crate::native::HostEffect::BankPick(_) => 'B',
+                crate::native::HostEffect::AssessWalk(_) => 'A',
+                crate::native::HostEffect::ServerOrdered(_) => 'S',
+            })
+            .collect();
+        let at = ledger
+            .outbox
+            .iter()
+            .position(|action| matches!(action.effect, crate::native::HostEffect::BankPick(_)))
+            .unwrap_or_else(|| panic!("a queued bank pick among {kinds:?}"));
+        let action = ledger.outbox.remove(at);
+        let crate::native::HostEffect::BankPick(request) = &action.effect else {
+            unreachable!("position matched a bank pick");
+        };
+        let eligible = Arc::clone(&request.eligible);
+        ledger.complete_bank_pick(
+            &action.authority(),
+            bank::BankPickReceipt {
+                request_id: action.request_id.get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: action.run(),
+                    tick,
+                    sequence: tick,
+                },
+                // The host answers a pick that found no bank with the typed
+                // negative receipt, never a selection.
+                outcome: if selected.kind == PickKind::NoCandidate {
+                    bank::BankPickOutcome::NoCandidate {
+                        detail: Arc::from("bank selection failed: NoPath"),
+                    }
+                } else {
+                    bank::BankPickOutcome::Selected(selected)
+                },
+            },
+        );
+        eligible
+    }
+
+    const ALTERNATE_BANK_TILE: WorldTile = WorldTile {
+        x: 3253,
+        z: 3420,
+        level: 0,
+    };
+
+    /// An ordinary walk failure at Access is not terminal (AGENTS.md: a walk
+    /// failure is never terminal until its bounded retries are spent). The
+    /// first failure walks again to the same stand from the observed position.
+    /// The second picks again with the failed bank dropped and walks to the
+    /// pick. The third ends the run with the last receipt's detail.
+    #[test]
+    fn access_recovers_each_ordinary_walk_failure_within_the_budget() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use crate::native::{WalkStall, WalkStallReason};
+        use crate::quester::families::tests::with_tick;
+        let stall = |why| {
+            WalkEnd::Stalled(Arc::new(WalkStall {
+                at: RELOG_BANK_TILE,
+                aiming: RELOG_BANK_TILE,
+                why,
+                tries: 60,
+            }))
+        };
+        for end in [
+            WalkEnd::NoPath,
+            WalkEnd::Failed,
+            WalkEnd::Blocked,
+            WalkEnd::RouteEnded,
+            stall(WalkStallReason::Expired),
+            stall(WalkStallReason::Dropped),
+            stall(WalkStallReason::EndBlocked),
+        ] {
+            let fixture = roster_fixture();
+            let mut gatherer = access_walker(&fixture);
+            let snapshot = fixture.snapshot;
+            let mut ledger = None;
+
+            with_tick(&snapshot, &mut ledger, 1, |tick| {
+                let receipt = failed_walk(tick, end.clone(), "first receipt");
+                gatherer.handle_walk(receipt, tick);
+            });
+            assert!(
+                gatherer.failure.is_none(),
+                "{end:?}: {:?}",
+                gatherer.failure
+            );
+            assert!(
+                matches!(gatherer.active, Active::Walk(_)),
+                "{end:?}: a fresh walk"
+            );
+            assert_eq!(take_walks(&mut ledger), [(RELOG_BANK_TILE, 1)], "{end:?}");
+            assert_eq!(gatherer.scratch.access_stall_recovery.actions(), 1);
+
+            gatherer.cancel_active();
+            with_tick(&snapshot, &mut ledger, 2, |tick| {
+                let receipt = failed_walk(tick, end.clone(), "second receipt");
+                gatherer.handle_walk(receipt, tick);
+            });
+            assert!(
+                gatherer.failure.is_none(),
+                "{end:?}: {:?}",
+                gatherer.failure
+            );
+            assert_eq!(gatherer.trip, TripStep::Select, "{end:?}: a fresh pick");
+            assert!(
+                matches!(gatherer.active, Active::SelectOther(_)),
+                "{end:?}: the pick began: {}",
+                gatherer.last_event
+            );
+            with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
+            assert!(
+                gatherer.failure.is_none(),
+                "{end:?}: {:?}",
+                gatherer.failure
+            );
+            let eligible = answer_bank_pick(
+                &mut ledger,
+                3,
+                SelectedBank {
+                    bank_index: 1,
+                    access_tile: ALTERNATE_BANK_TILE,
+                    kind: PickKind::Reachable,
+                    access: None,
+                },
+            );
+            assert_eq!(
+                eligible.as_ref(),
+                [1, 2],
+                "{end:?}: the failed bank 0 is dropped"
+            );
+            with_tick(&snapshot, &mut ledger, 4, |tick| {
+                gatherer.poll_active(tick);
+                gatherer.begin_trip(tick);
+            });
+            assert!(
+                gatherer.failure.is_none(),
+                "{end:?}: {:?}",
+                gatherer.failure
+            );
+            assert_eq!(gatherer.trip, TripStep::Access);
+            assert_eq!(
+                gatherer.scratch.selected_bank.as_ref().unwrap().bank_index,
+                1
+            );
+            assert_eq!(
+                take_walks(&mut ledger),
+                [(ALTERNATE_BANK_TILE, 1)],
+                "{end:?}"
+            );
+            assert_eq!(gatherer.scratch.access_stall_recovery.actions(), 2);
+            assert!(gatherer.scratch.access_avoid.is_none());
+
+            gatherer.cancel_active();
+            with_tick(&snapshot, &mut ledger, 5, |tick| {
+                let receipt = failed_walk(tick, end.clone(), "third receipt");
+                gatherer.handle_walk(receipt, tick);
+            });
+            let failure = gatherer
+                .failure
+                .as_ref()
+                .unwrap_or_else(|| panic!("{end:?}: the budget is spent"));
+            assert_eq!(failure.code.as_ref(), "bank-unavailable", "{end:?}");
+            assert!(
+                failure.message.contains("third receipt"),
+                "{end:?}: the last receipt's detail is kept: {}",
+                failure.message
+            );
+            assert!(
+                take_walks(&mut ledger).is_empty(),
+                "{end:?}: no further walk"
+            );
+        }
+    }
+
+    /// User input, cancellation, a safety refusal and an escape abort end the
+    /// access walk at once: the owner must not retry them.
+    #[test]
+    fn access_walk_cancellation_and_refusals_stay_terminal_at_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use crate::quester::families::tests::with_tick;
+        for (end, code) in [
+            (WalkEnd::UserInput, "manual-movement"),
+            (WalkEnd::Cancelled, "bank-unavailable"),
+            (WalkEnd::Refused, "bank-unavailable"),
+            (WalkEnd::Aborted, "bank-unavailable"),
+        ] {
+            let fixture = roster_fixture();
+            let mut gatherer = access_walker(&fixture);
+            let snapshot = fixture.snapshot;
+            let mut ledger = None;
+            with_tick(&snapshot, &mut ledger, 1, |tick| {
+                let receipt = failed_walk(tick, end.clone(), "refused");
+                gatherer.handle_walk(receipt, tick);
+            });
+            let failure = gatherer
+                .failure
+                .as_ref()
+                .unwrap_or_else(|| panic!("{end:?} is terminal"));
+            assert_eq!(failure.code.as_ref(), code, "{end:?}");
+            assert_eq!(gatherer.scratch.access_stall_recovery.actions(), 0);
+            assert!(take_walks(&mut ledger).is_empty(), "{end:?}: no replan");
+        }
+    }
+
+    /// When the banks left after dropping the failed one have no route, the
+    /// second recovery picks again with the failed bank allowed and walks to
+    /// it; the failure after that is terminal with its detail.
+    #[test]
+    fn access_reselect_without_another_reachable_bank_walks_to_the_failed_one_again() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use crate::quester::families::tests::with_tick;
+        let fixture = roster_fixture();
+        let mut gatherer = access_walker(&fixture);
+        let snapshot = fixture.snapshot;
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let receipt = failed_walk(tick, WalkEnd::NoPath, "first receipt");
+            gatherer.handle_walk(receipt, tick);
+        });
+        take_walks(&mut ledger);
+        gatherer.cancel_active();
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            let receipt = failed_walk(tick, WalkEnd::NoPath, "second receipt");
+            gatherer.handle_walk(receipt, tick);
+        });
+        with_tick(&snapshot, &mut ledger, 3, |tick| gatherer.poll_active(tick));
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        let narrowed = answer_bank_pick(
+            &mut ledger,
+            3,
+            SelectedBank {
+                bank_index: u16::MAX,
+                access_tile: RELOG_BANK_TILE,
+                kind: PickKind::NoCandidate,
+                access: None,
+            },
+        );
+        assert!(!narrowed.contains(&0));
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            gatherer.poll_active(tick);
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert!(matches!(gatherer.active, Active::Select(_)), "picks again");
+        with_tick(&snapshot, &mut ledger, 5, |tick| gatherer.poll_active(tick));
+        let widened = answer_bank_pick(
+            &mut ledger,
+            5,
+            SelectedBank {
+                bank_index: 0,
+                access_tile: RELOG_BANK_TILE,
+                kind: PickKind::Reachable,
+                access: None,
+            },
+        );
+        assert!(widened.contains(&0), "the failed bank is allowed again");
+        with_tick(&snapshot, &mut ledger, 6, |tick| {
+            gatherer.poll_active(tick);
+            gatherer.begin_trip(tick);
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert_eq!(take_walks(&mut ledger), [(RELOG_BANK_TILE, 1)]);
+        gatherer.cancel_active();
+        with_tick(&snapshot, &mut ledger, 7, |tick| {
+            let receipt = failed_walk(tick, WalkEnd::NoPath, "third receipt");
+            gatherer.handle_walk(receipt, tick);
+        });
+        let failure = gatherer.failure.as_ref().expect("the budget is spent");
+        assert_eq!(failure.code.as_ref(), "bank-unavailable");
+        assert!(
+            failure.message.contains("third receipt"),
+            "{}",
+            failure.message
+        );
+    }
+
+    /// A pick that finds no bank during the recovery ends the run with the
+    /// last receipt's detail, not the generic reason.
+    #[test]
+    fn access_recovery_pick_without_any_bank_keeps_the_last_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use crate::quester::families::tests::with_tick;
+        let fixture = roster_fixture();
+        let mut gatherer = access_walker(&fixture);
+        let snapshot = fixture.snapshot;
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let receipt = failed_walk(tick, WalkEnd::Failed, "first receipt");
+            gatherer.handle_walk(receipt, tick);
+        });
+        take_walks(&mut ledger);
+        gatherer.cancel_active();
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            let receipt = failed_walk(tick, WalkEnd::Failed, "second receipt");
+            gatherer.handle_walk(receipt, tick);
+        });
+        let none = || SelectedBank {
+            bank_index: u16::MAX,
+            access_tile: RELOG_BANK_TILE,
+            kind: PickKind::NoCandidate,
+            access: None,
+        };
+        for tick_number in [3, 5] {
+            with_tick(&snapshot, &mut ledger, tick_number, |tick| {
+                gatherer.poll_active(tick)
+            });
+            answer_bank_pick(&mut ledger, tick_number, none());
+            with_tick(&snapshot, &mut ledger, tick_number + 1, |tick| {
+                gatherer.poll_active(tick)
+            });
+        }
+        let failure = gatherer.failure.as_ref().expect("no bank is left");
+        assert_eq!(failure.code.as_ref(), "bank-unavailable");
+        assert!(
+            failure.message.contains("second receipt"),
+            "the last reason is kept: {}",
+            failure.message
+        );
+        assert!(
+            failure.message.contains("bank selection failed: NoPath"),
+            "the typed receipt's detail is kept: {}",
+            failure.message
+        );
+    }
+
+    /// The selection's own no-candidate sentinel (no bank eligible at all)
+    /// takes the same recovery and last-reason handling as the typed receipt.
+    #[test]
+    fn access_recovery_sentinel_pick_widens_then_keeps_the_last_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use crate::quester::families::tests::with_tick;
+        let fixture = roster_fixture();
+        let mut gatherer = access_walker(&fixture);
+        let snapshot = fixture.snapshot;
+        let mut ledger = None;
+        let sentinel = || SelectedBank {
+            bank_index: u16::MAX,
+            access_tile: RELOG_BANK_TILE,
+            kind: PickKind::NoCandidate,
+            access: None,
+        };
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let receipt = failed_walk(tick, WalkEnd::Failed, "first receipt");
+            gatherer.handle_walk(receipt, tick);
+        });
+        take_walks(&mut ledger);
+        gatherer.cancel_active();
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            let receipt = failed_walk(tick, WalkEnd::Failed, "second receipt");
+            gatherer.handle_walk(receipt, tick);
+        });
+        assert!(gatherer.scratch.access_avoid.is_some());
+        gatherer.cancel_active();
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            gatherer.handle_pick(sentinel(), tick);
+        });
+        assert!(gatherer.failure.is_none(), "{:?}", gatherer.failure);
+        assert!(matches!(gatherer.active, Active::Select(_)), "picks again");
+        gatherer.cancel_active();
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            gatherer.handle_pick(sentinel(), tick);
+        });
+        let failure = gatherer.failure.as_ref().expect("no bank is left");
+        assert_eq!(failure.code.as_ref(), "bank-unavailable");
+        assert!(
+            failure.message.contains("second receipt"),
+            "{}",
+            failure.message
         );
     }
     #[test]
     fn gatherer_cancels_open_retry_for_drink() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
 
         let mut fixture = BaitFixture::new();
@@ -3784,7 +5289,7 @@ mod tests {
         });
         gatherer.trip = TripStep::Open;
         gatherer.scratch.bank_open_attempts = 1;
-        gatherer.selected_bank = Some(SelectedBank {
+        gatherer.scratch.selected_bank = Some(SelectedBank {
             bank_index: 0,
             access_tile: bank_tile,
             kind: PickKind::Reachable,
@@ -3844,6 +5349,7 @@ mod tests {
                     q: Some(11),
                     hit_since_line: false,
                 },
+                poison_window: None,
                 food: FoodSummary::default(),
                 cures: CureDoses::default(),
             });
@@ -3859,12 +5365,15 @@ mod tests {
         assert!(matches!(
             ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::Held { action, .. }
+                crate::interact::InteractReq::Held { action, .. }
             )) if action == "Drink"
         ));
     }
     #[test]
     fn gatherer_interrupts_deposit_at_transfer_boundary() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::condition::{FoodSummary, PoisonState};
         use api::snapshot::{ItemActionFamily, ItemContainer};
@@ -3937,7 +5446,7 @@ mod tests {
                     .last()
                     .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::InvButton { id: 201, .. }
+                    crate::interact::InteractReq::InvButton { id: 201, .. }
                 ))
             ));
             accept_last_interaction(tick);
@@ -3986,7 +5495,7 @@ mod tests {
                     matches!(
                         &action.effect,
                         crate::native::HostEffect::Interaction(
-                            crate::shim::InteractReq::InvButton { id: 201..=203, .. }
+                            crate::interact::InteractReq::InvButton { id: 201..=203, .. }
                         )
                     )
                 })
@@ -4034,7 +5543,7 @@ mod tests {
         assert!(matches!(
             outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::Held { action, .. }
+                crate::interact::InteractReq::Held { action, .. }
             )) if action == "Drink"
         ));
         assert!(!gatherer.survival_interrupting);
@@ -4042,6 +5551,9 @@ mod tests {
 
     #[test]
     fn gatherer_interrupts_withdraw_at_transfer_boundary() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::condition::{FoodSummary, PoisonState};
         use api::snapshot::{ItemActionFamily, ItemContainer};
@@ -4117,7 +5629,7 @@ mod tests {
                     .last()
                     .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::SetNoteMode { on: false, .. }
+                    crate::interact::InteractReq::SetNoteMode { on: false, .. }
                 ))
             ));
             accept_last_interaction(tick);
@@ -4134,7 +5646,7 @@ mod tests {
                     .last()
                     .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::WithdrawX {
+                    crate::interact::InteractReq::WithdrawX {
                         bank_item_id: 301,
                         count: 2,
                         ..
@@ -4166,7 +5678,7 @@ mod tests {
                 matches!(
                     &action.effect,
                     crate::native::HostEffect::Interaction(
-                        crate::shim::InteractReq::WithdrawX { .. }
+                        crate::interact::InteractReq::WithdrawX { .. }
                     )
                 )
             })
@@ -4210,13 +5722,16 @@ mod tests {
         assert!(matches!(
             outbox.last().map(|action| &action.effect),
             Some(crate::native::HostEffect::Interaction(
-                crate::shim::InteractReq::Held { action, .. }
+                crate::interact::InteractReq::Held { action, .. }
             )) if action == "Drink"
         ));
         assert!(!gatherer.survival_interrupting);
     }
     #[test]
     fn need_does_not_block_interrupted_transfer_polling_to_boundary() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{NativePhase, ScriptFlow};
         use crate::quester::families::tests::{def, with_tick};
         use api::condition::{FoodSummary, PoisonState};
@@ -4297,7 +5812,7 @@ mod tests {
                     .last()
                     .map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::WithdrawX {
+                    crate::interact::InteractReq::WithdrawX {
                         bank_item_id: 301,
                         count: 2,
                         ..
@@ -4363,7 +5878,7 @@ mod tests {
         assert!(
             !outbox.iter().any(|action| matches!(
                 &action.effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
                     bank_item_id: 302,
                     ..
                 })
@@ -4374,6 +5889,9 @@ mod tests {
 
     #[test]
     fn parked_gatherer_publishes_waiting_continue_status_and_resumes_parked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{Interrupt, NativeOutput, NativePhase, ScriptFlow, ScriptStatus};
         use crate::quester::families::tests::with_tick_output;
         use api::condition::{FoodSummary, PoisonState};
@@ -4384,7 +5902,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -4441,6 +5959,9 @@ mod tests {
 
     #[test]
     fn status_row_shows_needed_under_never() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{NativeOutput, ScriptFlow, ScriptStatus};
         use crate::quester::families::tests::with_tick_output;
         use api::condition::PoisonState;
@@ -4451,7 +5972,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -4486,6 +6007,9 @@ mod tests {
     }
     #[test]
     fn runner_tick_poisoned_frame_allocates_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
 
@@ -4505,6 +6029,7 @@ mod tests {
                 last_mark: 1,
                 hit_since_mark: false,
             },
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -4536,6 +6061,9 @@ mod tests {
 
     #[test]
     fn runner_tick_parked_frame_allocates_nothing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::native::{NativePhase, ScriptFlow};
         use crate::quester::families::tests::with_tick;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
@@ -4556,6 +6084,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -4591,6 +6120,9 @@ mod tests {
 
     #[test]
     fn parked_runner_unparks_at_next_exact_fire_without_rescue() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::StatView;
@@ -4617,6 +6149,7 @@ mod tests {
             hp_max: 90,
             hp_known: true,
             poison,
+            poison_window: None,
             food: FoodSummary::default(),
             cures: CureDoses::default(),
         };
@@ -4715,6 +6248,9 @@ mod tests {
 
     #[test]
     fn parked_runner_with_food_unparks_at_fire_eight() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::{def, with_tick};
         use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
         use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, StatView};
@@ -4758,6 +6294,7 @@ mod tests {
                 hp_max: 10,
                 hp_known: true,
                 poison,
+                poison_window: None,
                 food: FoodSummary {
                     ordinary_count: food_count,
                     ordinary_heal_total: u16::from(food_count) * 12,
@@ -4810,7 +6347,7 @@ mod tests {
             assert!(matches!(
                 tick.cx.ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect),
                 Some(crate::native::HostEffect::Interaction(
-                    crate::shim::InteractReq::Held { action, .. }
+                    crate::interact::InteractReq::Held { action, .. }
                 )) if action == "Eat"
             ));
             accept_last_interaction(tick);
@@ -4917,6 +6454,9 @@ mod tests {
 
     #[test]
     fn gatherer_caps_timed_out_close_attempts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let mut fixture = BaitFixture::new();
         fixture
@@ -4955,6 +6495,9 @@ mod tests {
 
     #[test]
     fn gatherer_fails_a_shut_bank_with_a_stuck_side_root_at_the_bound() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
         let mut fixture = BaitFixture::new();
         fixture
@@ -5002,6 +6545,9 @@ mod tests {
     /// `Hint` or an unknown bank starts the trip.
     #[test]
     fn validate_admits_supply_trips_from_the_bank_memory() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick_bank;
         let fixture = BaitFixture::new();
         for (bank, in_place) in [
@@ -5034,6 +6580,9 @@ mod tests {
     /// N7: death recovery's reprovision step takes the same verdict.
     #[test]
     fn recovery_reprovision_takes_the_same_verdict() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick_bank;
         let fixture = BaitFixture::new();
         for (bank, in_place) in [
@@ -5168,6 +6717,9 @@ mod tests {
 
     #[test]
     fn draynor_small_net_exclusions_wait_then_return() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let mut gatherer = draynor_net_gatherer();
@@ -5249,6 +6801,9 @@ mod tests {
 
     #[test]
     fn death_return_waits_out_an_active_exclusion() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let mut gatherer = draynor_net_gatherer();
@@ -5317,6 +6872,9 @@ mod tests {
 
     #[test]
     fn validate_pending_names_the_missing_observation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let mut gatherer = draynor_net_gatherer();
@@ -5333,6 +6891,9 @@ mod tests {
 
     #[test]
     fn idle_without_world_names_the_pending_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let mut gatherer = draynor_net_gatherer();
@@ -5350,6 +6911,9 @@ mod tests {
 
     #[test]
     fn hazard_retreat_uses_a_reachable_stand_when_the_away_tile_is_blocked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let here = WorldTile {
@@ -5406,6 +6970,9 @@ mod tests {
 
     #[test]
     fn cancelled_observation_walk_does_not_poison_hazard_retreat_arrival() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         for cancel in [true, false] {
@@ -5454,6 +7021,7 @@ mod tests {
                         refusal: None,
                         assessment: None,
                         escape: None,
+                        prereq_allow: None,
                     },
                     tick,
                 );
@@ -5465,6 +7033,9 @@ mod tests {
 
     #[test]
     fn temporary_hazard_with_no_reachable_stand_keeps_observing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let here = WorldTile {
@@ -5525,6 +7096,9 @@ mod tests {
 
     #[test]
     fn hazard_retreat_does_not_pick_a_diagonal_only_cage() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use crate::quester::families::tests::with_tick;
 
         let here = WorldTile {
@@ -5640,8 +7214,7 @@ mod tests {
 
     #[test]
     fn hazard_retreat_uses_a_reachable_draynor_stand_on_the_real_pack() {
-        let Some(_pack) =
-            crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+        let Some(_pack) = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
         else {
             return;
         };

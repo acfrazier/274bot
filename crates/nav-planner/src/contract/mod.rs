@@ -16,13 +16,12 @@ use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
-
 use crate::world::NavWorld;
 
 mod arrival;
 mod collision;
 mod envelope;
+mod reachability;
 mod route;
 mod transport;
 mod zones;
@@ -32,6 +31,9 @@ pub use collision::CollisionView;
 pub use envelope::{
     BoundRouteRequest, RouteFamilyError, RouteFamilyResult, RoutePermissions, RoutePhase,
     RouteRequest, RouteService,
+};
+pub use reachability::{
+    BoundComponentKey, LocPlacementKey, LocStandView, ReachabilityError, ReachabilityView,
 };
 pub use route::{LegView, RoutePlanLease, RouteView};
 pub use transport::TransportView;
@@ -45,34 +47,6 @@ pub use crate::router::AvoidRect;
 pub use crate::transport::{DoorDir, TransportKind};
 pub use crate::zones::{ZoneClass, ZoneKey, AVOID_CATALOG_IDS, MAX_ZONE_KEYS};
 
-/// SHA-256 digest of pack content. Two leases of the same bytes share this
-/// identity and still have distinct [`PackId`]s.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PackDigest([u8; 32]);
-
-impl PackDigest {
-    /// Wrap an already-computed 32-byte digest (the owner-boundary
-    /// `nav_sha256` / `nav_planner::pack` hash).
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    /// The 32 content bytes.
-    pub const fn bytes(self) -> [u8; 32] {
-        self.0
-    }
-
-    /// Digest `bytes` with SHA-256.
-    pub fn of(bytes: &[u8]) -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(bytes);
-        let digest = hasher.finalize();
-        let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&digest);
-        Self(bytes)
-    }
-}
-
 /// Opaque identity of one immutable pack lease. A numeric zone or route
 /// index is meaningless without it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -81,7 +55,7 @@ pub struct PackId(NonZeroU64);
 impl PackId {
     fn mint() -> Result<Self, ContractError> {
         static LAST: AtomicU64 = AtomicU64::new(0);
-        match LAST.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+        match LAST.try_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
             last.checked_add(1)
         }) {
             Ok(previous) => NonZeroU64::new(previous + 1)
@@ -97,44 +71,35 @@ impl PackId {
     }
 }
 
-/// Nav revision/content identity carried by every view and plan lease:
-/// the lease id, the content digest, and the pack format/version.
+/// Per-loaded-world identity carried by every view and plan lease.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NavIdentity {
     pack: PackId,
-    content: PackDigest,
     format: &'static str,
     version: u8,
 }
 
 impl NavIdentity {
-    /// Mint a fresh lease identity for `content`. One per loaded world
-    /// (`crate::producer`) or per [`NavLease::wrap`] call.
-    pub(crate) fn mint(content: PackDigest) -> Result<Self, ContractError> {
+    /// Mint one identity for a loaded world.
+    pub(crate) fn mint() -> Result<Self, ContractError> {
         Ok(Self {
             pack: PackId::mint()?,
-            content,
             format: FORMAT_ID,
             version: VERSION,
         })
     }
 
-    /// The originating pack lease. Distinct even when content matches.
+    /// The originating pack lease. Distinct even when format matches.
     pub const fn pack(self) -> PackId {
         self.pack
     }
 
-    /// Content digest shared by every lease of the same bytes.
-    pub const fn content(self) -> PackDigest {
-        self.content
-    }
-
-    /// Pack format identity (`274V16` today).
+    /// Pack format identity.
     pub const fn format(self) -> &'static str {
         self.format
     }
 
-    /// Pack format version byte (`16` today).
+    /// Pack format version byte.
     pub const fn version(self) -> u8 {
         self.version
     }
@@ -264,17 +229,11 @@ pub struct NavLease {
 }
 
 impl NavLease {
-    /// Wrap a loaded world as an immutable lease with its content digest.
-    /// Every call mints a distinct lease identity; the host's one shared
-    /// identity per loaded world is [`crate::producer::lease`].
-    pub fn wrap(world: Arc<NavWorld>, content: PackDigest) -> Result<Self, ContractError> {
-        let identity = NavIdentity::mint(content)?;
-        let search_envelope = SearchGraphEnvelope::from_graph(&world.graph);
-        Ok(Self {
-            identity,
-            search_envelope,
-            world,
-        })
+    /// Wrap a loaded world as an immutable lease. Every lease over the same
+    /// world shares its owner-boundary identity.
+    pub fn wrap(world: Arc<NavWorld>) -> Result<Self, ContractError> {
+        let identity = crate::producer::identity(&world)?;
+        Ok(Self::with_identity(world, identity))
     }
 
     /// A lease over `world` under an identity the owner boundary already
@@ -288,7 +247,7 @@ impl NavLease {
         }
     }
 
-    /// Pack/format/content identity.
+    /// Pack/format identity.
     pub const fn identity(&self) -> NavIdentity {
         self.identity
     }

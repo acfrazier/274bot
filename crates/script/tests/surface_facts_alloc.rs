@@ -323,12 +323,14 @@ fn session_boundaries_clear_posted_facts_without_replacing_the_run() {
     }
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 #[test]
-fn slot_size_stays_within_the_full_build_parent_layout() {
+fn slot_size_matches_the_measured_linux_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
-    println!("S0d SlotScript layout: {actual} bytes");
+    println!("Prerequisite-aware SlotScript layout: {actual} bytes");
+    // Measured composed layout: W1 boxed replay and the cold prerequisite handover.
     assert_eq!(
-        actual, 1624,
+        actual, 1576,
         "the surface slot changed from its measured size"
     );
 }

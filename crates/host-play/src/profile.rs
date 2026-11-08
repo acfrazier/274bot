@@ -1,6 +1,6 @@
 //! Resolve launch inputs once, before shared assets, vault mutation or sockets.
 //!
-//! The host profile owns endpoint, vault, and resource identity.
+//! The host profile owns endpoints, vault paths and shared resources.
 //! The client receives only its immutable connection and resource binding.
 
 use std::path::{Path, PathBuf};
@@ -10,17 +10,10 @@ use client::client::ClientConfig;
 use client::io::{ClientRevision, Packet};
 use client::session::{ClientSessionConfig, ClientSessionProfile};
 use client::Transport;
-use nav_planner::canlight;
-use nav_planner::manifest::hash_bytes_with_progress;
-pub use nav_planner::manifest::{nav_manifest_path, CacheManifest, NavManifest};
-use nav_planner::pack::sha256_hex;
 use nav_planner::world::NavWorld;
 
 use crate::cache::CacheAvailability;
-use crate::nav_identity::{
-    bundled_nav_identities, install_resource_root, select_nav_origin, BundledNavIdentity,
-    NavFlagsOrigin, NavLoadCounters, NavOrigin,
-};
+use crate::nav_assets::artifact_layout;
 use crate::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 use crate::public_worlds::PublicWorlds;
 use crate::servers::{LaunchProfile, LoginKey};
@@ -36,6 +29,22 @@ mod binding;
 pub use binding::{DeferredReach, TemplatePreparation, TemplateStep, TEMPLATE_STEP_WAIT};
 #[path = "profile_selection.rs"]
 mod selection;
+
+/// Install resource root for an executable: macOS app `Contents/Resources`,
+/// otherwise the executable's containing directory.
+pub fn install_resource_root(exe: &Path) -> PathBuf {
+    let Some(parent) = exe.parent() else {
+        return PathBuf::from(".");
+    };
+    if parent.file_name().is_some_and(|name| name == "MacOS") {
+        if let Some(contents) = parent.parent() {
+            if contents.file_name().is_some_and(|name| name == "Contents") {
+                return contents.join("Resources");
+            }
+        }
+    }
+    parent.to_path_buf()
+}
 
 /// Launch selection, still changeable before a session is bound. It contains
 /// paths and captured key inputs, but loads no cache and opens no socket.
@@ -58,7 +67,6 @@ pub struct ProfileSelection {
     /// local-state service derives every state path from.
     state_root: PathBuf,
     catalog_root: Option<PathBuf>,
-    cache_manifest: Option<PathBuf>,
     rsa_modulus: Option<String>,
     rsa_exponent: Option<String>,
     nav_pack_overridden: bool,
@@ -71,215 +79,54 @@ pub struct ProfileSelection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NavAvailability {
     Unavailable(String),
-    Legacy274,
     Bound,
 }
 
-/// Which tree a pinned generator input is read from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GameDataSourceRoot {
-    Engine,
-    Content,
-}
-
-impl GameDataSourceRoot {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Engine => "engine",
-            Self::Content => "content",
-        }
-    }
-}
-
-/// Why one pinned generator input did not verify.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GameDataSourceFault {
-    /// Missing, unreadable or otherwise not hashable at the resolved path.
-    Unreadable { error: String },
-    /// The length differs from the pinned bytes.
-    Length { expected: u64, actual: u64 },
-    /// The length matches but the SHA-256 differs.
-    Content { expected: String, actual: String },
-}
-
-impl GameDataSourceFault {
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Self::Unreadable { .. } => "unreadable",
-            Self::Length { .. } => "length-mismatch",
-            Self::Content { .. } => "content-mismatch",
-        }
-    }
-}
-
-/// One pinned generator input that failed, with the path actually read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GameDataSourceFailure {
-    pub root: GameDataSourceRoot,
-    /// The pinned path, relative to the root.
-    pub input: String,
-    /// The resolved path that was read (root joined with `input`).
-    pub path: PathBuf,
-    pub fault: GameDataSourceFault,
-}
-
-impl GameDataSourceFailure {
-    pub fn detail(&self) -> String {
-        let path = self.path.display();
-        match &self.fault {
-            GameDataSourceFault::Unreadable { error } => {
-                format!("game data source {path}: {error}")
-            }
-            GameDataSourceFault::Length { expected, actual } => format!(
-                "game data source {path} length mismatch: expected {expected} bytes, found {actual}"
-            ),
-            GameDataSourceFault::Content { expected, actual } => format!(
-                "game data source {path} content mismatch: expected sha256 {expected}, found {actual}"
-            ),
-        }
-    }
-}
-
-/// Every pinned input was checked; at least one failed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GameDataSourceRejection {
-    /// Pinned inputs checked, in the generator's order.
-    pub total: usize,
-    pub failures: Vec<GameDataSourceFailure>,
-}
-
-impl GameDataSourceRejection {
-    pub fn verified(&self) -> usize {
-        self.total - self.failures.len()
-    }
-}
-
-/// What vouches for attached facts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GameDataAttestation {
-    /// Every pinned generator input matched by length and SHA-256.
-    SourcesVerified { inputs: usize },
-    /// The public target trusts its compiled resources, not a source tree.
-    PublicBuild,
-}
-
-/// The recorded outcome of the fact-trust decision at bind. Recording it
-/// never changes it: only [`GameDataStatus::Attached`] carries facts.
+/// Generated facts attached for this profile's supported revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GameDataStatus {
-    Attached(GameDataAttestation),
-    /// The selection is not a supported server, so no facts were requested
-    /// and no source was read.
+    Attached,
+    /// The selection is not a supported server, so no facts were requested.
     Unsupported {
         reason: String,
     },
-    /// The generated asset does not describe this profile's cache.
-    CacheIdentity {
-        profile_cache_id: String,
-        generated_cache_id: String,
-        generated_content_id: Option<String>,
-    },
-    /// A pinned generator input failed verification.
-    SourceRejected(GameDataSourceRejection),
 }
 
 impl GameDataStatus {
     pub fn is_attached(&self) -> bool {
-        matches!(self, Self::Attached(_))
+        matches!(self, Self::Attached)
     }
 
-    /// Stable machine label.
     pub fn reason(&self) -> &'static str {
         match self {
-            Self::Attached(_) => "attached",
+            Self::Attached => "attached",
             Self::Unsupported { .. } => "unsupported-server",
-            Self::CacheIdentity { .. } => "cache-identity",
-            Self::SourceRejected(_) => "source-rejected",
         }
     }
 
-    /// One human sentence naming the cause.
     pub fn detail(&self) -> String {
         match self {
-            Self::Attached(GameDataAttestation::SourcesVerified { inputs }) => {
-                format!("{inputs} pinned generator inputs verified")
-            }
-            Self::Attached(GameDataAttestation::PublicBuild) => {
-                "attested by the public build".into()
-            }
+            Self::Attached => "generated game data loaded".into(),
             Self::Unsupported { reason } => reason.clone(),
-            Self::CacheIdentity {
-                profile_cache_id,
-                generated_cache_id,
-                generated_content_id,
-            } => format!(
-                "profile cache {profile_cache_id} is neither the generated asset's cache id {generated_cache_id}{}",
-                generated_content_id
-                    .as_ref()
-                    .map_or(String::new(), |id| format!(" nor its content id {id}"))
-            ),
-            Self::SourceRejected(rejection) => format!(
-                "{} of {} pinned generator inputs failed verification; first: {}",
-                rejection.failures.len(),
-                rejection.total,
-                rejection
-                    .failures
-                    .first()
-                    .map_or_else(String::new, GameDataSourceFailure::detail)
-            ),
         }
     }
 
-    /// Structured form for profile and perf metadata. Failures are capped so
-    /// a wrong source root (every input failing) stays a small record.
     pub fn to_json(&self) -> serde_json::Value {
-        const LISTED_FAILURES: usize = 8;
-        let mut value = serde_json::json!({
+        serde_json::json!({
             "attached": self.is_attached(),
             "reason": self.reason(),
             "detail": self.detail(),
-        });
-        match self {
-            Self::Attached(GameDataAttestation::SourcesVerified { inputs }) => {
-                value["attestation"] = "sources-verified".into();
-                value["sources"] = serde_json::json!({
-                    "total": inputs, "verified": inputs, "failed": 0,
-                });
-            }
-            Self::Attached(GameDataAttestation::PublicBuild) => {
-                value["attestation"] = "public-build".into();
-            }
-            Self::Unsupported { .. } => {}
-            Self::CacheIdentity {
-                profile_cache_id,
-                generated_cache_id,
-                generated_content_id,
-            } => {
-                value["profile_cache_id"] = profile_cache_id.clone().into();
-                value["generated_cache_id"] = generated_cache_id.clone().into();
-                value["generated_content_id"] = generated_content_id.clone().into();
-            }
-            Self::SourceRejected(rejection) => {
-                value["sources"] = serde_json::json!({
-                    "total": rejection.total,
-                    "verified": rejection.verified(),
-                    "failed": rejection.failures.len(),
-                    "failures": rejection
-                        .failures
-                        .iter()
-                        .take(LISTED_FAILURES)
-                        .map(|failure| serde_json::json!({
-                            "root": failure.root.label(),
-                            "input": failure.input,
-                            "kind": failure.fault.kind(),
-                            "detail": failure.detail(),
-                        }))
-                        .collect::<Vec<_>>(),
-                });
-            }
-        }
-        value
+        })
     }
+}
+
+/// Actual navigation payload reads and decodes for this shared profile.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NavLoadCounters {
+    pub pack_reads: u32,
+    pub pack_decodes: u32,
+    pub reach_reads: u32,
+    pub canlight_reads: u32,
 }
 
 /// Frozen session inputs. Getters expose no mutable connection/resource fields.
@@ -289,24 +136,18 @@ pub struct ServerProfile {
     class: ProfileClass,
     client: Arc<ClientSessionProfile>,
     cache: CacheAvailability,
-    cache_manifest: CacheManifest,
     // Keeps owned packs/snapshot alive across every clone and bot.
     runtime_cache: Option<Arc<client::unpack::PreparedRuntimeCache>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     game_data_status: GameDataStatus,
     nav_pack: PathBuf,
     nav_flags: PathBuf,
-    nav_origin: NavOrigin,
-    nav_flags_origin: NavFlagsOrigin,
-    nav_identity: Option<NavManifest>,
     nav_load: NavLoadCounters,
     world: SharedWorld,
     reach: Option<Arc<binding::DeferredReach>>,
     canlight: Option<Arc<[u64]>>,
     nav: NavAvailability,
     content_dir: PathBuf,
-    #[cfg(feature = "debug-catalog")]
-    debug_engine_dir: PathBuf,
     vault_path: PathBuf,
     state_root: PathBuf,
     catalog_root: Option<PathBuf>,
@@ -350,7 +191,7 @@ impl ServerProfile {
     pub fn cache_id(&self) -> &str {
         self.client.content_id()
     }
-    /// Facts additionally qualified by the supported server/source boundary.
+    /// Facts loaded for the selected supported revision.
     pub fn game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
         self.game_data.clone()
     }
@@ -377,41 +218,34 @@ impl ServerProfile {
     pub fn nav_availability(&self) -> &NavAvailability {
         &self.nav
     }
-    pub fn nav_origin(&self) -> &NavOrigin {
-        &self.nav_origin
-    }
-    /// Explicit flags provenance captured at bind. Do not infer this from
-    /// pack origin or path equality: an override stays external.
-    pub fn nav_flags_origin(&self) -> NavFlagsOrigin {
-        self.nav_flags_origin
-    }
-    pub fn nav_identity(&self) -> Option<&NavManifest> {
-        self.nav_identity.as_ref()
-    }
     pub fn nav_load_counters(&self) -> NavLoadCounters {
         let mut counters = self.nav_load;
         if let Some(reach) = &self.reach {
-            let (reads, hashes) = reach.load_counts();
-            counters.reach_reads += reads;
-            counters.reach_hashes += hashes;
+            counters.reach_reads += reach.load_count();
         }
         counters
     }
     pub fn world(&self) -> Option<Arc<NavWorld>> {
         self.world.0.clone()
     }
-    /// Verified paint-reach sidecar, decoded once on the first paint request.
-    /// Routing never requests these words. Missing legacy identities or a file
-    /// changed after preparation return `None`; no unverified bits are exposed.
+    /// Process-lifetime ownership key for this loaded navigation world.
+    pub fn nav_pack_id(&self) -> Option<nav_planner::contract::PackId> {
+        self.world.0.as_deref().and_then(|world| {
+            nav_planner::producer::identity(world)
+                .ok()
+                .map(|identity| identity.pack())
+        })
+    }
+    /// Paint-reach words, decoded once on the first paint request.
+    /// Routing never requests these words. Invalid payloads return `None`.
     pub fn reach(&self) -> Option<Arc<[u64]>> {
         self.reach.as_ref().and_then(|reach| reach.get())
     }
-    /// Lazy verified reach handle. Binding a paint consumer does not decode it.
+    /// Lazy reach handle. Binding a paint consumer does not decode it.
     pub fn reach_source(&self) -> Option<Arc<DeferredReach>> {
         self.reach.clone()
     }
-    /// Verified static canlight plane shared by both navigation origins.
-    /// Legacy packs without a sidecar identity keep Fire explicitly unavailable.
+    /// Static canlight plane decoded for the loaded world's geometry.
     pub fn canlight(&self) -> Option<Arc<[u64]>> {
         self.canlight.clone()
     }
@@ -457,33 +291,6 @@ impl ServerProfile {
     pub fn require_bot_operation(&self) -> Result<(), String> {
         require_bot_operation(self.revision())
     }
-
-    pub fn validate_resources(&self) -> Result<(), String> {
-        self.validate_resources_with_progress(&ProfileProgressObserver::default())
-    }
-
-    pub fn validate_resources_with_progress(
-        &self,
-        observer: &ProfileProgressObserver,
-    ) -> Result<(), String> {
-        let actual = CacheManifest::capture_with_progress(
-            self.revision().as_i32() as u16,
-            self.client.cache_dir(),
-            |completed, total| {
-                observer.report(ProfileProgress::files(
-                    ProfileProgressStage::CheckingGameFiles,
-                    completed,
-                    total,
-                ));
-            },
-        )?;
-        if actual != self.cache_manifest {
-            return Err(
-                "cache changed after profile binding; restart with the prepared profile".into(),
-            );
-        }
-        Ok(())
-    }
 }
 
 fn require_bot_operation(revision: ClientRevision) -> Result<(), String> {
@@ -492,5 +299,23 @@ fn require_bot_operation(revision: ClientRevision) -> Result<(), String> {
         // bank-return and Guardian proof. Retain exhaustive revision dispatch:
         // a future client revision must make an explicit qualification choice.
         ClientRevision::R274 | ClientRevision::R289 => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod resource_root_tests {
+    use super::install_resource_root;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn install_root_handles_mac_app_and_plain_binary() {
+        assert_eq!(
+            install_resource_root(Path::new("/Applications/274bot.app/Contents/MacOS/274bot")),
+            PathBuf::from("/Applications/274bot.app/Contents/Resources")
+        );
+        assert_eq!(
+            install_resource_root(Path::new("/opt/274bot/274bot")),
+            PathBuf::from("/opt/274bot")
+        );
     }
 }

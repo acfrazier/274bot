@@ -80,9 +80,6 @@ const SHANTAY_BANK_CHEST: WorldTile = WorldTile {
     level: 0,
 };
 
-const ENGINE_A_GAME_PORT: u16 = 44594;
-const ENGINE_A_HTTP_PORT: u16 = 1080;
-
 fn engine_a_template() -> Arc<SharedClientTemplate> {
     let engine_dir = std::env::var_os("ENGINE_DIR")
         .map(PathBuf::from)
@@ -101,8 +98,8 @@ fn engine_a_template() -> Arc<SharedClientTemplate> {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(ENGINE_A_GAME_PORT),
-        http_port: Some(ENGINE_A_HTTP_PORT),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         engine_dir: Some(engine_dir.clone()),
         cache_dir: Some(engine_dir.join("data/pack/client")),
         unpack_dir: Some(unpack_dir),

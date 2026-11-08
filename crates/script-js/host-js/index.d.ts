@@ -1,5 +1,5 @@
 // Generated from host verb tables — do not edit by hand.
-// Regen: cargo test -p script --test host_js regen_host_js -- --ignored
+// Regen: cargo test -p script-js --test host_js regen_host_js -- --ignored
 // NativeTick Load is planned for a later release. JS API v2 is NativeApi (explicit export const apiVersion = 2).
 // Not a clone of rs2b0t-api.
 
@@ -955,6 +955,8 @@ export interface GatherSettings {
   fishingMethod?: string;
   /** default "Best tier", only when its card show-if holds */
   targetPreference?: 'Best tier' | 'Nearest';
+  /** default "Off", only when its card show-if holds */
+  tickMethod?: 'Off' | 'Knife';
   /** default "Start" */
   location?: 'Start' | 'Site' | 'Auto' | 'Custom';
   /** default "", only when its card show-if holds */
@@ -1001,10 +1003,22 @@ export interface GatherSettings {
 export interface GatherStatus {
   skill: string;
   method: string;
+  survival: string;
   phase: string;
   area: string;
   target: string;
   tool: string;
+  tick_method: string;
+  tick_cycle: number;
+  tick_verified: number;
+  tick_unobserved: number;
+  tick_slips: number;
+  tick_lost: number;
+  tick_delayed: number;
+  tick_paused: number;
+  tick_fallbacks: number;
+  tick_fallback_failed: number;
+  tick_events: number;
   bait: number;
   food: number;
   coins: number;
@@ -1059,11 +1073,12 @@ export type GatherOutcome =
   | { kind: 'refused'; reason: string }
   | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
 
-/** What a combat session fights. Exactly one key. `npc` names are selected npc config names (`'cow'`), or display names (`'Chicken'`) matching every attackable npc so named; `npcId` takes npc type ids. `attackers` engages only actors already attacking the bot: it never starts a fight with a player who is not. */
+/** What a combat session fights. Exactly one key. `npc` names are selected npc config names (`'cow'`), or display names (`'Chicken'`) matching every attackable npc so named; `npcId` takes npc type ids. `attackers` engages only actors already attacking the bot: it never starts a fight with a player who is not. `player` starts a fight with the named player (the name as the game shows it) where the game allows player combat: the Wilderness and a duel pen. It needs `pvp: true` on the request or the operator's `pvp.start_fights` setting; without either the fight is refused `invalid-setting:target:pvp-not-allowed`. */
 export type CombatTarget =
   | { npc: string | string[] }
   | { npcId: number | number[] }
-  | { attackers: 'npcs' | 'players' | 'any' };
+  | { attackers: 'npcs' | 'players' | 'any' }
+  | { player: string };
 
 /** One `api.combat.fight` request, mapped onto the native Combat request. Every key but `target` is optional. A malformed object (unknown key, wrong type, non-integer number) is refused `invalid-settings`; a semantic failure is refused `invalid-setting:<field>:<code>`. */
 export interface CombatRequest {
@@ -1098,6 +1113,8 @@ export interface CombatRequest {
   retaliate?: boolean;
   /** fight budget in game ticks, 1..65535; default 1500 (settles `budget`) */
   budgetTicks?: number;
+  /** player targets: opt in to start the fight. The operator's `pvp.start_fights` setting also opts in; a request without either is refused. Fighting back (`attackers`) needs neither; default false */
+  pvp?: boolean;
 }
 
 /** The live combat card's status. `engaged_index` is -1 when nothing is engaged. */
@@ -1116,7 +1133,7 @@ export interface CombatSession {
   status: CombatStatus | null;
 }
 
-/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive'. */
+/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive' | 'pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>'. */
 export interface CombatReport {
   end: 'killed' | 'target-gone' | 'no-target' | 'budget' | 'died' | 'aborted';
   reason: string | null;
@@ -1131,6 +1148,8 @@ export interface CombatReport {
   boostDoses: number;
   antifireDoses: number;
   protectSwitches: number;
+  /** what authorised a fight started with a player: the request's `pvp`, the operator's `pvp.start_fights` setting, or both; `null` for every other fight (an npc, or fighting back) */
+  pvpSource: 'request' | 'global' | 'both' | null;
 }
 
 /** How a session ended (the `value` of a `done` outcome). `fought`: Combat settled and reported. `interrupted`: a Pause, a death or a reconnect ended the fight before Combat settled it (the bot first cleared only the prayers it raised; death needs no clearing). `refused`: the host refused the request after admission (a name it could not resolve, `busy`, the machine refusing to begin) and nothing was fought. `failed`: a machine error or card panic. Moving the bot by hand mid-fight is never `done`: the seat revokes the session after the same scoped prayer clear, and the promise settles `{ kind: 'aborted', reason: 'user-input' }`. */

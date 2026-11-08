@@ -21,6 +21,9 @@ fn continuation(options: dialogue::DialogueOptions) -> dialogue::DialogueArgs {
 
 #[test]
 fn strict_line_rules_select_current_page_before_fixed_and_preferred_choices() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_chat_modal(100, vec!["What is the correct incantation?".into()]);
     snapshot.seed_chat_options(
@@ -48,8 +51,10 @@ fn strict_line_rules_select_current_page_before_fixed_and_preferred_choices() {
                         choose: Arc::from("Carlem Aber Camerinthum Purchai Gabindo"),
                     }]),
                     strict: true,
+                    answer_once: false,
                     chat_only: false,
                     gap_ticks: None,
+                    first_page_allowance_ticks: None,
                 }),
                 &mut tick.cx,
             )
@@ -67,6 +72,9 @@ fn strict_line_rules_select_current_page_before_fixed_and_preferred_choices() {
 
 #[test]
 fn strict_dialogue_rejects_unmatched_ambiguous_and_out_of_range_answers() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (options, prefer, choose) in [
         (vec!["No", "Later"], vec!["Yes"], None),
         (vec!["Yes please", "Yes certainly"], vec!["Yes"], None),
@@ -126,6 +134,9 @@ fn strict_dialogue_rejects_unmatched_ambiguous_and_out_of_range_answers() {
 
 #[test]
 fn continuation_waits_boundedly_without_talking_or_walking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = ready();
     let mut ledger = None;
     let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -151,6 +162,9 @@ fn continuation_waits_boundedly_without_talking_or_walking() {
 
 #[test]
 fn oddenstein_handin_mes_lines_rearm_the_authored_closed_chat_gap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Sourced from content
     // (area_draynor/scripts/professor_oddenstein.rs2 hand-in): `if_close`
     // at T, then four `mes` lines at T, T+2, T+5, T+8 (`p_delay` 1/2/2/1)
@@ -253,6 +267,9 @@ fn oddenstein_handin_mes_lines_rearm_the_authored_closed_chat_gap() {
 
 #[test]
 fn plain_conversation_end_completes_one_quiet_tick_after_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // The closed chat is observed at tick 3, and the default one-tick quiet
     // gap completes at tick 4.
     let mut snapshot = ready();
@@ -284,6 +301,9 @@ fn plain_conversation_end_completes_one_quiet_tick_after_close() {
 
 #[test]
 fn authored_gap_waits_for_harolds_reopened_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Harold Blurberry's death-guard equipment-room script
     // (`death_guard_equiproom.rs2:289-297`) closes chat before ten closed
     // ticks of delay and then opens another page without a re-arm signal.
@@ -358,6 +378,7 @@ fn shipped_talk_options(json: &str, step: &str) -> dialogue::DialogueOptions {
         choose: args.choose,
         line_rules: args.line_rules,
         strict: args.strict,
+        answer_once: args.answer_once,
         gap_ticks: args.gap_ticks,
     })
     .unwrap()
@@ -466,6 +487,9 @@ fn drives_harolds_last_page(options: dialogue::DialogueOptions, ale: bool) -> bo
 
 #[test]
 fn harold_steps_keep_the_blurberry_route_through_harolds_last_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // `give-ale-harold` reaches the Blurberry chain when the cocktail is
     // already carried; the ale's own four-tick value would end it early.
     let ale = shipped_death_talk_options("give-ale-harold");
@@ -540,6 +564,9 @@ fn drives_traiborn_bone_loop(options: dialogue::DialogueOptions) -> bool {
 
 #[test]
 fn ask_traiborn_keeps_a_resumed_bone_hand_in_through_its_last_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // `ask-traiborn` runs at ritual progress 3-27 (`traiborn.rs2:1-8`).
     let ask = shipped_talk_options(crate::quester::compile::DEMON_JSON, "ask-traiborn");
     assert!(drives_traiborn_bone_loop(ask.clone()));
@@ -551,6 +578,9 @@ fn ask_traiborn_keeps_a_resumed_bone_hand_in_through_its_last_page() {
 
 #[test]
 fn dialogue_waits_for_delayed_work_page_but_animation_cannot_rearm_forever() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for final_page in [true, false] {
         let mut snapshot = ready();
         snapshot.seed_chat_modal(100, vec![]);
@@ -603,6 +633,9 @@ fn dialogue_waits_for_delayed_work_page_but_animation_cannot_rearm_forever() {
 
 #[test]
 fn held_operation_uses_exact_inventory_slot_and_requires_acceptance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for accepted in [true, false] {
         let mut snapshot = ready();
         snapshot.seed_inventory(
@@ -648,6 +681,9 @@ fn held_operation_uses_exact_inventory_slot_and_requires_acceptance() {
 
 #[test]
 fn held_operation_refuses_an_unobserved_item_action() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_inventory(vec![held(1, "IOU", 7, 1, Some("Drop"))], 28);
     let mut args = reach_args(
@@ -672,6 +708,9 @@ fn held_operation_refuses_an_unobserved_item_action() {
 
 #[test]
 fn loc_interaction_drains_shared_strict_dialogue_before_success() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let plan = compile_interact(
             test_args::<InteractArgs>(serde_json::json!({
@@ -726,6 +765,9 @@ fn loc_interaction_drains_shared_strict_dialogue_before_success() {
 
 #[test]
 fn exact_loc_selection_skips_unreachable_same_id_decoys() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     // The posted flood starts on the live player tile.
     snapshot.seed_local_player(local_player(tile(5, 5)));
@@ -788,6 +830,9 @@ fn exact_loc_selection_skips_unreachable_same_id_decoys() {
 
 #[test]
 fn interact_until_rearms_after_adjacent_instant_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(5, 5)));
     let mut resource = loc(1000, "Rock", "Mine");
@@ -871,6 +916,9 @@ fn interact_until_rearms_after_adjacent_instant_progress() {
 
 #[test]
 fn ground_use_on_selects_exact_tile_and_id_not_nearest_decoy() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let source_id = resolve_obj(compile, "shears").unwrap();
         let target_id = resolve_obj(compile, "wool").unwrap();
@@ -925,6 +973,9 @@ fn ground_use_on_selects_exact_tile_and_id_not_nearest_decoy() {
 
 #[test]
 fn held_use_on_uses_canonical_host_kind_and_drains_dialogue_before_product_success() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let source_id = resolve_obj(compile, "shears").unwrap();
         let target_id = resolve_obj(compile, "wool").unwrap();
@@ -983,6 +1034,9 @@ fn held_use_on_uses_canonical_host_kind_and_drains_dialogue_before_product_succe
 
 #[test]
 fn extension_args_reject_invalid_target_provenance_and_dialogue_rules() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for args in [
             serde_json::json!({"npc":"fred_the_farmer","continue_only":true}),
@@ -1018,6 +1072,9 @@ fn extension_args_reject_invalid_target_provenance_and_dialogue_rules() {
 
 #[test]
 fn exact_ground_predicate_distinguishes_death_plateau_spawn_from_pedestal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let id = resolve_obj(compile, "death_cannonball_blue").unwrap();
         let predicate = compile_ground_item_near(
@@ -1076,6 +1133,9 @@ fn exact_ground_predicate_distinguishes_death_plateau_spawn_from_pedestal() {
 
 #[test]
 fn acquisition_child_identity_is_borrowed_until_the_child_settles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let snapshot = ready();
     let mut run = policy_s2_recipe_run(Box::new(WaitRun {
         until: Arc::new(AllPlan { items: vec![] }),
@@ -1172,6 +1232,9 @@ fn set_operation_count(snapshot: &mut GameSnapshot, id: i32, count: i32) {
 
 #[test]
 fn use_on_omitted_dialogue_refuses_an_observed_menu_without_answering() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (mut snapshot, plan, _) = operation_fixture(compile, "use_on", None, false);
         let mut ledger = None;
@@ -1217,6 +1280,9 @@ fn use_on_omitted_dialogue_refuses_an_observed_menu_without_answering() {
 
 #[test]
 fn operation_explicit_dialogue_reports_when_an_expected_page_does_not_open() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for kind in ["interact", "use_on"] {
             for dialogue in [
@@ -1274,6 +1340,9 @@ fn operation_explicit_dialogue_reports_when_an_expected_page_does_not_open() {
 
 #[test]
 fn operation_until_requires_explicit_dialogue_again_after_each_accepted_round() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for kind in ["interact", "use_on"] {
             let (mut snapshot, plan, goal) =
@@ -1344,6 +1413,9 @@ fn operation_until_requires_explicit_dialogue_again_after_each_accepted_round() 
 
 #[test]
 fn use_on_omitted_dialogue_does_not_require_a_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (snapshot, plan, _) = operation_fixture(compile, "use_on", None, false);
         let mut ledger = None;
@@ -1371,6 +1443,9 @@ fn use_on_omitted_dialogue_does_not_require_a_page() {
 
 #[test]
 fn use_on_until_drains_an_initial_continue_only_page_with_the_shared_driver() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (mut snapshot, plan, _) = operation_fixture(compile, "use_on", None, true);
         snapshot.seed_chat_modal(-1, vec!["An existing page.".into()]);
@@ -1413,6 +1488,9 @@ fn use_on_until_drains_an_initial_continue_only_page_with_the_shared_driver() {
 
 #[test]
 fn interact_until_reports_rejected_reach_without_waiting_for_settlement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(5, 5)));
     let mut target = loc(1000, "Door", "Open");
@@ -1465,6 +1543,9 @@ fn interact_until_reports_rejected_reach_without_waiting_for_settlement() {
 
 #[test]
 fn held_interact_compile_error_preserves_the_authored_alias() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let alias = "missing_held_alias";
         let error = compile_interact(
@@ -1480,6 +1561,9 @@ fn held_interact_compile_error_preserves_the_authored_alias() {
 
 #[test]
 fn operation_until_goal_observed_on_the_deadline_poll_wins_over_timeout() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for kind in ["interact", "use_on"] {
             let (mut snapshot, plan, goal) = operation_fixture(compile, kind, None, true);
@@ -1514,6 +1598,9 @@ fn operation_until_goal_observed_on_the_deadline_poll_wins_over_timeout() {
 
 #[test]
 fn use_on_until_leaves_post_use_page_for_the_next_owner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for initial_page in [false, true] {
             let (mut snapshot, plan, goal) = operation_fixture(compile, "use_on", None, true);
@@ -1600,6 +1687,9 @@ fn seed_operation_menu(snapshot: &mut GameSnapshot) {
 
 #[test]
 fn operation_omission_leaves_pages_after_reached_until_but_drains_without_until() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for kind in ["interact", "use_on"] {
             for until in [false, true] {
@@ -1681,6 +1771,9 @@ fn operation_omission_leaves_pages_after_reached_until_but_drains_without_until(
 
 #[test]
 fn operation_omission_refuses_a_menu_after_acceptance_without_answering() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for kind in ["interact", "use_on"] {
             for until in [false, true] {
@@ -1747,6 +1840,9 @@ fn operation_omission_refuses_a_menu_after_acceptance_without_answering() {
 
 #[test]
 fn operation_omission_no_page_settles_on_fresh_evidence_not_a_timer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for kind in ["interact", "use_on"] {
             let (snapshot, plan, _) = operation_fixture(compile, kind, None, false);
@@ -1785,6 +1881,9 @@ fn operation_omission_no_page_settles_on_fresh_evidence_not_a_timer() {
 
 #[test]
 fn operation_omission_waits_for_arrival_and_drains_distant_loc_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let plan = compile_interact(
             test_args::<InteractArgs>(serde_json::json!({
@@ -1864,6 +1963,9 @@ fn operation_omission_waits_for_arrival_and_drains_distant_loc_page() {
 
 #[test]
 fn operation_omission_waits_for_fresh_idle_player_before_no_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for kind in ["interact", "use_on"] {
             let (mut snapshot, plan, _) = operation_fixture(compile, kind, None, false);
@@ -1910,6 +2012,9 @@ fn operation_omission_waits_for_fresh_idle_player_before_no_page() {
 
 #[test]
 fn interact_omission_settle_timeout_remains_active_during_perpetual_activity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for (moving, animation) in [(true, -1), (false, 123)] {
             let (mut snapshot, plan, _) = operation_fixture(compile, "interact", None, false);
@@ -1948,6 +2053,9 @@ fn interact_omission_settle_timeout_remains_active_during_perpetual_activity() {
 
 #[test]
 fn interact_omission_requires_scene_activity_before_fresh_idle_completion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let plan = compile_interact(
             test_args::<InteractArgs>(serde_json::json!({
@@ -2009,6 +2117,9 @@ fn interact_omission_requires_scene_activity_before_fresh_idle_completion() {
 
 #[test]
 fn use_on_omission_completes_adjacent_instant_loc_without_activity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let plan = compile_use_on(
             test_args::<UseOnArgs>(serde_json::json!({
@@ -2063,6 +2174,9 @@ fn use_on_omission_completes_adjacent_instant_loc_without_activity() {
 
 #[test]
 fn operation_omission_leaves_unsupported_main_modal_untouched() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let ui = compile.selected.dialogue_ui().unwrap();
         let unsupported = [ui.scroll_root, ui.book_root].into_iter().max().unwrap() + 100;
@@ -2103,6 +2217,9 @@ fn operation_omission_leaves_unsupported_main_modal_untouched() {
 
 #[test]
 fn reach_scene_operations_require_accepted_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for kind in [
         reach::ReachKind::Loc {
             id: Some(1000),
@@ -2187,6 +2304,9 @@ fn reach_scene_operations_require_accepted_receipt() {
 
 #[test]
 fn adopted_talk_menu_uses_only_authored_answers_without_talk_to() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for continuation_only in [false, true] {
             for options in [
@@ -2239,6 +2359,9 @@ fn adopted_talk_menu_uses_only_authored_answers_without_talk_to() {
 
 #[test]
 fn operation_explicit_none_never_adopts_chat_after_acceptance() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for kind in ["interact", "use_on"] {
             for menu in [false, true] {
@@ -2296,6 +2419,9 @@ fn loc_interact_plan(settle_ms: u64, until: Option<(i32, s2::QuantityPlan)>) -> 
 
 #[test]
 fn interact_wait_until_gates_initial_and_refused_rounds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::atomic::{AtomicU8, Ordering};
     struct Gate(Arc<AtomicU8>);
     impl PredicatePlan for Gate {
@@ -2415,6 +2541,9 @@ fn interact_wait_until_gates_initial_and_refused_rounds() {
 
 #[test]
 fn interact_reached_until_completes_before_optional_scene_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         // Once the count is reached, omitted dialogue completes immediately even
         // when the player is still moving.
@@ -2479,6 +2608,9 @@ fn interact_reached_until_completes_before_optional_scene_gate() {
 
 #[test]
 fn use_on_reached_until_completes_before_optional_gate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         // Probe C: item use reaches its goal after acceptance while the player
         // remains in motion, without waiting for the omitted-dialogue gate.
@@ -2517,6 +2649,9 @@ fn use_on_reached_until_completes_before_optional_gate() {
 
 #[test]
 fn reached_until_never_skips_the_settle_deadline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         for (kind, timeout) in [
             ("interact", "interact settle timeout"),
@@ -2560,6 +2695,9 @@ fn reached_until_never_skips_the_settle_deadline() {
 
 #[test]
 fn adjacent_instant_interact_completes_on_fresh_idle_without_activity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(5, 5)));
     let mut resource = loc(1000, "Rock", "Mine");
@@ -2599,6 +2737,9 @@ fn adjacent_instant_interact_completes_on_fresh_idle_without_activity() {
 
 #[test]
 fn distant_instant_interact_still_requires_activity_then_fresh_idle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = ready();
     snapshot.seed_local_player(local_player(tile(5, 5)));
     let mut resource = loc(1000, "Rock", "Mine");
@@ -2719,6 +2860,9 @@ fn instant_loc_completion_tick(
 
 #[test]
 fn adjacent_loc_transformed_on_acceptance_completes_on_next_fresh_idle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Trapdoor Open: by the time the receipt is read the server has already
     // replaced `1568 [Open]` with `1570 [Climb-down/Close]`.
     let mut snapshot = ready();
@@ -2738,6 +2882,9 @@ fn adjacent_loc_transformed_on_acceptance_completes_on_next_fresh_idle() {
 
 #[test]
 fn adjacent_teleport_before_acceptance_completes_on_next_fresh_idle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // Climb-down: the receipt is read after the scene rebuild, in the crypt,
     // where the clicked trapdoor no longer exists.
     let mut snapshot = ready();
@@ -2761,6 +2908,9 @@ fn adjacent_teleport_before_acceptance_completes_on_next_fresh_idle() {
 
 #[test]
 fn distant_click_never_completes_on_unrelated_toggle_or_teleport() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     // A click on a target out of range when chosen still needs post-acceptance
     // movement or animation, even if the loc changes or the player teleports.
     for teleport in [false, true] {
@@ -2785,6 +2935,9 @@ fn distant_click_never_completes_on_unrelated_toggle_or_teleport() {
 
 #[test]
 fn interact_until_leaves_a_preexisting_page_for_the_next_owner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (mut snapshot, plan, goal) = operation_fixture(compile, "interact", None, true);
         snapshot.seed_chat_modal(-1, vec!["An existing page.".into()]);
@@ -2815,6 +2968,9 @@ fn interact_until_leaves_a_preexisting_page_for_the_next_owner() {
 
 #[test]
 fn interact_until_leaves_a_later_page_during_the_dialogue_gap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (mut snapshot, plan, goal) = operation_fixture(compile, "interact", None, true);
         let mut ledger = None;
@@ -2894,6 +3050,9 @@ fn interact_until_leaves_a_later_page_during_the_dialogue_gap() {
 
 #[test]
 fn interact_settle_deadline_wins_when_a_page_opens_late() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (mut snapshot, plan, goal) =
             operation_fixture_with_settle(compile, "interact", None, true, 3_000);
@@ -2933,6 +3092,9 @@ fn interact_settle_deadline_wins_when_a_page_opens_late() {
 
 #[test]
 fn interact_settle_deadline_bounds_an_active_dialogue_drain() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (mut snapshot, plan, _) =
             operation_fixture_with_settle(compile, "interact", None, true, 3_000);
@@ -2977,6 +3139,9 @@ fn interact_settle_deadline_bounds_an_active_dialogue_drain() {
 
 #[test]
 fn interact_until_completes_while_dialogue_driver_is_active() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (mut snapshot, plan, goal) =
             operation_fixture_with_settle(compile, "interact", None, true, 60_000);
@@ -3036,6 +3201,9 @@ fn interact_until_completes_while_dialogue_driver_is_active() {
 
 #[test]
 fn use_on_settle_deadline_bounds_an_active_dialogue_drain() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (mut snapshot, plan, _) =
             operation_fixture_with_settle(compile, "use_on", None, true, 3_000);
@@ -3077,6 +3245,9 @@ fn use_on_settle_deadline_bounds_an_active_dialogue_drain() {
 
 #[test]
 fn authored_interact_dialogue_progress_outlives_the_default_settle_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (mut snapshot, plan, _) = operation_fixture_with_settle(
             compile,
@@ -3137,6 +3308,9 @@ fn authored_interact_dialogue_progress_outlives_the_default_settle_window() {
 
 #[test]
 fn authored_interact_dialogue_progress_has_a_total_cap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (mut snapshot, plan, _) = operation_fixture_with_settle(
             compile,
@@ -3183,6 +3357,9 @@ fn authored_interact_dialogue_progress_has_a_total_cap() {
 
 #[test]
 fn authored_interact_settle_override_still_bounds_missing_dialogue() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|compile| {
         let (snapshot, plan, _) = operation_fixture_with_settle(
             compile,
@@ -3208,5 +3385,908 @@ fn authored_interact_settle_override_still_bounds_missing_dialogue() {
             with_step(tick, |cx| run.poll(cx))
         }), Poll::Ready(Err(ActionError::Failed(reason)))
             if reason.as_ref() == "interact settle timeout"));
+    });
+}
+fn production_menu_client(rows: &[(i32, &str)]) -> client::client::Client {
+    use client::client::{Client, ClientConfig};
+    use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
+    use client::io::ServerProt;
+
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp/274bot-no-production-cache".into(),
+        members: true,
+        lowmem: false,
+    });
+    let cache = Arc::get_mut(&mut client.cache).unwrap();
+    let max_id = rows.iter().map(|(id, _)| *id).max().unwrap_or(0) as usize;
+    cache
+        .objs
+        .resize(max_id + 1, client::config::ObjType::default());
+    for (id, name) in rows {
+        cache.objs[*id as usize] = client::config::ObjType {
+            id: *id,
+            name: (*name).into(),
+            ..Default::default()
+        };
+    }
+
+    let button_texts = ["Make 1", "Make 5", "Make 10", "Make X"];
+    let mut children = Vec::with_capacity(rows.len() * (button_texts.len() + 1));
+    for row_index in 0..rows.len() {
+        let row_base = 2110 + row_index as i32 * 20;
+        children.push(row_base);
+        children.extend((0..button_texts.len()).map(|index| row_base + 10 + index as i32));
+    }
+    client.set_iface(
+        2100,
+        IfType {
+            id: 2100,
+            layer_id: 2100,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(children),
+            ..Default::default()
+        },
+    );
+    for (row_index, (object_id, _)) in rows.iter().enumerate() {
+        let row_base = 2110 + row_index as i32 * 20;
+        client.set_iface(
+            row_base as usize,
+            IfType {
+                id: row_base,
+                layer_id: 2100,
+                r#type: ComponentType::TYPE_MODEL,
+                ..Default::default()
+            },
+        );
+        client.set_iface_mut(
+            row_base as usize,
+            IfTypeMut {
+                model1_type: 4,
+                model1_id: *object_id,
+                ..Default::default()
+            },
+        );
+        for (index, text) in button_texts.iter().enumerate() {
+            let component_id = row_base + 10 + index as i32;
+            client.set_iface(
+                component_id as usize,
+                IfType {
+                    id: component_id,
+                    layer_id: 2100,
+                    r#type: ComponentType::TYPE_TEXT,
+                    button_text: (*text).into(),
+                    ..Default::default()
+                },
+            );
+            client.set_iface_mut(
+                component_id as usize,
+                IfTypeMut {
+                    button_type: ButtonType::BUTTON_OK,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    client.chat_modal_id = 2100;
+    client.bump_gens(ServerProt::IF_OPENCHAT);
+    client
+}
+
+fn production_main_make_client(
+    item_id: i32,
+    item_name: &str,
+    actions: &[&str],
+) -> client::client::Client {
+    use client::client::{Client, ClientConfig};
+    use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+    use client::io::ServerProt;
+
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: "/tmp/274bot-no-production-cache".into(),
+        members: true,
+        lowmem: false,
+    });
+    let cache = Arc::get_mut(&mut client.cache).unwrap();
+    cache
+        .objs
+        .resize(item_id as usize + 1, client::config::ObjType::default());
+    cache.objs[item_id as usize] = client::config::ObjType {
+        id: item_id,
+        name: item_name.into(),
+        ..Default::default()
+    };
+    client.set_iface(
+        2200,
+        IfType {
+            id: 2200,
+            layer_id: 2200,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![2210]),
+            ..Default::default()
+        },
+    );
+    let mut operations: [Option<String>; 5] = Default::default();
+    for (operation, text) in operations.iter_mut().zip(actions) {
+        *operation = Some((*text).into());
+    }
+    client.set_iface(
+        2210,
+        IfType {
+            id: 2210,
+            layer_id: 2200,
+            r#type: ComponentType::TYPE_INV,
+            iop: operations,
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        2210,
+        IfTypeMut {
+            link_obj_type: Some(vec![item_id + 1]),
+            link_obj_number: Some(vec![1]),
+            ..Default::default()
+        },
+    );
+    client.main_modal_id = 2200;
+    client.bump_gens(ServerProt::IF_OPENMAIN);
+    client
+}
+
+#[test]
+fn make_accepts_selector_only_and_legacy_location_trigger_but_rejects_invalid_authorship() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    compile_context_test(|compile| {
+        let selector = serde_json::json!({
+            "product": "unstrung_shortbow",
+            "menu": {
+                "obj": "shortbow",
+                "source": "lostcity-289/content/scripts/skill_fletching/scripts/cut_logs.rs2:18-41"
+            },
+            "qty": 1
+        });
+        assert!(
+            crate::quester::compile::decode_args::<s2::MakeArgs>(&selector)
+                .and_then(|args| s2::compile_make(args, compile))
+                .is_ok(),
+            "selector-only make follows the preceding use_on step"
+        );
+
+        let legacy = serde_json::json!({
+            "loc": {"name": "spinningwheel", "op": "Spin"},
+            "anchor": {"tile": [3200, 3200, 0], "source": "lostcity-289/content/scripts/skill_crafting/scripts/spinning/spinning.rs2:36-51"},
+            "product": "ball_of_wool",
+            "menu": {"obj": "wool", "source": "lostcity-289/content/scripts/skill_crafting/scripts/spinning/spinning.rs2:36-51"},
+            "qty": 1
+        });
+        assert!(
+            crate::quester::compile::decode_args::<s2::MakeArgs>(&legacy)
+                .and_then(|args| s2::compile_make(args, compile))
+                .is_ok(),
+            "legacy location-triggered make remains authored"
+        );
+
+        for invalid in [
+            serde_json::json!({
+                "loc": {"name": "spinningwheel", "op": "Spin"},
+                "product": "ball_of_wool", "qty": 1
+            }),
+            serde_json::json!({
+                "anchor": {"tile": [3200, 3200, 0], "source": "runner fixture"},
+                "product": "ball_of_wool", "qty": 1
+            }),
+            serde_json::json!({"product": "missing-production-item", "qty": 1}),
+            serde_json::json!({
+                "product": "ball_of_wool",
+                "menu": {"obj": "missing-production-menu-item", "source": "runner fixture"},
+                "qty": 1
+            }),
+            serde_json::json!({
+                "product": "ball_of_wool",
+                "menu": {"obj": "wool", "source": " "},
+                "qty": 1
+            }),
+            serde_json::json!({
+                "loc": {"name": "spinningwheel", "op": "Spin"},
+                "anchor": {"tile": [3200, 3200, 0], "source": " "},
+                "product": "ball_of_wool", "qty": 1
+            }),
+            serde_json::json!({"product": "ball_of_wool", "qty": 0}),
+            serde_json::json!({
+                "loc": {"name": "spinningwheel", "op": "Produce"},
+                "anchor": {"tile": [3200, 3200, 0], "source": "runner fixture"},
+                "product": "ball_of_wool", "qty": 1
+            }),
+        ] {
+            assert!(
+                crate::quester::compile::decode_args::<s2::MakeArgs>(&invalid)
+                    .and_then(|args| s2::compile_make(args, compile))
+                    .is_err(),
+                "{invalid}"
+            );
+        }
+    });
+}
+
+#[test]
+fn item_on_item_use_on_emits_the_selected_inventory_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    compile_context_test(|compile| {
+        let source_id = resolve_obj(compile, "knife").unwrap();
+        let target_id = resolve_obj(compile, "logs").unwrap();
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "knife",
+                "target": {"item": "logs"}
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
+        snapshot.seed_inventory(
+            vec![
+                held(source_id, "Knife", 4, 1, None),
+                held(target_id, "Logs", 9, 3, None),
+            ],
+            28,
+        );
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                source_item_id: Some(source),
+                source_item_slot: Some(4),
+                target_item_id: Some(target),
+                target_item_slot: Some(9),
+                ..
+            } if kind == "inv" && *source == source_id && *target == target_id
+        ));
+        accept_last(&mut ledger, 3, true);
+        let product_id = resolve_obj(compile, "unstrung_shortbow").unwrap();
+        let menu_id = resolve_obj(compile, "shortbow").unwrap();
+        let decoy_id = resolve_obj(compile, "longbow").unwrap();
+        let make = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "product": "unstrung_shortbow",
+                "menu": {
+                    "obj": "shortbow",
+                    "source": "lostcity-289/content/scripts/skill_fletching/scripts/cut_logs.rs2:18-41"
+                },
+                "qty": 10
+            })),
+            compile,
+        )
+        .unwrap();
+        let client = production_menu_client(&[(decoy_id, "Longbow"), (menu_id, "Shortbow")]);
+        snapshot.rebuild_family(&client, api::snapshot::Family::MakeProducts);
+        snapshot.rebuild_family(&client, api::snapshot::Family::Modals);
+        snapshot.seed_inventory(
+            vec![
+                held(source_id, "Knife", 4, 1, None),
+                held(target_id, "Logs", 9, 3, None),
+                held(product_id, "Unstrung shortbow", 12, 5, None),
+            ],
+            28,
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 5, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        let mut make_run = with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| make.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            with_step(tick, |cx| make_run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::IfButton { component_id: 2141 }
+        ));
+    });
+}
+
+#[test]
+fn item_on_location_use_on_opens_pottery_product_selection() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    compile_context_test(|compile| {
+        let source_id = resolve_obj(compile, "softclay").unwrap();
+        let wheel_id = resolve_loc(compile, "potterywheel").unwrap();
+        let plan = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "softclay",
+                "target": {"loc": "potterywheel"}
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
+        snapshot.seed_inventory(vec![held(source_id, "Soft clay", 6, 1, None)], 28);
+        let mut wheel = loc(wheel_id, "Potter's Wheel", "Use");
+        wheel.tile = tile(5, 6);
+        wheel.distance = 1;
+        snapshot.seed_locs(vec![wheel]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                target_name: Some(name),
+                x: 5,
+                z: 6,
+                source_item_id: Some(source),
+                source_item_slot: Some(6),
+                ..
+            } if kind == "loc" && name == "Potter's Wheel" && *source == source_id
+        ));
+
+        accept_last(&mut ledger, 3, true);
+        let product_id = resolve_obj(compile, "bowl_unfired").unwrap();
+        let menu_id = resolve_obj(compile, "bowl_unfired").unwrap();
+        let make = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "product": "bowl_unfired",
+                "menu": {
+                    "obj": "bowl_unfired",
+                    "source": "lostcity-289/content/scripts/skill_crafting/scripts/pottery/pottery.rs2:59-66"
+                },
+                "qty": 5
+            })),
+            compile,
+        )
+        .unwrap();
+        let client = production_menu_client(&[(menu_id, "Unfired bowl")]);
+        snapshot.rebuild_family(&client, api::snapshot::Family::MakeProducts);
+        snapshot.rebuild_family(&client, api::snapshot::Family::Modals);
+        snapshot.seed_inventory(vec![held(source_id, "Soft clay", 6, 1, None)], 28);
+        assert_ne!(source_id, product_id);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 5, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        let mut make_run = with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| make.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            with_step(tick, |cx| make_run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::IfButton { component_id: 2121 }
+        ));
+    });
+}
+
+#[test]
+fn item_on_anvil_make_selects_bronze_wire_main_make_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    compile_context_test(|compile| {
+        let bar_id = resolve_obj(compile, "bronze_bar").unwrap();
+        let product_id = resolve_obj(compile, "bronzecraftwire").unwrap();
+        let anvil_id = resolve_loc(compile, "anvil").unwrap();
+        let use_on = compile_use_on(
+            test_args::<UseOnArgs>(serde_json::json!({
+                "item": "bronze_bar",
+                "target": {"loc": "anvil"}
+            })),
+            compile,
+        )
+        .unwrap();
+        let make = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "product": "bronzecraftwire",
+                "menu": {
+                    "obj": "bronze_bar",
+                    "source": "C:scripts/skill_smithing/configs/smithing/smithing.dbrow:1321-1330"
+                },
+                "qty": 1
+            })),
+            compile,
+        )
+        .unwrap();
+
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 5)));
+        snapshot.seed_inventory(vec![held(bar_id, "Bronze bar", 8, 1, None)], 28);
+        let mut anvil = loc(anvil_id, "Anvil", "Use");
+        anvil.tile = tile(5, 6);
+        anvil.distance = 1;
+        snapshot.seed_locs(vec![anvil]);
+        let mut ledger = None;
+        let mut use_on_run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| use_on.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| use_on_run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                target_name: Some(name),
+                x: 5,
+                z: 6,
+                source_item_id: Some(source),
+                source_item_slot: Some(8),
+                ..
+            } if kind == "loc" && name == "Anvil" && *source == bar_id
+        ));
+        accept_last(&mut ledger, 3, true);
+
+        let menu_client = production_main_make_client(bar_id, "Bronze bar", &["Make 1"]);
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake);
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert_ne!(bar_id, product_id);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| use_on_run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 5, |tick| {
+                with_step(tick, |cx| use_on_run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
+        let mut make_run = with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| make.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            with_step(tick, |cx| make_run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::MakePanel {
+                id,
+                slot: 0,
+                component,
+                operation: 1,
+            } if *id == bar_id && *component == 2210
+        ));
+    });
+}
+
+#[test]
+fn loc_make_starts_menu_clock_after_multi_tick_approach() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    // The accepted click follows approach arrival. World processes client input on
+    // a later tick (E engine/src/engine/World.ts:350-355), then NetworkPlayer
+    // writes the interface after that tick packet (E engine/src/engine/NetworkPlayer.ts:171-177).
+    // A snapshot on that tick can still lack the menu; it is observable on the next.
+    compile_context_test(|compile| {
+        let wheel_id = resolve_loc(compile, "spinningwheel").unwrap();
+        let wool_id = resolve_obj(compile, "wool").unwrap();
+        let anchor = tile(3200, 3200);
+        let plan = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "loc": {"name": "spinningwheel", "op": "Spin"},
+                "anchor": {"tile": [3200, 3200, 0], "source": "C:scripts/skill_crafting/scripts/spinning/spinning.rs2:36-51"},
+                "product": "ball_of_wool",
+                "menu": {
+                    "obj": "wool",
+                    "source": "C:scripts/skill_crafting/scripts/spinning/spinning.rs2:36-51"
+                },
+                "qty": 1
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(3195, 3200)));
+        let mut wheel = loc(wheel_id, "Spinning wheel", "Spin");
+        wheel.tile = anchor;
+        wheel.distance = 5;
+        snapshot.seed_locs(vec![wheel]);
+        snapshot.seed_inventory(Vec::new(), 28);
+
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(
+            matches!(
+                &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+                crate::native::HostEffect::Walk(request)
+                    if request.target == anchor && request.radius == 1
+            ),
+            "the loc op must wait for its multi-tick approach"
+        );
+
+        for tick in 3..=5 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
+                with_step(native, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        snapshot.seed_local_player(local_player(anchor));
+        let mut wheel = loc(wheel_id, "Spinning wheel", "Spin");
+        wheel.tile = anchor;
+        wheel.distance = 0;
+        snapshot.seed_locs(vec![wheel]);
+        let (request_id, run_key) = {
+            let action = ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .iter()
+                .rev()
+                .find(|action| matches!(&action.effect, crate::native::HostEffect::Walk(_)))
+                .unwrap();
+            (action.request_id.get(), action.run())
+        };
+        ledger.as_mut().unwrap().walk = Some(crate::native::WalkReceipt {
+            goal: None,
+            request_id,
+            evidence: api::quest_progress::EvidenceStamp {
+                run: run_key,
+                tick: 6,
+                sequence: 6,
+            },
+            end: crate::native::WalkEnd::Arrived,
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
+            prereq_allow: None,
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect,
+            crate::native::HostEffect::Interaction(InteractReq::Loc {
+                id: Some(id),
+                ..
+            }) if *id == wheel_id
+        ));
+
+        accept_last(&mut ledger, 7, true);
+        assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 8, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let menu_client = production_menu_client(&[(wool_id, "Wool")]);
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::MakeProducts);
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 9, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(emitted(&ledger), InteractReq::IfButton { .. }));
+    });
+}
+
+#[test]
+fn make_targets_item_yield_using_process_count_from_content() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    compile_context_test(|compile| {
+        let bar_id = resolve_obj(compile, "bronze_bar").unwrap();
+        let heads_id = resolve_obj(compile, "bronze_arrowheads").unwrap();
+        let plan = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "product": "bronze_arrowheads",
+                "menu": {
+                    "obj": "bronze_bar",
+                    "source": "C:scripts/skill_smithing/configs/smithing/smithing.inv:30-35"
+                },
+                "qty": 7
+            })),
+            compile,
+        )
+        .unwrap();
+        let menu_client = production_menu_client(&[(bar_id, "Bronze bar")]);
+        let mut snapshot = ready();
+        snapshot.seed_inventory(
+            vec![
+                held(bar_id, "Bronze bar", 8, 1, None),
+                held(heads_id, "Bronze arrowheads", 9, 0, None),
+            ],
+            28,
+        );
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::MakeProducts);
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::IfButton { component_id: 2120 }
+        ));
+    });
+}
+
+#[test]
+fn main_make_retriggers_item_on_loc_after_each_closed_batch() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use client::io::ServerProt;
+
+    compile_context_test(|compile| {
+        let bar_id = resolve_obj(compile, "bronze_bar").unwrap();
+        let wire_id = resolve_obj(compile, "bronzecraftwire").unwrap();
+        let anvil_id = resolve_loc(compile, "anvil").unwrap();
+        let make = s2::compile_make(
+            test_args::<s2::MakeArgs>(serde_json::json!({
+                "loc": {"name": "anvil"},
+                "anchor": {
+                    "tile": [6, 7, 0],
+                    "source": "unit fixture",
+                },
+                "product": "bronzecraftwire",
+                "menu": {
+                    "obj": "bronze_bar",
+                    "source": "C:scripts/skill_smithing/configs/smithing/smithing.inv:30-35"
+                },
+                "qty": 7
+            })),
+            compile,
+        )
+        .unwrap();
+        let mut menu_client =
+            production_main_make_client(bar_id, "Bronze bar", &["Make 1", "Make 5", "Make 10"]);
+        let mut snapshot = ready();
+        snapshot.seed_local_player(local_player(tile(5, 6)));
+        snapshot.seed_inventory(
+            vec![
+                held(bar_id, "Bronze bar", 8, 10, None),
+                held(wire_id, "Bronze wire", 9, 0, None),
+            ],
+            28,
+        );
+        let mut anvil = loc(anvil_id, "Anvil", "Use");
+        anvil.tile = tile(5, 6);
+        anvil.distance = 0;
+        snapshot.seed_locs(vec![anvil]);
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| make.begin(cx).unwrap())
+        });
+
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                x,
+                z,
+                source_item_id: Some(id),
+                target_item_id: Some(target),
+                ..
+            } if kind == "loc"
+                && (*x, *z) == (5, 6)
+                && *id == bar_id
+                && *target == anvil_id
+        ));
+        accept_last(&mut ledger, 3, true);
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+
+        menu_client.main_modal_id = 2200;
+        menu_client.bump_gens(ServerProt::IF_OPENMAIN);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 4, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::MakePanel { operation: 2, .. }
+        ));
+        accept_last(&mut ledger, 5, true);
+        // C:scripts/skill_smithing/scripts/smithing/smithing.rs2:213-214 closes the menu per attempt.
+        menu_client.main_modal_id = -1;
+        menu_client.bump_gens(ServerProt::IF_CLOSE);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 6, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+
+        snapshot.seed_inventory(
+            vec![
+                held(bar_id, "Bronze bar", 8, 5, None),
+                held(wire_id, "Bronze wire", 9, 5, None),
+            ],
+            28,
+        );
+        for tick in 7..=10 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
+                with_step(native, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        assert!(with_tick(&snapshot, &mut ledger, 11, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                x,
+                z,
+                source_item_id: Some(id),
+                target_item_id: Some(target),
+                ..
+            } if kind == "loc"
+                && (*x, *z) == (5, 6)
+                && *id == bar_id
+                && *target == anvil_id
+        ));
+
+        accept_last(&mut ledger, 12, true);
+        assert!(with_tick(&snapshot, &mut ledger, 12, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        menu_client.main_modal_id = 2200;
+        menu_client.bump_gens(ServerProt::IF_OPENMAIN);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 13, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::MakePanel { operation: 1, .. }
+        ));
+
+        accept_last(&mut ledger, 14, true);
+        menu_client.main_modal_id = -1;
+        menu_client.bump_gens(ServerProt::IF_CLOSE);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 15, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        snapshot.seed_inventory(
+            vec![
+                held(bar_id, "Bronze bar", 8, 4, None),
+                held(wire_id, "Bronze wire", 9, 6, None),
+            ],
+            28,
+        );
+        for tick in 16..=19 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
+                with_step(native, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        assert!(with_tick(&snapshot, &mut ledger, 20, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::UseOn {
+                kind,
+                x,
+                z,
+                source_item_id: Some(id),
+                target_item_id: Some(target),
+                ..
+            } if kind == "loc"
+                && (*x, *z) == (5, 6)
+                && *id == bar_id
+                && *target == anvil_id
+        ));
+
+        accept_last(&mut ledger, 21, true);
+        assert!(with_tick(&snapshot, &mut ledger, 21, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        menu_client.main_modal_id = 2200;
+        menu_client.bump_gens(ServerProt::IF_OPENMAIN);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 22, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(matches!(
+            emitted(&ledger),
+            InteractReq::MakePanel { operation: 1, .. }
+        ));
+
+        accept_last(&mut ledger, 23, true);
+        menu_client.main_modal_id = -1;
+        menu_client.bump_gens(ServerProt::IF_CLOSE);
+        assert!(snapshot.rebuild_family(&menu_client, api::snapshot::Family::MainMake));
+        snapshot.rebuild_family(&menu_client, api::snapshot::Family::Modals);
+        assert!(with_tick(&snapshot, &mut ledger, 24, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        snapshot.seed_inventory(
+            vec![
+                held(bar_id, "Bronze bar", 8, 3, None),
+                held(wire_id, "Bronze wire", 9, 7, None),
+            ],
+            28,
+        );
+        for tick in 25..=27 {
+            assert!(with_tick(&snapshot, &mut ledger, tick, |native| {
+                with_step(native, |cx| run.poll(cx))
+            })
+            .is_pending());
+        }
+        assert!(matches!(
+            with_tick(&snapshot, &mut ledger, 28, |tick| {
+                with_step(tick, |cx| run.poll(cx))
+            }),
+            Poll::Ready(Ok(_))
+        ));
     });
 }

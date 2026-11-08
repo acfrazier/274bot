@@ -1,9 +1,9 @@
 //! One click, selected title/root validation, capture, one close, observed close.
-use crate::native::{ActionContext, ActionError, NativeMachine, QuietReadLease};
-use crate::shim::InteractReq;
+use crate::interact::InteractReq;
+use crate::native::{ActionContext, ActionError, NativeMachine, QuietReadLease, WaitDeadline};
 use api::quest_facts::QuestCatalog;
 use api::quest_progress::{EvidenceStamp, JournalRead};
-use api::selected::{ClientRevision, FactKey, SelectedPin};
+use api::selected::{ClientRevision, FactKey};
 use std::{sync::Arc, task::Poll, time::Duration};
 
 // Selected 289 interface.pack: questjournal_scroll and :ifquestname. The
@@ -32,7 +32,6 @@ pub struct JournalMachine {
     title: Arc<str>,
     component: i32,
     colour: i32,
-    pin: Arc<SelectedPin>,
     lease: Option<QuietReadLease>,
     phase: Phase,
     deadline_tick: u64,
@@ -78,7 +77,7 @@ impl NativeMachine for JournalMachine {
     type Output = JournalRead;
 
     fn begin(args: JournalRequest, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
-        if cx.pin().revision != ClientRevision::R289 {
+        if cx.revision() != ClientRevision::R289 {
             return Err(ActionError::Unavailable(Arc::from(
                 "journal interface unavailable for selected revision",
             )));
@@ -128,18 +127,20 @@ impl NativeMachine for JournalMachine {
         let component = row.component_id;
         let colour = row.colour;
         let title = Arc::clone(title);
-        let lease = cx.begin_quiet_read(cx.action_id())?;
+        // The lease carries this machine's own window (`poll`: `tick >=
+        // deadline_tick` fails the read); each new window renews it.
+        let deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+        let lease = cx.begin_quiet_read(cx.action_id(), WaitDeadline::Tick(deadline_tick))?;
         Ok(Self {
             quest: args.quest,
             title,
             component,
             colour,
-            pin: Arc::new(cx.pin().clone()),
             lease: Some(lease),
             phase: adopted_before
                 .map(|before| Phase::Adopt { before })
                 .unwrap_or(Phase::Click),
-            deadline_tick: cx.evidence().tick + WINDOW_TICKS,
+            deadline_tick,
             overall_deadline: cx.active_now() + OVERALL,
             acquired: None,
             lines: Arc::from([]),
@@ -179,7 +180,7 @@ impl NativeMachine for JournalMachine {
                     }) {
                         Ok(request) => {
                             self.phase = Phase::Acquire { request };
-                            self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+                            self.arm_window(cx);
                         }
                         Err(ActionError::BudgetExhausted) => {}
                         Err(error) => return Poll::Ready(Err(error)),
@@ -210,7 +211,7 @@ impl NativeMachine for JournalMachine {
                     self.lines = page.value.lines().map(Arc::<str>::from).collect();
                     self.acquired = Some(page.stamp);
                     self.phase = Phase::Close;
-                    self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+                    self.arm_window(cx);
                     continue;
                 }
                 Phase::Adopt { before } => {
@@ -234,7 +235,7 @@ impl NativeMachine for JournalMachine {
                     self.lines = page.value.lines().map(Arc::<str>::from).collect();
                     self.acquired = Some(page.stamp);
                     self.phase = Phase::Close;
-                    self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+                    self.arm_window(cx);
                     continue;
                 }
                 Phase::Close => {
@@ -255,7 +256,7 @@ impl NativeMachine for JournalMachine {
                     match cx.emit(InteractReq::CloseModal) {
                         Ok(request) => {
                             self.phase = Phase::Closing { request };
-                            self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+                            self.arm_window(cx);
                         }
                         Err(ActionError::BudgetExhausted) => {}
                         Err(error) => return Poll::Ready(Err(error)),
@@ -289,7 +290,6 @@ impl NativeMachine for JournalMachine {
                             colour: Some(self.colour),
                             acquired: self.acquired.expect("captured before close"),
                             closed,
-                            pin: Arc::clone(&self.pin),
                         }));
                     }
                     if pair.value.root != ROOT_289 {
@@ -305,6 +305,16 @@ impl NativeMachine for JournalMachine {
         // Revocation precedes this callback. No compensating close can target
         // somebody else's modal; releasing the lease is unconditional.
         self.lease = None;
+    }
+}
+
+impl JournalMachine {
+    /// Arm the next phase's window and renew the lease's deadline with it.
+    fn arm_window(&mut self, cx: &mut ActionContext<'_>) {
+        self.deadline_tick = cx.evidence().tick + WINDOW_TICKS;
+        if let Some(lease) = &self.lease {
+            cx.renew_quiet_read(lease, WaitDeadline::Tick(self.deadline_tick));
+        }
     }
 }
 

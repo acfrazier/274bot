@@ -1,0 +1,182 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "priest",
+  "display_name": "The Restless Ghost",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      { "obj": "amulet_of_ghostspeak", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "priest:2" },
+      { "obj": "ghostskull", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "priest:4" }
+    ],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:amulet_of_ghostspeak", "obj:ghostskull"],
+    "owns_inventory": false
+  },
+  "roles": [{
+    "role": null,
+    "progress_binding": "journal:priest",
+    "progress": {
+      "colour": { "not_started": "priest:0", "in_progress": "priest:1", "complete": "priest:5" },
+      "rules": [
+        { "stage": "priest:4", "all": ["i found the ghost's skull in the basement"], "any": [], "not": [], "varp": 4 },
+        { "stage": "priest:3", "all": ["i spoke to the ghost and he told me"], "any": [], "not": [], "varp": 3 },
+        { "stage": "priest:2", "all": ["i found father urhney in the swamp"], "any": [], "not": [], "varp": 2 },
+        { "stage": "priest:1", "all": ["i should find", "father urhney"], "any": [], "not": [], "varp": 1 }
+      ],
+      "flags": [],
+      "monotonic": false
+    },
+    "prelude": [],
+    "sequences": [
+      {
+        "stage": "priest:0", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "start-aereck", "kind": "talk", "version": 1, "advances": true,
+          "comment": "content/scripts/areas/area_lumbridge/scripts/father_aereck.rs2:1-10,40-53; content/maps/m50_50.jm2:9710; content/pack/npc.pack:457",
+          "args": { "npc": "father_aereck", "anchor": { "tile": [3244, 3206, 0], "source": "content/maps/m50_50.jm2:9710; content/pack/npc.pack:457" }, "leash": 8, "prefer": ["I'm looking for a quest!"] },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "priest", "is": "in_progress" } } }
+        }]
+      },
+      {
+        "stage": "priest:1", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "ask-urhney", "kind": "talk", "version": 1, "advances": true,
+          "comment": "content/scripts/areas/area_lumbridge/scripts/father_urhney.rs2:1-6,30-57; content/maps/m50_49.jm2:6081; content/pack/npc.pack:459",
+          "args": { "npc": "father_urhney", "anchor": { "tile": [3235, 3153, 0], "source": "content/maps/m50_49.jm2:6081; content/pack/npc.pack:459" }, "leash": 8, "prefer": ["Father Aereck sent me to talk to you.", "He's got a ghost haunting his graveyard."] },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "priest", "any": ["priest:2"] } } }
+        }]
+      },
+      {
+        "stage": "priest:2", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "scan-amulet-bank", "kind": "bank", "version": 1,
+            "comment": "Urhney gives a replacement only when none is owned: content/scripts/areas/area_lumbridge/scripts/father_urhney.rs2:3-6,59-65.",
+            "args": { "op": "scan", "at": "nearest" },
+            "skip_if": { "Any": [ { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } }, { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } } ] },
+            "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+          },
+          {
+            "id": "withdraw-amulet", "kind": "bank", "version": 1,
+            "comment": "content/scripts/areas/area_lumbridge/scripts/father_urhney.rs2:3-6,59-65.",
+            "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "amulet_of_ghostspeak", "qty": 1 }] },
+            "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } }, { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } }, { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } } } ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } }
+          },
+          {
+            "id": "replace-amulet", "kind": "talk", "version": 1, "advances": false,
+            "comment": "content/scripts/areas/area_lumbridge/scripts/father_urhney.rs2:3-6,59-66; content/maps/m50_49.jm2:6081.",
+            "args": { "npc": "father_urhney", "anchor": { "tile": [3235, 3153, 0], "source": "content/maps/m50_49.jm2:6081; content/pack/npc.pack:459" }, "leash": 8, "prefer": ["I've lost the amulet."] },
+            "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } }, { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } } ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } }
+          },
+          {
+            "id": "wear-amulet", "kind": "equip", "version": 1,
+            "comment": "content/scripts/quests/quest_priest/scripts/restless_ghost.rs2:14-16; content/scripts/quests/quest_priest/configs/quest_priest.obj:1-16.",
+            "args": { "obj": "amulet_of_ghostspeak" },
+            "skip_if": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } },
+            "settle": { "Fact": { "kind": "worn", "version": 1, "args": { "obj": "amulet_of_ghostspeak" } } }
+          },
+          {
+            "id": "approach-crypt", "kind": "walk", "version": 1,
+            "comment": "Coffin placement: content/maps/m50_49.jm2:5699; content/pack/loc.pack:2146.",
+            "args": { "tile": [3249, 3192, 0], "source": "content/maps/m50_49.jm2:5699; content/pack/loc.pack:2146", "radius": 3 },
+            "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3249, 3192, 0], "radius": 4 } } },
+            "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3249, 3192, 0], "radius": 3 } } }
+          },
+          {
+            "id": "reset-open-coffin", "kind": "interact", "version": 1, "advances": false,
+            "comment": "Closing the open coffin can spawn the missing ghost: content/scripts/quests/quest_priest/scripts/quest_priest.rs2:19-34.",
+            "args": { "target": { "loc": "restless_ghost_altar" }, "op": "Close", "anchor": { "tile": [3249, 3192, 0], "source": "content/maps/m50_49.jm2:5699; content/scripts/quests/quest_priest/scripts/quest_priest.rs2:19-26" }, "radius": 8 },
+            "skip_if": { "Any": [ { "Fact": { "kind": "npc_present", "version": 1, "args": { "npc": "ghostx" } } }, { "Not": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "restless_ghost_altar" } } } } ] },
+            "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "shutghostcoffin" } } }
+          },
+          {
+            "id": "open-coffin-for-ghost", "kind": "interact", "version": 1, "advances": false,
+            "comment": "content/scripts/quests/quest_priest/scripts/quest_priest.rs2:6-14,28-34; content/maps/m50_49.jm2:5699.",
+            "args": { "target": { "loc": "shutghostcoffin" }, "op": "Open", "anchor": { "tile": [3249, 3192, 0], "source": "content/maps/m50_49.jm2:5699" }, "radius": 8 },
+            "skip_if": { "Fact": { "kind": "npc_present", "version": 1, "args": { "npc": "ghostx" } } },
+            "settle": { "Fact": { "kind": "npc_present", "version": 1, "args": { "npc": "ghostx" } } }
+          },
+          {
+            "id": "speak-to-ghost", "kind": "talk", "version": 1, "advances": true,
+            "comment": "content/scripts/quests/quest_priest/scripts/restless_ghost.rs2:14-29,130-139; ghost spawn content/scripts/quests/quest_priest/scripts/quest_priest.rs2:28-34.",
+            "args": { "npc": "ghostx", "anchor": { "tile": [3249, 3194, 0], "source": "content/scripts/quests/quest_priest/scripts/quest_priest.rs2:32-33" }, "leash": 8, "prefer": ["Yep, now tell me what the problem is."] },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "priest", "any": ["priest:3"] } } }
+          }
+        ]
+      },
+      {
+        "stage": "priest:3", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [{
+          "id": "take-skull", "kind": "interact", "version": 1, "advances": true,
+          "comment": "content/scripts/quests/quest_priest/scripts/quest_priest.rs2:68-80; content/maps/m48_149.jm2:6807-6808; content/pack/obj.pack:554.",
+          "args": { "target": { "ground": "ghostskull" }, "op": "Take", "anchor": { "tile": [3120, 9567, 0], "source": "content/maps/m48_149.jm2:6807-6808; content/pack/obj.pack:554" }, "radius": 4, "wait_if_missing": true },
+          "skip_if": { "Any": [] },
+          "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "priest", "any": ["priest:4"] } } }
+        }]
+      },
+      {
+        "stage": "priest:4", "required": [], "terminal": false, "recovery_entry": null,
+        "steps": [
+          {
+            "id": "scan-skull-bank", "kind": "bank", "version": 1,
+            "comment": "The skull cannot be picked up while one is banked: content/scripts/quests/quest_priest/scripts/quest_priest.rs2:68-80.",
+            "args": { "op": "scan", "at": "nearest" },
+            "skip_if": { "Any": [ { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }, { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ghostskull" } } } ] },
+            "settle": { "Fact": { "kind": "bank_known", "version": 1, "args": {} } }
+          },
+          {
+            "id": "withdraw-skull", "kind": "bank", "version": 1,
+            "comment": "content/scripts/quests/quest_priest/scripts/quest_priest.rs2:68-80.",
+            "args": { "op": "withdraw", "at": "nearest", "items": [{ "obj": "ghostskull", "qty": 1 }] },
+            "skip_if": { "Any": [ { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ghostskull" } } }, { "Not": { "Fact": { "kind": "bank_has", "version": 1, "args": { "obj": "ghostskull" } } } } ] },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ghostskull" } } }
+          },
+          {
+            "id": "replace-skull", "kind": "interact", "version": 1, "advances": false,
+            "comment": "content/scripts/quests/quest_priest/scripts/quest_priest.rs2:68-80; content/maps/m48_149.jm2:6807-6808.",
+            "args": { "target": { "ground": "ghostskull" }, "op": "Take", "anchor": { "tile": [3120, 9567, 0], "source": "content/maps/m48_149.jm2:6807-6808; content/pack/obj.pack:554" }, "radius": 4, "wait_if_missing": true },
+            "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ghostskull" } } },
+            "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "ghostskull" } } }
+          },
+          {
+            "id": "return-to-crypt", "kind": "walk", "version": 1,
+            "comment": "content/maps/m50_49.jm2:5699; content/pack/loc.pack:2146.",
+            "args": { "tile": [3249, 3192, 0], "source": "content/maps/m50_49.jm2:5699; content/pack/loc.pack:2146", "radius": 3 },
+            "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3249, 3192, 0], "radius": 4 } } },
+            "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3249, 3192, 0], "radius": 3 } } }
+          },
+          {
+            "id": "open-coffin-for-skull", "kind": "interact", "version": 1, "advances": false,
+            "comment": "content/scripts/quests/quest_priest/scripts/quest_priest.rs2:6-14,46-55; content/maps/m50_49.jm2:5699.",
+            "args": { "target": { "loc": "shutghostcoffin" }, "op": "Open", "anchor": { "tile": [3249, 3192, 0], "source": "content/maps/m50_49.jm2:5699" }, "radius": 8 },
+            "skip_if": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "restless_ghost_altar" } } },
+            "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "restless_ghost_altar" } } }
+          },
+          {
+            "id": "return-skull", "kind": "use_on", "version": 1, "advances": true,
+            "comment": "content/scripts/quests/quest_priest/scripts/quest_priest.rs2:53-64,94-98; content/maps/m50_49.jm2:5699.",
+            "args": { "item": "ghostskull", "target": { "loc": "restless_ghost_altar" }, "anchor": { "tile": [3249, 3192, 0], "source": "content/maps/m50_49.jm2:5699; content/scripts/quests/quest_priest/scripts/quest_priest.rs2:53-55" }, "radius": 8 },
+            "skip_if": { "Any": [] },
+            "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "priest", "is": "complete" } } }
+          }
+        ]
+      },
+      { "stage": "priest:5", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+    ]
+  }]
+}

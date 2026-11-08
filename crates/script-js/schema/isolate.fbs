@@ -296,6 +296,7 @@ table ApiCombatOutcome {
   boost_doses: ubyte;
   antifire_doses: ubyte;
   protect_switches: ubyte;
+  pvp_source: ubyte; // 0 none, 1 request, 2 global, 3 both: what authorised a fight started with a player.
 }
 
 // One progress page for the most recent quest-progress request (Snapshot VT 274).
@@ -596,6 +597,15 @@ table Snapshot {
   // Highest contiguous mirror revocation sequence applied by the host.
   // Optional so an omitted delta retains the previous acknowledgement.
   mirror_revokes_consumed: ulong = null;
+  // The local player's packed `api::snapshot::AttackMarks`: the newest hit,
+  // animation and spot animation marks folded into the low 32 bits and the
+  // newest start of a projectile aimed at the player in the high 32 bits.
+  // The compat chat dialog compares it against its own start. Absent means
+  // no observation (no local player or hit data, an old buffer, or a
+  // keyframe with none), so a keyframe without marks stays byte-identical to
+  // one from before this field. A delta carries it whenever it changes, and
+  // an explicit 0 clears it; the dialog reads 0 as no observation too.
+  local_attack_marks: ulong = null;
 }
 
 table Collision {
@@ -640,7 +650,7 @@ table AvoidRect {
 // One validated `api.combat.fight` request (Interact op "combat-fight").
 // Names are resolved against the slot's selected game data on the host.
 table CombatFight {
-  target: ubyte; // 1 npc config names, 2 npc type ids, 3 attackers.
+  target: ubyte; // 1 npc config names, 2 npc type ids, 3 attackers, 4 player.
   npc_names: [string];
   npc_ids: [int];
   attackers: ubyte; // 1 npcs, 2 players, 3 any.
@@ -661,6 +671,8 @@ table CombatFight {
   potions: bool = true;
   retaliate: bool = true;
   budget_ticks: ushort = 1500;
+  player: string; // The player's name, for target 4.
+  pvp: bool = false; // The script's opt-in to start a fight with a player.
 }
 
 enum SeatKind: ubyte {
@@ -952,6 +964,9 @@ table Interact {
   lineage: ulong = 0;
   // In-isolate machine row that owned this emission, or 0 for none.
   mirror_owner: ulong = 0;
+  // Per-walk prerequisite consent: absent inherits; only false forbids.
+  allow_prereq_dialogue: bool = null;
+  allow_quest_start: bool = null;
 }
 
 // The tick's shim interact queue, forwarded to the host.

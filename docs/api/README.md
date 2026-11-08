@@ -8,7 +8,7 @@
 
 ## Developer overview: the Agent API
 
-Beta kernel surface a bot agent codes against in 0.2.7 Beta 2: reading world state,
+Beta kernel surface a bot agent codes against in 0.2.8 Beta 2: reading world state,
 acting, settling, navigating, and logging in — through the `api` crate
 (`crates/api`), `nav-planner` (`crates/nav-planner`), `nav-executor`
 (`crates/nav-executor`) and the host tick. The script
@@ -24,7 +24,7 @@ tested nor claimed.
 - [query.md](../dev/query.md) — the fluent `Query<T>` read DSL + typed filters
 - [interact.md](../dev/interact.md) — `Driver` + the `Interactions` orchestration layer
 - [settle.md](../dev/settle.md) — pollable `Settle`/`Outcome`/`Evidence`
-- [nav.md](nav.md) — whole-world collision + transport graph (pack v17) +
+- [nav.md](nav.md) — whole-world collision + transport graph (pack v18) +
   Dijkstra router (`nav`) + `Traveller::follow` (`nav-executor`) + WalkTo picker + BankBudget fetch
 - [login.md](login.md) — login FIFO throttle numbers + server profiles
 - [vault.md](vault.md) — encrypted profile vault, assignments, passphrase policy and channels

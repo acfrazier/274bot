@@ -2,7 +2,7 @@
 // rows. It does not read bank, equipment or bank-side, invent ops, or
 // hardcode a valid inventory component.
 
-use script_js::wire::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

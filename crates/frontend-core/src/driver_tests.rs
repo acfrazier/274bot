@@ -49,7 +49,8 @@ fn scratch(test: &str) -> Scratch {
 /// let the guard drop first.
 fn open_driver(dir: &Scratch) -> HeadlessDriver {
     let _source = crate::quester_paths::registry_source_test_lock();
-    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip())
+        .expect("test script settings are readable");
     driver.session.preferences().unwrap().reload().unwrap();
     driver.poll();
     driver
@@ -117,6 +118,84 @@ fn cold_preferences_adopt_saved_startup_models_without_writing_defaults() {
         Path::new("saved-source")
     );
     assert_eq!(std::fs::read(path).unwrap(), saved);
+}
+
+#[test]
+fn saved_pvp_settings_and_legacy_files_keep_the_typed_setting_lifecycle() {
+    use crate::{Setting, SettingEvent, SettingEventState, SettingStatus};
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let setting = Setting::PvpStartFights;
+    assert_eq!(
+        Setting::ALL
+            .iter()
+            .filter(|entry| **entry == setting)
+            .count(),
+        1,
+        "the setting must participate in bounded failure expiry"
+    );
+    assert_eq!(setting.identity(), "start fights with players");
+    for (case, saved, enabled) in [
+        (
+            "legacy",
+            br#"{"capture":false,"nav":{"allow_teleports":true},"legacy_extension":{"version":7}}"#
+                .as_slice(),
+            false,
+        ),
+        (
+            "pvp",
+            br#"{"capture":false,"nav":{"allow_teleports":true},"legacy_extension":{"version":7},"pvp":{"start_fights":true}}"#
+                .as_slice(),
+            true,
+        ),
+    ] {
+        let dir = scratch(&format!("saved-pvp-setting-{case}"));
+        let path = dir.join("state").join("panel-ui.json");
+        vault::write_private_file(&path, saved).unwrap();
+        let mut driver = open_driver(&dir);
+        assert!(driver.session().preferences().unwrap().ready());
+        assert_eq!(driver.session().pvp_start_fights(), Some(enabled));
+        assert_eq!(driver.session().setting_status(setting), SettingStatus::Saved);
+        assert!(!driver.models.draw.capture());
+        assert!(driver.models.walk_globals.globals().allow_teleports());
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
+
+        driver.session_mut().watch_setting_events(true);
+        let release = hold_first_write(&driver);
+        let submitted = driver
+            .submit(OperatorCommand::SetPvpStartFights(!enabled), Targets::Application)
+            .expect("the saved setting command is admitted");
+        driver.poll();
+        assert_eq!(driver.session().setting_status(setting), SettingStatus::Pending);
+        assert_eq!(
+            driver.session_mut().take_setting_events(),
+            (
+                vec![SettingEvent::new(
+                    setting.identity().into(),
+                    SettingEventState::Pending,
+                    None,
+                )],
+                false,
+            )
+        );
+        release.send(()).unwrap();
+        assert_eq!(settled_app(&mut driver, submitted.request()), Some(done()));
+        assert_eq!(driver.session().setting_status(setting), SettingStatus::Saved);
+        assert_eq!(driver.session().pvp_start_fights(), Some(!enabled));
+        assert_eq!(
+            driver.session_mut().take_setting_events(),
+            (
+                vec![SettingEvent::new(
+                    setting.identity().into(),
+                    SettingEventState::Saved,
+                    None,
+                )],
+                false,
+            )
+        );
+        assert_eq!(preferences_file(&driver)["legacy_extension"]["version"], 7);
+    }
 }
 
 /// A real vault file at `dir/vault` holding `names`.
@@ -844,6 +923,295 @@ fn watched_setting_events_report_pending_failed_then_saved() {
     assert_eq!(d.session_mut().take_setting_events(), (Vec::new(), false));
 }
 
+/// PVP-V1 (design §2.7): `pvp.start_fights` is one member of the shared
+/// preferences document. Writing it settles `Done`, the file holds it, a new
+/// session reads it back, and the write logs exactly one audit info line
+/// that names the setting. A front end's refusal of the command (the TUI in
+/// `--live`, which has no preferences store) logs one `command refused` line.
+#[test]
+fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_line() {
+    use crate::log::{global, LogScope, LogView};
+    // The audit lines go to the process-wide log: no other test may write the
+    // setting while this one counts.
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-setting");
+    let mut d = driver_in(&dir, &["pvp1-alice"]);
+    let lines_with = |filter: &str, needle: &str| -> Vec<String> {
+        let mut view = LogView::new(LogScope::Process);
+        view.edit_filter(|f| f.set_text(filter));
+        global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|row| row.message().to_owned())
+            .filter(|line| line.contains(needle))
+            .collect()
+    };
+    assert_eq!(
+        crate::pvp_prefs::pvp_start_fights(&d.session().preferences().expect("bound")).ok(),
+        Some(false),
+        "off until the operator turns it on"
+    );
+    let audit_before = lines_with("pvp.start_fights", "pvp.start_fights").len();
+
+    let on = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    assert_eq!(settled_app(&mut d, on.request()), Some(done()));
+    assert_eq!(
+        preferences_file(&d)["pvp"]["start_fights"],
+        serde_json::Value::Bool(true)
+    );
+    let audit = lines_with("pvp.start_fights", "pvp.start_fights");
+    assert_eq!(
+        audit.len() - audit_before,
+        1,
+        "one write, one audit line: {audit:?}"
+    );
+    assert!(
+        audit.last().is_some_and(|line| line.contains("true")),
+        "{audit:?}"
+    );
+    assert!(
+        crate::pvp_prefs::pvp_start_fights(&d.session().preferences().expect("bound"))
+            .expect("the projection is ready"),
+    );
+    let again = open_driver(&dir);
+    assert_eq!(
+        crate::pvp_prefs::pvp_start_fights(&again.session().preferences().expect("bound")).ok(),
+        Some(true),
+        "a new session over the same state root"
+    );
+
+    let before = d.session().refusals();
+    d.session_mut().refuse_unsubmitted(
+        OperatorCommand::SetPvpStartFights(true),
+        &[],
+        "pvp-v1 test: no preferences store in this mode",
+    );
+    assert_eq!(d.session().refusals(), before + 1);
+    let refusal = lines_with("command refused: SetPvpStartFights", "pvp-v1 test");
+    assert_eq!(refusal.len(), 1, "{refusal:?}");
+}
+
+/// PVP-V1-R1 (review R3): a click that turns the setting off queues behind a
+/// busy disk and later fails. The view that showed the click at once shows the
+/// saved value (on) again when the command settles, with the owner's reason,
+/// and a peer's write after that stays visible. Panel and TUI call the same
+/// `PvpSettingView::follow`.
+#[cfg(unix)]
+#[test]
+fn the_pvp_setting_deferred_write_failure_shows_the_saved_value_and_a_peer_write_follows() {
+    use crate::{PvpSettingView, PvpWrite};
+    use std::os::unix::fs::PermissionsExt;
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-deferred-failure");
+    let mut d = driver_in(&dir, &["pvp2-alice"]);
+    let prefs = d.session().preferences().expect("bound");
+    let mut view = PvpSettingView::new(false);
+
+    // Saved on.
+    view.begin(true);
+    let on = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(on.request());
+    assert_eq!(settled_app(&mut d, on.request()), Some(done()));
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Saved));
+    assert!(view.shown() && !view.pending());
+
+    // Off: the disk is busy, so the write stays queued; the row shows off.
+    let release = hold_first_write(&d);
+    view.begin(false);
+    let off = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(false),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(off.request());
+    assert_eq!(terminal_app(&d, off.request()), None, "queued, not failed");
+    assert_eq!(view.follow(d.session()), None, "still waiting");
+    assert!(!view.shown() && view.pending());
+
+    // The state directory refuses the write once the disk answers.
+    let state_dir = prefs.path().parent().expect("a directory").to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    let terminal = settled_app(&mut d, off.request());
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the deferred write fails: {terminal:?}"
+    );
+
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Failed));
+    assert!(
+        crate::is_start_fights_error(view.failure(d.session())),
+        "the owner's reason: {}",
+        view.failure(d.session())
+    );
+    assert!(
+        view.shown() && !view.pending(),
+        "the saved value (on) is shown, not the attempted off"
+    );
+    assert_eq!(view.follow(d.session()), None, "reported once");
+    assert!(view.shown());
+
+    // A peer turns it off in the file: the row follows it after the failure.
+    vault::write_private_file(&prefs.path(), br#"{"pvp":{"start_fights":false}}"#).unwrap();
+    prefs.reload().unwrap();
+    d.poll();
+    assert_eq!(view.follow(d.session()), None);
+    assert!(
+        !view.shown(),
+        "a peer write stays visible after the failure"
+    );
+}
+
+/// The peer's write of `enabled` reaches the view between the click and the
+/// command's submission: a front end that refreshes its walk globals before it
+/// submits adopts the saved value there (the TUI pump does).
+fn peer_writes_pvp_before_submission(
+    d: &mut HeadlessDriver,
+    view: &mut crate::PvpSettingView,
+    enabled: bool,
+) {
+    let prefs = d.session().preferences().expect("bound");
+    let document = format!(r#"{{"pvp":{{"start_fights":{enabled}}}}}"#);
+    vault::write_private_file(&prefs.path(), document.as_bytes()).unwrap();
+    prefs.reload().unwrap();
+    d.poll();
+    view.adopt(crate::pvp_prefs::pvp_start_fights(&prefs).ok());
+}
+
+/// PVP-V1-R3 (review R6): a peer write that arrives after the click and before
+/// the command is submitted must not cut the click from its command. Whatever
+/// value the peer wrote, the click's own settlement is still reported, so a
+/// front end clears or sets the error exactly as for an ordinary retry.
+#[test]
+fn a_peer_write_before_submission_keeps_the_clicks_command_followed() {
+    use crate::{PvpSettingView, PvpWrite};
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-peer-before-submit");
+    let mut d = driver_in(&dir, &["pvp3-alice"]);
+    let mut view = PvpSettingView::new(false);
+
+    // The peer wrote the value the click asks for: the wait ends at once.
+    view.begin(true);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    assert!(view.shown() && !view.pending(), "the saved value agrees");
+    let click = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(click.request());
+    assert_eq!(settled_app(&mut d, click.request()), Some(done()));
+    assert_eq!(
+        view.follow(d.session()),
+        Some(PvpWrite::Saved),
+        "the click's own save is reported"
+    );
+    assert_eq!(view.follow(d.session()), None, "reported once");
+    assert!(view.shown() && !view.pending());
+
+    // The peer wrote the other value: the click keeps waiting and its save wins.
+    view.begin(false);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    assert!(!view.shown() && view.pending(), "the saved value differs");
+    let click = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(false),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(click.request());
+    assert_eq!(settled_app(&mut d, click.request()), Some(done()));
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Saved));
+    assert!(!view.shown() && !view.pending());
+
+    // A click that never became a command leaves nothing for a later submit.
+    view.begin(true);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    view.refuse();
+    let stray = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(stray.request());
+    assert_eq!(settled_app(&mut d, stray.request()), Some(done()));
+    assert_eq!(
+        view.follow(d.session()),
+        None,
+        "a refused click follows no command"
+    );
+}
+
+/// The same peer write, but the click's command fails: its failure is reported
+/// and the row shows the saved value, as for an ordinary click.
+#[cfg(unix)]
+#[test]
+fn a_peer_write_before_submission_still_reports_the_clicks_failure() {
+    use crate::{PvpSettingView, PvpWrite};
+    use std::os::unix::fs::PermissionsExt;
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-peer-before-submit-failure");
+    let mut d = driver_in(&dir, &["pvp4-alice"]);
+    let prefs = d.session().preferences().expect("bound");
+    let mut view = PvpSettingView::new(false);
+
+    let release = hold_first_write(&d);
+    view.begin(true);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    let click = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(click.request());
+    assert_eq!(
+        terminal_app(&d, click.request()),
+        None,
+        "queued, not failed"
+    );
+
+    let state_dir = prefs.path().parent().expect("a directory").to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    let terminal = settled_app(&mut d, click.request());
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the write fails: {terminal:?}"
+    );
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Failed));
+    assert!(
+        crate::is_start_fights_error(view.failure(d.session())),
+        "the owner's reason: {}",
+        view.failure(d.session())
+    );
+}
+
 /// T3.3 r5 (review finding 5): the newest command for a setting wins. An
 /// older write the disk held settles after a newer command for the same
 /// setting was accepted and made durable; the running session keeps the
@@ -997,11 +1365,24 @@ fn walk_to_without_a_confirmed_destination_is_refused_and_arms_nothing() {
     );
     // A staged walk over a map with no picked destination: the map
     // refuses it the same way, and no route is armed.
-    let context = crate::walk_map::WalkMapContext::browsing(
-        nav_planner::map::identity::Digest([0; 32]),
-        None,
-        1,
-    );
+    let world = std::sync::Arc::new(nav_planner::world::NavWorld::from_parts(
+        nav_planner::collision::WorldCollision {
+            origin: api::snapshot::WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 1,
+            height: 1,
+            walk: vec![0; 4],
+            blocked: vec![0],
+            flags: None,
+        },
+        nav_planner::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+    let lease = nav_planner::producer::lease(&world).expect("test navigation lease");
+    let context = crate::walk_map::WalkMapContext::browsing(lease.identity().pack(), None, 1);
     let mut map = crate::walk_map::WalkMap::new();
     d.models_mut().map_mut().stage_walk_to(
         &mut map,
@@ -1330,9 +1711,18 @@ fn id(d: &HeadlessDriver, name: &str) -> crate::ProfileIdentity {
     d.session().profile_identity_or_synthetic(name)
 }
 
-/// Stage and submit one reorder; its settled terminal.
+/// Stage and submit one Fleet-list reorder; its settled terminal.
 fn reorder(d: &mut HeadlessDriver, op: crate::ReorderOp) -> Option<Terminal> {
-    d.session_mut().stage_reorder(op);
+    reorder_from(d, op, crate::ReorderSurface::Fleet)
+}
+
+/// Stage and submit one reorder from `surface`; its settled terminal.
+fn reorder_from(
+    d: &mut HeadlessDriver,
+    op: crate::ReorderOp,
+    surface: crate::ReorderSurface,
+) -> Option<Terminal> {
+    d.session_mut().stage_reorder(op, surface);
     let submitted = d
         .submit(OperatorCommand::ReorderProfiles, Targets::Application)
         .expect("admitted");
@@ -1405,6 +1795,316 @@ fn view_sorts_never_write_the_order_and_refuse_a_reorder() {
     }
     assert_eq!(std::fs::read(&path).expect("file"), before, "byte for byte");
     assert_eq!(order_names(&d), ["carol", "alice", "bob"]);
+}
+
+/// The Profiles list and the Fleet share the one saved order: a
+/// Profiles-list move applies while the Fleet shows a temporary view
+/// sort, leaves that sort untouched, writes the same stored order, and
+/// the Fleet rows show it on return to Load order. A restart over the
+/// same state shows the order at once, before any Load.
+#[test]
+fn a_profiles_move_shares_the_fleet_order_under_a_view_sort_and_a_restart() {
+    let dir = scratch("order-profiles-surface");
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    d.poll();
+    // The Profiles list's rows are the order's entries, saved sequence.
+    let listed: Vec<&str> = d
+        .session()
+        .profile_order()
+        .entries()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(listed, ["alice", "bob", "carol"]);
+    d.submit(
+        OperatorCommand::SetFleetSort(crate::FleetOrder::Name),
+        Targets::Application,
+    )
+    .expect("sort");
+    let op = d
+        .session()
+        .profile_order()
+        .drop_op(id(&d, "carol"), id(&d, "alice"))
+        .expect("a Profiles drop");
+    assert_eq!(
+        reorder_from(&mut d, op, crate::ReorderSurface::Profiles),
+        Some(done()),
+        "a Profiles move does not need the Fleet's sort"
+    );
+    assert_eq!(order_names(&d), ["carol", "alice", "bob"]);
+    assert_eq!(stored_order(&d), ["carol", "alice", "bob"]);
+    assert_eq!(
+        d.models().fleet().order(),
+        crate::FleetOrder::Name,
+        "the Fleet's view sort is untouched"
+    );
+    d.submit(
+        OperatorCommand::SetFleetSort(crate::FleetOrder::LoadOrder),
+        Targets::Application,
+    )
+    .expect("back to Load order");
+    d.poll();
+    assert_eq!(row_names(&d), ["carol", "alice", "bob"], "one shared order");
+    d.session_mut().flush_writes();
+    drop(d);
+    let mut again = open_driver(&dir);
+    again.session_mut().set_spawn_workers(false);
+    again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock");
+    // Immediately after startup, before a poll or a Load, the Profiles
+    // list already shows the saved order.
+    let listed: Vec<&str> = again
+        .session()
+        .profile_order()
+        .entries()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(listed, ["carol", "alice", "bob"], "at startup, at once");
+    again.poll();
+    assert_eq!(row_names(&again), ["carol", "alice", "bob"]);
+}
+
+/// One durable order write logs exactly one audit line (the preferences
+/// service's info line for the commit), from either list.
+#[test]
+fn one_order_write_logs_one_audit_line() {
+    let mut d = driver("order-audit", &["alice", "bob", "carol"]);
+    d.poll();
+    let audits = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let hook = std::sync::Arc::clone(&audits);
+    d.session()
+        .local_state()
+        .expect("local state")
+        .set_audit_hook(std::sync::Arc::new(move |commit| {
+            hook.lock().expect("audits").push(commit.to_string());
+        }));
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(
+        reorder_from(&mut d, op, crate::ReorderSurface::Profiles),
+        Some(done())
+    );
+    d.session_mut().flush_writes();
+    d.poll();
+    let audits = audits.lock().expect("audits");
+    assert_eq!(
+        audits.len(),
+        1,
+        "one info line for the one order write: {audits:?}"
+    );
+}
+
+/// A Profiles-list move whose write is refused fails and puts back the
+/// last durable order, exactly as a Fleet-list one does.
+#[test]
+fn a_failed_profiles_order_write_restores_the_durable_order() {
+    let mut d = driver("order-profiles-failed", &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(
+        reorder_from(&mut d, op, crate::ReorderSurface::Profiles),
+        Some(done())
+    );
+    let path = d.session().preferences().expect("prefs").path();
+    std::fs::write(
+        &path,
+        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+    )
+    .expect("oversize the preferences file");
+    let _ = d.session().preferences().expect("prefs").reload();
+    let op = move_op(&d, "bob", "carol", false);
+    let terminal = reorder_from(&mut d, op, crate::ReorderSurface::Profiles);
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the write is refused: {terminal:?}"
+    );
+    d.poll();
+    assert_eq!(order_names(&d), ["carol", "alice", "bob"], "durable again");
+}
+
+/// The Load order setting a front end renders at both lists: a
+/// Profiles-list move whose write is held says it is saving (the new
+/// order shows as a preview); when the held write fails the setting
+/// holds the failure and the last durable order shows again, in the
+/// session and in the file; a later move that saves is the action that
+/// clears the failure.
+#[test]
+fn a_profiles_order_save_says_saving_then_the_failure_then_clears() {
+    let mut d = driver("order-profiles-feedback", &["alice", "bob", "carol"]);
+    d.poll();
+    let op = move_op(&d, "carol", "alice", false);
+    assert_eq!(
+        reorder_from(&mut d, op, crate::ReorderSurface::Profiles),
+        Some(done())
+    );
+    assert_eq!(stored_order(&d), ["carol", "alice", "bob"]);
+    let setting = crate::Setting::ProfileOrder;
+
+    // The next write waits on the disk, then fails.
+    let disk = Disk::install(&d, 1);
+    disk.fail_after(0);
+    let op = move_op(&d, "bob", "carol", false);
+    d.session_mut()
+        .stage_reorder(op, crate::ReorderSurface::Profiles);
+    let submitted = d
+        .submit(OperatorCommand::ReorderProfiles, Targets::Application)
+        .expect("admitted");
+    d.poll();
+    assert!(
+        matches!(
+            d.session().setting_status(setting),
+            crate::SettingStatus::Pending
+        ),
+        "a held write is saving"
+    );
+    assert_eq!(
+        order_names(&d),
+        ["bob", "carol", "alice"],
+        "the preview shows while it saves"
+    );
+    disk.release();
+    assert!(matches!(
+        settled_app(&mut d, submitted.request()),
+        Some(Settlement::Failed(_))
+    ));
+    d.poll();
+    assert!(
+        d.session()
+            .setting_failure(setting)
+            .is_some_and(|text| text.starts_with("Not saved: ")),
+        "the failure is retained for the lists to show: {:?}",
+        d.session().setting_failure(setting)
+    );
+    assert_eq!(
+        order_names(&d),
+        ["carol", "alice", "bob"],
+        "the durable order is back"
+    );
+    assert_eq!(stored_order(&d), ["carol", "alice", "bob"]);
+
+    // The disk recovers: the same move saves, and that resolving write
+    // clears the failure.
+    disk.pass_all();
+    let op = move_op(&d, "bob", "carol", false);
+    assert_eq!(
+        reorder_from(&mut d, op, crate::ReorderSurface::Profiles),
+        Some(done())
+    );
+    d.poll();
+    assert_eq!(
+        d.session().setting_status(setting),
+        crate::SettingStatus::Saved,
+        "the later success clears it"
+    );
+    assert_eq!(d.session().setting_failure(setting), None);
+    assert_eq!(order_names(&d), ["bob", "carol", "alice"]);
+    assert_eq!(stored_order(&d), ["bob", "carol", "alice"]);
+}
+
+/// Profiles has no marks, so Move marked to top from there is refused:
+/// the one `info` refusal line at the shared command boundary names
+/// the command, the application and the reason, and the refusal counts
+/// once. (This is the one test that submits that refusal, so its line
+/// count is exact.)
+#[test]
+fn a_profiles_marked_to_top_refusal_logs_one_info_line() {
+    use crate::log::{global, LogScope, LogView};
+    let mut d = driver("order-profiles-refusal-log", &["alice", "bob"]);
+    d.poll();
+    let refusal_lines = || -> Vec<String> {
+        let mut view = LogView::new(LogScope::Process);
+        view.edit_filter(|filter| filter.set_text("command refused: ReorderProfiles"));
+        global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|row| row.message().to_owned())
+            .filter(|line| line.contains("the Profiles list has no marks to move"))
+            .collect()
+    };
+    assert_eq!(refusal_lines(), Vec::<String>::new(), "no such refusal yet");
+    let before = d.session().refusals();
+    assert_eq!(
+        reorder_from(
+            &mut d,
+            crate::ReorderOp::MarkedToTop,
+            crate::ReorderSurface::Profiles,
+        ),
+        Some(rejected(crate::command::Rejection::NotApplicable)),
+        "no marks in Profiles"
+    );
+    assert_eq!(d.session().refusals(), before + 1);
+    let lines = refusal_lines();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let line = &lines[0];
+    for part in [
+        "ReorderProfiles",
+        "on application",
+        "NotApplicable",
+        "the Profiles list has no marks to move",
+    ] {
+        assert!(line.contains(part), "{part:?} missing from {line:?}");
+    }
+    assert_eq!(order_names(&d), ["alice", "bob"], "nothing moved");
+}
+
+/// A Profiles-list move under a frozen plan, with a mark the filter
+/// hides: the move lands in the one saved order, and the plan keeps
+/// its frozen targets (identities, names and dispatch order) and its
+/// prompt; the hidden profile keeps its mark. Running the plan then
+/// acts on exactly the frozen pair.
+#[test]
+fn a_profiles_move_leaves_a_frozen_plan_and_hidden_marks_alone() {
+    let mut d = driver(
+        "order-profiles-frozen-plan",
+        &["alice", "bob", "carol", "dave"],
+    );
+    d.poll();
+    // One loaded profile among the unloaded ones: the move covers both.
+    load(&mut d, &["alice"]);
+    mark(&mut d, &["alice", "bob"]);
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    let waiting = d.session().fleet_plan().expect("plan");
+    let prompt = waiting.prompt().to_owned();
+    assert_eq!(plan_names(&d), ["alice", "bob"]);
+    // The filter hides bob (and dave); bob's mark stays, hidden.
+    d.models_mut().fleet_mut().staged_filter_mut().push('c');
+    d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+        .expect("filter");
+    assert_eq!(shown_names(&d), ["alice", "carol"], "bob and dave hidden");
+    assert!(
+        d.models().fleet().marks().contains(id(&d, "bob")),
+        "bob is marked while hidden"
+    );
+
+    let op = move_op(&d, "dave", "alice", false);
+    assert_eq!(
+        reorder_from(&mut d, op, crate::ReorderSurface::Profiles),
+        Some(done())
+    );
+    assert_eq!(order_names(&d), ["dave", "alice", "bob", "carol"]);
+    assert_eq!(
+        plan_names(&d),
+        ["alice", "bob"],
+        "the frozen set and its dispatch order are unchanged"
+    );
+    assert_eq!(
+        d.session().fleet_plan().expect("plan").prompt(),
+        prompt,
+        "the frozen prompt is unchanged"
+    );
+    let marks = d.models().fleet().marks();
+    assert!(marks.contains(id(&d, "alice")), "alice stays marked");
+    assert!(
+        marks.contains(id(&d, "bob")),
+        "the hidden mark survives the move"
+    );
+    assert_eq!(marks.len(), 2, "no mark was added or dropped");
+
+    run_plan(&mut d);
+    assert_eq!(assignment(&d, "alice").as_deref(), Some("Gatherer"));
+    assert_eq!(assignment(&d, "bob").as_deref(), Some("Gatherer"));
+    assert_eq!(assignment(&d, "carol"), None);
+    assert_eq!(assignment(&d, "dave"), None);
 }
 
 /// A drag while a filter hides rows lands relative to its target in the
@@ -1515,7 +2215,8 @@ fn a_held_order_write_stays_pending_until_durable() {
     d.poll();
     let release = hold_first_write(&d);
     let op = move_op(&d, "bob", "alice", false);
-    d.session_mut().stage_reorder(op);
+    d.session_mut()
+        .stage_reorder(op, crate::ReorderSurface::Fleet);
     let submitted = d
         .submit(OperatorCommand::ReorderProfiles, Targets::Application)
         .expect("admitted");
@@ -1603,12 +2304,14 @@ fn a_superseded_order_write_settles_and_the_newest_order_wins() {
     d.poll();
     let release = hold_first_write(&d);
     let op = move_op(&d, "carol", "alice", false);
-    d.session_mut().stage_reorder(op);
+    d.session_mut()
+        .stage_reorder(op, crate::ReorderSurface::Fleet);
     let first = d
         .submit(OperatorCommand::ReorderProfiles, Targets::Application)
         .expect("first");
     let op = move_op(&d, "alice", "bob", true);
-    d.session_mut().stage_reorder(op);
+    d.session_mut()
+        .stage_reorder(op, crate::ReorderSurface::Fleet);
     let second = d
         .submit(OperatorCommand::ReorderProfiles, Targets::Application)
         .expect("second");
@@ -1651,6 +2354,74 @@ fn set_card(d: &mut HeadlessDriver, card: crate::FleetCard) {
         .submit(OperatorCommand::SetFleetCard, Targets::Application)
         .expect("card");
     assert_eq!(terminal_app(d, set.request()), Some(done()));
+}
+
+fn stage_quester_queue(
+    d: &mut HeadlessDriver,
+    profile: &str,
+    quests: &[&str],
+) -> crate::operations::OperationId {
+    let values = serde_json::json!({"quests": quests})
+        .as_object()
+        .expect("quest queue settings are an object")
+        .clone();
+    d.models
+        .scripts
+        .set_compiled_overrides(
+            &mut d.session,
+            profile,
+            crate::scripts::CompiledCardId::QUESTER,
+            values,
+        )
+        .expect("save Quester queue settings")
+}
+
+// Simulate a durable edit from another session without reconfiguring the live
+// run. The fleet confirmation must revalidate the saved row itself.
+fn save_quester_queue_without_runtime(
+    d: &mut HeadlessDriver,
+    profile: &str,
+    quests: &[&str],
+) -> crate::operations::OperationId {
+    let id = crate::scripts::CompiledCardId::QUESTER.to_script();
+    let card = script::compiled_card(id).expect("Quester card");
+    let key = script::compiled_identity_key(id);
+    let mut row = d
+        .session()
+        .profile_for_edit(profile)
+        .expect("profile exists")
+        .clone();
+    let mut values = row
+        .settings
+        .script_settings
+        .get(&key)
+        .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
+        .map(|(_, values)| values.clone())
+        .unwrap_or_default();
+    values.insert("quests".into(), serde_json::json!(quests));
+    row.settings.script_settings.insert(
+        key,
+        vault::CompiledSettingsRecord {
+            schema_version: card.schema_version,
+            values,
+        }
+        .into_entry(),
+    );
+    d.session_mut()
+        .save_profile(row, crate::ArmMirror::none(), "test")
+        .expect("save changed Quester queue")
+}
+
+fn set_quester_queue(d: &mut HeadlessDriver, profile: &str, quests: &[&str]) {
+    let operation = stage_quester_queue(d, profile, quests);
+    d.session.flush_writes();
+    assert_eq!(
+        d.session
+            .operation(operation)
+            .expect("settings operation")
+            .outcome(profile),
+        Some(&crate::operations::Outcome::Completed)
+    );
 }
 
 fn plan(d: &mut HeadlessDriver, action: crate::FleetAction) -> Option<Terminal> {
@@ -2179,6 +2950,182 @@ fn a_rename_or_card_change_before_confirm_never_retargets_the_plan() {
     assert_eq!(assignment(&d, "carol"), None);
 }
 
+/// Quester starts expose the exact per-profile zone lists before Confirm;
+/// if a saved queue changes afterward, that bot is skipped before Start.
+#[test]
+fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut d = driver("f3-quester-disclosure", &["alice", "bob"]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
+    d.session_mut()
+        .play_mut()
+        .expect("play")
+        .bind_script_test_data(data);
+    let _source = crate::quester_paths::registry_source_test_lock();
+    // Settle the initial asynchronous Path registry publication before the
+    // plan captures its revision. The queue-change check below must isolate
+    // the saved settings change, not a pending startup registry reload.
+    d.session_mut().flush_writes();
+    d.poll();
+    load(&mut d, &["alice", "bob"]);
+    set_card(
+        &mut d,
+        crate::FleetCard::pinned(crate::scripts::ScriptChoice::compiled(
+            crate::scripts::CompiledCardId::QUESTER,
+        )),
+    );
+    mark(&mut d, &["alice", "bob"]);
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+
+    set_quester_queue(&mut d, "alice", &["desertrescue"]);
+    set_quester_queue(&mut d, "bob", &["sheep"]);
+    d.poll();
+    d.session_mut().flush_writes();
+    set_card(&mut d, crate::FleetCard::OWN);
+    d.session_mut().flush_writes();
+    assert_eq!(plan(&mut d, crate::FleetAction::Start), Some(done()));
+    let waiting = d.session().fleet_plan().expect("Quester Start plan");
+    assert!(
+        waiting.needs_confirm(),
+        "a marked Quester Start always discloses before it runs"
+    );
+    assert_eq!(plan_names(&d), ["alice", "bob"]);
+    let prompt = waiting.prompt();
+    assert!(
+        prompt.contains("alice: Start accepts only these zones."),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("bob: No danger zones are declared."),
+        "{prompt}"
+    );
+    for id in [
+        "ugthanki@3268,3052,0",
+        "ugthanki@3281,3056,0",
+        "ugthanki@3305,3089,0",
+    ] {
+        assert!(prompt.contains(id), "missing {id}: {prompt}");
+    }
+
+    let alice = d.session().profile_identity_or_synthetic("alice");
+    let bob = d.session().profile_identity_or_synthetic("bob");
+    let queue_operation = save_quester_queue_without_runtime(&mut d, "alice", &["sheep"]);
+    d.session_mut().flush_writes();
+    assert_eq!(
+        d.session()
+            .operation(queue_operation)
+            .expect("changed settings operation")
+            .outcome("alice"),
+        Some(&crate::operations::Outcome::Completed)
+    );
+    let plan = d.session().fleet_plan().expect("plan waits");
+    let (registry, revision) = script::quester::registry::snapshot_with_revision();
+    assert_eq!(
+        revision,
+        plan.quester_registry_revision
+            .expect("Quester plan revision"),
+        "registry changed after disclosure"
+    );
+    for (name, identity) in [("alice", alice), ("bob", bob)] {
+        let disclosure = plan
+            .quester_start_zones
+            .iter()
+            .find(|disclosure| disclosure.profile == identity)
+            .expect("planned disclosure");
+        let current = d
+            .models()
+            .scripts()
+            .quester_start_zones_for_card(d.session(), name, plan.card.as_ref(), &registry)
+            .expect("current disclosure");
+        assert_eq!(
+            current != disclosure.zones,
+            name == "alice",
+            "{name} changed from the confirmed queue"
+        );
+    }
+    let command = d.session().fleet_plan().expect("plan waits").command();
+    let run = d.submit(command, Targets::Plan).expect("run");
+    let request = run.request();
+    d.poll();
+    let result = d.session().fleet_result().expect("Start result");
+    assert_eq!(result.counts().skipped, 1, "{}", result.text());
+    assert!(
+        result
+            .text()
+            .contains("alice (Quester danger-zone disclosure changed after confirmation)"),
+        "{}",
+        result.text()
+    );
+    assert!(
+        result
+            .text()
+            .contains("alice: Start accepts only these zones.")
+            && result.text().contains("bob: No danger zones are declared."),
+        "the result retains each confirmed disclosure: {}",
+        result.text()
+    );
+    let report = d.report(request).expect("unchanged Bob's Start report");
+    assert!(
+        report.member(Subject::Profile(alice)).is_none(),
+        "Alice was not started with a queue whose zones were not shown"
+    );
+    assert!(
+        report.member(Subject::Profile(bob)).is_some(),
+        "the unchanged Bob remains in the confirmed Start"
+    );
+}
+
+#[test]
+fn unplanned_bulk_start_refuses_quester_without_a_disclosure_plan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut d = driver("f3-quester-bulk-start-refused", &["alice", "bob"]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
+    d.session_mut()
+        .play_mut()
+        .expect("play")
+        .bind_script_test_data(data);
+    let _source = crate::quester_paths::registry_source_test_lock();
+    d.poll();
+    load(&mut d, &["alice", "bob"]);
+    set_card(
+        &mut d,
+        crate::FleetCard::pinned(crate::scripts::ScriptChoice::compiled(
+            crate::scripts::CompiledCardId::QUESTER,
+        )),
+    );
+    mark(&mut d, &["alice", "bob"]);
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    set_quester_queue(&mut d, "alice", &["cook"]);
+    set_quester_queue(&mut d, "bob", &["cook"]);
+    d.poll();
+
+    let start = d
+        .submit(OperatorCommand::StartScript, Targets::Everyone)
+        .expect("bulk Start is reported as rejected");
+    settle(&mut d, start.request());
+    let report = d.report(start.request()).expect("Start report");
+    for name in ["alice", "bob"] {
+        let identity = d.session().profile_identity_or_synthetic(name);
+        let member = report
+            .member(Subject::Profile(identity))
+            .expect("every selected profile receives the refusal");
+        assert!(
+            matches!(member.terminal(), Some(Settlement::Failed(_))),
+            "{name} must not start without a confirmed zone list"
+        );
+        assert_eq!(
+            member.detail(),
+            Some("Quester bulk Start requires a confirmed fleet plan showing each bot's danger zones")
+        );
+    }
+}
+
 /// A bot whose profile is being saved (here, a held rename) is a named skip
 /// of the plan, never a competing write; a plan's queued writes keep its
 /// result Pending until they land.
@@ -2568,6 +3515,9 @@ fn a_copy_skips_a_target_whose_save_started_after_the_plan() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_copy_never_writes_a_recreated_profile_with_the_same_name() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = native_copy_plan("native-copy-recreate");
     let vault = d.session_mut().vault_mut().expect("vault");
     assert!(vault.remove("bob").expect("remove"));
@@ -2600,6 +3550,9 @@ fn native_copy_never_writes_a_recreated_profile_with_the_same_name() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn native_copy_skips_a_target_whose_save_started_after_the_plan() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = native_copy_plan("native-copy-saving");
     let gate = d.session().write_gate();
     let held = gate.lock().expect("gate");
@@ -2723,6 +3676,9 @@ fn starts_held(d: &HeadlessDriver) -> bool {
 /// target; new Starts wait until the last save is accepted.
 #[test]
 fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for count in [67, 151] {
         let mut d = copy_to_many(&format!("f4-copy-{count}"), count);
         let command = d.session().fleet_plan().expect("plan").command();
@@ -2752,6 +3708,9 @@ fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
 /// already started settle, and new Starts are released.
 #[test]
 fn cancelling_a_queued_copy_writes_no_waiting_bot_and_releases_starts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = copy_to_many("f4-copy-cancel", 151);
     let command = d.session().fleet_plan().expect("plan").command();
     let run = d.submit(command, Targets::Plan).expect("run");
@@ -2878,6 +3837,9 @@ fn an_emptied_copy_plan_releases_its_scope() {
 #[cfg(not(feature = "js"))]
 #[test]
 fn an_emptied_native_copy_plan_releases_its_scope_and_start_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = native_copy_plan("native-emptied-copy");
     assert!(d
         .session()
@@ -3318,6 +4280,10 @@ fn refused(d: &HeadlessDriver, submitted: &Submitted, name: &str) -> bool {
 
 #[test]
 fn paint_controls_pause_resume_and_stop_the_displayed_run_through_the_lifecycle_rows() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-controls", &["alice"]);
     let running = shown(&d, "alice");
     assert_eq!(
@@ -3378,6 +4344,10 @@ fn paint_controls_pause_resume_and_stop_the_displayed_run_through_the_lifecycle_
 
 #[test]
 fn paint_stop_from_running_reaches_idle_with_one_stop_report() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-stop-running", &["alice"]);
     let frame = shown(&d, "alice");
     let stop = activate(&mut d, &frame, STOP, "alice").expect("stop applies");
@@ -3394,6 +4364,10 @@ fn paint_stop_from_running_reaches_idle_with_one_stop_report() {
 
 #[test]
 fn a_double_pause_never_becomes_a_resume() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-double-pause", &["alice"]);
     let frame = shown(&d, "alice");
     let first = activate(&mut d, &frame, PAUSE, "alice").expect("pause");
@@ -3406,6 +4380,10 @@ fn a_double_pause_never_becomes_a_resume() {
 
 #[test]
 fn a_control_shown_for_one_profile_never_controls_the_newly_focused_one() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-focus", &["alice", "bob"]);
     let alice = shown(&d, "alice");
     for index in [PAUSE, STOP] {
@@ -3418,6 +4396,10 @@ fn a_control_shown_for_one_profile_never_controls_the_newly_focused_one() {
 
 #[test]
 fn a_control_from_an_ended_run_never_controls_its_replacement() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-replacement", &["alice"]);
     let old = shown(&d, "alice");
     let generation = old.view().generation();
@@ -3436,6 +4418,10 @@ fn a_control_from_an_ended_run_never_controls_its_replacement() {
 
 #[test]
 fn a_stale_frame_generation_is_refused_before_dispatch() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-stale-frame", &["alice"]);
     let old = shown(&d, "alice");
     helper_paint(old.view().generation() + 1).publish(d.session().play().expect("play"), "alice");
@@ -3447,6 +4433,10 @@ fn a_stale_frame_generation_is_refused_before_dispatch() {
 
 #[test]
 fn an_ordinary_paint_button_keeps_its_script_click_path() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = paint_driver("paint-ordinary", &["alice"]);
     let frame = shown(&d, "alice");
     let click = activate(&mut d, &frame, 0, "alice").expect("script click");
@@ -3457,7 +4447,7 @@ fn an_ordinary_paint_button_keeps_its_script_click_path() {
     d.models_mut()
         .scripts_mut()
         .stage_paint_input(crate::scripts::PaintInput::click(
-            script::shim::HOST_PAUSE_CONTROL_ID.into(),
+            script::paint::HOST_PAUSE_CONTROL_ID.into(),
             frame.view().generation(),
         ));
     let forged = d
@@ -3500,7 +4490,7 @@ fn paint_controls_follow_the_lifecycle_state() {
 fn publish_native_paint(
     d: &HeadlessDriver,
     name: &str,
-    paint: std::sync::Arc<script::shim::ScriptPaint>,
+    paint: std::sync::Arc<script::paint::ScriptPaint>,
 ) {
     let play = d.session().play().expect("play");
     let mut rows = play.statuses.lock().expect("status rows");
@@ -3515,7 +4505,7 @@ fn publish_native_paint(
 /// host controls are buttons 0 and 1) and check each press through
 /// the lifecycle rows, as the front ends submit them.
 #[cfg(feature = "js")]
-fn native_paint_controls_case(test: &str, paint: std::sync::Arc<script::shim::ScriptPaint>) {
+fn native_paint_controls_case(test: &str, paint: std::sync::Arc<script::paint::ScriptPaint>) {
     let mut d = paint_driver(test, &["alice"]);
     publish_native_paint(&d, "alice", paint);
     d.poll();
@@ -3559,7 +4549,7 @@ fn native_paint_controls_case(test: &str, paint: std::sync::Arc<script::shim::Sc
 fn compiled_paint_controls_case(
     test: &str,
     card: crate::scripts::ScriptChoice,
-    paint: std::sync::Arc<script::shim::ScriptPaint>,
+    paint: std::sync::Arc<script::paint::ScriptPaint>,
 ) {
     let mut d = paint_driver_with_card(test, &["alice"], card);
     d.poll();
@@ -3607,6 +4597,9 @@ fn compiled_paint_controls_case(
 #[cfg(not(feature = "js"))]
 #[test]
 fn compiled_gatherer_paint_controls_pause_resume_and_stop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::Arc;
     let data = script::gatherer::status::StatusData {
         skill: "Woodcutting",
@@ -3634,6 +4627,9 @@ fn compiled_gatherer_paint_controls_pause_resume_and_stop() {
         zone_gated: 0,
         excluded_targets: Arc::from(""),
         last_event: Arc::from(""),
+        tick_method: Arc::from("Off"),
+        tick_cycle: -1,
+        tick_stats: Default::default(),
     };
     compiled_paint_controls_case(
         "native-gatherer-paint",
@@ -3675,6 +4671,9 @@ fn native_gatherer_paint_controls_pause_resume_and_stop() {
         zone_gated: 0,
         excluded_targets: Arc::from(""),
         last_event: Arc::from(""),
+        tick_method: Arc::from("Off"),
+        tick_cycle: -1,
+        tick_stats: Default::default(),
     };
     native_paint_controls_case(
         "native-gatherer-paint",
@@ -3689,10 +4688,10 @@ fn native_gatherer_paint_controls_pause_resume_and_stop() {
 #[cfg(feature = "js")]
 #[test]
 fn native_sherlock_paint_controls_pause_resume_and_stop() {
-    let paint = std::sync::Arc::new(script::shim::ScriptPaint {
+    let paint = std::sync::Arc::new(script::paint::ScriptPaint {
         title: Some("Sherlock".into()),
         lines: vec!["Waiting for a clue".into(), "Clues solved: 0".into()],
-        buttons: script::shim::host_control_buttons(),
+        buttons: script::paint::host_control_buttons(),
         generation: 7,
         ..Default::default()
     });
@@ -4763,6 +5762,10 @@ fn nine_running_with_three_walks(test: &str) -> TestDriver {
 /// scripts and zero script walks.
 #[test]
 fn stopping_nine_marked_bots_retires_the_three_script_walks() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = nine_running_with_three_walks("psg-stop-nine");
     assert_eq!(row_labels(&d), all_labels("running"));
     let walking: Vec<_> = d
@@ -4828,6 +5831,10 @@ fn stopping_nine_marked_bots_retires_the_three_script_walks() {
 /// label back: a label is a fact about the bot, not about a view of it.
 #[test]
 fn old_walk_labels_do_not_return_after_focus_mark_filter_or_choice_changes() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::{MarkOp, MarkPredicate};
     let mut d = nine_running_with_three_walks("psg-views");
     assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
@@ -4915,6 +5922,10 @@ fn old_walk_labels_do_not_return_after_focus_mark_filter_or_choice_changes() {
 /// Stop decision and the status filters all read the same row facts.
 #[test]
 fn a_manual_walk_stays_visible_after_stop_and_the_decisions_read_the_same_facts() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::{MarkOp, MarkPredicate};
     let mut d = nine_running_with_three_walks("psg-manual");
     let arm = std::sync::Arc::new(std::sync::Mutex::new(host_play::WalkArm::default()));
@@ -5033,6 +6044,10 @@ fn a_manual_walk_stays_visible_after_stop_and_the_decisions_read_the_same_facts(
 /// process log is shared by every test.
 #[test]
 fn a_repeated_stop_logs_one_refusal_line() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::log::{global, LogScope, LogView};
     const BOTS: [&str; 3] = ["psg5-a", "psg5-b", "psg5-c"];
     let mut d = driver("psg-refusal", &BOTS);
@@ -5357,6 +6372,52 @@ fn saved_settings() -> Vec<Saved> {
                         .expect("play")
                         .walk_globals()
                         .allow_teleports
+            },
+        },
+        Saved {
+            name: "prereq-dialogue",
+            setting: S::Nav(N::AllowPrereqDialogue),
+            stage: nothing_staged,
+            command: OperatorCommand::SetNavPreference(N::AllowPrereqDialogue, false),
+            unchanged: |d| {
+                d.models().walk_globals().globals().allow_prereq_dialogue()
+                    && d.session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .allow_prereq_dialogue
+            },
+            changed: |d| {
+                !d.models().walk_globals().globals().allow_prereq_dialogue()
+                    && !d
+                        .session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .allow_prereq_dialogue
+            },
+        },
+        Saved {
+            name: "quest-start",
+            setting: S::Nav(N::AllowQuestStart),
+            stage: nothing_staged,
+            command: OperatorCommand::SetNavPreference(N::AllowQuestStart, false),
+            unchanged: |d| {
+                d.models().walk_globals().globals().allow_quest_start()
+                    && d.session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .allow_quest_start
+            },
+            changed: |d| {
+                !d.models().walk_globals().globals().allow_quest_start()
+                    && !d
+                        .session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .allow_quest_start
             },
         },
         Saved {

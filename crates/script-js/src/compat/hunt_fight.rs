@@ -28,10 +28,10 @@ pub use walk_spot::{
     walk_deadline_remaining_ms, walk_dispatch, walk_force_bound_reached, walk_token_alive,
 };
 
-use crate::hunt::{flag, hook, index, number, strict_true, text, Host, Kind as HuntKind};
+use crate::compat::hunt::{flag, hook, index, number, strict_true, text, Host, Kind as HuntKind};
 use crate::machine::Ended;
-use crate::observed::{self, EntityRow, ItemRow, Scene, Skill, Skills};
-use crate::task_clock::InstantTaskClock;
+use crate::scene::observed::{self, EntityRow, ItemRow, Scene, Skill, Skills};
+use crate::scene::task_clock::InstantTaskClock;
 use api::snapshot::WorldTile;
 use script::combat::{
     policy,
@@ -89,7 +89,7 @@ thread_local! {
     static ANTIFIRE: RefCell<HuntAntifire> = RefCell::new(HuntAntifire::default());
 }
 fn hunt_combat_tables() -> Result<Arc<CombatTables>, ActionError> {
-    crate::supply_v2::combat_tables()
+    crate::scene::supply_v2::combat_tables()
 }
 
 /// Shared across Hunt Fight/Hold tokens, like the account's potion effect.
@@ -700,7 +700,7 @@ pub fn in_area_body(origin: Tile, size: i32, boxes: &[SiteBox]) -> bool {
 
 /// A site's area: its boxes (v2 and data sites), or, when the script's
 /// own `site.inArea(t)` predicate is held, that predicate's answers for
-/// the tiles a decision reads (`crate::hunt` asks for new tiles before
+/// the tiles a decision reads (`crate::compat::hunt` asks for new tiles before
 /// each step).
 #[derive(Clone, Debug, Default)]
 pub struct Area {
@@ -1112,7 +1112,7 @@ fn sighted_from(spot: Tile, n: &FightNpc, obs: &FightObservation) -> bool {
     if let Some(v) = obs.los_override {
         return v;
     }
-    crate::line_of_sight::query_v1(
+    crate::scene::line_of_sight::query_v1(
         WorldTile {
             x: spot.x,
             z: spot.z,
@@ -1742,7 +1742,7 @@ impl FightRuntime {
         if !uses_safespot(proj.style) {
             return Ladder::Held;
         }
-        if let Some(alt) = {
+        let alternate_spot = {
             if proj.site.key == TAVERLEY_BLACK
                 && proj.style == Style::Range
                 && at_tile(obs, anchor(proj))
@@ -1753,7 +1753,8 @@ impl FightRuntime {
             } else {
                 None
             }
-        } {
+        };
+        if let Some(alt) = alternate_spot {
             // Caller emits set-safespot then walks. Keep it internal: next pass
             // reads safespotIndex from projection, so we cannot mutate it here.
             let _ = alt;
@@ -2296,7 +2297,7 @@ pub(crate) fn interrupt_watch(token: u64) {
 }
 #[cfg(test)]
 fn seed_protect_observation() -> i32 {
-    crate::supply_v2::configure(Some(
+    crate::scene::supply_v2::configure(Some(
         api::game_data::for_revision(api::selected::ClientRevision::R289)
             .expect("R289 combat test data"),
     ));
@@ -2346,6 +2347,9 @@ mod tests {
 
     #[test]
     fn fight_consumer_emits_the_native_missiles_if_button() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button_com = seed_protect_observation();
         let mut runtime = FightRuntime::new(17, Instant::now());
         runtime.mode = Mode::Idle;
@@ -2358,6 +2362,9 @@ mod tests {
 
     #[test]
     fn fight_eating_consumes_its_reply_before_protect_and_routes_the_protect_ack() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let mut runtime = FightRuntime::new(17, Instant::now());
         runtime.mode = Mode::Eating;
@@ -2384,6 +2391,9 @@ mod tests {
 
     #[test]
     fn fight_failed_eat_reply_is_not_stolen_by_a_concurrent_protect() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         let mut runtime = FightRuntime::new(17, Instant::now());
         runtime.mode = Mode::Eating;
@@ -2395,6 +2405,9 @@ mod tests {
 
     #[test]
     fn hunt_protect_has_the_native_prayer_level_and_points_gate() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let tables = hunt_combat_tables().unwrap();
         for (base, points, expected) in [(39, 39, None), (43, 0, None), (40, 1, Some(button))] {
@@ -2422,6 +2435,9 @@ mod tests {
 
     #[test]
     fn hunt_protect_pending_does_not_respam_and_dropped_click_retries_after_three_ticks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let mut runtime = FightRuntime::new(17, Instant::now());
         assert_eq!(runtime.protect_click().unwrap(), Some(button));
@@ -2436,6 +2452,9 @@ mod tests {
 
     #[test]
     fn hunt_protect_retries_after_points_return_and_settles_the_observed_varp() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let mut runtime = FightRuntime::new(17, Instant::now());
         assert_eq!(runtime.protect_click().unwrap(), Some(button));
@@ -2474,6 +2493,9 @@ mod tests {
 
     #[test]
     fn hunt_tables_are_cached_and_build_failure_is_reported() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         let first = hunt_combat_tables().unwrap();
         assert!(Arc::ptr_eq(&first, &hunt_combat_tables().unwrap()));
@@ -2487,7 +2509,7 @@ mod tests {
             "style_spotanims": [{ "spotanim_id": 9, "style": 0, "where": "projectile" }]
         }))
         .unwrap();
-        crate::supply_v2::configure(Some(Arc::new(invalid)));
+        crate::scene::supply_v2::configure(Some(Arc::new(invalid)));
         assert!(hunt_combat_tables().is_err());
         let mut runtime = FightRuntime::new(17, Instant::now());
         let effect = next_effect(&mut runtime, &parse_projection(&json!({})), None);
@@ -2504,6 +2526,9 @@ mod tests {
 
     #[test]
     fn hunt_antifire_tracks_confirmed_sips_across_tokens_and_expires_like_combat() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         let tables = hunt_combat_tables().unwrap();
         let potion = tables
@@ -2549,6 +2574,9 @@ mod tests {
 
     #[test]
     fn hunt_antifire_dose_drop_without_fresh_consume_chat_is_not_a_sip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         let tables = hunt_combat_tables().unwrap();
         let id = tables.potion(PotionKind::Antifire).unwrap().doses[3]
@@ -2572,6 +2600,9 @@ mod tests {
 
     #[test]
     fn hunt_antifire_ignores_another_potion_consume_chat() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
         let tables = hunt_combat_tables().unwrap();
         let id = tables.potion(PotionKind::Antifire).unwrap().doses[3]

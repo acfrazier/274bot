@@ -20,6 +20,7 @@ pub mod paint_style;
 #[path = "paint_tests.rs"]
 mod paint_tests;
 pub mod paths;
+mod prestart_zones;
 mod vocab;
 pub(crate) use loadouts::Refused;
 pub use loadouts::{LoadoutForm, Loadouts, LoadoutsError, LoadoutsErrorKind, WornSlot};
@@ -35,6 +36,11 @@ pub use paint::{
 pub use paint_layout::{
     clipped_prefix, ButtonItem, ChromeItem, FooterLayout, PaintLayout, PaintRect, PaintSlot,
     RowItem, TabItem,
+};
+pub use prestart_zones::{
+    QuesterStartZone, QuesterStartZoneCache, QuesterStartZoneScope, QuesterStartZones,
+    START_ZONE_PANEL_SCROLL_HINT, START_ZONE_SCOPE_TITLE, START_ZONE_TUI_SCROLL_HINT,
+    START_ZONE_UNAVAILABLE_NOTICE,
 };
 pub use vocab::{
     format_setting_value, CardRuntime, CardSource, CompiledCardId, OwnedSchema, SchemaRef,
@@ -73,6 +79,8 @@ use start_tally::{Outcome, StartTally};
 use api::hostlog::{Level, Source};
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
+
+pub use script::ScriptSettingsError;
 
 use crate::command::{CommandFailure, Completion, FailureKind, Subject};
 use crate::operations::OperationId;
@@ -843,6 +851,8 @@ pub struct Scripts {
     inject: Option<Map<String, Value>>,
     /// Per-profile Browse selection, never treated as a successful Start.
     pending_browse: HashMap<String, ScriptChoice>,
+    /// Shared cached pre-start disclosure for the effective Quester queue.
+    quester_start_zone_cache: QuesterStartZoneCache,
     /// Reused editor keys for the currently displayed profile and card.
     parameter_key_cache: Vec<ParameterEditKey>,
     parameter_key_scope: Option<(Option<String>, script::ScriptSel)>,
@@ -949,6 +959,7 @@ impl Scripts {
             legacy,
             inject: None,
             pending_browse: HashMap::new(),
+            quester_start_zone_cache: QuesterStartZoneCache::default(),
             parameter_key_cache: Vec::new(),
             parameter_key_scope: None,
             parameter_edits: HashMap::new(),
@@ -975,6 +986,77 @@ impl Scripts {
             #[cfg(any(test, feature = "test-support"))]
             fail_reload_start_for: None,
         }
+    }
+
+    /// Refresh the selected Quester queue disclosure only when its durable
+    /// profile version or the published Path registry changes.
+    pub fn refresh_quester_start_zones<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        profile: Option<&str>,
+    ) -> bool {
+        let generation = core.profiles_generation();
+        let Some(profile) = profile else {
+            return self.quester_start_zone_cache.update_unavailable(
+                crate::selection::ProfileIdentity::synthetic("quester-no-focused-profile"),
+                generation,
+                "Quester settings are unavailable without a focused profile",
+            );
+        };
+        let identity = core.profile_identity_or_synthetic(profile);
+        if self
+            .quester_start_zone_cache
+            .settings_match(identity, generation)
+        {
+            return self.quester_start_zone_cache.refresh_registry();
+        }
+        let settings = self
+            .compiled_bag(core, profile, CompiledCardId::QUESTER)
+            .map_err(|error| format!("Quester settings are unavailable: {error}"));
+        self.quester_start_zone_cache
+            .update_settings(identity, generation, settings)
+    }
+
+    /// Clear a previously selected Quester disclosure.
+    pub fn clear_quester_start_zones(&mut self) -> bool {
+        self.quester_start_zone_cache.clear()
+    }
+
+    /// The cached selected queue disclosure, or its explicit failure.
+    pub fn quester_start_zone_view(&self) -> Option<Result<&QuesterStartZones, &str>> {
+        self.quester_start_zone_cache.view()
+    }
+
+    /// Share the immutable versioned disclosure with a front end.
+    pub fn shared_quester_start_zone_view(&self) -> Option<Arc<Result<QuesterStartZones, String>>> {
+        self.quester_start_zone_cache.shared_view()
+    }
+
+    /// Freeze the declaration list for one card and profile in a fleet plan.
+    pub(crate) fn quester_start_zones_for_card<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        profile: &str,
+        card: Option<&ScriptChoice>,
+        registry: &script::quester::registry::PathRegistry,
+    ) -> Result<Option<QuesterStartZones>, String> {
+        let is_quester = card.map_or_else(
+            || {
+                Self::assignment(core, profile)
+                    .and_then(|assignment| sel_from_assignment(&assignment))
+                    .is_some_and(|selection| {
+                        matches!(selection, script::ScriptSel::Compiled(id) if id.0 == "Quester")
+                    })
+            },
+            |card| card.compiled_id() == Some(CompiledCardId::QUESTER),
+        );
+        if !is_quester {
+            return Ok(None);
+        }
+        let settings = self
+            .compiled_bag(core, profile, CompiledCardId::QUESTER)
+            .map_err(|error| format!("Quester settings are unavailable: {error}"))?;
+        prestart_zones::resolve_selected_zones(registry, &settings).map(Some)
     }
 
     /// The shared Browse selection.
@@ -1437,22 +1519,20 @@ impl Scripts {
     }
 
     /// Initialize shared script coordination. With JS, restore the card
-    /// library and open the legacy per-card store. A missing library is a
-    /// first run; a refused or corrupt library is returned for the front
-    /// end to report. Nothing is saved over a refused store.
-    pub fn open_default() -> (Self, Option<String>) {
+    /// library and open the current per-card settings document. A missing
+    /// store is a first run; an existing unreadable or malformed store is
+    /// returned as a typed error and is never replaced with an empty map.
+    pub fn open_default() -> Result<(Self, Option<String>), script::ScriptSettingsError> {
         #[cfg(feature = "js")]
         {
             let mut js = script_js::JsLibrary::new(script_js::default_js_store());
             let restore_error = js.restore().err();
-            (
-                Self::new(js, script::ScriptSettingsStore::with_default_path()),
-                restore_error,
-            )
+            let settings = script::ScriptSettingsStore::with_default_path()?;
+            Ok((Self::new(js, settings), restore_error))
         }
         #[cfg(not(feature = "js"))]
         {
-            (Self::new(), None)
+            Ok((Self::new(), None))
         }
     }
 

@@ -1,14 +1,16 @@
 use api::selected::{RunKey, Truth};
 use api::snapshot::WorldTile;
 use script::api_gather::{GatherCounts, GatherEnd, GatherFailure, GatherPage, GatherPhase};
+use script::interact::InteractReq;
 use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
-use script::shim::InteractReq;
-use script_js::wire::{
-    decode_interact_batch, encode_interact_batch, encode_snapshot_delta_with_native,
-    NativeFactsInput, ReachViewInput, Snapshot, SnapshotInput,
-};
 use std::sync::Arc;
-use {script::CompiledId, script_js::observed};
+use {
+    script::native::snapshot_source::{NativeFactsInput, ReachViewInput, SnapshotInput},
+    script_js::wire::{
+        decode_interact_batch, encode_interact_batch, encode_snapshot_delta_with_native, Snapshot,
+    },
+};
+use {script::CompiledId, script_js::scene::observed};
 
 fn empty_input(tick: u64) -> SnapshotInput<'static> {
     SnapshotInput {
@@ -474,7 +476,7 @@ fn canonical_sample_status_wire_delta_stays_inside_two_kib() {
         fn status(&mut self, status: ScriptStatus) {
             self.0 = Some(status);
         }
-        fn paint(&mut self, _: Arc<script::shim::ScriptPaint>) {
+        fn paint(&mut self, _: Arc<script::paint::ScriptPaint>) {
             unreachable!("status publication cannot paint");
         }
         fn log(&mut self, _: api::hostlog::Level, _: &str) {
@@ -522,6 +524,9 @@ fn canonical_sample_status_wire_delta_stays_inside_two_kib() {
             zone_gated: 0,
             excluded_targets: Arc::from(""),
             last_event: Arc::from("dropped"),
+            tick_method: Arc::from("Off"),
+            tick_cycle: -1,
+            tick_stats: Default::default(),
         },
     );
     let page = GatherPage {

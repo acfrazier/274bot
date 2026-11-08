@@ -506,6 +506,7 @@ fn production_start(selected: Arc<SelectedGameData>, quests: Arc<QuestCatalog>) 
                     &quests,
                     cap,
                     &script::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             }
         })
@@ -1185,6 +1186,9 @@ fn run_case(case: FixtureCase) {
 
 #[test]
 fn original_cook_fixtures_build_without_a_synthetic_stage_zero_varp_hint() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for case in [FixtureCase::Banked, FixtureCase::Held, FixtureCase::Neither] {
         let (cell, _, _) = build_case(case).expect("original Cook fixture must be constructible");
         assert_eq!(cell.scenario.settings.deadline, LIVE_DEADLINE);
@@ -1645,17 +1649,26 @@ mod witness_lifecycle_tests {
 #[test]
 #[ignore = "requires Engine A and the live environment documented at the top of this file"]
 fn live_cook_banked_ingredients_use_one_preparation_bank_session() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_case(FixtureCase::Banked);
 }
 
 #[test]
 #[ignore = "requires Engine A and the live environment documented at the top of this file"]
 fn live_cook_held_ingredients_need_no_preparation_bank_session() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_case(FixtureCase::Held);
 }
 
 #[test]
 #[ignore = "requires Engine A and the live environment documented at the top of this file"]
 fn live_cook_neither_ingredients_are_acquired_from_real_content() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     run_case(FixtureCase::Neither);
 }

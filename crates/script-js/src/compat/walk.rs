@@ -50,7 +50,7 @@
 //! - Backoff 2–16 ticks (`walkLadder.ts:30–31, 39–40`).
 //! - The baked leg is frozen `Traversal.walkTo` (`Traversal.ts:160–170`),
 //!   whose failed walk runs `recoverBoatFare` (`Traversal.ts:80–95`) before
-//!   its one re-walk: [`crate::boat_fare::Recover`] after a baked pass that
+//!   its one re-walk: [`crate::compat::boat_fare::Recover`] after a baked pass that
 //!   did not arrive, then the ladder goes on as frozen does.
 //! - Options (`Traversal.ts:19–35, 102–112, 160–170`): `sceneRadius`
 //!   (default `radius + 1`) bounds the scene step; the teleport choice is
@@ -78,12 +78,12 @@
 //!   with `isArrived`.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::observed::{self, SceneRow};
-use crate::walk_wait;
+use crate::scene::observed::{self, SceneRow};
+use crate::scene::walk_wait;
 use api::line_of_sight::CollisionQuery;
 use api::query::{SceneQuery, SceneReachOptions};
 use api::snapshot::{SceneView, WorldTile};
-use script::shim::{InspectAvoidWire, InteractReq};
+use script::interact::{InspectAvoidWire, InteractReq};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::VecDeque;
@@ -214,6 +214,11 @@ struct WalkResilientOpts {
     /// Per-walk named danger-zone exemptions.
     #[serde(default)]
     cross_zones: Vec<String>,
+    /// Additive prerequisite grants; an explicit false narrows global allow.
+    #[serde(default)]
+    allow_prereq_dialogue: Option<bool>,
+    #[serde(default)]
+    allow_quest_start: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -301,7 +306,7 @@ pub(crate) fn here() -> Option<WorldTile> {
 /// Whether this walking operation has a runtime event or user-movement
 /// intent pending. Guardian `hold` freezes the row rather than interrupting.
 pub(crate) fn interrupted(cx: &Cx<'_>) -> bool {
-    crate::event_signal::pending()
+    crate::scene::event_signal::pending()
         || observed::with(|scene| scene.since_login().ours().unwrap_or(false))
         || cx.user_move_intent_interrupted()
 }
@@ -311,7 +316,7 @@ pub(crate) fn interrupted(cx: &Cx<'_>) -> bool {
 /// This is the same helper `walk_wait` uses (`posted_here` + flood origin +
 /// `canReachAdjacent`).
 fn arrived(dest: WorldTile, radius: i32) -> bool {
-    crate::reach_query::arrived(dest, radius)
+    crate::materialize::reach_query::arrived(dest, radius)
 }
 
 /// Frozen `backoffTicks` (`walkLadder.ts:39–40`).
@@ -648,7 +653,7 @@ fn barrier_still_shut(tile: WorldTile, name: &str) -> bool {
 }
 
 fn can_reach_adjacent(tile: WorldTile, max_steps: Option<u32>) -> bool {
-    crate::reach_query::with_view(|view| {
+    crate::materialize::reach_query::with_view(|view| {
         view.can_reach(
             tile,
             &SceneReachOptions {
@@ -660,7 +665,7 @@ fn can_reach_adjacent(tile: WorldTile, max_steps: Option<u32>) -> bool {
 }
 
 fn can_step(from: WorldTile, to: WorldTile) -> bool {
-    crate::reach_query::with_view(|view| view.can_step(from, to))
+    crate::materialize::reach_query::with_view(|view| view.can_step(from, to))
 }
 
 /// Frozen `pickUnstickStep` (`walkLadder.ts:96–104`).
@@ -725,6 +730,8 @@ fn shut_obstacle_at(door: WorldTile, obstacles: &[String]) -> Option<SceneRow> {
 struct WalkOptions {
     avoid: Vec<InspectAvoidWire>,
     cross: Vec<String>,
+    allow_prereq_dialogue: Option<bool>,
+    allow_quest_start: Option<bool>,
 }
 
 /// One native walk: arrival check, then the settled outcome. Frozen
@@ -775,12 +782,18 @@ impl Walk {
             allow_teleports,
             avoid,
             cross,
+            None,
+            None,
             false,
             cx,
         )
     }
 
     /// Compat `Traversal` walks preserve a walkable requested tile as route end.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Preserve the original routing policy and both request-level consent overrides"
+    )]
     pub(crate) fn begin_compat_avoiding(
         dest: WorldTile,
         radius: i32,
@@ -788,6 +801,8 @@ impl Walk {
         allow_teleports: bool,
         avoid: Vec<InspectAvoidWire>,
         cross: Vec<String>,
+        allow_prereq_dialogue: Option<bool>,
+        allow_quest_start: Option<bool>,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
         Self::begin_with_intent(
@@ -797,6 +812,8 @@ impl Walk {
             allow_teleports,
             avoid,
             cross,
+            allow_prereq_dialogue,
+            allow_quest_start,
             true,
             cx,
         )
@@ -810,6 +827,8 @@ impl Walk {
         allow_teleports: bool,
         avoid: Vec<InspectAvoidWire>,
         cross: Vec<String>,
+        allow_prereq_dialogue: Option<bool>,
+        allow_quest_start: Option<bool>,
         compat_tile_intent: bool,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
@@ -817,7 +836,7 @@ impl Walk {
             return Err(false);
         }
 
-        if crate::reach_query::arrived(dest, radius) {
+        if crate::materialize::reach_query::arrived(dest, radius) {
             return Err(true);
         }
 
@@ -832,10 +851,19 @@ impl Walk {
         }))
         .as_u64()
         .unwrap_or(0);
-        let options = if avoid.is_empty() && cross.is_empty() {
+        let options = if avoid.is_empty()
+            && cross.is_empty()
+            && allow_prereq_dialogue.is_none()
+            && allow_quest_start.is_none()
+        {
             None
         } else {
-            Some(Box::new(WalkOptions { avoid, cross }))
+            Some(Box::new(WalkOptions {
+                avoid,
+                cross,
+                allow_prereq_dialogue,
+                allow_quest_start,
+            }))
         };
         let walk = Self {
             token,
@@ -883,10 +911,18 @@ impl Walk {
     /// The host walk this wait is for.
     fn request(&self) -> InteractReq {
         let WorldTile { x, z, level } = self.dest;
-        let (avoid, cross) = self.options.as_ref().map_or_else(
-            || (Vec::new(), Vec::new()),
-            |options| (options.avoid.clone(), options.cross.clone()),
-        );
+        let (avoid, cross, allow_prereq_dialogue, allow_quest_start) =
+            self.options.as_ref().map_or_else(
+                || (Vec::new(), Vec::new(), None, None),
+                |options| {
+                    (
+                        options.avoid.clone(),
+                        options.cross.clone(),
+                        options.allow_prereq_dialogue,
+                        options.allow_quest_start,
+                    )
+                },
+            );
         if self.radius > 0 {
             InteractReq::WalkNear {
                 x,
@@ -900,6 +936,8 @@ impl Walk {
                 request_id: self.token,
                 cross,
                 avoid,
+                allow_prereq_dialogue,
+                allow_quest_start,
             }
         } else {
             InteractReq::Walk {
@@ -912,6 +950,8 @@ impl Walk {
                 request_id: self.token,
                 avoid,
                 cross,
+                allow_prereq_dialogue,
+                allow_quest_start,
             }
         }
     }
@@ -969,7 +1009,7 @@ enum Phase {
     },
     /// Frozen `Traversal.walkTo`'s `recoverBoatFare` (`Traversal.ts:89`)
     /// after a failed baked walk.
-    BoatFare(Box<crate::boat_fare::Recover>),
+    BoatFare(Box<crate::compat::boat_fare::Recover>),
 }
 
 /// Frozen walkResilient ladder over baked [`Walk`]s. Shared by `walk-hops`.
@@ -999,6 +1039,8 @@ pub(crate) struct Resilient {
     /// Per-walk zone names are preserved across repaths, but apply only to
     /// this request.
     cross: Box<[String]>,
+    allow_prereq_dialogue: Option<bool>,
+    allow_quest_start: Option<bool>,
     logs: VecDeque<String>,
 }
 
@@ -1030,6 +1072,8 @@ impl Resilient {
             avoid: Vec::new(),
             logs: VecDeque::new(),
             cross: Box::default(),
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
         }
     }
 
@@ -1047,6 +1091,15 @@ impl Resilient {
     }
     pub(crate) fn with_cross(mut self, cross: Vec<String>) -> Self {
         self.cross = cross.into_boxed_slice();
+        self
+    }
+    pub(crate) fn with_prereq_permissions(
+        mut self,
+        allow_prereq_dialogue: Option<bool>,
+        allow_quest_start: Option<bool>,
+    ) -> Self {
+        self.allow_prereq_dialogue = allow_prereq_dialogue;
+        self.allow_quest_start = allow_quest_start;
         self
     }
 
@@ -1217,7 +1270,7 @@ impl Resilient {
                 }
             }
             Phase::Verify { token } => {
-                let settled = crate::inspect_wait::dispatch(&json!({
+                let settled = crate::scene::inspect_wait::dispatch(&json!({
                     "op": "settled",
                     "token": token,
                 }))
@@ -1227,7 +1280,7 @@ impl Resilient {
                     self.phase = Phase::Verify { token };
                     return None;
                 }
-                let routed = crate::inspect_wait::dispatch(&json!({
+                let routed = crate::scene::inspect_wait::dispatch(&json!({
                     "op": "value",
                     "token": token,
                 }))
@@ -1258,6 +1311,8 @@ impl Resilient {
             allow_teleports,
             self.avoid.clone(),
             self.cross.to_vec(),
+            self.allow_prereq_dialogue,
+            self.allow_quest_start,
             cx,
         ) {
             Ok(walk) => {
@@ -1320,7 +1375,9 @@ impl Resilient {
             return Some(true);
         }
         if self.recover {
-            if let Ok(recover) = crate::boat_fare::Recover::start(self.dest, cx, &mut self.logs) {
+            if let Ok(recover) =
+                crate::compat::boat_fare::Recover::start(self.dest, cx, &mut self.logs)
+            {
                 self.phase = Phase::BoatFare(Box::new(recover));
                 return None;
             }
@@ -1464,7 +1521,7 @@ impl Resilient {
         let Some(me) = here() else {
             return self.after_verify(false, cx);
         };
-        let token = crate::inspect_wait::dispatch(&json!({
+        let token = crate::scene::inspect_wait::dispatch(&json!({
             "op": "begin",
             "from": { "x": me.x, "z": me.z, "level": me.level },
             "to": { "x": self.dest.x, "z": self.dest.z, "level": self.dest.level },
@@ -1585,6 +1642,7 @@ impl Family for WalkResilient {
         .with_scene_radius(opts.scene_radius.unwrap_or(radius.saturating_add(1)))
         .with_teleport_min_span(opts.policy.distance_before_teleport.unwrap_or(0))
         .with_cross(opts.cross_zones)
+        .with_prereq_permissions(opts.allow_prereq_dialogue, opts.allow_quest_start)
         .with_avoid(opts.avoid_zones);
         Begin::Run(Self {
             drive,
@@ -1731,6 +1789,8 @@ impl WalkOpening {
                         false,
                         Vec::new(),
                         Vec::new(),
+                        None,
+                        None,
                         cx,
                     ) {
                         Ok(walk) => {
@@ -1897,7 +1957,7 @@ fn scene_click(dest: WorldTile, cx: &mut Cx<'_>) -> bool {
         z: clamp(dest.z, me.z),
         level: me.level,
     };
-    let in_scene = crate::reach_query::with_view(|view| {
+    let in_scene = crate::materialize::reach_query::with_view(|view| {
         let lx = target.x - view.base_x;
         let lz = target.z - view.base_z;
         view.available && lx >= 0 && lz >= 0 && lx < view.width && lz < view.height
@@ -2044,10 +2104,10 @@ const SUSTAIN: usize = 1;
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::callback_v8::HeldCallback;
     use crate::machine::{self, Called, Outcome, Pending, Started, Take};
-    use crate::observed::{self, WalkOutcome};
-    use crate::walk_wait;
+    use crate::materialize::callback_v8::HeldCallback;
+    use crate::scene::observed::{self, WalkOutcome};
+    use crate::scene::walk_wait;
     use serde_json::Value;
 
     pub(crate) struct NoJs;
@@ -2074,8 +2134,8 @@ pub(crate) mod tests {
         observed::on_reset();
         machine::on_reset();
         walk_wait::on_reset();
-        crate::inspect_wait::on_reset();
-        crate::reach_query::on_reset();
+        crate::scene::inspect_wait::on_reset();
+        crate::materialize::reach_query::on_reset();
         machine::on_hold(false);
         reset_scene_time();
     }
@@ -2418,7 +2478,7 @@ pub(crate) mod tests {
     pub(crate) fn ladder_to_a_dead_probe(h: machine::Handle, radius: i32) {
         ladder_no_progress_passes(h, 1, UNREACHABLE_PASSES, radius);
         let probe = probe_token();
-        crate::inspect_wait::settle_for_tests(probe, false);
+        crate::scene::inspect_wait::settle_for_tests(probe, false);
     }
 
     fn probe_token() -> u64 {
@@ -2472,7 +2532,7 @@ pub(crate) mod tests {
         let seq = no_progress_passes(h, 1, UNREACHABLE_PASSES);
         let first = probe_token();
         assert_eq!(machine::take(h), Take::Pending, "verify waits on the probe");
-        crate::inspect_wait::settle_for_tests(first, true);
+        crate::scene::inspect_wait::settle_for_tests(first, true);
         machine::step(&mut NoJs);
         assert_eq!(
             machine::take(h),
@@ -2482,7 +2542,7 @@ pub(crate) mod tests {
         machine::step(&mut NoJs);
         no_progress_passes(h, seq, UNREACHABLE_PASSES);
         let second = probe_token();
-        crate::inspect_wait::settle_for_tests(second, true);
+        crate::scene::inspect_wait::settle_for_tests(second, true);
         machine::step(&mut NoJs);
         assert_eq!(
             machine::take(h),
@@ -2498,7 +2558,7 @@ pub(crate) mod tests {
         let h = start(None);
         no_progress_passes(h, 1, UNREACHABLE_PASSES);
         let probe = probe_token();
-        crate::inspect_wait::settle_for_tests(probe, false);
+        crate::scene::inspect_wait::settle_for_tests(probe, false);
         machine::step(&mut NoJs);
         assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
     }
@@ -2610,6 +2670,31 @@ pub(crate) mod tests {
                 }]
             ),
             other => panic!("one baked walk, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn walk_resilient_preserves_prerequisite_overrides_on_host_walk() {
+        reset();
+        post_here(0, 0);
+        let args = json!({
+            "tile": { "x": 10, "z": 0, "level": 0 },
+            "opts": { "radius": 0, "allowQuestStart": false },
+        });
+        let Started::Running(_) = machine::start("walk-resilient", args, Vec::new(), 0) else {
+            panic!("walk-resilient runs");
+        };
+        machine::step(&mut NoJs);
+        match machine::merge_ops(Vec::new()).as_slice() {
+            [InteractReq::Walk {
+                allow_prereq_dialogue,
+                allow_quest_start,
+                ..
+            }] => {
+                assert_eq!(*allow_prereq_dialogue, None);
+                assert_eq!(*allow_quest_start, Some(false));
+            }
+            other => panic!("expected the compat walk, got {other:?}"),
         }
     }
 
@@ -2734,8 +2819,9 @@ pub(crate) mod tests {
 
     #[test]
     fn walk_resilient_closest_with_fresh_negative_reach_does_not_arrive() {
-        use crate::wire::{
-            encode_snapshot_with_native, NativeFactsInput, ReachViewInput, Snapshot, TileInput,
+        use {
+            crate::wire::{encode_snapshot_with_native, Snapshot},
+            script::native::snapshot_source::{NativeFactsInput, ReachViewInput, TileInput},
         };
 
         reset();
@@ -2815,7 +2901,7 @@ pub(crate) mod tests {
             let bytes = encode_snapshot_with_native(&input, native);
             let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
             observed::apply(&snap);
-            crate::reach_query::apply(&snap);
+            crate::materialize::reach_query::apply(&snap);
             walk_wait::on_snapshot(&snap);
             view
         };
@@ -2964,9 +3050,9 @@ pub(crate) mod tests {
         assert_eq!(machine::take(h), Take::Pending);
     }
 
-    pub(crate) fn door_loc(id: i32, x: i32, z: i32) -> crate::observed::SceneRow {
+    pub(crate) fn door_loc(id: i32, x: i32, z: i32) -> crate::scene::observed::SceneRow {
         let dist = x.abs().max(z.abs());
-        crate::observed::SceneRow {
+        crate::scene::observed::SceneRow {
             id,
             name: Some("Door".into()),
             x,
@@ -3012,7 +3098,7 @@ pub(crate) mod tests {
     fn post_counterfactual_scene(
         here: WorldTile,
         scene: &api::snapshot::SceneView,
-        doors: Vec<crate::observed::SceneRow>,
+        doors: Vec<crate::scene::observed::SceneRow>,
     ) {
         use std::sync::Arc;
         observed::post(1, |post| {
@@ -3035,7 +3121,7 @@ pub(crate) mod tests {
         });
     }
 
-    fn straight_wall_door(door_on_player_side: bool) -> Option<crate::observed::SceneRow> {
+    fn straight_wall_door(door_on_player_side: bool) -> Option<crate::scene::observed::SceneRow> {
         use client::dash3d::CollisionFlag;
         let mut scene = counterfactual_scene(0);
         for z in -16..16 {
@@ -3177,7 +3263,7 @@ pub(crate) mod tests {
         scene
     }
 
-    pub(crate) fn post_walled_scene(doors: Vec<crate::observed::SceneRow>) {
+    pub(crate) fn post_walled_scene(doors: Vec<crate::scene::observed::SceneRow>) {
         use std::sync::Arc;
         let scene = wall_west_of_dest();
         let here = WorldTile {
@@ -3206,7 +3292,10 @@ pub(crate) mod tests {
         let flood = api::query::SceneQuery::new(&scene, Some(here))
             .flood_reach()
             .expect("origin is in-scene");
-        crate::reach_query::set_view_for_tests(api::query::pack_reach_query(&scene, Some(&flood)));
+        crate::materialize::reach_query::set_view_for_tests(api::query::pack_reach_query(
+            &scene,
+            Some(&flood),
+        ));
     }
 
     fn fail_baked_then_scene(h: machine::Handle) {
@@ -3585,7 +3674,7 @@ pub(crate) mod tests {
         machine::on_pause();
         machine::on_resume();
         // The host posts no snapshot while Paused. Resume is queued first.
-        crate::observed::post(2, |post| {
+        crate::scene::observed::post(2, |post| {
             post.user_move_intent_seq(1);
         });
         machine::step(&mut NoJs);

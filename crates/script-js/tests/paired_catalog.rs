@@ -21,6 +21,10 @@ fn wait_ready(isolate: &LoadIsolate) {
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn scratch() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("274bot-paired-catalog-{}", std::process::id()));
@@ -32,6 +36,9 @@ fn scratch() -> PathBuf {
 #[test]
 #[ignore = "requires the frozen RS2B0T catalog"]
 fn paired_catalog_cards_transpile_and_start_with_selected_289_data() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let root = script_js::rs2b0t_root().expect("RS2B0T catalog root configured");
     let dir = scratch();
     let mut library = JsLibrary::with_cache(dir.join("scripts.json"), dir.join("cache"));
@@ -115,6 +122,9 @@ fn paired_catalog_cards_transpile_and_start_with_selected_289_data() {
 #[test]
 #[ignore = "requires the frozen RS2B0T catalog"]
 fn frozen_jive_party_releases_only_a_complete_fresh_roster() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let root = script_js::rs2b0t_root().expect("RS2B0T catalog root configured");
     let dir = scratch();
     let mut library =

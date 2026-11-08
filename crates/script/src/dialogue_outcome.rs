@@ -8,20 +8,15 @@ pub enum DialogueOutcome {
 }
 
 impl DialogueOutcome {
-    /// A closed chat observed during combat is not a successful quiet end.
-    /// Combat may close an interface without changing the player's hitpoints.
-    ///
-    /// The `in_combat` fact is the local player's health-bar window
-    /// (`combat_cycle > loop_cycle`, `crates/api/src/snapshot/decode.rs`).
-    /// The 289 client sets `combat_cycle = cycle + 300` for every `Hit`
-    /// mask without looking at the damage value (`actor_289.rs`), so a
-    /// 0-damage miss raises it exactly like a damaging hit — unlike the
-    /// `taking_damage` predicate, which requires a positive type-1 hitmark
-    /// and is blind to misses. The NPC combat scripts call `if_close`
-    /// before the damage roll lands (`npc_combat_melee.rs2`,
-    /// `npc_combat_ranged.rs2`, `npc_combat_magic.rs2`), so the close and
-    /// the hit that raises `in_combat` arrive together.
-    pub fn combat_interrupted(chat_open: bool, in_combat: bool) -> bool {
-        !chat_open && in_combat
+    /// A closed chat alone does not prove combat interruption: the local
+    /// health-bar window may be raised by self-damage, and it stays raised
+    /// for 300 client cycles after a fight. The snapshot does not expose hit
+    /// source, so require separate attacker evidence as well. Both drivers
+    /// (the native Quester dialogue and the compat chat dialog) pass attacker
+    /// evidence that includes an attack mark on the player after their own
+    /// start (`api::snapshot::AttackMarks`): a content script that closes the
+    /// chat at its end sends none.
+    pub fn combat_interrupted(chat_open: bool, in_combat: bool, attacker_evidence: bool) -> bool {
+        !chat_open && in_combat && attacker_evidence
     }
 }

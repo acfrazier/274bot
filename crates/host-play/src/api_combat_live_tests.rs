@@ -17,6 +17,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 use vault::{Profile, ProfileSettings};
 
+#[path = "api_pvp_live_tests.rs"]
+mod pvp;
+
+#[path = "pvp_switch_live_tests.rs"]
+mod pvp_switch;
+
 /// A cow spawn tile inside the Lumbridge east cow field (selected
 /// `npc_placements`: cow at 3255,3278).
 const COW_FIELD: WorldTile = WorldTile {
@@ -97,6 +103,24 @@ struct Observed {
     equipment: Vec<(i32, i32, i32)>,
     /// The newest chat sequence before the final-session tutorial proof.
     chat_mark: i32,
+    /// The local actor is in combat (a player fight shows here).
+    local_in_combat: bool,
+    /// Every remote player row on the frame (name, ops, bars, combat level).
+    players: Vec<PlayerObs>,
+    /// Chat lines newer than the fixture's mark, newest last.
+    chat: Vec<String>,
+}
+
+/// One remote player row as the live frame saw it.
+#[derive(Default, Clone, serde::Serialize)]
+struct PlayerObs {
+    name: String,
+    ops: Vec<String>,
+    health: i32,
+    total_health: i32,
+    in_combat: bool,
+    combat_level: i32,
+    tile: (i32, i32, i32),
 }
 
 /// The first fixture step that sends a per-cell seed cheat.
@@ -118,6 +142,7 @@ fn frame(
     cheats: &[String],
     watched: &[i32],
     ready_check: &dyn Fn(&api::snapshot::GameSnapshot) -> bool,
+    dest: WorldTile,
 ) {
     let mut snapshot = api::snapshot::GameSnapshot::new();
     snapshot.rebuild(client);
@@ -158,6 +183,28 @@ fn frame(
         .equipment()
         .iter()
         .map(|item| (item.slot, item.def.id, item.count))
+        .collect();
+    state.local_in_combat = snapshot
+        .local_player()
+        .is_some_and(|local| local.player.actor.in_combat);
+    state.players = snapshot
+        .players()
+        .iter()
+        .map(|row| PlayerObs {
+            name: row.actor.name.clone().unwrap_or_default(),
+            ops: row.actor.actions.iter().flatten().cloned().collect(),
+            health: row.actor.health,
+            total_health: row.actor.total_health,
+            in_combat: row.actor.in_combat,
+            combat_level: row.combat_level,
+            tile: (row.actor.tile.x, row.actor.tile.z, row.actor.tile.level),
+        })
+        .collect();
+    let lines = snapshot.chat_lines();
+    state.chat = lines
+        .iter()
+        .skip(lines.len().saturating_sub(40))
+        .map(|line| line.text.clone())
         .collect();
     state.prayers = watched
         .iter()
@@ -253,15 +300,13 @@ fn frame(
             step if step == SEED_BASE + cheats.len() => {
                 send(
                     client,
-                    &api::interact::tele_args(COW_FIELD.level, COW_FIELD.x, COW_FIELD.z),
+                    &api::interact::tele_args(dest.level, dest.x, dest.z),
                 )?;
                 state.step += 1;
             }
             _ if state.step > SEED_BASE + cheats.len() => {
                 let near = snapshot.tile().is_some_and(|(x, z, level)| {
-                    level == COW_FIELD.level
-                        && x.abs_diff(COW_FIELD.x) <= 6
-                        && z.abs_diff(COW_FIELD.z) <= 6
+                    level == dest.level && x.abs_diff(dest.x) <= 6 && z.abs_diff(dest.z) <= 6
                 });
                 if ingame && near && ready_check(&snapshot) {
                     state.ready = true;
@@ -359,7 +404,7 @@ fn start_cell(
                 return;
             }
             let mut state = frame_observed.lock().expect("observed lock");
-            frame(client, &mut state, &cheats, &watched, &ready);
+            frame(client, &mut state, &cheats, &watched, &ready, COW_FIELD);
         },
     )
     .expect("start live Play");

@@ -29,11 +29,8 @@ on WSS profiles.
 Public play uses the `rs2b2t` roster, with w1, w2 and w3 bundled by default.
 The shared cache is prepared from the first world, trying the
 next if its asset server is unreachable; `~/.274bot/unpack-289` remains shared.
-The exact 0.2.0 `servers.json` roster with w1 and w2 is extended once;
-`servers.json.pre-0.2.0.1` is the byte-exact backup and completion marker, so
-later edits (including removing w3) stay respected. If the migration cannot be
-written or `servers.json` is a symlink, the app warns and keeps the existing
-roster. Other world lists are left alone.
+Existing valid schema-1 rosters load unchanged, including two-world and custom
+rosters. Startup does not add World 3 or rewrite their files.
 Each account can select `auto` or a listed world in the panel Profiles editor.
 An auto account moves to the next listed world when login says it is full,
 waiting after all worlds report full; pinned accounts stay put. Panel and TUI
@@ -45,11 +42,13 @@ the baked key without caching it.
 
 `--world-members true|false` is an operator-declared WORLD property, held immutable with the profile; explicit overrides always win. It is not a client/server packet observation, `NODE_MEMBERS`, or account membership. Without an override, a Local profile uses `node.members` from its engine's `data/config/world.json` only when that file declares the selected revision. Otherwise, `rs2b2t` declares members only when every configured world is an rs2b2t world (`w<N>.rs2b2t.com`, ASCII numeric label, case-insensitive, port 443). Other unresolved hosts, ports, and mixed rosters remain unknown and route as F2P. Profile-bound clients also receive `members=false` for unknown or known-free worlds; that prevents members map squares from being prefetched and makes members-object interface counts unavailable, while login remains unaffected.`
 
-On the first launch after upgrading, a valid `~/.274bot/worlds.json` is copied
-into the `rs2b2t` roster. The original is untouched; `servers.json` is
-authoritative thereafter. Each profile stores its vault filename explicitly,
-so existing `vault`, `vault-289`, and `vault-prod` files are not renamed or
-rewritten.
+Version 0.2.9 no longer imports `~/.274bot/worlds.json`.
+If it is the only roster file, startup reports its unsupported old format.
+Interactive panel and TUI startup offer to move it aside before starting fresh.
+The host command refuses it without moving it.
+An existing `servers.json` remains authoritative.
+Each profile stores its vault filename explicitly. See the
+[saved-data format policy](../upgrade-0.2.0.md#saved-data-in-029).
 
 Each panel/TUI map Walk confirmation emits one Info-level `WalkTo` outcome per requested slot through the shared host log sink, including refusals. It records origin, the routed destination (including snapping), teleport/wilderness/bank-fetch options, effective WORLD membership and compact provenance (`unknown`, `explicit`, `rs2b2t` or `local-world-json`), then route legs/walk steps/transports or the refusal reason. Local declaration paths and digests are not included. Unfocused refusals appear in the Process log; an empty group keeps its selection and reports “no bots selected.” Availability checks and frame-by-frame following do not emit request lines.
 
