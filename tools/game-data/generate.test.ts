@@ -2397,6 +2397,22 @@ const repackedTrailFacts = extractTrailFacts(trailFixture((files) => {
 assert.equal(trailRow(repackedTrailFacts, 'trail_clue_hard_sextant028').id, repackedConstrainedId);
 assert.equal(trailRow(repackedTrailFacts, 'trail_clue_hard_sextant028').access, 'constrained');
 
+for (const revision of [274, 289] as const) {
+    const withoutConstrained = extractTrailFacts(trailFixture((files) => {
+        files[`${TRAIL_CONFIG}/trail_hard.enum`] =
+            files[`${TRAIL_CONFIG}/trail_hard.enum`].replace('val=4,trail_clue_hard_sextant028\n', '');
+    }), trailFixtureItems, revision);
+    assert.equal(withoutConstrained.rows.some((row) => row.access !== undefined), false,
+        `${revision}: an absent constrained clue must not reject the corpus`);
+
+    const repeatedConstrained = extractTrailFacts(trailFixture((files) => {
+        files[`${TRAIL_CONFIG}/trail_hard.enum`] += 'val=5,trail_clue_hard_sextant028\n';
+    }), trailFixtureItems, revision);
+    assert.deepEqual(repeatedConstrained.rows.filter((row) => row.access !== undefined)
+        .map((row) => row.access), ['constrained', 'constrained'],
+        `${revision}: annotate every matching membership row without a count pin`);
+}
+
 // revision 377 derives the same membership but never inherits the 289 constrained-clue annotation
 const selectedTrailAnswerParam = 5;
 const selectedTrailAnswers = new Map(expectedTrailChallengeAnswers.map(({ alias, answer }) => [alias, Number(answer)]));
