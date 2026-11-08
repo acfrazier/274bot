@@ -11661,5 +11661,7 @@ mod squire_portrait_tests;
 #[cfg(test)]
 #[path = "upkeep_runner_tests.rs"]
 mod upkeep_tests;
+
+#[cfg(test)]
 #[path = "open_page_retry_runner_tests.rs"]
 mod open_page_retry_tests;
