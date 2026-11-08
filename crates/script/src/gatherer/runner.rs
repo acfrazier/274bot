@@ -4011,7 +4011,7 @@ mod tests {
             level: 0,
         };
         gatherer.trip = TripStep::Open;
-        gatherer.selected_bank = Some(SelectedBank {
+        gatherer.scratch.selected_bank = Some(SelectedBank {
             bank_index: 0,
             access_tile: bank_tile,
             kind: PickKind::Reachable,

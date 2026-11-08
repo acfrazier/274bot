@@ -54,6 +54,7 @@ fn crate_document() -> super::super::path::PathDocument {
         stop: None,
         skip_if: PredicateDocument::Any(vec![]),
         settle: PredicateDocument::Any(vec![]),
+        hazard: None,
     }];
     document
 }

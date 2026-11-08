@@ -5,11 +5,11 @@ use crate::native::{
     ledger, ActionHandle, HostEffect, InteractionReceipt, NativeOutput, NativeTick, Script,
     ScriptFlow, ScriptStatus,
 };
+use crate::paint::ScriptPaint;
 use crate::quester::compile::{CompiledStep, PredicatePlan, StepPlan};
 use crate::quester::path::{
     HazardDocument, PathDocument, PredicateDocument, SequenceOrder, StepDocument,
 };
-use crate::shim::ScriptPaint;
 use crate::survival::{CurePoison, HazardStat, StepHazard};
 use api::condition::PoisonState;
 use api::hostlog::Level;
@@ -44,7 +44,7 @@ struct CapturedOutput {
 struct ObservedInteraction {
     ledger: usize,
     request_id: u64,
-    request: crate::shim::InteractReq,
+    request: crate::interact::InteractReq,
 }
 
 impl NativeOutput for CapturedOutput {
@@ -180,6 +180,7 @@ fn compiled_step(
         plan,
         hazard,
         hazard_source: hazard.map(|_| Arc::from(RAILING_SOURCE)),
+        attempt_budget: None,
     }
 }
 
@@ -448,7 +449,7 @@ fn accept_latest_interaction(tick: &mut NativeTick<'_>) {
 fn interaction_count(
     ledger: &Option<Box<ledger::Ledger>>,
     output: &CapturedOutput,
-    predicate: impl Fn(&crate::shim::InteractReq) -> bool,
+    predicate: impl Fn(&crate::interact::InteractReq) -> bool,
 ) -> usize {
     let key = ledger
         .as_deref()
@@ -464,13 +465,13 @@ fn eat_count(ledger: &Option<Box<ledger::Ledger>>, output: &CapturedOutput) -> u
     interaction_count(
         ledger,
         output,
-        |request| matches!(request, crate::shim::InteractReq::Held { action, .. } if action == "Eat"),
+        |request| matches!(request, crate::interact::InteractReq::Held { action, .. } if action == "Eat"),
     )
 }
 
 fn close_count(ledger: &Option<Box<ledger::Ledger>>, output: &CapturedOutput) -> usize {
     interaction_count(ledger, output, |request| {
-        matches!(request, crate::shim::InteractReq::CloseModal)
+        matches!(request, crate::interact::InteractReq::CloseModal)
     })
 }
 
@@ -483,7 +484,7 @@ fn live_close_count(ledger: &Option<Box<ledger::Ledger>>) -> usize {
                 action.live()
                     && matches!(
                         &action.effect,
-                        HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+                        HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
                     )
             })
             .count()
@@ -502,7 +503,7 @@ fn count_answers(ledger: &Option<Box<ledger::Ledger>>, output: &CapturedOutput) 
                 return None;
             }
             match &observed.request {
-                crate::shim::InteractReq::AnswerCount { value } => Some(*value),
+                crate::interact::InteractReq::AnswerCount { value } => Some(*value),
                 _ => None,
             }
         })
@@ -785,6 +786,8 @@ fn install_make_document(document: &mut PathDocument) {
         }),
         comment: None,
         advances: Some(false),
+        max_attempts: None,
+        stop: None,
         skip_if: PredicateDocument::Any(Vec::new()),
         settle: PredicateDocument::Fact {
             kind: "item_count_at_least".to_owned(),
@@ -1567,7 +1570,7 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
         &mut held_output,
     );
     assert!(
-        matches!(held_ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect), Some(HostEffect::Interaction(crate::shim::InteractReq::Held { action, .. })) if action == "Drink")
+        matches!(held_ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect), Some(HostEffect::Interaction(crate::interact::InteractReq::Held { action, .. })) if action == "Drink")
     );
     assert_eq!(held_counts.began.load(Ordering::Relaxed), 0);
     assert!(
@@ -2473,7 +2476,7 @@ fn food_park_closes_the_page_on_the_next_tick_when_the_event_is_spent() {
     assert_eq!(
         interaction_count(&ledger, &output, |request| matches!(
             request,
-            crate::shim::InteractReq::IfButton { .. }
+            crate::interact::InteractReq::IfButton { .. }
         )),
         1
     );
@@ -3621,7 +3624,7 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut output,
     );
     assert!(
-        matches!(ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect), Some(HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })) if action == "Smelt")
+        matches!(ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect), Some(HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })) if action == "Smelt")
     );
 
     client.chat_modal_id = 2100;
@@ -3653,7 +3656,7 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
             .last()
             .map(|action| &action.effect),
         Some(HostEffect::Interaction(
-            crate::shim::InteractReq::IfButton { component_id: 2120 }
+            crate::interact::InteractReq::IfButton { component_id: 2120 }
         ))
     ));
 
@@ -3761,7 +3764,7 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         &mut output,
     );
     assert!(
-        matches!(ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect), Some(HostEffect::Interaction(crate::shim::InteractReq::Loc { action, .. })) if action == "Smelt")
+        matches!(ledger.as_ref().unwrap().outbox.last().map(|action| &action.effect), Some(HostEffect::Interaction(crate::interact::InteractReq::Loc { action, .. })) if action == "Smelt")
     );
 
     client.chat_modal_id = 2100;
@@ -3795,7 +3798,7 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
             .last()
             .map(|action| &action.effect),
         Some(HostEffect::Interaction(
-            crate::shim::InteractReq::IfButton { component_id: 2120 }
+            crate::interact::InteractReq::IfButton { component_id: 2120 }
         ))
     ));
     snapshot.seed_count_dialog(true);
