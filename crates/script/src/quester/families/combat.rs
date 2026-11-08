@@ -703,6 +703,21 @@ fn content_reengagement_budget(budget_ticks: u16) -> u32 {
     MAX_CONTENT_NPC_RESPAWN_TICKS.div_ceil(shortest_end_ticks) - 1
 }
 
+/// Confirmed kills a quantity-aware `until` loop spends on missed loot before
+/// the step fails. A settled loot miss re-engages like any chance outcome
+/// (AGENTS.md: retry within a bounded, content-justified budget). Separate
+/// from the per-fight `kill_budget_ticks` and the non-kill `reengage_budget`.
+///
+/// Rule: enough kills that the target of Doric's Quest is at least 99% likely
+/// to be reached. Its Path (`paths/377/doric.json`, step
+/// `gather-iron-from-dwarves`) holds two iron ores; a dwarf rolls
+/// `random(128)` and drops one iron ore on rolls 89..=92, 4/128 = 1/32
+/// (content `scripts/drop tables/scripts/dwarf.rs2:13,39-42`). The smallest
+/// `n` with P(Binomial(n, 1/32) >= 2) >= 0.99 is 210 (0.99011; 209 gives
+/// 0.98984). Ikov's 20 limpwurt roots at 22/128 (`hobgoblin.rs2:63-64`) reach
+/// 0.9994 in the same 210 kills.
+const DROP_LOOP_KILL_BUDGET: u32 = 210;
+
 fn compile_finish(
     args: FinishArgs,
     target: &Target,
@@ -2289,15 +2304,32 @@ impl CombatRun {
             return self.rebegin_combat(cx, false);
         }
         if missing_required_loot {
-            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                "required combat loot was not acquired during the post-kill search",
-            ))));
+            if self.kills >= DROP_LOOP_KILL_BUDGET {
+                return self.drop_loop_budget_failure();
+            }
+            return self.rebegin_combat(cx, false);
         }
         if self.until.is_none() && self.win.is_none() {
             self.finish(cx)
         } else {
             self.rebegin_combat(cx, false)
         }
+    }
+
+    fn drop_loop_budget_failure(&self) -> Poll<Result<StepOutcome, ActionError>> {
+        let detail = self.last_report.as_ref().map_or_else(
+            || {
+                format!(
+                    "required combat loot was not acquired within {DROP_LOOP_KILL_BUDGET} kills"
+                )
+            },
+            |report| {
+                format!(
+                    "required combat loot was not acquired within {DROP_LOOP_KILL_BUDGET} kills; last report: {report:?}"
+                )
+            },
+        );
+        Poll::Ready(Err(ActionError::Failed(Arc::from(detail))))
     }
 
     fn evaluate_predicate(

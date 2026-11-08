@@ -5665,7 +5665,7 @@ fn combat_loot_take_settles_after_the_appearance_deadline() {
 }
 
 #[test]
-fn combat_loot_take_without_held_count_fails_after_settlement_bound() {
+fn combat_loot_take_without_held_count_re_engages_after_settlement_bound() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -5750,17 +5750,20 @@ fn combat_loot_take_without_held_count_fails_after_settlement_bound() {
                 .is_pending()
         );
     }
-    assert!(matches!(
-        with_step_context_reach(
-            &appeared,
-            &reach,
-            &mut ledger,
-            deadline + api::ground_take::SETTLEMENT_TICKS,
-            |cx| run.poll(cx)
-        ),
-        Poll::Ready(Err(ActionError::Failed(_)))
-    ));
+    let settled = with_step_context_reach(
+        &appeared,
+        &reach,
+        &mut ledger,
+        deadline + api::ground_take::SETTLEMENT_TICKS,
+        |cx| run.poll(cx),
+    );
+    assert!(
+        settled.is_pending() && matches!(run.action.as_ref(), Some(Action::Combat(_))),
+        "a settled Take without the held count re-engages: {}",
+        describe_poll(&settled)
+    );
     assert_eq!(run.loot_index, 1);
+    assert_eq!(run.kills, 1);
 }
 
 #[test]
@@ -5879,7 +5882,7 @@ fn combat_loot_uses_the_steps_lost_radius() {
 }
 
 #[test]
-fn missing_required_combat_loot_counts_as_failure_and_a_later_drop_settles() {
+fn missing_required_combat_loot_re_engages_and_a_later_drop_settles() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -5918,13 +5921,16 @@ fn missing_required_combat_loot_counts_as_failure_and_a_later_drop_settles() {
             with_step_context(&absent, &mut ledger, tick, |cx| missing_run.poll(cx)).is_pending()
         );
     }
-    let failure = with_step_context(&absent, &mut ledger, deadline + 1, |cx| {
+    let retry = with_step_context(&absent, &mut ledger, deadline + 1, |cx| {
         missing_run.poll(cx)
     });
     assert!(
-        matches!(failure, Poll::Ready(Err(ActionError::Failed(_)))),
-        "a missing required drop must use the retryable step-failure path"
+        retry.is_pending() && matches!(missing_run.action.as_ref(), Some(Action::Combat(_))),
+        "a settled loot miss re-engages instead of ending the step: {}",
+        describe_poll(&retry)
     );
+    assert_eq!(missing_run.kills, 1);
+    assert!(!missing_run.loot_missing_this_kill);
 
     let mut appeared = GameSnapshot::new();
     appeared.seed_ingame(2);
@@ -5937,6 +5943,8 @@ fn missing_required_combat_loot_counts_as_failure_and_a_later_drop_settles() {
         0,
     )]);
     let reach = seed_loot_route(&mut appeared, stand, 12);
+    // The first run's re-engaged fight owns its own ledger.
+    let mut ledger = None;
     let mut successful_run = combat_test_run(
         imp_target(&selected),
         Some(stand),
@@ -5983,6 +5991,230 @@ fn missing_required_combat_loot_counts_as_failure_and_a_later_drop_settles() {
             .poll(cx)),
         Poll::Ready(Ok(_))
     ));
+}
+
+/// The held target of Doric's Path: at least `qty` of one item, counting every
+/// stack, like `item_count_at_least`.
+struct HeldAtLeast {
+    id: i32,
+    qty: i64,
+}
+
+impl PredicatePlan for HeldAtLeast {
+    fn evaluate(&self, context: &PredicateContext<'_, '_>) -> Truth {
+        let Some(rows) = context.cx.snapshot().inventory() else {
+            return Truth::Unknown;
+        };
+        let held: i64 = rows
+            .value
+            .iter()
+            .filter(|row| row.def.id == self.id)
+            .map(|row| i64::from(row.count))
+            .sum();
+        if held >= self.qty {
+            Truth::True
+        } else {
+            Truth::False
+        }
+    }
+}
+
+/// A Doric-shaped drop loop: loot and `until` both name two iron ores.
+fn doric_drop_loop_run() -> (CombatRun, i32, String) {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let ore = selected.item_by_alias("iron_ore").unwrap();
+    let name = ore.name.as_deref().unwrap().to_owned();
+    let run = combat_test_run(
+        imp_target(&selected),
+        None,
+        Some(Arc::new(HeldAtLeast { id: ore.id, qty: 2 })),
+        vec![LootItem {
+            id: ore.id,
+            name: Arc::from(name.as_str()),
+            qty: 2,
+        }],
+    );
+    (run, ore.id, name)
+}
+
+/// A snapshot holding `held` iron ore with nothing on the ground.
+fn ore_held_snapshot(id: i32, name: &str, held: i32) -> GameSnapshot {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(
+        if held == 0 {
+            Vec::new()
+        } else {
+            vec![inventory_item(id, name, held)]
+        },
+        28,
+    );
+    snapshot.seed_ground_items(Vec::new());
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    snapshot
+}
+
+/// Reports a confirmed kill at `tick`, then polls until the loot pass settles:
+/// the first ready result, or the poll that re-engages the fight.
+fn settle_kill(
+    run: &mut CombatRun,
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    tick: u64,
+) -> Poll<Result<StepOutcome, ActionError>> {
+    assert!(with_step_context(snapshot, ledger, tick, |cx| {
+        run.on_combat_report(report(CombatEnd::Killed), cx)
+    })
+    .is_pending());
+    for poll_tick in tick + 1..=tick + LOOT_ITEM_WAIT_TICKS + 1 {
+        let polled = with_step_context(snapshot, ledger, poll_tick, |cx| run.poll(cx));
+        if polled.is_ready() || matches!(run.action.as_ref(), Some(Action::Combat(_))) {
+            return polled;
+        }
+    }
+    panic!("the loot pass must settle within its bounded wait");
+}
+
+#[test]
+fn a_missed_chance_drop_keeps_fighting_until_the_held_target_is_met() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut run, id, name) = doric_drop_loop_run();
+    let mut ledger = None;
+
+    // Kill 1 drops nothing: the step re-engages instead of ending.
+    let none = ore_held_snapshot(id, &name, 0);
+    let first = settle_kill(&mut run, &none, &mut ledger, 10);
+    assert!(first.is_pending(), "{}", describe_poll(&first));
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+    assert_eq!(run.kills, 1);
+
+    // Kill 2 leaves one ore held, below the target of two (Doric's case).
+    let one = ore_held_snapshot(id, &name, 1);
+    let second = settle_kill(&mut run, &one, &mut ledger, 40);
+    assert!(second.is_pending(), "{}", describe_poll(&second));
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+    assert_eq!(run.kills, 2);
+
+    // Kill 3 reaches two ores: the step completes with its combat receipt.
+    let two = ore_held_snapshot(id, &name, 2);
+    let third = settle_kill(&mut run, &two, &mut ledger, 70);
+    assert!(
+        matches!(&third, Poll::Ready(Ok(_))),
+        "{}",
+        describe_poll(&third)
+    );
+    assert_eq!(run.kills, 3);
+    assert_eq!(last_test_combat_receipt(&run).kills, 3);
+}
+
+#[test]
+fn the_drop_loop_kill_budget_ends_the_step_with_the_last_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut run, id, name) = doric_drop_loop_run();
+    let mut ledger = None;
+    let none = ore_held_snapshot(id, &name, 0);
+
+    // The kill before the budget is spent still re-engages.
+    run.kills = DROP_LOOP_KILL_BUDGET - 2;
+    let before = settle_kill(&mut run, &none, &mut ledger, 10);
+    assert!(before.is_pending(), "{}", describe_poll(&before));
+    assert_eq!(run.kills, DROP_LOOP_KILL_BUDGET - 1);
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+
+    // The kill that spends the budget without the target ends the step and
+    // keeps the last report.
+    let spent = settle_kill(&mut run, &none, &mut ledger, 40);
+    assert_eq!(run.kills, DROP_LOOP_KILL_BUDGET);
+    match spent {
+        Poll::Ready(Err(ActionError::Failed(detail))) => {
+            assert!(
+                detail.contains("required combat loot was not acquired within 210 kills"),
+                "{detail}"
+            );
+            assert!(detail.contains("last report:"), "{detail}");
+            assert!(detail.contains("Killed"), "{detail}");
+        }
+        other => panic!(
+            "the spent budget must fail the step: {}",
+            describe_poll(&other)
+        ),
+    }
+}
+
+/// A held target reached on the budget's last kill is not a failure.
+#[test]
+fn a_drop_on_the_last_budgeted_kill_completes_the_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut run, id, name) = doric_drop_loop_run();
+    let mut ledger = None;
+    run.kills = DROP_LOOP_KILL_BUDGET - 1;
+    let two = ore_held_snapshot(id, &name, 2);
+    let done = settle_kill(&mut run, &two, &mut ledger, 10);
+    assert!(
+        matches!(&done, Poll::Ready(Ok(_))),
+        "{}",
+        describe_poll(&done)
+    );
+    assert_eq!(run.kills, DROP_LOOP_KILL_BUDGET);
+}
+
+/// A missing inventory observation is not a chance miss: it stays terminal.
+#[test]
+fn a_missing_inventory_observation_still_fails_the_loot_pass() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut run, _, _) = doric_drop_loop_run();
+    let mut ledger = None;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_ground_items(Vec::new());
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let failed = settle_kill(&mut run, &snapshot, &mut ledger, 10);
+    assert!(
+        matches!(&failed, Poll::Ready(Err(ActionError::NeedsEvidence(_)))),
+        "{}",
+        describe_poll(&failed)
+    );
+}
+
+/// `until_drop` keeps its own authored kill budget: the drop-loop budget does
+/// not shorten it, and its stop name still ends the step.
+#[test]
+fn until_drop_is_not_bounded_by_the_drop_loop_kill_budget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let item = selected.item_by_alias("bones").unwrap();
+    let item_name: Arc<str> = Arc::from(item.name.as_deref().unwrap_or("Bones"));
+    let max_kills = DROP_LOOP_KILL_BUDGET + 90;
+    let mut run = until_drop_test_run(imp_target(&selected), None, item.id, item_name, max_kills);
+    let mut ledger = None;
+    let none = ore_held_snapshot(item.id, "Bones", 0);
+
+    run.kills = DROP_LOOP_KILL_BUDGET + 4;
+    let past = settle_kill(&mut run, &none, &mut ledger, 10);
+    assert!(past.is_pending(), "{}", describe_poll(&past));
+    assert_eq!(run.kills, DROP_LOOP_KILL_BUDGET + 5);
+    assert!(matches!(run.action.as_ref(), Some(Action::Combat(_))));
+
+    run.kills = max_kills - 1;
+    let spent = settle_kill(&mut run, &none, &mut ledger, 40);
+    assert!(
+        matches!(
+            &spent,
+            Poll::Ready(Err(ActionError::Blocked(reason))) if reason.as_ref() == "bones_not_found"
+        ),
+        "{}",
+        describe_poll(&spent)
+    );
 }
 
 fn until_drop_test_run(
@@ -6868,12 +7100,8 @@ fn a_second_rebuilt_scene_cancel_on_the_retaken_item_is_missed_loot() {
         let done = with_step_context_reach(&gained, &reach, &mut ledger, 32, |cx| run.poll(cx));
         if required {
             assert!(
-                matches!(
-                    &done,
-                    Poll::Ready(Err(ActionError::Failed(reason)))
-                        if reason.contains("required combat loot was not acquired")
-                ),
-                "{}",
+                done.is_pending() && matches!(run.action.as_ref(), Some(Action::Combat(_))),
+                "a missed required drop re-engages the fight: {}",
                 describe_poll(&done)
             );
         } else {
