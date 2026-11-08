@@ -3591,7 +3591,7 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
         "maps/m47_50.jm2",
         "==== NPC ====\n0 18 17: 378\n0 37 36: 657\n0 38 36: 657\n",
     );
-    let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
+    let (graph, skipped, _) = derive(&data);
     assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 3);
     assert!(graph
         .edges
@@ -3605,7 +3605,7 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
     // Ardougne, x=2815 to Port Sarim. Mixed branches must omit the route.
     for spawns in ["0 62 25: 380\n0 63 25: 380\n", "0 63 25: 380\n"] {
         fx.write("maps/m43_50.jm2", &format!("==== NPC ====\n{spawns}"));
-        let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
+        let (graph, skipped, _) = derive(&data);
         assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 4);
         assert!(!graph.edges.iter().any(|edge| {
             edge.kind == TransportKind::Boat
