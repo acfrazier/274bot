@@ -6816,6 +6816,15 @@ fn follow_fails_fast_when_the_game_reports_cant_reach() {
 
 #[test]
 fn follow_lumbridge_stairs_approaches_operable_side_on_real_289_pack() {
+    if std::env::var_os("NAV_PACK").is_some() {
+        let Some(_pack) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "real 289 nav pack for Lumbridge staircase approach",
+        ) else {
+            return;
+        };
+    }
     let Some(world) = nav_planner::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };

@@ -187,11 +187,18 @@ fn approach_tiles_reach_candidates_match_the_facade_on_the_asymmetric_fixture() 
 
 #[test]
 fn approach_tiles_reach_candidates_match_the_facade_on_the_real_pack() {
-    let Some(path) = std::env::var_os("NAV_PACK") else {
+    if std::env::var_os("NAV_PACK").is_none() {
         eprintln!("SKIP: NAV_PACK is not set");
         return;
+    }
+    let Some(path) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        "",
+        "real nav pack for approach-tile facade parity",
+    ) else {
+        return;
     };
-    let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&path)).expect("real nav pack"));
+    let world = Arc::new(NavWorld::load_pack(&path).expect("real nav pack"));
     let lease = NavLease::wrap(Arc::clone(&world)).unwrap();
     let view = lease.collision();
     // Lumbridge castle courtyard, plus a walkable tile beside a solid and a
