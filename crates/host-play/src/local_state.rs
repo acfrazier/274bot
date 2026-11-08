@@ -115,6 +115,8 @@ use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Re
 pub use files::{
     StateRoot, HINT_SCHEMA_VERSION, MAX_HINT_BYTES, MAX_LOADOUTS_BYTES, MAX_PREFERENCES_BYTES,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use frontend::{transient_wait, wait_outcome, WaitOutcome};
 pub use frontend::{
     PreferenceError, PreferencePatch, PreferenceSnapshot, Preferences, QueuedUpdate,
     ServiceLoadouts, Update,
