@@ -121,7 +121,7 @@ impl HoldRig {
             );
         }
 
-        let input = admission::capture(&snapshot, false, bot.condition.current(), false);
+        let input = admission::capture(&snapshot, false, bot.condition.current(), false, None);
         assert!(
             !input.missing_facts(),
             "fixture must have complete live facts"
@@ -233,7 +233,7 @@ impl HoldRig {
         let bot = navs.get_mut(ALICE).expect("nav bot");
         let generation = bot.route_generation.wrapping_add(1);
         let request_id = bot.walk_request_id.wrapping_add(1);
-        let input = admission::capture(&self.snapshot, false, bot.condition.current(), false);
+        let input = admission::capture(&self.snapshot, false, bot.condition.current(), false, None);
         let admission = Admission {
             policy: RiskPolicy::Avoid,
             enforce: true,

@@ -2514,12 +2514,15 @@
       "additionalProperties": false,
       "properties": {
         "npc": {
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UseOnNpc"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "description": "Symbolic NPC config name; exactly one target selector is required.",
-          "default": null
+          "description": "Symbolic NPC config name or alternatives; exactly one selector is required."
         },
         "loc": {
           "type": [
@@ -2568,6 +2571,20 @@
         }
       },
       "description": "Exactly one selected target for a held-item operation."
+    },
+    "UseOnNpc": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ],
+      "description": "One placed NPC identity or fungible alternatives, as in combat targets."
     },
     "step.use_on.v1": {
       "type": "object",

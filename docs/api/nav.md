@@ -22,7 +22,7 @@ python tools/local-data/build.py
 ```
 
 `BOT_NAV_BUILD=skip` stages nothing. `BOT_NAV_REVISION` selects revision 289
-by default or 274. `BOT_NAV_RESOURCE_DIR` selects another staging root.
+by default, or 274 or 377 explicitly. `BOT_NAV_RESOURCE_DIR` selects another staging root.
 `NAV_PACK` overrides runtime pack selection only; it does not select build
 inputs.
 
@@ -40,11 +40,36 @@ cargo run --locked -p nav-bake --bin nav-pack -- \
   --out target/local-data/nav/289/274bot.navpack
 ```
 
-The cache path supplies the local revision's `data/pack/client` directory.
-Nav-pack reads its `config` and the generated `<revision>.json` and
+`--cache` supplies the local client-cache directory. Revisions 289 and 377 read
+its `config`. Revision 274 reads the server `config` beside that directory.
+Nav-pack also reads the generated `<revision>.json` and
 `<revision>/quests.json` files. It writes all five payloads beside `--out`.
 Use `--flags-out`, `--reach-out`, `--canlight-out`, and `--pois-out` only to
 select different sidecar paths.
+
+Revision 377 requires `--server-loc-dat` naming the selected local engine's
+packed `server/loc.dat`. A published client cache need not live below
+`data/pack/client`, so the bake does not infer this server path from `--cache`.
+The collision decoder applies engine defaults, the server record, the client
+record and the active-field postpass in that order.
+It does not apply the client's `breakroutefinding` postpass, which clears
+collision flags that the server retains.
+
+Use the explicit server table when you rebake revision 377:
+
+```bash
+cargo run --locked -p nav-bake --bin nav-pack -- \
+  --revision 377 \
+  --content "$GAME_DATA_377_CONTENT" \
+  --cache "$GAME_DATA_377_ENGINE/data/pack/client" \
+  --game-data-dir crates/api/data/game-data \
+  --server-loc-dat "$GAME_DATA_377_ENGINE/data/pack/server/loc.dat" \
+  --out target/local-data/nav/377/274bot.navpack
+```
+
+Revisions 274 and 289 reject `--server-loc-dat` and retain their existing
+collision behavior. Product builds only stage the generated local payloads.
+They do not read the server table or check source provenance.
 
 Each edge's `members_req` comes from the content handler that edge's op runs,
 resolved as the engine does: type `[<op>,<name>]`, then category
@@ -208,6 +233,7 @@ The TUI `r` layer tints walkable-but-unreached cells from the reach words. It
 shows `reach unavailable` when those words are not available.
 
 
+
 ## Collision (`nav_planner::collision`)
 
 `WorldCollision { origin, width, height, walk: Vec<u8>, blocked: Vec<u64>, flags: Option<Vec<u32>> }` bakes every
@@ -242,6 +268,29 @@ content-derived absence gates `forbidden_held` (must not be carried) and
 `worn_all_req`; carried or banked pieces do not. `BankBudget` neither
 supplies nor equips these strict pieces; the Quester loadout handles
 equipping. A held `item_req` is never budgeted as spent.
+
+An explicitly selected revision-377 bake also runs `vertical_377.rs`.
+It prices the renamed `ladder_1755` from the canonical climb helper while
+preserving its coordinate-specific landing and relative fallback. That return
+connects the Varrock sewer to the otherwise walled-in palace coin alcove.
+Renamed `scenery_*` stairs are priced from canonical coordinate-switch
+handlers. Each admitted arm must make one fixed jump; only the optional
+`p_arrivedelay` contributes an extra tick. This retains Morgan's downstairs
+route and explicit middle-stair up/down options without admitting the
+dialogue-bearing first option, gates or additional side effects.
+Repeated coordinate arms are accepted only when their resolved movement is
+identical; conflicting duplicates reject the handler.
+The surface entrance is the canonical `manholeclosed` Open followed by
+`manholeopen` Climb down. Its edge retains the opened loc ID and the player's
+z+6400 landing, at three ticks for the pair. Already-open placements take
+two ticks. The producer certifies every opener statement, including the
+cover placement, and rejects gates or additional side effects.
+Direct absolute climbs, including `trapdoor_9472`, use the strict source
+recognizer: presentation, suspension and one fixed move only, with a matching
+Climb operation. The ice-dungeon trapdoor lands at `(3007,9549,0)` in three
+ticks and has no invented open phase. This supplement does not run for
+revision 274, revision 289 or an unspecified revision.
+
 Spell runes and script-deleted fares or passes are consumptive requirements.
 Spell teleports have no fixed origin: they live on `TransportGraph::teleports`
 unless `FindOptions::allow_teleports`. Wilderness tiles stay out unless
@@ -1307,6 +1356,13 @@ Arrival radius is the Chebyshev distance treated as arrived at a hop
 target. `close_enough` defaults to 2. Legs with an exact planned
 `takeoff` settle at radius 0 on the planned landing; teleport hops accept
 radius 2 and glider landings radius 1 whatever the runner passes.
+
+- **377 bounded walk hops:** an endpoint shortcut must be within both 20
+  straight-line tiles and 20 remaining packed-route steps. Otherwise the
+  next target is at most 15 route steps ahead, still clipped to the loaded
+  scene. This avoids spending one finite hop budget on a long folded
+  local path around a nearby wall or fence. It does not extend the hop
+  timeout or change the 274/289 endpoint shortcut.
 
 - **Stalled walk recovery:** five distinct game ticks without tile progress
   or actor movement reissue the current aim, even if the map flag remains.

@@ -939,6 +939,7 @@ fn build_tables(cx: &CompileContext<'_>) -> Result<Arc<CombatTables>, CompileErr
     let revision = match cx.selected.revision() {
         274 => api::selected::ClientRevision::R274,
         289 => api::selected::ClientRevision::R289,
+        377 => api::selected::ClientRevision::R377,
         _ => return Err(CompileError::code("unsupported-revision")),
     };
     let selected = api::game_data::for_revision(revision)

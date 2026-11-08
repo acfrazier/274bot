@@ -26,7 +26,7 @@ struct Args {
 fn usage() -> ! {
     eprintln!(
         "usage: host-play [--profile NAME|--rs2b2t] \
-         [--revision 274|289] [--host HOST] [--port PORT] \
+         [--revision 274|289|377] [--host HOST] [--port PORT] \
          [--asset-host HOST] [--http-port PORT] [--engine PATH] \
          [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] \
@@ -119,9 +119,8 @@ fn main() -> ExitCode {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Info, "{line}");
     }
 
-    // Resolve, prepare and decode before opening or creating a vault. A 289
-    // profile remains constructible, but the host boundary refuses gameplay
-    // before any credential or filesystem mutation.
+    // Resolve, prepare and decode before opening or creating a vault.
+    // Revision-specific resource and host-action checks stay fail-closed.
     let selection = match args.profile.resolve(None) {
         Ok(selection) => selection,
         Err(msg) => {
