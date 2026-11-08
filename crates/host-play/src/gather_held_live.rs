@@ -87,6 +87,11 @@ struct Observations {
     catch_elapsed_ms: Option<u128>,
     box_changed: bool,
     harpoon_lost: bool,
+    /// Most sharks any frame's bank view held, sampled on every frame, not
+    /// only the first of each tick.
+    bank_sharks_seen: i32,
+    previous_frame: Option<FrameFacts>,
+    deposit_evidence_seen: bool,
 }
 
 fn fishing_xp(snapshot: &GameSnapshot) -> Option<i32> {
@@ -95,6 +100,26 @@ fn fishing_xp(snapshot: &GameSnapshot) -> Option<i32> {
         .iter()
         .find(|stat| stat.name.eq_ignore_ascii_case("fishing"))
         .map(|stat| stat.xp)
+}
+
+/// What one client frame shows of the bank and the pack.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FrameFacts {
+    bank_open: bool,
+    sharks: i32,
+}
+
+/// Whether the 26 sharks reached the bank. A frame whose bank view holds
+/// them proves it. The Gatherer closes the bank in the server tick that
+/// carries the deposit result, so the view can be gone before any frame
+/// shows it; then the whole stack leaving the pack on the first frame after
+/// one with the bank open is the same transfer: Bank mode has no other way to
+/// take sharks out of the pack.
+fn deposit_evidence(bank_sharks_seen: i32, previous: Option<FrameFacts>, now: FrameFacts) -> bool {
+    bank_sharks_seen >= 26
+        || previous.is_some_and(|before| {
+            before.bank_open && before.sharks >= 26 && now.sharks == 0
+        })
 }
 
 fn correct_outcome(
@@ -204,6 +229,43 @@ fn held_box_oracle_requires_sharks_deposit_then_fish_catch_with_boxes_held() {
 }
 
 #[test]
+fn deposit_evidence_accepts_a_bank_view_or_the_stack_leaving_an_open_bank() {
+    let open_full = Some(FrameFacts {
+        bank_open: true,
+        sharks: 26,
+    });
+    let empty = FrameFacts {
+        bank_open: false,
+        sharks: 0,
+    };
+    // A frame whose bank view held all 26 sharks.
+    assert!(deposit_evidence(26, None, empty));
+    // No view ever shown: the bank closed in the tick of the deposit result,
+    // so the pack goes 26 to 0 on the frame after the open-bank frame.
+    assert!(deposit_evidence(0, open_full, empty));
+    // The stack leaving a pack with no open bank before it is not a deposit.
+    assert!(!deposit_evidence(
+        0,
+        Some(FrameFacts {
+            bank_open: false,
+            sharks: 26
+        }),
+        empty
+    ));
+    // A partial deposit or a partial bank view is not the whole stack.
+    assert!(!deposit_evidence(
+        0,
+        open_full,
+        FrameFacts {
+            bank_open: true,
+            sharks: 10
+        }
+    ));
+    assert!(!deposit_evidence(25, None, empty));
+    assert!(!deposit_evidence(0, None, empty));
+}
+
+#[test]
 #[ignore = "requires LIVE=1, own BOT_LIVE_NAME_PREFIX (1-4 bytes), Engine A and Gatherer nav/engine/catalog/cache/evidence paths"]
 fn live_gatherer_disabled_events_strange_boxes_engine_a() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
@@ -273,6 +335,15 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
             };
             let mut obs = frame_observations.lock();
             obs.snapshot.rebuild(client);
+            let facts = FrameFacts {
+                bank_open: obs.snapshot.bank_component_id() >= 0,
+                sharks: count(obs.snapshot.inventory(), SHARK),
+            };
+            let seen = obs.bank_sharks_seen.max(count(obs.snapshot.bank(), SHARK));
+            obs.bank_sharks_seen = seen;
+            let evidence = deposit_evidence(seen, obs.previous_frame, facts);
+            obs.deposit_evidence_seen |= evidence;
+            obs.previous_frame = Some(facts);
             let tick = obs.snapshot.tick();
             if obs.tick == Some(tick) {
                 return;
@@ -294,7 +365,7 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
             });
             obs.frames.push(row);
             obs.bank_opened |= bank_open;
-            if obs.deposit_tick.is_none() && bank_sharks >= 26 {
+            if obs.deposit_tick.is_none() && obs.deposit_evidence_seen && sharks == 0 {
                 obs.sharks_banked = true;
                 obs.deposit_tick = Some(tick);
                 obs.deposit_elapsed_ms = Some(started.elapsed().as_millis());
