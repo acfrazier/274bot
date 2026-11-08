@@ -2253,6 +2253,7 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "order": "ordered",
           "steps": [
             {
               "id": "withdraw-portrait",
@@ -2413,6 +2414,116 @@
                   "version": 1,
                   "args": {
                     "loc": "vyvincupboardopen"
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-vyvin-out-of-target-range",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2978,
+                  3347,
+                  2
+                ],
+                "source": "C maps/m46_52.jm2:6789 (level 2, local [34,19]); Sir Vyvin NPC605 starts at [2983,3335,2] (maps/m46_52.jm2:14348), so this tile is 12 tiles away, beyond the generic target's 11-tile validity limit",
+                "radius": 0
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "knights_portrait"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2978,
+                          3347,
+                          2
+                        ],
+                        "radius": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2978,
+                      3347,
+                      2
+                    ],
+                    "radius": 0
+                  }
+                }
+              }
+            },
+            {
+              "id": "walk-vyvin-return-to-cupboard",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  2985,
+                  3335,
+                  2
+                ],
+                "source": "C maps/m46_52.jm2:13715 (LOC2271 cupboard at [2984,3336,2]); return to the valid south stand [2985,3335,2] before testing the one-tile refusal condition",
+                "radius": 0
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "knights_portrait"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2985,
+                          3335,
+                          2
+                        ],
+                        "radius": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2985,
+                      3335,
+                      2
+                    ],
+                    "radius": 0
                   }
                 }
               }
