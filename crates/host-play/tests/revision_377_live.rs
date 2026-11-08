@@ -6,8 +6,8 @@
 //! and `NAV_FLAGS`. Template preparation follows the production runtime-cache
 //! path in a private home.
 //! Pre-Start mainland fixtures request a fresh login after observing logout:
-//! idle slots park on a server logout, so the fixture arms Login and wakes the
-//! slot explicitly rather than relying on automatic reconnect policy.
+//! idle slots park on a server logout, so the fixture posts Login through its
+//! SlotArm once available rather than relying on automatic reconnect policy.
 //!
 //! Live invocation (with the real resource paths supplied by the owner):
 //! ```text
