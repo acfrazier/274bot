@@ -1229,11 +1229,14 @@ fn c0_acceptance_oracle(receipt: &C0Receipt, logs: &[HostLog]) -> Result<(), Str
     let s_send = receipt
         .s_send
         .ok_or("post-L0 stat_drain send was not observed")?;
-    if s_send.poll != l0.poll.saturating_add(1) {
+    // The runner starts a Perform step in the same tick the previous Await step
+    // finishes, so a send on the L0 poll is correct. The drain must not come
+    // before L0 and must come no later than one poll after it.
+    let latest_send_poll = l0.poll.saturating_add(1);
+    if s_send.poll < l0.poll || s_send.poll > latest_send_poll {
         return Err(format!(
-            "post-L0 drain send was on client poll {}, expected next poll {}",
-            s_send.poll,
-            l0.poll.saturating_add(1)
+            "post-L0 drain send was on client poll {}, expected L0 poll {} or the next poll {latest_send_poll}",
+            s_send.poll, l0.poll
         ));
     }
     let s1 = receipt
@@ -2006,6 +2009,33 @@ mod tests {
 
         let late_s1 = valid_receipt(3, 5, 1, 16, 2, 20);
         expect_rejected(&late_s1, &valid_hazard_logs());
+    }
+
+    #[test]
+    fn acceptance_oracle_bounds_the_post_l0_drain_send_poll() {
+        let base = valid_receipt(3, 2, 9, 16, 2, 20);
+        let l0 = base.l0.unwrap();
+        let with_send_poll = |poll: u64| {
+            let mut receipt = base.clone();
+            receipt.s_send = Some(Mark {
+                tick: l0.tick,
+                poll,
+            });
+            receipt
+        };
+
+        c0_acceptance_oracle(&with_send_poll(l0.poll), &valid_hazard_logs()).unwrap();
+        c0_acceptance_oracle(&with_send_poll(l0.poll + 1), &valid_hazard_logs()).unwrap();
+        expect_rejected_because(
+            &with_send_poll(l0.poll - 1),
+            &valid_hazard_logs(),
+            "post-L0 drain send",
+        );
+        expect_rejected_because(
+            &with_send_poll(l0.poll + 2),
+            &valid_hazard_logs(),
+            "post-L0 drain send",
+        );
     }
 
     #[test]
