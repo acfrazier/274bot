@@ -54,17 +54,25 @@ pub enum GameDataError {
 const REVISION_274: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/game-data-274.json.gz"));
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 const REVISION_289: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/game-data-289.json.gz"));
-#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+#[cfg(all(
+    feature = "embedded-game-data",
+    not(no_local_game_data),
+    not(no_local_game_data_377)
+))]
 const REVISION_377: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/game-data-377.json.gz"));
 
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 static DATA_274: OnceLock<Result<Arc<SelectedGameData>, GameDataError>> = OnceLock::new();
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 static DATA_289: OnceLock<Result<Arc<SelectedGameData>, GameDataError>> = OnceLock::new();
-#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+#[cfg(all(
+    feature = "embedded-game-data",
+    not(no_local_game_data),
+    not(no_local_game_data_377)
+))]
 static DATA_377: OnceLock<Result<Arc<SelectedGameData>, GameDataError>> = OnceLock::new();
 
-/// Whether this build embeds the local selected game-data assets.
+/// Whether this build embeds the local revision-274/289 game-data assets.
 pub const fn local_game_data_available() -> bool {
     cfg!(all(feature = "embedded-game-data", not(no_local_game_data)))
 }
@@ -3106,7 +3114,10 @@ pub fn for_revision(revision: ClientRevision) -> Result<Arc<SelectedGameData>, G
     let (cell, bytes) = match revision {
         ClientRevision::R274 => (&DATA_274, REVISION_274),
         ClientRevision::R289 => (&DATA_289, REVISION_289),
+        #[cfg(not(no_local_game_data_377))]
         ClientRevision::R377 => (&DATA_377, REVISION_377),
+        #[cfg(no_local_game_data_377)]
+        ClientRevision::R377 => return Err(GameDataError::LocalDataUnavailable),
     };
     match cell.get_or_init(|| {
         preflight_combat_facts_version(GzDecoder::new(bytes))?;
@@ -3184,6 +3195,31 @@ mod missing_data_tests {
         assert!(!local_game_data_available());
         assert!(matches!(
             for_revision(ClientRevision::R289),
+            Err(GameDataError::LocalDataUnavailable)
+        ));
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "embedded-game-data",
+    not(no_local_game_data),
+    no_local_game_data_377
+))]
+mod missing_377_data_tests {
+    use super::*;
+
+    #[test]
+    fn absent_377_assets_preserve_embedded_legacy_revisions() {
+        assert!(local_game_data_available());
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            assert_eq!(
+                for_revision(revision).unwrap().revision(),
+                revision.as_i32()
+            );
+        }
+        assert!(matches!(
+            for_revision(ClientRevision::R377),
             Err(GameDataError::LocalDataUnavailable)
         ));
     }
