@@ -376,6 +376,7 @@ mod tests {
 
     #[test]
     fn revision_377_prepares_its_own_tree_and_net_sites_for_banking() {
+        crate::require_local_game_data_for_test!(api::selected::ClientRevision::R377);
         for (skill, resource, site, method, products) in [
             (
                 "Woodcutting",
@@ -429,6 +430,7 @@ mod tests {
 
     #[test]
     fn revision_377_refuses_a_site_without_the_selected_resource() {
+        crate::require_local_game_data_for_test!(api::selected::ClientRevision::R377);
         let config = prepared_revision_site(
             api::selected::ClientRevision::R377,
             "Mining",
