@@ -1785,7 +1785,10 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
 /// the bound is the measured warm count plus headroom — both lab hosts
 /// measure 23 calls/frame with two published rows, and the ceiling is
 /// that measurement plus 2%, rounded up — plus the no-growth equality: a
-/// second block of 100 unchanged frames must cost exactly the same.
+/// second block of 100 unchanged frames must cost exactly the same. The
+/// count is the frame thread's own, and a block counts only when no
+/// wall-clock arrival (the preference store's first snapshot, the resource
+/// meter's once-a-second sample) landed in it.
 #[test]
 fn the_whole_pump_frame_adds_no_allocation_growth_across_100_unchanged_frames() {
     const CHILD: &str = "PANEL_WHOLE_FRAME_GATE_CHILD";
@@ -1821,22 +1824,61 @@ fn the_whole_pump_frame_adds_no_allocation_growth_across_100_unchanged_frames() 
     for _ in 0..16 {
         assert!(!rig.frame(Pointer::Away));
     }
-    let before = crate::test_alloc::alloc_calls();
-    for _ in 0..100 {
+    // The process preference store reads its file on its own thread, so
+    // the first readable snapshot lands on whatever frame the clock gives
+    // it: the core follows it on one frame and the panel adopts it on the
+    // next, and that one-time arrival costs hundreds of calls. It is not
+    // part of an unchanged frame: frame until it landed, then let the
+    // adoption settle for another warm run.
+    let settle_by = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !rig.session().panel_preferences_ready() {
+        assert!(!rig.frame(Pointer::Away));
         assert!(
-            !rig.frame(Pointer::Away),
-            "an unchanged frame ended the run"
+            std::time::Instant::now() < settle_by,
+            "the process preference store never published a readable snapshot"
         );
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    let first = crate::test_alloc::alloc_calls() - before;
-    let before = crate::test_alloc::alloc_calls();
-    for _ in 0..100 {
-        assert!(
-            !rig.frame(Pointer::Away),
-            "an unchanged frame ended the run"
-        );
+    for _ in 0..16 {
+        assert!(!rig.frame(Pointer::Away));
     }
-    let second = crate::test_alloc::alloc_calls() - before;
+    // The resource meter asks its probe thread for a sample once a second
+    // by the wall clock, and taking a published sample or counting the
+    // fleet again can allocate on the frame that does it. That is a
+    // cadence of its own, not growth in an unchanged frame, so a block
+    // counts only when the meter was idle through all of it: no sample in
+    // flight at either end and none published inside. A block that met
+    // the sampler is dropped and measured again; the first one, with the
+    // startup sample still on its way, is dropped the same way. Growth in
+    // the frame itself shows in every block, so it still fails.
+    let quiet_block = |rig: &mut Rig| -> Option<usize> {
+        let published = rig.session().core.resource_probe_generation();
+        let idle_before = !rig.session().core.resource_probe_in_flight();
+        let before = crate::test_alloc::alloc_calls();
+        for _ in 0..100 {
+            assert!(
+                !rig.frame(Pointer::Away),
+                "an unchanged frame ended the run"
+            );
+        }
+        let calls = crate::test_alloc::alloc_calls() - before;
+        let idle_after = !rig.session().core.resource_probe_in_flight();
+        let quiet = idle_before
+            && idle_after
+            && rig.session().core.resource_probe_generation() == published;
+        quiet.then_some(calls)
+    };
+    let mut measured = None;
+    for _ in 0..20 {
+        if let Some(first) = quiet_block(&mut rig) {
+            if let Some(second) = quiet_block(&mut rig) {
+                measured = Some((first, second));
+                break;
+            }
+        }
+    }
+    let (first, second) =
+        measured.expect("20 pairs of 100 frames each met the once-a-second resource sample");
     assert_eq!(
         second, first,
         "100 unchanged whole frames must cost exactly what the first block cost"
