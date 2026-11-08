@@ -16,7 +16,11 @@ fn raw_game_data(revision: ClientRevision) -> Option<Vec<u8>> {
             "revision 377 game data for API tests",
         ),
     };
-    let path = crate::test_support::local_asset_path("", path, description)?;
+    let path = if revision == ClientRevision::R377 {
+        crate::test_support::local_asset_path_377("", path, description)?
+    } else {
+        crate::test_support::local_asset_path("", path, description)?
+    };
     Some(
         std::fs::read(&path)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display())),
