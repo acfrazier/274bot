@@ -1,0 +1,14 @@
+# chardonnay (user unit): start 274bot-hold-model-nightly.service at 02:30
+# local time, after the 02:00 nightly of the other hosts. A missed run is not
+# made up at boot: the profiles are heavy (up to 7 GB).
+# Install: ~/.config/systemd/user/274bot-hold-model-nightly.timer
+[Unit]
+Description=274bot hold-model nightly profile runs at 02:30
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=false
+Unit=274bot-hold-model-nightly.service
+
+[Install]
+WantedBy=timers.target

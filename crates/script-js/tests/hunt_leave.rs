@@ -5,18 +5,24 @@
 
 use api::game_data::{self, SelectedGameData, TeleportSpell};
 use client::io::ClientRevision;
-use script::shim::InteractReq;
-use script_js::hunt_fight::Tile;
-use script_js::hunt_leave::{
+use script::interact::InteractReq;
+use script_js::compat::hunt_fight::Tile;
+use script_js::compat::hunt_leave::{
     self, leave_deadline_remaining_ms, leave_force_bound_reached, leave_token_alive,
     set_observation, LeaveInv, LeaveLoc, LeaveObservation, DOOR_MS, WALK_LEG_MS,
-};
-use script_js::wire::{
-    encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, StatInput, TileInput,
 };
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use {
+    script::native::snapshot_source::{ItemRowInput, SnapshotInput, StatInput, TileInput},
+    script_js::wire::{encode_snapshot, Snapshot},
+};
+
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn reset() {
     hunt_leave::on_reset();
@@ -209,6 +215,9 @@ fn already_out_missing_leave_by_walk_yields_true_without_abort() {
 
 #[test]
 fn missing_leave_by_walk_aborts_instead_of_casting() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     reset();
     let data = cache();
     let spell = falador(&data);
@@ -224,6 +233,9 @@ fn missing_leave_by_walk_aborts_instead_of_casting() {
 
 #[test]
 fn leave_by_walk_skips_teleport_even_when_runes_suffice() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     reset();
     let data = cache();
     let spell = falador(&data);
@@ -243,6 +255,9 @@ fn leave_by_walk_skips_teleport_even_when_runes_suffice() {
 #[test]
 fn teleport_names_the_escape_id_and_does_not_invent_a_button() {
     reset();
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data);
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(spell)));
@@ -257,6 +272,9 @@ fn teleport_names_the_escape_id_and_does_not_invent_a_button() {
 #[test]
 fn rune_precheck_matches_ids_not_names_and_ignores_a_staff() {
     reset();
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(
@@ -288,6 +306,9 @@ fn rune_precheck_matches_ids_not_names_and_ignores_a_staff() {
 #[test]
 fn magic_gate_reads_base_not_effective() {
     reset();
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     let inv: Vec<ItemRowInput> = spell
@@ -314,7 +335,7 @@ fn magic_gate_reads_base_not_effective() {
     }];
     let bytes = encode_snapshot(&snap_with(inside(), &low, &inv));
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let token = begin();
     let short = call(Some(&data), token, site(json!({})), None);
     assert_ne!(
@@ -333,7 +354,7 @@ fn magic_gate_reads_base_not_effective() {
     }];
     let bytes = encode_snapshot(&snap_with(inside(), &high, &inv));
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let token = begin();
     let ready = call(Some(&data), token, site(json!({})), None);
     assert_eq!(kind(&ready), "teleport");
@@ -341,6 +362,9 @@ fn magic_gate_reads_base_not_effective() {
 
 #[test]
 fn unknown_id_falls_through_and_is_not_blocked() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     reset();
     set_observation(obs(Some(inside()), Some(99), vec![]));
     let token = begin();
@@ -369,6 +393,9 @@ fn unknown_id_falls_through_and_is_not_blocked() {
 #[test]
 fn helper_done_while_inside_is_not_left() {
     reset();
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -384,6 +411,9 @@ fn helper_done_while_inside_is_not_left() {
 #[test]
 fn left_despite_helper_false_yields_true_without_a_walk() {
     reset();
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -399,6 +429,9 @@ fn left_despite_helper_false_yields_true_without_a_walk() {
 #[test]
 fn three_failed_casts_then_walk_out_and_no_fourth() {
     reset();
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -432,6 +465,9 @@ fn three_failed_casts_then_walk_out_and_no_fourth() {
 #[test]
 fn mid_loop_shortfall_stops_further_teleports() {
     reset();
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -633,6 +669,9 @@ fn gateless_is_walk_near_radius_3_not_a_sixth_kind() {
 #[test]
 fn kbd_key_route_or_loc_aborts_before_teleport_or_walk() {
     reset();
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(99), rows_by_id(&spell)));
@@ -675,6 +714,9 @@ fn size_one_point_outside_the_box_is_already_out() {
 #[test]
 fn enter_pause_does_not_freeze_the_leave_door_window() {
     reset();
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -694,8 +736,8 @@ fn enter_pause_does_not_freeze_the_leave_door_window() {
         "proof window must be DOOR_MS {DOOR_MS}, got {before}"
     );
     assert!(before < 120_000, "must not arm FIGHT_MS");
-    script_js::hunt_lair::on_pause();
-    script_js::hunt_fight::on_pause();
+    script_js::compat::hunt_lair::on_pause();
+    script_js::compat::hunt_fight::on_pause();
     std::thread::sleep(std::time::Duration::from_millis(220));
     let stepped = call(Some(&data), token, p.clone(), None);
     assert_ne!(
@@ -737,6 +779,9 @@ fn walk_leg_is_not_the_fight_window() {
 #[test]
 fn hold_during_proof_yields_false() {
     reset();
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = cache();
     let spell = falador(&data).clone();
     set_observation(obs(Some(inside()), Some(spell.level), rows_by_id(&spell)));
@@ -837,6 +882,8 @@ export default class T extends LoopingBot {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id,
                 avoid: _,
                 cross: _,
@@ -1062,7 +1109,7 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

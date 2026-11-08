@@ -32,6 +32,8 @@ pub enum Setting {
     DangerRouting,
     /// The session log file switch (and the sink it opens).
     SessionLog,
+    /// Whether combat may start fights with players.
+    PvpStartFights,
     /// The remembered map-bake warning choice.
     MapBake,
     /// The Quester Paths source folder and its switch.
@@ -44,7 +46,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting identity, for bounded failure expiry reporting.
-    pub(crate) const ALL: [Self; 20] = [
+    pub(crate) const ALL: [Self; 23] = [
         Self::Draw(DrawSwitch::CaptureInput),
         Self::Draw(DrawSwitch::SidecarFullRate),
         Self::Draw(DrawSwitch::FocusedFullRate),
@@ -54,11 +56,14 @@ impl Setting {
         Self::Nav(NavPreference::AllowWilderness),
         Self::Nav(NavPreference::AllowBankFetch),
         Self::Nav(NavPreference::AllowDangerZones),
+        Self::Nav(NavPreference::AllowPrereqDialogue),
+        Self::Nav(NavPreference::AllowQuestStart),
         Self::Nav(NavPreference::SurvivableRouting),
         Self::Nav(NavPreference::ScriptScopeNoticeAck),
         Self::Nav(NavPreference::SurvivableRoutingNoticeAck),
         Self::DangerRouting,
         Self::SessionLog,
+        Self::PvpStartFights,
         Self::MapBake,
         Self::QuesterPaths,
         Self::Notice(Notice::BackgroundBots),
@@ -78,6 +83,7 @@ impl Setting {
             Self::Nav(preference) => preference.setting_identity(),
             Self::DangerRouting => "danger routing",
             Self::SessionLog => "session file setting",
+            Self::PvpStartFights => "start fights with players",
             Self::MapBake => "map bake choice",
             Self::QuesterPaths => "Quest Paths settings",
             Self::Notice(Notice::BackgroundBots) => "background bots notice",

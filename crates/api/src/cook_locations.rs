@@ -1,14 +1,14 @@
 //! Frozen cook-location inputs: the curated bank cook surfaces, the surface
-//! kinds and the pairing constants, generated from the pinned rs2b0t sources
-//! (`data/cookLocations.ts`, `data/cookingRanges.ts`,
-//! `tools/cooking/gen-cooksurfaces.ts`); the placed surfaces themselves are
-//! selected content ([`crate::game_data::SelectedGameData::cook_surfaces`]).
+//! kinds and the pairing constants, generated from the local game-data sources;
+//! the placed surfaces themselves are selected content.
 
+use crate::selected::FactError;
+#[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+use crate::selected::LOCAL_GAME_DATA_FAMILY;
 use crate::snapshot::WorldTile;
 use serde::Deserialize;
 
-/// Which cooking branch a surface takes: an oven burns less than a fire
-/// (frozen `CookSurfaceKind`, `data/cookSurfaceTypes.ts:5`).
+/// Which cooking branch a surface takes: an oven burns less than a fire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CookSurfaceKind {
@@ -25,8 +25,7 @@ impl CookSurfaceKind {
     }
 }
 
-/// One hand-walked bank cook surface (frozen `curatedPlan`,
-/// `data/cookLocations.ts:98-116`).
+/// One hand-walked bank cook surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CookCamp {
     pub bank: &'static str,
@@ -38,7 +37,11 @@ pub struct CookCamp {
     pub label: &'static str,
 }
 
-include!("../data/game-data/cook-catalog.rs");
+#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+mod generated {
+    use super::*;
+    include!(concat!(env!("OUT_DIR"), "/cook_catalog.rs"));
+}
 
 /// One cook surface placed in the selected map pack.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -64,4 +67,53 @@ impl CookSurface {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct CookSurfaceFacts {
     pub rows: Vec<CookSurface>,
+}
+
+#[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+fn unavailable() -> FactError {
+    FactError::FamilyUnavailable((*LOCAL_GAME_DATA_FAMILY).clone())
+}
+
+pub fn cook_camps() -> Result<&'static [CookCamp], FactError> {
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::COOK_CAMPS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(unavailable())
+    }
+}
+
+pub fn default_obstacles() -> Result<&'static [&'static str], FactError> {
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::DEFAULT_OBSTACLES)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(unavailable())
+    }
+}
+
+pub fn max_surface_cheb() -> Result<i32, FactError> {
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::MAX_SURFACE_CHEB)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(unavailable())
+    }
+}
+
+pub fn derived_arrive_radius() -> Result<i32, FactError> {
+    #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+    {
+        Ok(generated::DERIVED_ARRIVE_RADIUS)
+    }
+    #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
+    {
+        Err(unavailable())
+    }
 }

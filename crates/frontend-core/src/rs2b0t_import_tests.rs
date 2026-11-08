@@ -691,6 +691,71 @@ fn review_h1_a_superseded_failed_import_is_not_reported_saved() {
     assert_eq!(core.vault().unwrap().profiles().count(), 0);
 }
 
+/// Import keeps the source file's order in the one saved order: new
+/// profiles land in file sequence (each creation is recorded in
+/// sequence, and the order appends just-created profiles in that
+/// creation sequence), never alphabetically; an existing profile the
+/// import skips keeps its place, and nothing is loaded.
+#[test]
+fn an_import_keeps_the_source_order() {
+    let file = parse_profile_file(
+        &json!({
+            "kind": PROFILE_FILE_KIND,
+            "v": 1,
+            "profiles": [
+                { "username": "zed", "password": "generic-pass", "world": 1 },
+                { "username": "bob", "password": "generic-pass", "world": 1 },
+                { "username": "mike", "password": "generic-pass", "world": 1 },
+                { "username": "anna", "password": "generic-pass", "world": 1 },
+            ],
+            "tabs": [],
+            "activeTab": "Main",
+            "storage": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    // Into a vault already holding alice and bob: bob is skipped and
+    // keeps his place; zed, mike and anna append in file order.
+    let mut core = session(vault_with("import-order", &[("alice", 1), ("bob", 2)]));
+    let plan = plan_import(
+        &file,
+        core.vault().unwrap(),
+        core.fresh_uid(),
+        &ThieverCatalog::new(),
+        ConflictPolicy::Skip,
+    );
+    let run = apply_import(&mut core, plan);
+    core.flush_writes();
+    core.poll();
+    assert!(run.succeeded(&core), "{:?}", run.results(&core));
+    assert_eq!(
+        core.profile_order().names(),
+        ["alice", "bob", "zed", "mike", "anna"],
+        "existing places kept, new in source order"
+    );
+    assert!(core.members().is_empty(), "import loads nothing");
+    // Into an empty vault the saved order is the file's order (bob's row
+    // skipped above is new here).
+    let mut core = session(vault_with("import-order-empty", &[]));
+    let plan = plan_import(
+        &file,
+        core.vault().unwrap(),
+        core.fresh_uid(),
+        &ThieverCatalog::new(),
+        ConflictPolicy::Skip,
+    );
+    let run = apply_import(&mut core, plan);
+    core.flush_writes();
+    core.poll();
+    assert!(run.succeeded(&core), "{:?}", run.results(&core));
+    assert_eq!(
+        core.profile_order().names(),
+        ["zed", "bob", "mike", "anna"],
+        "the file's sequence, not alphabetical"
+    );
+}
+
 /// Review M1: a FIFO is not read without bound (the review's stream was a
 /// valid export followed by 17 MiB of spaces).
 #[cfg(unix)]
@@ -1358,7 +1423,7 @@ fn the_shared_flow_previews_confirms_and_deletes_only_on_request() {
     let mut core = session(vault_with("flow-vault", &[]));
     let mut scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     );
     let mut flow = ProfileImport::new();
     assert_eq!(flow.stage(), Stage::Path);
@@ -1450,7 +1515,7 @@ fn a_locked_vault_refuses_the_preview() {
     let dir = temp_dir("locked");
     let scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     );
     let mut flow = ProfileImport::new();
     *flow.path_mut() = "rs2b0t-profiles.json".into();
@@ -1814,7 +1879,7 @@ fn the_shared_flow_offers_deletion_only_when_every_write_is_durable() {
     let mut core = failing_session("flow-failed-vault");
     let mut scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     );
     let mut flow = ProfileImport::new();
     *flow.path_mut() = path.display().to_string();
@@ -1961,7 +2026,7 @@ fn r3_h3_b_a_skipped_accounts_password_reaches_no_log_line() {
     ));
     let mut scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
     );
     let mut flow = ProfileImport::new();
     *flow.path_mut() = path.display().to_string();

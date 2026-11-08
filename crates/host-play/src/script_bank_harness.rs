@@ -70,6 +70,7 @@ pub(super) fn native_pick_action(
         }
     }
     let mut slot = script::SlotScript::new();
+    slot.bind_incarnation(1);
     slot.start_test_script(
         Box::new(Selecting {
             args: Some(SelectArgs {
@@ -141,6 +142,11 @@ pub(super) fn request(
         authority: native.authority,
         evidence: native.evidence,
         allow_air_fallback: native.request.allow_air_fallback,
+        // This isolated CPU replay never owns prerequisite consent.
+        prereq_allow: script::native::PrereqAllow {
+            dialogue: false,
+            quest_start: false,
+        },
     });
     super::make_bank_pick_request(
         request_id,
@@ -148,7 +154,7 @@ pub(super) fn request(
         facts,
         from,
         opts,
-        state,
+        Arc::new(state),
         order,
         target_count,
         (walking && target_count != 0).then_some(generation),
@@ -218,6 +224,7 @@ pub fn measures_captured_native_bank_pick_cpu() {
         varps: serde_json::from_value(captured["varps"].clone()).unwrap(),
         quests: serde_json::from_value(captured["quests"].clone()).unwrap(),
         map_members: captured["map_members"].as_bool().unwrap(),
+        establishable: None,
         quest_evidence: None,
     };
     let [x, z, level]: [i32; 3] = serde_json::from_value(capture["from"].clone()).unwrap();

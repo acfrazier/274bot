@@ -217,7 +217,7 @@ impl<'a> SnapshotView<'a> {
         stock
     }
 
-    pub fn reach(&self) -> Option<Observed<&crate::query::ReachQueryView>> {
+    pub fn reach(&self) -> Option<Observed<&'a crate::query::ReachQueryView>> {
         let snapshot = self.snapshot?;
         let reach = self.reach?;
         (snapshot.ingame() && snapshot.scene_state() == 2 && reach.available).then_some(Observed {
@@ -256,6 +256,14 @@ impl<'a> SnapshotView<'a> {
             value: snapshot.inventory(),
             stamp: self.stamp,
         })
+    }
+
+    /// Latest received NPC-info generation while the scene is ready.
+    ///
+    /// Exact NPC operations use this generation with the posted type, tile,
+    /// and index. A later NPC-info packet makes that reference stale.
+    pub fn npc_info_generation(&self) -> Option<u64> {
+        Some(self.scene_ready()?.gens().npc_info)
     }
 
     /// Latest received packet generation for the inv-tab component while its
@@ -349,6 +357,15 @@ impl<'a> SnapshotView<'a> {
         let snapshot = self.ingame()?;
         Some(Observed {
             value: snapshot.make_products(),
+            stamp: self.stamp,
+        })
+    }
+
+    /// Product rows and item operations posted by a main-modal production menu.
+    pub fn main_make(&self) -> Option<Observed<&[ItemView]>> {
+        let snapshot = self.ingame()?;
+        Some(Observed {
+            value: snapshot.main_make(),
             stamp: self.stamp,
         })
     }
@@ -450,6 +467,19 @@ impl<'a> SnapshotView<'a> {
         snapshot.local_player()?;
         Some(Observed {
             value: *snapshot.hitmarks()?,
+            stamp: self.stamp,
+        })
+    }
+
+    /// The local player's [`AttackMarks`] once the scene and player family
+    /// are ready and hit data has posted.
+    pub fn local_attack_marks(&self) -> Option<Observed<super::AttackMarks>> {
+        let snapshot = self.scene_ready()?;
+        if !snapshot.players_available {
+            return None;
+        }
+        Some(Observed {
+            value: snapshot.local_attack_marks()?,
             stamp: self.stamp,
         })
     }
@@ -693,6 +723,37 @@ pub fn chat_page_fingerprint<'a, T: Hash>(
     hash.finish()
 }
 
+/// Match rendered dialogue text across adjacent widgets without allocating.
+/// Widget boundaries contribute one space. Matching ignores ASCII case.
+pub fn chat_page_matches<T: AsRef<str>>(texts: &[T], fragment: &str) -> bool {
+    let Some((first, rest)) = fragment.as_bytes().split_first() else {
+        return false;
+    };
+    if texts.iter().any(|line| {
+        line.as_ref()
+            .as_bytes()
+            .windows(fragment.len())
+            .any(|bytes| bytes.eq_ignore_ascii_case(fragment.as_bytes()))
+    }) {
+        return true;
+    }
+    let mut bytes = texts
+        .iter()
+        .flat_map(|line| line.as_ref().bytes().chain(std::iter::once(b' ')));
+    while let Some(byte) = bytes.next() {
+        if byte.eq_ignore_ascii_case(first) {
+            let mut tail = bytes.clone();
+            if rest.iter().all(|expected| {
+                tail.next()
+                    .is_some_and(|byte| byte.eq_ignore_ascii_case(expected))
+            }) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Local combat observation from the player actor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CombatView {
@@ -705,6 +766,64 @@ mod tests {
     use super::*;
     use crate::selected::RunKey;
     use crate::snapshot::HitmarkView;
+
+    #[test]
+    fn main_make_borrows_posted_rows_with_current_evidence() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 8,
+        };
+        assert!(SnapshotView::new(None, stamp).main_make().is_none());
+        let mut snapshot = GameSnapshot::new();
+        assert!(SnapshotView::new(Some(&snapshot), stamp)
+            .main_make()
+            .is_none());
+        snapshot.seed_ingame(2);
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        let rows = view.main_make().unwrap();
+        assert!(std::ptr::eq(rows.value, snapshot.main_make()));
+        assert_eq!(rows.stamp, stamp);
+    }
+
+    #[test]
+    fn npc_info_generation_requires_a_ready_scene_and_uses_the_packet_generation() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 900,
+        };
+        assert_eq!(SnapshotView::new(None, stamp).npc_info_generation(), None);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.gens.npc_info = 41;
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            None,
+        );
+        snapshot.seed_ingame(1);
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            None,
+        );
+        snapshot.seed_ingame(2);
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            Some(41),
+        );
+        snapshot.gens.npc_info = 42;
+        assert_eq!(
+            SnapshotView::new(Some(&snapshot), stamp).npc_info_generation(),
+            Some(42),
+        );
+    }
 
     #[test]
     fn ground_collision_generations_follow_content_not_player_info_edges() {
@@ -863,6 +982,20 @@ mod tests {
             first,
             chat_page_fingerprint(&texts, [(4884, "No"), (4883, "Yes")])
         );
+    }
+
+    #[test]
+    fn dialogue_page_matching_respects_widget_boundaries() {
+        let texts = ["The barrier refuses", "to open."];
+        let refusal = "The barrier refuses to open.";
+        assert!(chat_page_matches(&texts, refusal));
+        assert!(chat_page_matches(&texts, "REFUSES to"));
+        assert!(chat_page_matches(&[refusal], refusal));
+        assert!(chat_page_matches(&texts.map(String::from), refusal));
+        assert!(!chat_page_matches(&texts, "refusesto"));
+        assert!(!chat_page_matches(&texts, "open. another page"));
+        assert!(!chat_page_matches(&texts, ""));
+        assert!(!chat_page_matches::<&str>(&[], refusal));
     }
 
     #[test]

@@ -26,10 +26,34 @@ pub struct PathDocument {
     pub required: Vec<FactKey>,
     pub tested_stats: Option<Vec<SkillMinimum>>,
     pub partner: Option<PartnerDeclaration>,
+    /// Request-level prerequisite overrides applied to every walk in this Path.
+    #[serde(default)]
+    pub prereq: PathPrereqDocument,
     /// Quest provisioning and eligibility input consumed during compilation.
     #[serde(default)]
     pub quest: Option<QuestHeaderDocument>,
     pub roles: Vec<PathRoleDocument>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct PathPrereqDocument {
+    /// None or false adds no path-level grant; true grants dialogue on every walk.
+    #[serde(default)]
+    pub dialogue: Option<bool>,
+    /// None or false adds no path-level grant; true grants quest starts on every walk.
+    #[serde(default)]
+    pub quest_start: Option<bool>,
+}
+
+impl PathPrereqDocument {
+    pub(crate) fn options(self) -> crate::native::PrereqOptions {
+        crate::native::PrereqOptions {
+            dialogue: self.dialogue.unwrap_or(false),
+            quest_start: self.quest_start.unwrap_or(false),
+        }
+    }
 }
 
 pub const PATH_SCHEMA: u16 = 3;
@@ -240,8 +264,27 @@ pub struct SequenceDocument {
     pub recovery_entry: Option<FactKey>,
     #[serde(default)]
     pub order: SequenceOrder,
+    /// Stable navigation identities the stage may cross.
+    #[serde(default)]
+    #[cfg_attr(feature = "path-schema", schemars(length(max = 8)))]
+    pub cross: Vec<RequiredZoneDocument>,
     pub steps: Vec<StepDocument>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "path-schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct RequiredZoneDocument {
+    #[cfg_attr(feature = "path-schema", schemars(length(min = 1)))]
+    pub id: String,
+    #[cfg_attr(feature = "path-schema", schemars(length(min = 1)))]
+    pub name: String,
+    #[cfg_attr(feature = "path-schema", schemars(length(min = 1)))]
+    pub reason: String,
+}
+
+/// Maximum number of counted attempts allowed for one Quester step.
+pub const MAX_STEP_ATTEMPTS: u32 = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -261,6 +304,12 @@ pub struct StepDocument {
     /// Required for Explicit handler kinds; omitted Default kinds behave as false.
     #[serde(default)]
     pub advances: Option<bool>,
+    /// Maximum number of counted attempts for this step before it parks.
+    /// The compiler caps this value at `MAX_STEP_ATTEMPTS`.
+    #[serde(default)]
+    pub max_attempts: Option<u32>,
+    /// Named stop reported when `max_attempts` is exhausted.
+    pub stop: Option<String>,
     /// Predicate which skips this step when proven true.
     pub skip_if: PredicateDocument,
     /// Predicate which settles this step after execution.

@@ -344,7 +344,7 @@ fn mainland_production_gate_queues_once_without_rearming_host_or_reconnect() {
     );
 }
 
-fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
+fn profile_fixture(revision: u16) -> (PathBuf, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
     let root = std::env::temp_dir().join(format!(
@@ -366,8 +366,7 @@ fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
     ] {
         std::fs::copy(fixture.join(jag), cache.join(jag)).unwrap();
     }
-    let manifest = fixture.join(format!("manifest-{revision}.json"));
-    (root, cache, manifest)
+    (root, cache)
 }
 
 /// The map pane reads `TuiApp::world`, projected from the core after `Play`
@@ -805,9 +804,12 @@ ScriptRegistry.register({ name: 'NatureCrafter', create: () => new NatureCrafter
 }
 
 #[test]
-fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
+fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for revision in [274_u16, 289] {
-        let (root, cache, manifest) = checked_fixture(revision);
+        let (root, cache) = profile_fixture(revision);
         let args = parse_args_from([
             "--live".to_string(),
             "script_bone_burier".to_string(),
@@ -815,8 +817,6 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
             format!("local-{revision}"),
             "--cache".to_string(),
             cache.display().to_string(),
-            "--cache-manifest".to_string(),
-            manifest.display().to_string(),
         ])
         .expect("frontend and shared flags parse in either order");
         let env = ProfileEnvironment {
@@ -1964,12 +1964,11 @@ fn deleting_pending_startup_profile_cancels_load_and_focus() {
     );
 }
 
-/// A 0.1.9.x home keeps its v10 pack at the default path. The TUI's play and
-/// its WalkTo/scenario world are the packaged v11 bundle's one shared world,
-/// and the old file is left alone; an explicit override to the old file still
-/// starts, with no world.
+/// A 0.1.9.x home keeps its v10 pack at the default path. The TUI and its
+/// WalkTo/scenario routes use the packaged format-19 world. An explicit
+/// old-pack override fails decoding.
 #[test]
-fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
+fn tui_upgraded_from_v10_home_plays_on_the_packaged_v19_world() {
     let home = upgrade_home::UpgradeHome::new();
     let start = |profile: Arc<host_play::ServerProfile>, vault: &str| {
         let template = SharedClientTemplate::load(profile).unwrap();
@@ -1980,7 +1979,11 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     };
 
     let profile = home.bind(None);
-    assert!(profile.nav_origin().is_bundled());
+    assert_eq!(
+        profile.nav_pack(),
+        home.resources
+            .join(host_play::nav_assets::artifact_layout(289).relative_pack)
+    );
     let (session, template) = start(profile, "bundled.vault");
     let world = template.world().expect("the packaged world decodes");
     let played = session
@@ -1993,15 +1996,27 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     assert!(Arc::ptr_eq(&routed.expect("WalkTo world"), &world));
     assert!(home.old_pack_untouched());
 
-    let overridden = home.bind(Some(home.old_pack.clone()));
-    assert!(matches!(
-        overridden.nav_availability(),
-        host_play::profile::NavAvailability::Unavailable(message)
-            if message.contains("rebuild it with nav-pack")
-    ));
-    let (session, _) = start(overridden, "override.vault");
-    assert!(session.core.play_for_test().unwrap().world().is_none());
-    assert!(session.core.nav_world().is_none());
+    let overridden = host_play::ProfileOptions {
+        profile: Some("local-289".into()),
+        cache_dir: Some(home.root.join("cache")),
+        nav_pack: Some(home.old_pack.clone()),
+        ..Default::default()
+    }
+    .resolve_with_env(
+        None,
+        &ProfileEnvironment {
+            home: Some(home.root.join("home")),
+            engine_dir: Some(home.root.join("engine")),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let Err(error) = overridden.bind() else {
+        panic!("v10 is not a supported pack");
+    };
+    assert!(error.contains("unsupported pack version 10"), "{error}");
     assert!(home.old_pack_untouched());
 }
 
@@ -3027,7 +3042,7 @@ mod bank_fetch_fixtures {
 #[test]
 fn map_walk_options_keep_the_frontend_bank_fetch_permission() {
     let mut app = TuiApp::new("274bot headless");
-    app.nav = frontend_core::WalkGlobals::new(false, false, true, true, true);
+    app.nav = frontend_core::WalkGlobals::new(false, false, true, true, true, true, true);
     app.nav = app
         .nav
         .with_danger_level(frontend_core::DangerLevel::Always);
@@ -3099,6 +3114,15 @@ fn removing_a_walk_slot_twice_logs_one_cancellation() {
     });
     play.focus(slot);
     session.core.set_play(Some(play));
+    publish_map_walk_snapshot(
+        &mut session.core,
+        slot,
+        Tile {
+            x: 0,
+            z: 1,
+            level: 0,
+        },
+    );
 
     let mut app = TuiApp::new("274bot headless");
     app.names = vec![slot.into()];
@@ -3356,10 +3380,8 @@ fn player_at_plane_one_follow_uses_level() {
         final_route.clone(),
     );
 
-    let mut arm = WalkArm {
-        bank_fetch: Some(pending.clone()),
-        ..Default::default()
-    };
+    let mut arm = WalkArm::default();
+    arm.bank_fetch = Some(pending.clone());
     step_walk_arm_bank_fetch(&mut c, &snap, &mut arm, None, Some(here), false);
     assert_eq!(
         arm.route.as_ref().map(|r| r.dest),
@@ -3371,10 +3393,8 @@ fn player_at_plane_one_follow_uses_level() {
         "stand Walk must clear bank_fetch when here matches plane 1"
     );
 
-    let mut arm_ground = WalkArm {
-        bank_fetch: Some(pending),
-        ..Default::default()
-    };
+    let mut arm_ground = WalkArm::default();
+    arm_ground.bank_fetch = Some(pending);
     step_walk_arm_bank_fetch(
         &mut c,
         &snap,
@@ -3420,28 +3440,26 @@ fn follow_tick_pumps_bank_budget_step() {
         legs: vec![],
         ticks: 0.0,
     });
-    let mut arm = WalkArm {
-        bank_fetch: Some(PendingBankFetch::for_test_with_route(
-            VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
-            WorldTile {
-                x: 4,
-                z: 4,
-                level: 0,
-            },
-            FindOptions::default(),
-            final_route.clone(),
-        )),
-        route: Some(Arc::new(Route {
-            dest: WorldTile {
-                x: 0,
-                z: 4,
-                level: 0,
-            },
-            legs: vec![],
-            ticks: 0.0,
-        })),
-        ..Default::default()
-    };
+    let mut arm = WalkArm::default();
+    arm.bank_fetch = Some(PendingBankFetch::for_test_with_route(
+        VecDeque::from([BankStep::Withdraw { id: 2, count: 1 }, BankStep::Close]),
+        WorldTile {
+            x: 4,
+            z: 4,
+            level: 0,
+        },
+        FindOptions::default(),
+        final_route.clone(),
+    ));
+    arm.route = Some(Arc::new(Route {
+        dest: WorldTile {
+            x: 0,
+            z: 4,
+            level: 0,
+        },
+        legs: vec![],
+        ticks: 0.0,
+    }));
     let before = c.out.pos;
     host_play::step_walk_arm_follow(
         &mut c,
@@ -3486,27 +3504,25 @@ fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
         }],
         ticks: 1.0,
     });
-    let mut arm = WalkArm {
-        bank_fetch: Some(PendingBankFetch::for_test_with_route(
-            VecDeque::from([BankStep::Walk {
-                x: stand.x,
-                z: stand.z,
-                level: stand.level,
-            }]),
-            destination,
-            FindOptions::default(),
-            final_route.clone(),
-        )),
-        route: Some(Arc::new(Route {
-            dest: stand,
-            legs: vec![Leg::Walk {
-                tiles: vec![at, stand],
-            }],
-            ticks: 1.0,
-        })),
-        route_generation: 103,
-        ..Default::default()
-    };
+    let mut arm = WalkArm::default();
+    arm.bank_fetch = Some(PendingBankFetch::for_test_with_route(
+        VecDeque::from([BankStep::Walk {
+            x: stand.x,
+            z: stand.z,
+            level: stand.level,
+        }]),
+        destination,
+        FindOptions::default(),
+        final_route.clone(),
+    ));
+    arm.route = Some(Arc::new(Route {
+        dest: stand,
+        legs: vec![Leg::Walk {
+            tiles: vec![at, stand],
+        }],
+        ticks: 1.0,
+    }));
+    arm.route_generation = 103;
     let mut snap = api::snapshot::GameSnapshot::new();
     snap.rebuild(&c);
     assert!(!host_play::step_walk_arm_follow(
@@ -3591,11 +3607,9 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
         legs: vec![],
         ticks: 0.0,
     };
-    let mut arrived = WalkArm {
-        route: Some(Arc::new(arrived_route)),
-        route_generation: 101,
-        ..Default::default()
-    };
+    let mut arrived = WalkArm::default();
+    arrived.route = Some(Arc::new(arrived_route));
+    arrived.route_generation = 101;
     assert!(host_play::step_walk_arm_follow(
         &mut c,
         &snap,
@@ -3652,11 +3666,9 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
         }],
         ticks: 7.0,
     };
-    let mut aborted = WalkArm {
-        route: Some(Arc::new(aborted_route)),
-        route_generation: 102,
-        ..Default::default()
-    };
+    let mut aborted = WalkArm::default();
+    aborted.route = Some(Arc::new(aborted_route));
+    aborted.route_generation = 102;
     let mut finished = 0;
     for _ in 0..70 {
         finished += usize::from(host_play::step_walk_arm_follow(
@@ -4108,6 +4120,10 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     assert_eq!(app.on_key(enter), AppAction::None);
     app.settings_state.row = 8;
     assert_eq!(app.on_key(enter), AppAction::None);
+    app.settings_state.row = 9;
+    assert_eq!(app.on_key(enter), AppAction::None);
+    app.settings_state.row = 10;
+    assert_eq!(app.on_key(enter), AppAction::None);
     assert_eq!(
         app.on_key(settings_key(crossterm::event::KeyCode::Char('d'))),
         AppAction::None
@@ -4120,12 +4136,293 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     assert_eq!(prefs["nav"]["allow_danger_zones"], true);
     assert_eq!(prefs["nav"]["survivable_routing"], false);
     assert_eq!(prefs["nav"]["script_scope_notice_ack"], true);
+    assert_eq!(
+        prefs["nav"]["allow_prereq_dialogue"], false,
+        "the default-on dialogue grant toggles off through its row"
+    );
+    assert_eq!(
+        prefs["nav"]["allow_quest_start"], false,
+        "the default-on quest-start grant toggles off through its row"
+    );
     assert!(app.walk_permissions.globals().allow_teleports());
+    assert!(!app.walk_permissions.globals().allow_prereq_dialogue());
+    assert!(!app.walk_permissions.globals().allow_quest_start());
     assert_eq!(
         app.walk_permissions.danger_level(),
         frontend_core::DangerLevel::Always
     );
     assert!(app.walk_permissions.script_scope_notice_ack());
+    let _iso = iso;
+}
+
+/// PVP-V1 (design §2.7): the popup's "Start fights with players" row writes
+/// `pvp.start_fights` through `SetPvpStartFights`, the row shows the saved
+/// value, and a `--live` run (settings are not saved) refuses the click at the
+/// command boundary instead of writing.
+#[test]
+fn start_fights_with_players_in_the_settings_popup_is_saved_through_its_command() {
+    let iso = IsolatedStores::enter("tui-pvp-start-fights");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    assert!(!app.pvp_start_fights.shown(), "off by default");
+
+    app.settings_state.open = true;
+    app.settings_state.row = 18;
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None
+    );
+    assert!(app.pvp_start_fights.shown(), "the click shows at once");
+    settle_preferences(&mut session, &mut app);
+    assert_eq!(app.error, None);
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    assert_eq!(prefs["pvp"]["start_fights"], true);
+    assert!(app.pvp_start_fights.shown());
+    assert!(
+        frontend_core::pvp_start_fights(&session.preferences).unwrap(),
+        "the host's projection follows the saved member"
+    );
+
+    // Off again is the same command.
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None
+    );
+    settle_preferences(&mut session, &mut app);
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    assert_eq!(prefs["pvp"]["start_fights"], false);
+    assert!(!app.pvp_start_fights.shown());
+    let _iso = iso;
+}
+
+/// PVP-V1-R1 (review R3, R6): turning the setting off queues behind a busy
+/// disk and later fails. The row shows the click at once, then the saved value
+/// again with the failure reason, and a peer write stays visible afterwards. A
+/// later successful retry clears exactly that failure line.
+#[cfg(unix)]
+#[test]
+fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer() {
+    use std::os::unix::fs::PermissionsExt;
+    let iso = IsolatedStores::enter("tui-pvp-start-fights-deferred-failure");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    app.settings_state.open = true;
+    app.settings_state.row = 18;
+
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    settle_preferences(&mut session, &mut app);
+    assert!(app.pvp_start_fights.shown() && !app.pvp_start_fights.pending());
+    assert_eq!(app.error, None);
+
+    // The disk is busy: the write that turns it off stays queued.
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    session
+        .core
+        .local_state_for_test()
+        .unwrap()
+        .set_write_stall_for_test(Arc::new(move || {
+            let _ = entered.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        }));
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    assert!(!app.pvp_start_fights.shown(), "the click shows at once");
+    session.pump(&mut app);
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.pump(&mut app);
+    assert!(
+        !app.pvp_start_fights.shown() && app.pvp_start_fights.pending(),
+        "still waiting for the save"
+    );
+
+    // The state directory refuses the write once the disk answers.
+    let state_dir = session.preferences.path().parent().unwrap().to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.pvp_start_fights.pending() && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(!app.pvp_start_fights.pending(), "the write never settled");
+    assert!(
+        app.pvp_start_fights.shown(),
+        "the failed write shows the saved value (on), not the attempted off"
+    );
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("settings: start fights with players:")),
+        "{:?}",
+        app.error
+    );
+
+    // A peer turns it off: the row follows after the failure.
+    std::fs::write(
+        session.preferences.path(),
+        br#"{"pvp":{"start_fights":false}}"#,
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+    session.pump(&mut app);
+    session.pump(&mut app);
+    assert!(
+        !app.pvp_start_fights.shown(),
+        "a peer write stays visible after the failure"
+    );
+
+    // The retry turns it on again: the disk is busy once more, so the retry
+    // stays queued. The failure stays visible until the save resolves it.
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    assert!(app.pvp_start_fights.shown(), "the retry shows at once");
+    session.pump(&mut app);
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.pump(&mut app);
+    assert!(app.pvp_start_fights.pending(), "waiting for the retry");
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(frontend_core::is_start_fights_error),
+        "the failure stays until the retry succeeds: {:?}",
+        app.error
+    );
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while (app.pvp_start_fights.pending() || app.error.is_some()) && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.pvp_start_fights.pending(), "the retry never settled");
+    assert!(
+        frontend_core::pvp_start_fights(&session.preferences).unwrap(),
+        "the retry was saved"
+    );
+    assert!(app.pvp_start_fights.shown());
+    assert_eq!(
+        app.error, None,
+        "a successful save clears the failure it resolves"
+    );
+
+    // Another setting's error is not this save's to clear.
+    let other = "settings: walk permissions: the store is busy".to_string();
+    app.error = Some(other.clone());
+    release.send(()).unwrap();
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.pvp_start_fights.pending() && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Let the save's settlement reach the view before looking at the error.
+    for _ in 0..40 {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.pvp_start_fights.shown(), "the second save settled off");
+    assert_eq!(app.error, Some(other), "an unrelated error stays");
+    let _iso = iso;
+}
+
+/// PVP-V1-R3 (review R6): a peer saves the click's value after the click and
+/// before the pump submits the command. The pump refreshes the walk globals
+/// first, and that adoption ends the click's wait before `submitted`. The
+/// click's own save still clears the failure line of the earlier attempt, as
+/// an ordinary retry does, and an unrelated error stays.
+#[test]
+fn a_peer_write_between_the_click_and_its_submission_still_clears_the_earlier_failure() {
+    let iso = IsolatedStores::enter("tui-pvp-start-fights-peer-before-submit");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    app.settings_state.open = true;
+    app.settings_state.row = 18;
+    assert!(!app.pvp_start_fights.shown(), "off by default");
+
+    // The failure line a first attempt left.
+    app.error = Some("settings: start fights with players: store I/O error".to_string());
+
+    // The retry turns it on. A peer saves `on` before the next pump.
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    assert!(app.pvp_start_fights.shown(), "the retry shows at once");
+    std::fs::create_dir_all(session.preferences.path().parent().unwrap()).unwrap();
+    std::fs::write(
+        session.preferences.path(),
+        br#"{"pvp":{"start_fights":true}}"#,
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+    settle_preferences(&mut session, &mut app);
+    assert!(!app.pvp_start_fights.pending(), "the retry never settled");
+    assert!(app.pvp_start_fights.shown());
+    assert!(frontend_core::pvp_start_fights(&session.preferences).unwrap());
+    assert_eq!(
+        app.error, None,
+        "the click's own save clears the failure it resolves"
+    );
+
+    // An unrelated error is not this save's to clear.
+    let other = "settings: walk permissions: the store is busy".to_string();
+    app.error = Some(other.clone());
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    std::fs::write(
+        session.preferences.path(),
+        br#"{"pvp":{"start_fights":false}}"#,
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+    settle_preferences(&mut session, &mut app);
+    for _ in 0..40 {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.pvp_start_fights.shown());
+    assert_eq!(app.error, Some(other), "an unrelated error stays");
+    let _iso = iso;
+}
+
+#[test]
+fn a_live_run_refuses_the_start_fights_row_without_writing() {
+    let iso = IsolatedStores::enter("tui-pvp-start-fights-live");
+    let mut session = TuiSession::new(dummy_options());
+    session.persist_ui = false;
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    let refusals = session.core.refusals();
+
+    app.settings_state.open = true;
+    app.settings_state.row = 18;
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None
+    );
+    settle_preferences(&mut session, &mut app);
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("settings: start fights with players:")),
+        "{:?}",
+        app.error
+    );
+    assert!(
+        !app.pvp_start_fights.shown(),
+        "the row shows the saved value again"
+    );
+    assert_eq!(session.core.refusals(), refusals + 1, "one refusal");
+    assert!(
+        !session.preferences.path().exists(),
+        "nothing was written in a --live run"
+    );
     let _iso = iso;
 }
 
@@ -4143,7 +4440,7 @@ fn tui_refresh_preserves_unsaved_checkbox_and_folder_draft() {
         AppAction::None,
     );
     assert!(app.nav.allow_teleports());
-    app.settings_state.row = 13;
+    app.settings_state.row = 15;
     app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     app.on_key(settings_key(crossterm::event::KeyCode::Char('x')));
     let folder = app.quester_paths.folder().to_path_buf();
@@ -4186,7 +4483,7 @@ fn pending_preferences_survive_settings_reopen_and_keep_the_folder_draft() {
     entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(app.settings_state.preferences_pending);
     assert!(!app.walk_permissions.globals().allow_teleports());
-    app.settings_state.row = 13;
+    app.settings_state.row = 15;
     app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     app.on_key(settings_key(crossterm::event::KeyCode::Char('x')));
     let folder = app.quester_paths.folder().to_path_buf();
@@ -4261,6 +4558,118 @@ fn quit_closes_the_play_through_the_quit_command() {
     assert!(app.quit, "the event loop ends");
     assert_eq!(app.error, None);
     assert!(!session.core.has_play(), "Quit closed the play session");
+}
+
+#[test]
+fn live_quit_defers_play_shutdown_to_run_loop_cleanup() {
+    let iso = IsolatedStores::enter("tui-live-quit-cleanup");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    session.live_name = Some("quester".into());
+
+    dispatch(&mut session, &mut app, AppAction::Quit);
+
+    assert!(app.quit, "the event loop ends");
+    assert_eq!(app.error, None);
+    assert!(
+        session.core.has_play(),
+        "live shutdown waits for the run-loop logout step"
+    );
+}
+
+#[test]
+fn incomplete_live_run_still_fails_after_shutdown_cleanup() {
+    let iso = IsolatedStores::enter("tui-live-incomplete-failure");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    session.live_name = Some("quester".into());
+
+    let result =
+        session.finish_live_exit(&mut app, Err("live run stopped before completion".into()));
+
+    assert_eq!(result, Err("live run stopped before completion".into()));
+    assert!(!session.core.has_play(), "cleanup quits the Play session");
+}
+
+#[test]
+fn live_logout_retries_only_after_sixteen_observed_game_ticks() {
+    let mut tick = Some(100);
+    for observed in [None, Some(100), Some(100), Some(115)] {
+        assert!(!live_logout_retry_due(&mut tick, observed));
+        assert_eq!(tick, Some(100));
+    }
+    assert!(live_logout_retry_due(&mut tick, Some(116)));
+    assert_eq!(tick, Some(116));
+    assert!(!live_logout_retry_due(&mut tick, Some(116)));
+    assert!(!live_logout_retry_due(&mut tick, Some(131)));
+    assert!(live_logout_retry_due(&mut tick, Some(132)));
+}
+
+#[test]
+fn live_logout_without_a_snapshot_starts_its_wait_at_the_first_observed_tick() {
+    let mut tick = None;
+    assert!(!live_logout_retry_due(&mut tick, None));
+    assert!(!live_logout_retry_due(&mut tick, Some(500)));
+    assert_eq!(tick, Some(500));
+    assert!(!live_logout_retry_due(&mut tick, Some(515)));
+    assert!(live_logout_retry_due(&mut tick, Some(516)));
+}
+
+#[test]
+fn live_logout_tick_wait_is_per_account_and_handles_tick_wrap() {
+    let mut early = Some(100);
+    let mut late = Some(108);
+    assert!(live_logout_retry_due(&mut early, Some(116)));
+    assert!(!live_logout_retry_due(&mut late, Some(116)));
+    assert!(live_logout_retry_due(&mut late, Some(124)));
+    let mut wrapped = Some(u32::MAX - 7);
+    assert!(!live_logout_retry_due(&mut wrapped, Some(7)));
+    assert!(live_logout_retry_due(&mut wrapped, Some(8)));
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn live_logout_waits_for_running_and_queued_scripts_to_stop() {
+    let iso = IsolatedStores::enter("tui-live-logout-stop");
+    let names = ["alice", "bob", "carol", "dave", "erin"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    session.names = names.iter().map(|name| (*name).to_string()).collect();
+    let path = iso.dir().join("loop.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
+    for name in names {
+        assign(&mut session, name, &card);
+    }
+    start_assigned_script(&mut session, &mut app, "alice");
+    settle_starts(&mut session, &mut app);
+    wait_script_state(
+        session.core.play_for_test().unwrap(),
+        "alice",
+        ScriptRunState::Running,
+    );
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Start);
+    let queued = names
+        .iter()
+        .find(|name| session.scripts.start_queue_place(name).is_some())
+        .expect("the frame leaves a queued Start")
+        .to_string();
+    assert!(names
+        .iter()
+        .any(|name| session.core.script_state(name) != ScriptRunState::Idle));
+    session.live_name = Some("auto_fighter".into());
+
+    session.clean_logout_live(&mut app).unwrap();
+
+    for name in names {
+        assert_eq!(
+            session.core.script_state(name),
+            ScriptRunState::Idle,
+            "{name} must acknowledge Stop before logout completes"
+        );
+        assert!(
+            !session.scripts.start_waiting(name),
+            "{name} must not retain a queued Start"
+        );
+    }
+    assert!(!session.scripts.start_waiting(&queued));
 }
 
 /// Nothing loaded is not an error when quitting.
@@ -4937,7 +5346,7 @@ fn settings_feedback_tui_row_shows_saving_then_the_failure_then_clears_on_retry(
     session.preferences.reload().unwrap();
     app.restore_preferences(session.preferences.share());
     open_settings(&mut session, &mut app);
-    app.settings_state.row = 10;
+    app.settings_state.row = 12;
     let disk = TuiDisk::install(&session);
     settings_press(&mut session, &mut app, KeyCode::Enter);
     session.pump(&mut app);
@@ -5065,7 +5474,7 @@ fn settings_feedback_tui_row_failure_expires_by_itself() {
     session.preferences.reload().unwrap();
     app.restore_preferences(session.preferences.share());
     open_settings(&mut session, &mut app);
-    app.settings_state.row = 10;
+    app.settings_state.row = 12;
     let disk = TuiDisk::install(&session);
     drop(disk.release);
     settings_press(&mut session, &mut app, KeyCode::Enter);
@@ -5211,7 +5620,19 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
 }
 
 #[test]
-fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
+fn tui_restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let nav_pack_default = nav_planner::world::NavWorld::default_pack_path();
+    let nav_pack_default = nav_pack_default.to_string_lossy();
+    let Some(nav_pack_path) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        &nav_pack_default,
+        "revision-289 navigation pack",
+    ) else {
+        return;
+    };
     let iso = IsolatedStores::enter("tui-quester-paths-startup");
     let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
 
@@ -5260,6 +5681,31 @@ fn tui_restored_enabled_folder_loads_when_game_data_becomes_ready() {
     .expect("selected data worker");
 
     session.project_quester_paths_with_game_data(&mut app, Some(Arc::clone(&selected)));
+    assert!(
+        !app.quester_paths_controller.is_running(),
+        "saved folder waits for its actual navigation catalog"
+    );
+    let world = nav_planner::world::NavWorld::load_pack(&nav_pack_path).unwrap_or_else(|error| {
+        panic!(
+            "could not load selected nav pack at {}: {error}",
+            nav_pack_path.display()
+        )
+    });
+    let fixture = map_fixture::MapFixture::new(&world, "local-289");
+    session.core.set_play(Some(fixture.play(Tile {
+        x: 2778,
+        z: 3401,
+        level: 0,
+    })));
+    let start_deadline = Instant::now() + Duration::from_secs(60);
+    while !app.quester_paths_controller.is_running() {
+        assert!(
+            Instant::now() < start_deadline,
+            "startup Path reload did not start after navigation became ready"
+        );
+        session.project_quester_paths_with_game_data(&mut app, Some(Arc::clone(&selected)));
+        std::thread::yield_now();
+    }
     let deadline = Instant::now() + Duration::from_secs(10);
     while app.quester_paths_controller.is_running() {
         assert!(
@@ -5887,6 +6333,9 @@ fn run_fleet_action(
 
 #[test]
 fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = IsolatedStores::enter("tui-restart-settings-prompt");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -5972,6 +6421,9 @@ fn restart_required_prompt_is_visible_at_standard_and_compact_sizes() {
 
 #[test]
 fn restart_settings_modal_redraws_when_targets_shrink_under_the_same_op() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let iso = IsolatedStores::enter("tui-restart-settings-stale-summary");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -7487,8 +7939,8 @@ fn saved_order(session: &TuiSession) -> Vec<String> {
 
 /// The names of the fleet table's drawn rows, top to bottom. Only the
 /// table's own columns are read, so the detail pane never adds a name.
-fn drawn_fleet_names(app: &mut TuiApp, names: &[&str]) -> Vec<String> {
-    let rows = crate::test_support::draw(app, 120, 40);
+fn drawn_fleet_names(app: &mut TuiApp, names: &[&str], width: u16, height: u16) -> Vec<String> {
+    let rows = crate::test_support::draw(app, width, height);
     let region = app.regions.fleet_rows;
     (region.y..region.y + region.height)
         .filter_map(|y| {
@@ -7516,7 +7968,7 @@ fn settings_feedback_tui_load_order_says_saving_then_the_failure_on_the_message_
     let iso = IsolatedStores::enter("tui-s3-load-order");
     let names = ["alice", "bob", "carol"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     let disk = TuiDisk::install(&session);
     let action = app.on_key(alt_key(KeyCode::Down));
     dispatch(&mut session, &mut app, action);
@@ -7557,12 +8009,14 @@ fn settings_feedback_tui_load_order_says_saving_then_the_failure_on_the_message_
 /// Alt+Down and Alt+Up through the real key path change the saved Load
 /// order and the drawn fleet table; the cursor stays on the moved profile;
 /// Alt+Up on the top row does nothing.
+/// At both terminal sizes, the moved table is checked independently of the
+/// detail pane. TUI_CAPTURE_DIR also keeps those frames under fleet-order.
 #[test]
 fn alt_keys_reorder_the_saved_load_order_and_the_drawn_table() {
     let iso = IsolatedStores::enter("tui-reorder-keys");
     let names = ["alice", "bob", "carol", "dave"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     assert_eq!(app.key_focus, crate::layout::Pane::Fleet);
     assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
     let alice = session.core.profile_identity("alice").unwrap();
@@ -7580,11 +8034,35 @@ fn alt_keys_reorder_the_saved_load_order_and_the_drawn_table() {
     dispatch(&mut session, &mut app, action);
     session.core.flush_writes();
     assert_eq!(saved_order(&session), ["bob", "alice", "carol", "dave"]);
-    assert_eq!(
-        drawn_fleet_names(&mut app, &names),
-        ["bob", "alice", "carol", "dave"],
-        "the drawn table follows the saved order"
-    );
+    let captures = std::env::var_os("TUI_CAPTURE_DIR")
+        .map(|dir| std::path::PathBuf::from(dir).join("fleet-order"));
+    if let Some(dir) = captures.as_deref() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    for (width, height) in SIZES {
+        let drawn = drawn_fleet_names(&mut app, &names, width, height);
+        assert_eq!(
+            drawn,
+            ["bob", "alice", "carol", "dave"],
+            "{width}x{height}: the drawn table follows the saved order"
+        );
+        if let Some(dir) = captures.as_deref() {
+            super::manual_click_live_tests::capture(
+                &mut app,
+                width,
+                height,
+                dir,
+                &format!("{width}x{height}"),
+                "alt-down",
+                &serde_json::json!({
+                    "key": "Alt+Down",
+                    "saved_order": saved_order(&session),
+                    "drawn_order": drawn,
+                }),
+            )
+            .unwrap();
+        }
+    }
     assert_eq!(
         app.fleet_model
             .identity(app.table.cursor_row(&app.fleet_model).unwrap()),
@@ -7606,7 +8084,7 @@ fn alt_keys_reorder_the_saved_load_order_and_the_drawn_table() {
     session.core.flush_writes();
     assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
     assert_eq!(
-        drawn_fleet_names(&mut app, &names),
+        drawn_fleet_names(&mut app, &names, 120, 40),
         ["alice", "bob", "carol", "dave"]
     );
 
@@ -7624,6 +8102,59 @@ fn alt_keys_reorder_the_saved_load_order_and_the_drawn_table() {
     assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
 }
 
+/// One shared order: a Profiles-list move staged on the core (as the
+/// panel's Profiles drag stages it) writes the same saved order the TUI
+/// table draws, and Alt keys then move within that order.
+#[test]
+fn a_profiles_list_move_is_the_order_the_tui_table_draws() {
+    let iso = IsolatedStores::enter("tui-profiles-order");
+    let names = ["alice", "bob", "carol"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
+    // The cursor sits on bob, by identity.
+    let bob = session.core.profile_identity("bob").unwrap();
+    app.table.cursor_to(1, &app.fleet_model);
+    assert_eq!(
+        app.fleet_model
+            .identity(app.table.cursor_row(&app.fleet_model).unwrap()),
+        Some(bob)
+    );
+    let op = session
+        .core
+        .profile_order()
+        .drop_op(
+            session.core.profile_identity("carol").unwrap(),
+            session.core.profile_identity("alice").unwrap(),
+        )
+        .expect("a Profiles drop");
+    session
+        .core
+        .stage_reorder(op, frontend_core::ReorderSurface::Profiles);
+    session
+        .submit_with(
+            &mut app,
+            OperatorCommand::ReorderProfiles,
+            Targets::Application,
+        )
+        .expect("reorder submitted");
+    session.core.flush_writes();
+    session.pump(&mut app);
+    assert_eq!(saved_order(&session), ["carol", "alice", "bob"]);
+    assert_eq!(
+        drawn_fleet_names(&mut app, &names, 120, 40),
+        ["carol", "alice", "bob"],
+        "the TUI draws the Profiles move"
+    );
+    assert_eq!(
+        app.fleet_model
+            .identity(app.table.cursor_row(&app.fleet_model).unwrap()),
+        Some(bob),
+        "the cursor stays on bob through the Profiles move"
+    );
+    assert_eq!(app.table.cursor, 2, "bob is third in the new order");
+    assert_eq!(app.error, None);
+}
+
 /// A filter hides the middle profile: Alt+Down on the upper shown row lands
 /// after the lower shown row, and the hidden profile keeps its relative
 /// place among the others.
@@ -7632,7 +8163,7 @@ fn alt_down_with_a_hidden_profile_between_lands_after_the_lower_shown_row() {
     let iso = IsolatedStores::enter("tui-reorder-hidden");
     let names = ["alpha-zq", "bob", "carol-zq", "dave"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     assert_eq!(
         saved_order(&session),
         ["alpha-zq", "bob", "carol-zq", "dave"]
@@ -7685,7 +8216,7 @@ fn reorder_run(label: &str, via_keys: bool) -> Vec<Vec<String>> {
     let iso = IsolatedStores::enter(label);
     let names = ["alice", "bob", "carol", "dave"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     let mut seen = Vec::new();
     for down in [true, true, true, false] {
         let action = match (via_keys, down) {
@@ -7721,7 +8252,7 @@ fn move_marked_to_top_leads_the_saved_order_with_the_marked_profiles() {
     let iso = IsolatedStores::enter("tui-reorder-marked");
     let names = ["alice", "bob", "carol", "dave"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     let before = app.run_command(crate::commands::Command::MoveMarkedToTop);
     assert!(
         matches!(&before, AppAction::Refused(refusal)
@@ -7744,7 +8275,7 @@ fn move_marked_to_top_leads_the_saved_order_with_the_marked_profiles() {
     session.core.flush_writes();
     assert_eq!(saved_order(&session), ["carol", "dave", "alice", "bob"]);
     assert_eq!(
-        drawn_fleet_names(&mut app, &names),
+        drawn_fleet_names(&mut app, &names, 120, 40),
         ["carol", "dave", "alice", "bob"]
     );
 }
@@ -7758,7 +8289,7 @@ fn reorder_is_unavailable_outside_load_order() {
     let iso = IsolatedStores::enter("tui-reorder-sorted");
     let names = ["alice", "bob", "carol", "dave"];
     let (mut session, mut app) = tui_with_profiles(&iso, &names);
-    drawn_fleet_names(&mut app, &names);
+    drawn_fleet_names(&mut app, &names, 120, 40);
     dispatch(
         &mut session,
         &mut app,
@@ -9433,5 +9964,93 @@ fn a_login_notice_stands_through_retry_states_and_expires_at_both_sizes() {
         "the notice is gone at the shared timeout"
     );
     assert_eq!(frames, 12);
+    let _iso = iso;
+}
+
+/// IDLEFIX-028: a bot with no script whose connection dropped stays logged
+/// out and says why, at 120x40 and 80x24. With `TUI_CAPTURE_DIR` set, the
+/// frames are written to `<dir>/idle-park` by the capture harness.
+#[test]
+fn an_idle_park_says_why_the_bot_is_logged_out_at_both_sizes() {
+    tui_shows_the_park(
+        host_play::SlotArm::exit_while_idle_for_test,
+        "logged out: disconnected while idle (Log in to connect)",
+        "logged-out-while-idle",
+    );
+}
+
+/// Only the client's own idle request makes a server logout an idle logout;
+/// any other one reads as a logout by the server, as in the panel.
+#[test]
+fn the_tui_calls_only_a_requested_logout_an_idle_logout() {
+    tui_shows_the_park(
+        |arm| arm.exit_by_server_logout_for_test(true),
+        "logged out: idle logout by the server (Log in to connect)",
+        "logged-out-idle-logout",
+    );
+    tui_shows_the_park(
+        |arm| arm.exit_by_server_logout_for_test(false),
+        "logged out by the server (Log in to connect)",
+        "logged-out-by-the-server",
+    );
+}
+
+fn tui_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str, capture_name: &str) {
+    let iso = IsolatedStores::enter("tui-idle-park");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["bob"]);
+    let dir = std::env::var_os("TUI_CAPTURE_DIR")
+        .map(|dir| std::path::PathBuf::from(dir).join("idle-park"));
+    if let Some(dir) = dir.as_deref() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    app.focused = Some(0);
+    dispatch(&mut session, &mut app, AppAction::Focus("bob".into()));
+    app.key_focus = crate::layout::Pane::Detail;
+    let arm = session
+        .core
+        .play_for_test()
+        .and_then(|play| play.arm("bob"))
+        .expect("bob's arm");
+    arm.complete_login_for_test();
+    exit(&arm);
+    publish_status(&session, "bob", |row| {
+        row.connected = false;
+        row.ingame = false;
+        row.login_latched = true;
+        row.login_latch_reason = arm.login_latch_reason();
+        row.startup_phase = host_play::StartupPhase::Queueing;
+        row.startup_phase_started = Instant::now();
+    });
+    session.pump(&mut app);
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, rows)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let text: String = (0..rows)
+            .map(|y| {
+                (0..cols)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        // The narrowest status pane wraps the long line: match its head.
+        let head: String = format!("state: {state}").chars().take(30).collect();
+        assert!(text.contains(&head), "{cols}x{rows}:\n{text}");
+        if let Some(dir) = dir.as_deref() {
+            let proof = serde_json::json!({ "state": state });
+            super::manual_click_live_tests::capture(
+                &mut app,
+                cols,
+                rows,
+                dir,
+                &format!("{cols}x{rows}"),
+                capture_name,
+                &proof,
+            )
+            .unwrap();
+        }
+    }
     let _iso = iso;
 }

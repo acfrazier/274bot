@@ -4,11 +4,12 @@ use api::quest_progress::{EvidenceStamp, ProgressFlag};
 use api::selected::{FactKey, Gap, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use script::api_progress::{ProgressPage, QuestPathRow, QuestProgressRow};
-use script_js::observed;
-use script_js::wire::{
-    encode_snapshot_delta_with_native, NativeFactsInput, Snapshot, SnapshotFingerprint,
-};
+use script_js::scene::observed;
 use std::sync::Arc;
+use {
+    script::native::snapshot_source::NativeFactsInput,
+    script_js::wire::{encode_snapshot_delta_with_native, Snapshot, SnapshotFingerprint},
+};
 
 fn progress_row() -> QuestProgressRow {
     QuestProgressRow {

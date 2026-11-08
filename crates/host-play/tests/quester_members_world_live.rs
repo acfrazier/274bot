@@ -187,6 +187,9 @@ fn cell(label: &str, guard: Value, expect_skip: bool) {
 #[test]
 #[ignore = "requires LIVE=1, shared local 289 engine, CPU captures and isolated HOME"]
 fn members_world_true_skips_on_a_members_engine() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     cell(
         "positive",
         json!({"Fact":{"kind":"members_world","version":1,"args":{}}}),
@@ -197,6 +200,9 @@ fn members_world_true_skips_on_a_members_engine() {
 #[test]
 #[ignore = "requires LIVE=1, shared local 289 engine, CPU captures and isolated HOME"]
 fn not_members_world_selects_on_a_members_engine() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     cell(
         "negative",
         json!({"Not":{"Fact":{"kind":"members_world","version":1,"args":{}}}}),

@@ -115,6 +115,9 @@ mod tests {
 
     #[test]
     fn counts_slots_not_stack_qty_both_revisions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(revision);
             let items = vec![
@@ -138,6 +141,9 @@ mod tests {
 
     #[test]
     fn noted_food_is_not_edible_or_counted() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = data(ClientRevision::R274);
         let noted = InvItemName {
             name: Some("2/3 cake".into()),
@@ -154,6 +160,9 @@ mod tests {
 
     #[test]
     fn empty_name_matches_empty_form_key() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = data(ClientRevision::R274);
         let items = vec![
             InvItemName {

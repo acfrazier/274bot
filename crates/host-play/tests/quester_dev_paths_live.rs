@@ -40,6 +40,9 @@ fn text<'a>(status: &'a ScriptStatus, key: &str) -> Option<&'a str> {
 #[test]
 #[ignore = "requires LIVE=1, shared local 289 engine, CPU captures and isolated HOME"]
 fn live_quester_folder_override_start() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert!(api::hostlog::install_sink(&START_LOG));
     let selected = FamilyPreparation::run(|_| {

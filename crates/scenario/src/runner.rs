@@ -446,7 +446,16 @@ pub struct ScenarioRunner {
     /// changed; the old session can already satisfy the step's tab proof.
     relog_session: Option<u64>,
     relog_left_session: bool,
+    /// The Relog step sent its logout and the host has not yet posted the
+    /// slot's explicit Login: a bot with no script stays logged out after
+    /// its exit, so the step's own logout cannot rely on a reconnect. The
+    /// driver that ticks this runner consumes the request with
+    /// [`ScenarioRunner::take_relog_login`] and posts the operator Login
+    /// intent (host-play's `SlotArm::arm_explicit_login`).
+    relog_login_wanted: bool,
     engine_speed_ms: Option<u32>,
+    /// Whether terminal cleanup restores the scenario's requested world speed.
+    restore_world_speed: bool,
     /// Endpoint reported when the initial world-speed command is sent.
     tick_speed_endpoint: Option<(String, u16)>,
     engine_speed_sent: bool,
@@ -550,6 +559,14 @@ impl ScenarioRunner {
         self.map_members = map_members;
     }
 
+    /// Control terminal restoration to the teardown world speed.
+    ///
+    /// Defaults to `true`; setting `false` leaves the initial requested
+    /// world-speed command unchanged but skips restoration during cleanup.
+    pub fn set_restore_world_speed(&mut self, restore: bool) {
+        self.restore_world_speed = restore;
+    }
+
     /// Record the endpoint for diagnostics when the world-wide speed command fires.
     /// This is logging metadata only; it does not restrict command dispatch.
     pub fn set_tick_speed_endpoint(&mut self, host: &str, port: u16) {
@@ -593,7 +610,9 @@ impl ScenarioRunner {
             relog_logout_sent: false,
             relog_session: None,
             relog_left_session: false,
+            relog_login_wanted: false,
             engine_speed_ms,
+            restore_world_speed: true,
             tick_speed_endpoint: None,
             speed_chat_baseline: None,
             engine_speed_sent: false,
@@ -652,8 +671,9 @@ impl ScenarioRunner {
 
     /// Recording sidecar position: `(step_index, total_steps, step_name)`.
     /// Pre-start reads `seeding`, the proof tail reads `proving`, terminal
-    /// speed restoration reads `cleaning`, and a finished run reads `done`.
-    /// Every video timestamp lines up with the step trace even outside run steps.
+    /// speed restoration reads `cleaning` when enabled, and a finished run
+    /// reads `done`. Every video timestamp lines up with the step trace even
+    /// outside run steps.
     pub fn record_step(&self) -> (usize, usize, &'static str) {
         let total = self.scenario.steps.len();
         match self.phase {
@@ -797,9 +817,27 @@ impl ScenarioRunner {
     }
 
     /// Run companion `index`'s hook once per client cycle on `client`. The
-    /// caller delivers one frame per call, exactly like [`tick`].
-    pub fn companion_tick(&mut self, index: usize, client: &mut Client) {
-        (self.scenario.companions[index].per_frame)(client);
+    /// caller delivers one frame per call, exactly like [`tick`]. `true`
+    /// means the hook pressed this slot's logout and needs the host's
+    /// explicit Login (the operator Login intent) posted for it, because a
+    /// bot with no script stays parked after its exit.
+    pub fn companion_tick(&mut self, index: usize, client: &mut Client) -> bool {
+        (self.scenario.companions[index].per_frame)(client)
+    }
+
+    /// Whether the current Relog step sent its logout and still needs the
+    /// host's explicit Login. The driver that ticks this runner consumes the
+    /// request with [`Self::take_relog_login`] and posts the operator Login
+    /// intent for the driven slot; a bot with no script does not reconnect by
+    /// itself, so the relog would otherwise wait out its budget.
+    pub fn relog_login_wanted(&self) -> bool {
+        self.relog_login_wanted
+    }
+
+    /// Consume the pending host-login request of the current Relog step.
+    /// One-shot: a second call is false until another relog logout goes out.
+    pub fn take_relog_login(&mut self) -> bool {
+        std::mem::take(&mut self.relog_login_wanted)
     }
 
     /// True while the runner is on [`StepKind::StartScript`]: panel/TUI
@@ -1333,6 +1371,7 @@ impl ScenarioRunner {
         self.relog_logout_sent = false;
         self.relog_session = None;
         self.relog_left_session = false;
+        self.relog_login_wanted = false;
         self.game_ticks_waited = 0;
         self.traveller.clear();
         self.route = None;
@@ -2121,6 +2160,12 @@ impl ScenarioRunner {
                         );
                     }
                     self.relog_logout_sent = true;
+                    // The bot has no script at a pre-Start relog, so the
+                    // approved scriptless policy parks it after this exit;
+                    // the driver posts the operator Login (a no-op wait here
+                    // would time out). A scripted bot ignores the request:
+                    // its own demand already relogs it.
+                    self.relog_login_wanted = true;
                 }
                 Ok(())
             }
@@ -2343,6 +2388,12 @@ impl ScenarioRunner {
     }
 
     fn begin_terminal_cleanup(&mut self, speed_ms: u32, outcome: TerminalOutcome) {
+        // Terminal cleanup is shared by pass, failure and unavailable
+        // outcomes. The opt-out skips only the teardown command.
+        if !self.restore_world_speed {
+            self.complete_terminal(outcome);
+            return;
+        }
         self.phase = Phase::Cleaning;
         self.terminal_cleanup = Some(TerminalCleanup {
             speed_ms,

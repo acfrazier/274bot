@@ -4,8 +4,8 @@ use super::super::compile::{
     CompileContext, CompileError, PredicateContext, PredicatePlan, StepContext, StepOutcome,
     StepPlan, StepRun,
 };
+use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
-use crate::shim::InteractReq;
 use api::quest_progress::EvidenceStamp;
 use api::selected::Truth;
 use serde::Deserialize;
@@ -191,6 +191,9 @@ mod tests {
 
     #[test]
     fn already_desired_retaliate_state_needs_no_packet() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (value, desired) in [(0, true), (1, false)] {
             let snapshot = snapshot(Some(value));
             let mut ledger = None;
@@ -211,6 +214,9 @@ mod tests {
 
     #[test]
     fn setting_requires_dispatch_acceptance_and_observed_desired_state() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = snapshot(Some(0));
         let mut ledger = None;
         let handle = with_tick(&snapshot, &mut ledger, 1, |tick| {
@@ -255,6 +261,9 @@ mod tests {
 
     #[test]
     fn unknown_or_unchanged_setting_is_bounded_and_rejection_is_failure() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for accepted in [true, false] {
             let snapshot = snapshot(None);
             let mut ledger = None;
@@ -289,6 +298,9 @@ mod tests {
 
     #[test]
     fn retaliate_predicate_does_not_guess_unobserved_or_invalid_values() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (value, expected) in [
             (None, Truth::Unknown),
             (Some(2), Truth::Unknown),

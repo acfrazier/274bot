@@ -109,7 +109,6 @@ function runtimeEvidence(
 ): NpcTransformClosureEvidence {
     return {
         schema: 1,
-        source_inputs: { engine: [], content: [] },
         source_spans: [],
         npc_types: [npcType(101), npcType(202)],
         actions: [action(101, baseFingerprint), action(202, temporaryFingerprint)],
@@ -130,7 +129,7 @@ const temporaryDifferent = prove({
 assert.equal(temporaryDifferent.status, 'inconsistent');
 assert.deepEqual(temporaryDifferent.reachable_npc_type_ids, [101, 202]);
 assert.deepEqual(temporaryDifferent.mismatched_npc_type_ids, [101]);
-const refusedRuntime = runtimeNpcOperations(runtimeEvidence('OP=base-handler;AP=shared', 'OP=temporary-handler;AP=shared', [temporaryDifferent]));
+const refusedRuntime = runtimeNpcOperations(runtimeEvidence('OP=base-handler;AP=shared', 'OP=temporary-handler;AP=shared', [temporaryDifferent]), [], []);
 assert.ok(!refusedRuntime.operations.some(({ npc_type_id, slot }) => npc_type_id === 202 && slot === 1),
     'a temporary target with a different base handler must not enter runtime operations');
 
@@ -142,7 +141,7 @@ const temporaryMatching = prove({
 });
 assert.equal(temporaryMatching.status, 'consistent');
 assert.deepEqual(temporaryMatching.reachable_npc_type_ids, [101, 202]);
-const admittedRuntime = runtimeNpcOperations(runtimeEvidence('OP=shared;AP=shared', 'OP=shared;AP=shared', [temporaryMatching]));
+const admittedRuntime = runtimeNpcOperations(runtimeEvidence('OP=shared;AP=shared', 'OP=shared;AP=shared', [temporaryMatching]), [], []);
 assert.ok(admittedRuntime.operations.some(({ npc_type_id, slot }) => npc_type_id === 202 && slot === 1),
     'a temporary target with the same base handler may enter runtime operations');
 assert.deepEqual(sameApDifferentOp.reachable_npc_type_ids, [101, 202]);
@@ -357,7 +356,7 @@ return;
     const temporaryTargetProof = evidence.proofs.find(({ npc_type_id, slot }) => npc_type_id === 202 && slot === 1)!;
     assert.equal(temporaryTargetProof.status, 'inconsistent', 'the extracted temporary form must include its different base handler');
     assert.deepEqual(temporaryTargetProof.reachable_npc_type_ids, [101, 202]);
-    assert.ok(!runtimeNpcOperations(evidence).operations.some(({ npc_type_id, slot }) => npc_type_id === 202 && slot === 1));
+    assert.ok(!runtimeNpcOperations(evidence, [], []).operations.some(({ npc_type_id, slot }) => npc_type_id === 202 && slot === 1));
     const sharedApHeader = evidence.source_spans.findIndex(({ file, first }) => file === 'scripts/handlers.rs2' && first === 6);
     assert.ok(sharedApHeader >= 0);
     assert.ok(base.source_refs.includes(sharedApHeader));
@@ -380,7 +379,7 @@ return;
         scope_npc_type_id === 808 && scope_slot === 3 && reason === 'missing_trigger_handler',
     ), 'a configured option with no handler reports missing_trigger_handler, not an unknown subject');
     assert.equal(evidence.proofs.find(({ npc_type_id, slot }) => npc_type_id === 808 && slot === 3)?.status, 'unavailable');
-    assert.ok(!runtimeNpcOperations(evidence).operations.some(({ npc_type_id, slot }) => npc_type_id === 808 && slot === 3),
+    assert.ok(!runtimeNpcOperations(evidence, [], []).operations.some(({ npc_type_id, slot }) => npc_type_id === 808 && slot === 3),
         'an option with no handler must not enter runtime operations');
     const opOnly = actionByPair.get('404:3')!;
     assert.equal(opOnly.state, 'present');

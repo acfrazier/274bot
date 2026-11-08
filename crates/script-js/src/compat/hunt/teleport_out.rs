@@ -10,7 +10,7 @@ pub(crate) struct TeleportOut {
     runes: Vec<(String, i32)>,
     tries: u32,
     phase: OutPhase,
-    teleport: Option<crate::teleport::Teleport>,
+    teleport: Option<crate::compat::teleport::Teleport>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -38,8 +38,8 @@ impl Family for TeleportOut {
     type Output = Value;
 
     fn begin(args: TeleportOutArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
-        let esc =
-            crate::hunt_catalog::call("escapeRunesFor", &[json!(args.id)]).unwrap_or(Value::Null);
+        let esc = crate::compat::hunt_catalog::call("escapeRunesFor", &[json!(args.id)])
+            .unwrap_or(Value::Null);
         let runes = esc["runes"]
             .as_array()
             .map(|rows| {
@@ -159,7 +159,7 @@ impl TeleportOut {
             return Step::Wait;
         }
         let args = serde_json::from_value(json!({ "name": self.id })).expect("teleport arguments");
-        match <crate::teleport::Teleport as Family>::begin(args, cx) {
+        match <crate::compat::teleport::Teleport as Family>::begin(args, cx) {
             Begin::Run(teleport) => {
                 self.teleport = Some(teleport);
                 self.phase = OutPhase::Casting;

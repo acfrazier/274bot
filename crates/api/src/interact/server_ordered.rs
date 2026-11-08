@@ -7,7 +7,7 @@
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::selected::{ClientRevision, SelectedPin, SourceSpan};
+use crate::selected::{ClientRevision, SourceSpan};
 
 mod npc_transforms;
 pub use npc_transforms::*;
@@ -20,12 +20,9 @@ pub use request::*;
 /// A selected contract cannot authorize input when its proof is unavailable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum ContractError {
-    /// The revision, catalog, or bound selected identity has no reviewed proof.
+    /// The selected revision or checked catalog has no reviewed proof.
     #[error("server-ordered content contract is unavailable")]
     ContractUnavailable,
-    /// The catalog and the caller do not select the same immutable inputs.
-    #[error("server-ordered content contract pin does not match")]
-    PinMismatch,
     /// A required symbolic component alias is absent.
     #[error("server-ordered content contract is missing a component alias")]
     MissingAlias,
@@ -886,11 +883,6 @@ mod wire {
 #[serde(deny_unknown_fields)]
 pub(crate) struct CatalogWire {
     schema: u16,
-    revision: i32,
-    engine_commit: String,
-    content_commit: String,
-    cache_id: String,
-    content_id: String,
     #[serde(deserialize_with = "wire::decode_list")]
     components: Vec<ContractComponent>,
     #[serde(deserialize_with = "wire::decode_list")]
@@ -907,7 +899,7 @@ pub(crate) struct CatalogWire {
     npc_transforms: NpcTransformEvidence,
 }
 
-/// Process-shared, pin-verified facts. This type has no public constructor or decoder.
+/// Process-shared, structurally checked facts. This type has no public constructor or decoder.
 ///
 /// ```compile_fail
 /// let _: api::interact::server_ordered::ServerOrderedCatalog =
@@ -916,23 +908,30 @@ pub(crate) struct CatalogWire {
 #[derive(Debug)]
 pub struct ServerOrderedCatalog {
     facts: CatalogWire,
+    revision: i32,
 }
 
 impl ServerOrderedCatalog {
-    pub(crate) fn bind(mut facts: CatalogWire, pin: &SelectedPin) -> Result<Self, ContractError> {
+    pub(crate) fn bind(
+        mut facts: CatalogWire,
+        revision: ClientRevision,
+    ) -> Result<Self, ContractError> {
         if facts.banker_page().is_err() {
             facts.banker_page = None;
             facts
                 .entries
                 .retain(|entry| entry.key != ContractKey::BankOpenDeposit);
         }
-        facts.validate(pin)?;
-        Ok(Self { facts })
+        facts.validate(revision)?;
+        Ok(Self {
+            facts,
+            revision: revision.as_i32(),
+        })
     }
 
-    /// Return the selected revision proved by this catalog.
+    /// Return the caller-selected revision used to prepare this catalog.
     pub fn revision(&self) -> i32 {
-        self.facts.revision()
+        self.revision
     }
 
     /// Return the exact selected alias without inventing a fallback identity.
@@ -975,7 +974,7 @@ impl ServerOrderedCatalog {
         self.facts.numeric_locs()
     }
 
-    /// Borrow the positive NPC admission rows and full-evidence digest.
+    /// Borrow the positive NPC admission rows and built-in fishing slots.
     pub fn npc_transforms(&self) -> &NpcTransformEvidence {
         &self.facts.npc_transforms
     }
@@ -984,14 +983,22 @@ impl ServerOrderedCatalog {
     pub fn npc_operation(&self, npc_type_id: i32, slot: u8) -> Option<&NpcTransformAction> {
         self.facts.npc_transforms.operation(npc_type_id, slot)
     }
+
+    /// Return a static selected-content fishing slot available only to the built-in Gatherer.
+    ///
+    /// Unlike `npc_operation`, this does not establish complete transform closure.
+    pub fn builtin_gatherer_fishing_operation(
+        &self,
+        npc_type_id: i32,
+        slot: u8,
+    ) -> Option<&BuiltinGathererFishingOperation> {
+        self.facts
+            .npc_transforms
+            .builtin_gatherer_fishing_operation(npc_type_id, slot)
+    }
 }
 
 impl CatalogWire {
-    /// Return the selected revision proved by this catalog.
-    pub fn revision(&self) -> i32 {
-        self.revision
-    }
-
     /// Return the exact selected alias without inventing a fallback identity.
     pub fn component(&self, alias: &str) -> Result<&ContractComponent, ContractError> {
         self.components
@@ -1063,17 +1070,9 @@ impl CatalogWire {
     pub fn numeric_locs(&self) -> &[NumericLocContract] {
         &self.numeric_locs
     }
-
-    pub(crate) fn validate(&self, pin: &SelectedPin) -> Result<(), ContractError> {
-        if self.schema != 1 || pin.revision != ClientRevision::R289 || self.revision != 289 {
+    pub(crate) fn validate(&self, revision: ClientRevision) -> Result<(), ContractError> {
+        if self.schema != 1 || revision != ClientRevision::R289 {
             return Err(ContractError::ContractUnavailable);
-        }
-        if self.engine_commit != pin.engine_commit.as_ref()
-            || self.content_commit != pin.content_commit.as_ref()
-            || self.cache_id != pin.cache_id.as_ref()
-            || self.content_id != pin.content_id.as_ref()
-        {
-            return Err(ContractError::PinMismatch);
         }
         for (index, component) in self.components.iter().enumerate() {
             if component.alias.is_empty() || component.id <= 0 {
@@ -1446,26 +1445,40 @@ impl ComponentProperties {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game_data::{for_revision, SelectedGameData};
-    use std::sync::Arc;
+    use crate::game_data::SelectedGameData;
 
-    fn catalog() -> CatalogWire {
-        let mut asset: serde_json::Value =
-            serde_json::from_slice(include_bytes!("../../data/game-data/289.json")).unwrap();
-        serde_json::from_value(asset["server_ordered"].take()).unwrap()
+    fn raw_asset() -> Option<Vec<u8>> {
+        let path = crate::test_support::local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
+            "revision 289 game data for server-ordered API tests",
+        )?;
+        Some(
+            std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display())),
+        )
     }
 
-    fn pin() -> Arc<SelectedPin> {
-        for_revision(ClientRevision::R289)
-            .unwrap()
-            .selected_pin()
-            .unwrap()
+    fn catalog() -> Option<CatalogWire> {
+        let mut asset: serde_json::Value = serde_json::from_slice(&raw_asset()?).unwrap();
+        Some(serde_json::from_value(asset["server_ordered"].take()).unwrap())
+    }
+
+    macro_rules! catalog_or_skip {
+        () => {
+            match catalog() {
+                Some(catalog) => catalog,
+                None => return,
+            }
+        };
     }
 
     #[test]
     fn selected_component_properties_remain_borrowed_and_kind_specific() {
-        let data = for_revision(ClientRevision::R289).unwrap();
-        let catalog = data.server_ordered_catalog(&pin()).unwrap();
+        let Some(data) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
+        let catalog = data.server_ordered_catalog().unwrap();
         let bank = catalog.component("bank_main:inv").unwrap().properties();
         assert_eq!(bank.draggable(), Some(true));
         assert_eq!(bank.margin_x(), Some(15));
@@ -1493,7 +1506,7 @@ mod tests {
 
     #[test]
     fn host_order_does_not_claim_synchronous_server_execution() {
-        let catalog = catalog();
+        let catalog = catalog_or_skip!();
         let banker = catalog.entry(ContractKey::BankOpenDeposit).unwrap();
         let resume = banker.predecessors().last().unwrap();
         assert_eq!(resume.from(), "RESUME_PAUSEBUTTON(player_page)");
@@ -1550,7 +1563,7 @@ mod tests {
     #[test]
     fn unproved_or_uncited_edges_refuse_the_catalog() {
         for checked_without_source in [false, true] {
-            let mut catalog = catalog();
+            let mut catalog = catalog_or_skip!();
             let edge = &mut catalog
                 .entries
                 .iter_mut()
@@ -1564,7 +1577,7 @@ mod tests {
                 edge.sources.clear();
             }
             assert_eq!(
-                catalog.validate(&pin()),
+                catalog.validate(ClientRevision::R289),
                 Err(ContractError::InvalidContract)
             );
         }
@@ -1572,7 +1585,7 @@ mod tests {
     #[test]
     fn condition_basis_requires_matching_source_citations() {
         for checked_without_sources in [false, true] {
-            let mut catalog = catalog();
+            let mut catalog = catalog_or_skip!();
             let condition = catalog
                 .entries
                 .iter_mut()
@@ -1588,7 +1601,7 @@ mod tests {
                 condition.basis = ContractBasis::HostPolicy;
             }
             assert_eq!(
-                catalog.validate(&pin()),
+                catalog.validate(ClientRevision::R289),
                 Err(ContractError::InvalidContract)
             );
         }
@@ -1596,17 +1609,20 @@ mod tests {
 
     #[test]
     fn selected_catalog_is_shared_and_cache_only() {
-        let data = for_revision(ClientRevision::R289).unwrap();
-        let pin = data.selected_pin().unwrap();
-        let first = data.server_ordered_catalog(&pin).unwrap();
-        let second = for_revision(ClientRevision::R289).unwrap();
+        let Some(data) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
+        let first = data.server_ordered_catalog().unwrap();
+        let Some(second) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
         assert!(std::ptr::eq(
             first,
-            second.server_ordered_catalog(&pin).unwrap()
+            second.server_ordered_catalog().unwrap()
         ));
         let measured = allocation_counter::measure(|| {
             for _ in 0..100 {
-                let catalog = data.server_ordered_catalog(&pin).unwrap();
+                let catalog = data.server_ordered_catalog().unwrap();
                 assert_eq!(catalog.revision(), 289);
                 assert_eq!(catalog.entries().len(), 8);
                 assert_eq!(catalog.banker_page().unwrap().page_count(), 1);
@@ -1617,8 +1633,10 @@ mod tests {
 
     #[test]
     fn decoded_catalog_heap_stays_bounded() {
-        let asset: serde_json::Value =
-            serde_json::from_slice(include_bytes!("../../data/game-data/289.json")).unwrap();
+        let Some(raw) = raw_asset() else {
+            return;
+        };
+        let asset: serde_json::Value = serde_json::from_slice(&raw).unwrap();
         let bytes = serde_json::to_vec(&asset["server_ordered"]).unwrap();
         let mut decoded = None;
         let measured = allocation_counter::measure(|| {
@@ -1626,9 +1644,15 @@ mod tests {
         });
         let retained = measured.bytes_current as usize + std::mem::size_of::<CatalogWire>();
         println!(
-            "server_ordered bytes={} loaded_bytes={retained}",
+            "server_ordered allocations={} allocated_bytes={} current_bytes={} retained_heap_bytes={} serialized_bytes={}",
+            measured.count_total,
+            measured.bytes_total,
+            measured.bytes_current,
+            retained,
             bytes.len()
         );
+        // These five removed identity fields are no longer retained:
+        // `revision`, `engine_commit`, `content_commit`, `cache_id`, `content_id`.
         assert!(
             retained < 131_072,
             "loaded catalog retains {retained} bytes"
@@ -1637,87 +1661,73 @@ mod tests {
     }
 
     #[test]
-    fn unbound_facts_cannot_expose_an_unverified_catalog() {
-        let unbound: SelectedGameData =
-            serde_json::from_slice(include_bytes!("../../data/game-data/289.json")).unwrap();
+    fn unprepared_facts_cannot_expose_a_server_catalog() {
+        let Some(raw) = raw_asset() else {
+            return;
+        };
+        let unbound: SelectedGameData = serde_json::from_slice(&raw).unwrap();
         assert!(matches!(
-            unbound.server_ordered_catalog(&pin()),
+            unbound.server_ordered_catalog(),
             Err(ContractError::ContractUnavailable)
         ));
     }
 
     #[test]
-    fn caller_pin_disagreement_refuses_the_shared_catalog() {
-        let data = for_revision(ClientRevision::R289).unwrap();
-        let mut changed = (*pin()).clone();
-        changed.manifest_sha256[0] ^= 1;
-        assert!(matches!(
-            data.server_ordered_catalog(&changed),
-            Err(ContractError::PinMismatch)
-        ));
-    }
-
-    #[test]
-    fn catalog_pin_disagreement_refuses_each_identity() {
-        for field in ["engine_commit", "content_commit", "cache_id", "content_id"] {
-            let mut catalog = catalog();
-            match field {
-                "engine_commit" => catalog.engine_commit.push('0'),
-                "content_commit" => catalog.content_commit.push('0'),
-                "cache_id" => catalog.cache_id.push('0'),
-                "content_id" => catalog.content_id.push('0'),
-                _ => unreachable!(),
-            }
-            assert_eq!(catalog.validate(&pin()), Err(ContractError::PinMismatch));
-        }
-    }
-
-    #[test]
-    fn unproved_revision_cannot_inherit_selected_289_controls() {
-        let mut catalog = catalog();
-        catalog.revision = 274;
+    fn unsupported_revision_cannot_select_server_catalog() {
+        let catalog = catalog_or_skip!();
         assert_eq!(
-            catalog.validate(&pin()),
+            catalog.validate(ClientRevision::R274),
             Err(ContractError::ContractUnavailable)
         );
-        let data = for_revision(ClientRevision::R274).unwrap();
+        let Some(data) = crate::game_data::test_data(ClientRevision::R274) else {
+            return;
+        };
         assert!(matches!(
-            data.server_ordered_catalog(&data.selected_pin().unwrap()),
+            data.server_ordered_catalog(),
             Err(ContractError::ContractUnavailable)
         ));
     }
 
     #[test]
     fn missing_alias_refuses_the_complete_catalog() {
-        let mut catalog = catalog();
+        let mut catalog = catalog_or_skip!();
         catalog
             .components
             .retain(|component| component.alias != "skill_multi3:make1_a");
-        assert_eq!(catalog.validate(&pin()), Err(ContractError::MissingAlias));
+        assert_eq!(
+            catalog.validate(ClientRevision::R289),
+            Err(ContractError::MissingAlias)
+        );
     }
 
     #[test]
     fn ambiguous_component_identity_refuses_the_catalog() {
-        let mut catalog = catalog();
+        let mut catalog = catalog_or_skip!();
         catalog.components[1].id = catalog.components[0].id;
-        assert_eq!(catalog.validate(&pin()), Err(ContractError::AmbiguousAlias));
+        assert_eq!(
+            catalog.validate(ClientRevision::R289),
+            Err(ContractError::AmbiguousAlias)
+        );
     }
 
     #[test]
     fn changed_root_ancestry_refuses_the_catalog() {
-        let mut catalog = catalog();
+        let mut catalog = catalog_or_skip!();
         let component = catalog
             .components
             .iter_mut()
             .find(|component| component.alias == "skill_multi3:make1_a")
             .unwrap();
         component.ancestor_ids.clear();
-        assert_eq!(catalog.validate(&pin()), Err(ContractError::WrongRoot));
+        assert_eq!(
+            catalog.validate(ClientRevision::R289),
+            Err(ContractError::WrongRoot)
+        );
     }
 
     #[test]
     fn changed_component_kind_refuses_the_catalog() {
-        let mut catalog = catalog();
+        let mut catalog = catalog_or_skip!();
         let component = catalog
             .components
             .iter_mut()
@@ -1725,24 +1735,24 @@ mod tests {
             .unwrap();
         component.component_type = ComponentType::Layer;
         assert_eq!(
-            catalog.validate(&pin()),
+            catalog.validate(ClientRevision::R289),
             Err(ContractError::ComponentChanged)
         );
     }
 
     #[test]
     fn changed_client_code_refuses_the_catalog() {
-        let mut catalog = catalog();
+        let mut catalog = catalog_or_skip!();
         catalog.components[0].client_code = 999;
         assert_eq!(
-            catalog.validate(&pin()),
+            catalog.validate(ClientRevision::R289),
             Err(ContractError::ComponentChanged)
         );
     }
 
     #[test]
     fn changed_button_kind_refuses_the_catalog() {
-        let mut catalog = catalog();
+        let mut catalog = catalog_or_skip!();
         let component = catalog
             .components
             .iter_mut()
@@ -1750,34 +1760,34 @@ mod tests {
             .unwrap();
         component.button_type = ButtonType::Pause;
         assert_eq!(
-            catalog.validate(&pin()),
+            catalog.validate(ClientRevision::R289),
             Err(ContractError::ComponentChanged)
         );
     }
 
     #[test]
     fn multiple_banker_pages_refuse_the_early_sequence() {
-        let mut catalog = catalog();
+        let mut catalog = catalog_or_skip!();
         catalog.banker_page.as_mut().unwrap().page_count = 2;
         assert_independent_recipes_survive(catalog);
     }
 
     #[test]
     fn banker_lines_without_selected_page_capacity_refuse_the_sequence() {
-        let mut catalog = catalog();
+        let mut catalog = catalog_or_skip!();
         catalog.banker_page.as_mut().unwrap().max_lines = 0;
         assert_independent_recipes_survive(catalog);
     }
 
     #[test]
     fn missing_banker_page_refuses_only_the_early_sequence() {
-        let mut catalog = catalog();
+        let mut catalog = catalog_or_skip!();
         catalog.banker_page = None;
         assert_independent_recipes_survive(catalog);
     }
 
     fn assert_independent_recipes_survive(facts: CatalogWire) {
-        let catalog = ServerOrderedCatalog::bind(facts, &pin()).unwrap();
+        let catalog = ServerOrderedCatalog::bind(facts, ClientRevision::R289).unwrap();
         assert!(matches!(
             catalog.entry(ContractKey::BankOpenDeposit),
             Err(ContractError::BankerPageUnproved)
@@ -1798,7 +1808,7 @@ mod tests {
 
     #[test]
     fn bank_mode_requires_an_explicit_selected_value() {
-        let catalog = catalog();
+        let catalog = catalog_or_skip!();
         let bank = &catalog.bank;
         assert_eq!(
             bank.observed_mode(Some(bank.item_mode)),

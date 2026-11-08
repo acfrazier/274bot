@@ -335,7 +335,7 @@ impl Observation {
         &mut self,
         cell: HuntCell,
         snapshot: &GameSnapshot,
-        paint: Option<&script::shim::ScriptPaint>,
+        paint: Option<&script::paint::ScriptPaint>,
         acts: Option<ScriptActsPublished>,
     ) {
         self.hunt = HuntObservation {

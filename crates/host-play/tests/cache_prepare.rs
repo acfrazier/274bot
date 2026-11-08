@@ -87,12 +87,10 @@ fn fixture_packs() -> Arc<Vec<(String, Vec<u8>)>> {
 /// update server, the cache/unpack/home roots are all temporary, and the
 /// navigation pack is deliberately absent (as in `session_profile`).
 fn selection(root: &TempRoot, revision: &str, asset_port: u16) -> ProfileSelection {
-    let manifest = fixture_dir().join(format!("manifest-{revision}.json"));
     let options = ProfileOptions {
         revision: Some(revision.to_string()),
         cache_dir: Some(root.join("cache")),
         unpack_dir: Some(root.join("unpack")),
-        cache_manifest: Some(manifest),
         nav_pack: Some(root.join("missing.navpack")),
         asset_host: Some("127.0.0.1".into()),
         http_port: Some(asset_port),
@@ -305,8 +303,8 @@ fn empty_cache_is_fetched_through_normal_profile_preparation() {
         "the packs must be fetched before the cache version is read: {degraded}"
     );
 
-    // Neither the profile's cache identity nor the shared template depends on
-    // a prepared snapshot: both still come from the fetched packs.
+    // The shared template decodes from the fetched packs, and Play validation
+    // continues to use the owned profile's frozen resources.
     let template =
         SharedClientTemplate::load_with_progress(Arc::clone(&profile), &observer).unwrap();
     template.validate_for_play_with_progress(&observer).unwrap();
@@ -320,46 +318,4 @@ fn empty_cache_is_fetched_through_normal_profile_preparation() {
         "a second bind must not re-fetch: {:?}",
         again.cache_availability()
     );
-}
-
-/// A manifest declared for another revision is rejected before any pack is
-/// fetched: no update-server work for the wrong selection, and no resource
-/// is created.
-#[test]
-fn wrong_revision_manifest_is_rejected_before_any_fetch() {
-    let root = TempRoot::new("cache-wrong-revision");
-    let cache = root.join("cache");
-    std::fs::create_dir_all(&cache).unwrap();
-    for name in JAG_SLOTS {
-        std::fs::copy(fixture_dir().join(name), cache.join(name)).unwrap();
-    }
-    // The 289 selection with the 274 identity: the fixture declares the same
-    // bytes for both revisions, so only the declared revision can reject it.
-    let manifest = fixture_dir().join("manifest-274.json");
-    let options = ProfileOptions {
-        revision: Some("289".into()),
-        cache_dir: Some(cache.clone()),
-        unpack_dir: Some(root.join("unpack")),
-        cache_manifest: Some(manifest),
-        nav_pack: Some(root.join("missing.navpack")),
-        asset_host: Some("127.0.0.1".into()),
-        http_port: Some(9),
-        ..Default::default()
-    };
-    let environment = ProfileEnvironment {
-        home: Some(root.0.clone()),
-        engine_dir: Some(root.join("engine")),
-        rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-        rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-        ..Default::default()
-    };
-    let selection = options.resolve_with_env(None, &environment).unwrap();
-    let error = selection
-        .bind_with_progress(&ProfileProgressObserver::default())
-        .unwrap_err();
-    assert!(
-        error.contains("cache/profile mismatch") && error.contains("declared manifest revision"),
-        "a wrong-revision manifest is a profile mismatch, got: {error}"
-    );
-    assert!(!selection.unpack_dir().exists(), "no preparation happened");
 }

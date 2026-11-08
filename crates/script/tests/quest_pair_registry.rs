@@ -76,10 +76,13 @@ fn with_data(
 
 #[test]
 fn quest_pair_r2_registry_load_validates_both_declared_gangs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_data(|selected, quests, worker| {
         let folder = Folder::new();
         folder.write(&paired_document());
-        let paths = PathRegistry::load(&folder.source(), &selected, &quests, worker).unwrap();
+        let paths = PathRegistry::load(&folder.source(), &selected, &quests, worker, None).unwrap();
         assert!(paths.diagnostics().is_empty(), "{:?}", paths.report());
         let bytes = paths
             .bytes(PATH_ID)
@@ -92,6 +95,7 @@ fn quest_pair_r2_registry_load_validates_both_declared_gangs() {
                 worker,
                 Some(gang),
                 &script::local_state::OperatorLoadouts::absent(),
+                None,
             )
             .unwrap();
             assert_eq!(
@@ -116,6 +120,9 @@ impl Drop for RestoreSource {
 
 #[test]
 fn quest_pair_r2_registry_public_reload_revalidates_edited_paired_roles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_data(|selected, quests, worker| {
         let folder = Folder::new();
         let mut document = paired_document();
@@ -134,6 +141,7 @@ fn quest_pair_r2_registry_public_reload_revalidates_edited_paired_roles() {
             worker,
             Some(Gang::BlackArm),
             &script::local_state::OperatorLoadouts::absent(),
+            None,
         )
         .unwrap();
         document["roles"][1]["sequences"][0]["steps"][0]["comment"] =
@@ -149,6 +157,7 @@ fn quest_pair_r2_registry_public_reload_revalidates_edited_paired_roles() {
             worker,
             Some(Gang::BlackArm),
             &script::local_state::OperatorLoadouts::absent(),
+            None,
         )
         .unwrap();
         assert_ne!(first_path.digest, second_path.digest);
@@ -170,6 +179,9 @@ fn quest_pair_r2_registry_public_reload_revalidates_edited_paired_roles() {
 
 #[test]
 fn quest_pair_r2_registry_invalid_role_reports_its_gang_and_original_compile_error() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_data(|selected, quests, worker| {
         for (side, gang) in [(0, "Phoenix"), (1, "BlackArm")] {
             let folder = Folder::new();
@@ -177,7 +189,8 @@ fn quest_pair_r2_registry_invalid_role_reports_its_gang_and_original_compile_err
             document["roles"][side]["sequences"][0]["steps"][0]["kind"] =
                 serde_json::json!("invalid-family");
             folder.write(&document);
-            let paths = PathRegistry::load(&folder.source(), &selected, &quests, worker).unwrap();
+            let paths =
+                PathRegistry::load(&folder.source(), &selected, &quests, worker, None).unwrap();
             assert!(
                 paths.bytes(PATH_ID).is_none(),
                 "one invalid role rejects the entire document"

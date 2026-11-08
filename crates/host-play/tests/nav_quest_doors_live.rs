@@ -1,24 +1,40 @@
 //! Live proof of content-derived Black Knights Fortress disguise doors and push-wall routing.
 //! The account is seeded outside the fortress; every ingress movement uses the production router and Traveller.
+//! Phoenix journal proof and Black Arm refusal also exercise the real Brimhaven kitchen door.
 use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::game_data::{self, WEARPOS_HAT, WEARPOS_TORSO};
 use api::interact::{self, Interactions, SendResult};
-use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
+use api::local_state::{
+    AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode, LocalStatePort,
+    StoreVersion, SubmitReceipt, WriteSettlement,
+};
+use api::prereq_knowledge::{self, Fact, Observation, SessionMemory};
+use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestListEvidenceProvider};
+use api::selected::{ClientRevision, Truth};
+use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
 use client::client::Client;
 use host::Pump;
 use host_play::{mint_live_entries, mint_live_names, ProfileOptions, SharedClientTemplate};
 use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{find_with, FindOptions, Leg, Route, RouteError};
 use nav_planner::transport::{TransportEdge, TransportKind};
 use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
+use parking_lot::Mutex;
+use script::local_state::{SlotState, StatePort};
+use script::native::{NativeTick, PrereqAllow, Script, ScriptFailure, ScriptFlow};
+use script::quest_journal::{JournalMachine, ROOT_289, TITLE_289};
+use script::quester::prereq::run::{PrereqBudget, PrereqRun, RunEntry};
 use serde::Serialize;
 use serde_json::{json, Value};
+use vault::{Profile, ProfileSettings};
 
 const ORIGIN: WorldTile = WorldTile {
     x: 3016,
@@ -80,8 +96,8 @@ fn live_profile_options() -> ProfileOptions {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         cache_dir: Some(required_path("BOT_CACHE_DIR")),
         unpack_dir: Some(required_path("BOT_NAV_SNAPSHOT_ROOT")),
         engine_dir: Some(required_path("WORLD_ENGINE_DIR")),
@@ -278,13 +294,19 @@ fn endpoint_observed_after(
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_QUEST_DOORS_EVIDENCE, and BOT_LIVE_NAME_PREFIX=nd"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, disposable HOME, BOT_CACHE_DIR, BOT_NAV_SNAPSHOT_ROOT, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_QUEST_DOORS_EVIDENCE, and an owned three-character BOT_LIVE_NAME_PREFIX"]
 fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     assert!(std::env::var_os("HOME").is_some(), "set a disposable HOME");
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("BOT_LIVE_NAME_PREFIX");
-    assert_eq!(prefix, "nd", "use this cell's account namespace");
+    assert!(
+        prefix.len() == 3 && prefix.bytes().all(|byte| byte.is_ascii_lowercase()),
+        "use an owned three-character lowercase account namespace"
+    );
     let evidence_root = required_path("NAV_QUEST_DOORS_EVIDENCE");
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -304,7 +326,7 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
     let mut receipt = json!({
         "scenario": "black-knights-fortress-disguise-and-secret-wall",
         "account": account,
-        "server": {"host": "127.0.0.1", "game_port": 44594, "http_port": 1080},
+        "server": {"host": "127.0.0.1", "game_port": host_play::live_ports::game_port(), "http_port": host_play::live_ports::http_port()},
         "profile": "local-289",
         "origin": ORIGIN,
         "inventory_only_target": INVENTORY_ONLY_TARGET,
@@ -338,7 +360,6 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         world.collision.standable(DESTINATION),
         "the proof destination must be a real stand, not the adjacent ladder's blocked anchor"
     );
-    let identity = profile.nav_identity().expect("navigation identity");
     let data =
         game_data::for_revision(client::io::ClientRevision::R289).expect("selected R289 game data");
     let helm = data
@@ -360,10 +381,7 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
     assert_eq!(guard.id, 2337);
     assert_eq!(secret_wall.id, 2341);
     receipt["engine_loaded"] = json!(true);
-    receipt["nav_identity"] = json!({
-        "pack_format": nav_planner::pack::FORMAT_ID,
-        "nav_sha256": identity.nav_sha256,
-    });
+    receipt["pack_format"] = json!(nav_planner::pack::FORMAT_ID);
     receipt["selected_facts"] = json!({
         "helmet": {"alias": HELM_ALIAS, "id": helm.id, "wear_position": helm.wear_position},
         "chainbody": {"alias": CHAINBODY_ALIAS, "id": chainbody.id, "wear_position": chainbody.wear_position},
@@ -856,4 +874,1481 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         logout_observed,
         "successful explicit logout was not observed: {receipt}"
     );
+}
+
+fn run_brimhaven_black_arm_kitchen_refusal() {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    assert_eq!(std::env::var("BOT_LIVE_NAME_PREFIX").as_deref(), Ok("npr2"));
+    let evidence = required_path("NAV_KITCHEN_EVIDENCE");
+    fs::create_dir_all(&evidence).unwrap();
+    let serial = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let (account, password) = mint_live_entries(&mint_live_names(1)).pop().unwrap();
+    let mut options = live_profile_options();
+    options.port = Some(47594);
+    options.http_port = Some(3080);
+    let profile = options.resolve(None).unwrap().bind().unwrap();
+    let template = SharedClientTemplate::load(profile).unwrap();
+    let world = template.world().unwrap();
+    let edge = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.loc_id == 2628
+                && edge
+                    .crossing_id()
+                    .is_some_and(|crossing| crossing.takeoff.z == 3190)
+        })
+        .expect("qualified kitchen door")
+        .clone();
+    let crossing = edge.crossing_id().expect("kitchen door crossing identity");
+    let mut client = template
+        .prepare_client((serial % i32::MAX as u128) as i32, true)
+        .unwrap();
+    client.draw = false;
+    client.maininit();
+    assert!(!client.error_loading);
+    assert!(interact::login(&mut client, &account, &password, false));
+    let mut snapshot = GameSnapshot::new();
+    let mut pump = Pump::new();
+    let result = (|| -> Result<Value, String> {
+        if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+            s.ingame() && s.attached() && s.scene_state() == 2
+        }) {
+            return Err("initial scene timeout".into());
+        }
+        interact::mainland_hop(&mut client);
+        assert!(interact::cheat(&mut client, "getvar tutorial").is_sent());
+        if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+            s.chat_lines()
+                .iter()
+                .any(|line| line.text.contains("get tutorial: 1000"))
+        }) {
+            return Err("tutorial seed timeout".into());
+        }
+        if !logout_and_wait(&mut client, &mut snapshot, &mut pump) {
+            return Err("tutorial logout timeout".into());
+        }
+        if !interact::login(&mut client, &account, &password, false) {
+            return Err("tutorial relog refused".into());
+        }
+        if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+            s.ingame() && s.attached() && s.scene_state() == 2
+        }) {
+            return Err("relogin scene timeout".into());
+        }
+        // Account-local seeds only. Never create, replace, or open the world loc.
+        // quest_hero.constant:4 and quest.constant:7-8 define these stages.
+        let hero = 15;
+        let gang = 0;
+        let black_arm = 4;
+        for (varp, value) in [
+            ("tutorial", scenario::tutorial::TUTORIAL_COMPLETE),
+            ("heroquest", hero),
+            ("phoenixgang", gang),
+            ("blackarmgang", black_arm),
+        ] {
+            let mark = snapshot
+                .chat_lines()
+                .iter()
+                .map(|line| line.sequence)
+                .max()
+                .unwrap_or(0);
+            for command in [format!("setvar {varp} {value}"), format!("getvar {varp}")] {
+                if !interact::cheat(&mut client, &command).is_sent() {
+                    return Err(format!("seed refused: {command}"));
+                }
+            }
+            let expected = format!("get {varp}: {value}");
+            if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+                s.chat_lines()
+                    .iter()
+                    .any(|line| line.sequence > mark && line.text.contains(&expected))
+            }) {
+                return Err(format!("missing fresh server witness: {expected}"));
+            }
+        }
+        interact::seed_at(
+            &mut client,
+            crossing.takeoff.level,
+            crossing.takeoff.x,
+            crossing.takeoff.z,
+        );
+        if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+            s.tile()
+                == Some((
+                    crossing.takeoff.x,
+                    crossing.takeoff.z,
+                    crossing.takeoff.level,
+                ))
+                && s.scene_state() == 2
+                && s.locs()
+                    .iter()
+                    .any(|loc| loc.id == 2628 && loc.tile == crossing.at)
+        }) {
+            return Err("kitchen stand or real door absent".into());
+        }
+        let before_tick = snapshot.tick();
+        let mark = snapshot
+            .chat_lines()
+            .iter()
+            .map(|line| line.sequence)
+            .max()
+            .unwrap_or(0);
+        let loc = snapshot
+            .locs()
+            .iter()
+            .find(|loc| loc.id == 2628 && loc.tile == crossing.at)
+            .unwrap();
+        let sent = matches!(
+            Interactions::new(&snapshot, &mut client).interact(
+                api::interact::OpTarget::Loc(loc),
+                api::interact::ActionSpec::Label("Open".into()),
+            ),
+            SendResult::Sent { .. }
+        );
+        if !sent {
+            return Err("real Open interaction refused by client".into());
+        }
+        let settled = wait_for(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            Duration::from_secs(20),
+            |s| {
+                s.tick() > before_tick
+                    && s.chat_lines().iter().any(|line| {
+                        line.sequence > mark
+                            && line.text.contains("This door seems to be locked...")
+                    })
+            },
+        );
+        let refused = snapshot.chat_lines().iter().any(|line| {
+            line.sequence > mark && line.text.contains("This door seems to be locked...")
+        });
+        let remained = snapshot.tile()
+            == Some((
+                crossing.takeoff.x,
+                crossing.takeoff.z,
+                crossing.takeoff.level,
+            ));
+        let correct = settled && refused && remained;
+        let receipt = json!({
+            "account": account,
+            "scenario": "black-arm-gang-refusal",
+            "server": "Engine L through chardonnay 127.0.0.1:47594",
+            "seeded": {
+                "heroquest_188": hero,
+                "phoenixgang_146": gang,
+                "blackarmgang_145": black_arm,
+            },
+            "seed_authority": "fresh server getvar replies",
+            "crossing": crossing,
+            "before_tick": before_tick,
+            "after_tick": snapshot.tick(),
+            "after_tile": snapshot.tile(),
+            "fresh_refusal": refused,
+            "correct": correct,
+            "chat": snapshot
+                .chat_lines()
+                .iter()
+                .map(|line| (&line.text, line.sequence))
+                .collect::<Vec<_>>(),
+        });
+        if !correct {
+            return Err(format!("wrong kitchen result: {receipt}"));
+        }
+        Ok(receipt)
+    })();
+    let logout = logout_and_wait(&mut client, &mut snapshot, &mut pump);
+    if !logout {
+        client.logout();
+    }
+    let receipt = json!({ "result": result, "logout_observed": logout });
+    write_receipt(
+        &evidence.join(format!("kitchen-black-arm-{account}-{serial}.json")),
+        &receipt,
+    );
+    println!("KITCHEN_LIVE {receipt}");
+    assert!(logout, "live account must log out");
+    assert!(result.is_ok(), "kitchen live proof failed: {receipt}");
+}
+
+struct NoStore;
+
+impl LocalStatePort for NoStore {
+    fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+        Err(ErrorCode::NotReady {
+            domain: identity.domain(),
+        })
+    }
+
+    fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+        SubmitReceipt::Refused(ErrorCode::Busy {
+            domain: edit.identity().domain(),
+        })
+    }
+
+    fn observe(&self, _: api::identity::RequestId) -> Option<WriteSettlement> {
+        None
+    }
+}
+
+impl StatePort for NoStore {
+    fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+        self.lease(identity).map(|lease| lease.version())
+    }
+}
+
+fn evidence_stamp_json(stamp: EvidenceStamp) -> Value {
+    json!({
+        "run": {
+            "slot": stamp.run.slot,
+            "run": stamp.run.run,
+            "session": stamp.run.session,
+        },
+        "tick": stamp.tick,
+        "sequence": stamp.sequence,
+    })
+}
+
+fn refresh_journal_attempt_receipts<'a>(
+    records: &mut Vec<Value>,
+    run: usize,
+    gate: &Value,
+    attempts: impl IntoIterator<Item = (u8, u64, Option<u64>, Option<&'a str>)>,
+) {
+    let this_run = json!(run);
+    records.retain(|record| record.get("run") != Some(&this_run));
+    records.extend(
+        attempts
+            .into_iter()
+            .map(|(attempt, started_tick, terminal_tick, failure)| {
+                json!({
+                    "run": run,
+                    "gate": gate,
+                    "attempt": attempt,
+                    "started_tick": started_tick,
+                    "terminal_tick": terminal_tick,
+                    "failure": failure,
+                })
+            }),
+    );
+}
+
+#[test]
+fn journal_attempt_receipts_keep_timeout_retry_and_last_error() {
+    let gate = json!({"quest": "phoenixgang"});
+    let mut records = Vec::new();
+    refresh_journal_attempt_receipts(&mut records, 1, &gate, [(1, 1, None, None)]);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["started_tick"], 1);
+    assert!(records[0]["terminal_tick"].is_null());
+    assert!(records[0]["failure"].is_null());
+
+    let timeout = (1, 1, Some(6), Some("journal modal timeout"));
+    let retry = (2, 7, None, None);
+    for _ in 0..2 {
+        refresh_journal_attempt_receipts(&mut records, 1, &gate, [timeout, retry]);
+        assert_eq!(
+            records.len(),
+            2,
+            "a repeated sample does not duplicate attempts"
+        );
+        assert_eq!(records[0]["terminal_tick"], 6);
+        assert_eq!(records[0]["failure"], "journal modal timeout");
+        assert_eq!(records[1]["attempt"], 2);
+        assert_eq!(records[1]["started_tick"], 7);
+        assert!(records[1]["terminal_tick"].is_null());
+    }
+    refresh_journal_attempt_receipts(
+        &mut records,
+        1,
+        &gate,
+        [
+            timeout,
+            (
+                2,
+                7,
+                Some(8),
+                Some("the native action failed: journal click refused"),
+            ),
+        ],
+    );
+    assert_eq!(records[1]["terminal_tick"], 8);
+    assert_eq!(
+        records[1]["failure"],
+        "the native action failed: journal click refused"
+    );
+
+    refresh_journal_attempt_receipts(
+        &mut records,
+        2,
+        &gate,
+        [(1, 10, Some(10), Some("journal facts are not prepared"))],
+    );
+    assert_eq!(
+        records.len(),
+        3,
+        "the same gate's earlier run stays recorded"
+    );
+    assert_eq!(records[2]["run"], 2);
+    assert_eq!(records[2]["started_tick"], records[2]["terminal_tick"]);
+    assert_eq!(records[2]["failure"], "journal facts are not prepared");
+
+    refresh_journal_attempt_receipts(
+        &mut records,
+        3,
+        &gate,
+        [(1, 12, Some(13), Some("the native action was cancelled"))],
+    );
+    assert_eq!(records[3]["failure"], "the native action was cancelled");
+    refresh_journal_attempt_receipts(&mut records, 4, &gate, [(1, 14, Some(15), None)]);
+    assert_eq!(records.len(), 5);
+    assert_eq!(records[4]["terminal_tick"], 15);
+    assert!(
+        records[4]["failure"].is_null(),
+        "a completed attempt has no error"
+    );
+    assert!(records.iter().all(|record| record["gate"] == gate));
+    assert_eq!(records[0]["run"], 1);
+    assert_eq!(records[1]["run"], 1);
+}
+
+#[derive(Default)]
+struct NativePrereqReport {
+    finished: bool,
+    attempts: Vec<Value>,
+    journal_attempts: Vec<Value>,
+    unsupported: Vec<Value>,
+    journal_pages: Vec<LiveJournalPage>,
+    error: Option<String>,
+    current_stamp: Option<EvidenceStamp>,
+}
+
+struct KitchenPrereqScript {
+    remaining: Vec<api::prereq_steps::ActionableGate>,
+    active: Option<(api::prereq_steps::ActionableGate, PrereqRun)>,
+    /// PrereqRuns begun so far. Each run's journal attempts carry its number, so
+    /// a second run for the same gate never replaces the first run's records.
+    runs_started: usize,
+    budget: PrereqBudget,
+    report: Arc<Mutex<NativePrereqReport>>,
+    open_page: Option<EvidenceStamp>,
+}
+impl Script for KitchenPrereqScript {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        let stamp = tick.cx.evidence();
+        {
+            let snapshot = tick.cx.snapshot();
+            if let Some(page) = snapshot.journal_widgets(ROOT_289, TITLE_289) {
+                let acquired = page.stamp;
+                let mut report = self.report.lock();
+                if report
+                    .journal_pages
+                    .iter()
+                    .all(|captured| captured.acquired != acquired)
+                {
+                    report.journal_pages.push(LiveJournalPage {
+                        title: page.value.title.to_string(),
+                        lines: page.value.lines().map(str::to_owned).collect(),
+                        acquired,
+                        closed: None,
+                    });
+                }
+                self.open_page = Some(acquired);
+            } else if self.open_page.is_some() {
+                if let Some(modal) = snapshot
+                    .main_modal()
+                    .filter(|modal| modal.value.root == -1 && modal.value.texts.is_empty())
+                {
+                    record_journal_close(&mut self.report.lock(), &mut self.open_page, modal.stamp);
+                }
+            }
+        }
+        let Some(state) = tick.state else {
+            let mut report = self.report.lock();
+            report.finished = true;
+            report.error = Some("native prerequisite tick has no session state".into());
+            report.current_stamp = Some(stamp);
+            return Ok(ScriptFlow::Complete);
+        };
+
+        if let Some((gate, mut run)) = self.active.take() {
+            let result = run.poll(tick.actions, &mut tick.cx, Some(state), &mut self.budget);
+            refresh_journal_attempt_receipts(
+                &mut self.report.lock().journal_attempts,
+                self.runs_started,
+                &json!(&gate),
+                run.journal_attempts(),
+            );
+            match result {
+                Poll::Pending => {
+                    self.active = Some((gate, run));
+                    return Ok(ScriptFlow::Continue);
+                }
+                Poll::Ready(Ok(done)) => {
+                    self.report.lock().attempts.push(json!({
+                        "gate": gate,
+                        "crossed": done.crossed,
+                    }));
+                    if done.crossed {
+                        let mut report = self.report.lock();
+                        report.finished = true;
+                        report.error =
+                            Some("journal prerequisite unexpectedly crossed the door".into());
+                        report.current_stamp = Some(stamp);
+                        report.unsupported =
+                            self.remaining.iter().map(|gate| json!(gate)).collect();
+                        return Ok(ScriptFlow::Complete);
+                    }
+                }
+                Poll::Ready(Err(error)) => {
+                    let mut report = self.report.lock();
+                    report.finished = true;
+                    report.error = Some(format!("{error:?}"));
+                    report.current_stamp = Some(stamp);
+                    report.unsupported = self.remaining.iter().map(|gate| json!(gate)).collect();
+                    return Ok(ScriptFlow::Complete);
+                }
+            }
+        }
+
+        let entry = RunEntry::NeedsStep;
+        let Some(gate) = PrereqRun::first_supported(&self.remaining, &entry, &tick.cx) else {
+            let mut report = self.report.lock();
+            report.finished = true;
+            report.current_stamp = Some(stamp);
+            report.unsupported = self.remaining.iter().map(|gate| json!(gate)).collect();
+            return Ok(ScriptFlow::Complete);
+        };
+        self.remaining.retain(|candidate| candidate != &gate);
+        self.runs_started += 1;
+        self.active = Some((
+            gate.clone(),
+            PrereqRun::begin(gate, entry, PrereqAllow::default()),
+        ));
+        Ok(ScriptFlow::Continue)
+    }
+}
+
+#[derive(Clone)]
+struct LiveJournalPage {
+    title: String,
+    lines: Vec<String>,
+    acquired: EvidenceStamp,
+    closed: Option<EvidenceStamp>,
+}
+
+fn record_journal_close(
+    report: &mut NativePrereqReport,
+    open_page: &mut Option<EvidenceStamp>,
+    closed: EvidenceStamp,
+) {
+    let Some(acquired) = *open_page else {
+        return;
+    };
+    // An empty modal may retain the page's stamp before the next observed
+    // snapshot. Keep tracking this page until the existing strict oracle
+    // can distinguish its close from that stale observation.
+    if closed.run != acquired.run
+        || (closed.tick, closed.sequence) <= (acquired.tick, acquired.sequence)
+    {
+        return;
+    }
+    if let Some(page) = report
+        .journal_pages
+        .iter_mut()
+        .find(|page| page.acquired == acquired)
+    {
+        page.closed = Some(closed);
+        *open_page = None;
+    }
+}
+
+#[test]
+fn kitchen_journal_observer_retains_a_stale_close_until_fresh_evidence() {
+    let acquired = EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 2,
+        sequence: 2,
+    };
+    for closed in [
+        EvidenceStamp {
+            sequence: 3,
+            ..acquired
+        },
+        EvidenceStamp {
+            tick: 3,
+            sequence: 3,
+            ..acquired
+        },
+    ] {
+        let mut report = NativePrereqReport {
+            journal_pages: vec![LiveJournalPage {
+                title: "Shield of Arrav".into(),
+                lines: Vec::new(),
+                acquired,
+                closed: None,
+            }],
+            ..NativePrereqReport::default()
+        };
+        let mut open_page = Some(acquired);
+        for stale in [
+            acquired,
+            EvidenceStamp {
+                tick: 1,
+                sequence: 1,
+                ..acquired
+            },
+            EvidenceStamp {
+                run: api::selected::RunKey {
+                    session: 2,
+                    ..acquired.run
+                },
+                ..closed
+            },
+        ] {
+            record_journal_close(&mut report, &mut open_page, stale);
+            assert_eq!(open_page, Some(acquired));
+            assert_eq!(report.journal_pages[0].closed, None);
+        }
+        record_journal_close(&mut report, &mut open_page, closed);
+        assert_eq!(open_page, None);
+        assert_eq!(report.journal_pages[0].closed, Some(closed));
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KitchenFrameCommand {
+    Idle,
+    Open,
+    Logout,
+}
+
+struct KitchenFrameControl {
+    command: KitchenFrameCommand,
+    crossing: api::prereq_steps::CrossingId,
+    crossing_pending: Option<(u32, i32)>,
+    crossing_result: Option<Value>,
+    logout_sent: bool,
+    logout_observed: bool,
+}
+
+impl KitchenFrameControl {
+    fn new(crossing: api::prereq_steps::CrossingId) -> Self {
+        Self {
+            command: KitchenFrameCommand::Idle,
+            crossing,
+            crossing_pending: None,
+            crossing_result: None,
+            logout_sent: false,
+            logout_observed: false,
+        }
+    }
+}
+
+fn observe_kitchen_frame(
+    client: &mut Client,
+    username: &str,
+    account: &str,
+    input: host_play::SlotFrameInput,
+    snapshot: &mut GameSnapshot,
+    control: &Mutex<KitchenFrameControl>,
+) {
+    if username != account {
+        return;
+    }
+    client.draw = false;
+    snapshot.rebuild(client);
+    let mut control = control.lock();
+
+    if let Some((before_tick, mark)) = control.crossing_pending {
+        let destination = (
+            control.crossing.to.x,
+            control.crossing.to.z,
+            control.crossing.to.level,
+        );
+        let arrived = snapshot.tile() == Some(destination);
+        let refusal = snapshot.chat_lines().iter().find(|line| {
+            line.sequence > mark && line.text.contains("This door seems to be locked...")
+        });
+        if snapshot.tick() > before_tick && (arrived || refusal.is_some()) {
+            control.crossing_result = Some(json!({
+                "before_tick": before_tick,
+                "after_tick": snapshot.tick(),
+                "before_tile": control.crossing.takeoff,
+                "after_tile": snapshot.tile(),
+                "refused": refusal.is_some(),
+                "refusal": refusal.map(|line| (&line.text, line.sequence)),
+                "correct": arrived && refusal.is_none(),
+                "chat": snapshot.chat_lines().iter()
+                    .map(|line| (&line.text, line.sequence))
+                    .collect::<Vec<_>>(),
+            }));
+            control.crossing_pending = None;
+        }
+    }
+
+    match control.command {
+        KitchenFrameCommand::Idle => {}
+        KitchenFrameCommand::Open => {
+            if input.hold
+                || input.host_move_owned
+                || snapshot.tile()
+                    != Some((
+                        control.crossing.takeoff.x,
+                        control.crossing.takeoff.z,
+                        control.crossing.takeoff.level,
+                    ))
+            {
+                return;
+            }
+            let Some(loc) = snapshot
+                .locs()
+                .iter()
+                .find(|loc| loc.id == 2628 && loc.tile == control.crossing.at)
+            else {
+                control.crossing_result = Some(json!({
+                    "correct": false,
+                    "error": "real kitchen door absent at planned crossing",
+                    "tick": snapshot.tick(),
+                    "tile": snapshot.tile(),
+                }));
+                control.command = KitchenFrameCommand::Idle;
+                return;
+            };
+            let mark = snapshot
+                .chat_lines()
+                .iter()
+                .map(|line| line.sequence)
+                .max()
+                .unwrap_or(0);
+            let before_tick = snapshot.tick();
+            let sent = matches!(
+                Interactions::new(snapshot, client).interact(
+                    api::interact::OpTarget::Loc(loc),
+                    api::interact::ActionSpec::Label("Open".into()),
+                ),
+                SendResult::Sent { .. }
+            );
+            if sent {
+                control.crossing_pending = Some((before_tick, mark));
+            } else {
+                control.crossing_result = Some(json!({
+                    "correct": false,
+                    "error": "real Open interaction refused by client",
+                    "tick": before_tick,
+                    "tile": snapshot.tile(),
+                }));
+            }
+            control.command = KitchenFrameCommand::Idle;
+        }
+        KitchenFrameCommand::Logout => {
+            if snapshot.ingame() && !control.logout_sent {
+                let ifaces = Arc::clone(&client.ifaces);
+                if !interact::logout(client, &ifaces) {
+                    client.logout();
+                }
+                control.logout_sent = true;
+            } else if control.logout_sent && !snapshot.ingame() {
+                control.logout_observed = true;
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SessionAndOrdinaryEvidence {
+    memory: SessionMemory,
+    ordinary: QuestListEvidenceProvider,
+}
+
+impl EvidenceProvider for SessionAndOrdinaryEvidence {
+    fn observe_gate(
+        &self,
+        gate: &api::selected::QuestGate,
+        required_after: EvidenceStamp,
+    ) -> Option<Observation> {
+        Some(prereq_knowledge::compose(
+            gate,
+            required_after,
+            &self.memory,
+            None,
+            &self.ordinary,
+        ))
+    }
+}
+
+fn wait_for_play_tile(
+    play: &host_play::Play,
+    account: &str,
+    tile: WorldTile,
+    timeout: Duration,
+) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if play.statuses().into_iter().any(|row| {
+            row.username == account
+                && row.ingame
+                && row.scene_state == 2
+                && row.tile_x == tile.x
+                && row.tile_z == tile.z
+                && row.tile_level == tile.level
+        }) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn wait_for_native_prereq(play: &host_play::Play, account: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if play
+            .script_lifecycle_receipt(account)
+            .is_some_and(|receipt| {
+                matches!(
+                    receipt.state,
+                    script::ScriptTerminalState::Completed | script::ScriptTerminalState::Failed
+                )
+            })
+        {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn wait_for_kitchen_crossing(
+    control: &Mutex<KitchenFrameControl>,
+    timeout: Duration,
+) -> Option<Value> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(result) = control.lock().crossing_result.clone() {
+            return Some(result);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn page_receipt(page: &LiveJournalPage) -> Value {
+    json!({
+        "title": &page.title,
+        "text": &page.lines,
+        "acquired": evidence_stamp_json(page.acquired),
+        "closed": page.closed.map(evidence_stamp_json),
+    })
+}
+
+fn fact_receipt(fact: &Fact) -> Value {
+    let source = match &fact.source {
+        api::prereq_knowledge::FactSource::Page { row, line } => {
+            json!({"kind": "page", "row": row, "rule": line})
+        }
+        api::prereq_knowledge::FactSource::Crossing {
+            loc_id,
+            option,
+            passed,
+        } => json!({"kind": "crossing", "loc_id": loc_id, "option": option, "passed": passed}),
+        api::prereq_knowledge::FactSource::Refusal { row, entry } => {
+            json!({"kind": "refusal", "row": row, "entry": entry})
+        }
+    };
+    json!({
+        "quest": &fact.quest,
+        "signal": &fact.signal,
+        "possible": fact.possible,
+        "after": fact.after,
+        "refused": fact.refused,
+        "source": source,
+        "observed": evidence_stamp_json(fact.observed),
+    })
+}
+fn seed_phoenix_kitchen_account(
+    template: &SharedClientTemplate,
+    uid: i32,
+    account: &str,
+    password: &str,
+    crossing: api::prereq_steps::CrossingId,
+) -> (Value, bool, Option<String>) {
+    let mut client = match template.prepare_client(uid, true) {
+        Ok(client) => client,
+        Err(error) => {
+            return (json!({"error": error.clone()}), false, Some(error));
+        }
+    };
+    client.draw = false;
+    client.maininit();
+    let mut snapshot = GameSnapshot::new();
+    let mut pump = Pump::new();
+    let seed_result = (|| -> Result<Value, String> {
+        if client.error_loading {
+            return Err("seed client failed to load".into());
+        }
+        if !interact::login(&mut client, account, password, false) {
+            return Err("seed account login refused".into());
+        }
+        if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+            s.ingame() && s.attached() && s.scene_state() == 2
+        }) {
+            return Err("initial seed scene timeout".into());
+        }
+        interact::mainland_hop(&mut client);
+        if !interact::cheat(&mut client, "getvar tutorial").is_sent() {
+            return Err("tutorial seed query refused".into());
+        }
+        if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+            s.chat_lines()
+                .iter()
+                .any(|line| line.text.contains("get tutorial: 1000"))
+        }) {
+            return Err("tutorial seed query timeout".into());
+        }
+        if !logout_and_wait(&mut client, &mut snapshot, &mut pump) {
+            return Err("tutorial seed logout timeout".into());
+        }
+        if !interact::login(&mut client, account, password, false) {
+            return Err("tutorial seed relog refused".into());
+        }
+        if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+            s.ingame() && s.attached() && s.scene_state() == 2
+        }) {
+            return Err("seed relog scene timeout".into());
+        }
+
+        // The Phoenix journal branch requires Black Arm to remain unjoined.
+        // Black Arm stage 4 stays the independent refusal case.
+        let seeded = [
+            ("tutorial", scenario::tutorial::TUTORIAL_COMPLETE),
+            ("heroquest", 3),
+            ("phoenixgang", 10),
+            ("blackarmgang", 0),
+        ];
+        for (varp, value) in seeded {
+            let mark = snapshot
+                .chat_lines()
+                .iter()
+                .map(|line| line.sequence)
+                .max()
+                .unwrap_or(0);
+            for command in [format!("setvar {varp} {value}"), format!("getvar {varp}")] {
+                if !interact::cheat(&mut client, &command).is_sent() {
+                    return Err(format!("seed refused: {command}"));
+                }
+            }
+            let expected = format!("get {varp}: {value}");
+            if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+                s.chat_lines()
+                    .iter()
+                    .any(|line| line.sequence > mark && line.text.contains(&expected))
+            }) {
+                return Err(format!("missing fresh server witness: {expected}"));
+            }
+        }
+
+        interact::seed_at(
+            &mut client,
+            crossing.takeoff.level,
+            crossing.takeoff.x,
+            crossing.takeoff.z,
+        );
+        if !wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
+            s.tile()
+                == Some((
+                    crossing.takeoff.x,
+                    crossing.takeoff.z,
+                    crossing.takeoff.level,
+                ))
+                && s.scene_state() == 2
+                && s.locs()
+                    .iter()
+                    .any(|loc| loc.id == 2628 && loc.tile == crossing.at)
+        }) {
+            return Err("kitchen stand or real door absent after account seed".into());
+        }
+        Ok(json!({
+            "seeded": {
+                "heroquest_188": 3,
+                "phoenixgang_146": 10,
+                "blackarmgang_145": 0,
+                "tutorial": scenario::tutorial::TUTORIAL_COMPLETE,
+            },
+            "seed_authority": "fresh server getvar replies",
+            "seed_tile": snapshot.tile(),
+            "seed_tick": snapshot.tick(),
+            "crossing": crossing,
+        }))
+    })();
+
+    let logout = logout_and_wait(&mut client, &mut snapshot, &mut pump);
+    if !logout {
+        client.logout();
+    }
+    let error = seed_result.as_ref().err().cloned();
+    let detail = json!({
+        "result": seed_result.as_ref().ok(),
+        "error": error,
+        "logout_observed": logout,
+    });
+    (detail, logout, error)
+}
+
+struct PhoenixPlayResult {
+    detail: Value,
+    logout_observed: bool,
+    error: Option<String>,
+}
+
+struct PhoenixPlaySetup<'a> {
+    template: Arc<SharedClientTemplate>,
+    selected: Arc<api::game_data::SelectedGameData>,
+    world: Arc<NavWorld>,
+    edge: TransportEdge,
+    account: &'a str,
+    password: &'a str,
+    uid: i32,
+    map_members: bool,
+}
+
+fn run_phoenix_native_and_crossing(
+    setup: PhoenixPlaySetup<'_>,
+    receipt_path: &Path,
+    receipt: &mut Value,
+) -> PhoenixPlayResult {
+    let PhoenixPlaySetup {
+        template,
+        selected,
+        world,
+        edge,
+        account,
+        password,
+        uid,
+        map_members,
+    } = setup;
+    let crossing = edge.crossing_id().expect("qualified kitchen crossing");
+    let snapshot = Arc::new(Mutex::new(GameSnapshot::new()));
+    let control = Arc::new(Mutex::new(KitchenFrameControl::new(crossing)));
+    let frame_snapshot = Arc::clone(&snapshot);
+    let frame_control = Arc::clone(&control);
+    let frame_account = account.to_owned();
+    let vault_profile = Profile {
+        username: account.to_owned(),
+        password: password.to_owned().into(),
+        uid,
+        settings: ProfileSettings::default(),
+    };
+    let mut play = match host_play::run_with_template(
+        template,
+        false,
+        vec![vault_profile],
+        |_| (None, None),
+        move |client, username, input| {
+            let mut snapshot = frame_snapshot.lock();
+            observe_kitchen_frame(
+                client,
+                username,
+                &frame_account,
+                input,
+                &mut snapshot,
+                &frame_control,
+            );
+        },
+    ) {
+        Ok(play) => play,
+        Err(error) => {
+            return PhoenixPlayResult {
+                detail: json!({"startup_error": &error}),
+                logout_observed: false,
+                error: Some(format!("start Engine Q Play: {error}")),
+            };
+        }
+    };
+    play.focus(account);
+
+    let slot_state = Arc::new(SlotState::new(
+        Arc::new(NoStore),
+        match AccountKey::try_new("local-289", account) {
+            Ok(account) => account,
+            Err(error) => {
+                control.lock().command = KitchenFrameCommand::Logout;
+                let deadline = Instant::now() + Duration::from_secs(30);
+                while !control.lock().logout_observed && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                return PhoenixPlayResult {
+                    detail: json!({"state_error": format!("{error:?}")}),
+                    logout_observed: control.lock().logout_observed,
+                    error: Some(format!("invalid slot account key: {error:?}")),
+                };
+            }
+        },
+        match ContentScope::try_new(ClientRevision::R289, "nav-prereq-phoenix-journal") {
+            Ok(scope) => scope,
+            Err(error) => {
+                control.lock().command = KitchenFrameCommand::Logout;
+                let deadline = Instant::now() + Duration::from_secs(30);
+                while !control.lock().logout_observed && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                return PhoenixPlayResult {
+                    detail: json!({"state_error": format!("{error:?}")}),
+                    logout_observed: control.lock().logout_observed,
+                    error: Some(format!("invalid slot content scope: {error:?}")),
+                };
+            }
+        },
+    ));
+
+    let proof = (|| -> Result<Value, String> {
+        if !wait_for_play_tile(&play, account, crossing.takeoff, Duration::from_secs(90)) {
+            return Err(format!(
+                "Engine Q account did not log in at kitchen stand: {:?}",
+                play.statuses()
+                    .into_iter()
+                    .find(|row| row.username == account)
+            ));
+        }
+        let candidates = edge
+            .quest_gates
+            .as_ref()
+            .ok_or_else(|| "qualified kitchen edge has no quest gates".to_owned())?
+            .gates()
+            .iter()
+            .cloned()
+            .map(|gate| api::prereq_steps::ActionableGate {
+                gate,
+                truth: Truth::Unknown,
+                leg: 0,
+                crossing,
+            })
+            .collect::<Vec<_>>();
+        let report = Arc::new(Mutex::new(NativePrereqReport::default()));
+        play.script_start_handle()
+            .start_test_script_with_local_state(
+                account,
+                Box::new(KitchenPrereqScript {
+                    remaining: candidates,
+                    active: None,
+                    runs_started: 0,
+                    budget: PrereqBudget::default(),
+                    report: Arc::clone(&report),
+                    open_page: None,
+                }),
+                Some(Arc::clone(&selected)),
+                Arc::clone(&slot_state),
+            )
+            .map_err(|error| format!("start production PrereqRun: {error:?}"))?;
+        if !wait_for_native_prereq(&play, account, Duration::from_secs(120)) {
+            let memory = slot_state.prereq_snapshot();
+            let report_guard = report.lock();
+            receipt["prerequisite_and_crossing"] = json!({
+                "partial": {
+                    "driver": "script::quester::prereq::run::PrereqRun",
+                    "attempts": &report_guard.attempts,
+                    "journal_attempts": &report_guard.journal_attempts,
+                    "unsupported_gates": &report_guard.unsupported,
+                    "session_memory": memory.facts().iter().map(fact_receipt).collect::<Vec<_>>(),
+                    "journal_pages": report_guard.journal_pages.iter().map(page_receipt).collect::<Vec<_>>(),
+                    "journal_attempts": &report_guard.journal_attempts,
+                },
+                "error": "production prerequisite journal run timed out",
+            });
+            write_receipt(receipt_path, receipt);
+            drop(report_guard);
+            play.script_stop(account);
+            return Err("production prerequisite journal run timed out".into());
+        }
+        let lifecycle = play.script_lifecycle_receipt(account);
+        let (
+            attempts,
+            journal_attempts,
+            unsupported,
+            pages,
+            report_error,
+            report_finished,
+            current_stamp,
+        ) = {
+            let report = report.lock();
+            (
+                report.attempts.clone(),
+                report.journal_attempts.clone(),
+                report.unsupported.clone(),
+                report.journal_pages.clone(),
+                report.error.clone(),
+                report.finished,
+                report.current_stamp,
+            )
+        };
+
+        let memory = slot_state.prereq_snapshot();
+        let page_facts = memory
+            .facts()
+            .iter()
+            .filter(|fact| matches!(&fact.source, api::prereq_knowledge::FactSource::Page { .. }))
+            .collect::<Vec<_>>();
+        let mut detail = json!({
+            "driver": "script::quester::prereq::run::PrereqRun",
+            "journal_machine": std::any::type_name::<JournalMachine>(),
+            "attempts": &attempts,
+            "journal_attempts": &journal_attempts,
+            "unsupported_gates": &unsupported,
+            "session_memory": memory.facts().iter().map(fact_receipt).collect::<Vec<_>>(),
+            "journal_pages": pages.iter().map(page_receipt).collect::<Vec<_>>(),
+            "runner_stamp": current_stamp.map(evidence_stamp_json),
+            "lifecycle_state": lifecycle.as_ref().map(|receipt| format!("{:?}", receipt.state)),
+            "read_count": pages.len(),
+            "close_count": pages.iter().filter(|page| page.closed.is_some()).count(),
+        });
+        receipt["prerequisite_and_crossing"] = json!({"proof": detail.clone()});
+        write_receipt(receipt_path, receipt);
+
+        let lifecycle = lifecycle
+            .ok_or_else(|| "production prerequisite lifecycle receipt absent".to_owned())?;
+        if lifecycle.state != script::ScriptTerminalState::Completed {
+            return Err(format!(
+                "production prerequisite script ended in {:?}",
+                lifecycle.state
+            ));
+        }
+        if let Some(error) = report_error {
+            return Err(format!("production PrereqRun refused: {error}"));
+        }
+        if !report_finished {
+            return Err("production prerequisite script ended without a settled report".into());
+        }
+        let current_stamp = current_stamp
+            .ok_or_else(|| "production prerequisite report lacks its live stamp".to_owned())?;
+        if attempts.len() != 2 || pages.len() != attempts.len() {
+            return Err(format!(
+                "expected one Hero and one Shield journal read, got attempts={} pages={}",
+                attempts.len(),
+                pages.len()
+            ));
+        }
+        if journal_attempts.len() < pages.len()
+            || journal_attempts
+                .iter()
+                .any(|attempt| attempt["terminal_tick"].is_null())
+        {
+            return Err("a journal attempt lacks its terminal outcome".into());
+        }
+        if pages.iter().any(|page| match page.closed {
+            None => true,
+            Some(closed) => {
+                closed.run != page.acquired.run
+                    || (closed.tick, closed.sequence)
+                        <= (page.acquired.tick, page.acquired.sequence)
+            }
+        }) {
+            return Err("a production journal read lacks a later close stamp".into());
+        }
+        if page_facts.len() != attempts.len() {
+            return Err(format!(
+                "expected one session Page fact per journal read, got facts={} reads={}",
+                page_facts.len(),
+                attempts.len()
+            ));
+        }
+        for page in &pages {
+            let normalized = page.title.strip_prefix("@dre@").unwrap_or(&page.title);
+            if !["Heroes' Quest", "Shield of Arrav"]
+                .iter()
+                .any(|expected| normalized.trim().eq_ignore_ascii_case(expected))
+            {
+                return Err(format!(
+                    "unexpected production journal page: {}",
+                    page.title
+                ));
+            }
+        }
+        let has_page = |expected: &str| {
+            pages.iter().any(|page| {
+                let normalized = page.title.strip_prefix("@dre@").unwrap_or(&page.title);
+                normalized.trim().eq_ignore_ascii_case(expected)
+            })
+        };
+        if !has_page("Heroes' Quest") || !has_page("Shield of Arrav") {
+            return Err(
+                "the prerequisite attempts did not read both Hero and Shield journals".into(),
+            );
+        }
+        let floor = page_facts
+            .iter()
+            .map(|fact| fact.observed)
+            .min_by_key(|stamp| (stamp.tick, stamp.sequence))
+            .ok_or_else(|| "production journal pages recorded no session facts".to_owned())?;
+        let quests = selected
+            .try_quests()
+            .ok_or_else(|| "selected quest catalog was not prepared".to_owned())?;
+        let snapshot_guard = snapshot.lock();
+        let ordinary = QuestListEvidenceProvider::from_snapshot(
+            &quests,
+            SnapshotView::new(Some(&snapshot_guard), current_stamp),
+        );
+        let evidence = QuestEvidence::new(
+            Arc::new(SessionAndOrdinaryEvidence {
+                memory: memory.clone(),
+                ordinary: ordinary.clone(),
+            }),
+            floor,
+        );
+        let state = WorldState::from_snapshot(&snapshot_guard)
+            .with_map_members(map_members)
+            .with_quest_evidence(evidence);
+        let quest_truth = state.quest_gates(&edge);
+        let gate_checks = edge
+            .quest_gates
+            .as_ref()
+            .expect("edge quest gates checked above")
+            .gates()
+            .iter()
+            .map(|gate| {
+                json!({
+                    "gate": gate,
+                    "ordinary": format!("{:?}", ordinary.test_gate(gate, floor)),
+                    "combined": format!("{:?}", prereq_knowledge::compose(
+                        gate, floor, &memory, None, &ordinary
+                    ).truth),
+                })
+            })
+            .collect::<Vec<_>>();
+        if quest_truth != Truth::True {
+            return Err(format!(
+                "journal session memory did not prove every kitchen gate: {gate_checks:?}"
+            ));
+        }
+        let route = find_route(&world, crossing.takeoff, crossing.to, &state)
+            .map_err(|error| format!("planner route failed after journal evidence: {error:?}"))?;
+        let planned = planned_edge(&route, 2628, crossing.at)
+            .ok_or_else(|| "planner route omitted kitchen loc 2628".to_owned())?;
+        if planned.crossing_id() != Some(crossing) {
+            return Err("planner selected a different directed kitchen crossing".into());
+        }
+        let plan = json!({
+            "gate_truth": format!("{quest_truth:?}"),
+            "gate_checks": gate_checks,
+            "loc_id": planned.loc_id,
+            "crossing": planned.crossing_id(),
+            "route_legs": route.legs.iter().map(|leg| match leg {
+                Leg::Walk { tiles } => json!({"kind": "walk", "tiles": tiles}),
+                Leg::Transport { edge } => json!({
+                    "kind": "transport",
+                    "loc_id": edge.loc_id,
+                    "at": edge.at,
+                    "to": edge.to,
+                }),
+            }).collect::<Vec<_>>(),
+        });
+        detail["plan"] = plan;
+        receipt["prerequisite_and_crossing"] = json!({"proof": detail.clone()});
+        write_receipt(receipt_path, receipt);
+        drop(snapshot_guard);
+
+        control.lock().command = KitchenFrameCommand::Open;
+        let crossing_result = wait_for_kitchen_crossing(&control, Duration::from_secs(30))
+            .unwrap_or_else(|| {
+                let snapshot = snapshot.lock();
+                json!({
+                    "correct": false,
+                    "error": "timed out waiting for real kitchen crossing",
+                    "tick": snapshot.tick(),
+                    "tile": snapshot.tile(),
+                })
+            });
+        detail["movement"] = crossing_result.clone();
+        receipt["prerequisite_and_crossing"] = json!({"proof": detail.clone()});
+        write_receipt(receipt_path, receipt);
+        if crossing_result["correct"] != Value::Bool(true) {
+            return Err(format!("real kitchen crossing failed: {crossing_result}"));
+        }
+        Ok(detail)
+    })();
+
+    if proof.is_err() && play.script_lifecycle_receipt(account).is_none() {
+        play.script_stop(account);
+    }
+    control.lock().command = KitchenFrameCommand::Logout;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !control.lock().logout_observed && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let logout_observed = control.lock().logout_observed;
+    let (detail, error) = match proof {
+        Ok(proof) => (
+            json!({"proof": proof, "logout_observed": logout_observed}),
+            None,
+        ),
+        Err(error) => (
+            json!({
+                "partial": receipt["prerequisite_and_crossing"].clone(),
+                "error": error.clone(),
+                "logout_observed": logout_observed,
+            }),
+            Some(error),
+        ),
+    };
+    drop(play);
+    PhoenixPlayResult {
+        detail,
+        logout_observed,
+        error,
+    }
+}
+fn run_brimhaven_phoenix_kitchen_journal() {
+    assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("BOT_LIVE_NAME_PREFIX");
+    assert!(
+        prefix.len() == 3 && prefix.bytes().all(|byte| byte.is_ascii_lowercase()),
+        "use an owned three-character lowercase account namespace"
+    );
+    let evidence = required_path("NAV_KITCHEN_EVIDENCE");
+    fs::create_dir_all(&evidence).unwrap();
+    let serial = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let (account, password) = mint_live_entries(&mint_live_names(1)).pop().unwrap();
+    let uid = (serial % i32::MAX as u128) as i32;
+    let receipt_path = evidence.join(format!("kitchen-phoenix-{account}-{serial}.json"));
+    let mut receipt = json!({
+        "account": account,
+        "server": "Engine Q at 127.0.0.1:44694",
+        "seed": null,
+        "prerequisite_and_crossing": null,
+        "logout_observed": false,
+    });
+    write_receipt(&receipt_path, &receipt);
+
+    let mut seed_logout = false;
+    let mut play_logout = false;
+    let setup = (|| -> Result<(), String> {
+        let mut options = live_profile_options();
+        options.port = Some(44694);
+        options.http_port = Some(1180);
+        options.catalog_root = Some(PathBuf::from(
+            "/Users/acfrazier/experiments/lostcity-289/content",
+        ));
+        let profile = options
+            .resolve(None)
+            .map_err(|error| format!("resolve Engine Q profile: {error:?}"))?
+            .bind_runtime()
+            .map_err(|error| format!("bind Engine Q profile: {error:?}"))?;
+        let selected = profile
+            .game_data()
+            .ok_or_else(|| "Engine Q selected game data unavailable".to_owned())?;
+        let template = SharedClientTemplate::load(Arc::clone(&profile))
+            .map_err(|error| format!("load Engine Q client template: {error:?}"))?;
+        if selected.try_quests().is_none() || selected.try_prereq_steps().is_none() {
+            return Err("Engine Q profile did not prepare quest and prerequisite catalogs".into());
+        }
+        let world = template
+            .world()
+            .ok_or_else(|| "qualified WORLD_NAV_PACK is unavailable".to_owned())?;
+        let edge = world
+            .graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.loc_id == 2628
+                    && edge
+                        .crossing_id()
+                        .is_some_and(|crossing| crossing.takeoff.z == 3190)
+            })
+            .ok_or_else(|| "qualified kitchen door loc 2628 is unavailable".to_owned())?
+            .clone();
+        let crossing = edge
+            .crossing_id()
+            .ok_or_else(|| "qualified kitchen edge has no directed crossing".to_owned())?;
+
+        let (seed_detail, observed_logout, seed_error) =
+            seed_phoenix_kitchen_account(&template, uid, &account, &password, crossing);
+        seed_logout = observed_logout;
+        receipt["seed"] = seed_detail;
+        receipt["logout_observed"] = json!(seed_logout);
+        write_receipt(&receipt_path, &receipt);
+        if let Some(error) = seed_error {
+            return Err(error);
+        }
+        if !seed_logout {
+            return Err("seed account did not log out before Engine Q Play".into());
+        }
+
+        let play_result = run_phoenix_native_and_crossing(
+            PhoenixPlaySetup {
+                template,
+                selected,
+                world,
+                edge,
+                account: &account,
+                password: &password,
+                uid,
+                map_members: profile.map_members(),
+            },
+            &receipt_path,
+            &mut receipt,
+        );
+        play_logout = play_result.logout_observed;
+        receipt["prerequisite_and_crossing"] = play_result.detail;
+        receipt["logout_observed"] = json!(seed_logout && play_logout);
+        write_receipt(&receipt_path, &receipt);
+        if let Some(error) = play_result.error {
+            return Err(error);
+        }
+        if !play_logout {
+            return Err("Engine Q account did not log out after journal proof".into());
+        }
+        Ok(())
+    })();
+    let error = setup.err();
+    let logout_observed = seed_logout && play_logout;
+    receipt["logout_observed"] = json!(logout_observed);
+    receipt["result"] = match &error {
+        Some(error) => json!({"ok": false, "error": error}),
+        None => json!({"ok": true}),
+    };
+    write_receipt(&receipt_path, &receipt);
+    println!("KITCHEN_LIVE {receipt}");
+    assert!(
+        logout_observed,
+        "live Phoenix account must log out: {receipt}"
+    );
+    assert!(
+        error.is_none(),
+        "Phoenix journal live proof failed: {receipt}"
+    );
+}
+#[test]
+#[ignore = "requires Engine Q at 127.0.0.1:44694/http1180, LIVE=1, WORLD_NAV_PACK, an owned three-character lowercase BOT_LIVE_NAME_PREFIX, and NAV_KITCHEN_EVIDENCE"]
+fn live_brimhaven_phoenix_kitchen_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    run_brimhaven_phoenix_kitchen_journal();
+}
+
+#[test]
+#[ignore = "requires Engine L, LIVE=1, qualified WORLD_NAV_PACK, own npr2 prefix and NAV_KITCHEN_EVIDENCE"]
+fn live_brimhaven_black_arm_kitchen_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    run_brimhaven_black_arm_kitchen_refusal();
 }

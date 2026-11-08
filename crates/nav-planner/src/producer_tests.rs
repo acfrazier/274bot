@@ -1,14 +1,14 @@
 //! The owner-boundary producers are checked against the storage they wrap
 //! and against the F0 facade semantics they must not change: one identity
-//! per loaded world, `NavLease::wrap` still fresh per call, bound
-//! exemptions equal to the router's `ZoneExempt::contains_zone`.
+//! per loaded world, `NavLease::wrap` reuses it, and bound exemptions equal
+//! the router's `ZoneExempt::contains_zone`.
 
 use std::sync::{Arc, Barrier, Mutex};
 
 use api::snapshot::WorldTile;
 
 use crate::collision::{pack_walk, WorldCollision};
-use crate::contract::{ContractError, NavLease, PackDigest, ZoneKey};
+use crate::contract::{ContractError, NavLease, ZoneKey};
 use crate::router::{AvoidRect, Leg, Route};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind, WildernessRules};
 use crate::world::NavWorld;
@@ -73,7 +73,7 @@ fn zone_world() -> Arc<NavWorld> {
 }
 
 #[test]
-fn one_identity_per_world_and_wrap_stays_fresh() {
+fn one_identity_per_world_is_shared_by_all_leases_and_views() {
     let world = Arc::new(NavWorld::from_parts(
         open_grid(1, 1),
         TransportGraph::default(),
@@ -83,48 +83,12 @@ fn one_identity_per_world_and_wrap_stays_fresh() {
     assert_eq!(identity(&world).unwrap(), first, "minted once");
     assert_eq!(lease(&world).unwrap().identity(), first);
     assert_eq!(collision_view(&world).unwrap().pack(), first.pack());
+    let wrapped = NavLease::wrap(Arc::clone(&world)).unwrap();
+    assert_eq!(wrapped.identity(), first);
     assert_eq!(
-        first.content(),
-        PackDigest::of(&[]),
-        "a synthetic world carries the empty-content digest"
-    );
-    // F0 semantics: every `wrap` is a distinct lease even of this world.
-    let wrapped = NavLease::wrap(Arc::clone(&world), PackDigest::of(b"x")).unwrap();
-    assert_ne!(wrapped.identity().pack(), first.pack());
-    assert_eq!(identity(&world).unwrap(), first, "wrap never rebinds");
-}
-
-#[test]
-fn bind_records_the_pack_digest_once() {
-    let world = Arc::new(NavWorld::from_parts(
-        open_grid(1, 1),
-        TransportGraph::default(),
-        Vec::new(),
-    ));
-    let content = PackDigest::of(b"pack bytes");
-    let bound = bind(&world, content).unwrap();
-    assert_eq!(bound.content(), content);
-    assert_eq!(bind(&world, content).unwrap(), bound);
-    assert_eq!(
-        bind(&world, PackDigest::of(b"other bytes")).unwrap_err(),
-        ContractError::PackMismatch
-    );
-    assert_eq!(identity(&world).unwrap(), bound);
-    assert_eq!(lease(&world).unwrap().identity(), bound);
-}
-
-#[test]
-fn from_bytes_records_the_bytes_digest() {
-    // Literal legacy grid: version 1, origin zero, 3×3 walk bytes, no doors.
-    let bytes = [
-        b'2', b'7', b'4', b'N', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0, 1,
-        1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0,
-    ];
-    let world = Arc::new(NavWorld::from_bytes(&bytes).unwrap());
-    assert_eq!(identity(&world).unwrap().content(), PackDigest::of(&bytes));
-    assert_eq!(
-        bind(&world, PackDigest::of(b"not the pack")).unwrap_err(),
-        ContractError::PackMismatch
+        identity(&world).unwrap(),
+        first,
+        "wrap uses the world identity"
     );
 }
 
@@ -179,13 +143,13 @@ fn route_view_borrows_the_owner_route_under_the_world_identity() {
         "the lease serves the same identity as the world"
     );
     assert_ne!(view.pack(), identity(&other).unwrap().pack());
-    assert_ne!(
+    assert_eq!(
         view.pack(),
-        NavLease::wrap(Arc::clone(&world), PackDigest::of(b"x"))
+        NavLease::wrap(Arc::clone(&world))
             .unwrap()
             .identity()
             .pack(),
-        "a wrapped lease is its own identity, not the world's"
+        "a wrapped lease shares the world's identity"
     );
     assert_eq!(view.destination(), route.dest);
     assert_eq!(view.ticks(), 2.5);

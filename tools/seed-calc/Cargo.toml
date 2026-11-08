@@ -1,0 +1,19 @@
+[package]
+name = "seed-calc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+api = { path = "../../crates/api" }
+client = { workspace = true }
+host-play = { path = "../../crates/host-play", default-features = false }
+nav-planner = { path = "../../crates/nav-planner" }
+script = { path = "../../crates/script" }
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.143"
+# Follow the host's locked 2.x release; no patch-level pin is needed here.
+thiserror = "2"
+
+[lints]
+workspace = true

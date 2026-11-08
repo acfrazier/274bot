@@ -76,8 +76,10 @@ impl Script for SettlementWalker {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Box::default(),
+                avoid: Box::default(),
                 protect: false,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
@@ -295,6 +297,9 @@ fn live_owner_id(navs: &Arc<Mutex<HashMap<String, NavBot>>>) -> u64 {
 
 #[test]
 fn first_compiled_walk_without_a_prior_nav_bot_carries_the_slot_scope() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = SettlementRig::new(packed_world());
     assert!(rig.navs.lock().unwrap().is_empty());
 
@@ -314,6 +319,9 @@ fn first_compiled_walk_without_a_prior_nav_bot_carries_the_slot_scope() {
 
 #[test]
 fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_owner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = packed_world();
     let mut rig = SettlementRig::new(world);
     rig.observe(1, START);
@@ -433,6 +441,9 @@ fn estimated_loc_endpoint_waits_for_live_footprint_then_refreshes_under_same_own
 
 #[test]
 fn loc_intent_target_gone_settles_instead_of_waiting_for_respawn() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for replaced in [true, false] {
         for gone_before_arm in [false, true] {
             let start = WorldTile {
@@ -489,9 +500,9 @@ fn loc_intent_target_gone_settles_instead_of_waiting_for_respawn() {
             }
             rig.observe(42, endpoint);
             assert!(
-                matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::Arrived),
-                "replaced={replaced}, gone_before_arm={gone_before_arm}: a gone target must settle through tile arrival"
-            );
+            matches!(rig.control.lock().result.as_ref(), Some(Ok(receipt)) if receipt.end == script::native::WalkEnd::Arrived),
+            "replaced={replaced}, gone_before_arm={gone_before_arm}: a gone target must settle through tile arrival"
+        );
             let all = rig.navs.lock().unwrap();
             assert!(!all[ALICE].has_route(), "the host follow must settle too");
             assert!(all[ALICE]
@@ -509,6 +520,9 @@ fn loc_intent_target_gone_settles_instead_of_waiting_for_respawn() {
 
 #[test]
 fn loc_intent_missing_on_scene_entry_settles_through_tile_arrival() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = SettlementRig::new(packed_world());
     rig.observe(1, START);
     let endpoint = wait_for_route(&rig.navs, |_| true);
@@ -532,6 +546,9 @@ fn loc_intent_missing_on_scene_entry_settles_through_tile_arrival() {
 
 #[test]
 fn depleted_large_loc_refreshes_to_plain_tile_radius_before_settling() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let start = WorldTile {
         x: TARGET.x + 4,
         ..TARGET
@@ -601,6 +618,9 @@ fn depleted_large_loc_refreshes_to_plain_tile_radius_before_settling() {
 
 #[test]
 fn offscene_solid_strip_walk_makes_progress_without_unchanged_refreshes() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const SIZE: usize = 160;
     let origin = WorldTile {
         x: TARGET.x - 140,

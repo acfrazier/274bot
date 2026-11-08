@@ -1,7 +1,7 @@
 //! The router's world, loaded from the baked nav pack: the whole-world
 //! [`WorldCollision`] walk surface plus the transport [`TransportGraph`]
 //! and the content-derived bank stand table ([`crate::pack::BankStand`]).
-//! The v16 pack file stores the compact packed walk surface and the
+//! The v19 pack file stores the compact packed walk surface and the
 //! transport edges, so the Dijkstra router ([`crate::router::find`])
 //! consumes one artifact — live harnesses load this and route on the
 //! packed collision. The legacy 274N grid pack (boolean walk bytes +
@@ -20,9 +20,10 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
-use crate::contract::{NavIdentity, PackDigest, SearchGraphEnvelope};
+use crate::contract::{NavIdentity, SearchGraphEnvelope};
 use crate::grid::StepGrid;
-use crate::pack::{decode, decode_any_reader, decode_grid, BankStand, PackError};
+use crate::pack::{decode_any_reader, decode_full, decode_grid, BankStand, PackError};
+use crate::reachability::ReachabilityAtlas;
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
@@ -35,17 +36,13 @@ const BLOCKED: u32 = CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOC
 pub struct NavWorld {
     pub collision: WorldCollision,
     pub graph: TransportGraph,
+    reachability: ReachabilityAtlas,
     banks: Vec<BankStand>,
     named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
     transport_item_names: OnceLock<TransportItemNames>,
     risk_facts: OnceLock<Box<dyn Any + Send + Sync>>,
-    /// The pack bytes' digest: set by [`Self::from_bytes`], or by the host's
-    /// loader from the verified manifest (`crate::producer::bind`). Unset on
-    /// a synthetic world until a view is first served.
-    pub(crate) content: OnceLock<PackDigest>,
     /// The one facade identity of this loaded world, minted on first use
-    /// (`crate::producer`). [`crate::contract::NavLease::wrap`] mints its
-    /// own and never reads this.
+    /// (`crate::producer`) and shared by every lease and view over it.
     pub(crate) lease_identity: OnceLock<NavIdentity>,
     pub(crate) search_envelope: OnceLock<SearchGraphEnvelope>,
 }
@@ -66,9 +63,9 @@ impl NavWorld {
             .expect("one admission fact type per navigation world")
     }
 
-    /// Cached once per immutable world. `producer::bind` pins production
-    /// worlds before publication; a synthetic fixture initializes on its
-    /// first producer lease. Search preflight copies only these scalars.
+    /// Cached once per immutable world. The producer prepares this before
+    /// publication; synthetic fixtures initialize it on first identity query.
+    /// Search preflight copies only these scalars.
     pub(crate) fn search_graph_envelope(&self) -> SearchGraphEnvelope {
         *self
             .search_envelope
@@ -79,6 +76,11 @@ impl NavWorld {
     /// and opens, ordered by tile.
     pub fn banks(&self) -> &[BankStand] {
         &self.banks
+    }
+
+    /// Borrowed reachability atlas. Unlabeled on synthetic worlds.
+    pub fn reachability(&self) -> &ReachabilityAtlas {
+        &self.reachability
     }
 
     /// The explicitly bound selected-content roster. Reading an unbound world
@@ -116,8 +118,10 @@ impl NavWorld {
         if self.named_banks.get().is_some() {
             return Err("bank facts already bound");
         }
+        let catalog =
+            api::named_banks::bank_catalog().map_err(|_| "local bank catalog unavailable")?;
         let facts = Arc::new(crate::named_banks::resolve(
-            api::named_banks::BANK_CATALOG,
+            catalog,
             data.bank_placements()
                 .map_or(&[], |facts| facts.rows.as_slice()),
             |tile| self.collision.standable(tile),
@@ -158,15 +162,14 @@ impl NavWorld {
     /// legacy 274N grid packs fall back to [`Self::from_grid`] on the same
     /// buffer. The fallback triggers on bad magic only — a `274V` pack with
     /// a stale version stays [`PackError::BadVersion`] so the operator
-    /// rebakes. This never rereads a pathname. The bytes' SHA-256 becomes
-    /// the world's facade content identity (`crate::producer`).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PackError> {
-        let world = match decode(bytes) {
-            Ok((collision, graph, banks)) => Self::from_parts(collision, graph, banks),
+        let world = match decode_full(bytes) {
+            Ok((collision, graph, banks, atlas)) => {
+                Self::from_decoded(collision, graph, banks, atlas)
+            }
             Err(PackError::BadMagic) => Self::from_grid(&decode_grid(bytes)?),
             Err(e) => return Err(e),
         };
-        let _ = world.content.set(PackDigest::of(bytes));
         Ok(world)
     }
 
@@ -175,7 +178,7 @@ impl NavWorld {
     /// reported as `BadVersion` rather than falling through to the grid.
     /// Accepted trailing bytes are drained without buffering.
     pub fn from_reader(reader: &mut impl BufRead, length: usize) -> Result<Self, PackError> {
-        decode_any_reader(reader, length, Self::from_parts, |grid| {
+        decode_any_reader(reader, length, Self::from_decoded, |grid| {
             Self::from_grid(&grid)
         })
     }
@@ -195,14 +198,26 @@ impl NavWorld {
         graph: TransportGraph,
         banks: Vec<BankStand>,
     ) -> Self {
+        let atlas = ReachabilityAtlas::unlabeled(&collision)
+            .expect("synthetic world collision geometry is a valid unlabeled atlas");
+        Self::from_decoded(collision, graph, banks, atlas)
+    }
+
+    /// Bind already-decoded pack parts including the reachability atlas.
+    pub fn from_decoded(
+        collision: WorldCollision,
+        graph: TransportGraph,
+        banks: Vec<BankStand>,
+        reachability: ReachabilityAtlas,
+    ) -> Self {
         NavWorld {
             collision,
             graph,
+            reachability,
             banks,
             named_banks: OnceLock::new(),
             transport_item_names: OnceLock::new(),
             risk_facts: OnceLock::new(),
-            content: OnceLock::new(),
             lease_identity: OnceLock::new(),
             search_envelope: OnceLock::new(),
         }

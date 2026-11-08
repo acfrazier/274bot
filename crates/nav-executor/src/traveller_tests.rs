@@ -28,8 +28,14 @@ mod n1_tests;
 mod door_expire_tests;
 #[path = "traveller/entrance_exclusion_tests.rs"]
 mod entrance_exclusion_tests;
+#[path = "traveller/gate_refusal_tests.rs"]
+mod gate_refusal_tests;
 #[path = "traveller/occupied_tests.rs"]
 mod occupied_tests;
+#[path = "traveller/open_door_approach_tests.rs"]
+mod open_door_approach_tests;
+#[path = "traveller/walk_budget_tests.rs"]
+mod walk_budget_tests;
 
 // --- Task 14: pollable high-level follow (drive legs via interact+settle) ---
 
@@ -1035,6 +1041,155 @@ fn follow_does_not_arrive_short_of_the_last_walk_tile() {
 }
 
 #[test]
+fn follow_walks_a_bent_leg_at_walking_speed_within_each_hop_budget() {
+    let mut path = Vec::with_capacity(64);
+    let (mut x, mut z) = (3200, 3200);
+    for row in 0..4 {
+        let width = if row % 2 == 0 { 20 } else { 12 };
+        for offset in 0..width {
+            if offset > 0 {
+                x += if row % 2 == 0 { 1 } else { -1 };
+            }
+            path.push((x, z));
+        }
+        if row < 3 {
+            z += 1;
+        }
+    }
+    assert_eq!(path.len() - 1, 63, "the bent walk has 63 steps");
+    let (dest_x, dest_z) = *path.last().expect("bent walk is non-empty");
+    let destination = WorldTile {
+        x: dest_x,
+        z: dest_z,
+        level: 0,
+    };
+
+    let mut c = scene_client();
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let route = Route {
+        legs: vec![walk_leg(&path)],
+        dest: destination,
+        ticks: 63.0,
+    };
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 60,
+        ..TravelOptions::default()
+    };
+    let mut path_index = 0;
+    let mut outcome = None;
+    for _ in 0..=path.len() {
+        outcome = t.follow(&mut rec, &snap, route.clone(), &mut options);
+        if outcome.is_some() {
+            break;
+        }
+        if path_index + 1 < path.len() {
+            path_index += 1;
+            let (x, z) = path[path_index];
+            plant_player(&mut c, x - 3200, z - 3200);
+            bump_rebuild(&mut c, &mut snap);
+        }
+    }
+
+    assert!(
+        matches!(outcome, Some(TravelOutcome::Arrived { at }) if at == destination),
+        "the 63-step walk must finish without exceeding a 60-tick hop budget: {outcome:?}"
+    );
+    let expected_aims: Vec<_> = [15, 31, 47, 63]
+        .into_iter()
+        .map(|index| (path[index].0 - 3200, path[index].1 - 3200))
+        .collect();
+    assert_eq!(
+        rec.walked, expected_aims,
+        "each aim advances along the bent path"
+    );
+}
+
+#[test]
+fn pick_aim_counts_all_remaining_tiles_when_the_player_is_off_path() {
+    let tiles: Vec<_> = (0..31)
+        .map(|step| WorldTile {
+            x: 3200,
+            z: 3200 + step,
+            level: 0,
+        })
+        .collect();
+    let here = WorldTile {
+        x: 3300,
+        z: 3300,
+        level: 0,
+    };
+    let cursor = 10;
+
+    assert_eq!(super::player_path_index(&tiles, here, cursor), None);
+    let (aim, index) = super::pick_aim(&tiles, None, cursor);
+
+    assert_eq!(index, 25, "the off-path count is 31 - 10 = 21 steps");
+    assert_eq!(aim, tiles[index]);
+}
+
+#[test]
+fn pick_aim_finds_a_repeated_player_tile_after_the_cursor() {
+    let mut tiles: Vec<_> = (0..50)
+        .map(|step| WorldTile {
+            x: 3200 + step,
+            z: 3200,
+            level: 0,
+        })
+        .collect();
+    tiles[20] = tiles[5];
+    let here = tiles[5];
+    let cursor = 10;
+
+    let here_index = super::player_path_index(&tiles, here, cursor);
+    assert_eq!(here_index, Some(20));
+    let (aim, index) = super::pick_aim(&tiles, here_index, cursor);
+
+    assert_eq!(index, 35, "aim from the matching path tile at index 20");
+    assert_eq!(aim, tiles[index]);
+}
+
+#[test]
+fn long_bent_walk_aims_at_short_path_hops() {
+    let mut tiles = Vec::with_capacity(64);
+    let (mut x, mut z) = (2576, 3299);
+    for row in 0..4 {
+        let width = if row % 2 == 0 { 20 } else { 12 };
+        for offset in 0..width {
+            if offset > 0 {
+                x += if row % 2 == 0 { 1 } else { -1 };
+            }
+            tiles.push(WorldTile { x, z, level: 0 });
+        }
+        if row < 3 {
+            z += 1;
+        }
+    }
+
+    assert_eq!(tiles.len() - 1, 63, "the bent leg has 63 steps");
+    let last = *tiles.last().expect("bent leg is non-empty");
+    let chebyshev_distance = (last.x - tiles[0].x).abs().max((last.z - tiles[0].z).abs());
+    assert!(chebyshev_distance <= 17, "the leg ends within 17 tiles");
+
+    let mut base = 0;
+    let mut hop_steps = Vec::new();
+    while base < tiles.len() - 1 {
+        let here = tiles[base];
+        let here_index = super::player_path_index(&tiles, here, base);
+        let (aim, index) = super::pick_aim(&tiles, here_index, base);
+        assert_eq!(aim, tiles[index]);
+        assert!(index > base, "each hop advances along the leg");
+        hop_steps.push(index - base);
+        base = index;
+    }
+    assert_eq!(hop_steps, [15, 15, 15, 18]);
+}
+
+#[test]
 fn current_aim_is_none_idle_and_the_walk_hop_aim_in_follow() {
     let mut t = Traveller::new();
     assert_eq!(t.current_aim(), None, "idle traveller has no aim");
@@ -1184,7 +1339,7 @@ fn follow_blocks_transport_when_worn_all_item_is_only_carried() {
 fn gated_transport_rechecks_evidence_after_approach_before_send() {
     use api::selected::Truth;
     use nav_planner::quest_gates::QuestGates;
-    use nav_planner::test_support::{family, range, tbwt_evidence, window};
+    use nav_planner::test_support::{range, tbwt_evidence, window};
 
     let proven = tbwt_evidence(range(Some(3), Some(3)));
     let blocked = tbwt_evidence(range(Some(4), Some(4)));
@@ -1206,7 +1361,7 @@ fn gated_transport_rechecks_evidence_after_approach_before_send() {
             ..FollowRec::default()
         };
         let mut edge = ladder_edge();
-        edge.quest_gates = Some(QuestGates::new(family(1), [gate.clone()]).unwrap());
+        edge.quest_gates = Some(QuestGates::new([gate.clone()]).unwrap());
         assert_eq!(
             edge.quest_gates.as_ref().unwrap().test(Some(&proven)),
             Truth::True
@@ -6007,6 +6162,8 @@ fn troll_open_door_progress_does_not_reverse_to_approach() {
             door_retry: super::DoorRetry::default(),
             occupied: super::OccupiedRetry::default(),
             chat_seq: 0,
+            refusal_watch: None,
+            pass_watch: None,
             dialog_page: None,
             approach: None,
         });
@@ -6073,6 +6230,8 @@ fn troll_probes_crossing_after_open_once_the_snapshot_catches_up() {
         door_retry: super::DoorRetry::default(),
         occupied: super::OccupiedRetry::default(),
         chat_seq: 0,
+        refusal_watch: None,
+        pass_watch: None,
         dialog_page: None,
         approach: None,
     });
@@ -6280,6 +6439,8 @@ fn troll_does_not_reopen_a_door_behind_the_walker() {
             door_retry: super::DoorRetry::default(),
             occupied: super::OccupiedRetry::default(),
             chat_seq: 0,
+            refusal_watch: None,
+            pass_watch: None,
             dialog_page: None,
             approach: None,
         });
@@ -7185,9 +7346,9 @@ fn follow_cancelled_walk_idle_ignores_duplicate_snapshot_ticks() {
         1,
         "duplicate snapshot polls must not trigger recovery"
     );
-    // The send-tick polls already credited one distinct idle tick.
-    // Three fresh ticks → idle 4; still under the threshold of 5.
-    for _ in 0..3 {
+    // Send-tick polls credit no elapsed ticks.
+    // Four fresh ticks remain under the recovery threshold of five.
+    for _ in 0..4 {
         bump_rebuild(&mut c, &mut snap);
         assert!(t
             .follow(&mut rec, &snap, route.clone(), &mut options)
@@ -7452,7 +7613,7 @@ fn follow_partial_progress_cancel_still_exhausts_original_budget() {
 }
 
 #[test]
-fn follow_stalls_expired_when_progress_stalls() {
+fn follow_does_not_expire_while_the_player_progresses() {
     let mut c = scene_client();
     let mut snap = snap_at(&mut c, 0, 0);
     let mut rec = FollowRec {
@@ -7482,9 +7643,8 @@ fn follow_stalls_expired_when_progress_stalls() {
         budget_ticks_per_hop: 3,
         ..TravelOptions::default()
     };
-    // The player creeps one tile per tick toward the far leg end but
-    // never arrives within the tiny hop budget: the hop lapses as
-    // Expired (progress was made).
+    // The planned walk takes seven walking ticks, despite the configured
+    // three-tick minimum. Continuing progress must reach the destination.
     let mut z = 0;
     let outcome = drive(
         &mut t,
@@ -7500,10 +7660,7 @@ fn follow_stalls_expired_when_progress_stalls() {
     );
     assert!(matches!(
         outcome,
-        TravelOutcome::Stalled {
-            why: HopFailure::Expired,
-            ..
-        }
+        TravelOutcome::Arrived { at } if at == route.dest
     ));
 }
 
@@ -8086,7 +8243,8 @@ fn pick_aim_in_scene_clips_a_hop_that_would_leave_the_104() {
         height: 104,
         collision_flags: vec![],
     };
-    let (aim, _) = super::pick_aim_in_scene(&tiles, here, 0, &scene);
+    let here_index = super::player_path_index(&tiles, here, 0);
+    let (aim, _) = super::pick_aim_in_scene(&tiles, here_index, 0, &scene, tiles.len() - 1);
     let lz = aim.z - scene.base_z;
     assert!(
         (0..104).contains(&lz),
@@ -8173,6 +8331,8 @@ fn level_change_transport_requires_proximity_to_to() {
         door_retry: super::DoorRetry::default(),
         occupied: super::OccupiedRetry::default(),
         chat_seq: 0,
+        refusal_watch: None,
+        pass_watch: None,
         dialog_page: None,
         approach: None,
     });
@@ -8276,6 +8436,8 @@ fn horizontal_climb_proves_translated_takeoff_without_widening_arrival() {
         door_retry: super::DoorRetry::default(),
         occupied: super::OccupiedRetry::default(),
         chat_seq: 0,
+        refusal_watch: None,
+        pass_watch: None,
         dialog_page: None,
         approach: None,
     });
@@ -8332,8 +8494,17 @@ fn executor_state_size_pins() {
     // +32 B: the transport hop's distinct-tick clock (`TickCount`) and the
     // occupied-crossing retry (`OccupiedRetry`): a refused ledge or rope
     // swing is retried within the hop budget instead of ending the follow.
-    assert_eq!(std::mem::size_of::<Traveller>(), 848);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 808);
+    // Prerequisite refusal-page tracking adds 176 B to the active hop union.
+    // Full physical identity retains takeoff and destination: +24 B over the
+    // former anchor-only crossing. It names both A1 approaches and A2 directions.
+    eprintln!(
+        "prereq executor layout Traveller={} FollowRun={}",
+        std::mem::size_of::<Traveller>(),
+        std::mem::size_of::<FollowRun>()
+    );
+    // Route indices: the same +48 B as the NavBot reason in host-play/src/script_native_walk_tests.rs.
+    assert_eq!(std::mem::size_of::<Traveller>(), 1104);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 1064);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,
@@ -8573,4 +8744,130 @@ fn blocked_why_npc_reach_retries_exhausted_display_is_unchanged() {
         .to_string(),
         "npc hop 378 gave up after 3 attempts: reach failure"
     );
+}
+
+#[test]
+fn follow_clips_and_reclips_walks_at_the_route_index_limit() {
+    let mut c = scene_client();
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let tiles: Vec<(i32, i32)> = (0..40).map(|z| (3200, 3200 + z)).collect();
+    let route = Route {
+        legs: vec![walk_leg(&tiles)],
+        dest: WorldTile {
+            x: 3200,
+            z: 3239,
+            level: 0,
+        },
+        ticks: 19.5,
+    };
+    let mut options = TravelOptions {
+        route_index_limit: Some(20),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked, vec![(0, 15)]);
+
+    options.route_index_limit = Some(10);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(
+        rec.walked,
+        vec![(0, 15), (0, 10)],
+        "an already queued hop is re-aimed inside the reduced limit"
+    );
+
+    plant_player(&mut c, 0, 10);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 2, "the limit tile is an exact stop");
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    assert_eq!(rec.walked.len(), 2, "a settled hold does not click onward");
+}
+
+#[test]
+fn follow_does_not_execute_unattached_transport_at_the_limit_point() {
+    let mut c = scene_client();
+    let snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let edge = ladder_edge();
+    let route = Route {
+        dest: edge.to,
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
+        ticks: 2.0,
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        route_index_limit: Some(0),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    assert!(rec.walked.is_empty());
+    assert_eq!(rec.loc_ops, 0);
+}
+
+#[test]
+fn follow_does_not_cross_attached_transport_at_the_limit_tile() {
+    let mut c = scene_client();
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let edge = ladder_edge();
+    let route = Route {
+        dest: edge.to,
+        legs: vec![
+            walk_leg(&[
+                (3200, 3200),
+                (3201, 3201),
+                (3202, 3202),
+                (3202, 3203),
+                (3202, 3204),
+            ]),
+            Leg::Transport {
+                edge: Box::new(edge),
+            },
+        ],
+        ticks: 4.0,
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        route_index_limit: Some(4),
+        ..TravelOptions::default()
+    };
+
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked, vec![(2, 4)]);
+
+    plant_player(&mut c, 2, 4);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 0);
+    assert_eq!(rec.walked.len(), 1);
 }

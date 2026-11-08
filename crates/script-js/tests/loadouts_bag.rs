@@ -1,11 +1,15 @@
 // Task 6: settings.str('loadout') reads the posted operator bag.
 
-use script_js::wire::ItemRowInput;
+use script::native::snapshot_source::ItemRowInput;
 use {script::SettingDef, script_js::LoadIsolate, script_js::LoadShape};
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 const LOADOUT_PROBE: &str = r#"
 export default class T extends LoopingBot {
@@ -55,13 +59,16 @@ fn loadout_combo_resolves_from_store_names_in_script_crate() {
         item_option_spec: None,
     };
     assert_eq!(
-        resolve_setting_options(&def, &store, None),
+        resolve_setting_options(&def, &store, None).unwrap(),
         vec!["a".to_string(), "b".to_string()]
     );
 }
 
 #[test]
 fn isolate_accessors_read_slots_quantities_and_food() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     use api::loadout::Loadout;
 
     let src = r#"
@@ -162,6 +169,13 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_provision_composes_fresh_bank_withdraw_and_wear() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
+
     use api::loadout::Loadout;
 
     let src = r#"
@@ -253,7 +267,7 @@ export default class T extends LoopingBot {
     snap.bank_generation = 4;
     snap.inv = &inv;
     snap.bank = &bank_rows;
-    let native = script_js::wire::NativeFactsInput {
+    let native = script::native::snapshot_source::NativeFactsInput {
         bank_snapshot_generation: Some(4),
         ..Default::default()
     };
@@ -261,7 +275,7 @@ export default class T extends LoopingBot {
     ready.tick_posted(1);
     assert_eq!(ready.probe("__queued").unwrap(), true);
     assert_eq!(ready.probe("__qty").unwrap(), 10);
-    let (_, reqs, _) = ready.slot.drain_host_interacts();
+    let (_, reqs, _) = ready.slot.drain_host_interacts(None);
     let mut actions = Vec::new();
     for tick in 2..=4 {
         snap.tick = tick;
@@ -282,7 +296,7 @@ export default class T extends LoopingBot {
     assert!(
         actions.iter().any(|request| matches!(
             request,
-            script::shim::InteractReq::WithdrawX { name, count, action, .. }
+            script::interact::InteractReq::WithdrawX { name, count, action, .. }
                 if name == "Lobster" && *count == 10 && action == "Withdraw 10"
         )),
         "fresh bank must withdraw the loadout quantity (10): {actions:?}"
@@ -290,7 +304,7 @@ export default class T extends LoopingBot {
     assert!(
         reqs.iter().any(|r| matches!(
             &r.req,
-            script::shim::InteractReq::Wear { name } if name == "Rune scimitar"
+            script::interact::InteractReq::Wear { name } if name == "Rune scimitar"
         )),
         "wear must use righthand, not a queued success: {reqs:?}"
     );

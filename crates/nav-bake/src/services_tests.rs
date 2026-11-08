@@ -63,28 +63,12 @@ fn produce(root: &Path, npcs: &[NpcType], locs: &[LocType]) -> ProducedPois {
         content_root: root,
         npcs,
         locs,
-        content_id: Digest([1; 32]),
-        nav_sha256: Digest([2; 32]),
-        source_sha256: Digest([3; 32]),
-        generator_sha256: Digest([4; 32]),
     })
     .unwrap()
 }
 
 fn decode(bytes: &[u8]) -> ServicePois {
-    ServicePois::decode_navpois(
-        bytes,
-        ServiceIdentity {
-            revision: 289,
-            content: Digest([1; 32]),
-            nav_sha256: Digest([2; 32]),
-            source_sha256: Digest([3; 32]),
-            generator_sha256: Digest([4; 32]),
-            policy: pois_policy_digest(),
-        },
-        Digest::of(bytes),
-    )
-    .unwrap()
+    ServicePois::decode_navpois(bytes).unwrap()
 }
 
 fn bank_tree() -> Fixture {
@@ -408,14 +392,6 @@ fn cheat_scripts_under_test_are_ignored() {
 #[test]
 fn record_count_stays_inside_the_shared_limit() {
     const { assert!(MAX_POIS >= 4096) };
-}
-
-#[test]
-fn generator_identity_tracks_source_bytes() {
-    let a = pois_generator_identity(&[("crates/nav-bake/src/services.rs", "fn a() {}")]);
-    let b = pois_generator_identity(&[("crates/nav-bake/src/services.rs", "fn b() {}")]);
-    assert_ne!(a, b);
-    assert_eq!(a.len(), 64);
 }
 
 #[test]

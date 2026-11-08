@@ -8,7 +8,6 @@ use api::identity::{ActiveTime, ExecutionId, Fence, FenceError, RequestId, Scope
 use api::lifecycle::SessionGate;
 use api::local_state::{AccountKey, ContentScope, LocalStatePort};
 use api::script_contract::DecisionSequence;
-use api::selected::SelectedPin;
 use api::snapshot::SnapshotView;
 
 /// Closed, source-backed callback point. A string cannot mint a point;
@@ -189,10 +188,6 @@ impl<'a, 'frame> ScriptServices<'a, 'frame> {
     }
     pub const fn authority(&self) -> &ServiceAuthority<'a> {
         &self.authority
-    }
-    /// Versioned selected content already resolved by the composition root.
-    pub fn selected(&self) -> &SelectedPin {
-        self.context.pin()
     }
     /// Borrow the real observation applied before the pass. Never copy a world.
     pub fn snapshot(&self) -> SnapshotView<'frame> {

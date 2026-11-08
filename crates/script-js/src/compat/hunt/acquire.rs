@@ -80,7 +80,8 @@ impl Family for Acquire {
 
 impl Acquire {
     fn state(&self) -> Value {
-        crate::hunt_catalog::call("keyState", &[json!(self.key)]).unwrap_or_else(|_| json!("fetch"))
+        crate::compat::hunt_catalog::call("keyState", &[json!(self.key)])
+            .unwrap_or_else(|_| json!("fetch"))
     }
 
     fn held(&self) -> bool {
@@ -106,8 +107,8 @@ impl Acquire {
             let point = json!({ "x": here.x, "z": here.z, "level": here.level });
             return cx.ask(hook::IN_AREA, &[point]).map(|v| truthy(&v));
         }
-        let mut proj = <crate::hunt_leave::Leave as Kind>::parse(&self.site);
-        Ok(<crate::hunt_leave::Leave as Kind>::area(&mut proj).contains(here, 1))
+        let mut proj = <crate::compat::hunt_leave::Leave as Kind>::parse(&self.site);
+        Ok(<crate::compat::hunt_leave::Leave as Kind>::area(&mut proj).contains(here, 1))
     }
 
     fn bank(&mut self, cx: &mut Cx<'_>) -> Result<Step<Value>, Ended> {

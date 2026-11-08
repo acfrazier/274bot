@@ -1,6 +1,6 @@
 //! Shared, allocation-free autocast arm progression for native combat and the isolate family.
 
-use crate::shim::InteractReq;
+use crate::interact::InteractReq;
 use api::game_data::AutocastControls;
 
 pub(crate) const TAB_WAIT_MS: u64 = 2_000;

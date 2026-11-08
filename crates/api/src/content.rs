@@ -80,7 +80,9 @@ mod tests {
 
     #[test]
     fn common_bank_loot_matches_names_and_selected_casket_alias() {
-        let data = crate::game_data::for_revision(ClientRevision::R289).expect("R289 data");
+        let Some(data) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
         let casket_id = random_event_casket_id(Some(data.as_ref())).expect("casket alias");
         assert!(matches_common_bank_loot(
             Some(casket_id),
@@ -104,7 +106,9 @@ mod tests {
 
     #[test]
     fn disposable_gather_junk_matches_common_loot_and_exact_event_leftovers() {
-        let data = crate::game_data::for_revision(ClientRevision::R289).expect("R289 data");
+        let Some(data) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
         let casket_id = random_event_casket_id(Some(data.as_ref())).expect("casket alias");
 
         assert!(is_disposable_gather_junk(

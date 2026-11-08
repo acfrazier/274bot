@@ -12,7 +12,10 @@ use crate::bot_projection::{BotProjection, LogoutEligibility, StopEligibility};
 use crate::bulk::{BulkOutcome, BulkRow};
 use crate::command::{Completion, Rejection};
 use crate::fleet::CardChoice;
-use crate::fleet_plan::{FleetAction, FleetPlan, FleetResult, PlanScope, ResultCounts};
+use crate::fleet_plan::{
+    append_quester_start_disclosures, FleetAction, FleetPlan, FleetResult, PlanScope,
+    QuesterStartDisclosure, ResultCounts,
+};
 use crate::scripts::{ScriptChoice, Scripts};
 use crate::selection::{MarkedSelection, ProfileIdentity};
 use crate::surface::SlotSurface;
@@ -270,6 +273,33 @@ impl<Io> OperatorSession<Io> {
             });
             copy_source = Some(source);
         }
+        let mut quester_start_zones = Vec::new();
+        let mut quester_registry_revision = None;
+        if matches!(action, FleetAction::Start | FleetAction::AssignRestart) {
+            let Some(scripts) = scripts.as_deref() else {
+                return no_model("scripts");
+            };
+            let (registry, revision) = script::quester::registry::snapshot_with_revision();
+            quester_registry_revision = Some(revision);
+            let mut disclosed_targets = Vec::with_capacity(targets.len());
+            for (identity, name) in std::mem::take(&mut targets) {
+                match scripts.quester_start_zones_for_card(self, &name, card.as_ref(), &registry) {
+                    Ok(zones) => {
+                        quester_start_zones.push(QuesterStartDisclosure {
+                            profile: identity,
+                            name: name.clone(),
+                            zones,
+                        });
+                        disclosed_targets.push((identity, name));
+                    }
+                    Err(reason) => {
+                        interrupted.retain(|running| running != &name);
+                        skipped.push(BulkRow::new(name, BulkOutcome::skipped(reason)));
+                    }
+                }
+            }
+            targets = disclosed_targets;
+        }
 
         if targets.is_empty() {
             if action == FleetAction::CopySettings {
@@ -293,7 +323,10 @@ impl<Io> OperatorSession<Io> {
             || matches!(
                 action,
                 FleetAction::CopySettings | FleetAction::SwitchWorld(_)
-            );
+            )
+            || quester_start_zones
+                .iter()
+                .any(|disclosure| disclosure.zones.is_some());
         let mut prompt = String::new();
         if let Some(old) = replaced {
             let _ = write!(prompt, "Replaces the waiting {} plan. ", old.verb());
@@ -307,6 +340,7 @@ impl<Io> OperatorSession<Io> {
             &interrupted,
             &skipped,
         );
+        append_quester_start_disclosures(&mut prompt, &quester_start_zones);
         self.commands.fleet_plan = Some(FleetPlan {
             action,
             scope,
@@ -316,6 +350,8 @@ impl<Io> OperatorSession<Io> {
             copy_kind,
             interrupted,
             skipped,
+            quester_start_zones,
+            quester_registry_revision,
             prompt,
             needs_confirm,
             catalog_root,
@@ -358,6 +394,69 @@ impl<Io> OperatorSession<Io> {
             None => Err(super::commands::SubmitError::NoTarget(command)),
         }
     }
+    /// Exclude any target whose current Quester declaration differs from the
+    /// exact disclosure the operator confirmed.
+    pub(super) fn validate_quester_start_zones<S: SlotSurface<Io = Io>>(
+        &self,
+        plan: &mut FleetPlan,
+        surface: &mut S,
+    ) {
+        let Some(planned_revision) = plan.quester_registry_revision else {
+            return;
+        };
+        let (registry, revision) = script::quester::registry::snapshot_with_revision();
+        let mut stale = Vec::new();
+        let models = surface.models();
+        if let Some(scripts) = models.scripts.as_deref() {
+            for disclosure in &plan.quester_start_zones {
+                let profile = self.name_for_identity(disclosure.profile);
+                let current = scripts.quester_start_zones_for_card(
+                    self,
+                    &profile,
+                    plan.card.as_ref(),
+                    &registry,
+                );
+                let current_has_quester = current.as_ref().map_or(true, Option::is_some);
+                let changed = !current
+                    .as_ref()
+                    .is_ok_and(|zones| zones == &disclosure.zones)
+                    || (revision != planned_revision
+                        && (disclosure.zones.is_some() || current_has_quester));
+                if changed {
+                    stale.push(disclosure.profile);
+                }
+            }
+        } else {
+            stale.extend(
+                plan.quester_start_zones
+                    .iter()
+                    .filter(|disclosure| disclosure.zones.is_some())
+                    .map(|disclosure| disclosure.profile),
+            );
+        }
+        if stale.is_empty() {
+            return;
+        }
+
+        let mut targets = Vec::with_capacity(plan.targets.len());
+        for (identity, name) in std::mem::take(&mut plan.targets) {
+            if stale.contains(&identity) {
+                plan.skipped.push(BulkRow::new(
+                    name.as_str(),
+                    BulkOutcome::skipped(
+                        "Quester danger-zone disclosure changed after confirmation",
+                    ),
+                ));
+                plan.interrupted.retain(|running| running != &name);
+            } else {
+                targets.push((identity, name));
+            }
+        }
+        plan.targets = targets;
+        plan.marks = MarkedSelection::default();
+        plan.marks
+            .mark_all(plan.targets.iter().map(|(identity, _)| *identity));
+    }
 
     /// After a planned command opened as `request`: keep its result view
     /// (the plan's skips and the profiles gone since the plan included).
@@ -382,6 +481,7 @@ impl<Io> OperatorSession<Io> {
             request,
             action: plan.action,
             extra,
+            quester_start_zones: plan.quester_start_zones,
             text: String::new(),
             settled: false,
             logged: false,
@@ -519,6 +619,7 @@ impl<Io> OperatorSession<Io> {
             }
             let _ = write!(text, "pending {}", counts.pending);
         }
+        append_quester_start_disclosures(&mut text, &result.quester_start_zones);
         let settled = counts.pending == 0;
         let Some(result) = self.commands.fleet_result.as_mut() else {
             return;

@@ -105,9 +105,20 @@ fn path_json(dest: WorldTile) -> String {
 
 #[test]
 fn throwers_crossing_path_compiles_with_current_schema() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     script::quester::compile::prepare_for_test(move |cap| {
+        let pack = std::env::var_os("NAV_PACK")
+            .map(PathBuf::from)
+            .unwrap_or_else(default_nav_pack_path);
+        let bytes = std::fs::read(&pack).expect("read the throwers navigation catalog");
+        let world = nav_planner::world::NavWorld::from_bytes(&bytes)
+            .expect("load the throwers navigation catalog");
+        let nav = nav_planner::contract::NavLease::wrap(Arc::new(world))
+            .expect("bind the throwers navigation catalog");
         compile_path(
             path_json(WorldTile {
                 x: 2880,
@@ -119,6 +130,7 @@ fn throwers_crossing_path_compiles_with_current_schema() {
             &quests,
             cap,
             &script::local_state::OperatorLoadouts::absent(),
+            nav.zones(),
         )
     })
     .expect("the live crossing fixture must compile before launching a client");
@@ -1769,8 +1781,8 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
     );
     let mut options = profile_options(&home_path).expect("W1 live prerequisites");
     if food.is_some() {
-        options.port = Some(44_594);
-        options.http_port = Some(1_080);
+        options.port = Some(crate::live_ports::game_port());
+        options.http_port = Some(crate::live_ports::http_port());
     }
     let template = options
         .resolve(None)
@@ -1779,6 +1791,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         .expect("prepare isolated local-289 template");
     let world = template.world().expect("selected navigation world");
     let (start, dest) = pick_crossing(world.as_ref());
+    let nav = nav_planner::producer::lease(&world).expect("selected navigation catalog");
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
     let quests = Arc::new(
         QuestCatalog::from_identity(selected.quest_identity()).expect("selected quest catalog"),
@@ -1793,6 +1806,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
                 &quests,
                 cap,
                 &script::local_state::OperatorLoadouts::absent(),
+                nav.zones(),
             )
         }
     })

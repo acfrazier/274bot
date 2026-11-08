@@ -88,7 +88,8 @@ fn a_refused_login_notice_outlives_log_out_and_renews_on_real_retries() {
             .unwrap();
     }
     drop(vault);
-    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip())
+        .expect("test script settings are readable");
     driver.session_mut().set_bypass_asset_startup(true);
     driver.session_mut().set_focus_hint(Some("bob"));
     driver

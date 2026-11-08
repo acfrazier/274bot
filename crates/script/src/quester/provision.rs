@@ -4,17 +4,34 @@
 //! the account's bank memory (design-bank-snapshot §4 N2). An `Unknown` bank
 //! or a `Hint`-predicted shortage costs one scan trip that observes the whole
 //! bank; only a `Session`-known shortage blocks in place (§2.4).
+//!
+//! A bank session is the run of bank trips this provisioner starts. It ends
+//! when provisioning returns to the Path (`Ready`), parks (`Blocked`) or starts
+//! a recipe. Then the provisioner closes the bank if its own trips opened it
+//! and it is still open, because a Path step cannot act under the bank
+//! interface. It never closes a bank that was already open when its first trip
+//! began (the player's, or an earlier step's): that session is not its own.
+//!
+//! Ownership is a [`BankLease`]. It is recorded only when a frame shows the
+//! bank open after a trip of this provisioner began with the bank shut. It
+//! names the login session and the bank session generation it covers, so a
+//! relog, or a bank that was closed and opened again by someone else, makes it
+//! void. A trip that ends by error or cancel keeps an observed lease: the
+//! bank is still open, and the queue runner closes it through [`BankCloser`]
+//! when input is allowed again. An operator Stop sends nothing and discards
+//! the lease with the run. A Path step that needs the bank opens it again
+//! through the bank kernel.
 use super::compile::{
     CompiledAcquireRecipe, CompiledItemKind, CompiledProvisioning, StepContext, StepPlan, StepRun,
 };
 use super::families::AcquirePlan;
-use crate::acquire::plan::{NeedObservation, Planner};
-use crate::acquire::run::AcquireRun;
+use crate::acquire::plan::{NeedObservation, Planner, UnmetCause, UnmetNeed};
+use crate::acquire::run::{bank_open, AcquireRun, MAX_CLOSE_ATTEMPTS};
 use crate::acquire::{
     AcquireOutcome, AcquireRequest, NeedKind, OpenGate, Presence, SourceSet, WorldFacts,
 };
-use crate::bank::ops;
-use crate::native::{ActionError, NativeActions};
+use crate::bank::{self, ops};
+use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeTick};
 use crate::native_bank::{BankAction, BankReceipt};
 use api::bank_memory::Origin;
 use api::selected::{FactKey, Truth};
@@ -35,6 +52,7 @@ pub enum ProvisionPhase {
     Scanning,
     Spillover,
     Withdrawing,
+    Closing,
     Acquiring,
     Ready,
     Blocked,
@@ -83,6 +101,165 @@ pub enum ProvisionEvent {
     Blocked { item: Arc<str> },
 }
 
+/// The bank this Quester's own trips opened. It names the login session and
+/// the bank session generation of the frame that showed the bank open. Any
+/// other session or generation is somebody else's bank.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BankLease {
+    session: u64,
+    generation: u64,
+}
+
+impl BankLease {
+    pub(super) fn new(session: u64, generation: u64) -> Self {
+        Self {
+            session,
+            generation,
+        }
+    }
+}
+
+/// What the current frame says about a lease.
+enum LeaseView {
+    /// No lease, or the frame voided it (relog, bank shut, another session).
+    Absent,
+    /// The frame has no bank observation, so the lease is neither proved nor voided.
+    Unobserved,
+    /// The bank is open in the leased session.
+    Owned,
+}
+
+/// Reads the lease against the frame and drops it when the frame voids it.
+fn lease_view(cx: &ActionContext<'_>, lease: &mut Option<BankLease>) -> LeaseView {
+    let Some(held) = *lease else {
+        return LeaseView::Absent;
+    };
+    if held.session != cx.evidence().run.session {
+        *lease = None;
+        return LeaseView::Absent;
+    }
+    match cx.snapshot().bank_session() {
+        None => LeaseView::Unobserved,
+        Some(view) if view.value.open && view.value.generation == held.generation => {
+            LeaseView::Owned
+        }
+        Some(_) => {
+            *lease = None;
+            LeaseView::Absent
+        }
+    }
+}
+
+/// How one drive of a [`BankCloser`] ended.
+pub(super) enum Closed {
+    /// No bank is owed a close (none leased, voided, or no frame to judge by).
+    Done,
+    Pending,
+    /// The close is given up and the lease dropped, so the failure is final.
+    Failed(ActionError),
+}
+
+/// Closes the bank a [`BankLease`] covers, through the bank kernel's own
+/// close. Its wait counts observed game ticks, with an active-time floor. A
+/// close that times out is begun again, up to `MAX_CLOSE_ATTEMPTS`. It sends
+/// nothing without a lease the frame still proves.
+#[derive(Default)]
+pub(super) struct BankCloser {
+    handle: Option<Box<ActionHandle<bank::Close>>>,
+    attempts: u8,
+}
+
+impl BankCloser {
+    pub(super) fn active(&self) -> bool {
+        self.handle.is_some()
+    }
+
+    /// Drops the close in flight. Dropping revokes it before the host can dispatch it.
+    pub(super) fn cancel(&mut self) {
+        self.handle = None;
+        self.attempts = 0;
+    }
+
+    /// Begins the close when none is in flight and the frame still proves the
+    /// lease, then polls it, so the click goes out on the tick it begins.
+    pub(super) fn drive(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+        lease: &mut Option<BankLease>,
+    ) -> Closed {
+        if self.handle.is_none() {
+            match lease_view(&tick.cx, lease) {
+                LeaseView::Absent => {
+                    self.attempts = 0;
+                    return Closed::Done;
+                }
+                LeaseView::Unobserved => return Closed::Done,
+                LeaseView::Owned => {}
+            }
+            if !tick.cx.may_continue_this_tick() {
+                return Closed::Pending;
+            }
+            if self.attempts >= MAX_CLOSE_ATTEMPTS {
+                self.attempts = 0;
+                *lease = None;
+                return Closed::Failed(ActionError::Failed(Arc::from(format!(
+                    "bank-close-failed: bank did not close after {MAX_CLOSE_ATTEMPTS} attempts"
+                ))));
+            }
+            match tick.actions.begin::<bank::Close>((), &mut tick.cx) {
+                Ok(handle) => {
+                    self.attempts += 1;
+                    self.handle = Some(Box::new(handle));
+                }
+                Err(
+                    ActionError::Busy
+                    | ActionError::Held
+                    | ActionError::Stale
+                    | ActionError::Cancelled
+                    | ActionError::BudgetExhausted,
+                ) => return Closed::Pending,
+                Err(error) => {
+                    self.attempts = 0;
+                    *lease = None;
+                    return Closed::Failed(error);
+                }
+            }
+        }
+        let handle = self.handle.take().expect("a close is in flight");
+        match tick.actions.poll(&handle, &mut tick.cx) {
+            Poll::Pending => {
+                self.handle = Some(handle);
+                Closed::Pending
+            }
+            Poll::Ready(Ok(())) => {
+                *lease = None;
+                self.attempts = 0;
+                Closed::Done
+            }
+            // The bank did not shut in time, its session was replaced, or the
+            // action owner refused: the next drive judges the frame again.
+            Poll::Ready(Err(
+                ActionError::Busy
+                | ActionError::Held
+                | ActionError::Stale
+                | ActionError::Cancelled
+                | ActionError::BudgetExhausted,
+            )) => Closed::Pending,
+            Poll::Ready(Err(ActionError::Failed(message)))
+                if message.as_ref() == "bank did not close"
+                    || message.starts_with("bank session replaced") =>
+            {
+                Closed::Pending
+            }
+            Poll::Ready(Err(error)) => {
+                *lease = None;
+                self.attempts = 0;
+                Closed::Failed(error)
+            }
+        }
+    }
+}
+
 pub struct Provisioner {
     path: Option<api::selected::FactKey>,
     bank_run: Option<AcquireRun>,
@@ -96,6 +273,17 @@ pub struct Provisioner {
     /// Bank trips started so far (wrapping), so the runner can trace a trip
     /// that began and ended within one poll.
     bank_starts: u32,
+    /// The provisioner has started bank trips and has not reached the end of
+    /// that session, the close included. A lease outside a session is owed to
+    /// the queue runner, which closes it.
+    in_session: bool,
+    /// A trip began with the bank shut and no frame has shown it open yet.
+    opening: bool,
+    /// The bank this provisioner's trips opened, once a frame showed it open.
+    lease: Option<BankLease>,
+    closer: BankCloser,
+    /// Optional needs already logged as unmet since the last path reset.
+    unmet_logged: Vec<UnmetNeed>,
 }
 
 impl Default for Provisioner {
@@ -117,10 +305,38 @@ impl Provisioner {
             status: Status::default(),
             revision: 0,
             bank_starts: 0,
+            in_session: false,
+            opening: false,
+            lease: None,
+            closer: BankCloser::default(),
+            unmet_logged: Vec::new(),
         }
     }
 
     pub fn poll(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        plan: &CompiledProvisioning,
+        active_loadout: Option<&str>,
+        current_stage: Option<&FactKey>,
+    ) -> Poll<Result<ProvisionEvent, ActionError>> {
+        let result = self.poll_inner(cx, plan, active_loadout, current_stage);
+        // Read after the poll, so a bank that this poll's own kernel opened is
+        // recorded on the tick it appears, even when the poll ends the session.
+        self.observe_bank(cx.tick);
+        // An error, or a return to the Path, ends the session. The lease stays
+        // with this provisioner for the queue runner to close.
+        if matches!(
+            result,
+            Poll::Ready(Err(_) | Ok(ProvisionEvent::Ready | ProvisionEvent::Blocked { .. }))
+        ) {
+            self.in_session = false;
+            self.opening = false;
+        }
+        result
+    }
+
+    fn poll_inner(
         &mut self,
         cx: &mut StepContext<'_, '_>,
         plan: &CompiledProvisioning,
@@ -139,6 +355,13 @@ impl Provisioner {
             self.set_coin_drawn(plan.coin_float <= 0);
         }
 
+        if self.closer.active() {
+            match self.closer.drive(cx.tick, &mut self.lease) {
+                Closed::Pending => return Poll::Pending,
+                Closed::Failed(error) => return Poll::Ready(Err(error)),
+                Closed::Done => {}
+            }
+        }
         if self.bank_run.is_some() {
             return self.poll_bank(cx);
         }
@@ -146,6 +369,9 @@ impl Provisioner {
             return self.poll_acquire(cx);
         }
         if plan.owns_inventory {
+            if let Some(ended) = self.end_session(cx) {
+                return ended;
+            }
             self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
             return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
@@ -157,6 +383,15 @@ impl Provisioner {
             if self.bank_run.is_some() {
                 return self.poll_bank(cx);
             }
+            if self.closer.active() {
+                return match self.closer.drive(cx.tick, &mut self.lease) {
+                    Closed::Failed(error) => {
+                        self.in_session = false;
+                        Poll::Ready(Err(error))
+                    }
+                    _ => Poll::Pending,
+                };
+            }
             if self.acquire_run.is_some() {
                 return self.poll_acquire(cx);
             }
@@ -164,9 +399,15 @@ impl Provisioner {
         prepared
     }
 
+    /// Stops this provisioner's runs. It sends nothing. A lease that a frame
+    /// showed open stays: that bank is still open and still ours. A trip that
+    /// was cancelled before any frame showed its bank open owns nothing.
     pub fn cancel(&mut self) {
         self.bank_run = None;
         self.acquire_run = None;
+        self.closer.cancel();
+        self.in_session = false;
+        self.opening = false;
         self.acquire_finished = false;
         self.set_status(
             ProvisionPhase::Idle,
@@ -185,11 +426,15 @@ impl Provisioner {
         if let Some(mut run) = self.acquire_run.take() {
             run.cancel(actions);
         }
+        self.closer.cancel();
+        self.in_session = false;
+        self.opening = false;
         self.acquire_finished = false;
         self.path = None;
         self.set_coin_drawn(false);
         self.set_carry_drawn(0);
         self.attempts = 0;
+        self.unmet_logged.clear();
         self.set_status(ProvisionPhase::Idle, None, 0, 0, None, false);
     }
 
@@ -206,15 +451,51 @@ impl Provisioner {
     }
 
     pub(super) fn bank_phase(&self) -> Option<ProvisionPhase> {
-        self.bank_run.as_ref().map(|_| self.status.phase)
+        (self.bank_run.is_some() || self.closer.active()).then_some(self.status.phase)
     }
 
     pub(super) fn bank_starts(&self) -> u32 {
         self.bank_starts
     }
 
+    /// This provisioner's trips are running, or its close of their bank is.
+    pub(super) fn session_open(&self) -> bool {
+        self.in_session
+    }
+
+    /// The bank this provisioner's trips opened, while a frame last showed it open.
+    pub(super) fn bank_lease(&self) -> Option<BankLease> {
+        self.lease
+    }
+
+    /// Hands the lease of an ended session to the queue runner, which closes
+    /// it. `None` while a session is running: the provisioner closes that one.
+    pub(super) fn take_unowned_lease(&mut self) -> Option<BankLease> {
+        if self.in_session {
+            None
+        } else {
+            self.lease.take()
+        }
+    }
+
+    /// Test fixture for a session that left its bank open before the test begins.
+    #[cfg(test)]
+    pub(super) fn set_lease_for_test(&mut self, lease: BankLease) {
+        self.lease = Some(lease);
+    }
+
     pub(super) fn take_trace_event(&mut self) -> Option<super::compile::StepTraceEvent> {
         self.acquire_run.as_mut()?.take_trace_event()
+    }
+
+    /// Prayers the acquisition run raised, so a survival cancel can still
+    /// clear them after it drops the run.
+    pub(super) fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
+        self.acquire_run
+            .as_ref()
+            .map_or_else(crate::combat::RaisedPrayers::empty, |run| {
+                run.prayer_cleanup()
+            })
     }
 
     pub fn status_revision(&self) -> u64 {
@@ -231,7 +512,30 @@ impl Provisioner {
 
     /// A bank or acquisition run is live and may own an open dialogue.
     pub(super) fn run_live(&self) -> bool {
-        self.bank_run.is_some() || (self.acquire_run.is_some() && !self.acquire_finished)
+        self.bank_run.is_some()
+            || self.closer.active()
+            || (self.acquire_run.is_some() && !self.acquire_finished)
+    }
+    pub(super) fn has_run(&self) -> bool {
+        self.bank_run.is_some() || self.acquire_run.is_some()
+    }
+
+    pub(super) fn transfer_in_flight(&self) -> bool {
+        self.bank_run
+            .as_ref()
+            .is_some_and(AcquireRun::transfer_in_flight)
+            || self
+                .acquire_run
+                .as_ref()
+                .is_some_and(|run| run.transfer_in_flight())
+    }
+
+    pub(super) fn interrupt_transfer(&mut self, actions: &mut NativeActions) {
+        if let Some(run) = &mut self.bank_run {
+            run.interrupt_transfer(actions);
+        } else if let Some(run) = &mut self.acquire_run {
+            run.interrupt_transfer(actions);
+        }
     }
 
     pub fn needs_progress_read(&self) -> bool {
@@ -417,6 +721,13 @@ impl Provisioner {
                             NeedKind::Optional,
                             Presence::Held,
                         ))?;
+                    } else {
+                        needs.note_unmet(UnmetNeed {
+                            item: Arc::clone(&coin.item.name),
+                            need: coin.qty,
+                            have: ops::count_id(inventory, coin.item.id),
+                            cause: UnmetCause::NoRoom,
+                        });
                     }
                 }
             }
@@ -458,6 +769,13 @@ impl Provisioner {
                             NeedKind::Optional,
                             Presence::Held,
                         ))?;
+                    } else {
+                        needs.note_unmet(UnmetNeed {
+                            item: Arc::clone(&row.item.name),
+                            need: row.qty,
+                            have: ops::count_id(inventory, row.item.id),
+                            cause: UnmetCause::NoRoom,
+                        });
                     }
                 }
             }
@@ -495,6 +813,12 @@ impl Provisioner {
                 {
                     // An optional later-stage hint must not park a runnable Path.
                     // Its authored steps still acquire it when it is needed.
+                    needs.note_unmet(UnmetNeed {
+                        item: Arc::clone(&item.name),
+                        need: target,
+                        have: pack,
+                        cause: UnmetCause::NoRoom,
+                    });
                     continue;
                 }
             }
@@ -525,6 +849,9 @@ impl Provisioner {
             return Poll::Pending;
         }
         if let Some(missing) = needs.blocked() {
+            if let Some(ended) = self.end_session(cx) {
+                return ended;
+            }
             // A `Session` shortage of a required item is final (design-bank-
             // snapshot §2.4, D4): in place, before any spillover or
             // withdrawal trip — the same observation already rules the
@@ -555,6 +882,9 @@ impl Provisioner {
         let deficit = required_slots.saturating_sub(capacity);
         if deficit > 0 {
             if safe_slots < deficit {
+                if let Some(ended) = self.end_session(cx) {
+                    return ended;
+                }
                 let item = Arc::from(format!(
                     "inventory capacity needs {deficit} additional safe slots"
                 ));
@@ -609,6 +939,9 @@ impl Provisioner {
             return Poll::Pending;
         }
         if let (Some(recipe_need), Some(recipe)) = (recipe_need, active_recipe) {
+            if let Some(ended) = self.end_session(cx) {
+                return ended;
+            }
             // A provisioning need has no step settle to restart against, so
             // this run makes one pass.
             let acquire = AcquirePlan {
@@ -634,6 +967,10 @@ impl Provisioner {
             }
         }
 
+        if let Some(ended) = self.end_session(cx) {
+            return ended;
+        }
+        self.log_unmet(plan, needs.unmet());
         self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
         Poll::Ready(Ok(ProvisionEvent::Ready))
     }
@@ -724,6 +1061,8 @@ impl Provisioner {
         pack: i32,
         bank: Option<i32>,
     ) {
+        self.in_session = true;
+        self.opening = !bank_open(&cx.tick.cx);
         let request = AcquireRequest::bank_actions(
             plan.bank,
             plan.bank_required,
@@ -731,15 +1070,90 @@ impl Provisioner {
             false,
             cx.required_after,
         );
-        self.bank_run = Some(AcquireRun::new(
-            request,
-            crate::acquire::AcquirePlan::authored(),
-            cx.banks,
-            &cx.tick.cx,
-        ));
+        self.bank_run = Some(
+            AcquireRun::new(
+                request,
+                crate::acquire::AcquirePlan::authored(),
+                cx.banks,
+                &cx.tick.cx,
+            )
+            .with_quester_walk_retries(),
+        );
         self.attempts = self.attempts.saturating_add(1);
         self.bank_starts = self.bank_starts.wrapping_add(1);
         self.set_status(phase, item, need, pack, bank, bank_known(cx));
+    }
+
+    /// Ends the bank session: closes the bank this provisioner's trips opened
+    /// and a frame still shows open. `None` means nothing is left to close.
+    /// Otherwise the result is the poll result to return while the close runs.
+    fn end_session(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Option<Poll<Result<ProvisionEvent, ActionError>>> {
+        match self.closer.drive(cx.tick, &mut self.lease) {
+            Closed::Done => {
+                self.in_session = false;
+                None
+            }
+            Closed::Pending => {
+                if self.closer.active() {
+                    self.set_status(ProvisionPhase::Closing, None, 0, 0, None, bank_known(cx));
+                }
+                Some(Poll::Pending)
+            }
+            Closed::Failed(error) => {
+                self.in_session = false;
+                Some(Poll::Ready(Err(error)))
+            }
+        }
+    }
+
+    /// Records the lease when a frame shows an open bank that this account's
+    /// own bank kernel opened. Without that evidence, a bank is the player's:
+    /// the lease is neither created nor renewed. A trip that began with the
+    /// bank shut creates the lease. Inside the session, a bank that the kernel
+    /// reopened is the same lease under its new generation. Any other
+    /// generation stays unadopted, and the next frame check voids the lease
+    /// (`lease_view`), so a close in progress or due never reaches it.
+    fn observe_bank(&mut self, tick: &NativeTick<'_>) {
+        let Some(view) = tick.cx.snapshot().bank_session().map(|seen| seen.value) else {
+            return;
+        };
+        if !view.open || !tick.cx.bank_opened_by_machine(view.generation) {
+            return;
+        }
+        let session = tick.cx.evidence().run.session;
+        if self.opening {
+            self.lease = Some(BankLease::new(session, view.generation));
+            self.opening = false;
+        } else if self.in_session {
+            if let Some(lease) = self.lease.as_mut().filter(|lease| lease.session == session) {
+                lease.generation = view.generation;
+            }
+        }
+    }
+
+    /// One `info` line for each optional need that provisioning leaves unmet
+    /// while it returns `Ready`. A repeat of the same shortfall logs nothing.
+    fn log_unmet(&mut self, plan: &CompiledProvisioning, unmet: &[UnmetNeed]) {
+        if self.unmet_logged.as_slice() == unmet {
+            return;
+        }
+        for need in unmet {
+            api::host_log!(
+                api::hostlog::Category::BankOp,
+                api::hostlog::Level::Info,
+                "quester {}: provisioning ready with an optional need unmet: {} needs {}, holds {}, short {} ({})",
+                plan.path.0,
+                need.item,
+                need.need,
+                need.have,
+                need.need.saturating_sub(need.have),
+                need.cause.describe()
+            );
+        }
+        self.unmet_logged = unmet.to_vec();
     }
 
     fn set_coin_drawn(&mut self, drawn: bool) {
@@ -1103,6 +1517,7 @@ mod tests {
             refusal: None,
             assessment: None,
             escape: None,
+            prereq_allow: None,
         }
     }
 
@@ -1524,6 +1939,9 @@ mod tests {
 
     #[test]
     fn authored_draynor_varrock_and_unmatched_tiles_select_without_explicit_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let draynor = tile(3092, 3242);
         let varrock_west = tile(3185, 3438);
         let banks = Arc::new(NamedBankFacts::from_banks(vec![
@@ -1558,6 +1976,9 @@ mod tests {
 
     #[test]
     fn required_draynor_bank_is_explicit_and_unmatched_required_bank_refuses() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let draynor = tile(3092, 3242);
         let banks = Arc::new(NamedBankFacts::from_banks(vec![NamedBank::new(
             "Draynor Village",
@@ -1630,6 +2051,9 @@ mod tests {
 
     #[test]
     fn pack_sufficiency_does_not_open_an_unread_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -1672,6 +2096,9 @@ mod tests {
 
     #[test]
     fn missing_preserved_tool_is_not_an_implicit_must_have_requirement() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = provisioning(Vec::new(), None);
         plan.tools = Arc::from([crate::native_bank::BankItem {
             id: 42,
@@ -1752,6 +2179,9 @@ mod tests {
 
     #[test]
     fn banked_gather_tool_uses_the_shared_bank_withdrawal_run() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (path, quests, mut snapshot, axe_id) = woodcutting_tool_fixture();
         let memo = BankMemory::seeded(&[(axe_id, 1)], Origin::Session);
         let mut provisioner = Provisioner::new();
@@ -1789,6 +2219,9 @@ mod tests {
     /// `Unknown` bank's is.
     #[test]
     fn hint_lacking_every_gather_tool_costs_the_verifying_scan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (path, quests, mut snapshot, _) = woodcutting_tool_fixture();
         let memo = BankMemory::seeded(&[], Origin::Hint);
         let mut provisioner = Provisioner::new();
@@ -1824,6 +2257,9 @@ mod tests {
 
     #[test]
     fn acquirable_without_recipe_defers_to_authored_steps_after_bank_observation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -1859,6 +2295,9 @@ mod tests {
 
     #[test]
     fn unread_bank_is_scanned_before_a_must_have_can_be_blocked() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -1922,6 +2361,9 @@ mod tests {
 
     #[test]
     fn observed_empty_bank_blocks_a_must_have_shortfall() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -1959,6 +2401,9 @@ mod tests {
 
     #[test]
     fn acquirable_shortfall_runs_its_recipe_without_invalidating_bank_memo() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = provisioning(
             vec![compiled_item(
                 42,
@@ -2005,6 +2450,9 @@ mod tests {
 
     #[test]
     fn duplicate_item_without_recipe_does_not_hide_a_later_acquisition_recipe() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = provisioning(
             vec![
                 compiled_item(42, "Quest token", 1, CompiledItemKind::Acquirable, None),
@@ -2048,6 +2496,9 @@ mod tests {
 
     #[test]
     fn float_latches_survive_consumption_and_reset_clears_them() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let coin = crate::native_bank::BankItem {
             id: 10,
             name: Arc::from("Coins"),
@@ -2125,6 +2576,9 @@ mod tests {
 
     #[test]
     fn r1_missing_coin_and_carry_floats_scan_unknown_bank_but_held_floats_do_not() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (coin_qty, carry_qty) in [(100, 0), (0, 3), (100, 3)] {
             let mut plan = provisioning(Vec::new(), None);
             plan.coin_float = coin_qty;
@@ -2187,6 +2641,9 @@ mod tests {
 
     #[test]
     fn owns_inventory_skips_prepare() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = provisioning(Vec::new(), None);
         plan.owns_inventory = true;
         let snapshot = ready_snapshot(vec![item_view(
@@ -2220,6 +2677,9 @@ mod tests {
 
     #[test]
     fn staged_item_waits_for_its_stage_and_skips_the_unknown_bank_scan() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut item = compiled_item(
             42,
             "Quest token",
@@ -2390,7 +2850,7 @@ mod tests {
                     tick,
                     sequence: tick,
                 },
-                selected: crate::bank::SelectedBank {
+                outcome: crate::bank::BankPickOutcome::Selected(crate::bank::SelectedBank {
                     bank_index: 0,
                     access_tile: stand,
                     kind: crate::bank::PickKind::Reachable,
@@ -2402,7 +2862,7 @@ mod tests {
                         name: None,
                         choose: None,
                     })),
-                },
+                }),
             },
         );
     }
@@ -2467,7 +2927,7 @@ mod tests {
                 ledger.outbox.first().is_some_and(|action| {
                     matches!(
                         &action.effect,
-                        HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                        HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. })
                     )
                 })
             });
@@ -2491,6 +2951,9 @@ mod tests {
 
     #[test]
     fn authored_provisioning_returns_the_first_open_error_without_retrying() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for has_booth in [false, true] {
             let (mut snapshot, bank, banks) = openable_bank_fixture();
             if !has_booth {
@@ -2538,7 +3001,7 @@ mod tests {
             if has_booth {
                 assert!(matches!(
                     &ledger.as_ref().unwrap().outbox[0].effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                    HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. })
                 ));
                 complete_open_stand(&mut ledger, 2);
             } else {
@@ -2571,6 +3034,9 @@ mod tests {
 
     #[test]
     fn scan_spill_and_withdraw_preserve_the_provisioners_open_bank_lifetime() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for required in [false, true] {
             let (mut snapshot, bank, banks) = openable_bank_fixture();
             let stand = bank.tile;
@@ -2616,6 +3082,7 @@ mod tests {
             let mut picks = 0;
             let mut deposits = 0;
             let mut withdrawals = 0;
+            let mut closes = 0;
             let mut ready = false;
 
             for tick in 1..=64 {
@@ -2645,7 +3112,7 @@ mod tests {
                         picks += 1;
                         complete_bank_pick(&mut ledger, bank, stand, tick);
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::OpenStand {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::OpenStand {
                         ..
                     })) => {
                         complete_open_stand(&mut ledger, tick);
@@ -2656,7 +3123,7 @@ mod tests {
                             side_rows(&pack),
                         );
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::InvButton {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::InvButton {
                         id,
                         ..
                     })) => {
@@ -2679,13 +3146,13 @@ mod tests {
                             side_rows(&pack),
                         );
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
                         on: false,
                     })) => {
                         assert_eq!(phase, ProvisionPhase::Withdrawing);
                         complete_open_stand(&mut ledger, tick);
                     }
-                    Some(HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
                         bank_item_id,
                         count,
                         ..
@@ -2708,7 +3175,13 @@ mod tests {
                             side_rows(&pack),
                         );
                     }
-                    Some(_) => panic!("provisioning must not close, walk or issue another effect"),
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::Close)) => {
+                        assert_eq!(phase, ProvisionPhase::Closing);
+                        closes += 1;
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
+                    }
+                    Some(_) => panic!("provisioning must not walk or issue another effect"),
                     None => {}
                 }
                 match result {
@@ -2737,6 +3210,7 @@ mod tests {
                     ProvisionPhase::Scanning,
                     ProvisionPhase::Spillover,
                     ProvisionPhase::Withdrawing,
+                    ProvisionPhase::Closing,
                     ProvisionPhase::Ready
                 ]
             );
@@ -2756,9 +3230,10 @@ mod tests {
             );
             assert_eq!(provisioner.bank_starts(), 3);
             assert_eq!(provisioner.status().attempts, 3);
+            assert_eq!(closes, 1, "one close, after the last trip");
             assert!(snapshot_view(&snapshot, 64)
                 .bank_session()
-                .is_some_and(|session| session.value.open));
+                .is_some_and(|session| !session.value.open));
             assert!(ledger
                 .as_ref()
                 .is_none_or(|ledger| ledger.outbox.is_empty()));
@@ -2767,6 +3242,9 @@ mod tests {
 
     #[test]
     fn hint_shortage_costs_one_scan_then_withdraws_at_the_same_open_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -2904,7 +3382,7 @@ mod tests {
                             HostEffect::BankPick(_)
                                 | HostEffect::Walk(_)
                                 | HostEffect::Interaction(
-                                    crate::shim::InteractReq::OpenStand { .. }
+                                    crate::interact::InteractReq::OpenStand { .. }
                                 )
                         ),
                         "the withdrawal must not start a second bank trip"
@@ -2924,6 +3402,9 @@ mod tests {
 
     #[test]
     fn stale_hint_stock_costs_one_withdraw_trip_then_session_zero_then_acquisition() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut plan = provisioning(
             vec![compiled_item(
                 42,
@@ -3023,7 +3504,32 @@ mod tests {
         assert_eq!(memory.count(42), Some(0));
 
         // A Session-known shortage of an Acquirable runs its recipe: no
-        // block in place and no second bank trip.
+        // block in place and no second bank trip. The bank session ends
+        // first, so the recipe's steps never act under the bank interface.
+        tick += 1;
+        memory.track(&snapshot, tick);
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick,
+            &plan,
+            None,
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Closing);
+        assert!(matches!(
+            ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect),
+            Some(HostEffect::Interaction(crate::interact::InteractReq::Close))
+        ));
+        complete_open_stand(&mut ledger, tick);
+        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
         tick += 1;
         memory.track(&snapshot, tick);
         // The empty recipe starts and finishes on that poll (TICK-FIX #7).
@@ -3057,6 +3563,9 @@ mod tests {
 
     #[test]
     fn session_known_shortage_of_a_must_have_blocks_in_place() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -3099,6 +3608,9 @@ mod tests {
     /// trip for the part it does hold.
     #[test]
     fn partially_banked_session_must_have_blocks_in_place_without_a_withdrawal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -3142,6 +3654,9 @@ mod tests {
 
     #[test]
     fn worn_must_have_is_carried_and_not_withdrawn() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let plan = provisioning(
             vec![compiled_item(
                 42,
@@ -3181,5 +3696,1178 @@ mod tests {
         ));
         assert_eq!(provisioner.status().phase, ProvisionPhase::Ready);
         assert!(ledger.is_none(), "a worn MustHave queues no withdrawal");
+    }
+
+    /// The host side of one provisioning bank session on the fixture bank.
+    /// It completes each effect the provisioner sends, moves a withdrawn
+    /// token from the bank rows to the pack, and takes the bank interface
+    /// away when the provisioner closes it.
+    struct SessionRun {
+        /// The effects the provisioner sent, in order.
+        effects: Vec<&'static str>,
+        /// Whether the bank was open on the tick provisioning returned `Ready`.
+        open_at_ready: Option<bool>,
+    }
+
+    fn run_session(
+        plan: &CompiledProvisioning,
+        mut memory: BankMemory,
+        mut bank_rows: Vec<ItemView>,
+        open_at_start: bool,
+    ) -> SessionRun {
+        enum Seen {
+            Pick,
+            Open,
+            Note,
+            Withdraw,
+            Close,
+        }
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        if open_at_start {
+            snapshot.seed_bank_observation(1, 0, Some(bank_rows.clone()), Vec::new());
+        }
+        let stand = bank.tile;
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut pack: Vec<ItemView> = Vec::new();
+        let mut run = SessionRun {
+            effects: Vec::new(),
+            open_at_ready: None,
+        };
+        for tick in 1..=80 {
+            memory.track(&snapshot, tick);
+            let result = poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick,
+                plan,
+                None,
+                &memory,
+                &banks,
+                &quests,
+            );
+            let seen = ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| match &action.effect {
+                    HostEffect::BankPick(_) => Seen::Pick,
+                    HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. }) => {
+                        Seen::Open
+                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
+                        ..
+                    }) => Seen::Note,
+                    HostEffect::Interaction(
+                        crate::interact::InteractReq::Withdraw { .. }
+                        | crate::interact::InteractReq::WithdrawX { .. },
+                    ) => Seen::Withdraw,
+                    HostEffect::Interaction(crate::interact::InteractReq::Close) => Seen::Close,
+                    HostEffect::Interaction(request) => {
+                        panic!("unexpected interaction {request:?}")
+                    }
+                    _ => panic!("unexpected non-interaction effect"),
+                });
+            match seen {
+                Some(Seen::Pick) => {
+                    run.effects.push("pick");
+                    complete_bank_pick(&mut ledger, bank, stand, tick);
+                }
+                Some(Seen::Open) => {
+                    run.effects.push("open");
+                    complete_open_stand(&mut ledger, tick);
+                    snapshot.seed_bank_observation(1, tick, Some(bank_rows.clone()), Vec::new());
+                }
+                Some(Seen::Note) => {
+                    run.effects.push("note");
+                    complete_open_stand(&mut ledger, tick);
+                }
+                Some(Seen::Withdraw) => {
+                    run.effects.push("withdraw");
+                    pack.push(item_view(42, "Quest token", 1, ItemContainer::Inventory));
+                    bank_rows.retain(|row| row.def.id != 42);
+                    complete_open_stand(&mut ledger, tick);
+                    snapshot.seed_inventory(pack.clone(), 28);
+                    snapshot.seed_bank_observation(1, tick, Some(bank_rows.clone()), Vec::new());
+                }
+                Some(Seen::Close) => {
+                    run.effects.push("close");
+                    complete_open_stand(&mut ledger, tick);
+                    snapshot.seed_bank_observation(-1, tick, None, Vec::new());
+                }
+                None => {}
+            }
+            match result {
+                Poll::Pending | Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) => {}
+                Poll::Ready(Ok(ProvisionEvent::Ready)) => {
+                    run.open_at_ready = Some(
+                        snapshot_view(&snapshot, tick)
+                            .bank_session()
+                            .is_some_and(|session| session.value.open),
+                    );
+                    break;
+                }
+                Poll::Ready(other) => panic!("provisioning ended without Ready: {other:?}"),
+            }
+        }
+        run
+    }
+
+    fn coin_float_plan(qty: i32) -> CompiledProvisioning {
+        let mut plan = provisioning(Vec::new(), None);
+        plan.coin_float = qty;
+        plan.coin = Some(super::super::compile::CompiledCarry {
+            item: crate::native_bank::BankItem {
+                id: 10,
+                name: Arc::from("Coins"),
+            },
+            qty,
+            stackable: true,
+            latch_index: u8::MAX,
+        });
+        plan
+    }
+
+    #[test]
+    fn scan_then_ready_closes_the_bank_before_the_next_step_acts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        // The empty-bank Sheep Shearer case: the scan finds no coins, no
+        // withdrawal follows, and the Path's next step is not a bank step.
+        let run = run_session(
+            &coin_float_plan(20),
+            BankMemory::default(),
+            Vec::new(),
+            false,
+        );
+        assert_eq!(
+            run.open_at_ready,
+            Some(false),
+            "provisioning must not hand control to a step under the bank interface: {:?}",
+            run.effects
+        );
+        assert_eq!(run.effects.iter().filter(|e| **e == "close").count(), 1);
+        assert_eq!(run.effects.last(), Some(&"close"));
+    }
+
+    #[test]
+    fn scan_then_withdraw_closes_once_after_the_withdrawal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let plan = provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                1,
+                CompiledItemKind::MustHave,
+                None,
+            )],
+            None,
+        );
+        let run = run_session(
+            &plan,
+            BankMemory::seeded(&[], Origin::Hint),
+            vec![bank_row(42, "Quest token", 1)],
+            false,
+        );
+        let position = |name: &str| run.effects.iter().position(|effect| *effect == name);
+        let open = position("open").expect("the scan opens the bank");
+        let withdraw = position("withdraw").expect("the bank holds the token");
+        let close = position("close").expect("the session ends with a close");
+        assert!(
+            !run.effects[open..withdraw].contains(&"close"),
+            "no close between the scan and the withdrawal: {:?}",
+            run.effects
+        );
+        assert!(withdraw < close, "the close follows the withdrawal");
+        assert_eq!(run.effects.iter().filter(|e| **e == "close").count(), 1);
+        assert_eq!(run.effects.last(), Some(&"close"));
+        assert_eq!(run.open_at_ready, Some(false));
+    }
+
+    #[test]
+    fn a_bank_open_before_the_first_trip_is_left_open() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        // The player (or an earlier step) opened this bank: the provisioner
+        // withdraws at it and never closes it, since the session is not its own.
+        let plan = provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                1,
+                CompiledItemKind::MustHave,
+                None,
+            )],
+            None,
+        );
+        let run = run_session(
+            &plan,
+            BankMemory::default(),
+            vec![bank_row(42, "Quest token", 1)],
+            true,
+        );
+        assert!(
+            run.effects.contains(&"withdraw"),
+            "the provisioner withdraws at the open bank: {:?}",
+            run.effects
+        );
+        assert_eq!(run.open_at_ready, Some(true));
+        assert!(
+            !run.effects.contains(&"close"),
+            "a bank the provisioner did not open is not closed by it: {:?}",
+            run.effects
+        );
+    }
+
+    #[test]
+    fn ready_with_an_unmet_optional_need_logs_the_need_and_the_shortfall_once() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        const SLOT: &str = "status-provision-unmet-supply";
+        crate::slot::compiled::tests::install_status_line_sink();
+        api::hostlog::bind_slot(SLOT);
+        let plan = coin_float_plan(20);
+        let snapshot = ready_snapshot(Vec::new());
+        let memo = known_empty(10);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        for tick in 1..=3 {
+            assert!(matches!(
+                poll_once(
+                    &mut provisioner,
+                    &snapshot,
+                    &mut ledger,
+                    tick,
+                    &plan,
+                    None,
+                    &memo,
+                    &banks,
+                    &quests,
+                ),
+                Poll::Ready(Ok(ProvisionEvent::Ready))
+            ));
+        }
+        let lines: Vec<_> = crate::slot::compiled::tests::status_lines_for(SLOT)
+            .into_iter()
+            .filter(|line| line.message.contains("optional need unmet"))
+            .collect();
+        assert_eq!(lines.len(), 1, "one line, not one per poll: {lines:?}");
+        assert_eq!(lines[0].level, api::hostlog::Level::Info);
+        assert!(
+            lines[0]
+                .message
+                .ends_with("Coins needs 20, holds 0, short 20 (nothing more to draw it from)"),
+            "{}",
+            lines[0].message
+        );
+    }
+
+    #[test]
+    fn a_float_left_out_for_pack_room_logs_the_shortfall() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        const SLOT: &str = "status-provision-unmet-room";
+        crate::slot::compiled::tests::install_status_line_sink();
+        api::hostlog::bind_slot(SLOT);
+        let mut plan = coin_float_plan(20);
+        plan.base_spillover_keep = Arc::from([42]);
+        let mut snapshot = ready_snapshot(Vec::new());
+        snapshot.seed_inventory(vec![item_view(42, "Kept", 1, ItemContainer::Inventory)], 1);
+        let memo = BankMemory::seeded(&[(10, 5)], Origin::Session);
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert!(matches!(
+            poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                &plan,
+                None,
+                &memo,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Ready))
+        ));
+        let lines: Vec<_> = crate::slot::compiled::tests::status_lines_for(SLOT)
+            .into_iter()
+            .filter(|line| line.message.contains("optional need unmet"))
+            .collect();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0]
+                .message
+                .ends_with("Coins needs 20, holds 0, short 20 (no free pack slot for it)"),
+            "{}",
+            lines[0].message
+        );
+    }
+
+    fn scan_plan(bank: NamedBank) -> CompiledProvisioning {
+        provisioning(
+            vec![compiled_item(
+                42,
+                "Quest token",
+                1,
+                CompiledItemKind::MustHave,
+                None,
+            )],
+            Some(bank),
+        )
+    }
+
+    /// A plan that needs no bank trip, so polling it only ends a session.
+    fn owned_plan() -> CompiledProvisioning {
+        let mut plan = provisioning(Vec::new(), None);
+        plan.owns_inventory = true;
+        plan
+    }
+
+    fn closes_sent(ledger: &Option<Box<ledger::Ledger>>) -> usize {
+        ledger.as_ref().map_or(0, |ledger| {
+            ledger
+                .outbox
+                .iter()
+                .filter(|action| {
+                    matches!(
+                        &action.effect,
+                        HostEffect::Interaction(crate::interact::InteractReq::Close)
+                    )
+                })
+                .count()
+        })
+    }
+
+    /// A scan trip to the point where a frame shows the bank open and the
+    /// kernel waits on a table that never arrives. Returns the tick reached.
+    #[allow(clippy::too_many_arguments)] // Explicit fixture inputs mirror the production poll context.
+    fn open_the_bank_without_a_table(
+        provisioner: &mut Provisioner,
+        snapshot: &mut GameSnapshot,
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        plan: &CompiledProvisioning,
+        banks: &Arc<NamedBankFacts>,
+        bank: NamedBank,
+    ) -> u64 {
+        let memory = BankMemory::default();
+        let quests = quest_catalog();
+        assert!(poll_once(
+            provisioner,
+            snapshot,
+            ledger,
+            1,
+            plan,
+            None,
+            &memory,
+            banks,
+            &quests
+        )
+        .is_pending());
+        complete_bank_pick(ledger, bank, bank.tile, 1);
+        assert!(poll_once(
+            provisioner,
+            snapshot,
+            ledger,
+            2,
+            plan,
+            None,
+            &memory,
+            banks,
+            &quests
+        )
+        .is_pending());
+        complete_open_stand(ledger, 2);
+        snapshot.seed_bank_observation(1, 2, None, Vec::new());
+        assert!(poll_once(
+            provisioner,
+            snapshot,
+            ledger,
+            3,
+            plan,
+            None,
+            &memory,
+            banks,
+            &quests
+        )
+        .is_pending());
+        3
+    }
+
+    #[test]
+    fn a_terminal_error_with_the_bank_open_ends_the_session_and_keeps_the_lease() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let reached = open_the_bank_without_a_table(
+            &mut provisioner,
+            &mut snapshot,
+            &mut ledger,
+            &plan,
+            &banks,
+            bank,
+        );
+        assert!(provisioner.session_open());
+        assert_eq!(
+            provisioner.bank_lease(),
+            Some(BankLease::new(1, snapshot.bank_session_generation())),
+            "a frame showed the bank open after a trip that began with it shut"
+        );
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            reached + 10,
+            &plan,
+            None,
+            &BankMemory::default(),
+            &banks,
+            &quest_catalog(),
+        );
+        assert!(matches!(result, Poll::Ready(Err(_))), "{result:?}");
+        assert!(
+            !provisioner.session_open(),
+            "the error ended the session without a close"
+        );
+        assert_eq!(
+            closes_sent(&ledger),
+            0,
+            "the provisioner sends no close here"
+        );
+        assert!(provisioner.take_unowned_lease().is_some());
+        assert_eq!(provisioner.take_unowned_lease(), None, "handed over once");
+    }
+
+    #[test]
+    fn cancel_keeps_a_lease_a_frame_showed_and_drops_an_unobserved_open() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let memory = BankMemory::default();
+        let quests = quest_catalog();
+
+        // Cancelled before any frame showed the bank open: nothing is owned.
+        let mut early = Provisioner::new();
+        let mut ledger = None;
+        assert!(poll_once(
+            &mut early,
+            &snapshot,
+            &mut ledger,
+            1,
+            &plan,
+            None,
+            &memory,
+            &banks,
+            &quests
+        )
+        .is_pending());
+        early.cancel();
+        snapshot.seed_bank_observation(1, 2, Some(Vec::new()), Vec::new());
+        assert!(poll_once(
+            &mut early,
+            &snapshot,
+            &mut ledger,
+            2,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests
+        )
+        .is_ready());
+        assert_eq!(early.bank_lease(), None);
+
+        // Cancelled with the bank observed open: the bank is still ours.
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let mut late = Provisioner::new();
+        let mut ledger = None;
+        open_the_bank_without_a_table(&mut late, &mut snapshot, &mut ledger, &plan, &banks, bank);
+        late.cancel();
+        assert!(!late.session_open());
+        assert!(late.take_unowned_lease().is_some());
+    }
+
+    #[test]
+    fn a_trip_cancelled_before_the_bank_opened_does_not_own_a_bank_the_player_opens() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let memory = BankMemory::default();
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert!(poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &plan,
+            None,
+            &memory,
+            &banks,
+            &quests
+        )
+        .is_pending());
+        provisioner.cancel();
+        ledger.as_mut().unwrap().outbox.clear();
+        snapshot.seed_bank_observation(1, 2, Some(Vec::new()), Vec::new());
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            2,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+        assert_eq!(closes_sent(&ledger), 0, "the player's bank stays open");
+        assert_eq!(provisioner.bank_lease(), None);
+    }
+
+    #[test]
+    fn a_replaced_bank_session_is_not_closed_by_a_stale_lease() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut memory = BankMemory::default();
+        let mut tick = 0;
+        drive_trip_to_receipt(
+            &mut provisioner,
+            &mut snapshot,
+            &mut memory,
+            &mut ledger,
+            &mut tick,
+            &plan,
+            &banks,
+            &quests,
+            bank,
+            bank.tile,
+            Some(Vec::new()),
+        );
+        assert!(provisioner.bank_lease().is_some());
+        // The runner abandons the session, then the bank is shut and opened
+        // again by someone else: a different bank session generation.
+        provisioner.cancel();
+        snapshot.seed_bank_observation(-1, tick + 1, None, Vec::new());
+        snapshot.seed_bank_observation(1, tick + 2, Some(Vec::new()), Vec::new());
+        ledger.as_mut().unwrap().outbox.clear();
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick + 3,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+        assert_eq!(closes_sent(&ledger), 0);
+        assert_eq!(provisioner.bank_lease(), None, "the stale lease is dropped");
+    }
+
+    #[test]
+    fn a_lease_from_another_login_session_is_dropped_without_a_close() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut memory = BankMemory::default();
+        let mut tick = 0;
+        drive_trip_to_receipt(
+            &mut provisioner,
+            &mut snapshot,
+            &mut memory,
+            &mut ledger,
+            &mut tick,
+            &plan,
+            &banks,
+            &quests,
+            bank,
+            bank.tile,
+            Some(Vec::new()),
+        );
+        // The test frames carry login session 1. The lease was made in session 2.
+        provisioner.cancel();
+        provisioner.lease = Some(BankLease::new(2, snapshot.bank_session_generation()));
+        ledger.as_mut().unwrap().outbox.clear();
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick + 1,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+        assert_eq!(closes_sent(&ledger), 0);
+        assert_eq!(provisioner.bank_lease(), None);
+    }
+
+    /// The state of a session that left its bank open between two trips: the
+    /// first trip's lease names the bank session `generation`.
+    fn session_with_a_leased_bank() -> (
+        Provisioner,
+        GameSnapshot,
+        Option<Box<ledger::Ledger>>,
+        BankMemory,
+        u64,
+        Arc<NamedBankFacts>,
+    ) {
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        let plan = scan_plan(bank);
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut memory = BankMemory::default();
+        let mut tick = 0;
+        drive_trip_to_receipt(
+            &mut provisioner,
+            &mut snapshot,
+            &mut memory,
+            &mut ledger,
+            &mut tick,
+            &plan,
+            &banks,
+            &quests,
+            bank,
+            bank.tile,
+            Some(Vec::new()),
+        );
+        assert!(provisioner.session_open());
+        assert_eq!(
+            provisioner.bank_lease(),
+            Some(BankLease::new(1, snapshot.bank_session_generation())),
+            "the bank the kernel opened is leased"
+        );
+        (provisioner, snapshot, ledger, memory, tick, banks)
+    }
+
+    #[test]
+    fn a_bank_the_player_reopens_between_trips_is_not_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut provisioner, mut snapshot, mut ledger, memory, tick, banks) =
+            session_with_a_leased_bank();
+        let quests = quest_catalog();
+        // The player shuts the bank and opens it again: a new bank session.
+        snapshot.seed_bank_observation(-1, tick + 1, None, Vec::new());
+        snapshot.seed_bank_observation(1, tick + 2, Some(Vec::new()), Vec::new());
+        ledger.as_mut().unwrap().outbox.clear();
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick + 3,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+        assert_eq!(closes_sent(&ledger), 0, "the player's bank stays open");
+        assert_eq!(provisioner.bank_lease(), None);
+        assert!(!provisioner.session_open());
+    }
+
+    #[test]
+    fn a_bank_the_player_reopens_during_a_close_is_not_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut provisioner, mut snapshot, mut ledger, memory, tick, banks) =
+            session_with_a_leased_bank();
+        let quests = quest_catalog();
+        let leased = snapshot.bank_session_generation();
+        let result = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick + 1,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        assert!(result.is_pending());
+        assert_eq!(closes_sent(&ledger), 1, "the close of the leased bank");
+        assert!(provisioner.closer.active());
+
+        // Before the close lands, the player shuts the bank and opens it again.
+        snapshot.seed_bank_observation(-1, tick + 2, None, Vec::new());
+        snapshot.seed_bank_observation(1, tick + 3, Some(Vec::new()), Vec::new());
+        assert_eq!(snapshot.bank_session_generation(), leased + 2);
+        ledger.as_mut().unwrap().outbox.clear();
+        for step in 4..8 {
+            let result = poll_once(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick + step,
+                &owned_plan(),
+                None,
+                &memory,
+                &banks,
+                &quests,
+            );
+            if matches!(result, Poll::Ready(_)) {
+                assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+                break;
+            }
+        }
+        assert_eq!(
+            closes_sent(&ledger),
+            0,
+            "no close is sent for the player's bank session"
+        );
+        assert_eq!(provisioner.bank_lease(), None);
+        assert!(!provisioner.session_open());
+    }
+
+    /// A withdraw trip whose bank session closes after the click. In the first
+    /// case the trip's own kernel opens it again with its stand click. In the
+    /// second, the player opens a new session before the kernel can click.
+    #[test]
+    fn a_reopen_inside_a_trip_keeps_the_lease_only_when_the_kernel_made_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for player in [false, true] {
+            let (mut snapshot, bank, banks) = openable_bank_fixture();
+            // A required bank is picked again for each trip, so the trip knows its stand.
+            let mut plan = scan_plan(bank);
+            plan.bank_required = true;
+            let quests = quest_catalog();
+            let mut bank_rows = vec![bank_row(42, "Quest token", 1)];
+            let mut pack: Vec<ItemView> = Vec::new();
+            let mut memory = BankMemory::seeded(&[], Origin::Hint);
+            let mut ledger = None;
+            let mut provisioner = Provisioner::new();
+            let mut reopened = false;
+            let mut closes = 0;
+            let mut closed_generation = None;
+            let mut ready = false;
+            let mut generations = Vec::new();
+
+            for tick in 1..=80 {
+                memory.track(&snapshot, tick);
+                let result = poll_once(
+                    &mut provisioner,
+                    &snapshot,
+                    &mut ledger,
+                    tick,
+                    &plan,
+                    None,
+                    &memory,
+                    &banks,
+                    &quests,
+                );
+                match ledger
+                    .as_ref()
+                    .and_then(|ledger| ledger.outbox.first())
+                    .map(|action| &action.effect)
+                {
+                    Some(HostEffect::BankPick(_)) => {
+                        complete_bank_pick(&mut ledger, bank, bank.tile, tick);
+                    }
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::OpenStand {
+                        ..
+                    })) => {
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_bank_observation(
+                            1,
+                            tick,
+                            Some(bank_rows.clone()),
+                            Vec::new(),
+                        );
+                        generations.push(snapshot.bank_session_generation());
+                    }
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
+                        ..
+                    })) => complete_open_stand(&mut ledger, tick),
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
+                        ..
+                    })) if !reopened => {
+                        reopened = true;
+                        complete_open_stand(&mut ledger, tick);
+                        // The session ends before the click's effect shows.
+                        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
+                        if player {
+                            snapshot.seed_bank_observation(
+                                1,
+                                tick,
+                                Some(bank_rows.clone()),
+                                Vec::new(),
+                            );
+                            generations.push(snapshot.bank_session_generation());
+                        }
+                    }
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
+                        ..
+                    })) => {
+                        let mut row = item_view(42, "Quest token", 1, ItemContainer::Inventory);
+                        row.slot = 0;
+                        pack.push(row);
+                        bank_rows.retain(|row| row.def.id != 42);
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_inventory(pack.clone(), 28);
+                        snapshot.seed_bank_observation(
+                            1,
+                            tick,
+                            Some(bank_rows.clone()),
+                            Vec::new(),
+                        );
+                    }
+                    Some(HostEffect::Interaction(crate::interact::InteractReq::Close)) => {
+                        closes += 1;
+                        closed_generation = Some(snapshot.bank_session_generation());
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
+                    }
+                    Some(_) => panic!("provisioning must not walk or issue another effect"),
+                    None => {}
+                }
+                match result {
+                    Poll::Ready(Ok(ProvisionEvent::Ready)) => {
+                        ready = true;
+                        break;
+                    }
+                    Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) | Poll::Pending => {}
+                    Poll::Ready(other) => panic!("provisioning did not finish: {other:?}"),
+                }
+            }
+
+            assert!(ready, "player={player}: provisioning finished");
+            assert!(reopened, "player={player}: the session closed mid-trip");
+            assert_eq!(generations.len(), 2, "player={player}: {generations:?}");
+            assert_ne!(generations[0], generations[1]);
+            if player {
+                assert_eq!(closes, 0, "the player's session is never closed");
+            } else {
+                assert_eq!(closes, 1, "the kernel's own reopen is closed once");
+                assert_eq!(
+                    closed_generation,
+                    Some(generations[1]),
+                    "the close names the reopened session"
+                );
+            }
+        }
+    }
+
+    /// What happens before a bank opens on a teller trip.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum TellerStart {
+        /// No banker is in the scene. The kernel waits and sends nothing.
+        NoBanker,
+        /// No banker at first, so the kernel waits. Then a banker appears, but
+        /// the tick's one interaction event is already spent: the kernel's talk
+        /// is refused. (A trip polls its kernel even on such a tick, while it
+        /// begins one only on a tick with the event unspent.)
+        BudgetDenied,
+        /// The kernel talks to the banker, and that request opens the bank.
+        KernelOpens,
+        /// The `BudgetDenied` timeline with the event unspent: the kernel's
+        /// talk goes out on the tick that `BudgetDenied` refuses, and that
+        /// request opens the bank.
+        KernelOpensAfterWait,
+    }
+
+    fn teller_npc(stand: WorldTile) -> api::snapshot::NpcView {
+        api::snapshot::NpcView {
+            index: 7,
+            r#type: None,
+            name: Some("Banker".into()),
+            actions: vec![Some("Talk-to".into()), Some("Bank".into())],
+            tile: stand,
+            distance: 1,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health: 0,
+            total_health: 0,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 0,
+            size: 1,
+            network: stand,
+            x: stand.x,
+            z: stand.z,
+            yaw: 0,
+        }
+    }
+
+    /// Drive one teller trip to its receipt, then end the session. Returns the
+    /// ledger's bank mark after the trip, the lease after the trip, and the
+    /// number of closes that ending the session sent.
+    fn teller_trip(
+        start: TellerStart,
+    ) -> (Option<ledger::BankSessionMark>, Option<BankLease>, usize) {
+        let (mut snapshot, bank, banks) = openable_bank_fixture();
+        if start == TellerStart::KernelOpens {
+            snapshot.seed_npcs(vec![teller_npc(bank.tile)]);
+        }
+        let plan = scan_plan(bank);
+        let quests = quest_catalog();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut memory = BankMemory::default();
+        let mut picked = false;
+        let mut kernel_waited = false;
+        let mut deny_next = false;
+        // The tick on which the kernel's talk to a late banker is due.
+        let mut talk_due = None;
+        let mut receipt = false;
+        let mut tick = 0;
+        while tick < 20 && !receipt {
+            tick += 1;
+            memory.track(&snapshot, tick);
+            let deny = std::mem::take(&mut deny_next);
+            let result = with_tick_bank(&snapshot, Some(&memory), &mut ledger, tick, |native| {
+                if deny {
+                    assert!(native.cx.budget.event(false), "the tick's one event");
+                }
+                let required_after = native.cx.evidence();
+                let mut cx = StepContext {
+                    tick: native,
+                    quests: &quests,
+                    progress: &[],
+                    required_after,
+                    banks: &banks,
+                    choices: &crate::quester::choices::QuestChoices::default(),
+                };
+                provisioner.poll(&mut cx, &plan, None, None)
+            });
+            match ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect)
+            {
+                Some(HostEffect::BankPick(_)) => {
+                    let ledger = ledger.as_mut().unwrap();
+                    let action = ledger.outbox.remove(0);
+                    let authority = action.authority();
+                    ledger.complete_bank_pick(
+                        &authority,
+                        crate::bank::BankPickReceipt {
+                            request_id: authority.request_id().get(),
+                            evidence: api::quest_progress::EvidenceStamp {
+                                run: authority.run(),
+                                tick,
+                                sequence: tick,
+                            },
+                            outcome: crate::bank::BankPickOutcome::Selected(
+                                crate::bank::SelectedBank {
+                                    bank_index: 0,
+                                    access_tile: bank.tile,
+                                    kind: crate::bank::PickKind::Reachable,
+                                    access: Some(Arc::new(crate::bank::BankStandAccess {
+                                        bank,
+                                        stand_tile: bank.tile,
+                                        kind: crate::bank::AccessKind::Teller,
+                                        stand_op: 2,
+                                        name: Some(Arc::from("Banker")),
+                                        choose: None,
+                                    })),
+                                },
+                            ),
+                        },
+                    );
+                    picked = true;
+                }
+                Some(HostEffect::Interaction(crate::interact::InteractReq::Npc {
+                    name, ..
+                })) => {
+                    assert!(
+                        matches!(
+                            start,
+                            TellerStart::KernelOpens | TellerStart::KernelOpensAfterWait
+                        ),
+                        "{start:?}: no talk goes out"
+                    );
+                    assert_eq!(name, "Banker");
+                    if start == TellerStart::KernelOpensAfterWait {
+                        assert_eq!(
+                            talk_due,
+                            Some(tick),
+                            "the talk goes out as the banker shows"
+                        );
+                    }
+                    complete_open_stand(&mut ledger, tick);
+                    snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
+                }
+                Some(_) => panic!("{start:?}: the teller trip issued an unexpected effect"),
+                None if deny => {
+                    // The kernel's talk to the banker was refused on the tick
+                    // it was due. Nothing went out. The player now opens a bank.
+                    assert_eq!(talk_due, Some(tick));
+                    kernel_waited = true;
+                    assert_eq!(
+                        ledger.as_ref().unwrap().bank_session,
+                        None,
+                        "{start:?}: nothing is marked before any bank opens"
+                    );
+                    snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
+                }
+                None if picked && !kernel_waited && start == TellerStart::NoBanker => {
+                    // The kernel waits for a banker without a request. The
+                    // player now opens a bank.
+                    kernel_waited = true;
+                    assert_eq!(
+                        ledger.as_ref().unwrap().bank_session,
+                        None,
+                        "{start:?}: nothing is marked before any bank opens"
+                    );
+                    snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
+                }
+                None if picked
+                    && !kernel_waited
+                    && talk_due.is_none()
+                    && matches!(
+                        start,
+                        TellerStart::BudgetDenied | TellerStart::KernelOpensAfterWait
+                    ) =>
+                {
+                    // The kernel waited for a banker. One appears now. For
+                    // `BudgetDenied`, the next tick's event is spent before
+                    // the kernel polls.
+                    snapshot.seed_npcs(vec![teller_npc(bank.tile)]);
+                    deny_next = start == TellerStart::BudgetDenied;
+                    talk_due = Some(tick + 1);
+                }
+                None => {}
+            }
+            match result {
+                Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) => receipt = true,
+                Poll::Pending => {}
+                other => panic!("{start:?}: teller trip did not reach its receipt: {other:?}"),
+            }
+        }
+        assert!(receipt, "{start:?}: teller trip reached its receipt");
+        assert_eq!(
+            kernel_waited,
+            matches!(start, TellerStart::NoBanker | TellerStart::BudgetDenied),
+            "{start:?}: the player open happened only after the kernel waited"
+        );
+        let mark = ledger.as_ref().unwrap().bank_session;
+        let lease = provisioner.bank_lease();
+        ledger.as_mut().unwrap().outbox.clear();
+        let ended = poll_once(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            tick + 1,
+            &owned_plan(),
+            None,
+            &memory,
+            &banks,
+            &quests,
+        );
+        let closes = closes_sent(&ledger);
+        // A close keeps the session in Closing. Without one, it ends now.
+        if closes == 0 {
+            assert!(
+                matches!(ended, Poll::Ready(Ok(ProvisionEvent::Ready))),
+                "{start:?}: {ended:?}"
+            );
+        } else {
+            assert!(ended.is_pending(), "{start:?}: {ended:?}");
+        }
+        (mark, lease, closes)
+    }
+
+    /// The player's bank after a teller wait: no ownership mark, no lease and
+    /// no close.
+    fn assert_the_players_bank(start: TellerStart) {
+        let (mark, lease, closes) = teller_trip(start);
+        assert_eq!(
+            (
+                mark.is_some_and(|mark| mark.opened_by_machine),
+                lease,
+                closes
+            ),
+            (false, None, 0),
+            "{start:?}: (marked as the kernel's, lease, closes); mark {mark:?}"
+        );
+    }
+
+    #[test]
+    fn a_bank_the_player_opens_while_the_teller_kernel_finds_no_banker_is_not_its_own() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        assert_the_players_bank(TellerStart::NoBanker);
+    }
+
+    #[test]
+    fn a_bank_the_player_opens_after_a_denied_teller_talk_is_not_its_own() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        assert_the_players_bank(TellerStart::BudgetDenied);
+    }
+
+    /// The kernel's own teller open is marked, leased and closed once: at
+    /// once, and after a wait for a banker.
+    #[test]
+    fn a_bank_the_teller_kernel_opens_is_its_own_and_closed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for start in [TellerStart::KernelOpens, TellerStart::KernelOpensAfterWait] {
+            let (mark, lease, closes) = teller_trip(start);
+            let mark = mark.expect("the kernel's open is marked");
+            assert!(mark.opened_by_machine, "{start:?}");
+            assert_eq!(lease, Some(BankLease::new(1, mark.generation)), "{start:?}");
+            assert_eq!(
+                closes, 1,
+                "{start:?}: the kernel's teller bank is closed once"
+            );
+        }
     }
 }

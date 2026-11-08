@@ -5326,6 +5326,7 @@ impl<'a> ApiCombatOutcome<'a> {
   pub const VT_BOOST_DOSES: ::flatbuffers::VOffsetT = 26;
   pub const VT_ANTIFIRE_DOSES: ::flatbuffers::VOffsetT = 28;
   pub const VT_PROTECT_SWITCHES: ::flatbuffers::VOffsetT = 30;
+  pub const VT_PVP_SOURCE: ::flatbuffers::VOffsetT = 32;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -5344,6 +5345,7 @@ impl<'a> ApiCombatOutcome<'a> {
     builder.add_casts(args.casts);
     builder.add_swings(args.swings);
     builder.add_ticks(args.ticks);
+    builder.add_pvp_source(args.pvp_source);
     builder.add_protect_switches(args.protect_switches);
     builder.add_antifire_doses(args.antifire_doses);
     builder.add_boost_doses(args.boost_doses);
@@ -5453,6 +5455,13 @@ impl<'a> ApiCombatOutcome<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u8>(ApiCombatOutcome::VT_PROTECT_SWITCHES, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn pvp_source(&self) -> u8 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u8>(ApiCombatOutcome::VT_PVP_SOURCE, Some(0)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for ApiCombatOutcome<'_> {
@@ -5475,6 +5484,7 @@ impl ::flatbuffers::Verifiable for ApiCombatOutcome<'_> {
      .visit_field::<u8>("boost_doses", Self::VT_BOOST_DOSES, false)?
      .visit_field::<u8>("antifire_doses", Self::VT_ANTIFIRE_DOSES, false)?
      .visit_field::<u8>("protect_switches", Self::VT_PROTECT_SWITCHES, false)?
+     .visit_field::<u8>("pvp_source", Self::VT_PVP_SOURCE, false)?
      .finish();
     Ok(())
   }
@@ -5494,6 +5504,7 @@ pub struct ApiCombatOutcomeArgs<'a> {
     pub boost_doses: u8,
     pub antifire_doses: u8,
     pub protect_switches: u8,
+    pub pvp_source: u8,
 }
 impl<'a> Default for ApiCombatOutcomeArgs<'a> {
   #[inline]
@@ -5513,6 +5524,7 @@ impl<'a> Default for ApiCombatOutcomeArgs<'a> {
       boost_doses: 0,
       antifire_doses: 0,
       protect_switches: 0,
+      pvp_source: 0,
     }
   }
 }
@@ -5579,6 +5591,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ApiCombatOutcomeBuilder<'a, '
     self.fbb_.push_slot::<u8>(ApiCombatOutcome::VT_PROTECT_SWITCHES, protect_switches, 0);
   }
   #[inline]
+  pub fn add_pvp_source(&mut self, pvp_source: u8) {
+    self.fbb_.push_slot::<u8>(ApiCombatOutcome::VT_PVP_SOURCE, pvp_source, 0);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ApiCombatOutcomeBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     ApiCombatOutcomeBuilder {
@@ -5610,6 +5626,7 @@ impl ::core::fmt::Debug for ApiCombatOutcome<'_> {
       ds.field("boost_doses", &self.boost_doses());
       ds.field("antifire_doses", &self.antifire_doses());
       ds.field("protect_switches", &self.protect_switches());
+      ds.field("pvp_source", &self.pvp_source());
       ds.finish()
   }
 }
@@ -6515,6 +6532,7 @@ impl<'a> Snapshot<'a> {
   pub const VT_SEAT_LIVE: ::flatbuffers::VOffsetT = 292;
   pub const VT_SEAT_RESULTS: ::flatbuffers::VOffsetT = 294;
   pub const VT_MIRROR_REVOKES_CONSUMED: ::flatbuffers::VOffsetT = 296;
+  pub const VT_LOCAL_ATTACK_MARKS: ::flatbuffers::VOffsetT = 298;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -6526,6 +6544,7 @@ impl<'a> Snapshot<'a> {
     args: &'args SnapshotArgs<'args>
   ) -> ::flatbuffers::WIPOffset<Snapshot<'bldr>> {
     let mut builder = SnapshotBuilder::new(_fbb);
+    if let Some(x) = args.local_attack_marks { builder.add_local_attack_marks(x); }
     if let Some(x) = args.mirror_revokes_consumed { builder.add_mirror_revokes_consumed(x); }
     builder.add_chat_page_fingerprint(args.chat_page_fingerprint);
     builder.add_user_move_intent_seq(args.user_move_intent_seq);
@@ -7691,6 +7710,13 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(Snapshot::VT_MIRROR_REVOKES_CONSUMED, None)}
   }
+  #[inline]
+  pub fn local_attack_marks(&self) -> Option<u64> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(Snapshot::VT_LOCAL_ATTACK_MARKS, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -7844,6 +7870,7 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SeatLive>>>>("seat_live", Self::VT_SEAT_LIVE, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SeatResult>>>>("seat_results", Self::VT_SEAT_RESULTS, false)?
      .visit_field::<u64>("mirror_revokes_consumed", Self::VT_MIRROR_REVOKES_CONSUMED, false)?
+     .visit_field::<u64>("local_attack_marks", Self::VT_LOCAL_ATTACK_MARKS, false)?
      .finish();
     Ok(())
   }
@@ -7994,6 +8021,7 @@ pub struct SnapshotArgs<'a> {
     pub seat_live: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatLive<'a>>>>>,
     pub seat_results: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SeatResult<'a>>>>>,
     pub mirror_revokes_consumed: Option<u64>,
+    pub local_attack_marks: Option<u64>,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -8144,6 +8172,7 @@ impl<'a> Default for SnapshotArgs<'a> {
       seat_live: None,
       seat_results: None,
       mirror_revokes_consumed: None,
+      local_attack_marks: None,
     }
   }
 }
@@ -8734,6 +8763,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<u64>(Snapshot::VT_MIRROR_REVOKES_CONSUMED, mirror_revokes_consumed);
   }
   #[inline]
+  pub fn add_local_attack_marks(&mut self, local_attack_marks: u64) {
+    self.fbb_.push_slot_always::<u64>(Snapshot::VT_LOCAL_ATTACK_MARKS, local_attack_marks);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -8896,6 +8929,7 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("seat_live", &self.seat_live());
       ds.field("seat_results", &self.seat_results());
       ds.field("mirror_revokes_consumed", &self.mirror_revokes_consumed());
+      ds.field("local_attack_marks", &self.local_attack_marks());
       ds.finish()
   }
 }
@@ -9597,6 +9631,8 @@ impl<'a> CombatFight<'a> {
   pub const VT_POTIONS: ::flatbuffers::VOffsetT = 38;
   pub const VT_RETALIATE: ::flatbuffers::VOffsetT = 40;
   pub const VT_BUDGET_TICKS: ::flatbuffers::VOffsetT = 42;
+  pub const VT_PLAYER: ::flatbuffers::VOffsetT = 44;
+  pub const VT_PVP: ::flatbuffers::VOffsetT = 46;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -9608,11 +9644,13 @@ impl<'a> CombatFight<'a> {
     args: &'args CombatFightArgs<'args>
   ) -> ::flatbuffers::WIPOffset<CombatFight<'bldr>> {
     let mut builder = CombatFightBuilder::new(_fbb);
+    if let Some(x) = args.player { builder.add_player(x); }
     if let Some(x) = args.spells { builder.add_spells(x); }
     if let Some(x) = args.area { builder.add_area(x); }
     if let Some(x) = args.npc_ids { builder.add_npc_ids(x); }
     if let Some(x) = args.npc_names { builder.add_npc_names(x); }
     builder.add_budget_ticks(args.budget_ticks);
+    builder.add_pvp(args.pvp);
     builder.add_retaliate(args.retaliate);
     builder.add_potions(args.potions);
     builder.add_food(args.food);
@@ -9772,6 +9810,20 @@ impl<'a> CombatFight<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u16>(CombatFight::VT_BUDGET_TICKS, Some(1500)).unwrap()}
   }
+  #[inline]
+  pub fn player(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(CombatFight::VT_PLAYER, None)}
+  }
+  #[inline]
+  pub fn pvp(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(CombatFight::VT_PVP, Some(false)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for CombatFight<'_> {
@@ -9800,6 +9852,8 @@ impl ::flatbuffers::Verifiable for CombatFight<'_> {
      .visit_field::<bool>("potions", Self::VT_POTIONS, false)?
      .visit_field::<bool>("retaliate", Self::VT_RETALIATE, false)?
      .visit_field::<u16>("budget_ticks", Self::VT_BUDGET_TICKS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("player", Self::VT_PLAYER, false)?
+     .visit_field::<bool>("pvp", Self::VT_PVP, false)?
      .finish();
     Ok(())
   }
@@ -9825,6 +9879,8 @@ pub struct CombatFightArgs<'a> {
     pub potions: bool,
     pub retaliate: bool,
     pub budget_ticks: u16,
+    pub player: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub pvp: bool,
 }
 impl<'a> Default for CombatFightArgs<'a> {
   #[inline]
@@ -9850,6 +9906,8 @@ impl<'a> Default for CombatFightArgs<'a> {
       potions: true,
       retaliate: true,
       budget_ticks: 1500,
+      player: None,
+      pvp: false,
     }
   }
 }
@@ -9940,6 +9998,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CombatFightBuilder<'a, 'b, A>
     self.fbb_.push_slot::<u16>(CombatFight::VT_BUDGET_TICKS, budget_ticks, 1500);
   }
   #[inline]
+  pub fn add_player(&mut self, player: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(CombatFight::VT_PLAYER, player);
+  }
+  #[inline]
+  pub fn add_pvp(&mut self, pvp: bool) {
+    self.fbb_.push_slot::<bool>(CombatFight::VT_PVP, pvp, false);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> CombatFightBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     CombatFightBuilder {
@@ -9977,6 +10043,8 @@ impl ::core::fmt::Debug for CombatFight<'_> {
       ds.field("potions", &self.potions());
       ds.field("retaliate", &self.retaliate());
       ds.field("budget_ticks", &self.budget_ticks());
+      ds.field("player", &self.player());
+      ds.field("pvp", &self.pvp());
       ds.finish()
   }
 }
@@ -12206,6 +12274,8 @@ impl<'a> Interact<'a> {
   pub const VT_COMPAT_TILE_INTENT: ::flatbuffers::VOffsetT = 90;
   pub const VT_LINEAGE: ::flatbuffers::VOffsetT = 92;
   pub const VT_MIRROR_OWNER: ::flatbuffers::VOffsetT = 94;
+  pub const VT_ALLOW_PREREQ_DIALOGUE: ::flatbuffers::VOffsetT = 96;
+  pub const VT_ALLOW_QUEST_START: ::flatbuffers::VOffsetT = 98;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -12254,6 +12324,8 @@ impl<'a> Interact<'a> {
     builder.add_z(args.z);
     builder.add_x(args.x);
     if let Some(x) = args.op { builder.add_op(x); }
+    if let Some(x) = args.allow_quest_start { builder.add_allow_quest_start(x); }
+    if let Some(x) = args.allow_prereq_dialogue { builder.add_allow_prereq_dialogue(x); }
     builder.add_compat_tile_intent(args.compat_tile_intent);
     builder.add_run_energy_kind(args.run_energy_kind);
     builder.add_run_auto_kind(args.run_auto_kind);
@@ -12573,6 +12645,20 @@ impl<'a> Interact<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(Interact::VT_MIRROR_OWNER, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn allow_prereq_dialogue(&self) -> Option<bool> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Interact::VT_ALLOW_PREREQ_DIALOGUE, None)}
+  }
+  #[inline]
+  pub fn allow_quest_start(&self) -> Option<bool> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Interact::VT_ALLOW_QUEST_START, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Interact<'_> {
@@ -12625,6 +12711,8 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<bool>("compat_tile_intent", Self::VT_COMPAT_TILE_INTENT, false)?
      .visit_field::<u64>("lineage", Self::VT_LINEAGE, false)?
      .visit_field::<u64>("mirror_owner", Self::VT_MIRROR_OWNER, false)?
+     .visit_field::<bool>("allow_prereq_dialogue", Self::VT_ALLOW_PREREQ_DIALOGUE, false)?
+     .visit_field::<bool>("allow_quest_start", Self::VT_ALLOW_QUEST_START, false)?
      .finish();
     Ok(())
   }
@@ -12674,6 +12762,8 @@ pub struct InteractArgs<'a> {
     pub compat_tile_intent: bool,
     pub lineage: u64,
     pub mirror_owner: u64,
+    pub allow_prereq_dialogue: Option<bool>,
+    pub allow_quest_start: Option<bool>,
 }
 impl<'a> Default for InteractArgs<'a> {
   #[inline]
@@ -12723,6 +12813,8 @@ impl<'a> Default for InteractArgs<'a> {
       compat_tile_intent: false,
       lineage: 0,
       mirror_owner: 0,
+      allow_prereq_dialogue: None,
+      allow_quest_start: None,
     }
   }
 }
@@ -12909,6 +13001,14 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot::<u64>(Interact::VT_MIRROR_OWNER, mirror_owner, 0);
   }
   #[inline]
+  pub fn add_allow_prereq_dialogue(&mut self, allow_prereq_dialogue: bool) {
+    self.fbb_.push_slot_always::<bool>(Interact::VT_ALLOW_PREREQ_DIALOGUE, allow_prereq_dialogue);
+  }
+  #[inline]
+  pub fn add_allow_quest_start(&mut self, allow_quest_start: bool) {
+    self.fbb_.push_slot_always::<bool>(Interact::VT_ALLOW_QUEST_START, allow_quest_start);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InteractBuilder {
@@ -12970,6 +13070,8 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("compat_tile_intent", &self.compat_tile_intent());
       ds.field("lineage", &self.lineage());
       ds.field("mirror_owner", &self.mirror_owner());
+      ds.field("allow_prereq_dialogue", &self.allow_prereq_dialogue());
+      ds.field("allow_quest_start", &self.allow_quest_start());
       ds.finish()
   }
 }

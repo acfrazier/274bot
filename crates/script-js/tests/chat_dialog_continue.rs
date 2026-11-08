@@ -4,8 +4,8 @@
 
 mod common;
 
-use script::shim::InteractReq;
-use script_js::wire::SnapshotInput;
+use script::interact::InteractReq;
+use script::native::snapshot_source::SnapshotInput;
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
 use std::time::Duration;

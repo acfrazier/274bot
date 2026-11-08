@@ -133,16 +133,6 @@ enum FlagsSlot {
 static FLAGS: Mutex<FlagsSlot> = Mutex::new(FlagsSlot::Unloaded);
 /// Immutable process-profile path installed before any panel session starts.
 static BOUND_NAV_FLAGS: Mutex<Option<PathBuf>> = Mutex::new(None);
-/// Expected flags digest from the selected nav identity. `None` means the
-/// identity does not name flags, so a sidecar cannot be applied.
-static EXPECTED_FLAGS_SHA256: Mutex<Option<String>> = Mutex::new(None);
-/// True when the bound flags path is the build-stamped sibling of a bundled
-/// pack (not an explicit `--nav-flags` / `NAV_FLAGS` override). Trusted
-/// provenance skips runtime content hashing on first paint.
-static FLAGS_TRUSTED_BUNDLED: AtomicBool = AtomicBool::new(false);
-/// Content-hash attempts while loading the flags sidecar. Tests assert the
-/// bundled fast path never increments this; external overrides always do.
-static FLAGS_CONTENT_HASHES: AtomicU32 = AtomicU32::new(0);
 /// Successful or attempted disk loads of the flags sidecar (from `Unloaded`).
 /// Drawing-gated activation tests assert boot prefs do not bump this.
 static FLAGS_LOADS: AtomicU32 = AtomicU32::new(0);
@@ -152,8 +142,8 @@ static FLAGS_LOADS: AtomicU32 = AtomicU32::new(0);
 //   1. `crate::IMGUI_CTX_TEST_GUARD` (`test_support::imgui_context_guard`)
 //   2. `FLAGS_TEST_LOCK` (`lock_nav_statics`; reentrant)
 //   3. the picker nav data mutexes (`PACK`, `FLAGS`, `BOUND_NAV_FLAGS`,
-//      `EXPECTED_FLAGS_SHA256`, `REACH`, `REACH_BINDING`, `FLOOD_CACHE`,
-//      `FLOOD_REPORT`, `ROUTE_TILES`), always taken through `lock_data`.
+//      `REACH`, `REACH_BINDING`, `FLOOD_CACHE`, `FLOOD_REPORT`, `ROUTE_TILES`),
+//      always taken through `lock_data`.
 // A holder of a data mutex that goes on to call a nav-locking API must take
 // `lock_nav_statics` first (see `lock_route_path`). Production keeps only the
 // data mutexes; the nav lock and the order checks compile away.
@@ -254,43 +244,26 @@ fn lock_data<T>(mutex: &Mutex<T>) -> DataGuard<'_, T> {
     mutex.lock().unwrap()
 }
 
-/// Update the process-profile flags path, expected digest, and provenance.
-/// `None` clears the binding so lookup falls back to `$NAV_FLAGS`/default.
-fn update_navflags_binding(
-    path: Option<PathBuf>,
-    flags_sha256: Option<String>,
-    trusted_bundled: bool,
-) {
+/// Update the process-profile flags path.
+/// `None` restores `$NAV_FLAGS`/default lookup.
+fn update_navflags_binding(path: Option<PathBuf>) {
     let _nav = lock_nav_statics();
     *lock_data(&BOUND_NAV_FLAGS) = path;
-    *lock_data(&EXPECTED_FLAGS_SHA256) = flags_sha256;
-    FLAGS_TRUSTED_BUNDLED.store(trusted_bundled, Ordering::Relaxed);
     drop_flags_sidecar();
 }
 
-/// Bind the process-profile flags path, expected digest, and provenance.
-/// `trusted_bundled` is true only for the build-stamped sibling of a bundled
-/// pack; an explicit flags override must pass `false` even when its path
-/// equals that sibling.
-pub(crate) fn set_navflags_binding(
-    path: PathBuf,
-    flags_sha256: Option<String>,
-    trusted_bundled: bool,
-) {
-    update_navflags_binding(Some(path), flags_sha256, trusted_bundled);
+/// Bind the process-profile flags path.
+pub(crate) fn set_navflags_binding(path: PathBuf) {
+    update_navflags_binding(Some(path));
 }
 
-/// Bind the current profile's verified map flags/reach identity. No profile
-/// restores environment/default flags lookup and clears stale profile state.
+/// Bind the current profile's map flags and lazy reach source.
+/// No profile restores default flags lookup and clears stale profile state.
 pub(crate) fn bind_profile_nav(profile: Option<&frontend_core::launch::BoundProfile>) {
     if let Some(profile) = profile {
-        set_navflags_binding(
-            profile.nav_flags_path().to_path_buf(),
-            profile.nav_flags_sha256().map(str::to_owned),
-            profile.nav_flags_trusted_bundled(),
-        );
+        set_navflags_binding(profile.nav_flags_path().to_path_buf());
     } else {
-        update_navflags_binding(None, None, false);
+        update_navflags_binding(None);
     }
 
     let world = profile.and_then(frontend_core::launch::BoundProfile::world);
@@ -317,7 +290,7 @@ pub(crate) fn bind_profile_nav(profile: Option<&frontend_core::launch::BoundProf
         origin,
         width,
         height,
-        profile.is_some_and(|profile| profile.nav_identity().is_some()),
+        profile.is_some(),
     );
 }
 
@@ -338,8 +311,7 @@ pub(crate) fn navflags_path() -> PathBuf {
 /// back to the walk word).
 #[cfg(test)]
 fn decode_sidecar_file(path: &std::path::Path) -> Option<FlagSidecar> {
-    // Tests decode fixtures without identity hashing.
-    let loaded = nav_planner::pack::read_flags_sidecar(path, false).ok()?;
+    let loaded = nav_planner::pack::read_flags_sidecar(path).ok()?;
     Some(FlagSidecar {
         origin: loaded.origin,
         width: loaded.width,
@@ -348,53 +320,29 @@ fn decode_sidecar_file(path: &std::path::Path) -> Option<FlagSidecar> {
     })
 }
 
-/// Decode the flags sidecar once while a collision paint is on **and** a
-/// surface is actually drawing it; no-op when already attempted for this
-/// paint-on. Missing, unknown, or mismatched identity falls back to the
-/// walk word and is not retried until the sidecar is dropped. Build-stamped
-/// bundled flags skip the content hash; external overrides always validate
-/// against the digest. Disk load streams into one resident `Arc<Vec<u32>>` so
-/// the raw file buffer is never retained beside the decoded words.
+/// Decode the sidecar once while collision paint is on and a surface draws it.
+/// Missing or malformed data stays unavailable until the sidecar is dropped.
+/// Disk loading retains one shared word buffer, not the raw file bytes.
 pub(crate) fn ensure_flags_sidecar() {
     let _nav = lock_nav_statics();
     if !matches!(*lock_data(&FLAGS), FlagsSlot::Unloaded) {
         return;
     }
-    let expected = lock_data(&EXPECTED_FLAGS_SHA256).clone();
     let path = navflags_path();
-    let trusted_bundled = FLAGS_TRUSTED_BUNDLED.load(Ordering::Relaxed);
     FLAGS_LOADS.fetch_add(1, Ordering::Relaxed);
-    // Hash only when identity must be checked. The counter lives next to the
-    // actual digest so trusted bundled never bills a 260 MB SHA-256.
-    let hash = !trusted_bundled;
-    let slot = match expected {
-        None => FlagsSlot::Refused("flags identity is unknown"),
-        Some(expected) => match nav_planner::pack::read_flags_sidecar(&path, hash) {
-            Err(nav_planner::pack::PackError::Io(err))
-                if err.kind() == std::io::ErrorKind::NotFound =>
-            {
-                FlagsSlot::Missing
-            }
-            Err(_) => FlagsSlot::Refused("flags sidecar is unreadable"),
-            Ok(loaded) => {
-                let identity_ok = if trusted_bundled {
-                    true
-                } else {
-                    FLAGS_CONTENT_HASHES.fetch_add(1, Ordering::Relaxed);
-                    loaded.content_sha256.as_deref() == Some(expected.as_str())
-                };
-                if !identity_ok {
-                    FlagsSlot::Refused("flags sidecar hash mismatch")
-                } else {
-                    FlagsSlot::Loaded(FlagSidecar {
-                        origin: loaded.origin,
-                        width: loaded.width,
-                        height: loaded.height,
-                        flags: loaded.flags,
-                    })
-                }
-            }
-        },
+    let slot = match nav_planner::pack::read_flags_sidecar(&path) {
+        Err(nav_planner::pack::PackError::Io(err))
+            if err.kind() == std::io::ErrorKind::NotFound =>
+        {
+            FlagsSlot::Missing
+        }
+        Err(_) => FlagsSlot::Refused("flags sidecar is unreadable"),
+        Ok(loaded) => FlagsSlot::Loaded(FlagSidecar {
+            origin: loaded.origin,
+            width: loaded.width,
+            height: loaded.height,
+            flags: loaded.flags,
+        }),
     };
     let mut guard = lock_data(&FLAGS);
     if matches!(*guard, FlagsSlot::Unloaded) {
@@ -407,18 +355,6 @@ pub(crate) fn ensure_flags_sidecar() {
 pub(crate) fn drop_flags_sidecar() {
     let _nav = lock_nav_statics();
     *lock_data(&FLAGS) = FlagsSlot::Unloaded;
-}
-
-#[cfg(test)]
-pub(crate) fn flags_content_hash_count() -> u32 {
-    let _nav = lock_nav_statics();
-    FLAGS_CONTENT_HASHES.load(Ordering::Relaxed)
-}
-
-#[cfg(test)]
-pub(crate) fn reset_flags_content_hash_count() {
-    let _nav = lock_nav_statics();
-    FLAGS_CONTENT_HASHES.store(0, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -496,18 +432,18 @@ enum ReachBinding {
 static REACH: Mutex<Option<ReachCache>> = Mutex::new(None);
 static REACH_BINDING: Mutex<ReachBinding> = Mutex::new(ReachBinding::Unbound);
 
-/// Bind a lazy verified paint-reach source from either navigation origin. A failed
-/// sidecar stays unavailable rather than being replaced by a runtime flood.
-/// Only a legacy unbound 3D paint may still one-time bake; the map never bakes.
+/// Bind a lazy paint-reach source. An unavailable profile sidecar is not
+/// replaced by a runtime flood. Only an unbound legacy 3D paint can bake once.
+/// The map never bakes.
 pub(crate) fn set_reach_binding(
     source: Option<Arc<frontend_core::walk_map::WalkReachSource>>,
     origin: WorldTile,
     width: usize,
     height: usize,
-    verified_identity: bool,
+    profile_bound: bool,
 ) {
     let _nav = lock_nav_statics();
-    *lock_data(&REACH_BINDING) = match (verified_identity, source) {
+    *lock_data(&REACH_BINDING) = match (profile_bound, source) {
         (_, Some(source)) => ReachBinding::Bound {
             source: Some(source),
             origin,
@@ -875,18 +811,28 @@ pub(crate) fn walkto_selection_caption(
 }
 
 pub(crate) fn ellipsize_to_width(ui: &Ui, text: &str, max_w: f32) -> String {
+    let mut out = String::new();
+    ellipsize_into(ui, text, max_w, &mut out);
+    out
+}
+
+/// Append `text` to `out`, cut to `max_w` with a trailing "…" when it is
+/// too wide (nothing at all when even the "…" does not fit). The buffer
+/// is the caller's, so a warm frame reuses it.
+pub(crate) fn ellipsize_into(ui: &Ui, text: &str, max_w: f32, out: &mut String) {
     if max_w <= 0.0 {
-        return String::new();
+        return;
     }
     let font = ui.current_font();
     let size = ui.current_font_size();
     if font.calc_text_size(size, f32::MAX, 0.0, text)[0] <= max_w {
-        return text.to_string();
+        out.push_str(text);
+        return;
     }
     const ELLIPSIS: &str = "…";
     let ellipsis_w = font.calc_text_size(size, f32::MAX, 0.0, ELLIPSIS)[0];
     if ellipsis_w >= max_w {
-        return String::new();
+        return;
     }
     let mut lo = 0usize;
     let mut hi = text.len();
@@ -907,7 +853,8 @@ pub(crate) fn ellipsize_to_width(ui: &Ui, text: &str, max_w: f32) -> String {
     while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}{ELLIPSIS}", &text[..end])
+    out.push_str(&text[..end]);
+    out.push_str(ELLIPSIS);
 }
 
 pub(crate) fn format_walkto_status(caption: WalktoCaption, status: &str) -> String {

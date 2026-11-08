@@ -69,9 +69,8 @@ count-dialog) → target identity (`still_present`) → label/opcode resolve
 ## Server-ordered input dispatch
 
 `api::interact::server_ordered::ServerOrderedInputs` is the shared dispatcher
-for selected-content requests and advanced typed packet batches. This mechanism
-has no product consumer yet. It does not add a script declaration, JavaScript
-binding or new Gatherer, bank or dialogue behavior.
+for selected-content requests and advanced typed packet batches. The built-in
+Gatherer's optional Knife arm uses it. There is no JavaScript binding.
 
 Native content uses `ActionContext::emit_server_ordered`. A request uses one
 owner reservation, one request id and one completion. Its receipt contains
@@ -81,11 +80,26 @@ The existing completion envelope retains run and observation identity.
 `HostQueued` means that the normal encrypted client sink accepted the bytes.
 It does not prove that the server applied them.
 
+`dispatch_tick` is the raw Client `PLAYER_INFO` generation, not the
+session-relative `GameSnapshot::tick()` or the native completion's
+`EvidenceStamp.tick`. The first clock guard compares it with
+`snapshot.gens().player_info`; the second compares it with the input observer's
+raw generation. The existing live-authority checks separately fence the run,
+session and request before any packet, so matching a prior session's relative
+tick cannot revive its owner.
+
 The dispatcher checks the full request before the first packet. The knife
 request checks the selected `knife.knife` and `knife.logs` item identities,
 inventory generations and distinct slots. These identities come from the
 selected content extractor, not item names or a hand-written id table.
-The selected NPC transform proofs currently admit no numeric NPC operation.
+Generic NPC requests require complete transform-closure proof. The built-in
+Gatherer's fishing arm admits only the current ordinary type and its own
+selected static-operation proof; Whirlpool and Big fish stay unarmed.
+
+The continuing knife click uses the Client's operation-routing mode, `2`.
+Its packets are `OPHELDU`, `IF_BUTTON`, `MOVE_OPCLICK`, then the exact loc or
+NPC operation. The ending shape sends only `OPHELDU` and `IF_BUTTON`.
+
 The native request surface cannot construct an advanced envelope or its permit.
 The private advanced surface uses the same dispatcher, packet validation and
 cheat authorization as the named content path.

@@ -10,7 +10,7 @@ use crate::quester::{
 };
 use api::identity::{Cancellation, Scope, SlotKey};
 use api::quest_facts::QuestCatalog;
-use api::selected::{Knowledge, SelectedPin};
+use api::selected::Knowledge;
 use api::snapshot::QuestListStatus;
 use std::{task::Poll, time::Duration};
 
@@ -18,7 +18,7 @@ pub(super) type ProgressJob = PreparedTask<Result<PreparedProgress, Arc<str>>>;
 
 pub(super) struct PreparedProgress {
     selected: Arc<api::game_data::SelectedGameData>,
-    pin: Arc<SelectedPin>,
+    revision: api::selected::ClientRevision,
     path: Arc<CompiledPath>,
     quests: Arc<QuestCatalog>,
 }
@@ -94,6 +94,9 @@ fn error_reason(error: ActionError) -> Arc<str> {
         ActionError::BankDeposit(reason) => format!("failed:{reason}").into(),
         ActionError::CombatInterrupted => "combat-interrupted".into(),
         ActionError::NeedsEvidence(gates) => format!("needs-evidence:{gates:?}").into(),
+        ActionError::NeedsStep(gates) => format!("needs-step:{gates:?}").into(),
+        ActionError::GateRefused(observation) => format!("gate-refused:{observation:?}").into(),
+        ActionError::Prerequisite(refusal) => format!("prerequisite:{refusal}").into(),
         ActionError::GroundTake(api::ground_take::GroundRefusal::Capacity) => {
             "ground-take-capacity".into()
         }
@@ -102,6 +105,7 @@ fn error_reason(error: ActionError) -> Arc<str> {
         }
         ActionError::WalkGoals(reason) => format!("walk-goals:{reason:?}").into(),
         ActionError::ServerOrdered(reason) => format!("server-ordered:{reason}").into(),
+        ActionError::PvpRefused(refusal) => format!("pvp-refused:{}", refusal.code()).into(),
     }
 }
 
@@ -163,25 +167,32 @@ fn submit_progress(
     selected: Arc<api::game_data::SelectedGameData>,
     bytes: &'static [u8],
     operator: crate::local_state::OperatorLoadouts,
+    nav: Option<nav_planner::contract::NavLease>,
 ) -> Result<ProgressJob, preparation::PreparationError> {
     preparation::submit(
         PreparationKind::Profile,
         Scope::Slot(slot),
         input,
         move |cap| {
-            let pin = selected
-                .selected_pin()
+            let revision = compiled::selected_revision(&selected)
                 .map_err(|error| Arc::from(format!("failed:{error:?}")))?;
             let quests = Arc::new(
                 QuestCatalog::from_identity(selected.quest_identity())
                     .map_err(|error| Arc::from(format!("failed:{error:?}")))?,
             );
-            let path =
-                crate::quester::compile::compile_path(bytes, &selected, &quests, cap, &operator)
-                    .map_err(compile_error_reason)?;
+            let path = crate::quester::compile::compile_path(
+                bytes,
+                &selected,
+                &quests,
+                cap,
+                &operator,
+                nav.as_ref()
+                    .and_then(nav_planner::contract::NavLease::zones),
+            )
+            .map_err(compile_error_reason)?;
             Ok(PreparedProgress {
                 selected,
-                pin,
+                revision,
                 path,
                 quests,
             })
@@ -190,7 +201,12 @@ fn submit_progress(
 }
 
 impl SlotScript {
-    pub(in crate::slot) fn start_api_progress(&mut self, token: u64, quest: &str) {
+    pub(in crate::slot) fn start_api_progress(
+        &mut self,
+        token: u64,
+        quest: &str,
+        nav: Option<nav_planner::contract::NavLease>,
+    ) {
         if !self.surface_active() {
             return;
         }
@@ -302,7 +318,7 @@ impl SlotScript {
             });
             return;
         };
-        let job = submit_progress(slot, input, Arc::clone(&selected), bytes, operator);
+        let job = submit_progress(slot, input, Arc::clone(&selected), bytes, operator, nav);
         match job {
             Ok(job) => {
                 self.control_generation = generation;
@@ -357,7 +373,14 @@ impl SlotScript {
                     return;
                 }
             };
-            match submit_progress(slot, *input, Arc::clone(selected), bytes, operator) {
+            match submit_progress(
+                slot,
+                *input,
+                Arc::clone(selected),
+                bytes,
+                operator,
+                ctx.compiled.nav.cloned(),
+            ) {
                 Ok(job) => {
                     seat.progress = ProgressSeat::Preparing {
                         token: *token,
@@ -427,7 +450,7 @@ impl SlotScript {
         let mut cx = compiled::frame_context(
             ctx,
             *run,
-            &prepared.pin,
+            prepared.revision,
             &mut retained,
             &mut self.native_runtime,
         );
@@ -520,12 +543,7 @@ impl SlotScript {
                     token: *token,
                     row: row(
                         prepared,
-                        resolve_colour(
-                            &prepared.path,
-                            colour,
-                            cx.evidence(),
-                            Arc::clone(&prepared.pin),
-                        ),
+                        resolve_colour(&prepared.path, colour, cx.evidence()),
                         colour,
                         false,
                     ),

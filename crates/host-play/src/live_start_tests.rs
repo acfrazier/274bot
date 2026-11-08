@@ -240,3 +240,65 @@ fn js_setup_failure_settles_as_a_failed_pump() {
     }
     assert!(pending[0].settled);
 }
+
+#[cfg(feature = "js")]
+#[test]
+fn js_setup_failure_consumed_by_frontend_still_fails_catalog_start() {
+    let _iso = script::IsolatedEnv::enter("catalog-consumed-setup-failure");
+    let play = empty_play();
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::Thiever, "catalogtest");
+    watch.observe("catalogtest", prepared_thiever(), false);
+    let handle = play.script_start_handle();
+    let arming = || StartArming {
+        handle: Some(handle.clone()),
+        catalog: Some(watch.clone()),
+        ..Default::default()
+    };
+    let mut pending = vec![PendingCatalogStart::load(
+        "catalogtest",
+        "throw new Error('zz-consumed-setup-proof');\nexport function tick() {}".into(),
+        script_js::LoadShape::NativeTick,
+        None,
+        vec![],
+        vec![],
+    )];
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Continue
+    );
+    // The frontend polls the same Start handle. Its earlier poll can consume
+    // setup failure before the live pump sees the one-shot settlement.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        match handle.poll_start("catalogtest") {
+            script::StartPoll::Pending => {
+                assert!(Instant::now() < deadline, "setup failure did not settle");
+                std::thread::yield_now();
+            }
+            script::StartPoll::Settled(script::StartOutcome::Failed(error)) => {
+                assert!(error.contains("zz-consumed-setup-proof"), "{error}");
+                break;
+            }
+            other => panic!("expected the frontend to consume setup failure, got {other:?}"),
+        }
+    }
+    assert_eq!(handle.run_state("catalogtest"), script::RunState::Idle);
+    assert!(matches!(
+        handle.poll_start("catalogtest"),
+        script::StartPoll::NotOwed
+    ));
+    let pump = fire_pending_catalog_start(&mut pending, true, false, arming);
+    let StartScriptPump::Failed(error) = pump else {
+        panic!("expected a Failed pump after consumed setup failure, got {pump:?}");
+    };
+    assert!(error.contains("zz-consumed-setup-proof"), "{error}");
+    assert!(pending[0].settled);
+    assert!(
+        watch
+            .failure()
+            .is_some_and(|failure| failure.contains("zz-consumed-setup-proof")),
+        "{:?}",
+        watch.failure()
+    );
+}

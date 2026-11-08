@@ -6,21 +6,27 @@
 //! owns no sequencing, so every assertion is about what the isolate machine
 //! answered and what reached the interact drain.
 use client::io::ClientRevision;
-use script::shim::InteractReq;
-use script_js::wire::{ItemRowInput, SceneEntityInput, SnapshotInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{ItemRowInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 use std::time::{Duration, Instant};
+
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 /// `trail_clue_easy_simple001`: a selected search membership whose
 /// `trail_coord` decodes to `(3209, 3218, 1)`.
 const SEARCH_ID: i32 = 2677;
 
-const DEATH_CHAT: [script_js::wire::ChatLineInput<'static>; 1] = [script_js::wire::ChatLineInput {
-    seq: 1,
-    text: "Oh dear, you are dead!",
-    type_: 0,
-    username: None,
-}];
+const DEATH_CHAT: [script::native::snapshot_source::ChatLineInput<'static>; 1] =
+    [script::native::snapshot_source::ChatLineInput {
+        seq: 1,
+        text: "Oh dear, you are dead!",
+        type_: 0,
+        username: None,
+    }];
 /// The packed `access: "constrained"` row whose special runtime crosses the
 /// Duel Arena before digging.
 const CONSTRAINED_ID: i32 = 3554;
@@ -72,9 +78,9 @@ struct Scene<'a> {
     /// Dig and the Open all resolve identity by posted name.
     names: &'a [(i32, &'a str)],
     /// The posted stat page can require waiting, but does not prove death.
-    stats: &'a [script_js::wire::StatInput<'a>],
+    stats: &'a [script::native::snapshot_source::StatInput<'a>],
     /// Rust-decoded game chat supplies the shared native death latch.
-    chat_lines: &'a [script_js::wire::ChatLineInput<'a>],
+    chat_lines: &'a [script::native::snapshot_source::ChatLineInput<'a>],
     main_modal_id: i32,
     hold: bool,
     ours: bool,
@@ -90,7 +96,7 @@ struct Scene<'a> {
     count_dialog_open: bool,
     /// The posted chat choices the trio acquire chain reads, in posted order:
     /// each row's own 1-based slot is its position here.
-    options: &'a [script_js::wire::ChatOptionInput<'a>],
+    options: &'a [script::native::snapshot_source::ChatOptionInput<'a>],
     /// Whether the posted pack carries the held coordinate trio: a dig-row
     /// scene needs it, because the acquire chain owns the row until it does.
     trio: bool,
@@ -99,7 +105,7 @@ struct Scene<'a> {
     equipment: &'a [ItemRowInput<'a>],
     /// The posted nearest Use-quickly booth the strip's and the restore's bank
     /// trip opens.
-    nearest_booth: Option<&'a script_js::wire::NearestBoothInput<'a>>,
+    nearest_booth: Option<&'a script::native::snapshot_source::NearestBoothInput<'a>>,
     /// The posted bank interface: the strip's deposit and the restore's claim
     /// go out only behind a posted open one.
     bank_open: bool,
@@ -147,8 +153,8 @@ fn worn_row(id: i32, name: &str, slot: i32) -> ItemRowInput<'_> {
 /// The posted nearest Use-quickly booth the Entrana bank trip opens: the tile
 /// beside the player, the loc's own id and the two labels the landed bank
 /// helpers queue on `open-booth`.
-const POSTED_BOOTH: script_js::wire::NearestBoothInput<'static> =
-    script_js::wire::NearestBoothInput {
+const POSTED_BOOTH: script::native::snapshot_source::NearestBoothInput<'static> =
+    script::native::snapshot_source::NearestBoothInput {
         x: 2810,
         z: 3350,
         level: 0,
@@ -198,16 +204,16 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         inv_size: 28,
         stats: scene.stats,
         booths: &[],
-        nearest_booth: scene
-            .nearest_booth
-            .map(|booth| script_js::wire::NearestBoothInput {
+        nearest_booth: scene.nearest_booth.map(|booth| {
+            script::native::snapshot_source::NearestBoothInput {
                 x: booth.x,
                 z: booth.z,
                 level: booth.level,
                 id: booth.id,
                 name: booth.name,
                 op: booth.op,
-            }),
+            }
+        }),
         banks: &[],
         bank: &[],
         bank_side: &[],
@@ -264,7 +270,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -348,6 +354,8 @@ fn walk_to(x: i32, z: i32, level: i32) -> InteractReq {
         request_id: 0,
         avoid: Vec::new(),
         cross: Vec::new(),
+        allow_prereq_dialogue: None,
+        allow_quest_start: None,
     }
 }
 
@@ -398,6 +406,9 @@ fn assert_clean(logs: &[String]) {
 /// ride along even with a scroll held.
 #[test]
 fn solve_clue_adapter_surface_is_idle_and_owns_no_equipment() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import * as clueModule from '../../api/ai/clues/SolveClue.js';
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
@@ -470,6 +481,9 @@ export default class T extends TaskBot {
 /// allowed by default, off once the card's `ClueExecutor.setTeleports(false)`.
 #[test]
 fn walk_to_bank_is_one_trail_walk_to_the_stand() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     for (set_teleports, teleports) in [("", true), ("ClueExecutor.setTeleports(false);", false)] {
         let src = format!(
             r#"
@@ -538,6 +552,9 @@ export default class T extends LoopingBot {{
 /// the embed's gate comes back.
 #[test]
 fn solve_clue_adapter_does_not_begin_or_steal_the_grind_while_disabled() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -628,6 +645,9 @@ export default class T extends TaskBot {
 /// and loc steps reach the interact drain with the landed field names.
 #[test]
 fn solve_clue_adapter_drains_the_search_step_over_the_task_loop() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -751,6 +771,9 @@ export default class T extends TaskBot {
 /// already has.
 #[test]
 fn solve_clue_adapter_keeps_a_live_token_and_never_begins_twice() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -931,6 +954,9 @@ export default class T extends TaskBot {
 /// sibling grind task back in, and the next held row begins a fresh session.
 #[test]
 fn solve_clue_adapter_finishes_none_held_without_a_solved_mark() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1022,6 +1048,9 @@ export default class T extends TaskBot {
 /// the casket's precedence.
 #[test]
 fn solve_clue_adapter_opens_the_held_casket_over_the_queue() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1066,6 +1095,9 @@ export default class T extends TaskBot {
 
 #[test]
 fn clue_3554_family_embeds_duel_travel_then_dig() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1158,6 +1190,9 @@ export default class T extends TaskBot {
 
 #[test]
 fn clue_3554_family_logs_and_refuses_missing_or_self_partner() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1214,6 +1249,9 @@ export default class T extends TaskBot {
 /// digs with no partner set.
 #[test]
 fn clue_3554_resumes_inside_the_target_pen_without_a_partner() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1287,6 +1325,9 @@ export default class T extends TaskBot {
 /// too before the crossing fails and the clue token dies.
 #[test]
 fn clue_3554_family_leaves_each_wrong_arena_before_failing() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1312,11 +1353,11 @@ export default class T extends TaskBot {
     let forfeit = ["Forfeit".to_string()];
     let exit = [scene_loc(3203, 3345, 3243, 0, &forfeit)];
     let yes = [
-        script_js::wire::ChatOptionInput {
+        script::native::snapshot_source::ChatOptionInput {
             text: "Yes",
             com_id: 4883,
         },
-        script_js::wire::ChatOptionInput {
+        script::native::snapshot_source::ChatOptionInput {
             text: "No",
             com_id: 4884,
         },
@@ -1402,6 +1443,9 @@ export default class T extends TaskBot {
 /// tick. The mark is the isolate machine's — this adapter never invents it.
 #[test]
 fn solve_clue_adapter_finishes_the_collect_with_the_solved_mark() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1504,6 +1548,9 @@ export default class T extends TaskBot {
 /// takes the next tick.
 #[test]
 fn solve_clue_adapter_ends_the_session_on_an_observed_death() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1524,7 +1571,7 @@ export default class T extends TaskBot {
 "#;
     let iso = spawn(src);
     let page = [(SEARCH_ID, 1)];
-    let stats = [script_js::wire::StatInput {
+    let stats = [script::native::snapshot_source::StatInput {
         index: 3,
         name: "hitpoints",
         xp: 0,
@@ -1568,7 +1615,7 @@ export default class T extends TaskBot {
     );
 
     // Tick 3: fresh native death chat is authoritative even after HP recovers.
-    let recovered = [script_js::wire::StatInput {
+    let recovered = [script::native::snapshot_source::StatInput {
         index: 3,
         name: "hitpoints",
         xp: 0,
@@ -1625,6 +1672,9 @@ export default class T extends TaskBot {
 /// The same live token Digs once the pack posts the item.
 #[test]
 fn solve_clue_adapter_keeps_the_token_live_over_a_missing_spade() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1766,6 +1816,9 @@ fn scene_npc<'a>(
 /// solved mark and no second begin.
 #[test]
 fn solve_clue_adapter_drains_the_talk_step_over_the_task_loop() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -1901,7 +1954,7 @@ export default class T extends TaskBot {
 
     // Tick 6: fresh native death chat ends the session: the token is gone
     // and nothing was solved.
-    let dead = [script_js::wire::StatInput {
+    let dead = [script::native::snapshot_source::StatInput {
         index: 3,
         name: "hitpoints",
         xp: 0,
@@ -1969,6 +2022,9 @@ export default class T extends TaskBot {
 /// same token falls through to the landed Dig.
 #[test]
 fn solve_clue_adapter_drains_the_trio_acquire_over_the_task_loop() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -2072,11 +2128,11 @@ export default class T extends TaskBot {
     // Tick 4: the closed handler's option, posted second: that posted 1-based
     // slot is the answer, through the clue adapter's own arm.
     let options = [
-        script_js::wire::ChatOptionInput {
+        script::native::snapshot_source::ChatOptionInput {
             text: "Who are you?",
             com_id: 4883,
         },
-        script_js::wire::ChatOptionInput {
+        script::native::snapshot_source::ChatOptionInput {
             text: "Talk about Treasure Trails.",
             com_id: 4884,
         },
@@ -2169,6 +2225,9 @@ export default class T extends TaskBot {
 /// own arm, never the loc fall-through.
 #[test]
 fn solve_clue_adapter_answers_the_count_dialog_over_the_task_loop() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -2283,6 +2342,9 @@ export default class T extends TaskBot {
 /// retry/abandon and clears only after both original items are worn again.
 #[test]
 fn solve_clue_adapter_strips_and_restores_entrana_gear_before_the_solved_mark() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {
@@ -2787,6 +2849,9 @@ export default class T extends TaskBot {
 /// Only a fresh task instance (operator Stop/Start) starts the list over.
 #[test]
 fn solve_clue_adapter_keeps_the_stripped_list_across_a_connection_boundary() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { SolveClue } from '../../api/ai/clues/SolveClue.js';
 export default class T extends TaskBot {

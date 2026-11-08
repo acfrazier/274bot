@@ -3,22 +3,48 @@ use api::snapshot::WorldTile;
 use nav_planner::router::{find_with, FindOptions, Leg, RouteError};
 use nav_planner::zones::ZoneExempt;
 
+fn walk_step<'a>(value: &'a serde_json::Value, id: &str) -> Option<&'a serde_json::Value> {
+    if value.get("id").and_then(serde_json::Value::as_str) == Some(id) {
+        return Some(value);
+    }
+    match value {
+        serde_json::Value::Array(rows) => rows.iter().find_map(|row| walk_step(row, id)),
+        serde_json::Value::Object(rows) => rows.values().find_map(|row| walk_step(row, id)),
+        _ => None,
+    }
+}
+
+fn cross_names(step: &serde_json::Value) -> Vec<&str> {
+    step["args"]["cross"]
+        .as_array()
+        .expect("declared cross ids")
+        .iter()
+        .map(|name| name.as_str().expect("cross id"))
+        .collect()
+}
+
+#[test]
+fn desert_captain_resume_step_declares_the_same_pack_zones() {
+    let document: serde_json::Value =
+        serde_json::from_str(include_str!("../../script/paths/289/desertrescue.json")).unwrap();
+    let first = walk_step(&document, "walk-to-captain").expect("first captain crossing");
+    let resumed = walk_step(&document, "walk-to-captain-again").expect("resumed crossing");
+    let expected = [
+        "ugthanki@3268,3052,0",
+        "ugthanki@3281,3056,0",
+        "ugthanki@3305,3089,0",
+    ];
+    assert_eq!(cross_names(first), expected);
+    assert_eq!(cross_names(resumed), expected);
+    assert!(resumed["args"].get("allow_danger_zones").is_none());
+}
+
 #[test]
 #[ignore = "requires WORLD_NAV_PACK pointing at the selected 289 content pack"]
 fn desert_captain_cross_grants_only_required_ugthanki() {
     let document: serde_json::Value =
         serde_json::from_str(include_str!("../../script/paths/289/desertrescue.json")).unwrap();
-    fn crossing(value: &serde_json::Value) -> Option<&serde_json::Value> {
-        if value.get("id").and_then(serde_json::Value::as_str) == Some("walk-to-captain") {
-            return Some(value);
-        }
-        match value {
-            serde_json::Value::Array(rows) => rows.iter().find_map(crossing),
-            serde_json::Value::Object(rows) => rows.values().find_map(crossing),
-            _ => None,
-        }
-    }
-    let args = &crossing(&document).expect("released captain crossing")["args"];
+    let args = &walk_step(&document, "walk-to-captain").expect("released captain crossing")["args"];
     assert!(args.get("allow_danger_zones").is_none());
     let names: Vec<_> = args["cross"]
         .as_array()
@@ -38,10 +64,25 @@ fn desert_captain_cross_grants_only_required_ugthanki() {
     let pack = std::fs::read(std::env::var_os("WORLD_NAV_PACK").unwrap()).unwrap();
     let (collision, graph, _) = nav_planner::pack::decode(&pack).unwrap();
     let table = graph.zones.as_ref().unwrap();
+    let resumed_args =
+        &walk_step(&document, "walk-to-captain-again").expect("released resumed crossing")["args"];
+    assert!(resumed_args.get("allow_danger_zones").is_none());
+    let resumed_names: Vec<_> = resumed_args["cross"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|name| name.as_str().unwrap())
+        .collect();
+    assert_eq!(resumed_names, names);
+    let resumed_keys: Vec<_> = resumed_names
+        .iter()
+        .map(|name| table.resolve(name).unwrap())
+        .collect();
     let keys: Vec<_> = names
         .iter()
         .map(|name| table.resolve(name).unwrap())
         .collect();
+    assert_eq!(resumed_keys, keys);
     let origin = WorldTile {
         x: 3302,
         z: 3114,

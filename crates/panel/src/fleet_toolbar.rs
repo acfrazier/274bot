@@ -700,7 +700,7 @@ fn marks_row(ui: &Ui, session: &mut Session) {
         session.submit(OperatorCommand::MarkFleet(op), Targets::Application);
     }
     if move_to_top {
-        session.reorder_profiles(ReorderOp::MarkedToTop);
+        session.reorder_profiles(ReorderOp::MarkedToTop, frontend_core::ReorderSurface::Fleet);
     }
 }
 
@@ -893,7 +893,10 @@ pub(crate) fn plan_row(ui: &Ui, session: &mut Session) {
     };
     #[cfg(test)]
     crate::fleet::count_plan_row();
-    ui.text_wrapped(plan.prompt());
+    let prompt_height = scale_px(ui, 136.0);
+    ui.child_window("##fleet-plan-prompt")
+        .size([0.0, prompt_height])
+        .build(ui, || ui.text_wrapped(plan.prompt()));
     #[cfg(test)]
     let prompt_rect = item_rect(ui);
     let confirm = ui.button("Confirm##fleet-plan");

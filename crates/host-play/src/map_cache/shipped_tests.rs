@@ -697,9 +697,6 @@ fn catalogue_only_capture(
     cache_root: &MapCacheRoot,
     descriptor: &MapProfileDescriptor,
     revision: u16,
-    cache_id: &str,
-    content_id: &str,
-    navpack_sha256: &str,
 ) {
     let manager = MapDemandManager::new(cache_root.clone(), Arc::new(NativeMapProducer::new()));
     let metrics_start = map_bake_test_step_snapshot();
@@ -748,9 +745,6 @@ fn catalogue_only_capture(
         "schema": 1,
         "status": "ready",
         "revision": revision,
-        "cache_id": cache_id,
-        "content_id": content_id,
-        "navpack_sha256": navpack_sha256,
         "demand": "ReadyImages",
         "images": null,
         "note": "No shipped terrain is supplied by this fixture; this path isolates catalogue generation, not shipped-terrain installation.",
@@ -777,12 +771,12 @@ fn catalogue_only_capture(
 }
 
 /// Capture one complete real-content demand through the host API. Run once
-/// against each source snapshot with the same canonical cache, navpack, and
-/// output contract; compare the resulting full capture trees byte for byte.
+/// against each source snapshot with the same canonical cache and output contract.
+/// Compare the resulting full capture trees byte for byte.
 ///
 /// Required: `BOT_NAV_BUILD=skip`, `BOT_MAP_BAKE_JAG_DIR`,
-/// `BOT_MAP_BAKE_SNAPSHOT_DIR`, `BOT_MAP_BAKE_NAVPACK`, and a fresh
-/// `BOT_MAP_BAKE_CAPTURE_DIR`. `BOT_MAP_BAKE_REVISION` defaults to 289.
+/// `BOT_MAP_BAKE_SNAPSHOT_DIR` and a fresh `BOT_MAP_BAKE_CAPTURE_DIR`.
+/// `BOT_MAP_BAKE_REVISION` defaults to 289.
 #[test]
 #[ignore = "real-content old/new map-bake equivalence capture"]
 fn real_content_map_demand_capture() {
@@ -798,7 +792,6 @@ fn real_content_map_demand_capture() {
     };
     let jag_dir = env_path("BOT_MAP_BAKE_JAG_DIR");
     let snapshot_root = env_path("BOT_MAP_BAKE_SNAPSHOT_DIR");
-    let navpack = env_path("BOT_MAP_BAKE_NAVPACK");
     let capture = env_path("BOT_MAP_BAKE_CAPTURE_DIR");
     let revision = std::env::var("BOT_MAP_BAKE_REVISION")
         .ok()
@@ -812,42 +805,7 @@ fn real_content_map_demand_capture() {
     fs::create_dir_all(&capture).unwrap();
     let cache_root = MapCacheRoot::from_existing_root(capture.join(".cache"));
 
-    // Bind both identities to the same complete source: offline() verifies
-    // the decoded snapshot's versionlist and computes its content identity;
-    // the navpack sidecar binds that identity to the canonical source cache.
     let input = PreparedMapInput::offline(revision, &jag_dir, &snapshot_root).unwrap();
-    let cache = nav_planner::manifest::CacheManifest::capture(revision, &jag_dir).unwrap();
-    let nav_manifest_path = nav_planner::manifest::nav_manifest_path(&navpack);
-    let nav_manifest: nav_planner::manifest::NavManifest =
-        serde_json::from_slice(&fs::read(nav_manifest_path).unwrap()).unwrap();
-    let navpack_sha256 = nav_planner::manifest::hash_file(&navpack).unwrap();
-    let content_id = input.content().to_string();
-    nav_manifest
-        .verify_pack(revision, &cache, &navpack_sha256, Some(content_id.as_str()))
-        .unwrap();
-    for (extension, expected) in [
-        ("navflags", nav_manifest.flags_sha256.as_deref()),
-        ("navreach", nav_manifest.reach_sha256.as_deref()),
-        ("navcanlight", nav_manifest.canlight_sha256.as_deref()),
-        ("navpois", nav_manifest.pois_sha256.as_deref()),
-    ] {
-        let sidecar = navpack.with_extension(extension);
-        match expected {
-            Some(expected) => {
-                assert_eq!(
-                    nav_planner::manifest::hash_file(&sidecar).unwrap(),
-                    expected,
-                    "reference navpack sidecar {}",
-                    sidecar.display()
-                );
-            }
-            None => assert!(
-                !sidecar.exists(),
-                "undeclared navpack sidecar exists: {}",
-                sidecar.display()
-            ),
-        }
-    }
 
     let (image_policy, catalogue_policy) = map_artifact_policies().unwrap();
     let descriptor =
@@ -856,15 +814,7 @@ fn real_content_map_demand_capture() {
             .with_input(input)
             .unwrap();
     if std::env::var("BOT_MAP_BAKE_CATALOGUE_ONLY").as_deref() == Ok("1") {
-        catalogue_only_capture(
-            &capture,
-            &cache_root,
-            &descriptor,
-            revision,
-            &cache.identity(),
-            &content_id,
-            &navpack_sha256,
-        );
+        catalogue_only_capture(&capture, &cache_root, &descriptor, revision);
         return;
     }
     let work_service =
@@ -1040,9 +990,6 @@ fn real_content_map_demand_capture() {
         "schema": 1,
         "status": "ready",
         "revision": revision,
-        "cache_id": cache.identity(),
-        "content_id": content_id,
-        "navpack_sha256": navpack_sha256,
         "catalogue": {
             "identity": descriptor.catalogue_identity(),
             "manifest_sha256": Digest::of(&catalogue_manifest),

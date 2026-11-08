@@ -51,15 +51,6 @@ pub fn prepare(
     revision: u64,
     bag: Arc<SettingsBag>,
 ) -> Result<Arc<PreparedConfig>, StartError> {
-    if cx
-        .selected
-        .selected_pin()
-        .map_err(StartError::Facts)?
-        .as_ref()
-        != cx.pin.as_ref()
-    {
-        return Err(StartError::Facts(api::selected::FactError::PinMismatch));
-    }
     let mut settings = GathererSettings::from_bag_for_prepare(&bag).map_err(StartError::Config)?;
     let catalog =
         api::gather_methods::prepare(&cx.selected, cx.families).map_err(StartError::Facts)?;
@@ -257,6 +248,9 @@ mod tests {
 
     #[test]
     fn site_errors_are_deferred_to_start_not_unrelated_settings_edits() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let run = RunKey {
             slot: 1,
             run: 1,
@@ -305,6 +299,9 @@ mod tests {
 
     #[test]
     fn site_prepare_accepts_group_key_and_saved_fishing_alias_without_rewriting() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for resource in [
             "fishing.harpoon.tool_311.products_359_371",
             "fishing.rarefish.op3",
@@ -319,6 +316,9 @@ mod tests {
 
     #[test]
     fn banking_site_rejects_bank_mode_but_remains_available_in_power_mode() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let site_id = "mining.desert_mining_camp.underground";
         let bank_config = prepared_site("Mining", "copper", site_id, "Site");
         let bank = bank_config.get::<Arc<Prepared>>().unwrap();

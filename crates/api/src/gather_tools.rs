@@ -103,7 +103,9 @@ mod tests {
     #[test]
     fn posted_tool_ids_follow_selected_alias_rows() {
         for revision in [ClientRevision::R274, ClientRevision::R289] {
-            let data = game_data::for_revision(revision).expect("generated game data");
+            let Some(data) = game_data::test_data(revision) else {
+                return;
+            };
             let posted = content_json_value(Some(data.as_ref()));
             for (kind, tools) in [("axes", AXES), ("pickaxes", PICKAXES)] {
                 let rows = posted[kind].as_array().expect("tool rows");

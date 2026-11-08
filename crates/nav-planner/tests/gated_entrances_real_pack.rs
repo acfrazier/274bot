@@ -1,21 +1,27 @@
 //! Content-gated entrances and the resource regions they serve on the real 289 pack.
 
+use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 use api::game_data;
+use api::identity::Deadline;
+use api::prereq_knowledge::Observation;
 use api::quest_facts::QuestCatalog;
-use api::quest_progress::{EvidenceStamp, QuestListEvidenceProvider};
+use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestListEvidenceProvider};
 #[expect(
     clippy::disallowed_types,
     reason = "read-only revision value selects real-pack fixture data and does not perform an action"
 )]
 use api::selected::ClientRevision;
-use api::selected::{QuestGate, RunKey, Truth};
+use api::selected::{FamilyPreparation, QuestGate, RunKey, StageWindow, Truth};
 use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView, WorldTile};
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{
-    find_first_with, find_missing_item_reqs, find_unresolved_quest_gates, find_with, FindOptions,
-    Leg, MissingReq, RouteError,
+    find_actionable_quest_gates, find_first_with, find_missing_item_reqs,
+    find_unresolved_quest_gates, find_with, FindOptions, Leg, MissingReq, RouteError,
 };
 use nav_planner::transport::TransportEdge;
 use nav_planner::world::NavWorld;
@@ -56,15 +62,8 @@ fn stamp() -> EvidenceStamp {
 
 fn completed_state() -> WorldState {
     let selected = game_data::for_revision(ClientRevision::R289).expect("selected revision");
-    let (facts, identity) = selected
-        .quest_identity_for_bake()
-        .expect("verified quest family");
-    let catalog = QuestCatalog::from_identity(Some(&facts)).expect("quest catalog");
-    let family = QuestFamilyId::new(identity.sha256, identity.schema);
-    world()
-        .graph
-        .admit_quest_family(&family)
-        .expect("exact selected quest family");
+    let facts = selected.quest_identity().expect("selected quest facts");
+    let catalog = QuestCatalog::from_identity(Some(facts)).expect("quest catalog");
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_quest_statuses(
@@ -81,8 +80,6 @@ fn completed_state() -> WorldState {
     );
     let provider = QuestListEvidenceProvider::from_snapshot(
         &catalog,
-        Some(identity),
-        Some(identity),
         SnapshotView::new(Some(&snapshot), stamp()),
     );
     WorldState {
@@ -96,7 +93,7 @@ fn completed_state() -> WorldState {
             .collect(),
         ..WorldState::empty().with_map_members(true)
     }
-    .with_quest_evidence(QuestEvidence::new(Arc::new(provider), family, stamp()))
+    .with_quest_evidence(QuestEvidence::new(Arc::new(provider), stamp()))
 }
 
 fn ingress(id: i32, gate: impl Fn(&TransportEdge) -> bool) -> &'static TransportEdge {
@@ -199,7 +196,6 @@ fn grand_tree_completion_opens_both_mine_resource_regions() {
         &missing,
         &[],
     )
-    .expect("matching family diagnosis")
     .expect("typed completion requirement");
     assert_eq!(&*unresolved, gates.gates());
 }
@@ -322,4 +318,359 @@ fn dusty_key_door_opens_the_lava_eel_resource_route() {
     )
     .expect("typed dusty-key diagnosis");
     assert!(missing.contains(&MissingReq::Carry { id: 1590, count: 1 }));
+}
+
+/// Fixed route evidence for comparing strict A1/A2 passage behavior by truth state.
+/// All unrelated quest gates stay proven so these two passages are the only changed facts.
+#[derive(Clone, Copy)]
+struct MorytaniaGateEvidence(Truth);
+
+impl EvidenceProvider for MorytaniaGateEvidence {
+    fn observe_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
+        let observed = stamp();
+        if !observed.meets(required_after) {
+            return None;
+        }
+        let truth = match gate {
+            QuestGate::Window(window)
+                if window.quest.0.as_ref() == "priestperil"
+                    && window.signal.0.as_ref() == "priestperil"
+                    && window.values.min == Some(61)
+                    && window.values.max == Some(61) =>
+            {
+                self.0
+            }
+            QuestGate::Window(window)
+                if window.quest.0.as_ref() == "druidspirit"
+                    && window.signal.0.as_ref() == "druidspirit"
+                    && window.values.min == Some(1)
+                    && window.values.max == Some(110) =>
+            {
+                self.0
+            }
+            _ => Truth::True,
+        };
+        Some(Observation {
+            truth,
+            observed: Some(observed),
+        })
+    }
+}
+
+fn prerequisite_catalog() -> Arc<api::prereq_steps::PrereqCatalog> {
+    let selected = game_data::for_revision(ClientRevision::R289).expect("selected revision");
+    let clock = SystemClock;
+    let cancel = SharedCancellation::new();
+    let mut step = StepContext::<PreparationPhase>::new(
+        &clock,
+        SliceBudget::new(
+            NonZeroU32::MIN,
+            Deadline::at(Instant::now() + Duration::from_secs(60)),
+        ),
+        &cancel,
+    );
+    FamilyPreparation::within(&mut step, |worker| selected.prepare_prereq_steps(worker))
+        .expect("verified prerequisite catalog")
+}
+
+fn morytania_state(
+    base: &WorldState,
+    truth: Truth,
+    establishable: &Arc<[StageWindow]>,
+) -> WorldState {
+    base.clone()
+        .with_quest_evidence(QuestEvidence::new(
+            Arc::new(MorytaniaGateEvidence(truth)),
+            stamp(),
+        ))
+        .with_establishable(Arc::clone(establishable))
+}
+
+fn is_a1_gate(gate: &QuestGate) -> bool {
+    matches!(
+        gate,
+        QuestGate::Window(window)
+            if window.quest.0.as_ref() == "priestperil"
+                && window.signal.0.as_ref() == "priestperil"
+                && window.values.min == Some(61)
+                && window.values.max == Some(61)
+    )
+}
+
+fn is_a2_gate(gate: &QuestGate) -> bool {
+    matches!(
+        gate,
+        QuestGate::Window(window)
+            if window.quest.0.as_ref() == "druidspirit"
+                && window.signal.0.as_ref() == "druidspirit"
+                && window.values.min == Some(1)
+                && window.values.max == Some(110)
+    )
+}
+
+/// This real-pack matrix covers the ten newly reachable Morytania sites.
+/// It is not the separate 1,378-search, five-mode ordinary route corpus.
+#[test]
+#[ignore = "requires freshly baked real 289 NAV_PACK and its sidecars"]
+fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
+    const SITES: [(&str, [i32; 4]); 10] = [
+        ("fishing.canifis.sw", [3479, 3430, 3490, 3449]),
+        ("fishing.mort_ton.w", [3437, 3271, 3445, 3280]),
+        ("fishing.river_salve.se", [3424, 3407, 3440, 3417]),
+        ("woodcutting.canifis", [3527, 3465, 3540, 3482]),
+        ("woodcutting.haunted_woods", [3569, 3461, 3597, 3503]),
+        ("woodcutting.haunted_woods.2", [3549, 3483, 3555, 3508]),
+        ("woodcutting.haunted_woods.e", [3600, 3467, 3641, 3511]),
+        ("woodcutting.mort_ton", [3459, 3264, 3516, 3319]),
+        ("woodcutting.river_salve.ne", [3422, 3459, 3422, 3459]),
+        ("woodcutting.temple", [3430, 3457, 3443, 3498]),
+    ];
+
+    let mut crossing_ids = HashMap::new();
+    for (index, edge) in world()
+        .graph
+        .edges
+        .iter()
+        .chain(&world().graph.teleports)
+        .enumerate()
+    {
+        let crossing = edge
+            .crossing_id()
+            .expect("representable real-pack crossing");
+        let physical = (
+            edge.kind,
+            edge.loc_id,
+            edge.option,
+            edge.at,
+            crossing.takeoff,
+            edge.to,
+        );
+        if let Some(previous) = crossing_ids.insert(crossing, physical) {
+            assert_eq!(
+                previous, physical,
+                "different physical crossings share an id at edge {index}: {crossing:?}"
+            );
+        }
+    }
+    println!("real-pack unique crossing ids: {}", crossing_ids.len());
+    println!(
+        "real-pack census: ordinary_edges={} teleports={} quest_gated_edges={}",
+        world().graph.edges.len(),
+        world().graph.teleports.len(),
+        world()
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| edge.quest_gates.is_some())
+            .count(),
+    );
+
+    let a1 = ingress(3443, |edge| {
+        edge.option == 1 && edge.at == tile(3440, 9886) && edge.to == tile(3423, 3485)
+    });
+    assert!(
+        a1.quest_gates
+            .as_ref()
+            .is_some_and(|gates| gates.gates().iter().any(is_a1_gate)),
+        "the real A1 crossing carries the exact [61,61] stage gate"
+    );
+    let a1_directions: Vec<_> = world()
+        .graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge.loc_id == a1.loc_id && edge.at == a1.at && edge.to == a1.to)
+        .collect();
+    assert_eq!(
+        a1_directions.len(),
+        2,
+        "both exact A1 takeoffs are retained"
+    );
+    assert!(
+        !world().collision.standable(a1.at),
+        "the barrier anchor is blocked"
+    );
+    for (index, edge) in &a1_directions {
+        let crossing = edge.crossing_id().unwrap();
+        assert_eq!(crossing.at, a1.at);
+        assert_ne!(crossing.takeoff, crossing.at);
+        assert!(world().collision.standable(crossing.takeoff));
+        assert!(world()
+            .graph
+            .admissible_from(&world().collision, *index, crossing.takeoff));
+    }
+    let mut a1_takeoffs: Vec<_> = a1_directions
+        .iter()
+        .map(|(_, edge)| edge.crossing_id().unwrap().takeoff)
+        .collect();
+    a1_takeoffs.sort_by_key(|at| (at.x, at.z, at.level));
+    assert_eq!(a1_takeoffs, [tile(3440, 9885), tile(3440, 9887)]);
+    let a2: Vec<_> = world()
+        .graph
+        .edges
+        .iter()
+        .filter(|edge| matches!(edge.loc_id, 3506 | 3507))
+        .collect();
+    assert_eq!(a2.len(), 4, "both leaves carry both directed crossings");
+    for (loc_id, anchor, takeoff, to) in [
+        (3507, tile(3443, 3458), tile(3443, 3458), tile(3443, 3457)),
+        (3506, tile(3444, 3458), tile(3444, 3458), tile(3444, 3457)),
+        (3507, tile(3443, 3458), tile(3443, 3457), tile(3443, 3458)),
+        (3506, tile(3444, 3458), tile(3444, 3457), tile(3444, 3458)),
+    ] {
+        assert!(
+            a2.iter().any(|edge| {
+                edge.loc_id == loc_id
+                    && edge.option == 1
+                    && edge.at == anchor
+                    && edge.to == to
+                    && edge.crossing_id().unwrap().takeoff == takeoff
+            }),
+            "missing A2 directed crossing {loc_id} anchor {anchor:?}: {takeoff:?} -> {to:?}"
+        );
+    }
+    assert!(
+        a2.iter().all(|edge| edge
+            .quest_gates
+            .as_ref()
+            .is_some_and(|gates| { gates.gates().iter().any(is_a2_gate) })),
+        "every real A2 crossing carries the [1,110] stage gate"
+    );
+
+    let from = a1.takeoff.unwrap_or(a1.at);
+    let base = completed_state();
+    let catalog = prerequisite_catalog();
+    let establishable = catalog.establishable_windows();
+    for edge in a1_directions
+        .iter()
+        .map(|(_, edge)| *edge)
+        .chain(a2.iter().copied())
+    {
+        let crossing = edge.crossing_id().expect("representable directed crossing");
+        for gate in edge
+            .quest_gates
+            .as_ref()
+            .expect("typed crossing gates")
+            .gates()
+        {
+            assert!(
+                catalog.for_gate(gate, &crossing).is_some(),
+                "baked gate and complete CrossingId must select the real row: {crossing:?}, {gate:?}"
+            );
+        }
+    }
+    let proof = morytania_state(&base, Truth::True, &establishable);
+    let unknown = morytania_state(&base, Truth::Unknown, &establishable);
+    let false_state = morytania_state(&base, Truth::False, &establishable);
+    let world = world();
+    let east = tile(3422, 3485);
+    let underground = tile(3440, 9887);
+    let east_stand = tile(3423, 3485); // holy_barrier.rs2's outward landing.
+    assert!(!world.collision.standable(east));
+    assert!(world.collision.standable(east_stand));
+    assert!(
+        world
+            .graph
+            .edges
+            .iter()
+            .any(|edge| edge.at == east && edge.to == underground),
+        "the east trapdoor must enter the mausoleum"
+    );
+    for (start, target, loc_id) in [
+        (east_stand, underground, 3432),
+        (underground, east_stand, 3443),
+    ] {
+        let route = find_with(
+            &world.collision,
+            &world.graph,
+            start,
+            target,
+            FindOptions::default(),
+            &proof,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "Morytania-side mausoleum access {start:?} -> {target:?}: {error:?}; \
+                 start standable={}, target standable={}",
+                world.collision.standable(start),
+                world.collision.standable(target),
+            )
+        });
+        println!("mausoleum access {start:?} -> {target:?}: {route:?}");
+        assert!(route
+            .legs
+            .iter()
+            .any(|leg| matches!(leg, Leg::Transport { edge } if edge.loc_id == loc_id)));
+    }
+    let mut unknown_routes = Vec::with_capacity(SITES.len());
+    let mut false_routes = Vec::with_capacity(SITES.len());
+
+    for (name, region) in SITES {
+        let targets = resource_targets(region);
+        assert!(
+            !targets.is_empty(),
+            "{name} has no standable resource target"
+        );
+
+        let proof_search = find_first_with(
+            &world.collision,
+            &world.graph,
+            from,
+            &targets,
+            FindOptions::default(),
+            &proof,
+        );
+        let proof_route = proof_search
+            .route()
+            .unwrap_or_else(|error| panic!("proof cannot reach {name}: {error:?}"));
+        assert!(
+            proof_route.legs.iter().any(
+                |leg| matches!(leg, Leg::Transport { edge } if matches!(edge.loc_id, 3443 | 3506 | 3507))
+            ),
+            "proof route to {name} must use an A1/A2 crossing"
+        );
+        println!("morytania route state=proof site={name}: {proof_route:?}");
+
+        for (label, state, routes) in [
+            ("unknown", &unknown, &mut unknown_routes),
+            ("false", &false_state, &mut false_routes),
+        ] {
+            let search = find_first_with(
+                &world.collision,
+                &world.graph,
+                from,
+                &targets,
+                FindOptions::default(),
+                state,
+            );
+            let result = search.route();
+            let rendered = format!("{result:?}");
+            println!("morytania route state={label} site={name}: {rendered}");
+            if matches!(result, Err(RouteError::NoPath)) {
+                let actionable = find_actionable_quest_gates(
+                    &world.collision,
+                    &world.graph,
+                    from,
+                    &targets,
+                    FindOptions::default(),
+                    state,
+                    &[],
+                )
+                .expect("strict NoPath has an actionable A1/A2 diagnosis");
+                assert!(
+                    actionable
+                        .iter()
+                        .any(|gate| { matches!(gate.crossing.loc_id, 3443 | 3506 | 3507) }),
+                    "{label} diagnosis for {name} must identify an A1/A2 crossing"
+                );
+                println!("morytania diagnosis state={label} site={name}: {actionable:?}");
+            }
+            routes.push(rendered);
+        }
+    }
+
+    assert_eq!(
+        unknown_routes, false_routes,
+        "unknown and false A1/A2 evidence must produce byte-identical strict route results"
+    );
 }

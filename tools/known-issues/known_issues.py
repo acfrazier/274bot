@@ -50,7 +50,8 @@ if sys.version_info < REQUIRED_PYTHON:
 
 KNOWN_ISSUE = "known-issue"
 NOT_IN_RELEASE = "not-in-release"
-KINDS = (NOT_IN_RELEASE, KNOWN_ISSUE)
+DEFERRED = "deferred"
+KINDS = (NOT_IN_RELEASE, KNOWN_ISSUE, DEFERRED)
 SEVERITIES = ("critical", "high", "medium", "low")
 WIDTH = 80
 

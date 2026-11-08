@@ -601,6 +601,9 @@ impl SeededState {
 /// count.
 #[test]
 fn clean_stop_scenarios_are_not_satisfied_by_their_own_seed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let items = GameItems::load();
     let names = Arc::clone(&items.names);
     let mut checked = Vec::new();
@@ -1020,6 +1023,51 @@ fn world_speed_resets_after_failed_run() {
         }
         other => panic!("expected failed run after speed reset, got {other:?}"),
     }
+}
+
+#[test]
+fn world_speed_opt_out_skips_restore_after_pass() {
+    let mut runner = ScenarioRunner::new(fast_speed_scenario(
+        Proof::WorldSpeedChanged { ms: 300 },
+        10,
+    ));
+    runner.set_restore_world_speed(false);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+
+    runner.tick(&mut client);
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    push_system_chat(&mut client, "World speed was changed to 300ms");
+    runner.tick(&mut client);
+    runner.tick(&mut client);
+
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    assert_eq!(
+        outgoing_ascii_count(&client, "speed 600"),
+        0,
+        "the opt-out skips only the terminal restoration command"
+    );
+}
+
+#[test]
+fn world_speed_opt_out_skips_restore_after_failure() {
+    let mut runner = ScenarioRunner::new(fast_speed_scenario(Proof::Stat { id: 16, min: 999 }, 1));
+    runner.set_restore_world_speed(false);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+
+    runner.tick(&mut client);
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    runner.tick(&mut client);
+
+    assert!(
+        matches!(runner.status(), RunnerStatus::Failed(message) if message.contains("not seen within 1 game tick")),
+        "the original terminal failure is preserved: {:?}",
+        runner.status()
+    );
+    assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    assert_eq!(outgoing_ascii_count(&client, "speed 600"), 0);
 }
 
 #[test]
@@ -1610,6 +1658,7 @@ fn companion_slots_tick_their_hook_while_the_driven_slot_runs() {
             profile: 1,
             per_frame: Box::new(move |_| {
                 hook.store(true, Ordering::Relaxed);
+                false
             }),
         }],
         settings: ScenarioSettings::default(),
@@ -1635,6 +1684,47 @@ fn companion_slots_tick_their_hook_while_the_driven_slot_runs() {
         .expect("the companion slot resolves by profile name");
     runner.companion_tick(index, &mut c);
     assert!(flipped.load(Ordering::Relaxed));
+}
+
+/// A companion hook's `true` is a one-shot host-login request: the driver
+/// reads it from the tick and posts the slot's operator Login, which the
+/// scriptless park policy needs after a prep relog's logout.
+#[test]
+fn companion_tick_surfaces_a_one_shot_host_login_request() {
+    let scenario = Scenario {
+        name: "companion-login",
+        seed: Seed {
+            profiles: vec![("test", "test"), ("test2", "test2")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "set run energy",
+            kind: StepKind::Perform {
+                send: Box::new(|c, _| {
+                    c.runenergy = 99;
+                    true
+                }),
+            },
+            wait: wait(Proof::Stat { id: 16, min: 1 }, 10),
+        }],
+        proof: Proof::Stat { id: 16, min: 1 },
+        companions: vec![Companion {
+            profile: 1,
+            per_frame: {
+                let mut pending = true;
+                Box::new(move |_| std::mem::take(&mut pending))
+            },
+        }],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::new(scenario);
+    let mut c = seeded_client();
+    let index = runner.companion_for("test2").expect("companion slot");
+    assert!(runner.companion_tick(index, &mut c));
+    assert!(
+        !runner.companion_tick(index, &mut c),
+        "the fixture consumes its request, exactly like pair_companion_hook"
+    );
 }
 
 /// Live boots mint per-run usernames: the runner drives/companions the
@@ -1666,6 +1756,7 @@ fn live_names_replace_the_seed_names_for_dispatch() {
             profile: 1,
             per_frame: Box::new(move |_| {
                 hook.store(true, Ordering::Relaxed);
+                false
             }),
         }],
         settings: ScenarioSettings::default(),
@@ -2026,6 +2117,18 @@ fn relog_presses_the_logout_button_while_ingame() {
     assert!(
         matches!(runner.status(), RunnerStatus::Running { .. }),
         "still waiting to come back; we do not DC-wait"
+    );
+    assert!(
+        runner.relog_login_wanted(),
+        "a scriptless relog needs the host's explicit Login"
+    );
+    assert!(
+        runner.take_relog_login(),
+        "the host consumes the one-shot Login request"
+    );
+    assert!(
+        !runner.take_relog_login(),
+        "the request is posted once per relog step"
     );
 }
 

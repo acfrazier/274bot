@@ -684,6 +684,9 @@ const PATHS_RUNNING: [&str; 2] = [
 /// a frame that stops advancing the reload never settles it, and one that
 /// advances it after the drawing draws the running notice.
 fn frames_settle_a_quester_paths_reload(drive: Drive) {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut session, _dir) = session_with_play("frame-quester-paths", &["alice"]);
     session.script_prefs_open = true;
     session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
@@ -1546,6 +1549,10 @@ fn the_rail_tiles_scroll_under_the_sticky_toolbar() {
 /// three whose script was walking. Under `UiFrame` the drawn text says the
 /// same.
 fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     const NINE: [&str; 9] = [
         "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
     ];
@@ -1717,4 +1724,130 @@ fn a_preview_fold_shows_its_saving_and_failure_in_its_own_tile() {
             "grid={grid}: {tile}"
         );
     }
+}
+#[test]
+fn panel_driver_shows_quester_zone_disclosure_before_start() {
+    let (mut session, _dir) = session_with_play("frame-quester-zone-disclosure", &["alice"]);
+    session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        eprintln!(
+            "panel_driver_shows_quester_zone_disclosure_before_start: no headless GPU, skipped"
+        );
+        return;
+    };
+    rig.frames_until("the panel preferences", |rig| {
+        rig.session().panel_preferences_ready()
+    });
+    rig.session()
+        .ui
+        .collapsed
+        .entry("alice".into())
+        .or_default()
+        .insert("script".into(), false);
+    rig.frames_until("the expanded Script section", |rig| {
+        rig.text.contains("Start zone scope")
+    });
+    assert!(rig.text.contains("Start zone scope"), "{}", rig.text);
+    assert!(
+        rig.text.contains("Start accepts only these zones."),
+        "{}",
+        rig.text
+    );
+    assert!(
+        rig.text
+            .contains("The food guard is armed for the whole walk"),
+        "{}",
+        rig.text
+    );
+    assert!(
+        rig.text
+            .contains("protection runs only where a step requests it."),
+        "{}",
+        rig.text
+    );
+    assert!(
+        rig.text.contains("Prince Ali Rescue (prince)"),
+        "{}",
+        rig.text
+    );
+    assert!(rig.text.contains("draynor-jail-guards"), "{}", rig.text);
+    assert!(rig.text.contains("Guide reason:"), "{}", rig.text);
+}
+
+/// The whole panel frame as the CI lanes run it: one real Dear ImGui frame
+/// whose pump phase is the production `frame_pumps` order and whose staged
+/// GameInput submit follows it. The CI lanes have no GPU adapter
+/// (`SKIP_GPU=1`), so the drawing half of `ui_frame` stays under the
+/// per-surface warm-frame tests; this gate bounds the composed warm frame.
+///
+/// The steady pump frame is not allocation-free: the core poll pass clones
+/// the host's status rows every poll and `pump_shots` pays one call, so
+/// the bound is the measured warm count plus headroom — both lab hosts
+/// measure 23 calls/frame with two published rows, and the ceiling is
+/// that measurement plus 2%, rounded up — plus the no-growth equality: a
+/// second block of 100 unchanged frames must cost exactly the same.
+#[test]
+fn the_whole_pump_frame_adds_no_allocation_growth_across_100_unchanged_frames() {
+    const CHILD: &str = "PANEL_WHOLE_FRAME_GATE_CHILD";
+    const TEST_PATH: &str =
+        "app::frame_tests::the_whole_pump_frame_adds_no_allocation_growth_across_100_unchanged_frames";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        // The process-wide log store carries every earlier test's lines,
+        // and the pump's per-frame cost depends on what the ring holds, so
+        // an in-process count depends on the test's position in the
+        // binary. A fresh child starts an empty ring and measures the same
+        // cost a fresh panel process pays.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST_PATH, "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated whole-frame gate");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed; 0 failed;"),
+            "whole-frame gate child failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let (session, _dir) = session_with_play("frame-alloc-whole", &["alice", "bob"]);
+    let Some(mut rig) = Rig::new(Drive::Pumps, session) else {
+        return;
+    };
+    publish_ingame(rig.session(), "alice");
+    publish_ingame(rig.session(), "bob");
+    // Warm: the first status transitions, the log lines they publish, the
+    // ImGui frame queues and every lazy per-frame buffer settle here.
+    for _ in 0..16 {
+        assert!(!rig.frame(Pointer::Away));
+    }
+    let before = crate::test_alloc::alloc_calls();
+    for _ in 0..100 {
+        assert!(
+            !rig.frame(Pointer::Away),
+            "an unchanged frame ended the run"
+        );
+    }
+    let first = crate::test_alloc::alloc_calls() - before;
+    let before = crate::test_alloc::alloc_calls();
+    for _ in 0..100 {
+        assert!(
+            !rig.frame(Pointer::Away),
+            "an unchanged frame ended the run"
+        );
+    }
+    let second = crate::test_alloc::alloc_calls() - before;
+    assert_eq!(
+        second, first,
+        "100 unchanged whole frames must cost exactly what the first block cost"
+    );
+    // Call counts can differ between hosts, so the ceiling carries
+    // headroom instead of pinning one host's measurement: the measured
+    // warm count (23 calls/frame on both lab hosts) plus 2%, rounded up.
+    const WHOLE_FRAME_CALL_CEILING_PER_FRAME: usize = 24;
+    assert!(
+        second <= WHOLE_FRAME_CALL_CEILING_PER_FRAME * 100,
+        "100 unchanged whole frames: {second} calls exceeds the measured warm count plus 2% headroom ({})",
+        WHOLE_FRAME_CALL_CEILING_PER_FRAME * 100
+    );
 }
