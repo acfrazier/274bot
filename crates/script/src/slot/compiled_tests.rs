@@ -15,6 +15,11 @@ fn compiled_runs_select_each_supported_game_data_revision() {
         ClientRevision::R289,
         ClientRevision::R377,
     ] {
+        if revision == ClientRevision::R377
+            && !crate::native::has_local_game_data_for_test(revision)
+        {
+            continue;
+        }
         let selected = api::game_data::for_revision(revision).expect("selected revision game data");
         assert_eq!(compiled::selected_revision(&selected).unwrap(), revision);
     }
