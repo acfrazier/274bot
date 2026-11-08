@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::wilderness::{
     TEST_LEVELS_CONSTANT, TEST_LEVELS_RS2, TEST_SPELL_TELEPORT_RS2, TEST_ZONES_DBROW,
@@ -26,6 +28,27 @@ if ($progress = 0) {
     if_setcolour($component, ^yellow_rgb);
 }
 ";
+
+fn selected_revision_data_for_test(
+    description: &str,
+    data: Result<Arc<api::game_data::SelectedGameData>, api::game_data::GameDataError>,
+) -> Option<Arc<api::game_data::SelectedGameData>> {
+    match data {
+        Ok(data) => Some(data),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+            if std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(OsStr::new("true")) =>
+        {
+            eprintln!(
+                "Skipping {description} transport assertions: local game data is unavailable"
+            );
+            None
+        }
+        Err(api::game_data::GameDataError::LocalDataUnavailable) => {
+            panic!("missing {description}; generate it with `python tools/local-data/build.py`");
+        }
+        Err(error) => panic!("{description}: {error:?}"),
+    }
+}
 
 /// The derived graph carries the Rune Mysteries essence-mine
 /// entries — one `TransportKind::Npc` edge per wizard who knows the
@@ -3498,9 +3521,8 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
     }
     let defs = loc_defs(&[]);
     let wc = bake_collision(&fx, &defs, &HashSet::new());
-    let derive = |revision| {
-        let data = api::game_data::for_revision(revision).expect("selected revision item data");
-        derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(&data))
+    let derive = |data: &api::game_data::SelectedGameData| {
+        derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(data))
     };
     // Old revisions keep the table, regardless of selected-map differences.
     let baseline = derive_transports(fx.path(), &defs, &wc);
@@ -3508,7 +3530,13 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
-        let (legacy, _, _) = derive(revision);
+        let Some(data) = selected_revision_data_for_test(
+            "selected revision game data",
+            api::game_data::for_revision(revision),
+        ) else {
+            continue;
+        };
+        let (legacy, _, _) = derive(&data);
         let legacy_boats = legacy
             .edges
             .iter()
@@ -3530,7 +3558,9 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
         );
         return;
     }
-    let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 game data");
+    let (graph, skipped, _) = derive(&data);
     let positions = npc_positions(fx.path());
     let boats: Vec<_> = graph
         .edges
@@ -3565,7 +3595,7 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
         "maps/m47_50.jm2",
         "==== NPC ====\n0 18 17: 378\n0 37 36: 657\n0 38 36: 657\n",
     );
-    let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
+    let (graph, skipped, _) = derive(&data);
     assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 3);
     assert!(graph
         .edges
@@ -3579,7 +3609,7 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
     // Ardougne, x=2815 to Port Sarim. Mixed branches must omit the route.
     for spawns in ["0 62 25: 380\n0 63 25: 380\n", "0 63 25: 380\n"] {
         fx.write("maps/m43_50.jm2", &format!("==== NPC ====\n{spawns}"));
-        let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
+        let (graph, skipped, _) = derive(&data);
         assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 4);
         assert!(!graph.edges.iter().any(|edge| {
             edge.kind == TransportKind::Boat
@@ -10667,7 +10697,12 @@ p_telejump(0_46_149_63_13);
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
-        let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        let Some(data) = selected_revision_data_for_test(
+            "selected revision game data",
+            api::game_data::for_revision(revision),
+        ) else {
+            continue;
+        };
         apply_legacy_entrana_fixture_guards(&mut baseline, &data);
         assert_eq!(
             derive(Some(&data)).edges,
@@ -10769,7 +10804,12 @@ p_telejump($coord);
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
-        let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        let Some(data) = selected_revision_data_for_test(
+            "selected revision game data",
+            api::game_data::for_revision(revision),
+        ) else {
+            continue;
+        };
         apply_legacy_entrana_fixture_guards(&mut baseline, &data);
         assert_eq!(
             derive(Some(&data)).edges,
@@ -10909,7 +10949,12 @@ switch_coord (loc_coord) {
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
-        let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        let Some(data) = selected_revision_data_for_test(
+            "selected revision game data",
+            api::game_data::for_revision(revision),
+        ) else {
+            continue;
+        };
         apply_legacy_entrana_fixture_guards(&mut baseline, &data);
         assert_eq!(derive(Some(&data)).edges, baseline.edges);
     }
@@ -11058,7 +11103,12 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
-        let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        let Some(data) = selected_revision_data_for_test(
+            "selected revision game data",
+            api::game_data::for_revision(revision),
+        ) else {
+            continue;
+        };
         apply_legacy_entrana_fixture_guards(&mut baseline, &data);
         assert_eq!(
             derive(Some(&data)).edges,
