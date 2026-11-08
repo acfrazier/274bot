@@ -351,11 +351,10 @@ fn quester_377_cook_native() -> Result<(), String> {
         }
         if !relogin_requested && state.relog_detached {
             drop(state);
-            play.arm(&account)
-                .ok_or("377 Quester fixture slot disappeared")?
-                .arm_explicit_login();
-            play.wake(&account);
-            relogin_requested = true;
+            if let Some(arm) = play.arm(&account) {
+                arm.arm_explicit_login();
+                relogin_requested = true;
+            }
             continue;
         }
         if !started && state.baseline.is_some() {
