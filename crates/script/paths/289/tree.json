@@ -1,0 +1,1473 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "tree",
+  "display_name": "Tree Gnome Village",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 2,
+    "requirements": [],
+    "items": [
+      {
+        "obj": "logs",
+        "qty": 6,
+        "kind": "acquirable",
+        "acquire": null,
+        "from_stage": "tree:2"
+      }
+    ],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {
+      "village": {
+        "boxes": [
+          [
+            2514,
+            3162,
+            2550,
+            3180,
+            0
+          ]
+        ],
+        "source": "maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12; maps/m39_49.jm2:6839"
+      },
+      "maze_inner": {
+        "boxes": [
+          [
+            2512,
+            3156,
+            2517,
+            3160,
+            0
+          ]
+        ],
+        "source": "scripts/quests/quest_tree/configs/quest_tree.constant:12; maps/m39_49.jm2:5023"
+      },
+      "fort_inside": {
+        "boxes": [
+          [
+            2500,
+            3254,
+            2511,
+            3263,
+            0
+          ]
+        ],
+        "source": "maps/m39_50.jm2:4512; scripts/quests/quest_tree/scripts/quest_tree.rs2:44-56"
+      }
+    },
+    "tools": [
+      "obj:orb_of_protection",
+      "obj:orbs_of_protection"
+    ],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:tree",
+      "progress": {
+        "colour": {
+          "not_started": "tree:0",
+          "in_progress": "tree:1",
+          "complete": "tree:9"
+        },
+        "rules": [
+          {
+            "stage": "tree:8",
+            "all": [
+              "i should return them now to"
+            ]
+          },
+          {
+            "stage": "tree:7",
+            "all": [
+              "i should retrieve the"
+            ]
+          },
+          {
+            "stage": "tree:6",
+            "all": [
+              "i should return the"
+            ]
+          },
+          {
+            "stage": "tree:5",
+            "all": [
+              "stronghold exposed",
+              "retrieve the"
+            ]
+          },
+          {
+            "stage": "tree:4",
+            "all": [
+              "i need to head into the"
+            ]
+          },
+          {
+            "stage": "tree:3",
+            "all": [
+              "i should speak to"
+            ]
+          },
+          {
+            "stage": "tree:2",
+            "all": [
+              "i need to bring montai"
+            ]
+          },
+          {
+            "stage": "tree:1",
+            "all": [
+              "commander montai"
+            ]
+          },
+          {
+            "stage": "tree:0",
+            "all": [
+              "i can start this quest"
+            ]
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "tree:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "approach-railing-start",
+              "kind": "walk",
+              "version": 1,
+              "comment": "Approach the railing from the maze side. maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12",
+              "args": {
+                "tile": [
+                  2515,
+                  3160,
+                  0
+                ],
+                "source": "maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "village"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2515,
+                          3160,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2515,
+                      3160,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "squeeze-railing-start",
+              "kind": "interact",
+              "version": 1,
+              "comment": "The railing crosses the village boundary. maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12",
+              "args": {
+                "target": {
+                  "loc": "treegnomelooserailing"
+                },
+                "op": "Squeeze-through",
+                "anchor": {
+                  "tile": [
+                    2515,
+                    3161,
+                    0
+                  ],
+                  "source": "maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "village"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "village"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "bolren-start",
+              "kind": "talk",
+              "version": 1,
+              "comment": "scripts/areas/area_gnome/scripts/king_bolren.rs2:8-35,48-75,83-124",
+              "args": {
+                "npc": "king_bolren",
+                "anchor": {
+                  "tile": [
+                    2542,
+                    3169,
+                    0
+                  ],
+                  "source": "maps/m39_49.jm2:6839"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Can I help at all?",
+                  "I would be glad to help."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "tree",
+                    "any": [
+                      "tree:1"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "tree:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "montai-request-logs",
+              "kind": "talk",
+              "version": 1,
+              "comment": "scripts/areas/area_gnome/scripts/commander_montai.rs2:6-55",
+              "args": {
+                "npc": "commander_montai",
+                "anchor": {
+                  "tile": [
+                    2523,
+                    3211,
+                    0
+                  ],
+                  "source": "maps/m39_50.jm2:5731"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Ok, I'll gather some wood."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "tree",
+                    "any": [
+                      "tree:2"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "tree:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "cut-six-logs", "kind": "gather", "version": 1, "advances": false,
+              "args": {"skill": "woodcutting", "resource": "normal", "until": {"obj": "logs", "qty": 6}, "anchor": {"tile": [2613, 3252, 0], "source": "content/maps/m40_50.jm2:5891; content/scripts/skill_woodcutting/configs/trees.dbrow:1-9"}},
+              "comment": "content/scripts/skill_woodcutting/scripts/woodcut.rs2:1-14,91-148 produces normal logs. Montai consumes six: content/scripts/areas/area_gnome/scripts/commander_montai.rs2:6-35.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "logs", "qty": 6}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "logs", "qty": 6}}}
+            },
+            {
+              "id": "montai-deliver-logs",
+              "kind": "talk",
+              "version": 1,
+              "comment": "scripts/areas/area_gnome/scripts/commander_montai.rs2:6-55",
+              "args": {
+                "npc": "commander_montai",
+                "anchor": {
+                  "tile": [
+                    2523,
+                    3211,
+                    0
+                  ],
+                  "source": "maps/m39_50.jm2:5731"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "tree",
+                    "any": [
+                      "tree:3"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "tree:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "montai-instructions",
+              "kind": "talk",
+              "version": 1,
+              "comment": "scripts/areas/area_gnome/scripts/commander_montai.rs2:6-55",
+              "args": {
+                "npc": "commander_montai",
+                "anchor": {
+                  "tile": [
+                    2523,
+                    3211,
+                    0
+                  ],
+                  "source": "maps/m39_50.jm2:5731"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'll try my best."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "tree",
+                    "any": [
+                      "tree:4"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "tree:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "fire-ballista",
+              "kind": "interact",
+              "version": 1,
+              "comment": "Fixed coordinates 4,3,5, no tracker dialogue required. if_close then p_delay(1) creates a two-tick hole. scripts/quests/quest_tree/scripts/quest_tree.rs2:1-27; scripts/interface_chat/scripts/chat.rs2:149-172",
+              "args": {
+                "target": {
+                  "loc": "catabow"
+                },
+                "op": "Fire",
+                "anchor": {
+                  "tile": [
+                    2508,
+                    3210,
+                    0
+                  ],
+                  "source": "maps/m39_50.jm2:4469"
+                },
+                "radius": 8,
+                "dialogue": {
+                  "line_rules": [
+                    {
+                      "when_line": "height-coordinate",
+                      "choose": "0004"
+                    },
+                    {
+                      "when_line": "x-coordinate",
+                      "choose": "0003"
+                    },
+                    {
+                      "when_line": "y-coordinate",
+                      "choose": "0005"
+                    }
+                  ],
+                  "strict": true,
+                  "gap_ticks": 2
+                }
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "tree",
+                    "any": [
+                      "tree:5"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "tree:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "climb-breached-wall",
+              "kind": "interact",
+              "version": 1,
+              "comment": "The wall is passable after ballista fire. scripts/quests/quest_tree/scripts/quest_tree.rs2:44-68",
+              "args": {
+                "target": {
+                  "loc": "khazzacklowwall"
+                },
+                "op": "Climb-over",
+                "anchor": {
+                  "tile": [
+                    2509,
+                    3253,
+                    0
+                  ],
+                  "source": "maps/m39_50.jm2:4512"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "fort_inside"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "fort_inside"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "climb-fort-ladder",
+              "kind": "interact",
+              "version": 1,
+              "comment": "The fort ladder leads to the upper floor. maps/m39_50.jm2:4358,5618; scripts/ladders+stairs/scripts/ladders.rs2:49-54",
+              "args": {
+                "target": {
+                  "loc": "ladder"
+                },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [
+                    2503,
+                    3252,
+                    0
+                  ],
+                  "source": "maps/m39_50.jm2:4358; scripts/ladders+stairs/scripts/ladders.rs2:49-54"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 1
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 1
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "open-fort-chest",
+              "kind": "interact",
+              "version": 1,
+              "comment": "Opening the chest can provoke the commander. scripts/quests/quest_tree/scripts/quest_tree.rs2:70-75",
+              "args": {
+                "target": {
+                  "loc": "chestclosed_khazard"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2506,
+                    3259,
+                    1
+                  ],
+                  "source": "maps/m39_50.jm2:5618"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "chestopen_khazard"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "orb_of_protection"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "chestopen_khazard"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "search-fort-chest",
+              "kind": "interact",
+              "version": 1,
+              "comment": "Search grants the first orb and advances the quest. scripts/quests/quest_tree/scripts/quest_tree.rs2:77-90",
+              "args": {
+                "target": {
+                  "loc": "chestopen_khazard"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2506,
+                    3259,
+                    1
+                  ],
+                  "source": "maps/m39_50.jm2:5618"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "orb_of_protection"
+                  }
+                }
+              },
+              "settle": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "orb_of_protection"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "stage_in",
+                      "version": 1,
+                      "args": {
+                        "quest": "tree",
+                        "any": [
+                          "tree:6"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "tree:6",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "climb-breached-wall-recover",
+              "kind": "interact",
+              "version": 1,
+              "comment": "The wall is passable after ballista fire. scripts/quests/quest_tree/scripts/quest_tree.rs2:44-68 Recovery at stage 6: scripts/quests/quest_tree/scripts/quest_tree.rs2:77-90.",
+              "args": {
+                "target": {
+                  "loc": "khazzacklowwall"
+                },
+                "op": "Climb-over",
+                "anchor": {
+                  "tile": [
+                    2509,
+                    3253,
+                    0
+                  ],
+                  "source": "maps/m39_50.jm2:4512"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "orb_of_protection"
+                      }
+                    }
+                  },
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "on_level",
+                          "version": 1,
+                          "args": {
+                            "level": 1
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "in_area",
+                          "version": 1,
+                          "args": {
+                            "area": "fort_inside"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "fort_inside"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "climb-fort-ladder-recover",
+              "kind": "interact",
+              "version": 1,
+              "comment": "The fort ladder leads to the upper floor. maps/m39_50.jm2:4358,5618; scripts/ladders+stairs/scripts/ladders.rs2:49-54 Recovery at stage 6: scripts/quests/quest_tree/scripts/quest_tree.rs2:77-90.",
+              "args": {
+                "target": {
+                  "loc": "ladder"
+                },
+                "op": "Climb-up",
+                "anchor": {
+                  "tile": [
+                    2503,
+                    3252,
+                    0
+                  ],
+                  "source": "maps/m39_50.jm2:4358; scripts/ladders+stairs/scripts/ladders.rs2:49-54"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "orb_of_protection"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "on_level",
+                      "version": 1,
+                      "args": {
+                        "level": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "on_level",
+                  "version": 1,
+                  "args": {
+                    "level": 1
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "open-fort-chest-recover",
+              "kind": "interact",
+              "version": 1,
+              "comment": "Opening the chest can provoke the commander. scripts/quests/quest_tree/scripts/quest_tree.rs2:70-75 Recovery at stage 6: scripts/quests/quest_tree/scripts/quest_tree.rs2:77-90.",
+              "args": {
+                "target": {
+                  "loc": "chestclosed_khazard"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    2506,
+                    3259,
+                    1
+                  ],
+                  "source": "maps/m39_50.jm2:5618"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "chestopen_khazard"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "orb_of_protection"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "chestopen_khazard"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "search-fort-chest-recover",
+              "kind": "interact",
+              "version": 1,
+              "comment": "Search grants the first orb and advances the quest. scripts/quests/quest_tree/scripts/quest_tree.rs2:77-90 Recovery at stage 6: scripts/quests/quest_tree/scripts/quest_tree.rs2:77-90.",
+              "args": {
+                "target": {
+                  "loc": "chestopen_khazard"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2506,
+                    3259,
+                    1
+                  ],
+                  "source": "maps/m39_50.jm2:5618"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "orb_of_protection"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "orb_of_protection"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "elkoy-escort-first-orb",
+              "kind": "talk",
+              "version": 1,
+              "comment": "The outside Elkoy transports the player to (2515,3159) after selecting Yes. scripts/areas/area_gnome/scripts/elkoy.rs2:62-75,145-151; scripts/quests/quest_tree/configs/quest_tree.constant:11-12",
+              "args": {
+                "npc": "elkoy",
+                "anchor": {
+                  "tile": [
+                    2504,
+                    3191,
+                    0
+                  ],
+                  "source": "maps/m39_49.jm2:6802; scripts/areas/area_gnome/scripts/elkoy.rs2:62-75,145-151"
+                },
+                "leash": 5,
+                "prefer": [
+                  "Yes please."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "village"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "maze_inner"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "maze_inner"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "approach-railing-first-orb",
+              "kind": "walk",
+              "version": 1,
+              "comment": "Approach the railing from the maze side. maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12",
+              "args": {
+                "tile": [
+                  2515,
+                  3160,
+                  0
+                ],
+                "source": "maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "village"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2515,
+                          3160,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2515,
+                      3160,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "squeeze-railing-first-orb",
+              "kind": "interact",
+              "version": 1,
+              "comment": "The railing crosses the village boundary. maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12",
+              "args": {
+                "target": {
+                  "loc": "treegnomelooserailing"
+                },
+                "op": "Squeeze-through",
+                "anchor": {
+                  "tile": [
+                    2515,
+                    3161,
+                    0
+                  ],
+                  "source": "maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "village"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "village"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "bolren-first-orb",
+              "kind": "talk",
+              "version": 1,
+              "comment": "scripts/areas/area_gnome/scripts/king_bolren.rs2:8-35,48-75,83-124",
+              "args": {
+                "npc": "king_bolren",
+                "anchor": {
+                  "tile": [
+                    2542,
+                    3169,
+                    0
+                  ],
+                  "source": "maps/m39_49.jm2:6839"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I will find the warlord and bring back the orbs."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "tree",
+                    "any": [
+                      "tree:7"
+                    ]
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "tree:7",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "fight-warlord",
+              "kind": "combat",
+              "version": 1,
+              "comment": "The warlord grants orbs directly to the inventory on death and advances progress. scripts/quests/quest_tree/scripts/khazard_warlord.rs2:24-47; scripts/quests/quest_tree/configs/gnome_battlefield.npc:76-107",
+              "args": {
+                "target": {
+                  "npc": "khazard_warlord",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2457,
+                    3302,
+                    0
+                  ],
+                  "source": "maps/m38_51.jm2:7210"
+                },
+                "area": {
+                  "box": [
+                    2440,
+                    3285,
+                    2474,
+                    3320,
+                    0
+                  ],
+                  "source": "maps/m38_51.jm2:7210; scripts/quests/quest_tree/configs/gnome_battlefield.npc:76-107"
+                },
+                "lost_radius": 20,
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 10,
+                  "auto_retaliate": true
+                },
+                "kill_budget_ticks": 600,
+                "loot": [],
+                "until": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "orbs_of_protection"
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "orbs_of_protection"
+                  }
+                }
+              },
+              "settle": {
+                "All": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "orbs_of_protection"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "stage_in",
+                      "version": 1,
+                      "args": {
+                        "quest": "tree",
+                        "any": [
+                          "tree:8"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "tree:8",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "recover-final-orbs",
+              "kind": "combat",
+              "version": 1,
+              "comment": "When both orbs are missing, another warlord kill can restore them without advancing beyond stage 8. scripts/quests/quest_tree/scripts/khazard_warlord.rs2:40-47.",
+              "args": {
+                "target": {
+                  "npc": "khazard_warlord",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "stand": {
+                  "tile": [
+                    2457,
+                    3302,
+                    0
+                  ],
+                  "source": "maps/m38_51.jm2:7210"
+                },
+                "area": {
+                  "box": [
+                    2440,
+                    3285,
+                    2474,
+                    3320,
+                    0
+                  ],
+                  "source": "maps/m38_51.jm2:7210; scripts/quests/quest_tree/configs/gnome_battlefield.npc:76-107"
+                },
+                "lost_radius": 20,
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 10,
+                  "auto_retaliate": true
+                },
+                "kill_budget_ticks": 600,
+                "loot": [],
+                "until": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "orbs_of_protection"
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "orbs_of_protection"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "orbs_of_protection"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "elkoy-escort-final-orbs",
+              "kind": "talk",
+              "version": 1,
+              "comment": "The outside Elkoy transports the player to (2515,3159) after selecting Yes. scripts/areas/area_gnome/scripts/elkoy.rs2:62-75,145-151; scripts/quests/quest_tree/configs/quest_tree.constant:11-12",
+              "args": {
+                "npc": "elkoy",
+                "anchor": {
+                  "tile": [
+                    2504,
+                    3191,
+                    0
+                  ],
+                  "source": "maps/m39_49.jm2:6802; scripts/areas/area_gnome/scripts/elkoy.rs2:62-75,145-151"
+                },
+                "leash": 5,
+                "prefer": [
+                  "Yes please."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "village"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "maze_inner"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "maze_inner"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "approach-railing-final-orbs",
+              "kind": "walk",
+              "version": 1,
+              "comment": "Approach the railing from the maze side. maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12",
+              "args": {
+                "tile": [
+                  2515,
+                  3160,
+                  0
+                ],
+                "source": "maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12",
+                "radius": 1
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "village"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "near",
+                      "version": 1,
+                      "args": {
+                        "tile": [
+                          2515,
+                          3160,
+                          0
+                        ],
+                        "radius": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      2515,
+                      3160,
+                      0
+                    ],
+                    "radius": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "squeeze-railing-final-orbs",
+              "kind": "interact",
+              "version": 1,
+              "comment": "The railing crosses the village boundary. maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12",
+              "args": {
+                "target": {
+                  "loc": "treegnomelooserailing"
+                },
+                "op": "Squeeze-through",
+                "anchor": {
+                  "tile": [
+                    2515,
+                    3161,
+                    0
+                  ],
+                  "source": "maps/m39_49.jm2:5023; scripts/areas/area_gnome/scripts/gnomevillage_fence.rs2:1-12"
+                },
+                "radius": 3
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "village"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "village"
+                  }
+                }
+              },
+              "advances": false
+            },
+            {
+              "id": "bolren-finish",
+              "kind": "talk",
+              "version": 1,
+              "comment": "The closed-chat ceremony has four p_delay(1) calls and one p_delay(6), at most 15 ticks without a rearming player signal. scripts/areas/area_gnome/scripts/king_bolren.rs2:83-124,136-148",
+              "args": {
+                "npc": "king_bolren",
+                "anchor": {
+                  "tile": [
+                    2542,
+                    3169,
+                    0
+                  ],
+                  "source": "maps/m39_49.jm2:6839"
+                },
+                "leash": 8,
+                "prefer": [],
+                "strict": true,
+                "gap_ticks": 15
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "tree",
+                    "is": "complete"
+                  }
+                }
+              },
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "tree:9",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

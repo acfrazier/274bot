@@ -353,7 +353,7 @@ fn a_script_walk_plans_from_the_slot_memory_with_the_bank_closed() {
     let memory = RwLock::new(session_memory());
     let (navs, _) = empty_nav();
     bind_test_route_scope(&navs, "alice");
-    let walk: script::shim::InteractReq = serde_json::from_value(serde_json::json!({
+    let walk: script::interact::InteractReq = serde_json::from_value(serde_json::json!({
         "op": "walk",
         "x": 4,
         "z": 4,
@@ -406,7 +406,7 @@ fn a_compat_inspect_with_a_closed_bank_and_a_known_memory_is_bank_planned() {
     let state = WorldState::from_snapshot(&closed);
     let (navs, _) = empty_nav();
     let inspect = |client: &mut Client, memory: &RwLock<BankMemory>, request_id: u64| {
-        let request: script::shim::InteractReq = serde_json::from_value(serde_json::json!({
+        let request: script::interact::InteractReq = serde_json::from_value(serde_json::json!({
             "op": "inspect-route",
             "x": 4,
             "z": 4,
@@ -523,7 +523,7 @@ export default class T extends LoopingBot {
                 tick,
                 Some((0, 0, 0)),
                 None,
-                Some(WorldState::from_snapshot(&snapshot)),
+                Some(Arc::new(WorldState::from_snapshot(&snapshot))),
                 Some(&snapshot),
                 Some(&memory),
                 None,
@@ -723,7 +723,8 @@ fn assert_one_trip_only_for_a_hint(arrival: nav_planner::arrival::ArrivalKind) {
         loc_id: None,
         arrival,
         opts: fetch_on(),
-        state: Some(state.clone()),
+        state: Some(Arc::new(state.clone())),
+        prereq_catalog: None,
         bank_origin,
         bank: rows.to_vec(),
         live_geometry: None,
@@ -795,7 +796,7 @@ fn a_compat_walk_near_a_solid_tile_plans_the_hint_trip_with_the_bank_closed() {
             Some(state.clone()),
             memory,
             "alice",
-            [script::shim::InteractReq::WalkNear {
+            [script::interact::InteractReq::WalkNear {
                 x: 4,
                 z: 4,
                 level: 0,
@@ -804,6 +805,8 @@ fn a_compat_walk_near_a_solid_tile_plans_the_hint_trip_with_the_bank_closed() {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 43,
                 avoid: Vec::new(),
                 cross: Vec::new(),

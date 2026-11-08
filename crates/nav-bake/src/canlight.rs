@@ -14,7 +14,7 @@ use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 use client::dash3d::{CollisionFlag, LocAngle};
 use nav_planner::collision::{game_plane, WorldCollision};
-use nav_planner::pack::PackError;
+use nav_planner::pack::{PackError, KEY_COORD_MAX};
 
 const SQUARE: i32 = 64;
 const LEVELS: i32 = 4;
@@ -58,6 +58,9 @@ pub enum CanlightError {
     /// A packed coordinate has an out-of-range local coordinate.
     #[error("packed coord {token:?} has a local coordinate outside 0..64")]
     PackedCoordinateLocalInvalid { token: String },
+    /// A packed coordinate expands outside the v18 tile key range.
+    #[error("packed coord {token:?} expands outside 0..16384 or overflows")]
+    PackedCoordinateOutOfRange { token: String },
     /// Raw flags do not match the collision geometry.
     #[error("canlight flags length {actual} does not match collision geometry {width}x{height}x4")]
     FlagsLengthMismatch {
@@ -228,9 +231,20 @@ fn unpack_packed_coord_inner(token: &str) -> Result<WorldTile, CanlightError> {
             token: token.to_owned(),
         });
     }
+    // Check each product and sum: `i32::MAX * 64` wraps in release and
+    // panics in the dev profile. A tile outside the packed key range is an
+    // error, never clamped.
+    let expand = |map: i32, local: i32| {
+        map.checked_mul(SQUARE)
+            .and_then(|base| base.checked_add(local))
+            .filter(|&tile| (0..KEY_COORD_MAX).contains(&tile))
+            .ok_or_else(|| CanlightError::PackedCoordinateOutOfRange {
+                token: token.to_owned(),
+            })
+    };
     Ok(WorldTile {
-        x: map_x * SQUARE + local_x,
-        z: map_z * SQUARE + local_z,
+        x: expand(map_x, local_x)?,
+        z: expand(map_z, local_z)?,
         level,
     })
 }

@@ -11,7 +11,7 @@ workspace = true
 api = { path = "../api" }
 nav-planner = { path = "../nav-planner" }
 client = { workspace = true }
-thiserror = "=2.0.20"
+thiserror = "2.0.20"
 
 [dev-dependencies]
 api = { path = "../api", features = ["test-support"] }

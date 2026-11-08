@@ -141,7 +141,8 @@ fn driver(label: &str) -> FleetDriver {
             .expect("profile");
     }
     drop(vault);
-    let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip())
+        .expect("test script settings are readable");
     // Driver startup hydrates preferences asynchronously. Adopt the initial
     // snapshot before measuring a frame window so a late first read cannot
     // be charged to a quiet or waiting fleet-plan frame.
@@ -380,6 +381,9 @@ fn a_100_bot_world_switch_holds_bounded_state_and_quiet_frames_grow_nothing() {
 /// makes no more allocation calls than a frame with no copy at all.
 #[test]
 fn a_full_copy_queue_allocates_nothing_while_it_waits() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut d = driver("copy-queue");
     // A native card's settings copy reads the revision's script data.
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");

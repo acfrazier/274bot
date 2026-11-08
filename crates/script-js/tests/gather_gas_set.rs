@@ -6,6 +6,11 @@ use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
+
 type Data = Arc<api::game_data::SelectedGameData>;
 
 const REVISIONS: [ClientRevision; 2] = [ClientRevision::R274, ClientRevision::R289];
@@ -14,7 +19,16 @@ fn spawn(src: &str, data: &Data) -> LoadIsolate {
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::CompatClass, vec![], data.clone())
             .unwrap();
-    assert_eq!(iso.probe("1").unwrap(), json!(1));
+    assert_eq!(
+        iso.probe("1").unwrap_or_else(|error| {
+            panic!(
+                "isolate probe failed: {error}; readiness={:?}; logs={:?}",
+                iso.poll_ready(),
+                iso.drain_logs()
+            )
+        }),
+        json!(1)
+    );
     iso
 }
 
@@ -50,6 +64,11 @@ fn gas_ids() -> Vec<i32> {
 /// ordered set, and the exports of the relative shim module and of `@rs2b0t/api` are that one object.
 #[test]
 fn every_first_operation_sees_the_full_ordered_set() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let firsts = [
         ("GAS_ROCK_IDS.size", json!(21)),
         ("GAS_ROCK_IDS.has(2125)", json!(true)),
@@ -107,6 +126,11 @@ export default class T extends LoopingBot {{
 /// concerns object properties, never the set's entries.
 #[test]
 fn freezing_or_sealing_first_leaves_the_full_set_readable() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     for revision in REVISIONS {
         let data = api::game_data::for_revision(revision).unwrap();
         for lock in ["freeze", "seal", "preventExtensions"] {
@@ -128,6 +152,11 @@ fn freezing_or_sealing_first_leaves_the_full_set_readable() {
 /// Clearing the set and then defining, redefining or deleting same-named own members never brings ids back.
 #[test]
 fn a_cleared_set_stays_cleared_whatever_members_are_redefined() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let src = r#"
 import { GAS_ROCK_IDS } from '../../data/miningRocks.js';
 let step = 0;
@@ -171,6 +200,9 @@ export default class T extends LoopingBot {
 /// a second isolate.
 #[test]
 fn mutations_persist_within_the_isolate_and_stay_local_to_it() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { GAS_ROCK_IDS } from '../../data/miningRocks.js';
 let step = 0;
@@ -278,15 +310,15 @@ export default class T extends LoopingBot {
 /// Selected data without the generated gas slice is the fail-closed miss on every member, never an empty set.
 #[test]
 fn selected_data_without_the_gas_slice_fails_closed_on_every_member() {
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let raw = r#"{
         "schema_version": 5,
         "revision": 274,
-        "provenance": {
-            "cache_identity": {"cache_id": "x"},
-            "inputs": [],
-            "content_inputs": [],
-            "decoder_sources": []
-        },
+        "shops": [],
+        "cook_surfaces": { "rows": [] },
         "items": [],
         "consumption": [],
         "pickpocket": []

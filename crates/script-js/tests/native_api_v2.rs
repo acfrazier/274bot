@@ -4,17 +4,23 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script::{ScriptSource, SlotScript, WatchdogAction};
-use script_js::wire::{
-    encode_snapshot_with_native, CollisionViewInput, NativeFactsInput, QuestStatusInput,
-    SceneEntityInput,
-};
 use script_js::{
     parse_declared_api_version, resolve_api_family, ApiFamily, JsLibrary, LoadIsolate, LoadShape,
 };
+use {
+    script::native::snapshot_source::{
+        CollisionViewInput, NativeFactsInput, QuestStatusInput, SceneEntityInput,
+    },
+    script_js::wire::encode_snapshot_with_native,
+};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn temp_dir() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -66,7 +72,7 @@ fn start_js_surface(
 }
 
 fn post_base_with_hold(iso: &LoadIsolate, tick: u64, hold: bool) {
-    let mut input = script_js::wire::SnapshotInput {
+    let mut input = script::native::snapshot_source::SnapshotInput {
         tick,
         here: None,
         ingame: true,
@@ -131,7 +137,7 @@ fn post_base_with_hold(iso: &LoadIsolate, tick: u64, hold: bool) {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -747,6 +753,8 @@ export function tick(api) {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 0,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -758,6 +766,8 @@ export function tick(api) {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 0,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -769,6 +779,8 @@ export function tick(api) {
                 allow_teleports: true,
                 allow_wilderness: true,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 0,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -782,6 +794,8 @@ export function tick(api) {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 99,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -846,7 +860,7 @@ export function tick(api) {
 
 #[test]
 fn v2_inspect_route_uses_isolate_token_and_rejects_invented_ids() {
-    use script::shim::InspectAvoidWire;
+    use script::interact::InspectAvoidWire;
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -956,6 +970,9 @@ export async function tick(api) {
   catch (e) { globalThis.__if = String(e); }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
@@ -1000,6 +1017,9 @@ export function tick(api) {
   };
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
@@ -1156,6 +1176,8 @@ fn v2_hold_run_sets_status_and_emits_the_world_walk() {
                 allow_teleports: false,
                 allow_wilderness: true,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id,
                 avoid: _,
                 cross: _,
@@ -1251,6 +1273,9 @@ export function tick(api) {
   };
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let prepared = std::sync::Arc::clone(&data);
     api::selected::FamilyPreparation::run(move |worker| prepared.prepare_gathering(worker))
@@ -1314,6 +1339,9 @@ export function tick(api) {
   };
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
@@ -1372,6 +1400,9 @@ export async function tick(api) {
   };
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
@@ -1659,7 +1690,7 @@ fn open_collision<'a>() -> NativeFactsInput<'a> {
 }
 
 fn post_with_native(iso: &LoadIsolate, tick: u64, facts: NativeFactsInput<'_>) {
-    let mut input = script_js::wire::SnapshotInput {
+    let mut input = script::native::snapshot_source::SnapshotInput {
         tick,
         here: None,
         ingame: true,
@@ -1724,7 +1755,7 @@ fn post_with_native(iso: &LoadIsolate, tick: u64, facts: NativeFactsInput<'_>) {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -1756,7 +1787,7 @@ export function tick(api) {
         loc_row(2092, 3202, &prospect),
         loc_row(2092, 3203, &mine),
     ];
-    let input = script_js::wire::SnapshotInput {
+    let input = script::native::snapshot_source::SnapshotInput {
         tick: 4,
         here: None,
         ingame: true,
@@ -1821,7 +1852,7 @@ export function tick(api) {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,
@@ -1875,7 +1906,7 @@ export function tick(api) {
         npc_row(9, 3, &attack),
         npc_row(-1, 4, &attack),
     ];
-    let mut input = script_js::wire::SnapshotInput {
+    let mut input = script::native::snapshot_source::SnapshotInput {
         tick: 5,
         here: None,
         ingame: true,
@@ -1940,7 +1971,7 @@ export function tick(api) {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

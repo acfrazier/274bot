@@ -192,7 +192,7 @@ fn route_admission_full_retains_demand_and_retries_only_after_capacity_changes()
     for ticket in &held[1..] {
         shared.lock().consume(ticket).unwrap();
     }
-    finish(&shared, &navs, &ledger);
+    drain_route_work_for_test(&shared, &navs, "alice", &ledger);
     assert_eq!(navs.lock().unwrap()["alice"].route_destination(), Some(to));
     wait_for_capacity(&shared, api::work::WorkCapacity::EMPTY);
     assert_eq!(shared.lock().capacity(), api::work::WorkCapacity::EMPTY);
@@ -202,27 +202,6 @@ fn route_admission_full_retains_demand_and_retries_only_after_capacity_changes()
         "route Full frames=1000 allocations={} request_ids=0",
         allocations.count_total
     );
-}
-
-fn finish(
-    shared: &Arc<parking_lot::Mutex<WorkService>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-    ledger: &OwnerResultLedger,
-) {
-    for _ in 0..64 {
-        pump_route_work_on_service(shared, navs, "alice", ledger);
-        let ticket = navs.lock().unwrap()["alice"]
-            .route_ticket
-            .as_ref()
-            .map(|owner| owner.ticket());
-        if let Some(ticket) = ticket {
-            WorkService::wait_terminal(shared, &ticket).unwrap();
-        }
-        if !navs.lock().unwrap()["alice"].route_work_pending() {
-            return;
-        }
-    }
-    panic!("tiny route did not finish within 64 admitted stages");
 }
 
 #[test]
@@ -254,7 +233,7 @@ fn route_owner_ledger_full_retains_terminal_until_result_capacity_returns() {
     );
     assert!(!navs.lock().unwrap()["alice"].walk_outcome_failed);
     drop(blocker);
-    finish(&shared, &navs, &ledger);
+    drain_route_work_for_test(&shared, &navs, "alice", &ledger);
     assert_eq!(navs.lock().unwrap()["alice"].route_destination(), Some(to));
     wait_for_capacity(&shared, api::work::WorkCapacity::EMPTY);
     assert_eq!(shared.lock().capacity(), api::work::WorkCapacity::EMPTY);
@@ -273,8 +252,8 @@ fn running_owner_release(drop_bot: bool) {
         drop(bot);
         bot = NavBot::default();
     } else {
-        bot.supersede_route_work();
-        bot.supersede_route_work();
+        bot.supersede_walk_route_work();
+        bot.supersede_walk_route_work();
     }
     assert_eq!(
         shared.lock().capacity(),
@@ -385,7 +364,7 @@ fn a_completed_search_starts_its_continuation_in_the_harvesting_pump_pass() {
     };
     wait_for_capacity(&shared, continuation_capacity);
     assert_eq!(shared.lock().capacity().jobs(), 1);
-    finish(&shared, &navs, &ledger);
+    drain_route_work_for_test(&shared, &navs, "alice", &ledger);
     assert_eq!(navs.lock().unwrap()["alice"].route_destination(), Some(to));
     navs.lock().unwrap().clear();
     assert_eq!(ledger.used_bytes(), 0);
@@ -479,12 +458,12 @@ fn qualifies_real_bank_route_adapter_search_latency() {
             1,
             crate::WalkGlobals::default(),
         );
-        request.state = Some(WorldState {
+        request.state = Some(Arc::new(WorldState {
             stats: (0..25).map(|skill| (skill, 99)).collect(),
             combat_level: Some(126),
             map_members: true,
             ..WorldState::empty()
-        });
+        }));
         request.bank_origin = Origin::Session;
         request.bank = vec![(item, 1)];
         let bot = NavBot {
@@ -555,4 +534,66 @@ fn qualifies_real_bank_route_adapter_search_latency() {
         .unwrap(),
     )
     .unwrap();
+}
+
+#[test]
+#[ignore = "requires BOT_ROUTE_PLAN_NAVPACK pointing to the matched 289 pack"]
+fn real_prerequisite_route_fits_checked_admission() {
+    let pack = std::path::PathBuf::from(std::env::var_os("BOT_ROUTE_PLAN_NAVPACK").unwrap());
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let worker_data = Arc::clone(&selected);
+    script::preparation::submit(
+        script::preparation::PreparationKind::Profile,
+        Scope::Process,
+        script::preparation::PreparationInput::new(1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024).unwrap(),
+        move |worker| {
+            worker_data.prepare_quests(worker)?;
+            worker_data.prepare_prereq_steps(worker)
+        },
+    )
+    .unwrap()
+    .join()
+    .unwrap()
+    .unwrap();
+    let catalog = selected.try_prereq_steps().unwrap();
+    let loaded = NavWorld::load_pack(&pack).unwrap();
+    loaded.bind_named_bank_facts(&selected).unwrap();
+    let world = Arc::new(loaded);
+    let mut failures = Vec::new();
+    for (prerequisite, bank_fetch) in [(false, false), (false, true), (true, false), (true, true)] {
+        let mut request = diagnostic_tests::tiny_stage_request();
+        request.world = Arc::clone(&world);
+        request.from = WorldTile {
+            x: 3408,
+            z: 3489,
+            level: 0,
+        };
+        request.to = WorldTile {
+            x: 3423,
+            z: 3485,
+            level: 0,
+        };
+        request.opts.allow_bank_fetch = bank_fetch;
+        request.opts.allow_wilderness = true;
+        request.admission = crate::admission::Admission::manual(
+            request.opts,
+            Default::default(),
+            1,
+            crate::WalkGlobals::default(),
+        );
+        request.prereq_catalog = prerequisite.then(|| Arc::clone(&catalog));
+        request.state = Some(Arc::new(WorldState::empty()));
+        request.compat_tile_intent = true;
+        if let Err(error) = RouteJob::prepare(
+            "prereq-live",
+            request,
+            RouteDemandKind::Walk { authority: None },
+        ) {
+            failures.push((prerequisite, bank_fetch, error.to_string()));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "prerequisite/bank-fetch admission failures: {failures:?}"
+    );
 }

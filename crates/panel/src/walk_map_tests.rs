@@ -2569,7 +2569,8 @@ fn renderer_background_decode_pans_refills_and_releases_every_owner() {
         "pack-change setup has an active decode"
     );
     let old_generation = map.generation();
-    map.sync_identity(Digest([0x5a; 32]), Some((0, 0, 3, 3)), None);
+    let nav = nav_planner::producer::identity(&world).unwrap().pack();
+    map.sync_world(Some(nav), Some((0, 0, 3, 3)), None);
     assert_ne!(map.generation(), old_generation);
     assert!(map.pending_upload.is_none());
     assert!(!map.decode.is_busy());

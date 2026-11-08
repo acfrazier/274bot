@@ -13,9 +13,9 @@
 //! the partner header and the screens are read from the scene; sends reuse
 //! the native trade ops.
 
+use crate::compat::trade::{self, Decline, Declining};
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step, Thrown};
-use crate::observed;
-use crate::trade::{self, Decline, Declining};
+use crate::scene::observed;
 use script::trade_screen::{CloseDriver, ScreenDriver, ScreenKind, WaitEnd};
 use script::trade_screen::{TRADE_CONFIRM_WAIT_MS, TRADE_OFFER_WAIT_MS};
 use serde::Deserialize;
@@ -548,7 +548,8 @@ impl PartnerTrade {
             };
             if !self.receiver {
                 // The giver's partner gate: a stranger is declined.
-                if !crate::partner_trade::is_configured_partner(Some(&who), &self.partners) {
+                if !crate::compat::partner_trade::is_configured_partner(Some(&who), &self.partners)
+                {
                     return self.decline_stranger(&who);
                 }
             } else {
@@ -595,7 +596,7 @@ impl PartnerTrade {
 
     /// Frozen `decideReceiverOfferScreen` with a posted header.
     fn decide(&mut self, who: String, their_count: f64) -> Next {
-        if !crate::partner_trade::is_configured_partner(Some(&who), &self.partners) {
+        if !crate::compat::partner_trade::is_configured_partner(Some(&who), &self.partners) {
             return self.decline_stranger(&who);
         }
         if Screen::read().mine_len > 0 {

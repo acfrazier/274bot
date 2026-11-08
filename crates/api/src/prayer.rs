@@ -130,14 +130,16 @@ mod tests {
     use super::*;
     use client::io::ClientRevision;
 
-    fn data(rev: ClientRevision) -> std::sync::Arc<SelectedGameData> {
-        crate::game_data::for_revision(rev).expect("selected data")
+    fn data(rev: ClientRevision) -> Option<std::sync::Arc<SelectedGameData>> {
+        crate::game_data::test_data(rev)
     }
 
     #[test]
     fn both_selected_caches_lookup_trim_and_case() {
         for rev in [ClientRevision::R274, ClientRevision::R289] {
-            let data = data(rev);
+            let Some(data) = data(rev) else {
+                return;
+            };
             assert!(known(&data, "Protect from Melee"));
             assert!(known(&data, "  protect from melee  "));
             assert!(known(&data, "THICK SKIN"));
@@ -151,7 +153,9 @@ mod tests {
 
     #[test]
     fn available_requires_level_and_remaining_points() {
-        let data = data(ClientRevision::R289);
+        let Some(data) = data(ClientRevision::R289) else {
+            return;
+        };
         let required = lookup(&data, "Protect from Melee").unwrap().level;
         let mut obs = PrayerObservation::empty();
         obs.max = required;
@@ -167,7 +171,9 @@ mod tests {
 
     #[test]
     fn active_is_varp_one_and_missing_stats_are_zero() {
-        let data = data(ClientRevision::R274);
+        let Some(data) = data(ClientRevision::R274) else {
+            return;
+        };
         let melee = lookup(&data, "Protect from Melee").unwrap();
         let obs = PrayerObservation::empty();
         assert_eq!(points(&obs), 0);
@@ -188,8 +194,7 @@ mod tests {
 
     #[test]
     fn unobserved_overlay_is_neither_on_nor_off() {
-        let data = data(ClientRevision::R289);
-        let varp = lookup(&data, "Protect from Melee").unwrap().varp;
+        let varp = PRAYER_VARP0;
         let mut obs = PrayerObservation::empty();
         assert!(!obs.varp_observed(varp));
         assert!(!obs.is_on(varp));

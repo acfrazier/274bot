@@ -1,8 +1,9 @@
-use std::num::{NonZeroU16, NonZeroU32};
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
 use api::identity::Deadline;
+use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{FactKey, QuestGate, RunKey, Truth};
 use api::snapshot::WorldTile;
@@ -12,7 +13,7 @@ use api::work::{
 use nav_planner::contract::NavLease;
 use nav_planner::grid::StepGrid;
 use nav_planner::producer;
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId, QuestGates};
+use nav_planner::quest_gates::{QuestEvidence, QuestGates};
 use nav_planner::router::{
     AvoidRect, CursorStep, FindOptions, SearchCompletion, SearchCursor, SearchOutcome,
     SearchRequest, SearchRequestShape,
@@ -183,24 +184,10 @@ enum PositiveGate {
     FalseQuest,
 }
 
-fn family() -> QuestFamilyId {
-    QuestFamilyId::new(
-        [0x5a; 32],
-        NonZeroU16::new(1).expect("nonzero quest extractor schema"),
-    )
-}
-
 fn install_positive_gate(world: &mut NavWorld, gate: PositiveGate) {
     if matches!(gate, PositiveGate::UnknownQuest | PositiveGate::FalseQuest) {
-        let family = family();
-        world.graph.quest_family = Some(family);
-        world.graph.edges[0].quest_gates = Some(
-            QuestGates::new(
-                family,
-                [QuestGate::Complete(FactKey::new("quest:entrance-test"))],
-            )
-            .expect("valid stage gate"),
-        );
+        let gates = [QuestGate::Complete(FactKey::new("quest:entrance-test"))];
+        world.graph.edges[0].quest_gates = Some(QuestGates::new(gates).expect("valid stage gate"));
         return;
     }
 
@@ -222,15 +209,17 @@ fn install_positive_gate(world: &mut NavWorld, gate: PositiveGate) {
 struct FixedEvidence(Truth);
 
 impl EvidenceProvider for FixedEvidence {
-    fn test_gate(&self, _: &QuestGate, _: EvidenceStamp) -> Truth {
-        self.0
+    fn observe_gate(&self, _: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
+        Some(Observation {
+            truth: self.0,
+            observed: Some(required_after),
+        })
     }
 }
 
 fn evidence(value: Truth) -> QuestEvidence {
     QuestEvidence::new(
         Arc::new(FixedEvidence(value)),
-        family(),
         EvidenceStamp {
             run: RunKey {
                 slot: 1,

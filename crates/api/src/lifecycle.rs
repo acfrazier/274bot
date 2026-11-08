@@ -130,6 +130,9 @@ pub enum Intent {
     /// `SlotArm::set_script_active`, `play_login.rs:597-604`). The end of
     /// the need (`false` after `true`) also invalidates the in-flight
     /// attempt's outcome (today `invalidate_clean_exit`, `:600,881-885`).
+    /// The end of the need also cancels a reconnect the script was running
+    /// through, parking the slot ([`IdlePark`]); the start of the need ends
+    /// a park.
     ScriptNeedsSession(bool),
     /// The login identity (profile uid) changed under a running slot: the
     /// next handshake uses it and nothing in flight is current any more
@@ -300,13 +303,22 @@ pub enum LifecycleFact {
     /// the session's outstanding clean-logout boundary, so a logout
     /// acknowledgement that arrives later is stale; an open turnover's login
     /// half is armed now (today `complete_memory_relogs` fires it once the
-    /// slot is parked, `session.rs:1124-1155`).
+    /// slot is parked, `session.rs:1124-1155`). An exit nobody asked for (no
+    /// logout, turnover or explicit Login open, nothing latched) parks a
+    /// slot whose script does not need a session ([`IdlePark`]): it stays
+    /// logged out until an explicit Login or a script's need. With a script
+    /// the reconnect proceeds, and is owed until the script's need ends.
     SessionExited {
         /// The exit was a server logout (operator logout, world change or
         /// idle), never a drop.
         clean: bool,
         /// The client kept its world, so the next handshake may reconnect.
         resumable: bool,
+        /// The client's own idle-logout request (opcode 145) was pending
+        /// when the server logged it out ([`SessionEndCause::IdleLogout`]).
+        /// Only then is the park of a bot without a script an idle logout;
+        /// any other server logout reads as one nobody explained.
+        idle_request_pending: bool,
     },
     /// The repeat guard tripped: `count` unexpected exits within the window
     /// (today `record_unexpected_logout_at`, `play_login.rs:744-778`:
@@ -333,10 +345,12 @@ impl LifecycleFact {
         LifecycleFact::SessionExited {
             clean: true,
             resumable: false,
+            idle_request_pending: false,
         },
         LifecycleFact::SessionExited {
             clean: false,
             resumable: true,
+            idle_request_pending: false,
         },
         LifecycleFact::RepeatGuardTripped {
             count: 3,
@@ -619,6 +633,7 @@ pub struct IntentSnapshot {
     logout_wanted: bool,
     turnover: bool,
     latch: Option<LoginLatch>,
+    idle_park: Option<IdlePark>,
     error_hold: bool,
     auto_login: bool,
     script_needs_session: bool,
@@ -660,6 +675,11 @@ impl IntentSnapshot {
     /// Why automatic login is latched off, if it is.
     pub const fn latch(&self) -> Option<LoginLatch> {
         self.latch
+    }
+
+    /// Why the slot is parked without a script, if it is ([`IdlePark`]).
+    pub const fn idle_park(&self) -> Option<IdlePark> {
+        self.idle_park
     }
 
     /// Whether a world-preference error holds the login.
@@ -704,7 +724,7 @@ impl IntentSnapshot {
     pub const fn login_wanted(&self) -> bool {
         !self.closed
             && self.latch.is_none()
-            && (!matches!(self.login, LoginIntent::Withdrawn)
+            && ((!matches!(self.login, LoginIntent::Withdrawn) && self.idle_park.is_none())
                 || (!self.error_hold && self.script_needs_session))
     }
 
@@ -716,8 +736,13 @@ impl IntentSnapshot {
             Some(LoginLatch::PersistedLogout) => Some(ParkReason::PersistedLogout),
             Some(LoginLatch::RepeatGuard { .. }) => Some(ParkReason::RepeatGuard),
             None if self.error_hold => Some(ParkReason::WorldError),
-            None if self.login_wanted() => None,
-            None => Some(ParkReason::NoIntent),
+            None => match self.idle_park {
+                Some(IdlePark::IdleLogout) => Some(ParkReason::IdleLogout),
+                Some(IdlePark::ServerLogout) => Some(ParkReason::ServerLogout),
+                Some(IdlePark::Disconnect) => Some(ParkReason::IdleDisconnect),
+                None if self.login_wanted() => None,
+                None => Some(ParkReason::NoIntent),
+            },
         }
     }
 }
@@ -736,6 +761,31 @@ pub enum ParkReason {
     RepeatGuard,
     /// A world-preference error holds the login.
     WorldError,
+    /// The server logged out a bot that had no script after the client's own
+    /// idle request ([`IdlePark::IdleLogout`]).
+    IdleLogout,
+    /// The server logged out a bot that had no script and no idle request
+    /// pending ([`IdlePark::ServerLogout`]).
+    ServerLogout,
+    /// A bot with no script lost its connection ([`IdlePark::Disconnect`]).
+    IdleDisconnect,
+}
+
+/// Why a bot without a script was parked after an exit nobody asked for.
+/// Such a bot behaves like a human client: the Java idle logout is a normal
+/// logout, and a dropped connection is not retried. It stays logged out
+/// until the operator logs it in, or a script that needs a session starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IdlePark {
+    /// The server logged the bot out after the client's own idle request
+    /// (the Java idle logout).
+    IdleLogout,
+    /// The server logged the bot out with no idle request pending: a logout
+    /// nobody asked for and the client cannot explain.
+    ServerLogout,
+    /// The connection ended: a reset, the dead-server deadline, a protocol
+    /// error or a server restart.
+    Disconnect,
 }
 
 /// The generation-stamped operator-intent mailbox: one per slot lifetime,
@@ -760,6 +810,17 @@ pub struct IntentMailbox {
     /// session exits. A stronger row supersedes it.
     turnover: bool,
     latch: Option<LoginLatch>,
+    /// The slot has no script and nobody asked for the exit that ended its
+    /// last session, so it stays logged out until the operator logs it in or
+    /// a script wants a session. Masks the login intent, never a script's
+    /// need. See [`IdlePark`].
+    idle_park: Option<IdlePark>,
+    /// An exit nobody asked for ended a session while a script needed it, or
+    /// a script started on a parked slot: the slot's park is owed back. The
+    /// end of the script's need turns it into a park again while the slot is
+    /// offline; a login, a session or an explicit preference change clears
+    /// it.
+    owed_park: Option<IdlePark>,
     error_hold: bool,
     auto_login: bool,
     script_needs_session: bool,
@@ -789,6 +850,8 @@ impl IntentMailbox {
             logout: None,
             turnover: false,
             latch: None,
+            idle_park: None,
+            owed_park: None,
             error_hold: false,
             auto_login,
             script_needs_session: false,
@@ -812,6 +875,7 @@ impl IntentMailbox {
             logout_wanted: self.logout.is_some(),
             turnover: self.turnover,
             latch: self.latch,
+            idle_park: self.idle_park,
             error_hold: self.error_hold,
             auto_login: self.auto_login,
             script_needs_session: self.script_needs_session,
@@ -867,6 +931,8 @@ impl IntentMailbox {
         self.login = LoginIntent::Once;
         self.logout = None;
         self.turnover = false;
+        self.idle_park = None;
+        self.owed_park = None;
     }
 
     /// Want a clean logout: an outstanding boundary keeps its identity (an
@@ -917,9 +983,16 @@ impl IntentMailbox {
             }
             Intent::AutoLogin(enabled) => {
                 let withdraws = !enabled && self.login == LoginIntent::Auto;
+                // Switching the preference on is an operator login request;
+                // saving it again unchanged (a re-Load) leaves a park alone.
+                let turned_on = enabled && !self.auto_login;
                 self.command(withdraws)?;
                 self.auto_login = enabled;
                 self.error_hold = false;
+                if turned_on {
+                    self.idle_park = None;
+                    self.owed_park = None;
+                }
                 if enabled {
                     self.rederive_auto_want();
                 } else if withdraws {
@@ -932,6 +1005,8 @@ impl IntentMailbox {
                 self.want_logout();
                 self.turnover = false;
                 self.login = LoginIntent::Withdrawn;
+                self.idle_park = None;
+                self.owed_park = None;
                 // A connected exit reads OperatorLogout from the latch; only
                 // an already-offline command owes a held-work reset, and an
                 // older unconsumed reset is kept.
@@ -945,6 +1020,8 @@ impl IntentMailbox {
                 self.login = LoginIntent::Withdrawn;
                 self.logout = None;
                 self.turnover = false;
+                self.idle_park = None;
+                self.owed_park = None;
             }
             Intent::WithdrawLogin => {
                 self.command(true)?;
@@ -981,10 +1058,28 @@ impl IntentMailbox {
             }
             Intent::ScriptNeedsSession(needs) => {
                 if needs != self.script_needs_session {
-                    if !needs {
-                        self.invalidate_attempt()?;
+                    if needs {
+                        self.script_needs_session = true;
+                        // The script wants a session: the park no longer
+                        // holds the login back. The park is kept owed, so a
+                        // script that ends before the bot is back leaves it
+                        // parked, not logged in by its saved preference.
+                        self.owed_park = self.owed_park.or(self.idle_park.take());
+                    } else {
+                        // The end of the need parks the slot when it still
+                        // owes the reconnect of an exit it was running
+                        // through, and an explicit Login has not replaced it.
+                        let parks = self.owed_park.is_some() && !self.session_online;
+                        if parks {
+                            self.command(true)?;
+                        } else {
+                            self.invalidate_attempt()?;
+                        }
+                        self.script_needs_session = false;
+                        if parks {
+                            self.idle_park = self.owed_park.take();
+                        }
                     }
-                    self.script_needs_session = needs;
                 }
             }
             Intent::LoginIdentityChanged => {
@@ -1003,6 +1098,8 @@ impl IntentMailbox {
                 self.login = LoginIntent::Withdrawn;
                 self.script_needs_session = false;
                 self.turnover = false;
+                self.idle_park = None;
+                self.owed_park = None;
                 // A connected slot gets the clean logout first; the owner
                 // bounds that window and stops after the exit or its deadline.
                 if self.session_online {
@@ -1025,15 +1122,52 @@ impl IntentMailbox {
                 self.invalidate_attempt()?;
                 self.session_online = true;
                 self.reconnect = true;
+                self.idle_park = None;
+                self.owed_park = None;
             }
-            LifecycleFact::SessionExited { clean, resumable } => {
-                let was_online = std::mem::replace(&mut self.session_online, false);
+            LifecycleFact::SessionExited {
+                clean,
+                resumable,
+                idle_request_pending,
+            } => {
+                let was_online = self.session_online;
+                // Nobody asked for this exit: no logout or turnover is open,
+                // no explicit Login is outstanding (one posted after the
+                // session began), nothing latched the slot and the lifetime
+                // is open.
+                let unattended = was_online
+                    && self.logout.is_none()
+                    && !self.turnover
+                    && self.login != LoginIntent::Once
+                    && self.latch.is_none()
+                    && !self.error_hold
+                    && !self.closed;
+                let kind = unattended.then_some(match (clean, idle_request_pending) {
+                    (true, true) => IdlePark::IdleLogout,
+                    (true, false) => IdlePark::ServerLogout,
+                    (false, _) => IdlePark::Disconnect,
+                });
+                // A bot without a script parks at once; a script's own
+                // reconnect is owed instead, and ends when the script does.
+                let parks = kind.is_some() && !self.script_needs_session;
+                if parks {
+                    self.command(true)?;
+                }
+                self.session_online = false;
                 self.last_exit_clean = clean;
                 self.reconnect = resumable;
                 if was_online {
                     // The session is gone: its clean-logout boundary is
                     // settled, so a later acknowledgement of it is stale.
                     self.logout = None;
+                }
+                if let Some(kind) = kind {
+                    if parks {
+                        self.idle_park = Some(kind);
+                        self.owed_park = None;
+                    } else {
+                        self.owed_park = Some(kind);
+                    }
                 }
                 if std::mem::replace(&mut self.turnover, false) {
                     // The turnover's session is done; its login half is
@@ -1052,6 +1186,8 @@ impl IntentMailbox {
                         window_seconds,
                     });
                     self.login = LoginIntent::Withdrawn;
+                    self.idle_park = None;
+                    self.owed_park = None;
                 }
             }
             LifecycleFact::WorldPreferenceFailed => {
@@ -1313,9 +1449,12 @@ pub enum AbortedAttempt {
 /// the owner produces itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionEndCause {
-    /// The server logged the client out: operator logout, world change or
-    /// idle. The only clean end.
+    /// The server logged the client out: operator logout, world change or a
+    /// logout nobody explains (no idle request pending). A clean end.
     ServerLogout,
+    /// The server logged the client out while the client's own idle-logout
+    /// request (opcode 145) was pending: the Java idle logout. A clean end.
+    IdleLogout,
     /// The read side reached end of stream.
     ReadEof,
     /// A read error.
@@ -1352,6 +1491,9 @@ impl SessionEndCause {
     pub fn classify(reason: &client::client::client::SessionExitReason) -> Self {
         use client::client::client::SessionExitReason as Exit;
         match reason {
+            Exit::ServerLogout {
+                local_idle_request_pending: true,
+            } => Self::IdleLogout,
             Exit::ServerLogout { .. } => Self::ServerLogout,
             Exit::ReadEof => Self::ReadEof,
             Exit::ReadError { .. } => Self::ReadError,
@@ -1367,7 +1509,7 @@ impl SessionEndCause {
     /// Whether this end is clean: a server logout or the owner's own
     /// removal. Every other end is unexpected.
     pub const fn is_clean(self) -> bool {
-        matches!(self, Self::ServerLogout | Self::Removed)
+        matches!(self, Self::ServerLogout | Self::IdleLogout | Self::Removed)
     }
 
     /// Whether the owner's repeat guard counts this end: every unexpected
@@ -1375,7 +1517,7 @@ impl SessionEndCause {
     pub const fn counts_toward_repeat_guard(self) -> bool {
         !matches!(
             self,
-            Self::ServerLogout | Self::Removed | Self::ServiceUnavailable { .. }
+            Self::ServerLogout | Self::IdleLogout | Self::Removed | Self::ServiceUnavailable { .. }
         )
     }
 }

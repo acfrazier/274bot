@@ -369,12 +369,13 @@ pub enum OperatorCommand {
     MarkAll,
     /// Clear the marks (`MarkedSelection::clear`).
     ClearMarks,
-    /// Reorder the saved Load order with the staged
-    /// [`crate::profile_order::ReorderOp`] (a rail or Fleet-row drag, the
-    /// TUI move keys, Move marked to top;
-    /// [`crate::OperatorSession::stage_reorder`]). Refused unless the fleet
-    /// view shows Load order. Settles `Done` when the saved order is
-    /// durable (at once when nothing moved).
+    /// Reorder the one saved Load order with the staged
+    /// [`crate::profile_order::ReorderOp`] (a rail, Fleet-row or
+    /// Profiles-row drag, the TUI move keys, Move marked to top;
+    /// [`crate::OperatorSession::stage_reorder`]). A Fleet-list reorder is
+    /// refused unless the fleet view shows Load order; a Profiles-list
+    /// move is not. Settles `Done` when the saved order is durable (at
+    /// once when nothing moved).
     ReorderProfiles,
     /// Commit the fleet card the lent fleet model staged
     /// ([`crate::FleetModel::stage_card`]): which card the fleet buttons
@@ -429,13 +430,17 @@ pub enum OperatorCommand {
     SetDraw(DrawSwitch, bool),
 
     // --- Preferences and notices ---
-    /// Set one shared navigation preference (`nav_prefs.rs:5-25`).
+    /// Set one shared navigation preference (`nav_prefs.rs:10-32`).
     SetNavPreference(NavPreference, bool),
     /// Set the global danger-routing level
     /// (`WalkGlobalsView::persist_changed_at`, `walk_permissions.rs:183`).
     SetDangerLevel(DangerLevel),
     /// Turn the session log file on or off (`log_file::apply_session_log`).
     SetSessionLog(bool),
+    /// Allow or forbid every script to START a fight with a player (the shared
+    /// preference `pvp.start_fights`, `pvp_prefs.rs`). Fighting back against a
+    /// player is never affected.
+    SetPvpStartFights(bool),
     /// Persist the map-bake choice (`map_bake::persist_map_bake_choice`;
     /// `MapBakeGate::set_choice`).
     SetMapBakeChoice(MapBakeChoice),
@@ -584,6 +589,7 @@ pub enum FormClose {
     /// Close the form; Profiles stays open (the form's Cancel).
     Form,
     /// Close Profiles and the form with it (its Close button and its ✕).
+    /// With no form open there is nothing to confirm: it completes at once.
     Window,
 }
 
@@ -715,7 +721,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 97] = [
+    pub const ALL: [OperatorCommand; 98] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -803,6 +809,7 @@ impl OperatorCommand {
         Self::SetNavPreference(NavPreference::AllowTeleports, true),
         Self::SetDangerLevel(DangerLevel::Never),
         Self::SetSessionLog(true),
+        Self::SetPvpStartFights(true),
         Self::SetMapBakeChoice(MapBakeChoice::Ask),
         Self::OpenMapDemand,
         Self::ReleaseMapDemand,
@@ -871,6 +878,7 @@ impl OperatorCommand {
             | Self::SetNavPreference(..)
             | Self::SetDangerLevel(_)
             | Self::SetSessionLog(_)
+            | Self::SetPvpStartFights(_)
             | Self::SetMapBakeChoice(_)
             | Self::OpenMapDemand
             | Self::ReleaseMapDemand
@@ -1785,6 +1793,9 @@ impl CommandBook {
             }
             Some(ParkReason::OperatorLogout) => Some("a logout was requested"),
             Some(ParkReason::PersistedLogout) => Some("the bot is set to stay logged out"),
+            Some(ParkReason::IdleLogout) => Some("the server logged the bot out while it was idle"),
+            Some(ParkReason::ServerLogout) => Some("the server logged the bot out"),
+            Some(ParkReason::IdleDisconnect) => Some("the bot disconnected while it was idle"),
             Some(ParkReason::NoIntent | ParkReason::WorldError) | None => None,
         }
     }

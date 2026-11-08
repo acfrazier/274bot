@@ -96,6 +96,9 @@ fn open_grid_derives_an_all_walkable_world() {
 
 #[test]
 fn transport_name_bound_is_cached_with_selected_names() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut world = NavWorld::from_grid(&StepGrid::fixture_door_corridor());
     assert_eq!(world.transport_item_name_bytes_bound(), 0);
     let ids = [31, 563, 995];

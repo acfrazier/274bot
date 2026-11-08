@@ -314,6 +314,14 @@ const CORE: &[(&str, Decision)] = &[
         "scripts/mod.rs::Scripts::assignment_name",
         Excluded("reads the profile's assignment display name"),
     ),
+    (
+        "scripts/mod.rs::Scripts::refresh_quester_start_zones",
+        Excluded("refreshes a derived cache of the selected queue's danger-zone disclosure; no operator decision"),
+    ),
+    (
+        "scripts/mod.rs::Scripts::clear_quester_start_zones",
+        Excluded("clears the derived selected-queue disclosure cache; no operator decision"),
+    ),
     ("scripts/mod.rs::Scripts::stage_cancel_queued", Staged(C::CancelQueuedStart)),
     ("scripts/mod.rs::Scripts::stage_browse_pick", Staged(C::PickBrowseCard)),
     ("scripts/mod.rs::Scripts::stage_browse_pick_clear", Staged(C::PickBrowseCard)),
@@ -403,6 +411,27 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("scripts/paint_layout.rs::clipped_prefix", Excluded(FORMAT)),
     ("scripts/paint_style.rs::parse_accent", Excluded(FORMAT)),
+    // scripts/prestart_zones.rs: derived disclosure, not operator commands.
+    (
+        "scripts/prestart_zones.rs::QuesterStartZoneCache::update_settings",
+        Excluded(PROJECTION),
+    ),
+    (
+        "scripts/prestart_zones.rs::QuesterStartZones::append_plan_disclosure",
+        Excluded(PROJECTION),
+    ),
+    (
+        "scripts/prestart_zones.rs::QuesterStartZoneCache::update_unavailable",
+        Excluded(PROJECTION),
+    ),
+    (
+        "scripts/prestart_zones.rs::QuesterStartZoneCache::refresh_registry",
+        Excluded(PROJECTION),
+    ),
+    (
+        "scripts/prestart_zones.rs::QuesterStartZoneCache::clear",
+        Excluded(PROJECTION),
+    ),
     // scripts/paths.rs: operator file locations.
     ("scripts/paths.rs::bot_home", Excluded(PATH_READ)),
     ("scripts/paths.rs::bot_file", Excluded(PATH_READ)),
@@ -469,6 +498,8 @@ const CORE: &[(&str, Decision)] = &[
     ("live/mod.rs::create_shot_run_dir", Excluded(HARNESS)),
     ("live/mod.rs::write_shot", Excluded(HARNESS)),
     ("live/mod.rs::external_loader_scenario_name", Excluded(HARNESS)),
+    ("live/mod.rs::CombatLogout::allows_retry", Excluded(HARNESS)),
+    ("live/mod.rs::CombatLogout::send_escape", Excluded(HARNESS)),
     ("live/mod.rs::external_loader_live_name", Excluded(HARNESS)),
     ("live/mod.rs::external_loader_terminal_shot", Excluded(HARNESS)),
     ("live/mod.rs::external_loader_prereq_shot", Excluded(HARNESS)),
@@ -670,6 +701,7 @@ const CORE: &[(&str, Decision)] = &[
     ("session.rs::OperatorSession::take_write_failures", Excluded(RESULT)),
     ("session.rs::OperatorSession::take_settled_saves", Excluded(RESULT)),
     ("session.rs::OperatorSession::take_settings_writes", Excluded(RESULT)),
+    ("session.rs::OperatorSession::take_vault_refusal", Excluded(RESULT)),
     (
         "session.rs::OperatorSession::flush_writes",
         Excluded("startup/harness boundary: blocks until the queued writes settle"),
@@ -681,6 +713,13 @@ const CORE: &[(&str, Decision)] = &[
     ("session/commands.rs::Submitted::take_marked", Excluded(RESULT)),
     ("session/prefs.rs::DrawPolicy::key", Excluded(FORMAT)),
     ("nav_prefs.rs::nav_preference", Excluded("reads the stored preference; SetNavPreference writes it")),
+    ("pvp_prefs.rs::pvp_start_fights", Excluded("reads the stored setting; SetPvpStartFights writes it")),
+    ("pvp_prefs.rs::PvpSettingView::begin", Excluded("the shown value of a click already submitted as SetPvpStartFights")),
+    ("pvp_prefs.rs::PvpSettingView::refuse", Excluded("the shown value after a click that never became a command; the refusal is logged at submission")),
+    ("pvp_prefs.rs::PvpSettingView::submitted", Excluded("remembers the click's request so follow can read its terminal")),
+    ("pvp_prefs.rs::PvpSettingView::follow", Excluded(RESULT)),
+    ("pvp_prefs.rs::is_start_fights_error", Excluded(FORMAT)),
+    ("pvp_prefs.rs::PvpSettingView::adopt", Excluded("adopts the saved value for display")),
     ("session/commands.rs::OperatorSession::stage_select_opens_slot", Staged(C::Select)),
     ("session/fleet.rs::OperatorSession::stage_mark_all", Staged(C::MarkAll)),
     ("session/fleet.rs::OperatorSession::stage_reorder", Staged(C::ReorderProfiles)),
@@ -1045,6 +1084,13 @@ const SURFACE: &[(&str, Decision)] = &[
         "tui/bin.rs::map_bundle",
         Excluded("`--map-bundle` packaging flag: bakes the shipped map bundle; not an operator command"),
     ),
+    (
+        "tui/bin.rs::TuiSession::clean_logout_live",
+        Rows(
+            &[C::StopScript, C::Logout],
+            "post-proof live fixture teardown: acknowledge Stop, then request and retry clean logout",
+        ),
+    ),
     // --- tui: routers and the pump ---
     (
         "tui/bin.rs::dispatch",
@@ -1089,6 +1135,8 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(
             &[
                 C::SetNavPreference(NavPreference::AllowTeleports, true),
+                C::SetNavPreference(NavPreference::AllowPrereqDialogue, true),
+                C::SetNavPreference(NavPreference::AllowQuestStart, true),
                 C::SetDangerLevel(DangerLevel::Never),
             ],
             "the Nav config window: one command per changed navigation preference, and the danger level",
@@ -1113,6 +1161,8 @@ const SURFACE: &[(&str, Decision)] = &[
         Rows(
             &[
                 C::SetNavPreference(NavPreference::AllowTeleports, true),
+                C::SetNavPreference(NavPreference::AllowPrereqDialogue, true),
+                C::SetNavPreference(NavPreference::AllowQuestStart, true),
                 C::SetDangerLevel(DangerLevel::Never),
             ],
             "which walk permission the operator changed selects the row: a grant or an acknowledgement is a navigation preference, the danger routing level its own row",

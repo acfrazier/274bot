@@ -6,6 +6,8 @@ use api::query::loc_approach::LocApproach;
 
 #[path = "stage_doors_entrances.rs"]
 mod entrances;
+#[path = "stage_doors_obstacles.rs"]
+mod obstacles;
 
 pub(super) const ENGINE_FORCED_PROCS: &str = include_str!("engine_forced_procs.rs2");
 const SKIP_FORCED_CONFLICT: &str =
@@ -226,6 +228,7 @@ fn tool_selector(block: &Block, src: &Sources, facts: &Facts) -> Option<Vec<Tool
 fn movement_proofs(src: &Sources) -> HashSet<String> {
     let pinned: HashMap<_, _> = header_blocks(ENGINE_FORCED_PROCS)
         .into_iter()
+        .chain(header_blocks(include_str!("engine_obstacle_procs.rs2")))
         .map(|(_, name, params, body)| (name, proc_identity(&params, &body)))
         .collect();
     let matches = |name: &str| {
@@ -241,6 +244,23 @@ fn movement_proofs(src: &Sources) -> HashSet<String> {
     }
     if matches("agility_exactmove") {
         proofs.insert("agility_exactmove".to_owned());
+    }
+    if matches("agility_climb_up") {
+        proofs.insert("agility_climb_up".to_owned());
+    }
+    if [
+        "set_forcemove_bas",
+        "set_walkbas",
+        "set_readywalk_bas",
+        "set_readywalkturn_bas",
+        "bas_set",
+        "update_bas",
+        "inzone_coord_pair_table",
+    ]
+    .into_iter()
+    .all(matches)
+    {
+        proofs.insert("obstacle_appearance".to_owned());
     }
     proofs
 }
@@ -327,15 +347,30 @@ struct Motion<'a> {
     moved: bool,
     ticks: i32,
     gate_read: bool,
+    /// OpLoc closes modals before starting the handler. Consume that proof at
+    /// the first command; no later close may run an unmodelled close trigger.
+    entry_modal_closed: bool,
     entrance: Option<entrances::Inputs<'a>>,
     returned: Option<Val>,
     value_query: bool,
     timer: Option<&'a str>,
+    obstacle: Option<obstacles::Class>,
 }
 
 impl Motion<'_> {
     fn run(&mut self, body: &[Stmt], env: &mut Env) -> End {
         for (index, stmt) in body.iter().enumerate() {
+            if self.entrance.is_some()
+                && self.moved
+                && !self.value_query
+                && entrances::scenery_tail(&body[index..], self.base.src)
+            {
+                return if self.price(1).is_some() {
+                    End::Continue
+                } else {
+                    End::Refused
+                };
+            }
             if self.entrance.is_some()
                 && self.moved
                 && !self.value_query
@@ -355,6 +390,12 @@ impl Motion<'_> {
     }
 
     fn statement(&mut self, stmt: &Stmt, env: &mut Env) -> End {
+        if self.obstacle == Some(obstacles::Class::Rocks) && obstacles::failure(stmt) {
+            return End::Continue;
+        }
+        if let Some(end) = self.obstacle_assignment(stmt, env) {
+            return end;
+        }
         match stmt {
             Stmt::Block(body) => self.run(body, env),
             Stmt::Return(calls) if calls.is_empty() => End::Return,
@@ -398,6 +439,7 @@ impl Motion<'_> {
                         .as_deref()
                         .is_none_or(|body| body.iter().all(|s| self.presentation(s)))
                 {
+                    self.entry_modal_closed = false;
                     return End::Continue;
                 }
                 for (test, body) in arms {
@@ -430,7 +472,10 @@ impl Motion<'_> {
                     End::Return
                 }
             }
-            Stmt::Call(_, _) if self.presentation(stmt) => End::Continue,
+            Stmt::Call(_, _) if self.presentation(stmt) => {
+                self.entry_modal_closed = false;
+                End::Continue
+            }
             Stmt::Call(name, args) => self.call(name, args, env),
             _ => End::Refused,
         }
@@ -482,10 +527,30 @@ impl Motion<'_> {
     }
 
     fn call(&mut self, name: &str, args: &[Expr], env: &Env) -> End {
+        let entry_modal_closed = std::mem::replace(&mut self.entry_modal_closed, false);
+        if name == "if_close" {
+            // OpLocHandler.ts:53 clears pending actions, which calls
+            // Player.closeModal before this script starts. Without a prior
+            // command or yield this second close cannot run an IF_CLOSE script.
+            return if self.entrance.is_some()
+                && entry_modal_closed
+                && self.ticks == 1
+                && !self.value_query
+                && self.timer.is_none()
+                && args.is_empty()
+            {
+                End::Continue
+            } else {
+                End::Refused
+            };
+        }
         if self.entrance.is_some() {
             if let Some(end) = self.entrance_call(name, args, env) {
                 return end;
             }
+        }
+        if let Some(end) = self.obstacle_call(name, args, env) {
+            return end;
         }
         let result = match name {
             "~forcemove" if self.proofs.contains("forcemove") => match args {
@@ -886,6 +951,11 @@ impl Motion<'_> {
                         CmpOp::Ne => a != b,
                         _ => return Cond::unknown(),
                     },
+                    (Val::Name(a), Val::Name(b)) => match op {
+                        CmpOp::Eq => a == b,
+                        CmpOp::Ne => a != b,
+                        _ => return Cond::unknown(),
+                    },
                     (Val::Loc(LocRef::Itself), Val::Name(name))
                     | (Val::Name(name), Val::Loc(LocRef::Itself)) => {
                         let Some(&id) = self.base.src.ids.get(name) else {
@@ -1110,10 +1180,12 @@ pub(super) fn forced_move_edges(
                                 moved: false,
                                 ticks: 1,
                                 gate_read: false,
+                                entry_modal_closed: false,
                                 entrance: None,
                                 returned: None,
                                 value_query: false,
                                 timer: None,
+                                obstacle: None,
                             };
                             let mut env = Env::new();
                             if motion.run(&handler.body, &mut env) == End::Refused

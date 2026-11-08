@@ -1471,6 +1471,7 @@ fn synthetic_document(no_match: bool) -> PathDocument {
                 terminal: *stage == "rm:6",
                 order: script::quester::path::SequenceOrder::Authored,
                 recovery_entry: None,
+                cross: Vec::new(),
                 steps: Vec::new(),
             };
             if !sequence.terminal {

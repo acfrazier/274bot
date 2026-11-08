@@ -1285,9 +1285,9 @@ fn resume_refuses_a_linked_vault_whose_target_bytes_changed() {
     assert_eq!(launches(&tmp).len(), 1, "a refused resume launches nothing");
 }
 
-/// Nav pack bytes at the resolved path are bound; a same-path edit refuses resume.
+/// Navigation assets retain their resolved paths, not file-authentication digests.
 #[test]
-fn resume_refuses_when_nav_pack_bytes_change_at_the_same_path() {
+fn resume_does_not_authenticate_nav_pack_bytes() {
     let tmp = temp_dir("nav-pack");
     let run_dir = tmp.join("run");
     let nav = home(&tmp).join(".274bot/289/274bot.navpack");
@@ -1303,15 +1303,25 @@ fn resume_refuses_when_nav_pack_bytes_change_at_the_same_path() {
         text(&first.stderr)
     );
     assert_eq!(launches(&tmp).len(), 1);
+    let original = Ledger::resume(&run_dir).unwrap();
+    assert_eq!(
+        original.state.identity["profile"]["resolved"]["nav_pack"],
+        serde_json::json!(nav.display().to_string()),
+        "the edited file is the selected profile's navigation pack"
+    );
 
     std::fs::write(&nav, "nav pack v2").unwrap();
     let changed = suite(&tmp, &run_dir, &["--only", "fixture_one", "--resume"], &[]);
-    assert_eq!(changed.status.code(), Some(EXIT_USAGE));
-    let stderr = text(&changed.stderr);
-    assert!(
-        stderr.contains("refusing resume") && stderr.contains("profile/input configuration"),
-        "{stderr}"
+    assert_eq!(
+        changed.status.code(),
+        Some(EXIT_OK),
+        "{}",
+        text(&changed.stderr)
     );
+    let resumed = Ledger::resume(&run_dir).unwrap();
+    let summary = resumed.state.summary.expect("summary recorded");
+    assert_eq!(summary.carried_success, 1);
+    assert_eq!(summary.attempted, 0);
     assert_eq!(launches(&tmp).len(), 1);
 }
 

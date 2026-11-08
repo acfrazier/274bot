@@ -186,7 +186,7 @@ fn settings_store_round_trips_overrides_at_private_mode() {
     ];
 
     {
-        let mut store = script::ScriptSettingsStore::at(path.clone());
+        let mut store = script::ScriptSettingsStore::at(path.clone()).expect("settings file");
         store.set_bool(ScriptSource::Catalog, "ChickenKiller", "buryBones", false);
         store.set_num(ScriptSource::Catalog, "ChickenKiller", "leashRadius", 20.0);
         store.save().expect("save settings");
@@ -199,7 +199,7 @@ fn settings_store_round_trips_overrides_at_private_mode() {
         assert_eq!(mode, 0o600, "script-settings.json must be 0o600");
     }
 
-    let store = script::ScriptSettingsStore::at(path);
+    let store = script::ScriptSettingsStore::at(path).expect("settings file");
     let bag = store.merged_bag(ScriptSource::Catalog, "ChickenKiller", &schema, None);
     assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(false)));
     assert_eq!(bag.get("leashRadius").and_then(|v| v.as_f64()), Some(20.0));

@@ -258,10 +258,10 @@ pub(super) fn row_index(row: &ZoneInterval) -> u16 {
     }
 }
 
-fn in_envelope(tile: WorldTile, zone: ZoneView<'_>, risk: &KindRisk, input: &RiskInput) -> bool {
+fn in_envelope(tile: WorldTile, zone: ZoneView<'_>, risk: &KindRisk) -> bool {
     if zone.has_shape()
         || zone.kind().npc_id().is_none_or(|id| id < 0)
-        || risk.unknown_for(input.map_members).is_some()
+        || risk.unknown_for().is_some()
     {
         zone.contains(tile)
     } else {
@@ -276,7 +276,6 @@ async fn interval<F, U>(
     path: RoutePath<'_>,
     zone: ZoneView<'_>,
     risks: &RiskTables,
-    input: &RiskInput,
     a: u16,
     start: u16,
     checkpoint: &mut F,
@@ -294,7 +293,7 @@ where
         let i = i as u16;
         let tile = path.point(i).ok_or(UnknownWhy::Overflow)?.tile;
         let mut stop = false;
-        if in_envelope(tile, zone, &risk, input) {
+        if in_envelope(tile, zone, &risk) {
             envelope_first.get_or_insert(i);
             envelope_last = Some(i);
             if i >= a {
@@ -331,7 +330,7 @@ where
         risk.max_hit,
         risk.rate,
         risk.style,
-        risk.unknown_for(input.map_members),
+        risk.unknown_for(),
         risk.ap(),
         kind.npc_id().is_none_or(|id| id < 0),
     )
@@ -455,7 +454,7 @@ where
                 let mut next = i;
                 let mut start = 0;
                 loop {
-                    let row = interval(path, zone, risks, input, next, start, checkpoint).await?;
+                    let row = interval(path, zone, risks, next, start, checkpoint).await?;
                     visit(row)?;
                     if !row.escaping() {
                         break;

@@ -46,6 +46,9 @@ mod tests {
 
     #[test]
     fn pens_match_generated_duel_zones() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // The six generated `duel_zones.pens` in dbrow order (fights first,
         // then obstacles) equal the frozen `PENS` table used by `pen_at`.
         // Content: `duelarena.dbrow:1-11` and `duel_arena_finish.rs2:75`.

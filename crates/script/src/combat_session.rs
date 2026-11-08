@@ -243,6 +243,7 @@ impl CombatSessionCard {
                     value: StatusValue::Integer(index),
                 },
             ]),
+            survival: crate::survival::SurvivalReport::default(),
             failure: None,
         });
     }
@@ -273,6 +274,9 @@ fn error_reason(error: &ActionError) -> Arc<str> {
         ActionError::Blocked(why) => Arc::from(format!("blocked:{why}")),
         ActionError::CombatInterrupted => Arc::from("combat-interrupted"),
         ActionError::NeedsEvidence(_) => Arc::from("needs-evidence"),
+        ActionError::NeedsStep(gates) => Arc::from(format!("needs-step:{gates:?}")),
+        ActionError::GateRefused(observation) => Arc::from(format!("gate-refused:{observation:?}")),
+        ActionError::Prerequisite(refusal) => Arc::from(format!("prerequisite:{refusal}")),
         ActionError::GroundTake(api::ground_take::GroundRefusal::Capacity) => {
             Arc::from("ground-take-capacity")
         }
@@ -281,6 +285,9 @@ fn error_reason(error: &ActionError) -> Arc<str> {
         }
         ActionError::WalkGoals(reason) => Arc::from(format!("walk-goals:{reason:?}")),
         ActionError::ServerOrdered(reason) => Arc::from(format!("server-ordered:{reason}")),
+        ActionError::PvpRefused(refusal) => {
+            Arc::from(format!("invalid-setting:target:{}", refusal.code()))
+        }
     }
 }
 
@@ -336,8 +343,11 @@ impl Script for CombatSessionCard {
             return Ok(ScriptFlow::Continue);
         }
         if !self.begun {
+            let globals = tick
+                .pvp_globals
+                .unwrap_or_else(crate::native::PvpGlobals::fail_closed);
             match tick.actions.begin::<Combat>(
-                (Arc::clone(&self.request), Arc::clone(&self.tables)),
+                (Arc::clone(&self.request), Arc::clone(&self.tables), globals),
                 &mut tick.cx,
             ) {
                 Ok(handle) => {
@@ -348,6 +358,14 @@ impl Script for CombatSessionCard {
                 Err(ActionError::Unavailable(why)) => {
                     self.begun = true;
                     self.end = Some(Settle::Refused(Arc::from(format!("unavailable:{why}"))));
+                    self.settle();
+                    return Ok(ScriptFlow::Complete);
+                }
+                Err(ActionError::PvpRefused(refusal)) => {
+                    self.begun = true;
+                    self.end = Some(Settle::Refused(error_reason(&ActionError::PvpRefused(
+                        refusal,
+                    ))));
                     self.settle();
                     return Ok(ScriptFlow::Complete);
                 }

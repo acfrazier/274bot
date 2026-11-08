@@ -3,15 +3,15 @@
 //! published poison condition and the actions captured from the live host.
 //!
 //! Run each ignored cell three times with separate accounts. Use Engine A at
-//! its normal 600 ms tick, a throwaway HOME (`isohome`), the v17 reference nav
+//! its normal 600 ms tick, a throwaway HOME (`isohome`), the v18 reference nav
 //! pack, and the accepted read-only 1.1 cache inputs:
 //!
 //! ```sh
 //! LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<unique-prefix> \
 //!   GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 \
 //!   GATHERER_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289/engine \
-//!   GATHERER_NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack \
-//!   GATHERER_NAV_FLAGS=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navflags \
+//!   GATHERER_NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack \
+//!   GATHERER_NAV_FLAGS=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navflags \
 //!   GATHERER_CATALOG_ROOT=<catalog-root> \
 //!   BOT_CACHE_DIR=/Volumes/dev-scratch/274bot-evidence/SURVIVAL-1.1/live-cache/6dcb7c4ad1b85372 \
 //!   CLIENT_UNPACK_DIR=/Volumes/dev-scratch/274bot-evidence/SURVIVAL-1.1/client-home/.274bot/unpack \
@@ -270,8 +270,10 @@ impl Script for NativeWalkScript {
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Box::default(),
+                avoid: Box::default(),
                 protect: true,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
             };
             match tick.actions.begin::<Walk>(request, &mut tick.cx) {
@@ -2103,6 +2105,9 @@ mod oracle_tests {
 
     #[test]
     fn fruit_oracle_accepts_first_allowed_tick_and_observed_cure() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (frames, actions) = fruit_receipt(85, true);
         assert_eq!(
             evaluate_fruit(&frames, &actions, Some(82)),
@@ -2112,6 +2117,9 @@ mod oracle_tests {
 
     #[test]
     fn fruit_oracle_requires_real_combat_actions_from_the_same_fight() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (mut frames, mut actions) = fruit_receipt(85, true);
         for frame in &mut frames {
             frame.route_active = false;
@@ -2130,11 +2138,11 @@ mod oracle_tests {
         );
         actions[1]["action_id"] = json!(8);
         assert!(matches!(evaluate_fruit(&frames, &actions, Some(82)),
-            OracleDecision::Fail(reason) if reason.starts_with("oracle:")));
+        OracleDecision::Fail(reason) if reason.starts_with("oracle:")));
         actions[1]["action_id"] = json!(7);
         actions[1]["wire_decoded"] = json!(false);
         assert!(matches!(evaluate_fruit(&frames, &actions, Some(82)),
-            OracleDecision::Fail(reason) if reason.starts_with("oracle:")));
+        OracleDecision::Fail(reason) if reason.starts_with("oracle:")));
     }
 
     #[test]

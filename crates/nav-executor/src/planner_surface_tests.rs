@@ -38,7 +38,6 @@ const PRODUCTION_ALLOW: &[&str] = &[
 ];
 
 const TEST_ALLOW: &[&str] = &[
-    "test_support::family",
     "test_support::range",
     "test_support::tbwt_evidence",
     "test_support::window",
@@ -203,7 +202,7 @@ fn planner_scan_rejects_the_equivalent_action_path_fixtures() {
 fn test_scope_accepts_only_list_b_and_cfg_attr_fails_closed() {
     let test_list = scan_fixture(
         "#[cfg(all(test, target_os = \"macos\"))] mod tests {\
-         use nav_planner::test_support::family; use nav_planner::test_support::window;\
+         use nav_planner::test_support::range; use nav_planner::test_support::window;\
          }",
     );
     assert!(
@@ -248,7 +247,7 @@ fn attached_test_path_scope_and_unattached_files_are_enforced() {
     );
     attached_test.insert(
         PathBuf::from("src/x_tests.rs"),
-        "use nav_planner::test_support::family;".to_owned(),
+        "use nav_planner::test_support::range;".to_owned(),
     );
     let report = scan_sources(&attached_test, "nav-executor", &[PLANNER_ROOT], &[]);
     assert!(report.findings.is_empty(), "{:#?}", report.findings);

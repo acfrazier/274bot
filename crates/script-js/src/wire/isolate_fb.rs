@@ -32,8 +32,8 @@ use flatbuffers::{
 };
 use script::native::request::NativeKind;
 use script::native::seat::{SeatEntry, SeatResult as NativeSeatResult, SeatTerminal};
-pub use script::native::seat_rows::*;
-pub use script::native::snapshot_source::*;
+use script::native::seat_rows::*;
+use script::native::snapshot_source::*;
 use script::native::NativePhase;
 use std::sync::Arc;
 
@@ -238,7 +238,7 @@ pub struct SeatInteractRequest<'a> {
     /// Must not collide with `lineage` when both are present.
     pub mirror_owner: Option<RequestId>,
     /// Interaction payload to encode after reserved rows.
-    pub request: &'a script::shim::InteractReq,
+    pub request: &'a script::interact::InteractReq,
 }
 
 /// Borrowed producer input for the complete isolate-to-host seat batch.
@@ -555,6 +555,7 @@ impl<'a> Snapshot<'a> {
         has_api_combat_outcome => VT_API_COMBAT_OUTCOME,
         has_api_progress => VT_API_PROGRESS,
         has_chat_page_fingerprint => VT_CHAT_PAGE_FINGERPRINT,
+        has_local_attack_marks => VT_LOCAL_ATTACK_MARKS,
         has_side_modal_id => VT_SIDE_MODAL_ID,
         has_local_player_motion => VT_LOCAL_PLAYER_MOTION,
     }
@@ -1077,6 +1078,7 @@ pub struct SnapshotFingerprint {
     pub api_progress: Option<(u64, u8)>,
     pub bank_snapshot_generation: Option<i64>,
     pub chat_page_fingerprint: u64,
+    pub local_attack_marks: u64,
     pub side_modal_id: Option<i32>,
     seat_page: Option<SeatPageFingerprint>,
 }
@@ -1375,6 +1377,7 @@ impl SnapshotFingerprint {
             api_combat_outcome: native.api_combat_outcome.map(|end| end.token()),
             api_progress: native.api_progress.map(|page| (page.token(), page.kind())),
             chat_page_fingerprint: native.chat_page_fingerprint,
+            local_attack_marks: native.local_attack_marks,
             side_modal_id: native.side_modal_id,
             seat_page: native.seat_page.map(SeatPageFingerprint::from),
         }
@@ -1540,6 +1543,9 @@ pub struct DeltaMask {
     /// A progress page is replaced by the next request or cleared on teardown.
     pub api_progress: bool,
     pub chat_page_fingerprint: bool,
+    pub local_attack_marks: bool,
+    /// The mask is the keyframe's ([`DeltaMask::all`]), not a delta's.
+    pub keyframe: bool,
     /// The side modal root; written only when supplied.
     pub side_modal_id: bool,
     /// One bit for the seat live and retained-result pages, posted together.
@@ -1550,6 +1556,7 @@ impl DeltaMask {
     /// Every field: the full (keyframe) snapshot.
     fn all() -> DeltaMask {
         DeltaMask {
+            keyframe: true,
             here: true,
             ingame: true,
             inv: true,
@@ -1642,6 +1649,7 @@ impl DeltaMask {
             api_combat_outcome: true,
             api_progress: true,
             chat_page_fingerprint: true,
+            local_attack_marks: true,
             side_modal_id: true,
             seat_page: true,
         }
@@ -1657,6 +1665,7 @@ impl DeltaMask {
         force_banks: bool,
     ) -> DeltaMask {
         DeltaMask {
+            keyframe: false,
             here: next.here != last.here,
             ingame: next.ingame != last.ingame,
             inv: next.inv != last.inv,
@@ -1768,6 +1777,7 @@ impl DeltaMask {
                 && next.api_combat_outcome != last.api_combat_outcome,
             api_progress: next.api_progress.is_some() && next.api_progress != last.api_progress,
             chat_page_fingerprint: next.chat_page_fingerprint != last.chat_page_fingerprint,
+            local_attack_marks: next.local_attack_marks != last.local_attack_marks,
             side_modal_id: next.side_modal_id != last.side_modal_id,
             seat_page: next.seat_page != last.seat_page,
         }
@@ -1863,6 +1873,7 @@ impl DeltaMask {
             || self.api_gather_outcome
             || self.api_progress
             || self.chat_page_fingerprint
+            || self.local_attack_marks
             || self.side_modal_id
             || self.seat_page
             || (self.banks && next.banks != last.banks)
@@ -2032,7 +2043,7 @@ impl IsolateBuf {
     }
 
     /// Encode the tick's shim interact queue as a root-`InteractBatch`.
-    pub fn encode_interact_batch(&mut self, reqs: &[script::shim::InteractReq]) -> Vec<u8> {
+    pub fn encode_interact_batch(&mut self, reqs: &[script::interact::InteractReq]) -> Vec<u8> {
         self.builder.reset();
         encode_interact_batch_into(&mut self.builder, reqs);
         self.copy_finished()
@@ -2904,6 +2915,12 @@ fn encode_snapshot_masked_into(
     if mask.chat_page_fingerprint {
         table.add_chat_page_fingerprint(native.chat_page_fingerprint);
     }
+    // A keyframe with no marks leaves the slot absent (no observation), so it
+    // stays byte-identical to one from before the field. A delta writes the
+    // value whenever it changed, an explicit 0 included.
+    if mask.local_attack_marks && (native.local_attack_marks != 0 || !mask.keyframe) {
+        table.add_local_attack_marks(native.local_attack_marks);
+    }
     if let (true, Some(side)) = (mask.side_modal_id, native.side_modal_id) {
         table.add_side_modal_id(side);
     }
@@ -3365,6 +3382,10 @@ fn combat_fight_off<'b>(
         let offs: Vec<_> = spells.iter().map(|name| b.create_string(name)).collect();
         b.create_vector(&offs)
     });
+    let player = match &request.target {
+        TargetSpec::Player(name) => Some(b.create_string(name)),
+        _ => None,
+    };
     let mut table = CombatFightBuilder::new(b);
     match &request.target {
         TargetSpec::Names(_) => table.add_target(1),
@@ -3373,6 +3394,7 @@ fn combat_fight_off<'b>(
             table.add_target(3);
             table.add_attackers(u8::from(*npcs) | (u8::from(*players) << 1));
         }
+        TargetSpec::Player(_) => table.add_target(4),
     }
     if let Some(names) = names {
         table.add_npc_names(names);
@@ -3418,6 +3440,10 @@ fn combat_fight_off<'b>(
     table.add_potions(request.potions);
     table.add_retaliate(request.retaliate);
     table.add_budget_ticks(request.budget_ticks);
+    if let Some(player) = player {
+        table.add_player(player);
+    }
+    table.add_pvp(request.pvp);
     table.finish()
 }
 
@@ -3456,6 +3482,7 @@ fn decode_combat_fight(
             },
             _ => return Err(bad("target")),
         },
+        4 => TargetSpec::Player(Arc::from(fight.player().ok_or_else(|| bad("target"))?)),
         _ => return Err(bad("target")),
     };
     let request = CombatSessionRequest {
@@ -3516,6 +3543,7 @@ fn decode_combat_fight(
         potions: fight.potions(),
         retaliate: fight.retaliate(),
         budget_ticks: fight.budget_ticks(),
+        pvp: fight.pvp(),
     };
     request
         .check()
@@ -3554,6 +3582,7 @@ fn api_combat_outcome_off<'b>(
         table.add_boost_doses(report.boost_doses);
         table.add_antifire_doses(report.antifire_doses);
         table.add_protect_switches(report.protect_switches);
+        table.add_pvp_source(report.pvp_source.map_or(0, script::combat::PvpSource::code));
     }
     table.finish()
 }
@@ -4160,7 +4189,7 @@ fn nearest_booth_table_off<'b>(
 /// Encode the tick's shim interact queue as a root-`InteractBatch`
 /// FlatBuffer. Tests and one-shot callers; the live path uses
 /// [`IsolateBuf`].
-pub fn encode_interact_batch(reqs: &[script::shim::InteractReq]) -> Vec<u8> {
+pub fn encode_interact_batch(reqs: &[script::interact::InteractReq]) -> Vec<u8> {
     IsolateBuf::new().encode_interact_batch(reqs)
 }
 /// Encode a typed seat batch, enforcing its reserved-control and gameplay caps.
@@ -4168,7 +4197,10 @@ pub fn encode_seat_interact_batch(input: &SeatInteractBatchInput<'_>) -> Result<
     IsolateBuf::new().encode_seat_interact_batch(input)
 }
 
-fn encode_interact_batch_into(b: &mut FlatBufferBuilder<'_>, reqs: &[script::shim::InteractReq]) {
+fn encode_interact_batch_into(
+    b: &mut FlatBufferBuilder<'_>,
+    reqs: &[script::interact::InteractReq],
+) {
     let offs = reqs
         .iter()
         .map(|req| interact_off(b, req, None, None))
@@ -4189,8 +4221,10 @@ enum SeatInteractClass {
     Gameplay,
 }
 
-fn seat_interact_class(request: &script::shim::InteractReq) -> Result<SeatInteractClass, String> {
-    use script::shim::InteractReq;
+fn seat_interact_class(
+    request: &script::interact::InteractReq,
+) -> Result<SeatInteractClass, String> {
+    use script::interact::InteractReq;
     match request {
         InteractReq::AbortWalk { .. } => Ok(SeatInteractClass::WalkRelease),
         InteractReq::GatherStop { .. } => Ok(SeatInteractClass::GatherRelease),
@@ -4271,7 +4305,7 @@ fn validate_seat_batch(input: &SeatInteractBatchInput<'_>) -> Result<(), String>
         }
         match seat_interact_class(row.request)? {
             SeatInteractClass::WalkRelease => {
-                let script::shim::InteractReq::AbortWalk { request_id } = row.request else {
+                let script::interact::InteractReq::AbortWalk { request_id } = row.request else {
                     unreachable!("walk release class comes only from AbortWalk")
                 };
                 if *request_id == 0 {
@@ -4805,7 +4839,7 @@ fn encode_seat_interact_batch_into(
 /// built; a frame over a cap is dropped and logged, never forwarded. Their
 /// first failure was the wire decoder's, and this is that check in its new
 /// place. The canvas half is capped by the recorder itself.
-pub fn cap_paint(paint: &script::shim::ScriptPaint) -> Result<(), String> {
+pub fn cap_paint(paint: &script::paint::ScriptPaint) -> Result<(), String> {
     if paint.lines.len() > MAX_PAINT_LINES {
         return Err(format!(
             "vector length {} exceeds cap {MAX_PAINT_LINES}",
@@ -4845,16 +4879,16 @@ pub fn cap_paint(paint: &script::shim::ScriptPaint) -> Result<(), String> {
 /// the whole batch — the host logs it and drops the batch, never fatal,
 /// exactly like the old JSON parse.
 /// A row's typed avoid rectangles (inspect route and world walks).
-fn decoded_avoid(row: &Interact<'_>) -> Vec<script::shim::InspectAvoidWire> {
+fn decoded_avoid(row: &Interact<'_>) -> Vec<script::interact::InspectAvoidWire> {
     let Some(rects) = row.avoid() else {
         return Vec::new();
     };
     rects
         .iter()
         .map(|rect| match rect.catalog_id() {
-            Some("") => script::shim::InspectAvoidWire::Unsupported,
-            Some(id) => script::shim::InspectAvoidWire::Catalog(id.to_string()),
-            None => script::shim::InspectAvoidWire::Rect {
+            Some("") => script::interact::InspectAvoidWire::Unsupported,
+            Some(id) => script::interact::InspectAvoidWire::Catalog(id.to_string()),
+            None => script::interact::InspectAvoidWire::Rect {
                 min_x: rect.min_x(),
                 max_x: rect.max_x(),
                 min_z: rect.min_z(),
@@ -4909,7 +4943,7 @@ impl InteractDecodeOutput {
         }
     }
 
-    fn push(&mut self, request: script::shim::InteractReq) {
+    fn push(&mut self, request: script::interact::InteractReq) {
         self.rows.push(SeatInteractDecoded {
             lineage: self.lineage,
             mirror_owner: self.mirror_owner,
@@ -4918,7 +4952,7 @@ impl InteractDecodeOutput {
     }
 }
 
-pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<script::shim::InteractReq>, String> {
+pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<script::interact::InteractReq>, String> {
     let batch = InteractBatch::from_bytes(buf)?;
     let decoded = decode_interact_rows(batch.reqs(), false)?;
     Ok(decoded.into_iter().map(|row| row.request).collect())
@@ -4952,7 +4986,7 @@ fn decode_interact_rows<'a>(
             .op()
             .ok_or_else(|| "interact row has no op".to_string())?;
         match op {
-            "open-booth" => out.push(script::shim::InteractReq::OpenBooth {
+            "open-booth" => out.push(script::interact::InteractReq::OpenBooth {
                 x: row
                     .has_x()
                     .then(|| row.x())
@@ -4971,7 +5005,7 @@ fn decode_interact_rows<'a>(
                 name: row.name().map(str::to_string),
                 action: row.action().map(str::to_string),
             }),
-            "open-stand" => out.push(script::shim::InteractReq::OpenStand {
+            "open-stand" => out.push(script::interact::InteractReq::OpenStand {
                 x: row.x(),
                 z: row.z(),
                 level: row.level(),
@@ -4980,13 +5014,15 @@ fn decode_interact_rows<'a>(
                 stand_op: row.stand_op(),
                 choose: row.choose().map(str::to_string),
             }),
-            "walk" => out.push(script::shim::InteractReq::Walk {
+            "walk" => out.push(script::interact::InteractReq::Walk {
                 x: row.x(),
                 z: row.z(),
                 level: row.level(),
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
+                allow_prereq_dialogue: row.allow_prereq_dialogue(),
+                allow_quest_start: row.allow_quest_start(),
                 request_id: row.request_id(),
                 avoid: decoded_avoid(&row),
                 cross: row
@@ -4994,7 +5030,7 @@ fn decode_interact_rows<'a>(
                     .map(|names| names.iter().map(str::to_string).collect())
                     .unwrap_or_default(),
             }),
-            "walk-near" => out.push(script::shim::InteractReq::WalkNear {
+            "walk-near" => out.push(script::interact::InteractReq::WalkNear {
                 x: row.x(),
                 z: row.z(),
                 level: row.level(),
@@ -5003,6 +5039,8 @@ fn decode_interact_rows<'a>(
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
                 allow_wilderness: row.allow_wilderness(),
                 allow_bank_fetch: row.allow_bank_fetch(),
+                allow_prereq_dialogue: row.allow_prereq_dialogue(),
+                allow_quest_start: row.allow_quest_start(),
                 request_id: row.request_id(),
                 avoid: decoded_avoid(&row),
                 cross: row
@@ -5010,7 +5048,7 @@ fn decode_interact_rows<'a>(
                     .map(|names| names.iter().map(str::to_string).collect())
                     .unwrap_or_default(),
             }),
-            "walk-nearest-bank" => out.push(script::shim::InteractReq::WalkNearestBank),
+            "walk-nearest-bank" => out.push(script::interact::InteractReq::WalkNearestBank),
             "gather-run" => {
                 let request_id = row.request_id();
                 if request_id == 0 {
@@ -5021,7 +5059,7 @@ fn decode_interact_rows<'a>(
                     .map(decode_gather_settings)
                     .transpose()?
                     .unwrap_or_default();
-                out.push(script::shim::InteractReq::GatherRun {
+                out.push(script::interact::InteractReq::GatherRun {
                     request_id,
                     settings: Arc::new(settings),
                 });
@@ -5031,7 +5069,7 @@ fn decode_interact_rows<'a>(
                 if request_id == 0 {
                     return Err("gather-stop has no request_id".into());
                 }
-                out.push(script::shim::InteractReq::GatherStop { request_id });
+                out.push(script::interact::InteractReq::GatherStop { request_id });
             }
             "combat-fight" => {
                 let request_id = row.request_id();
@@ -5041,7 +5079,7 @@ fn decode_interact_rows<'a>(
                 let fight = row
                     .combat()
                     .ok_or_else(|| "combat-fight has no request".to_string())?;
-                out.push(script::shim::InteractReq::CombatFight {
+                out.push(script::interact::InteractReq::CombatFight {
                     request_id,
                     request: Arc::new(decode_combat_fight(fight)?),
                 });
@@ -5051,7 +5089,7 @@ fn decode_interact_rows<'a>(
                 if request_id == 0 {
                     return Err("combat-stop has no request_id".into());
                 }
-                out.push(script::shim::InteractReq::CombatStop { request_id });
+                out.push(script::interact::InteractReq::CombatStop { request_id });
             }
             "progress-read" => {
                 let request_id = row.request_id();
@@ -5061,15 +5099,15 @@ fn decode_interact_rows<'a>(
                 let name = row
                     .name()
                     .ok_or_else(|| "progress-read has no quest id".to_string())?;
-                out.push(script::shim::InteractReq::ProgressRead {
+                out.push(script::interact::InteractReq::ProgressRead {
                     request_id,
                     name: name.to_string(),
                 });
             }
-            "abort-walk" => out.push(script::shim::InteractReq::AbortWalk {
+            "abort-walk" => out.push(script::interact::InteractReq::AbortWalk {
                 request_id: row.request_id(),
             }),
-            "inspect-route" => out.push(script::shim::InteractReq::InspectRoute {
+            "inspect-route" => out.push(script::interact::InteractReq::InspectRoute {
                 x: row.x(),
                 z: row.z(),
                 level: row.level(),
@@ -5086,23 +5124,23 @@ fn decode_interact_rows<'a>(
                     .unwrap_or_default(),
                 request_id: row.request_id(),
             }),
-            "inspect-ack" => out.push(script::shim::InteractReq::InspectAck {
+            "inspect-ack" => out.push(script::interact::InteractReq::InspectAck {
                 seq: row.inspect_ack_seq(),
                 generation: row.inspect_ack_generation(),
             }),
-            "walk-to" => out.push(script::shim::InteractReq::WalkTo {
+            "walk-to" => out.push(script::interact::InteractReq::WalkTo {
                 x: row.x(),
                 z: row.z(),
                 level: row.level(),
             }),
-            "deposit" => out.push(script::shim::InteractReq::Deposit {
+            "deposit" => out.push(script::interact::InteractReq::Deposit {
                 name: row
                     .name()
                     .ok_or_else(|| "deposit has no name".to_string())?
                     .to_string(),
                 id: row.bank_item_id(),
             }),
-            "withdraw" => out.push(script::shim::InteractReq::Withdraw {
+            "withdraw" => out.push(script::interact::InteractReq::Withdraw {
                 name: row
                     .name()
                     .ok_or_else(|| "withdraw has no name".to_string())?
@@ -5112,7 +5150,7 @@ fn decode_interact_rows<'a>(
                     .ok_or_else(|| "withdraw has no action".to_string())?
                     .to_string(),
             }),
-            "withdraw-x" => out.push(script::shim::InteractReq::WithdrawX {
+            "withdraw-x" => out.push(script::interact::InteractReq::WithdrawX {
                 name: row
                     .name()
                     .ok_or_else(|| "withdraw-x has no name".to_string())?
@@ -5132,7 +5170,7 @@ fn decode_interact_rows<'a>(
                     .bank_generation()
                     .ok_or_else(|| "withdraw-x has no bank_generation".to_string())?,
             }),
-            "held" => out.push(script::shim::InteractReq::Held {
+            "held" => out.push(script::interact::InteractReq::Held {
                 name: row
                     .name()
                     .ok_or_else(|| "held has no name".to_string())?
@@ -5144,7 +5182,7 @@ fn decode_interact_rows<'a>(
                 slot: None,
                 target_item_id: None,
             }),
-            "inv-button" => out.push(script::shim::InteractReq::InvButton {
+            "inv-button" => out.push(script::interact::InteractReq::InvButton {
                 id: row
                     .bank_item_id()
                     .ok_or_else(|| "inv-button has no id".to_string())?,
@@ -5159,7 +5197,7 @@ fn decode_interact_rows<'a>(
                     .ok_or_else(|| "inv-button has no operation".to_string())?,
                 bank_generation: row.bank_generation().unwrap_or(0),
             }),
-            "puzzle-move" => out.push(script::shim::InteractReq::PuzzleMove {
+            "puzzle-move" => out.push(script::interact::InteractReq::PuzzleMove {
                 id: row
                     .bank_item_id()
                     .ok_or_else(|| "puzzle-move has no id".to_string())?,
@@ -5173,7 +5211,7 @@ fn decode_interact_rows<'a>(
                     .bank_generation()
                     .ok_or_else(|| "puzzle-move has no generation".to_string())?,
             }),
-            "shop-button" => out.push(script::shim::InteractReq::ShopButton {
+            "shop-button" => out.push(script::interact::InteractReq::ShopButton {
                 kind: row
                     .kind()
                     .ok_or_else(|| "shop-button has no kind".to_string())?
@@ -5195,7 +5233,7 @@ fn decode_interact_rows<'a>(
                     .stand_op()
                     .ok_or_else(|| "shop-button has no chunk".to_string())?,
             }),
-            "make-panel" => out.push(script::shim::InteractReq::MakePanel {
+            "make-panel" => out.push(script::interact::InteractReq::MakePanel {
                 id: row
                     .bank_item_id()
                     .ok_or_else(|| "make-panel has no id".to_string())?,
@@ -5209,8 +5247,8 @@ fn decode_interact_rows<'a>(
                     .stand_op()
                     .ok_or_else(|| "make-panel has no operation".to_string())?,
             }),
-            "close" => out.push(script::shim::InteractReq::Close),
-            "npc" => out.push(script::shim::InteractReq::Npc {
+            "close" => out.push(script::interact::InteractReq::Close),
+            "npc" => out.push(script::interact::InteractReq::Npc {
                 name: row
                     .name()
                     .ok_or_else(|| "npc has no name".to_string())?
@@ -5221,7 +5259,7 @@ fn decode_interact_rows<'a>(
                     .to_string(),
                 index: row.index(),
             }),
-            "loc" => out.push(script::shim::InteractReq::Loc {
+            "loc" => out.push(script::interact::InteractReq::Loc {
                 x: row.x(),
                 z: row.z(),
                 level: row.level(),
@@ -5231,7 +5269,7 @@ fn decode_interact_rows<'a>(
                     .to_string(),
                 id: row.index(),
             }),
-            "obj" => out.push(script::shim::InteractReq::Obj {
+            "obj" => out.push(script::interact::InteractReq::Obj {
                 x: row.x(),
                 z: row.z(),
                 level: row.level(),
@@ -5242,7 +5280,7 @@ fn decode_interact_rows<'a>(
                     .to_string(),
                 id: row.index(),
             }),
-            "player" => out.push(script::shim::InteractReq::Player {
+            "player" => out.push(script::interact::InteractReq::Player {
                 name: row
                     .name()
                     .ok_or_else(|| "player has no name".to_string())?
@@ -5252,7 +5290,7 @@ fn decode_interact_rows<'a>(
                     .ok_or_else(|| "player has no action".to_string())?
                     .to_string(),
             }),
-            "use-on" => out.push(script::shim::InteractReq::UseOn {
+            "use-on" => out.push(script::interact::InteractReq::UseOn {
                 name: row
                     .name()
                     .ok_or_else(|| "use-on has no name".to_string())?
@@ -5268,7 +5306,7 @@ fn decode_interact_rows<'a>(
                 target_item_id: row.target_item_id(),
                 target_item_slot: row.target_item_slot(),
             }),
-            "use-widget-on" => out.push(script::shim::InteractReq::UseWidgetOn {
+            "use-widget-on" => out.push(script::interact::InteractReq::UseWidgetOn {
                 component_id: row
                     .component_id()
                     .ok_or_else(|| "use-widget-on has no component_id".to_string())?,
@@ -5279,21 +5317,23 @@ fn decode_interact_rows<'a>(
                 level: row.level(),
                 index: row.index(),
             }),
-            "continue" => out.push(script::shim::InteractReq::ContinueDialog {
+            "continue" => out.push(script::interact::InteractReq::ContinueDialog {
                 component_id: row.component_id(),
             }),
-            "answer" => out.push(script::shim::InteractReq::Answer {
+            "answer" => out.push(script::interact::InteractReq::Answer {
                 option: row
                     .stand_op()
                     .ok_or_else(|| "answer has no option".to_string())?,
             }),
-            "answer-count" => out.push(script::shim::InteractReq::AnswerCount { value: row.x() }),
-            "if-button" => out.push(script::shim::InteractReq::IfButton {
+            "answer-count" => {
+                out.push(script::interact::InteractReq::AnswerCount { value: row.x() })
+            }
+            "if-button" => out.push(script::interact::InteractReq::IfButton {
                 component_id: row
                     .component_id()
                     .ok_or_else(|| "if-button has no component_id".to_string())?,
             }),
-            "duel-accept" => out.push(script::shim::InteractReq::DuelAccept {
+            "duel-accept" => out.push(script::interact::InteractReq::DuelAccept {
                 screen: row
                     .action()
                     .ok_or_else(|| "duel-accept has no screen".to_string())?
@@ -5304,45 +5344,47 @@ fn decode_interact_rows<'a>(
                     .to_string(),
                 rules: row.x(),
             }),
-            "close-modal" => out.push(script::shim::InteractReq::CloseModal),
-            "side-tab" => out.push(script::shim::InteractReq::SideTab {
+            "close-modal" => out.push(script::interact::InteractReq::CloseModal),
+            "side-tab" => out.push(script::interact::InteractReq::SideTab {
                 tab: row
                     .stand_op()
                     .ok_or_else(|| "side-tab has no tab".to_string())?,
             }),
-            "wear" => out.push(script::shim::InteractReq::Wear {
+            "wear" => out.push(script::interact::InteractReq::Wear {
                 name: row
                     .name()
                     .ok_or_else(|| "wear has no name".to_string())?
                     .to_string(),
             }),
-            "unequip" => out.push(script::shim::InteractReq::Unequip {
+            "unequip" => out.push(script::interact::InteractReq::Unequip {
                 name: row
                     .name()
                     .ok_or_else(|| "unequip has no name".to_string())?
                     .to_string(),
             }),
-            "set-run" => out.push(script::shim::InteractReq::SetRun {
+            "set-run" => out.push(script::interact::InteractReq::SetRun {
                 on: row.action().is_some_and(|a| a == "on" || a == "true"),
             }),
-            "set-retaliate" => out.push(script::shim::InteractReq::SetRetaliate {
+            "set-retaliate" => out.push(script::interact::InteractReq::SetRetaliate {
                 on: row.action().is_some_and(|a| a == "on" || a == "true"),
             }),
-            "set-note-mode" => out.push(script::shim::InteractReq::SetNoteMode {
+            "set-note-mode" => out.push(script::interact::InteractReq::SetNoteMode {
                 on: row.action().is_some_and(|a| a == "on" || a == "true"),
             }),
-            "set-camera-yaw" => out.push(script::shim::InteractReq::SetCameraYaw { yaw: row.x() }),
-            "note-progress" => out.push(script::shim::InteractReq::NoteProgress),
-            "loop-settled" => out.push(script::shim::InteractReq::LoopSettled),
-            "wait-enqueued" => out.push(script::shim::InteractReq::WaitEnqueued),
-            "wait-settled" => out.push(script::shim::InteractReq::WaitSettled),
-            "recovery-anchor" => out.push(script::shim::InteractReq::RecoveryAnchor {
+            "set-camera-yaw" => {
+                out.push(script::interact::InteractReq::SetCameraYaw { yaw: row.x() })
+            }
+            "note-progress" => out.push(script::interact::InteractReq::NoteProgress),
+            "loop-settled" => out.push(script::interact::InteractReq::LoopSettled),
+            "wait-enqueued" => out.push(script::interact::InteractReq::WaitEnqueued),
+            "wait-settled" => out.push(script::interact::InteractReq::WaitSettled),
+            "recovery-anchor" => out.push(script::interact::InteractReq::RecoveryAnchor {
                 x: row.x(),
                 z: row.z(),
                 level: row.level(),
             }),
-            "recovery-anchor-none" => out.push(script::shim::InteractReq::RecoveryAnchorNone),
-            "channel-open" => out.push(script::shim::InteractReq::ChannelOpen {
+            "recovery-anchor-none" => out.push(script::interact::InteractReq::RecoveryAnchorNone),
+            "channel-open" => out.push(script::interact::InteractReq::ChannelOpen {
                 channel_id: row.channel_id(),
                 name: row
                     .name()
@@ -5356,7 +5398,7 @@ fn decode_interact_rows<'a>(
                     return Err("channel-post data exceeds cap".into());
                 }
                 let data = data.map(|bytes| bytes.iter().collect()).unwrap_or_default();
-                out.push(script::shim::InteractReq::ChannelPost {
+                out.push(script::interact::InteractReq::ChannelPost {
                     channel_id: row.channel_id(),
                     name: row
                         .name()
@@ -5365,7 +5407,7 @@ fn decode_interact_rows<'a>(
                     data,
                 });
             }
-            "channel-close" => out.push(script::shim::InteractReq::ChannelClose {
+            "channel-close" => out.push(script::interact::InteractReq::ChannelClose {
                 channel_id: row.channel_id(),
                 name: row
                     .name()
@@ -5379,7 +5421,7 @@ fn decode_interact_rows<'a>(
                     return Err("channel-message data exceeds cap".into());
                 }
                 let data = data.map(|bytes| bytes.iter().collect()).unwrap_or_default();
-                out.push(script::shim::InteractReq::ChannelMessage {
+                out.push(script::interact::InteractReq::ChannelMessage {
                     channel_id: row.channel_id(),
                     sender: row
                         .name()
@@ -5389,14 +5431,14 @@ fn decode_interact_rows<'a>(
                     data,
                 });
             }
-            "channel-status" => out.push(script::shim::InteractReq::ChannelStatus {
+            "channel-status" => out.push(script::interact::InteractReq::ChannelStatus {
                 channel_id: row.channel_id(),
                 message: row
                     .action()
                     .ok_or_else(|| "channel-status has no message".to_string())?
                     .to_string(),
             }),
-            "key" => out.push(script::shim::InteractReq::Key {
+            "key" => out.push(script::interact::InteractReq::Key {
                 down: row.index() == Some(1),
                 key: row
                     .action()
@@ -5404,14 +5446,14 @@ fn decode_interact_rows<'a>(
                     .to_string(),
                 code: row.kind().unwrap_or("").to_string(),
             }),
-            "mouse" => out.push(script::shim::InteractReq::Mouse {
+            "mouse" => out.push(script::interact::InteractReq::Mouse {
                 down: row.index() == Some(1),
                 x: row.xf().unwrap_or(f64::NAN),
                 y: row.yf().unwrap_or(f64::NAN),
                 button: row.level(),
                 identity: row.input_identity(),
             }),
-            "run-policy" => out.push(script::shim::InteractReq::RunPolicyOverride {
+            "run-policy" => out.push(script::interact::InteractReq::RunPolicyOverride {
                 policy: decoded_run_policy(&row)?,
             }),
             other => return Err(format!("unknown interact op: {other}")),
@@ -5934,11 +5976,11 @@ pub fn decode_seat_interact_batch(buf: &[u8]) -> Result<DecodedSeatBatch, String
 
 fn interact_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
-    req: &script::shim::InteractReq,
+    req: &script::interact::InteractReq,
     lineage: Option<u64>,
     mirror_owner: Option<u64>,
 ) -> WIPOffset<Interact<'b>> {
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     let op_off = b.create_string(match req {
         InteractReq::OpenBooth { .. } => "open-booth",
         InteractReq::OpenStand { .. } => "open-stand",
@@ -6071,15 +6113,15 @@ fn interact_off<'b>(
             let offs: Vec<_> = avoid
                 .iter()
                 .map(|entry| match entry {
-                    script::shim::InspectAvoidWire::Rect {
+                    script::interact::InspectAvoidWire::Rect {
                         min_x,
                         max_x,
                         min_z,
                         max_z,
                         level,
                     } => avoid_rect_off(b, *min_x, *max_x, *min_z, *max_z, *level),
-                    script::shim::InspectAvoidWire::Catalog(id) => avoid_catalog_off(b, id),
-                    script::shim::InspectAvoidWire::Unsupported => avoid_invalid_off(b),
+                    script::interact::InspectAvoidWire::Catalog(id) => avoid_catalog_off(b, id),
+                    script::interact::InspectAvoidWire::Unsupported => avoid_invalid_off(b),
                 })
                 .collect();
             Some(b.create_vector(&offs))
@@ -6229,6 +6271,8 @@ fn interact_off<'b>(
             request_id,
             allow_wilderness,
             allow_bank_fetch,
+            allow_prereq_dialogue,
+            allow_quest_start,
             ..
         } => {
             table.add_x(*x);
@@ -6249,6 +6293,12 @@ fn interact_off<'b>(
             }
             if *allow_bank_fetch {
                 table.add_allow_bank_fetch(true);
+            }
+            if let Some(allow) = allow_prereq_dialogue {
+                table.add_allow_prereq_dialogue(*allow);
+            }
+            if let Some(allow) = allow_quest_start {
+                table.add_allow_quest_start(*allow);
             }
         }
         InteractReq::WalkNearestBank => {}
@@ -6300,6 +6350,8 @@ fn interact_off<'b>(
             request_id,
             allow_wilderness,
             allow_bank_fetch,
+            allow_prereq_dialogue,
+            allow_quest_start,
             ..
         } => {
             table.add_x(*x);
@@ -6316,6 +6368,12 @@ fn interact_off<'b>(
             }
             if *allow_bank_fetch {
                 table.add_allow_bank_fetch(true);
+            }
+            if let Some(allow) = allow_prereq_dialogue {
+                table.add_allow_prereq_dialogue(*allow);
+            }
+            if let Some(allow) = allow_quest_start {
+                table.add_allow_quest_start(*allow);
             }
         }
         InteractReq::WalkTo { x, z, level } | InteractReq::RecoveryAnchor { x, z, level } => {
@@ -6575,7 +6633,7 @@ fn interact_off<'b>(
 pub(crate) mod tests {
     use super::*;
     use api::snapshot::{ActorTargetView, WorldTile};
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     pub(crate) fn empty_input(tick: u64) -> SnapshotInput<'static> {
         SnapshotInput {
@@ -6713,7 +6771,7 @@ pub(crate) mod tests {
             chat_page_fingerprint,
             ..NativeFactsInput::default()
         };
-        crate::observed::on_reset();
+        crate::scene::observed::on_reset();
         let mut input = empty_input(1);
         let (keyframe_bytes, fp) =
             encode_snapshot_delta_with_native(None, &input, NativeFactsInput::default(), false);
@@ -6723,7 +6781,7 @@ pub(crate) mod tests {
             "a zero-valued keyframe scalar is still present"
         );
         assert_eq!(keyframe.chat_page_fingerprint(), 0);
-        crate::observed::apply(&keyframe);
+        crate::scene::observed::apply(&keyframe);
 
         let fingerprint = 0xfedc_ba98_7654_3210;
         input.tick = 2;
@@ -6736,8 +6794,8 @@ pub(crate) mod tests {
             !changed.has_ingame(),
             "only the fingerprint changed apart from always-posted fields"
         );
-        crate::observed::apply(&changed);
-        crate::observed::with(|scene| {
+        crate::scene::observed::apply(&changed);
+        crate::scene::observed::with(|scene| {
             assert_eq!(scene.latest().chat_page_fingerprint(), Some(fingerprint));
             assert_eq!(
                 scene.since_login().chat_page_fingerprint(),
@@ -6753,8 +6811,8 @@ pub(crate) mod tests {
             !unchanged.has_chat_page_fingerprint(),
             "an unchanged scalar is omitted"
         );
-        crate::observed::apply(&unchanged);
-        crate::observed::with(|scene| {
+        crate::scene::observed::apply(&unchanged);
+        crate::scene::observed::with(|scene| {
             assert_eq!(
                 scene.latest().chat_page_fingerprint(),
                 Some(fingerprint),
@@ -6776,8 +6834,8 @@ pub(crate) mod tests {
             !logout.has_chat_page_fingerprint(),
             "logout does not need to resend an unchanged fingerprint"
         );
-        crate::observed::apply(&logout);
-        crate::observed::with(|scene| {
+        crate::scene::observed::apply(&logout);
+        crate::scene::observed::with(|scene| {
             assert_eq!(scene.latest().chat_page_fingerprint(), Some(fingerprint));
             assert_eq!(
                 scene.since_login().chat_page_fingerprint(),
@@ -6792,8 +6850,8 @@ pub(crate) mod tests {
             encode_snapshot_delta_with_native(Some(&fp), &input, native(fingerprint), false);
         let login = decode_snapshot(&login_bytes).expect("login delta");
         assert!(!login.has_chat_page_fingerprint());
-        crate::observed::apply(&login);
-        crate::observed::with(|scene| {
+        crate::scene::observed::apply(&login);
+        crate::scene::observed::with(|scene| {
             assert_eq!(
                 scene.since_login().chat_page_fingerprint(),
                 None,
@@ -6815,11 +6873,89 @@ pub(crate) mod tests {
         );
         assert_eq!(clear.chat_page_fingerprint(), 0);
         assert!(!clear.has_ingame());
-        crate::observed::apply(&clear);
-        crate::observed::with(|scene| {
+        crate::scene::observed::apply(&clear);
+        crate::scene::observed::with(|scene| {
             assert_eq!(scene.latest().chat_page_fingerprint(), Some(0));
             assert_eq!(scene.since_login().chat_page_fingerprint(), Some(0));
         });
+    }
+
+    #[test]
+    fn local_attack_marks_round_trip_as_a_delta_scalar_and_force_a_post() {
+        let native = |local_attack_marks| NativeFactsInput {
+            local_attack_marks,
+            ..NativeFactsInput::default()
+        };
+        crate::scene::observed::on_reset();
+        let mut input = empty_input(1);
+        let (keyframe_bytes, fp) =
+            encode_snapshot_delta_with_native(None, &input, NativeFactsInput::default(), false);
+        let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
+        assert!(
+            !keyframe.has_local_attack_marks(),
+            "a keyframe with no marks leaves the slot absent, as before the field"
+        );
+        assert_eq!(keyframe.local_attack_marks(), None);
+        crate::scene::observed::apply(&keyframe);
+
+        let marks = api::snapshot::AttackMarks::new(1100, 7, 640, 5200).to_wire();
+        input.tick = 2;
+        let mut buf = IsolateBuf::new();
+        let (changed_bytes, fp, evidence) = buf.encode_snapshot_delta_with_native_and_evidence(
+            Some(&fp),
+            &input,
+            native(marks),
+            false,
+        );
+        assert!(evidence, "a mark alone is a posted evidence change");
+        let changed = decode_snapshot(&changed_bytes).expect("changed delta");
+        assert!(changed.has_local_attack_marks());
+        assert_eq!(changed.local_attack_marks(), Some(marks));
+        crate::scene::observed::apply(&changed);
+        crate::scene::observed::with(|scene| {
+            assert_eq!(scene.latest().local_attack_marks(), Some(marks));
+            assert_eq!(scene.since_login().local_attack_marks(), Some(marks));
+        });
+
+        input.tick = 3;
+        let (unchanged_bytes, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(marks), false);
+        let unchanged = decode_snapshot(&unchanged_bytes).expect("unchanged delta");
+        assert!(
+            !unchanged.has_local_attack_marks(),
+            "unchanged marks are omitted"
+        );
+        crate::scene::observed::apply(&unchanged);
+        crate::scene::observed::with(|scene| {
+            assert_eq!(
+                scene.since_login().local_attack_marks(),
+                Some(marks),
+                "omission retains the last observed marks"
+            );
+        });
+
+        input.tick = 4;
+        let (clear_bytes, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &input, native(0), false);
+        let clear = decode_snapshot(&clear_bytes).expect("clear delta");
+        assert!(
+            clear.has_local_attack_marks(),
+            "a delta posts an explicit 0 when the marks go away"
+        );
+        assert_eq!(clear.local_attack_marks(), Some(0));
+        crate::scene::observed::apply(&clear);
+        crate::scene::observed::with(|scene| {
+            assert_eq!(scene.since_login().local_attack_marks(), Some(0));
+        });
+
+        let (marked_keyframe_bytes, _) =
+            encode_snapshot_delta_with_native(None, &input, native(marks), false);
+        let marked_keyframe = decode_snapshot(&marked_keyframe_bytes).expect("marked keyframe");
+        assert_eq!(
+            marked_keyframe.local_attack_marks(),
+            Some(marks),
+            "a keyframe with marks carries them"
+        );
     }
 
     #[test]
@@ -6896,13 +7032,13 @@ pub(crate) mod tests {
             side_modal_id: Some(side),
             ..NativeFactsInput::default()
         };
-        let side = |scene: &crate::observed::Scene| {
+        let side = |scene: &crate::scene::observed::Scene| {
             (
                 scene.latest().side_modal_id(),
                 scene.since_login().side_modal_id(),
             )
         };
-        crate::observed::on_reset();
+        crate::scene::observed::on_reset();
         let mut input = empty_input(1);
         input.bank_open = true;
         let (keyframe_bytes, fp) =
@@ -6910,8 +7046,8 @@ pub(crate) mod tests {
         let keyframe = decode_snapshot(&keyframe_bytes).expect("keyframe");
         assert!(keyframe.has_side_modal_id());
         assert_eq!(keyframe.side_modal_id(), 700);
-        crate::observed::apply(&keyframe);
-        assert_eq!(crate::observed::with(side), (Some(700), Some(700)));
+        crate::scene::observed::apply(&keyframe);
+        assert_eq!(crate::scene::observed::with(side), (Some(700), Some(700)));
 
         input.tick = 2;
         let (unchanged_bytes, fp) =
@@ -6926,9 +7062,9 @@ pub(crate) mod tests {
             -1,
             "the reader default is absent"
         );
-        crate::observed::apply(&unchanged);
+        crate::scene::observed::apply(&unchanged);
         assert_eq!(
-            crate::observed::with(side),
+            crate::scene::observed::with(side),
             (Some(700), Some(700)),
             "omission retains the posted root, not -1"
         );
@@ -6940,28 +7076,28 @@ pub(crate) mod tests {
         let closed = decode_snapshot(&closed_bytes).expect("closed");
         assert!(closed.has_side_modal_id(), "-1 is an explicit close");
         assert_eq!(closed.side_modal_id(), -1);
-        crate::observed::apply(&closed);
-        assert_eq!(crate::observed::with(side), (Some(-1), Some(-1)));
+        crate::scene::observed::apply(&closed);
+        assert_eq!(crate::scene::observed::with(side), (Some(-1), Some(-1)));
 
         input.tick = 4;
         input.bank_open = true;
         let (open_bytes, fp) =
             encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
-        crate::observed::apply(&decode_snapshot(&open_bytes).expect("reopen"));
+        crate::scene::observed::apply(&decode_snapshot(&open_bytes).expect("reopen"));
         input.tick = 5;
         input.ingame = false;
         let (logout_bytes, fp) =
             encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
-        crate::observed::apply(&decode_snapshot(&logout_bytes).expect("logout"));
+        crate::scene::observed::apply(&decode_snapshot(&logout_bytes).expect("logout"));
         input.tick = 6;
         input.ingame = true;
         let (login_bytes, _) =
             encode_snapshot_delta_with_native(Some(&fp), &input, native(700), false);
         let login = decode_snapshot(&login_bytes).expect("login");
         assert!(!login.has_side_modal_id());
-        crate::observed::apply(&login);
+        crate::scene::observed::apply(&login);
         assert_eq!(
-            crate::observed::with(side),
+            crate::scene::observed::with(side),
             (Some(700), None),
             "a prior session's root is not this session's observation"
         );
@@ -7987,6 +8123,8 @@ pub(crate) mod tests {
                 allow_teleports: true,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 9,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -8000,6 +8138,8 @@ pub(crate) mod tests {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 0,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -8035,6 +8175,8 @@ pub(crate) mod tests {
                 allow_teleports: false,
                 allow_wilderness: true,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: Some(false),
                 request_id: 11,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -8048,6 +8190,8 @@ pub(crate) mod tests {
                 allow_teleports: true,
                 allow_wilderness: false,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: Some(true),
+                allow_quest_start: None,
                 request_id: 12,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -8055,6 +8199,46 @@ pub(crate) mod tests {
         ];
         let bytes = encode_interact_batch(&reqs);
         assert_eq!(decode_interact_batch(&bytes).expect("decode"), reqs);
+    }
+
+    #[test]
+    fn walk_prerequisite_overrides_roundtrip_without_collapsing_inherit_and_forbid() {
+        for allow_prereq_dialogue in [None, Some(false), Some(true)] {
+            for allow_quest_start in [None, Some(false), Some(true)] {
+                let reqs = [
+                    InteractReq::Walk {
+                        x: 3100,
+                        z: 3525,
+                        level: 0,
+                        allow_teleports: false,
+                        allow_wilderness: false,
+                        allow_bank_fetch: false,
+                        allow_prereq_dialogue,
+                        allow_quest_start,
+                        request_id: 11,
+                        avoid: Vec::new(),
+                        cross: Vec::new(),
+                    },
+                    InteractReq::WalkNear {
+                        x: 3222,
+                        z: 3222,
+                        level: 0,
+                        radius: 2,
+                        compat_tile_intent: true,
+                        allow_teleports: false,
+                        allow_wilderness: false,
+                        allow_bank_fetch: false,
+                        allow_prereq_dialogue,
+                        allow_quest_start,
+                        request_id: 12,
+                        avoid: Vec::new(),
+                        cross: Vec::new(),
+                    },
+                ];
+                let bytes = encode_interact_batch(&reqs);
+                assert_eq!(decode_interact_batch(&bytes).expect("decode"), reqs);
+            }
+        }
     }
 
     #[test]
@@ -8097,6 +8281,8 @@ pub(crate) mod tests {
                 allow_teleports: false,
                 allow_wilderness: false,
                 allow_bank_fetch: false,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id: 7,
                 avoid: Vec::new(),
                 cross: Vec::new(),
@@ -9366,7 +9552,7 @@ pub(crate) mod tests {
 
     #[test]
     fn typed_seat_batch_round_trips_starts_controls_and_physical_lineage() {
-        use script::shim::InteractReq;
+        use script::interact::InteractReq;
 
         let stamp = |raw| {
             RequestStamp::new(
@@ -10534,7 +10720,7 @@ pub(crate) mod tests {
 
     #[test]
     fn seat_batch_vector_and_binary_bounds_are_enforced() {
-        use script::shim::InteractReq;
+        use script::interact::InteractReq;
 
         let stamp = |raw| {
             RequestStamp::new(
@@ -10729,7 +10915,7 @@ pub(crate) mod tests {
     }
     #[test]
     fn seat_mirror_owner_and_lineage_collision_is_rejected() {
-        use script::shim::InteractReq;
+        use script::interact::InteractReq;
 
         let id = RequestId::from_raw(41).expect("shared request id");
         let request = InteractReq::Close;
@@ -10761,7 +10947,7 @@ pub(crate) mod tests {
 
     #[test]
     fn seat_batch_decoder_rejects_missing_lineage_and_unknown_enums() {
-        use script::shim::InteractReq;
+        use script::interact::InteractReq;
 
         let legacy = encode_interact_batch(&[InteractReq::Close]);
         assert!(decode_seat_interact_batch(&legacy)

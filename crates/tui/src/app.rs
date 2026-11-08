@@ -490,6 +490,8 @@ pub(crate) struct PendingSettings {
     pub(crate) teleports: bool,
     pub(crate) wilderness: bool,
     pub(crate) bank_fetch: bool,
+    pub(crate) prereq_dialogue: bool,
+    pub(crate) quest_start: bool,
     pub(crate) danger: bool,
     pub(crate) scope_ack: bool,
     pub(crate) survivable_ack: bool,
@@ -617,6 +619,11 @@ pub struct TuiApp {
     pub pause_script_on_manual_walk_abort: bool,
     /// The global manual-movement pause preference changed; the session persists it.
     pub pause_script_on_manual_walk_abort_dirty: bool,
+    /// The global "Start fights with players" setting (`pvp.start_fights`):
+    /// what the popup row shows, with a click waiting for its saved value.
+    pub pvp_start_fights: frontend_core::PvpSettingView,
+    /// The popup set the row; the session submits this value (`SetPvpStartFights`).
+    pub pvp_start_fights_request: Option<bool>,
     shared_preferences: Option<frontend_core::UiPreferences>,
     /// Which saved settings have a write the core still holds pending
     /// (copied from the core each pump): their drafts stay the operator's.
@@ -633,6 +640,11 @@ pub struct TuiApp {
     pub script_queued: bool,
     /// The focused profile's script heading; Start keys on `(source, name)`.
     pub script_sel: Option<ScriptChoice>,
+    /// Immutable versioned disclosure received from frontend-core.
+    pub(crate) quester_start_zones:
+        Option<Arc<Result<frontend_core::scripts::QuesterStartZones, String>>>,
+    /// Vertical scroll through the complete pre-start disclosure.
+    pub(crate) quester_start_zone_scroll: u16,
     /// The operator picked a card in Browse since the last pump: the
     /// binary records it as the focused profile's pending selection.
     pub browse_changed: bool,
@@ -762,6 +774,8 @@ impl TuiApp {
             quester_paths_dirty: false,
             pause_script_on_manual_walk_abort: true,
             pause_script_on_manual_walk_abort_dirty: false,
+            pvp_start_fights: frontend_core::PvpSettingView::default(),
+            pvp_start_fights_request: None,
             shared_preferences: None,
             pending: PendingSettings::default(),
             setting_feedback: Vec::new(),
@@ -792,6 +806,8 @@ impl TuiApp {
             script_load_sel: 0,
             #[cfg(feature = "js")]
             script_load_last_dir: None,
+            quester_start_zones: None,
+            quester_start_zone_scroll: 0,
             params_schema: OwnedSchema::default(),
             params_unavailable: None,
             params_bag: serde_json::Map::new(),
@@ -852,6 +868,8 @@ impl TuiApp {
             NavPreference::AllowTeleports => self.pending.teleports,
             NavPreference::AllowWilderness => self.pending.wilderness,
             NavPreference::AllowBankFetch => self.pending.bank_fetch,
+            NavPreference::AllowPrereqDialogue => self.pending.prereq_dialogue,
+            NavPreference::AllowQuestStart => self.pending.quest_start,
             NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
                 self.pending.danger
             }
@@ -930,6 +948,10 @@ impl TuiApp {
             ),
             WalkGlobalsView::read,
         );
+        if let Some(preferences) = self.shared_preferences.as_ref() {
+            self.pvp_start_fights
+                .adopt(frontend_core::pvp_start_fights(preferences).ok());
+        }
         if !self.preferences_adopted && self.shared_preferences.is_some() {
             self.walk_permissions = view;
         } else {
@@ -978,6 +1000,16 @@ impl TuiApp {
                 self.holds(NavPreference::SurvivableRouting),
                 self.nav.survivable_routing(),
                 next.survivable_routing(),
+            ),
+            keep(
+                self.holds(NavPreference::AllowPrereqDialogue),
+                self.nav.allow_prereq_dialogue(),
+                next.allow_prereq_dialogue(),
+            ),
+            keep(
+                self.holds(NavPreference::AllowQuestStart),
+                self.nav.allow_quest_start(),
+                next.allow_quest_start(),
             ),
         );
         self.script_scope_notice_ack = keep(
@@ -1958,18 +1990,8 @@ impl TuiApp {
         }
     }
 
-    /// The script pane's clicks: a button runs its command, picker rows store
-    /// the selection.
-    pub(crate) fn script_click(&mut self, col: u16, row: u16) -> AppAction {
-        #[cfg(feature = "js")]
-        {
-            if self.script_load_open {
-                return self.load_click(col, row);
-            }
-            if self.rs2b0t_catalog_open {
-                return self.catalog_click(col, row);
-            }
-        }
+    /// Build the shared script-pane view, including the selected zone scope.
+    pub(crate) fn script_pane(&self) -> ScriptPane<'_> {
         let pane = ScriptPane::new(
             self.script_state,
             self.script_sel.as_ref(),
@@ -1984,6 +2006,61 @@ impl TuiApp {
             self.script_load_open,
             self.reload_confirm,
         );
+        let view = self.quester_start_zones.as_deref().map(|view| match view {
+            Ok(zones) => Ok(zones),
+            Err(reason) => Err(reason.as_str()),
+        });
+        pane.with_start_zone_view(view, self.quester_start_zone_scroll)
+    }
+
+    pub(crate) fn set_quester_start_zone_view(
+        &mut self,
+        view: Option<Arc<Result<frontend_core::scripts::QuesterStartZones, String>>>,
+    ) {
+        self.quester_start_zones = view;
+    }
+
+    pub(crate) fn scroll_quester_start_zones(&mut self, delta: i32) -> bool {
+        let selected_quester = self.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
+            == Some(frontend_core::scripts::CompiledCardId::QUESTER);
+        #[cfg(feature = "js")]
+        let load_open = self.script_load_open;
+        #[cfg(not(feature = "js"))]
+        let load_open = false;
+        if !selected_quester
+            || !matches!(
+                self.script_state,
+                ScriptRunState::Idle | ScriptRunState::Error
+            )
+            || self.script_browse_open
+            || load_open
+            || self.quester_start_zones.is_none()
+        {
+            return false;
+        }
+        let max = self.script_pane().max_vertical_scroll(self.script_area);
+        if max == 0 {
+            return false;
+        }
+        self.quester_start_zone_scroll = i32::from(self.quester_start_zone_scroll)
+            .saturating_add(delta)
+            .clamp(0, i32::from(max)) as u16;
+        true
+    }
+
+    /// The script pane's clicks: a button runs its command, picker rows store
+    /// the selection.
+    pub(crate) fn script_click(&mut self, col: u16, row: u16) -> AppAction {
+        #[cfg(feature = "js")]
+        {
+            if self.script_load_open {
+                return self.load_click(col, row);
+            }
+            if self.rs2b0t_catalog_open {
+                return self.catalog_click(col, row);
+            }
+        }
+        let pane = self.script_pane();
         match pane.on_click(self.script_area, col, row) {
             ScriptClick::Button(label) => {
                 script_command(label).map_or(AppAction::None, |command| self.run_command(command))
@@ -1995,6 +2072,7 @@ impl TuiApp {
                 if let Some(card) = self.script_cards.get(idx) {
                     self.script_sel = card_selection(card);
                     self.browse_changed = true;
+                    self.script_browse_open = false;
                 }
                 AppAction::None
             }
@@ -2014,15 +2092,25 @@ impl TuiApp {
                     AppAction::None
                 }
             }
-            Command::ScriptStart => match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
-                Some(sel) => AppAction::ScriptStart(sel),
-                None => AppAction::Refused(Refusal {
-                    command: Some(OperatorCommand::StartScript),
-                    bot: self.focused_name(),
-                    reason: "script: browse to pick one first".into(),
-                    need: Unavailable::NoScriptPicked.need(),
-                }),
-            },
+            Command::ScriptStart => {
+                let quester_selected = self.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
+                    == Some(frontend_core::scripts::CompiledCardId::QUESTER);
+                if quester_selected && self.script_browse_open {
+                    // Browse covers Quester's shared pre-start zone disclosure.
+                    self.script_browse_open = false;
+                    AppAction::None
+                } else {
+                    match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
+                        Some(sel) => AppAction::ScriptStart(sel),
+                        None => AppAction::Refused(Refusal {
+                            command: Some(OperatorCommand::StartScript),
+                            bot: self.focused_name(),
+                            reason: "script: browse to pick one first".into(),
+                            need: Unavailable::NoScriptPicked.need(),
+                        }),
+                    }
+                }
+            }
             Command::ScriptPause => AppAction::ScriptPause,
             Command::ScriptStop => AppAction::ScriptStop,
             #[cfg(feature = "js")]
@@ -2439,21 +2527,8 @@ impl TuiApp {
                 .render(inner, frame.buffer_mut());
             return;
         }
-        let pane = ScriptPane::new(
-            self.script_state,
-            self.script_sel.as_ref(),
-            &self.script_cards,
-            &self.script_category_order,
-            self.script_browse_open,
-            !self.params_schema.as_ref().is_empty(),
-        );
-        #[cfg(feature = "js")]
-        let pane = pane.with_js_controls(
-            frontend_core::scripts::paths::rs2b0t_import_deferred(),
-            self.script_load_open,
-            self.reload_confirm,
-        );
-        let pane = pane
+        let pane = self
+            .script_pane()
             .with_native_status(
                 self.focused_detail()
                     .and_then(|detail| detail.native_status()),

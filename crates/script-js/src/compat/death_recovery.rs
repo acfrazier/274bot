@@ -15,10 +15,10 @@
 //!   `walkBack` or a walk to the anchor. Neither result is read.
 
 use crate::machine::{self, Begin, Call, Cx, Family, Reply, Step};
-use crate::observed::{self, ChatLine};
-use crate::reach_query::arrived;
+use crate::materialize::reach_query::arrived;
+use crate::scene::observed::{self, ChatLine};
 use api::snapshot::WorldTile as Tile;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde::Deserialize;
 use serde_json::Value;
 use std::cell::RefCell;
@@ -276,6 +276,8 @@ impl Family for DeathRecovery {
                         request_id: 0,
                         avoid: Vec::new(),
                         cross: Vec::new(),
+                        allow_prereq_dialogue: None,
+                        allow_quest_start: None,
                     });
                     self.phase = Phase::Walking;
                     return Step::Wait;
@@ -365,7 +367,7 @@ mod tests {
 
         fn call(
             &mut self,
-            _hook: Option<&crate::callback_v8::HeldCallback>,
+            _hook: Option<&crate::materialize::callback_v8::HeldCallback>,
             _args: &[Value],
         ) -> machine::Called {
             panic!("no hooks were passed");
@@ -458,7 +460,10 @@ mod tests {
     }
 
     fn post_at(tick: u64, here: Tile, view: &api::query::ReachQueryView) {
-        use crate::wire::{encode_snapshot, ReachViewInput, Snapshot, TileInput};
+        use {
+            crate::wire::{encode_snapshot, Snapshot},
+            script::native::snapshot_source::{ReachViewInput, TileInput},
+        };
         let mut input = crate::wire::tests::empty_input(tick);
         input.here = Some(TileInput {
             x: here.x,
@@ -484,7 +489,7 @@ mod tests {
         let bytes = encode_snapshot(&input);
         let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         observed::apply(&snap);
-        crate::reach_query::apply(&snap);
+        crate::materialize::reach_query::apply(&snap);
     }
 
     /// A walk that ends within Chebyshev `radius` of the anchor but not
@@ -494,7 +499,7 @@ mod tests {
     fn a_walk_ending_near_but_not_arrived_recovers_at_the_next_validate() {
         machine::on_reset();
         observed::on_reset();
-        crate::reach_query::on_reset();
+        crate::materialize::reach_query::on_reset();
         on_reset();
         let here = Tile {
             x: 2820,

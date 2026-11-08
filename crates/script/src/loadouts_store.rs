@@ -479,15 +479,15 @@ impl ResolvedSettingOptions {
 /// options resolve from borrowed selected facts without mutating the schema.
 /// Recognized imported catalog tables are a last-resort host metadata lookup.
 /// W1c equipment idents resolve from borrowed `equipment_names` facts; `AXES`
-/// / `DROP_DB` stay empty. `gather:<skill>` resolves from the pinned
-/// `gather_resources` slice and `named-banks` from the frozen `BANK_CATALOG`.
-/// `gatherer-teleports` combines a literal `Off` with available selected spell facts.
+/// / `DROP_DB` stay empty. `gather:<skill>` resolves from the selected
+/// `gather_resources` slice; named banks, bank locations and cook locations use
+/// their typed API catalogues. `gatherer-teleports` combines a literal `Off` with available selected spell facts.
 pub fn resolve_setting_options(
     def: &crate::card::SettingDef,
     loadouts: &LoadoutsStore,
     game_data: Option<&api::game_data::SelectedGameData>,
-) -> Vec<String> {
-    resolve_setting_options_with_labels(def, loadouts, game_data).values
+) -> Result<Vec<String>, api::selected::FactError> {
+    Ok(resolve_setting_options_with_labels(def, loadouts, game_data)?.values)
 }
 
 /// Like [`resolve_setting_options`], with parallel identity labels for UI.
@@ -495,7 +495,7 @@ pub fn resolve_setting_options_with_labels(
     def: &crate::card::SettingDef,
     loadouts: &LoadoutsStore,
     game_data: Option<&api::game_data::SelectedGameData>,
-) -> ResolvedSettingOptions {
+) -> Result<ResolvedSettingOptions, api::selected::FactError> {
     let mixed_equipment_options = def.options.last().is_some_and(|s| s == "Other")
         && def.options_from.as_deref().is_some_and(|from| {
             from.split(',')
@@ -508,13 +508,13 @@ pub fn resolve_setting_options_with_labels(
             Some("named-banks" | "gatherer-teleports")
         )
     {
-        return inline_setting_options(def);
+        return Ok(inline_setting_options(def));
     }
     if def.options_from.as_deref() == Some("loadouts") {
-        return ResolvedSettingOptions::from_values(loadouts.names());
+        return Ok(ResolvedSettingOptions::from_values(loadouts.names()));
     }
     if let Some(spec) = def.item_option_spec.as_ref() {
-        return resolve_item_option_spec(spec, game_data);
+        return Ok(resolve_item_option_spec(spec, game_data));
     }
     if let Some(from) = def.options_from.as_deref() {
         if from
@@ -531,32 +531,32 @@ pub fn resolve_setting_options_with_labels(
                 resolved.values.push(literal.clone());
                 resolved.labels.push(literal.clone());
             }
-            return resolved;
+            return Ok(resolved);
         }
         if from == "FOOD_OPTIONS" {
-            return resolve_food_options(game_data);
+            return Ok(resolve_food_options(game_data));
         }
         if from == "gatherer-food" {
-            return resolve_gatherer_food_options(game_data);
+            return Ok(resolve_gatherer_food_options(game_data));
         }
         if crate::card::is_revision_fact_option_ident(from) {
-            return resolve_w1c_equipment_options(from, game_data);
+            return Ok(resolve_w1c_equipment_options(from, game_data));
         }
         if from == "gather:sites" {
             // Site eligibility depends on the settings bag, owned by frontend-core.
-            return ResolvedSettingOptions::default();
+            return Ok(ResolvedSettingOptions::default());
         }
         if let Some(skill) = from.strip_prefix("gather:") {
-            return resolve_gather_options(skill, game_data);
+            return Ok(resolve_gather_options(skill, game_data));
         }
         if from == "named-banks" {
             let mut values = def.options.clone();
             values.extend(
-                api::named_banks::BANK_CATALOG
+                api::named_banks::bank_catalog()?
                     .iter()
-                    .map(|bank| bank.name.to_string()),
+                    .map(|bank| bank.name.to_owned()),
             );
-            return ResolvedSettingOptions::from_values(values);
+            return Ok(ResolvedSettingOptions::from_values(values));
         }
         if from == "gatherer-teleports" {
             let mut values = def.options.clone();
@@ -570,15 +570,13 @@ pub fn resolve_setting_options_with_labels(
                     }
                 }
             }
-            return ResolvedSettingOptions::from_values(values);
+            return Ok(ResolvedSettingOptions::from_values(values));
         }
-        if let Some(table) = crate::card::catalog_option_table(from) {
-            return ResolvedSettingOptions::from_values(
-                table.iter().map(|s| (*s).to_string()).collect(),
-            );
+        if let Some(table) = crate::card::catalog_option_table(from)? {
+            return Ok(ResolvedSettingOptions::from_values(table.to_vec()));
         }
     }
-    ResolvedSettingOptions::default()
+    Ok(ResolvedSettingOptions::default())
 }
 
 fn inline_setting_options(def: &crate::card::SettingDef) -> ResolvedSettingOptions {
@@ -1283,6 +1281,9 @@ mod tests {
 
     #[test]
     fn copy_equipment_keeps_supplies_and_unknown_gear() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut loadout = Loadout::new("melee").with_carry("Lobster", 8);
         copy_equipment_preserving_supplies(
             &mut loadout,
@@ -1299,6 +1300,9 @@ mod tests {
 
     #[test]
     fn catalog_metadata_options_when_schema_empty() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = SettingDef {
             id: "location".into(),
@@ -1317,7 +1321,7 @@ mod tests {
             help: None,
             item_option_spec: None,
         };
-        let opts = resolve_setting_options(&def, &store, None);
+        let opts = resolve_setting_options(&def, &store, None).unwrap();
         assert!(opts.contains(&"Catherby".into()), "{opts:?}");
         assert!(opts.contains(&"Auto".into()), "{opts:?}");
         assert!(opts.contains(&"Custom".into()), "{opts:?}");
@@ -1345,12 +1349,18 @@ mod tests {
 
     #[test]
     fn food_options_follow_selected_fixed_heal_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = equipment_from("FOOD_OPTIONS");
-        assert!(resolve_setting_options(&def, &store, None).is_empty());
+        assert!(resolve_setting_options(&def, &store, None)
+            .unwrap()
+            .is_empty());
 
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-        let options = resolve_setting_options_with_labels(&def, &store, Some(data.as_ref()));
+        let options =
+            resolve_setting_options_with_labels(&def, &store, Some(data.as_ref())).unwrap();
         assert!(options.values.contains(&"Lobster".to_string()));
         assert!(options.values.contains(&"Shark".to_string()));
         assert!(options.values.contains(&"Chocolaty milk".to_string()));
@@ -1372,15 +1382,19 @@ mod tests {
 
     #[test]
     fn gatherer_food_options_start_with_none_and_inline_labels_are_preserved() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let food = equipment_from("gatherer-food");
-        let no_facts = resolve_setting_options_with_labels(&food, &store, None);
+        let no_facts = resolve_setting_options_with_labels(&food, &store, None).unwrap();
         assert!(
             no_facts.is_empty(),
             "dynamic food options need selected facts"
         );
-        let food_options = resolve_setting_options_with_labels(&food, &store, Some(data.as_ref()));
+        let food_options =
+            resolve_setting_options_with_labels(&food, &store, Some(data.as_ref())).unwrap();
         assert_eq!(food_options.values.first().map(String::as_str), Some(""));
         assert_eq!(
             food_options.labels.first().map(String::as_str),
@@ -1394,7 +1408,7 @@ mod tests {
         inline.options = vec!["quest_id".into()];
         inline.option_labels = vec!["Quest display name".into()];
         inline.options_from = None;
-        let inline_options = resolve_setting_options_with_labels(&inline, &store, None);
+        let inline_options = resolve_setting_options_with_labels(&inline, &store, None).unwrap();
         assert_eq!(inline_options.values, ["quest_id"]);
         assert_eq!(inline_options.labels, ["Quest display name"]);
     }
@@ -1402,12 +1416,21 @@ mod tests {
     fn w1c_equipment_options_closed_without_game_data() {
         let store = LoadoutsStore::default();
         let def = equipment_from("STAFFS");
-        assert!(resolve_setting_options(&def, &store, None).is_empty());
-        assert!(resolve_setting_options(&equipment_from("AXES"), &store, None).is_empty());
+        assert!(resolve_setting_options(&def, &store, None)
+            .unwrap()
+            .is_empty());
+        assert!(
+            resolve_setting_options(&equipment_from("AXES"), &store, None)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
     fn w1c_equipment_options_match_curated_families_on_both_pins() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -1420,8 +1443,8 @@ mod tests {
             "MELEE_WEAPONS",
         ] {
             let def = equipment_from(ident);
-            let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref()));
-            let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref()));
+            let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref())).unwrap();
+            let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref())).unwrap();
             assert_eq!(a, b, "{ident} must match across pins");
             assert_eq!(a.values.len(), a.labels.len());
             assert!(!a.values.is_empty(), "{ident} must have resolved rows");
@@ -1430,7 +1453,8 @@ mod tests {
             &equipment_from("STAFFS"),
             &store,
             Some(r274.as_ref()),
-        );
+        )
+        .unwrap();
         assert_eq!(staffs.values.len(), 15);
         assert_eq!(staffs.values[0], "Staff");
         assert_eq!(
@@ -1439,13 +1463,15 @@ mod tests {
         );
         assert_eq!(staffs.label_for("Staff of air"), "Staff of air");
 
-        let bows = resolve_setting_options(&equipment_from("BOWS"), &store, Some(r274.as_ref()));
+        let bows =
+            resolve_setting_options(&equipment_from("BOWS"), &store, Some(r274.as_ref())).unwrap();
         assert_eq!(bows.len(), 12);
         assert_eq!(bows[0], "Shortbow");
         assert_eq!(bows.last().map(String::as_str), Some("Magic longbow"));
 
         let crossbows =
-            resolve_setting_options(&equipment_from("CROSSBOWS"), &store, Some(r274.as_ref()));
+            resolve_setting_options(&equipment_from("CROSSBOWS"), &store, Some(r274.as_ref()))
+                .unwrap();
         assert_eq!(crossbows, vec!["Crossbow".to_string()]);
         assert!(
             !crossbows.iter().any(|n| n.contains("Karil")),
@@ -1453,14 +1479,16 @@ mod tests {
         );
 
         let arrows =
-            resolve_setting_options(&equipment_from("ARROWS"), &store, Some(r274.as_ref()));
+            resolve_setting_options(&equipment_from("ARROWS"), &store, Some(r274.as_ref()))
+                .unwrap();
         assert_eq!(arrows.len(), 6);
         assert!(
             !arrows.iter().any(|n| n == "Dragon arrow"),
             "Dragon arrow is absent under exact join: {arrows:?}"
         );
 
-        let bolts = resolve_setting_options(&equipment_from("BOLTS"), &store, Some(r274.as_ref()));
+        let bolts =
+            resolve_setting_options(&equipment_from("BOLTS"), &store, Some(r274.as_ref())).unwrap();
         assert!(
             bolts.is_empty(),
             "bolt tiers stay absent; generic Bolts must not be invented: {bolts:?}"
@@ -1470,7 +1498,8 @@ mod tests {
             &equipment_from("RANGED_WEAPONS"),
             &store,
             Some(r274.as_ref()),
-        );
+        )
+        .unwrap();
         assert_eq!(ranged.values.len(), 19, "12 bows + 7 darts");
         assert_eq!(ranged.values[0], "Shortbow");
         assert_eq!(ranged.values[12], "Bronze dart");
@@ -1478,15 +1507,18 @@ mod tests {
             &equipment_from("ROCK_CRAB_RANGED_WEAPONS"),
             &store,
             Some(r274.as_ref()),
-        );
+        )
+        .unwrap();
         assert_eq!(rock, ranged.values);
 
         assert!(
             resolve_setting_options(&equipment_from("AXES"), &store, Some(r274.as_ref()))
+                .unwrap()
                 .is_empty()
         );
         assert!(
             resolve_setting_options(&equipment_from("DROP_DB"), &store, Some(r274.as_ref()))
+                .unwrap()
                 .is_empty()
         );
     }
@@ -1512,7 +1544,7 @@ mod tests {
             item_option_spec: None,
         };
         assert_eq!(
-            resolve_setting_options(&def, &store, None),
+            resolve_setting_options(&def, &store, None).unwrap(),
             vec!["Range".to_string(), "Fire".to_string()]
         );
     }
@@ -1539,7 +1571,7 @@ mod tests {
             help: None,
             item_option_spec: None,
         };
-        let opts = resolve_setting_options(&def, &store, None);
+        let opts = resolve_setting_options(&def, &store, None).unwrap();
         assert_eq!(opts, vec!["fish", "mine"]);
     }
 
@@ -1659,12 +1691,15 @@ mod tests {
 
     #[test]
     fn resolve_item_options_matches_both_pinned_revisions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-        let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref()));
-        let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref()));
+        let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref())).unwrap();
+        let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref())).unwrap();
         assert_eq!(
             a.values.iter().map(String::as_str).collect::<Vec<_>>(),
             FAITHFUL_ALCH_OPTIONS
@@ -1689,6 +1724,9 @@ mod tests {
 
     #[test]
     fn resolve_item_options_label_sort_orders_prefix_then_keys_on_both_pins() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let spec = ItemOptionSpec {
             prefix: vec!["custom".into()],
@@ -1703,8 +1741,8 @@ mod tests {
         let def = item_def(spec);
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-        let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref()));
-        let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref()));
+        let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref())).unwrap();
+        let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref())).unwrap();
         let want_keys = [
             "custom",
             "dragonhide_body",
@@ -1739,17 +1777,20 @@ mod tests {
     fn resolve_item_options_none_facts_prefix_only() {
         let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
-        let opts = resolve_setting_options(&def, &store, None);
+        let opts = resolve_setting_options(&def, &store, None).unwrap();
         assert_eq!(opts, vec!["custom".to_string()]);
         assert!(!opts.iter().any(|k| k == "maple_longbow"));
     }
 
     #[test]
     fn resolve_item_options_drops_missing_alias_and_keeps_sort() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[cand("not_a_real_selected_item", None)]));
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-        let opts = resolve_setting_options(&def, &store, Some(data.as_ref()));
+        let opts = resolve_setting_options(&def, &store, Some(data.as_ref())).unwrap();
         assert!(!opts.iter().any(|k| k == "not_a_real_selected_item"));
         assert_eq!(
             opts.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -1759,10 +1800,14 @@ mod tests {
 
     #[test]
     fn resolve_item_options_tie_order_and_identity_labels() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-        let resolved = resolve_setting_options_with_labels(&def, &store, Some(data.as_ref()));
+        let resolved =
+            resolve_setting_options_with_labels(&def, &store, Some(data.as_ref())).unwrap();
         let two_h = resolved
             .values
             .iter()
@@ -1792,13 +1837,16 @@ mod tests {
 
     #[test]
     fn resolve_item_options_rebounds_without_mutating_schema() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let def = item_def(alcher_spec(&[]));
         let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-        let none = resolve_setting_options(&def, &store, None);
-        let a = resolve_setting_options(&def, &store, Some(r274.as_ref()));
-        let b = resolve_setting_options(&def, &store, Some(r289.as_ref()));
+        let none = resolve_setting_options(&def, &store, None).unwrap();
+        let a = resolve_setting_options(&def, &store, Some(r274.as_ref())).unwrap();
+        let b = resolve_setting_options(&def, &store, Some(r289.as_ref())).unwrap();
         assert_eq!(none, vec!["custom".to_string()]);
         assert_eq!(a, b);
         assert!(def.options.is_empty());
@@ -1807,6 +1855,9 @@ mod tests {
 
     #[test]
     fn resolve_item_options_leaves_literals_and_loadouts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut store = LoadoutsStore::default();
         store.upsert(Loadout::new("fish"));
         let literal = SettingDef {
@@ -1828,7 +1879,7 @@ mod tests {
         };
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         assert_eq!(
-            resolve_setting_options(&literal, &store, Some(data.as_ref())),
+            resolve_setting_options(&literal, &store, Some(data.as_ref())).unwrap(),
             vec!["Logs".to_string(), "Oak logs".to_string()],
             "inline options win over item spec"
         );
@@ -1874,7 +1925,6 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "schema_version": 5,
             "revision": 289,
-            "provenance": {"cache_identity": {"cache_id": "x"}, "inputs": [], "content_inputs": [], "decoder_sources": []},
             "items": [],
             "consumption": [],
             "pickpocket": [],
@@ -1896,7 +1946,8 @@ mod tests {
             &equipment_from("gather:mining"),
             &store,
             Some(&data),
-        );
+        )
+        .unwrap();
         assert_eq!(
             mining.values,
             vec!["copper".to_string(), "iron".to_string()]
@@ -1909,7 +1960,8 @@ mod tests {
             &equipment_from("gather:woodcutting"),
             &store,
             Some(&data),
-        );
+        )
+        .unwrap();
         assert_eq!(jungle.values, vec!["jungle".to_string()]);
         assert_eq!(
             jungle.labels,
@@ -1919,7 +1971,8 @@ mod tests {
             &equipment_from("gather:fishing"),
             &store,
             Some(&data),
-        );
+        )
+        .unwrap();
         assert_eq!(
             fishing.values,
             vec!["fishing.net.tool_303.products_317_321".to_string()]
@@ -1932,8 +1985,15 @@ mod tests {
 
     #[test]
     fn resolve_gather_options_empty_without_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
-        assert!(resolve_setting_options(&equipment_from("gather:mining"), &store, None).is_empty());
+        assert!(
+            resolve_setting_options(&equipment_from("gather:mining"), &store, None)
+                .unwrap()
+                .is_empty()
+        );
         let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
         assert!(
             resolve_setting_options(
@@ -1941,6 +2001,7 @@ mod tests {
                 &store,
                 Some(data.as_ref())
             )
+            .unwrap()
             .is_empty(),
             "an unknown skill is no options, never the whole slice"
         );
@@ -1948,13 +2009,17 @@ mod tests {
 
     #[test]
     fn resolve_named_banks_keeps_nearest_before_catalog_names() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let mut def = equipment_from("named-banks");
         def.options.push("Nearest".into());
-        let banks = resolve_setting_options(&def, &store, None);
+        let banks = resolve_setting_options(&def, &store, None).unwrap();
         let mut expected = vec!["Nearest".to_string()];
         expected.extend(
-            api::named_banks::BANK_CATALOG
+            api::named_banks::bank_catalog()
+                .unwrap()
                 .iter()
                 .map(|bank| bank.name.to_string()),
         );
@@ -1963,11 +2028,15 @@ mod tests {
 
     #[test]
     fn resolve_gatherer_teleports_uses_only_available_selected_spell_facts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let store = LoadoutsStore::default();
         let mut def = equipment_from("gatherer-teleports");
         def.options.push("Off".into());
         let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-        let resolved = resolve_setting_options_with_labels(&def, &store, Some(data.as_ref()));
+        let resolved =
+            resolve_setting_options_with_labels(&def, &store, Some(data.as_ref())).unwrap();
         let mut expected = vec!["Off".to_string()];
         for spell in data.teleports().iter().filter(|spell| spell.available()) {
             if !expected
@@ -1980,7 +2049,7 @@ mod tests {
         assert_eq!(resolved.values, expected);
         assert_eq!(resolved.labels, expected);
 
-        let no_facts = resolve_setting_options_with_labels(&def, &store, None);
+        let no_facts = resolve_setting_options_with_labels(&def, &store, None).unwrap();
         assert_eq!(no_facts.values, ["Off"]);
     }
 }

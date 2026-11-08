@@ -25,6 +25,7 @@ pub(crate) mod retreat_spot;
 pub(crate) mod route_inspect;
 pub(crate) mod script_basics;
 pub(crate) mod shop;
+pub(crate) mod survival_need;
 pub(crate) mod walk_spot;
 
 pub(crate) use acquire_key::acquire_key_v2_scenario;
@@ -48,6 +49,7 @@ pub(crate) use guardian_events::{
     guardian_skill_tree_spirit_scenario, guardian_skill_watchman_scenario,
     guardian_skill_whirlpool_scenario, guardian_skill_zombie_scenario,
 };
+pub(crate) use survival_need::survival_need_scenario;
 
 pub(crate) use boat_fare::{
     boat_fare_far_start_v1_scenario, boat_fare_reconnect_v1_scenario, boat_fare_v1_scenario,

@@ -1,5 +1,4 @@
 use super::*;
-use sha2::{Digest, Sha256};
 use std::path::Component;
 
 fn normalized_path(path: &Path) -> PathBuf {
@@ -53,7 +52,7 @@ impl ProfileOptions {
         }
         let home = env.home.clone().unwrap_or_default();
         let bot_dir = home.join(".274bot");
-        let servers = crate::Servers::load(&bot_dir)?;
+        let servers = crate::Servers::load(&bot_dir).map_err(|error| error.to_string())?;
         if self.profile.is_some() && self.rs2b2t {
             return Err("--rs2b2t conflicts with --profile".into());
         }
@@ -232,7 +231,7 @@ impl ProfileOptions {
                 working_dir.join(path)
             }
         };
-        let engine_dir = engine_dir.map(&absolute).unwrap_or_default();
+        let engine_dir = engine_dir.map(absolute).unwrap_or_default();
         let content_dir = absolute(content_dir);
         let unpack_dir = absolute(unpack_dir);
         validate_unpack_root(&unpack_dir, &engine_dir, &content_dir)?;
@@ -287,11 +286,6 @@ impl ProfileOptions {
                 .clone()
                 .or_else(|| env.catalog_root.clone())
                 .map(absolute),
-            cache_manifest: self
-                .cache_manifest
-                .clone()
-                .or_else(|| env.cache_manifest.clone())
-                .map(absolute),
             rsa_modulus: env.rsa_modulus.clone(),
             rsa_exponent: env.rsa_exponent.clone(),
             nav_pack_overridden,
@@ -306,8 +300,6 @@ impl ProfileOptions {
 struct GuardedLocalWorld {
     members: bool,
     path: PathBuf,
-    sha256: String,
-    bytes: u64,
 }
 
 fn parse_guarded_local_world(revision: u16, engine_dir: &Path) -> Option<GuardedLocalWorld> {
@@ -318,13 +310,7 @@ fn parse_guarded_local_world(revision: u16, engine_dir: &Path) -> Option<Guarded
         return None;
     }
     let members = value.get("node")?.get("members")?.as_bool()?;
-    let digest: [u8; 32] = Sha256::digest(&bytes).into();
-    Some(GuardedLocalWorld {
-        members,
-        path,
-        sha256: nav_planner::pack::sha256_hex(&digest),
-        bytes: bytes.len() as u64,
-    })
+    Some(GuardedLocalWorld { members, path })
 }
 
 fn resolve_world_members(
@@ -343,8 +329,6 @@ fn resolve_world_members(
             members: guarded.members,
             source: WorldMembersSource::LocalWorldJson {
                 path: guarded.path.clone(),
-                sha256: guarded.sha256.clone(),
-                bytes: guarded.bytes,
             },
         };
     }

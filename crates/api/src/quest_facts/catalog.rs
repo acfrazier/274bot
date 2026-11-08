@@ -1,6 +1,6 @@
 //! Identity catalog: roster rows only. Stage resolution belongs to the Path.
 
-use crate::game_data::{QuestCoverageRecord, QuestIdentityFacts, QuestIdentityRow};
+use crate::game_data::{QuestCoverageRecord, QuestIdentityFacts, QuestIdentityRow, Transmission};
 use crate::quest_progress::{EvidenceStamp, JournalRead, ProgressError, QuestProgress};
 use crate::selected::{EntityId, FactKey, Knowledge, Requirement, SignalRange, SourceSpan};
 use crate::selected::{FactError, QuestGate, Truth};
@@ -69,10 +69,12 @@ impl QuestCatalog {
         self.rows.iter()
     }
 
-    /// Transmission is not inferred from identity. Live varp table membership
-    /// is the Window authority (design §14 N1).
-    pub fn transmission(&self, _signal: &FactKey) -> Transmission {
-        Transmission::Unknown
+    /// Transmission comes from the selected varp definition, never from quest color.
+    pub fn transmission(&self, signal: &FactKey) -> Transmission {
+        self.rows
+            .iter()
+            .find(|row| row.varp == *signal)
+            .map_or(Transmission::Unknown, |row| row.transmission)
     }
 
     pub fn resolve(
@@ -101,12 +103,21 @@ fn facts_from_row(row: &QuestIdentityRow) -> QuestFacts {
     };
     QuestFacts {
         id: FactKey::new(&row.id),
+        varp: FactKey::new(&row.varp),
+        varp_id: row.varp_id,
+        complete: row.complete,
+        colour_authoritative: row.colour_authoritative,
+        stage_domain: row.stage_domain,
+        transmission: row.transmission,
         display: Arc::from(row.display.as_str()),
         kind,
         component: Knowledge::Unknown(crate::selected::Gap {
             code: Arc::from("identity-only"),
             sources: Arc::from([]),
         }),
+        progress_signal: (row.varp_id >= 0 && !row.varp.is_empty())
+            .then(|| FactKey::new(&row.varp)),
+        completion_value: (row.complete > 0).then_some(row.complete),
         component_name: Arc::from(row.component.as_str()),
         members: row.members,
         quest_points: row.quest_points,
@@ -134,12 +145,6 @@ pub enum QuestKind {
     Miniquest,
     Stub,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Transmission {
-    PostedByContent,
-    NotTransmitted,
-    Unknown,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -164,9 +169,21 @@ pub struct StageFacts {
 #[serde(deny_unknown_fields)]
 pub struct QuestFacts {
     pub id: FactKey,
+    pub varp: FactKey,
+    pub varp_id: i32,
+    pub complete: i32,
+    pub colour_authoritative: bool,
+    pub stage_domain: Option<crate::selected::InclusiveRange>,
+    pub transmission: Transmission,
     pub display: Arc<str>,
     pub kind: QuestKind,
     pub component: Knowledge<Option<i32>>,
+    /// Content-declared quest varp used by stage windows and quest-list colour.
+    #[serde(default)]
+    pub progress_signal: Option<FactKey>,
+    /// Content's completion constant, which bounds the quest-list in-progress colour.
+    #[serde(default)]
+    pub completion_value: Option<i32>,
     #[serde(default)]
     pub component_name: Arc<str>,
     #[serde(default)]

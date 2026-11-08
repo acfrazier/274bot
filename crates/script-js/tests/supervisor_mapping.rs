@@ -1,8 +1,8 @@
 //! G5: `Supervisor.noteProgress` forwards to `Execution.noteProgress` / host
 //! `note-progress` lifecycle op. RangingGuild import graph after the shim.
 
-use script::shim::InteractReq;
-use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::LoadIsolate;
 use script_js::LoadShape;
 

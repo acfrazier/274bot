@@ -10,7 +10,7 @@ impl NativeOutput for Capture {
     fn status(&mut self, status: ScriptStatus) {
         self.0.push(status);
     }
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, message: &str) {
         self.1.push(message.to_owned());
     }
@@ -59,6 +59,9 @@ fn runemysteries_settings() -> QueueSettings {
 
 #[test]
 fn missing_login_quest_observation_waits_without_gameplay_then_admits() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(cook_settings());
     let mut ledger = None;
     let mut output = Capture::default();
@@ -99,6 +102,9 @@ fn missing_login_quest_observation_waits_without_gameplay_then_admits() {
 
 #[test]
 fn missing_login_quest_observation_times_out_with_recovery_instructions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, snapshot) = fixture(cook_settings());
     let mut ledger = None;
     let mut output = Capture::default();
@@ -114,13 +120,192 @@ fn missing_login_quest_observation_times_out_with_recovery_instructions() {
     assert_eq!(output.0.last().unwrap().phase, NativePhase::Blocked);
     assert!(failure.message.contains("quest"));
     assert!(failure.message.contains("log in"));
-    assert!(failure.message.contains("Stop"));
+    assert!(failure.message.contains("start the Quester again"));
     assert!(ledger
         .as_ref()
         .is_none_or(|ledger| ledger.outbox.is_empty()));
 }
 #[test]
+fn a_parked_queue_row_publishes_its_stage_step_and_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::quester::path::{PredicateDocument, StepDocument};
+
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            name: "Cook's Assistant".into(),
+            component_id: 42,
+            colour: 0xf80000,
+        }],
+        true,
+    );
+    // One root step whose settle can never hold: the run retries it until the
+    // failure streak parks (the runner's settle-timeout policy).
+    let mut document = crate::quester::compile::decode_cook().unwrap();
+    document.quest.as_mut().unwrap().owns_inventory = true;
+    document.roles[0].sequences[0].steps = vec![StepDocument {
+        id: api::selected::FactKey::new("queue-park-step"),
+        kind: "wait".into(),
+        version: 1,
+        args: serde_json::json!({"until":{"All":[]},"max_ticks":100}),
+        comment: None,
+        advances: Some(false),
+        max_attempts: None,
+        stop: None,
+        skip_if: PredicateDocument::Any(vec![]),
+        settle: PredicateDocument::Any(vec![]),
+    }];
+    let path = crate::quester::compile::compile_uncached_for_test(
+        &document,
+        &queued.selected,
+        &queued.quests,
+    )
+    .unwrap();
+    let expected_stage = Arc::clone(&path.colour_not_started.0);
+    let index = queued.queue.next_candidate().expect("selected cook row");
+    assert_eq!(queued.queue.id(index), Some("cook"));
+    queued.active_index = Some(index);
+
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.activate(native, path);
+    });
+    assert!(queued.active.is_some());
+    let mut parked = false;
+    for tick in 2..=200 {
+        with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+            queued.tick(native).unwrap();
+        });
+        if queued.queue.status(index) == Some(crate::quester::queue::QueueStatus::Parked) {
+            parked = true;
+            break;
+        }
+    }
+    assert!(parked, "the never-settling step must park the queued run");
+    assert!(
+        queued.active.is_none(),
+        "the parked executor is dropped before the Blocked status is built"
+    );
+
+    let status = output.0.last().expect("blocked status was published");
+    assert_eq!(status.phase, NativePhase::Blocked);
+    let field = |key: &str| {
+        status
+            .fields
+            .iter()
+            .find(|field| field.key == key)
+            .and_then(|field| match &field.value {
+                StatusValue::Text(value) => Some(value.as_ref()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("status field {key} is missing or not text"))
+    };
+    assert_eq!(field("quest_id"), "cook");
+    assert_eq!(field("stage"), expected_stage.as_ref());
+    assert_eq!(field("step_id"), "queue-park-step");
+    assert_eq!(field("last_failure"), "step settle timeout");
+    assert_eq!(field("action_state"), "blocked");
+    let failure = status.failure.as_ref().expect("terminal failure retained");
+    assert!(
+        failure.message.contains("step settle timeout")
+            && failure.message.contains("then start the Quester again"),
+        "{failure:?}"
+    );
+}
+
+#[test]
+fn a_queued_no_step_park_publishes_and_reuses_the_empty_step_id() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::quester::path::PredicateDocument;
+
+    let mut previous_empty_step = None;
+    for _ in 0..2 {
+        let (mut queued, mut snapshot) = fixture(cook_settings());
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                name: "Cook's Assistant".into(),
+                component_id: 42,
+                colour: 0xf80000,
+            }],
+            true,
+        );
+        let mut document = crate::quester::compile::decode_cook().unwrap();
+        document.quest.as_mut().unwrap().owns_inventory = true;
+        // A real observed-stage predicate skips the steps. A constant true
+        // predicate would fail compilation before the no-step park is reached.
+        let observed_stage_skip: PredicateDocument = serde_json::from_value(serde_json::json!({
+            "Fact": {
+                "kind": "stage_in",
+                "version": 1,
+                "args": {"quest": "cook", "any": ["cook:0"]}
+            }
+        }))
+        .unwrap();
+        for role in &mut document.roles {
+            for sequence in &mut role.sequences {
+                for step in &mut sequence.steps {
+                    step.skip_if = observed_stage_skip.clone();
+                }
+            }
+        }
+        let path = crate::quester::compile::compile_uncached_for_test(
+            &document,
+            &queued.selected,
+            &queued.quests,
+        )
+        .unwrap();
+        let index = queued.queue.next_candidate().unwrap();
+        queued.active_index = Some(index);
+        let mut ledger = None;
+        let mut output = Capture::default();
+        with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+            queued.activate(native, path);
+        });
+        for tick in 2..=10 {
+            with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+                queued.tick(native).unwrap();
+            });
+            if queued.active.is_none() {
+                break;
+            }
+        }
+        let parked = queued
+            .queue
+            .parked(index)
+            .expect("the no-step run must park");
+        assert_eq!(parked.step.as_ref(), "");
+        if let Some(previous) = &previous_empty_step {
+            assert!(Arc::ptr_eq(previous, &parked.step));
+        }
+        previous_empty_step = Some(Arc::clone(&parked.step));
+        let status = output
+            .0
+            .last()
+            .expect("the queued Blocked status is published");
+        assert_eq!(status.phase, NativePhase::Blocked);
+        assert!(status.fields.iter().any(|field| {
+            field.key == "step_id"
+                && matches!(&field.value, StatusValue::Text(step) if step.is_empty())
+        }));
+        assert!(status
+            .failure
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("no step for stage"));
+    }
+}
+
+#[test]
 fn individually_missing_quest_row_stays_fail_closed() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(runemysteries_settings());
     snapshot.seed_quest_statuses(
         vec![QuestStatusView {
@@ -144,7 +329,22 @@ fn individually_missing_quest_row_stays_fail_closed() {
         ));
     });
     assert!(queued.active.is_none());
-    assert_eq!(output.0.last().unwrap().phase, NativePhase::Blocked);
+    let status = output.0.last().unwrap();
+    assert_eq!(status.phase, NativePhase::Blocked);
+    // The row was blocked by requirements, so no step ran and the queue has no
+    // parked position to publish.
+    for key in [
+        "stage",
+        "quest_id",
+        "step_id",
+        "last_failure",
+        "action_state",
+    ] {
+        assert!(
+            !status.fields.iter().any(|field| field.key == key),
+            "a queue row that never ran publishes no {key}"
+        );
+    }
     assert!(ledger
         .as_ref()
         .is_none_or(|ledger| ledger.outbox.is_empty()));
@@ -152,6 +352,9 @@ fn individually_missing_quest_row_stays_fail_closed() {
 
 #[test]
 fn runemysteries_queue_uses_selected_identity_status_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(runemysteries_settings());
     snapshot.seed_varps(vec![VarpView {
         index: 101,
@@ -199,6 +402,9 @@ fn runemysteries_queue_uses_selected_identity_status_row() {
 
 #[test]
 fn completed_canonical_quest_row_wins_before_missing_requirements() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(runemysteries_settings());
     snapshot.seed_quest_statuses(
         vec![QuestStatusView {
@@ -230,6 +436,9 @@ fn completed_canonical_quest_row_wins_before_missing_requirements() {
 
 #[test]
 fn excluding_the_entire_default_queue_is_an_actionable_block() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let index: ReleaseIndex = serde_json::from_str(crate::quester::compile::INDEX_JSON).unwrap();
     let (mut queued, snapshot) = fixture(QueueSettings {
         skip: index.paths.into_iter().map(|entry| entry.id).collect(),
@@ -250,14 +459,22 @@ fn excluding_the_entire_default_queue_is_an_actionable_block() {
 
 #[test]
 fn a_parked_run_is_not_sent_to_script_prefs_but_a_requirement_block_is() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, _) = fixture(cook_settings());
     queued.queue.mark_parked(
         0,
-        Arc::from("no route: blocked by danger zones: White Wolf Mountain"),
+        crate::quester::queue::ParkedRun {
+            quest: Arc::from("cook"),
+            stage: Some(Arc::from("not_started")),
+            step: Arc::from("walk-draynor-bank"),
+            failure: Arc::from("no route: blocked by danger zones: White Wolf Mountain"),
+        },
     );
     let parked = queued.blocked().message;
     assert!(parked.starts_with("no route: blocked by danger zones: White Wolf Mountain; "));
-    assert!(parked.contains("Stop/Start Quester"));
+    assert!(parked.contains("start the Quester again"));
     assert!(
         !parked.contains("Script prefs"),
         "a refused walk can't be fixed in Script prefs: {parked}"
@@ -272,6 +489,9 @@ fn a_parked_run_is_not_sent_to_script_prefs_but_a_requirement_block_is() {
 }
 #[test]
 fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut queued, mut snapshot) = fixture(QueueSettings {
         quests: vec!["cook".into(), "sheep".into()],
         order_override: vec!["cook".into(), "sheep".into()],
@@ -305,6 +525,7 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
                 &quests,
                 cap,
                 &crate::local_state::OperatorLoadouts::absent(),
+                None,
             )
         }
     })
@@ -379,6 +600,9 @@ fn third_queued_death_stops_the_slot_and_retains_blocked_status() {
 
 #[test]
 fn cached_path_does_not_share_account_choices_between_activations() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::choices::{CrestGauntlets, QuestChoices};
     let (mut cooking, mut snapshot) = fixture(cook_settings());
     let (mut goldsmith, _) = fixture(cook_settings());
@@ -417,6 +641,9 @@ fn cached_path_does_not_share_account_choices_between_activations() {
 
 #[test]
 fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::registry::{FolderSource, PathRegistry};
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -449,6 +676,7 @@ fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() 
                 &selected,
                 &quests,
                 worker,
+                None,
             )
             .unwrap()
         })
@@ -513,6 +741,9 @@ fn folder_override_and_draft_activate_from_the_queue_and_publish_their_source() 
 /// the typed reason, instead of waiting, and logging, on every tick.
 #[test]
 fn a_refused_loadouts_store_blocks_the_path_instead_of_waiting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::local_state::{
         AccountKey, ContentScope, DomainEdit, DomainIdentity, DomainLease, ErrorCode,
         FailureReason, LocalStatePort, StoreVersion, SubmitReceipt, WriteSettlement,
@@ -576,5 +807,293 @@ fn a_refused_loadouts_store_blocks_the_path_instead_of_waiting() {
             .iter()
             .any(|line| line.contains("waits for operator loadouts")),
         "a refused store is not a cold one"
+    );
+}
+
+fn cook_status(colour: i32) -> Vec<QuestStatusView> {
+    vec![QuestStatusView {
+        name: "Cook's Assistant".into(),
+        component_id: 42,
+        colour,
+    }]
+}
+
+/// The kinds of effect the host was asked for, in order.
+fn effects(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> Vec<&'static str> {
+    ledger.as_ref().map_or_else(Vec::new, |ledger| {
+        ledger
+            .outbox
+            .iter()
+            .map(|action| match &action.effect {
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Close) => {
+                    "close"
+                }
+                crate::native::HostEffect::Interaction(_) => "interaction",
+                _ => "other",
+            })
+            .collect()
+    })
+}
+
+/// The host accepts the interaction at the end of the outbox.
+fn accept_last_interaction(ledger: &mut Option<Box<crate::native::ledger::Ledger>>, tick: u64) {
+    let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+    ledger.as_mut().unwrap().complete_interaction(
+        &authority,
+        crate::native::InteractionReceipt {
+            request_id: authority.request_id().get(),
+            evidence: EvidenceStamp {
+                run: authority.run(),
+                tick,
+                sequence: tick,
+            },
+            accepted: true,
+            chat_since: 0,
+        },
+    );
+    ledger.as_mut().unwrap().outbox.clear();
+}
+
+fn open_bank(snapshot: &mut GameSnapshot, tick: u64) -> BankLease {
+    snapshot.seed_bank_observation(1, tick, Some(Vec::new()), Vec::new());
+    // The test frames carry login session 1.
+    BankLease::new(1, snapshot.bank_session_generation())
+}
+
+#[test]
+fn a_restarted_run_closes_the_open_bank_before_it_reads_or_plans_anything() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(cook_status(0xf80000), true);
+    let lease = open_bank(&mut snapshot, 1);
+    // The retained cell of the replaced instance carried the lease.
+    queued.restore(&super::super::QuesterRetained {
+        bank_lease: Some(lease),
+        ..Default::default()
+    });
+    let mut ledger = None;
+    let mut output = Capture::default();
+    let flow = with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        let flow = queued.tick(native).unwrap();
+        assert_eq!(
+            native.cx.retained().quester().bank_lease,
+            Some(lease),
+            "the lease stays retained until the bank is shut"
+        );
+        flow
+    });
+    assert_eq!(flow, ScriptFlow::Continue);
+    assert_eq!(output.0.last().unwrap().phase, NativePhase::Waiting);
+    assert_eq!(
+        effects(&ledger),
+        ["close"],
+        "the close is the first and only input"
+    );
+    assert!(
+        queued.preparing.is_none(),
+        "no Path compile starts under the open bank"
+    );
+    accept_last_interaction(&mut ledger, 1);
+    snapshot.seed_bank_observation(-1, 2, None, Vec::new());
+    with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+        queued.tick(native).unwrap();
+        assert_eq!(native.cx.retained().quester().bank_lease, None);
+    });
+    assert!(queued.owed_bank.is_none());
+    assert!(
+        effects(&ledger).iter().all(|effect| *effect != "close"),
+        "one close only"
+    );
+}
+
+#[test]
+fn resume_closes_the_bank_the_run_left_open_before_the_journal_is_read() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(cook_status(0xf80000), true);
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.tick(native).unwrap();
+    });
+    let path = queued.preparing.take().unwrap().join().unwrap().unwrap();
+    with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+        queued.activate(native, path);
+    });
+    assert!(queued.active.is_some());
+    // Provisioning opened the bank, then the run was paused.
+    let lease = open_bank(&mut snapshot, 3);
+    queued
+        .active
+        .as_mut()
+        .unwrap()
+        .provisioner
+        .set_lease_for_test(lease);
+    queued.interrupt(Interrupt::Resume);
+    assert_eq!(
+        queued.owed_bank,
+        Some(lease),
+        "resume hands the bank to the closer"
+    );
+    with_tick_output(&snapshot, &mut ledger, 3, &mut output, |native| {
+        assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
+    });
+    assert_eq!(
+        effects(&ledger),
+        ["close"],
+        "the close comes before the journal read that resume owes"
+    );
+    assert!(!queued.active.as_ref().unwrap().journal_opened());
+}
+
+#[test]
+fn a_run_started_after_stop_leaves_an_open_bank_alone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    open_bank(&mut snapshot, 1);
+    // Stop discards the retained cell, so the next run starts without a lease.
+    queued.restore(&super::super::QuesterRetained::default());
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.tick(native).unwrap();
+    });
+    assert_eq!(effects(&ledger), Vec::<&str>::new());
+    assert!(queued.owed_bank.is_none());
+}
+
+#[test]
+fn operator_stop_hands_nothing_to_the_closer() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    snapshot.seed_quest_statuses(cook_status(0xf80000), true);
+    let mut ledger = None;
+    let mut output = Capture::default();
+    with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
+        queued.tick(native).unwrap();
+    });
+    let path = queued.preparing.take().unwrap().join().unwrap().unwrap();
+    with_tick_output(&snapshot, &mut ledger, 2, &mut output, |native| {
+        queued.activate(native, path);
+    });
+    let lease = open_bank(&mut snapshot, 3);
+    queued
+        .active
+        .as_mut()
+        .unwrap()
+        .provisioner
+        .set_lease_for_test(lease);
+    queued.on_stop(StopReason::Operator);
+    assert!(
+        queued.owed_bank.is_none(),
+        "Stop does not reclaim the lease, so no tick can close it"
+    );
+    assert_eq!(effects(&ledger), Vec::<&str>::new());
+}
+
+#[test]
+fn a_held_tick_sends_no_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    let lease = open_bank(&mut snapshot, 1);
+    queued.restore(&super::super::QuesterRetained {
+        bank_lease: Some(lease),
+        ..Default::default()
+    });
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let evidence = EvidenceStamp {
+        run: queued.run,
+        tick: 1,
+        sequence: 1,
+    };
+    let compiled = crate::CompiledTick {
+        condition: None,
+        poison_unknown_pulse: None,
+        cure_poison: crate::survival::CurePoison::WhenNeeded,
+        walk_danger: Some(&crate::native::AllowWalkDanger),
+        wilderness: None,
+        pvp_globals: None,
+        selected: Some(&data),
+        reach: None,
+        nav: None,
+        reach_flood: None,
+        bank_memory: None,
+        collision: None,
+        // The host holds the account: a user takeover or a survival hold.
+        hold: true,
+        world_members: Truth::Unknown,
+        interacts: Some(Vec::new()),
+        service_gate: None,
+    };
+    let frame = crate::native::HostFrame::for_test(None, Some(&snapshot), None, compiled);
+    let mut ledger = None;
+    let mut output = Capture::default();
+    let flow = crate::native::with_test_tick(
+        frame,
+        evidence,
+        api::selected::ClientRevision::R289,
+        (Duration::from_millis(600), std::time::Instant::now()),
+        &mut ledger,
+        &mut output,
+        |native| queued.tick(native).unwrap(),
+    );
+    assert_eq!(flow, ScriptFlow::Continue);
+    assert_eq!(effects(&ledger), Vec::<&str>::new());
+    assert_eq!(
+        queued.owed_bank,
+        Some(lease),
+        "the obligation waits for the hold to end"
+    );
+}
+
+#[test]
+fn a_close_the_bank_never_honours_is_bounded_and_then_dropped() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut queued, mut snapshot) = fixture(cook_settings());
+    let lease = open_bank(&mut snapshot, 1);
+    queued.restore(&super::super::QuesterRetained {
+        bank_lease: Some(lease),
+        ..Default::default()
+    });
+    let mut ledger = None;
+    let mut output = Capture::default();
+    let mut sent = 0;
+    for tick in 1..=400 {
+        with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
+            queued.tick(native).unwrap();
+        });
+        if effects(&ledger) == ["close"] {
+            sent += 1;
+            // The click is accepted but the interface never goes away.
+            accept_last_interaction(&mut ledger, tick);
+        }
+        if queued.owed_bank.is_none() && !queued.owed_closer.active() {
+            break;
+        }
+    }
+    assert_eq!(sent, crate::acquire::run::MAX_CLOSE_ATTEMPTS);
+    assert!(
+        queued.owed_bank.is_none(),
+        "the obligation is dropped, not retried forever"
+    );
+    assert!(
+        output
+            .1
+            .iter()
+            .any(|line| line.contains("the open bank was not closed")),
+        "{:?}",
+        output.1
     );
 }

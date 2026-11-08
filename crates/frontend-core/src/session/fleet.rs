@@ -53,9 +53,13 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Stage the reorder the next [`OperatorCommand::ReorderProfiles`]
-    /// applies to the saved Load order.
-    pub fn stage_reorder(&mut self, op: crate::profile_order::ReorderOp) {
-        self.commands.stage_reorder(op);
+    /// applies to the saved Load order, from the list `surface` names.
+    pub fn stage_reorder(
+        &mut self,
+        op: crate::profile_order::ReorderOp,
+        surface: crate::profile_order::ReorderSurface,
+    ) {
+        self.commands.stage_reorder(op, surface);
     }
 
     /// The name of the profile `identity` names now: its vault row, or a
@@ -72,32 +76,27 @@ impl<Io> OperatorSession<Io> {
             })
     }
 
-    /// Apply the staged reorder to the saved Load order (the lent fleet
-    /// model must show Load order) and write it. Nothing moved: `Done`
-    /// with no write and no audit line.
+    /// Apply the staged reorder to the saved Load order and write it.
+    /// From the Fleet list it needs the lent fleet model showing Load
+    /// order (Move marked to top reads its marks). From the Profiles list
+    /// — which always shows the saved order — a move needs no fleet model
+    /// and no view sort, and leaves the Fleet's sort untouched. Nothing
+    /// moved: `Done` with no write and no audit line.
     fn reorder_profiles<S: SlotSurface<Io = Io>>(
         &mut self,
         request: RequestId,
         surface: &mut S,
     ) -> Applied {
-        let Some(op) = self.commands.take_reorder() else {
+        let Some((op, from)) = self.commands.take_reorder() else {
             return Applied::Rejected(Rejection::NotStaged, Some("reorder: nothing staged".into()));
         };
-        let mut models = surface.models();
-        let Some(fleet) = models.fleet.as_deref_mut() else {
-            return no_model("fleet order");
-        };
-        if fleet.order() != FleetOrder::LoadOrder {
-            return Applied::Rejected(
-                Rejection::NotApplicable,
-                Some(format!(
-                    "reorder: the fleet is sorted by {}; choose Load order to reorder",
-                    fleet.order().label()
-                )),
-            );
-        }
         let changed = match op {
             crate::profile_order::ReorderOp::Move { moving, to } => {
+                if from == crate::profile_order::ReorderSurface::Fleet {
+                    if let Some(refused) = self.fleet_reorder_refusal(surface) {
+                        return refused;
+                    }
+                }
                 let (target, after) = match to {
                     crate::profile_order::Placement::Before(target) => (target, false),
                     crate::profile_order::Placement::After(target) => (target, true),
@@ -113,6 +112,19 @@ impl<Io> OperatorSession<Io> {
                 self.profile_order.move_to(&moving, &target, after)
             }
             crate::profile_order::ReorderOp::MarkedToTop => {
+                if from != crate::profile_order::ReorderSurface::Fleet {
+                    return Applied::Rejected(
+                        Rejection::NotApplicable,
+                        Some("reorder: the Profiles list has no marks to move".into()),
+                    );
+                }
+                if let Some(refused) = self.fleet_reorder_refusal(surface) {
+                    return refused;
+                }
+                let mut models = surface.models();
+                let Some(fleet) = models.fleet.as_deref_mut() else {
+                    return no_model("fleet order");
+                };
                 let marks = fleet.marks();
                 let marked: Vec<String> = self
                     .profile_order
@@ -133,6 +145,29 @@ impl<Io> OperatorSession<Io> {
         self.order_reconciled_at = Some(self.profiles_generation);
         self.sort_members_by_order();
         self.write_profile_order(request)
+    }
+
+    /// Why a Fleet-list reorder cannot run now, when it cannot: no lent
+    /// fleet model, or the model shows a temporary Name/Status view sort
+    /// instead of the saved Load order a drag would rewrite.
+    fn fleet_reorder_refusal<S: SlotSurface<Io = Io>>(
+        &mut self,
+        surface: &mut S,
+    ) -> Option<Applied> {
+        let mut models = surface.models();
+        let Some(fleet) = models.fleet.as_deref_mut() else {
+            return Some(no_model("fleet order"));
+        };
+        if fleet.order() != FleetOrder::LoadOrder {
+            return Some(Applied::Rejected(
+                Rejection::NotApplicable,
+                Some(format!(
+                    "reorder: the fleet is sorted by {}; choose Load order to reorder",
+                    fleet.order().label()
+                )),
+            ));
+        }
+        None
     }
 
     pub(super) fn fleet_row<S: SlotSurface<Io = Io>>(

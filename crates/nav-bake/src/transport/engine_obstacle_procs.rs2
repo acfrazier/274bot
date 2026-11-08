@@ -1,0 +1,72 @@
+// skill_agility/scripts/agility.rs2:3-7,147-164.
+[proc,agility_climb_up](int $xp, coord $coord)
+anim(human_reachforladder, 0);
+p_delay(0);
+stat_advance(agility, $xp);
+p_telejump($coord);
+
+[proc,set_walkbas](seq $walk_seq)
+~bas_set($walk_seq, $walk_seq, $walk_seq, $walk_seq, $walk_seq, $walk_seq, null);
+[proc,set_readywalk_bas](seq $ready_seq, seq $walk_seq)
+~bas_set($ready_seq, $walk_seq, $walk_seq, $walk_seq, $walk_seq, $walk_seq, null);
+[proc,set_readywalkturn_bas](seq $ready_seq, seq $turn_seq, seq $walk_seq)
+~bas_set($ready_seq, $turn_seq, $walk_seq, $walk_seq, $walk_seq, $walk_seq, null);
+[proc,set_forcemove_bas](seq $walk_seq)
+switch_seq($walk_seq) {
+    case human_walk_logbalance : ~set_readywalk_bas(human_walk_logbalance_ready, human_walk_logbalance);
+    case human_climbing : ~set_readywalk_bas(human_climbing_ready, human_climbing);
+    case human_climbing_down : ~set_readywalk_bas(human_climbing_ready, human_climbing_down);
+    case human_walk_sidestep : ~set_readywalkturn_bas(human_ready_sidestep, human_ready_sidestep, human_walk_sidestep);
+    case human_walk_sidestepl : ~set_readywalkturn_bas(human_ready_sidestepl, human_ready_sidestepl, human_walk_sidestepl);
+    case default : ~set_walkbas($walk_seq);
+}
+
+// player/scripts/appearance.rs2:1-24,54-62.
+[proc,update_bas]
+if (~inzone_coord_pair_table(trawler_wreck_zones, coord) = true) {
+    buildappearance(worn);
+    return;
+}
+def_obj $weapon = inv_getobj(worn, ^wearpos_rhand);
+if ($weapon = null) {
+    readyanim(human_ready);
+    turnanim(human_turnonspot);
+    walkanim(human_walk_f);
+    walkanim_b(human_walk_b);
+    walkanim_l(human_walk_l);
+    walkanim_r(human_walk_r);
+    runanim(human_running);
+} else {
+    readyanim(oc_param($weapon, ready_baseanim));
+    turnanim(oc_param($weapon, turnonspot_baseanim));
+    walkanim(oc_param($weapon, walk_f_baseanim));
+    walkanim_b(oc_param($weapon, walk_b_baseanim));
+    walkanim_l(oc_param($weapon, walk_l_baseanim));
+    walkanim_r(oc_param($weapon, walk_r_baseanim));
+    runanim(oc_param($weapon, running_baseanim));
+}
+buildappearance(worn);
+[proc,bas_set](seq $ready, seq $turn, seq $walkf, seq $walkb, seq $walkl, seq $walkr, seq $run)
+readyanim($ready);
+turnanim($turn);
+walkanim($walkf);
+walkanim_b($walkb);
+walkanim_l($walkl);
+walkanim_r($walkr);
+runanim($run);
+buildappearance(worn);
+
+// general/scripts/misc/coord_procs.rs2:49-61. This proc only reads a table.
+[proc,inzone_coord_pair_table](dbrow $data, coord $coord)(boolean)
+def_coord $coord1;
+def_coord $coord2;
+def_int $i = 0;
+while($i < db_getfieldcount($data, coord_pair_table:coord_pair)) {
+    $coord1, $coord2 = db_getfield($data, coord_pair_table:coord_pair, $i);
+    if(inzone($coord1, $coord2, $coord) = true) {
+        return (true);
+    } else {
+        $i = add($i, 1);
+    }
+}
+return (false);

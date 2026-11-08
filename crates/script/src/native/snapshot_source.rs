@@ -407,6 +407,9 @@ pub struct NativeFactsInput<'a> {
     pub projectiles: Option<&'a [ProjectileView]>,
     /// Host-published native fingerprint for the current chat modal page.
     pub chat_page_fingerprint: u64,
+    /// The local player's packed `api::snapshot::AttackMarks`
+    /// (`AttackMarks::to_wire`); 0 when there is no observation.
+    pub local_attack_marks: u64,
     /// `modals().side` (`-1` none). With `bank_open` it is the posted-side
     /// fact for `bank_side`. `None` omits the slot; the isolate keeps its
     /// last root.

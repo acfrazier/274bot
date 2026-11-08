@@ -201,7 +201,9 @@ impl ServerOrderedInputState {
         }
     }
 
-    /// Observe a PLAYER_INFO tick edge. Repeated wakes preserve counts.
+    /// Observe the raw Client `PLAYER_INFO` generation, not a session-relative
+    /// snapshot tick or the host's native completion-evidence tick.
+    /// Repeated wakes preserve counts.
     pub fn observe_tick(&mut self, tick: u64) {
         let Ok(tick) = u32::try_from(tick) else {
             self.observed_tick = None;
@@ -639,7 +641,8 @@ impl ServerOrderedInputState {
 }
 
 impl ServerOrderedInputSnapshot {
-    /// Return the latest observed PLAYER_INFO tick, if initialized.
+    /// Return the latest raw Client `PLAYER_INFO` generation, if initialized.
+    /// This is not `GameSnapshot::tick()` or a native completion-evidence tick.
     pub fn observed_tick(self) -> Option<u32> {
         self.observed_tick
     }

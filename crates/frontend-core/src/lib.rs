@@ -50,6 +50,7 @@ pub mod profile_order;
 pub mod profile_saves;
 mod profiles;
 pub mod progress;
+pub mod pvp_prefs;
 pub mod quester_paths;
 pub mod resources;
 pub mod rs2b0t_import;
@@ -78,6 +79,7 @@ pub use fleet::{
 };
 pub use fleet_plan::{FleetAction, FleetPlan, FleetResult, PlanScope, ResultCounts};
 pub use group_walk::{MarkedWalk, WalkInputs};
+pub use host_play::saved_data;
 pub use map_bake::{
     load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt, MAP_BAKE_TITLE,
     MAP_BAKE_WARNING,
@@ -101,14 +103,24 @@ pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRe
 pub use profile_form::{
     FailedSave, FormNotice, FormSettled, ProfileFormSave, SavedProfile, NOTHING_SAVED,
 };
-pub use profile_order::{Placement, ProfileOrder, ReorderOp, PROFILE_ORDER_KEY};
+pub use profile_order::{Placement, ProfileOrder, ReorderOp, ReorderSurface, PROFILE_ORDER_KEY};
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
+pub use pvp_prefs::{
+    is_start_fights_error, pvp_start_fights, PvpSettingView, PvpWrite, START_FIGHTS_LABEL,
+    START_FIGHTS_NOTE,
+};
 pub use quester_paths::{
     QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, QUESTER_HEADING,
     QUEST_PATHS_HEADING, RELOAD_PATHS_LABEL,
 };
 pub use resources::{Metric, ResourceView};
-pub use scripts::{Notice, Scripts};
+pub use script::survival::{
+    cure::CureWhy as SurvivalCureWhy,
+    math::{NeedWhy as SurvivalNeedWhy, SurvivalNeed},
+    Decision as SurvivalDecision, Owner as SurvivalOwner, SurvivalReport,
+};
+pub use scripts::{Notice, ScriptSettingsError, Scripts};
+
 pub use selection::{
     marked_startable, profile_id_at, profile_id_for_name, stop_marked, BulkSkip, MarkedSelection,
     ProfileIdentity, StopReport, EMPTY_MARKS_HINT,
@@ -125,8 +137,8 @@ pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
 pub use walk_permissions::{
     DangerLevel, WalkGlobals, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL,
-    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
-    SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
+    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, PREREQ_PERMISSION_LABELS, PREREQ_SCOPE_NOTE,
+    ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE, SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
 };
 
 #[cfg(test)]

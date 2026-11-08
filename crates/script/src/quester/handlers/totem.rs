@@ -5,13 +5,16 @@
 //! document. Content echoes each dial letter after every click
 //! (`quest_totem.rs2` `tribal_door_combo`: `if_settext(tribal_door2:com_43..46,
 //! enum(alphabet, $stage))`).
-use crate::native::walk::Walk;
-use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkReceipt};
+use crate::interact::InteractReq;
+use crate::native::{
+    ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine, WalkReceipt,
+    WalkRetryState,
+};
 use crate::quester::compile::{
     CompileContext, CompileError, StepContext, StepOutcome, StepPlan, StepRun,
 };
 use crate::quester::families::reach;
-use crate::shim::InteractReq;
+use crate::quester::prereq::{reach::PrereqReach, walk::PrereqWalk};
 use api::WorldTile;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -119,6 +122,7 @@ impl StepPlan for Plan {
             tile: self.tile,
             radius: self.radius,
             walk: None,
+            walk_retry: WalkRetryState::default(),
             reach: None,
             combo: None,
             opened: false,
@@ -136,21 +140,29 @@ struct Run {
     door_name: Arc<str>,
     tile: WorldTile,
     radius: i32,
-    walk: Option<ActionHandle<Walk>>,
-    reach: Option<ActionHandle<reach::Reach>>,
+    walk: Option<PrereqWalk>,
+    walk_retry: WalkRetryState,
+    reach: Option<PrereqReach>,
     combo: Option<ActionHandle<Combo>>,
     opened: bool,
 }
 
 impl StepRun for Run {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
-        if let Some(handle) = &self.walk {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        if let Some(walk) = self.walk.as_mut() {
+            match walk.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(receipt)) => {
-                    walk_arrival(receipt)?;
                     self.walk = None;
+                    if self
+                        .walk_retry
+                        .observe_approach_failure(&receipt, cx.tick.cx.evidence().tick)
+                    {
+                        return Poll::Pending;
+                    }
+                    walk_arrival(receipt)?;
+                    self.walk_retry.reset();
                 }
             }
         }
@@ -160,19 +172,39 @@ impl StepRun for Run {
         if !self.opened {
             let here = cx.tick.cx.snapshot().here();
             if !here.is_some_and(|obs| reach::within(obs.value, self.tile, self.radius)) {
-                self.walk = Some(cx.tick.actions.begin::<Walk>(
-                    reach::walk_request(
-                        self.tile,
-                        self.radius.max(1) as u16,
-                        None,
-                        cx.required_after,
-                    ),
+                let tick = cx.tick.cx.evidence().tick;
+                if self.walk_retry.waiting_for_next_tick(tick) {
+                    return Poll::Pending;
+                }
+                let mut request = reach::walk_request(
+                    self.tile,
+                    self.radius.max(1) as u16,
+                    None,
+                    cx.required_after,
+                );
+                // The gate above is the authored anchor radius; any
+                // standable tile inside it is close enough to open the door.
+                request.arrival = nav_planner::contract::ArrivalKind::Area;
+                match crate::native::defer_budget(PrereqWalk::begin(
+                    request,
+                    cx.tick.actions,
                     &mut cx.tick.cx,
-                )?);
+                )) {
+                    Poll::Pending => {
+                        self.walk_retry.defer_until_next_tick(tick);
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Ok(handle)) => {
+                        self.walk_retry.action_submitted();
+                        self.walk = Some(handle);
+                    }
+                }
                 return Poll::Pending;
             }
+            self.walk_retry.reset();
             if self.reach.is_none() {
-                self.reach = Some(cx.tick.actions.begin::<reach::Reach>(
+                self.reach = Some(PrereqReach::begin(
                     reach::ReachArgs {
                         kind: reach::ReachKind::Loc {
                             id: Some(self.door_id),
@@ -185,13 +217,14 @@ impl StepRun for Run {
                         target_tile: None,
                         reachable_only: false,
                     },
+                    cx.tick.actions,
                     &mut cx.tick.cx,
                 )?);
                 return Poll::Pending;
             }
         }
-        if let Some(handle) = &self.reach {
-            match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
+        if let Some(handle) = &mut self.reach {
+            match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Ready(Ok(false)) => {
@@ -230,6 +263,12 @@ impl StepRun for Run {
     }
 
     fn cancel(&mut self, _actions: &mut NativeActions) {
+        if let Some(walk) = self.walk.as_mut() {
+            walk.cancel();
+        }
+        if let Some(reach) = self.reach.as_mut() {
+            reach.cancel();
+        }
         self.walk = None;
         self.reach = None;
         self.combo = None;
@@ -443,7 +482,59 @@ fn dial_button(index: usize, current: char, target: char) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{dial_button, DIAL_DOWN, DIAL_UP};
+    use super::*;
+    use crate::quester::families::tests::{local_player, post_walk_receipt, with_tick};
+    use api::snapshot::GameSnapshot;
+
+    /// The door approach is gated on `reach::within` against the authored
+    /// anchor and radius, so it must accept any standable tile in that area
+    /// rather than demand a path onto the door tile.
+    #[test]
+    fn door_approach_walks_the_anchor_area() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let door = WorldTile {
+            x: 2658,
+            z: 3322,
+            level: 0,
+        };
+        let plan = super::Plan {
+            word: Arc::from("KURT"),
+            door_id: 716,
+            door_name: Arc::from("combodoor"),
+            tile: door,
+            radius: 2,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: 2640,
+            z: 3322,
+            level: 0,
+        }));
+        let mut ledger = None;
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        let crate::native::HostEffect::Walk(request) =
+            &ledger.as_ref().unwrap().outbox.last().unwrap().effect
+        else {
+            panic!("the door approach must emit a native walk");
+        };
+        assert_eq!(request.target, door);
+        assert_eq!(request.radius, 2);
+        assert_eq!(request.loc_id, None);
+        assert_eq!(
+            request.arrival,
+            nav_planner::contract::ArrivalKind::Area,
+            "the authored door radius accepts any standable tile inside it"
+        );
+    }
 
     #[test]
     fn dial_picks_the_shorter_rotation() {
@@ -465,5 +556,78 @@ mod tests {
             DIAL_DOWN[0],
             "ten steps back beats sixteen forward"
         );
+    }
+
+    fn with_step<R>(
+        tick: &mut crate::native::NativeTick<'_>,
+        f: impl FnOnce(&mut crate::quester::compile::StepContext<'_, '_>) -> R,
+    ) -> R {
+        let quests = api::quest_facts::QuestCatalog::empty();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let choices = crate::quester::choices::QuestChoices::default();
+        let required_after = tick.cx.evidence();
+        f(&mut crate::quester::compile::StepContext {
+            tick,
+            quests: &quests,
+            progress: &[],
+            required_after,
+            banks: &banks,
+            choices: &choices,
+        })
+    }
+
+    #[test]
+    fn totem_door_retries_a_failed_walk_on_the_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let tile = WorldTile {
+            x: 12,
+            z: 34,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(WorldTile {
+            x: 30,
+            z: 40,
+            level: 0,
+        }));
+        let mut ledger = None;
+        let plan = Plan {
+            word: Arc::from("KURT"),
+            door_id: 41,
+            door_name: Arc::from("Tribal door"),
+            tile,
+            radius: 1,
+        };
+        let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            with_step(tick, |cx| plan.begin(cx).unwrap())
+        });
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        post_walk_receipt(
+            &mut ledger,
+            2,
+            crate::native::WalkEnd::NoPath,
+            Some("totem approach failed"),
+        );
+        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+        assert!(with_tick(&snapshot, &mut ledger, 3, |tick| {
+            with_step(tick, |cx| run.poll(cx))
+        })
+        .is_pending());
+    
+        let retry = ledger.as_ref().unwrap().outbox.last().unwrap();
+        let crate::native::HostEffect::Walk(request) = &retry.effect else {
+            panic!("the next attempt should be a fresh totem approach walk");
+        };
+        assert_eq!(request.target, tile);
+        assert_eq!(request.required_after.tick, 3);
     }
 }

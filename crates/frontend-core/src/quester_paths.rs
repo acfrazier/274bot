@@ -1,6 +1,7 @@
 //! Durable operator configuration and asynchronous reload for Quester Paths.
 
 use api::identity::{Scope, WorkIdentity};
+use nav_planner::contract::NavLease;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -135,6 +136,7 @@ enum ReloadValue {
 struct PendingReload {
     selected: Arc<api::game_data::SelectedGameData>,
     source: script::quester::registry::FolderSource,
+    nav: Option<NavLease>,
 }
 
 /// Non-blocking owner for one Path-registry reload. Only a consumed
@@ -151,11 +153,16 @@ impl ReloadPaths {
         &mut self,
         selected: Arc<api::game_data::SelectedGameData>,
         source: script::quester::registry::FolderSource,
+        nav: Option<NavLease>,
     ) -> Result<(), String> {
         if self.is_running() {
             return Err("a Path reload is already running".into());
         }
-        let pending = PendingReload { selected, source };
+        let pending = PendingReload {
+            selected,
+            source,
+            nav,
+        };
         match self.submit(&pending) {
             Ok(()) => Ok(()),
             Err(SubmissionError::Full) => {
@@ -202,6 +209,7 @@ impl ReloadPaths {
         })?;
         let selected = Arc::clone(&pending.selected);
         let mut source = Some(pending.source.clone());
+        let mut nav = pending.nav.clone();
         let mut preparation = None;
         let mut actions = 0_u32;
         let worker = script::preparation::submit_cooperative(
@@ -214,6 +222,7 @@ impl ReloadPaths {
                     match RegistryPreparation::from_source_without_catalog(
                         source.take().expect("first registry initialization"),
                         Arc::clone(&selected),
+                        nav.take(),
                     ) {
                         Ok(candidate) => preparation = Some(candidate),
                         Err(error) => {
@@ -321,6 +330,9 @@ pub enum ReloadRefused {
     /// No profile's game data is loaded yet.
     #[error("load a profile before reloading quest Paths")]
     NoGameData,
+    /// The selected navigation catalog is not loaded yet.
+    #[error("wait for the navigation map before reloading quest Paths")]
+    NoNavData,
 }
 
 impl QuesterPathsController {
@@ -388,13 +400,19 @@ impl QuesterPathsController {
         &mut self,
         request: api::identity::RequestId,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
+        nav: Option<NavLease>,
     ) -> Result<(), ReloadRefused> {
         if self.reload.is_running() {
             self.set_notice(Ok(Arc::from("A Path reload is already running.")));
             Err(ReloadRefused::Running)
+        } else if selected.is_some() && self.settings.enabled && nav.is_none() {
+            self.set_notice(Err(Arc::from(
+                "Wait for the navigation map before reloading quest Paths.",
+            )));
+            Err(ReloadRefused::NoNavData)
         } else if let Some(selected) = selected {
             self.reload_when_ready = false;
-            self.start_reload(selected);
+            self.start_reload(selected, nav);
             if self.reload.is_running() || self.reload.pending.is_some() {
                 self.reload_request = Some(request);
             } else {
@@ -421,9 +439,18 @@ impl QuesterPathsController {
         self.settled_reload.take()
     }
 
-    /// Start a saved-setting reload as soon as game data is ready and poll
-    /// the worker without blocking the caller.
-    pub fn advance(&mut self, selected: Option<Arc<api::game_data::SelectedGameData>>) {
+    /// Whether an automatic folder reload is waiting for its navigation input.
+    pub(crate) fn needs_navigation(&self) -> bool {
+        self.reload_when_ready && self.settings.enabled && !self.reload.is_running()
+    }
+
+    /// Start a saved-setting reload once its game data and navigation are ready.
+    /// Poll the worker without blocking the caller.
+    pub fn advance(
+        &mut self,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+        nav: Option<NavLease>,
+    ) {
         if let Some(result) = self.reload.poll() {
             let outcome = match &result {
                 Ok(_) => Ok(()),
@@ -438,16 +465,21 @@ impl QuesterPathsController {
             }
         }
         if self.reload_when_ready && !self.reload.is_running() {
-            if let Some(selected) = selected {
+            let waiting_for_navigation =
+                self.settings.enabled && selected.is_some() && nav.is_none();
+            if let Some(selected) = selected.filter(|_| !waiting_for_navigation) {
                 self.reload_when_ready = false;
                 self.profile_notice_due = false;
-                self.start_reload(selected);
+                self.start_reload(selected, nav);
                 return;
             }
             if std::mem::take(&mut self.profile_notice_due) {
-                self.set_notice(Err(Arc::from(
-                    "Load a profile before reloading quest Paths.",
-                )));
+                let reason = if waiting_for_navigation {
+                    "Wait for the navigation map before reloading quest Paths."
+                } else {
+                    "Load a profile before reloading quest Paths."
+                };
+                self.set_notice(Err(Arc::from(reason)));
             }
         }
         if self.reload.worker.is_none() {
@@ -489,9 +521,13 @@ impl QuesterPathsController {
         self.notice = None;
     }
 
-    fn start_reload(&mut self, selected: Arc<api::game_data::SelectedGameData>) {
+    fn start_reload(
+        &mut self,
+        selected: Arc<api::game_data::SelectedGameData>,
+        nav: Option<NavLease>,
+    ) {
         let source = script::quester::registry::source_for_preparation();
-        match self.reload.start(selected, source) {
+        match self.reload.start(selected, source, nav) {
             Ok(()) if self.reload.pending.is_some() => self.set_notice(Ok(Arc::from(
                 "Reload Paths queued until background capacity is available.",
             ))),
@@ -635,6 +671,34 @@ mod tests {
     }
 
     #[test]
+    fn automatic_folder_reload_waits_for_the_navigation_catalog() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected =
+            FamilyPreparation::run(|_| api::game_data::for_revision(ClientRevision::R289).unwrap())
+                .unwrap()
+                .join()
+                .unwrap();
+        let mut controller = super::QuesterPathsController {
+            settings: QuesterPathsView::new(
+                true,
+                PathBuf::from("not-read-before-navigation-is-ready"),
+            ),
+            reload_when_ready: true,
+            profile_notice_due: true,
+            ..Default::default()
+        };
+        controller.advance(Some(selected), None);
+        assert!(!controller.is_running());
+        assert!(controller.needs_navigation());
+        assert_eq!(
+            controller.notice_text(),
+            Some("Wait for the navigation map before reloading quest Paths.")
+        );
+    }
+
+    #[test]
     fn missing_preferences_disable_folder_paths_and_use_product_data_directory() {
         let store = TempStore::new();
         let view = QuesterPathsView::read(store.prefs());
@@ -681,6 +745,9 @@ mod tests {
 
     #[test]
     fn async_reload_retries_temporary_full_and_publishes_edited_folder_files() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let _source = super::registry_source_test_lock();
         let store = TempStore::new();
         let folder = store.dir().join("paths");
@@ -800,7 +867,7 @@ mod tests {
         script::quester::registry::set_source(source.clone());
         let _restore_source = RestoreRegistrySource;
         let mut reload = ReloadPaths::default();
-        let queued = reload.start(Arc::clone(&selected), source.clone());
+        let queued = reload.start(Arc::clone(&selected), source.clone(), None);
         assert!(
             reload.pending.is_some(),
             "Path reload must encounter temporary Full"
@@ -814,7 +881,9 @@ mod tests {
             folder: store.dir().join("replacement"),
         };
         assert!(
-            reload.start(Arc::clone(&selected), replacement).is_err(),
+            reload
+                .start(Arc::clone(&selected), replacement, None)
+                .is_err(),
             "queued Path reload demand must not be replaced"
         );
         assert_eq!(
@@ -835,7 +904,7 @@ mod tests {
             reload,
             ..Default::default()
         };
-        controller.advance(Some(Arc::clone(&selected)));
+        controller.advance(Some(Arc::clone(&selected)), None);
         assert!(
             controller.reload.pending.is_none(),
             "controller retries queued demand"
@@ -845,7 +914,7 @@ mod tests {
         assert!(summary.contains("Reload Paths:"), "{summary}");
         let published = script::quester::registry::snapshot();
         for (id, label) in [
-            ("cook", "Folder Cook [folder]"),
+            ("cook", "Folder Cook [folder] [draft]"),
             ("fresh-draft", "Fresh Draft [draft]"),
         ] {
             assert!(
@@ -877,18 +946,18 @@ mod tests {
         write_cook(&folder, "cook", "Edited Again", false);
         controller
             .reload
-            .start(Arc::clone(&selected), source.clone())
+            .start(Arc::clone(&selected), source.clone(), None)
             .expect("restart asynchronous reload");
         finish_reload(&mut controller.reload).expect("second folder reload report");
         let edited = script::quester::registry::snapshot();
         assert!(edited
             .rows()
             .iter()
-            .any(|row| row.id == "cook" && row.label == "Edited Again [folder]"));
+            .any(|row| row.id == "cook" && row.label == "Edited Again [folder] [draft]"));
         assert!(!edited
             .rows()
             .iter()
-            .any(|row| row.id == "cook" && row.label == "Folder Cook [folder]"));
+            .any(|row| row.id == "cook" && row.label == "Folder Cook [folder] [draft]"));
         assert!(edited
             .diagnostics()
             .iter()

@@ -596,7 +596,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
             (root / engine / script).write_text("#!/bin/sh\n", encoding="utf-8")
         fixtures = root / "nightly-root/fixtures"
         fixtures.mkdir(parents=True)
-        (fixtures / "274bot-289-v17.navpack").write_text("fixture\n", encoding="utf-8")
+        (fixtures / "274bot-289-v18.navpack").write_text("fixture\n", encoding="utf-8")
         (fixtures / "inspect.fb").write_text("inspect fixture\n", encoding="utf-8")
         isohome = root / "isohome"
         isohome.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")

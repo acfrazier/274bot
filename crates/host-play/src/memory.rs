@@ -2237,7 +2237,7 @@ impl Run {
             .is_none_or(|t| t.elapsed() >= Duration::from_secs(1))
         {
             let (allocs, alloc_bytes, live_bytes) = rust_allocator_counts();
-            let metrics = script_js::memory_profile::snapshots();
+            let metrics = script_js::runtime::memory_profile::snapshots();
             let sum = |key: &str| metrics.iter().filter_map(|m| m[key].as_u64()).sum::<u64>();
             let live = sum("v8_live");
             let sampled = metrics
@@ -2390,9 +2390,10 @@ impl Run {
             self.last_sample = Some(now);
         }
 
-        Ok(self
+        let finished = self
             .teardown
-            .is_some_and(|t| t.elapsed() >= self.config.teardown))
+            .is_some_and(|t| t.elapsed() >= self.config.teardown);
+        Ok(finished)
     }
 
     /// The profile's game-data trust decision, serialized once.

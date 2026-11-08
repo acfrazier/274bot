@@ -24,7 +24,7 @@ fn sherlock_factory_rejects_wrong_prepared_type() {
 
     let wrong_type = PreparedConfig::new(CompiledId("Sherlock"), 1, 1, Arc::default(), ());
     assert!(matches!(
-        (script_js::sherlock::CARD.create)(
+        (script_js::compat::sherlock::CARD.create)(
             RunKey {
                 slot: 10,
                 run: 2,

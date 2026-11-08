@@ -1,11 +1,13 @@
 //! Native walk wait: LoadIsolate + FlatBuffer outcome, not arrival-only timeout.
 
-use script::shim::InteractReq;
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_delta_with_native, encode_snapshot_with_native,
-    NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{NativeFactsInput, ReachViewInput, SnapshotInput, TileInput},
+    script_js::wire::{
+        encode_snapshot, encode_snapshot_delta_with_native, encode_snapshot_with_native,
+    },
+};
 
 fn base_snapshot<'a>(tick: u64, here: TileInput) -> SnapshotInput<'a> {
     SnapshotInput {
@@ -156,6 +158,8 @@ fn park_walk(iso: &LoadIsolate) -> u64 {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,
@@ -249,6 +253,8 @@ fn isolate_nopath_delta_snapshot_returns_false_promptly() {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,
@@ -432,6 +438,8 @@ fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: first,
             avoid: _,
             cross: _,
@@ -444,6 +452,8 @@ fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
             compat_tile_intent: true,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: second,
             avoid: _,
             cross: _,
@@ -637,6 +647,8 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
                 compat_tile_intent: true,
                 allow_wilderness: true,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id,
                 avoid: _,
                 cross: _,
@@ -652,6 +664,8 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
                 allow_teleports: false,
                 allow_wilderness: true,
                 allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
                 request_id,
                 avoid: _,
                 cross: _,
@@ -726,6 +740,8 @@ fn walk_to_stays_pending_until_posted_arrival() {
             compat_tile_intent: true,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,
@@ -768,6 +784,8 @@ fn walk_to_same_coord_wrong_plane_is_not_arrival() {
             allow_teleports: false,
             allow_wilderness: true,
             allow_bank_fetch: true,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id,
             avoid: _,
             cross: _,

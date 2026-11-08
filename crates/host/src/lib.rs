@@ -126,13 +126,98 @@ const WATCH_PARK_MS: Duration = Duration::from_secs(1);
 /// Host: spawns and owns per-client slot threads.
 pub struct Host;
 
+/// Margin, in observed game ticks, between a script wait's own deadline and
+/// the host's terminal release of that hold
+/// ([`ScriptRunPolicy::observe_script_wait`]).
+///
+/// The script ends its hold itself: when it observes the page its own
+/// interaction opened, when its own bound ends the wait with a logged
+/// failure, or when it is dropped. The host releases a hold that is still
+/// live after its deadline plus this margin: its owner did not run its own
+/// deadline check (a hung or frozen owner). That release is a logged failure,
+/// never the normal release.
+///
+/// Derivation from the frame order. On each frame the owner's poll
+/// (`host-play/src/script_observe.rs:827`, with the frame's tick) runs
+/// before the sample of its wait (`script_observe.rs:1325`), and the sample
+/// runs before the press decision (`lib.rs:739` before `lib.rs:758`). So an
+/// owner with a tick deadline `d` has ended its wait before the sample of
+/// tick `d`: 0 ticks. For an active-clock bound, the script reports as its
+/// deadline the first tick whose sample saw the owner's own active clock
+/// reach the bound; until then the bound is not due, also while a pause has
+/// stopped that clock. The owner's poll on that frame read its clock earlier
+/// (`script/src/slot/compiled.rs:391` before `script_observe.rs:1141`), so it
+/// can first see the bound on its next poll, at the next tick, before that
+/// tick's sample: 1 tick. The margin is the larger of the two. Counts are
+/// observed game ticks, not wall time.
+pub const SCRIPT_WAIT_MARGIN_TICKS: u64 = 1;
+
+/// The script's own wait for the result of its own interaction, as sampled on
+/// one host frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScriptWait {
+    /// Changes with each new wait (a new lease, a new send, a re-arm).
+    pub key: u64,
+    /// The observed game tick (the script's tick clock) by which the owner
+    /// ends this wait itself. A renewed wait reports its new deadline.
+    pub deadline_tick: u64,
+}
+
+/// One hold that the host ended at its deadline plus
+/// [`SCRIPT_WAIT_MARGIN_TICKS`]; the host logs it as a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScriptWaitExpired {
+    pub key: u64,
+    pub deadline_tick: u64,
+    pub tick: u64,
+}
+
 /// Host-owned script auto-run overlay. Host-play identifies the active script
 /// run and applies only generation-matched FlatBuffer updates through this
 /// sink; script Stop/replacement clears the value, while relogs preserve it.
+///
+/// The script also holds the host press while it waits for the result of its
+/// own interaction ([`Self::observe_script_wait`]). The hold follows the
+/// script's own state, not packets: no packet order can end it before the
+/// script has seen its page or ended its wait. The only other release is the
+/// terminal one: a hold still live after its own deadline plus
+/// [`SCRIPT_WAIT_MARGIN_TICKS`], counted on the script's observed-tick clock.
 #[derive(Debug, Default)]
 pub struct ScriptRunPolicy {
     runtime_generation: Option<u64>,
     policy_override: Option<RunPolicyOverride>,
+    /// The script's current wait, if any.
+    script_wait: Option<ScriptWaitHold>,
+}
+
+/// Where one hold stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoldPhase {
+    /// The press is held.
+    Held,
+    /// A session boundary ended the hold. Only a new key holds again.
+    EndedAtBoundary,
+    /// The terminal release ended the hold at the deadline sampled last. A
+    /// renewal of the same key that moves the deadline later holds again.
+    EndedAtDeadline,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScriptWaitHold {
+    key: u64,
+    /// The deadline of the latest sample of this key, to tell a renewal from
+    /// a repeat. A deadline above `u32::MAX` observed ticks (about 81 years
+    /// of game time) saturates there, so a renewal between two such deadlines
+    /// is not seen. The 4 bytes keep [`ScriptRunPolicy`] within its per-slot
+    /// size budget.
+    deadline_tick: u32,
+    phase: HoldPhase,
+}
+
+impl ScriptWaitHold {
+    fn deadline_of(wait: ScriptWait) -> u32 {
+        u32::try_from(wait.deadline_tick).unwrap_or(u32::MAX)
+    }
 }
 
 impl ScriptRunPolicy {
@@ -142,6 +227,7 @@ impl ScriptRunPolicy {
         if self.runtime_generation != runtime_generation {
             self.runtime_generation = runtime_generation;
             self.policy_override = None;
+            self.script_wait = None;
         }
     }
 
@@ -149,6 +235,95 @@ impl ScriptRunPolicy {
     pub fn apply_override(&mut self, runtime_generation: u64, policy: Option<RunPolicyOverride>) {
         if self.runtime_generation == Some(runtime_generation) {
             self.policy_override = policy;
+        }
+    }
+
+    /// Read the script's own wait once per frame, after the script tick and
+    /// before the press decision. `tick` is the frame's observed game tick on
+    /// the script's clock. `None` ends the hold at once. A new key starts a
+    /// new hold. The deadline is the owner's latest, read on every frame, so a
+    /// renewed wait moves it. A renewal that moves the deadline later after
+    /// the terminal release is a wait of its own and holds again (the
+    /// dialogue renews its acknowledgement wait as its end gap); a repeat of
+    /// the same deadline does not, and a session boundary is never undone.
+    /// A hold still live at `deadline_tick + SCRIPT_WAIT_MARGIN_TICKS` ends
+    /// here, is logged as a failure and is returned.
+    pub fn observe_script_wait(
+        &mut self,
+        wait: Option<ScriptWait>,
+        tick: u64,
+    ) -> Option<ScriptWaitExpired> {
+        let before = self.script_wait.map(|hold| hold.key);
+        self.script_wait = match (wait, self.script_wait) {
+            (None, _) => None,
+            (Some(wait), Some(mut hold)) if hold.key == wait.key => {
+                let deadline = ScriptWaitHold::deadline_of(wait);
+                if hold.phase == HoldPhase::EndedAtDeadline && deadline > hold.deadline_tick {
+                    hold.phase = HoldPhase::Held;
+                    host_log!(
+                        Category::InteractTrace,
+                        Level::Debug,
+                        "auto-run hold key={} renewed deadline_tick={} was={} tick={tick}",
+                        hold.key,
+                        wait.deadline_tick,
+                        hold.deadline_tick
+                    );
+                }
+                hold.deadline_tick = deadline;
+                Some(hold)
+            }
+            (Some(wait), _) => Some(ScriptWaitHold {
+                key: wait.key,
+                deadline_tick: ScriptWaitHold::deadline_of(wait),
+                phase: HoldPhase::Held,
+            }),
+        };
+        let after = self.script_wait.map(|hold| hold.key);
+        if before != after {
+            host_log!(
+                Category::InteractTrace,
+                Level::Debug,
+                "auto-run hold key={after:?} was={before:?} deadline_tick={:?} tick={tick}",
+                wait.map(|wait| wait.deadline_tick)
+            );
+        }
+        let (Some(wait), Some(hold)) = (wait, self.script_wait.as_mut()) else {
+            return None;
+        };
+        if hold.phase != HoldPhase::Held
+            || tick < wait.deadline_tick.saturating_add(SCRIPT_WAIT_MARGIN_TICKS)
+        {
+            return None;
+        }
+        hold.phase = HoldPhase::EndedAtDeadline;
+        host_log!(
+            Category::InteractTrace,
+            Level::Warn,
+            "auto-run hold ended after its deadline key={} deadline_tick={} tick={tick}: the script did not end its wait",
+            hold.key,
+            wait.deadline_tick
+        );
+        Some(ScriptWaitExpired {
+            key: hold.key,
+            deadline_tick: wait.deadline_tick,
+            tick,
+        })
+    }
+
+    /// True while the host must not press run: the script waits for the
+    /// result of its own interaction. The modal check holds the press
+    /// separately while a modal is open.
+    pub fn should_defer_auto_run(&self) -> bool {
+        self.script_wait
+            .is_some_and(|hold| hold.phase == HoldPhase::Held)
+    }
+
+    /// A session boundary ends the current hold: no page of the old session
+    /// can arrive. A wait that outlives the boundary holds again only with a
+    /// new key, also when it renews its deadline.
+    fn release_at_session_boundary(&mut self) {
+        if let Some(hold) = self.script_wait.as_mut() {
+            hold.phase = HoldPhase::EndedAtBoundary;
         }
     }
 
@@ -606,6 +781,35 @@ impl Host {
                     .is_some_and(|head| head.backend_kind() == BackendKind::Gpu),
         );
         let t_obs = Instant::now();
+        #[cfg(feature = "observe-cost-profile")]
+        let busy = if performance_profile::observe_cost_profile_enabled() {
+            let mut busy = false;
+            let mut cpu_ns = None;
+            let allocations = allocation_counter::measure(|| {
+                let cpu_start = capacity::thread_cpu_time();
+                busy = observe(client, username, *run_sends, &status, &mut slot.run_policy);
+                cpu_ns = cpu_start.and_then(|start| {
+                    capacity::thread_cpu_time().map(|end| {
+                        u64::try_from(end.saturating_sub(start).as_nanos()).unwrap_or(u64::MAX)
+                    })
+                });
+            });
+            slot.observe_cost_frames = slot.observe_cost_frames.wrapping_add(1);
+            slot.observe_cost_allocations = slot
+                .observe_cost_allocations
+                .wrapping_add(allocations.count_total);
+            slot.observe_cost_allocated_bytes = slot
+                .observe_cost_allocated_bytes
+                .wrapping_add(allocations.bytes_total);
+            if let Some(cpu_ns) = cpu_ns {
+                slot.observe_cost_cpu_ns = slot.observe_cost_cpu_ns.wrapping_add(cpu_ns);
+                slot.observe_cost_cpu_samples = slot.observe_cost_cpu_samples.wrapping_add(1);
+            }
+            busy
+        } else {
+            observe(client, username, *run_sends, &status, &mut slot.run_policy)
+        };
+        #[cfg(not(feature = "observe-cost-profile"))]
         let busy = observe(client, username, *run_sends, &status, &mut slot.run_policy);
         let observe_ns = t_obs.elapsed().as_nanos() as u64;
         slot.observe_ns = slot.observe_ns.wrapping_add(observe_ns);
@@ -765,7 +969,7 @@ impl Host {
         }
         slot.log_n = slot.log_n.wrapping_add(1);
         #[cfg(feature = "performance-profile")]
-        slot.publish_profile();
+        slot.publish_profile(username);
         if debug_enabled() {
             let frame_us = t_loop.elapsed().as_micros() as u64;
             if let Some(us) = debug_hitch_us(frame_us) {
@@ -1262,6 +1466,17 @@ struct SlotLoop {
     raster_ns: u64,
     /// Wall time of the observe hook (`script_observe` + snapshot encode).
     observe_ns: u64,
+    /// Per-observe thread CPU and allocation counters for the opt-in cost probe.
+    #[cfg(feature = "observe-cost-profile")]
+    observe_cost_cpu_ns: u64,
+    #[cfg(feature = "observe-cost-profile")]
+    observe_cost_cpu_samples: u64,
+    #[cfg(feature = "observe-cost-profile")]
+    observe_cost_frames: u64,
+    #[cfg(feature = "observe-cost-profile")]
+    observe_cost_allocations: u64,
+    #[cfg(feature = "observe-cost-profile")]
+    observe_cost_allocated_bytes: u64,
     /// Max single observe in the current `BOT_DEBUG` window.
     observe_max_ns: u64,
     paint_n: u64,
@@ -1328,6 +1543,16 @@ impl SlotLoop {
             loop_ns: 0,
             raster_ns: 0,
             observe_ns: 0,
+            #[cfg(feature = "observe-cost-profile")]
+            observe_cost_cpu_ns: 0,
+            #[cfg(feature = "observe-cost-profile")]
+            observe_cost_cpu_samples: 0,
+            #[cfg(feature = "observe-cost-profile")]
+            observe_cost_frames: 0,
+            #[cfg(feature = "observe-cost-profile")]
+            observe_cost_allocations: 0,
+            #[cfg(feature = "observe-cost-profile")]
+            observe_cost_allocated_bytes: 0,
             observe_max_ns: 0,
             paint_n: 0,
             skip_n: 0,
@@ -1356,7 +1581,8 @@ impl SlotLoop {
     /// Recover missed 20 ms cycles on every slot, including late focused
     /// and busy frames, before new packets replace routes or animations.
     /// Advance only entity and presentation state, including cutscene camera
-    /// updates. Never replay I/O or input timers.
+    /// updates. Never replay I/O or input timers, except the Java idle timer
+    /// a host asked for (below).
     fn recover_entity_cycles(&mut self, client: &mut Client, now: Instant) {
         if !client.ingame || client.error_loading || client.gens.session != self.pump.last().session
         {
@@ -1383,6 +1609,15 @@ impl SlotLoop {
                 *cycle = cycle.wrapping_add(1);
             }
         }
+        // The one input timer replayed: the Java idle timer counts 20 ms
+        // cycles, so a bot that parks between game ticks still reaches its
+        // 4500-cycle threshold after the Java client's 90 s, not after 4500
+        // parked passes. Only a client whose host asked for that timer
+        // ([`Client::set_host_idle_timer`]) counts; every other timer stays
+        // unreplayed.
+        if missed > 0 && client.host_idle_timer() {
+            client.shell.idle_cycles = client.shell.idle_cycles.saturating_add(missed);
+        }
         // Retain fractional periods and account for early control wakes.
         // Do not carry capped stall debt across newly received packets.
         self.entity_cycle_at = Some(if due > u128::from(missed + 1) {
@@ -1393,12 +1628,28 @@ impl SlotLoop {
     }
 
     #[cfg(feature = "performance-profile")]
-    fn publish_profile(&mut self) {
+    fn publish_profile(&mut self, username: &str) {
         if self.profile_published_at.elapsed() < Duration::from_secs(1) {
             return;
         }
+        #[cfg(feature = "observe-cost-profile")]
+        let observe_cost = performance_profile::ObserveCost {
+            cpu_ns: self.observe_cost_cpu_ns,
+            cpu_samples: self.observe_cost_cpu_samples,
+            frames: self.observe_cost_frames,
+            allocations: self.observe_cost_allocations,
+            allocated_bytes: self.observe_cost_allocated_bytes,
+        };
+        #[cfg(not(feature = "observe-cost-profile"))]
+        let observe_cost = performance_profile::ObserveCost::default();
         if let Some(profile) = &self.profile {
-            profile.publish(self.loop_ns, self.observe_ns, self.raster_ns);
+            profile.publish(
+                username,
+                self.loop_ns,
+                self.observe_ns,
+                self.raster_ns,
+                observe_cost,
+            );
         }
         self.profile_published_at = Instant::now();
     }
@@ -1409,6 +1660,7 @@ impl SlotLoop {
             self.guardian = Guardian::new();
             self.guardian_status = RandomStatus::default();
             self.run_on = false;
+            self.run_policy.release_at_session_boundary();
         }
         publish_snapshot(&mut self.snapshot, client, result);
         result
@@ -1426,14 +1678,17 @@ impl SlotLoop {
             self.run_on = false;
         }
         let policy = self.run_policy.resolved();
+        let modal_free = auto_run::modal_free(
+            client.main_modal_id,
+            client.chat_modal_id,
+            client.side_modal_id,
+        );
+        let defer_auto_run = self.run_policy.should_defer_auto_run();
         if self.snapshot.local_player().is_some()
             && auto_run_ready(client.ingame, client.scene_state)
-            && auto_run::modal_free(
-                client.main_modal_id,
-                client.chat_modal_id,
-                client.side_modal_id,
-            )
+            && modal_free
             && auto_run_tick(energy, self.run_on, policy)
+            && !defer_auto_run
             && set_run(client, true)
         {
             self.run_on = true;

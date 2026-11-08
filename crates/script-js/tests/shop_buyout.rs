@@ -5,6 +5,10 @@
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
 
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
 }
@@ -70,6 +74,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let iso = spawn(PLAN_SRC);
     tick(&iso);
     let probe = iso.probe("__probe").unwrap();
@@ -118,6 +125,9 @@ fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
 
 #[test]
 fn aubury_selection_ranks_by_base_cost() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { SHOP_DB } from '../../data/shopdb.js';
 import { buyoutPlan } from '../../api/shop/BuyoutLogic.js';

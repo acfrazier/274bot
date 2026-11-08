@@ -183,7 +183,7 @@ fn drive_to_wear(
                         tick: now,
                         sequence: now,
                     },
-                    selected: crate::bank::SelectedBank {
+                    outcome: crate::bank::BankPickOutcome::Selected(crate::bank::SelectedBank {
                         bank_index: 0,
                         access_tile: tile(),
                         kind: crate::bank::PickKind::Reachable,
@@ -195,7 +195,7 @@ fn drive_to_wear(
                             name: None,
                             choose: None,
                         })),
-                    },
+                    }),
                 },
             );
             continue;
@@ -213,10 +213,10 @@ fn drive_to_wear(
             unreachable!();
         };
         match request {
-            crate::shim::InteractReq::Wear { name } => {
+            crate::interact::InteractReq::Wear { name } => {
                 return (withdrawn, name.clone());
             }
-            crate::shim::InteractReq::WithdrawX {
+            crate::interact::InteractReq::WithdrawX {
                 name,
                 count,
                 bank_item_id,
@@ -248,7 +248,7 @@ fn drive_to_wear(
                 }
                 snapshot.seed_inventory(held.clone(), 28);
             }
-            crate::shim::InteractReq::SetNoteMode { .. } => {
+            crate::interact::InteractReq::SetNoteMode { .. } => {
                 ledger_state.as_mut().unwrap().complete_interaction(
                     &authority,
                     InteractionReceipt {
@@ -263,7 +263,7 @@ fn drive_to_wear(
                     },
                 );
             }
-            crate::shim::InteractReq::Close => {
+            crate::interact::InteractReq::Close => {
                 ledger_state.as_mut().unwrap().complete_interaction(
                     &authority,
                     InteractionReceipt {
@@ -329,6 +329,9 @@ fn begin_unobserved_loadout(
 
 #[test]
 fn loadout_observation_wait_exposes_borrowed_stable_detail() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_path_loadout(vec![], path_loadout(), false, |plan, _, _| {
         let snapshot = unobserved_snapshot();
         let mut ledger_state = None;
@@ -349,6 +352,9 @@ fn loadout_observation_wait_exposes_borrowed_stable_detail() {
 
 #[test]
 fn loadout_observation_wait_times_out_without_both_observations() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_path_loadout(vec![], path_loadout(), false, |plan, _, _| {
         let (_, banks) = bank_facts();
         let partial_inventory = {
@@ -380,6 +386,9 @@ fn loadout_observation_wait_times_out_without_both_observations() {
 
 #[test]
 fn loadout_observation_at_deadline_wins_and_cancellation_dispatches_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_path_loadout(
         vec![],
         serde_json::json!({"worn":{}, "carry":[]}),
@@ -409,6 +418,9 @@ fn loadout_observation_at_deadline_wins_and_cancellation_dispatches_nothing() {
 
 #[test]
 fn path_alias_worn_and_carry_queue_the_exact_unnoted_ids() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_path_loadout(vec![], path_loadout(), false, |plan, _, data| {
         let lobster = data.item_by_alias("lobster").unwrap();
         let cert_lobster = data.item_by_alias("cert_lobster").unwrap();
@@ -439,6 +451,9 @@ fn path_alias_worn_and_carry_queue_the_exact_unnoted_ids() {
 
 #[test]
 fn alias_tier_fallback_resolves_real_candidates_and_keeps_stat_gates() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let loadout = serde_json::json!({"worn": {"hat": "rune_full_helm"}, "carry": []});
     with_path_loadout(vec![], loadout, true, |plan, _, data| {
         let adamant = data.item_by_alias("adamant_full_helm").unwrap();
@@ -490,6 +505,9 @@ fn alias_tier_fallback_resolves_real_candidates_and_keeps_stat_gates() {
 
 #[test]
 fn real_loadout_candidates_match_canonical_first_with_fewer_name_lookups() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let helm = selected.item_by_alias("rune_full_helm").unwrap();
     let lobster = selected.item_by_alias("lobster").unwrap();
@@ -541,6 +559,9 @@ fn real_loadout_candidates_match_canonical_first_with_fewer_name_lookups() {
 
 #[test]
 fn loadout_ready_uses_alias_ids_and_excludes_same_display_certificates() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_path_loadout(vec![], path_loadout(), true, |_, ready, data| {
         let lobster = data.item_by_alias("lobster").unwrap();
         let cert_lobster = data.item_by_alias("cert_lobster").unwrap();
@@ -605,6 +626,9 @@ fn loadout_ready_uses_alias_ids_and_excludes_same_display_certificates() {
 
 #[test]
 fn operator_display_name_override_still_selects_unnoted_items() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let store = api::loadout::Loadout::new("cook/melee")
         .with_slot("hat", "Rune full helm")
         .with_carry("Lobster", 2);
@@ -729,7 +753,7 @@ fn drive_loadout(
                         tick: now,
                         sequence: now,
                     },
-                    selected: crate::bank::SelectedBank {
+                    outcome: crate::bank::BankPickOutcome::Selected(crate::bank::SelectedBank {
                         bank_index: 0,
                         access_tile: tile(),
                         kind: crate::bank::PickKind::Reachable,
@@ -741,7 +765,7 @@ fn drive_loadout(
                             name: None,
                             choose: None,
                         })),
-                    },
+                    }),
                 },
             );
             continue;
@@ -774,10 +798,10 @@ fn drive_loadout(
             );
         };
         match request {
-            crate::shim::InteractReq::Wear { name } => {
+            crate::interact::InteractReq::Wear { name } => {
                 return (withdrawn, Ok(Some(name.clone())));
             }
-            crate::shim::InteractReq::Unequip { name } => {
+            crate::interact::InteractReq::Unequip { name } => {
                 accept(&mut ledger_state);
                 let mut equipment = snapshot.equipment().to_vec();
                 let index = equipment
@@ -795,7 +819,7 @@ fn drive_loadout(
                 snapshot.seed_equipment(equipment);
                 snapshot.seed_inventory(inventory, 28);
             }
-            crate::shim::InteractReq::OpenStand { .. } => {
+            crate::interact::InteractReq::OpenStand { .. } => {
                 let rows = fixture
                     .opens_with
                     .clone()
@@ -803,7 +827,7 @@ fn drive_loadout(
                 accept(&mut ledger_state);
                 snapshot.seed_bank_observation(100, now, Some(rows), vec![]);
             }
-            crate::shim::InteractReq::WithdrawX {
+            crate::interact::InteractReq::WithdrawX {
                 name,
                 count,
                 bank_item_id,
@@ -824,8 +848,8 @@ fn drive_loadout(
                 }
                 snapshot.seed_inventory(inventory, 28);
             }
-            crate::shim::InteractReq::SetNoteMode { .. } => accept(&mut ledger_state),
-            crate::shim::InteractReq::Close => {
+            crate::interact::InteractReq::SetNoteMode { .. } => accept(&mut ledger_state),
+            crate::interact::InteractReq::Close => {
                 accept(&mut ledger_state);
                 snapshot.seed_bank_observation(-1, now, None, vec![]);
             }
@@ -839,6 +863,9 @@ fn drive_loadout(
 /// satisfied — no bank trip, not even with an unknown bank.
 #[test]
 fn worn_legal_tier_takes_no_bank_action() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let loadout = serde_json::json!({"worn": {"hat": "rune_full_helm"}, "carry": []});
     with_path_loadout(vec![], loadout, true, |plan, _, data| {
         let adamant = data.item_by_alias("adamant_full_helm").unwrap();
@@ -878,6 +905,9 @@ fn worn_legal_tier_takes_no_bank_action() {
 /// bank really holds.
 #[test]
 fn known_bank_withdraws_the_strongest_banked_tier_not_withdraw_any() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let loadout = serde_json::json!({"worn": {"hat": "rune_full_helm"}, "carry": []});
     with_path_loadout(vec![], loadout, true, |plan, _, data| {
         let adamant = data.item_by_alias("adamant_full_helm").unwrap();
@@ -945,6 +975,9 @@ fn known_bank_withdraws_the_strongest_banked_tier_not_withdraw_any() {
 /// nothing carried refuses the step in place — no selection, no walk.
 #[test]
 fn session_bank_with_no_legal_tier_is_refused_in_place() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let loadout = serde_json::json!({"worn": {"hat": "rune_full_helm"}, "carry": []});
     with_path_loadout(vec![], loadout, true, |plan, _, _| {
         let (_, banks) = bank_facts();
@@ -984,6 +1017,9 @@ fn session_bank_with_no_legal_tier_is_refused_in_place() {
 /// an open bank reuses it — the first effect is the withdraw itself.
 #[test]
 fn loadout_at_an_open_bank_issues_no_select_walk_or_open() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_path_loadout(vec![], path_loadout(), false, |plan, _, data| {
         let lobster = data.item_by_alias("lobster").unwrap();
         let helm = data.item_by_alias("rune_full_helm").unwrap();
@@ -1018,6 +1054,9 @@ fn loadout_at_an_open_bank_issues_no_select_walk_or_open() {
 /// a separate Close, so the engine closes the bank as it equips the helm.
 #[test]
 fn held_legal_tier_is_worn_after_carry_trip_without_a_separate_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_path_loadout(vec![], path_loadout(), true, |plan, _, data| {
         let adamant = data.item_by_alias("adamant_full_helm").unwrap();
         let lobster = data.item_by_alias("lobster").unwrap();
@@ -1052,6 +1091,9 @@ fn held_legal_tier_is_worn_after_carry_trip_without_a_separate_close() {
 /// Quester sends the Wear without a separate Close.
 #[test]
 fn fully_held_loadout_wears_with_open_bank() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     with_path_loadout(vec![], path_loadout(), true, |plan, _, data| {
         let adamant = data.item_by_alias("adamant_full_helm").unwrap();
         let lobster = data.item_by_alias("lobster").unwrap();
@@ -1084,6 +1126,9 @@ fn fully_held_loadout_wears_with_open_bank() {
 /// sends Unequip with the bank open; 289 closes it on that interaction.
 #[test]
 fn exclusive_strip_follows_the_trip_without_a_separate_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let loadout = serde_json::json!({"worn": {"hat": "rune_full_helm"}, "carry": []});
     let args = serde_json::json!({"exclusive": true});
     with_path_loadout_args(vec![], loadout, args, |plan, _, data| {

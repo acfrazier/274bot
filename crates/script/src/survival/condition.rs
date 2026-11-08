@@ -43,6 +43,7 @@ pub fn derive(
         poison: PoisonState::Unknown {
             since: snapshot.tick() as u16,
         },
+        poison_window: None,
         food: FoodSummary::default(),
         cures: CureDoses::default(),
     };

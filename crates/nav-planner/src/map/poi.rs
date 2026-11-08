@@ -1,5 +1,4 @@
 //! Discovery evidence is not route/account eligibility and never an action.
-use super::identity::Digest;
 use super::spatial::GameTile;
 use super::{MapError, Rows, Text};
 use serde::{Deserialize, Serialize};
@@ -135,11 +134,9 @@ pub enum CapabilityEvidence {
         eligibility: Eligibility,
         /// Content-root-relative source reference (may include a line/label).
         reference: Text,
-        source_sha256: Digest,
     },
     SourceLabel {
         reference: Text,
-        source_sha256: Digest,
     },
 }
 
@@ -183,7 +180,6 @@ pub struct DisplayAnchor {
 #[serde(deny_unknown_fields)]
 pub struct WalkTarget {
     pub tile: GameTile,
-    pub nav_sha256: Digest,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

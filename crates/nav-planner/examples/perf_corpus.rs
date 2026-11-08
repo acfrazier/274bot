@@ -168,7 +168,8 @@ fn main() -> Result<(), String> {
     let decode_started = (!counters_only()).then(Instant::now);
     let mut world = NavWorld::load_pack(&pack).map_err(|error| format!("load pack: {error:?}"))?;
     let decode_ms = decode_started.map(|started| started.elapsed().as_secs_f64() * 1000.0);
-    let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)?;
+    let game_data = api::game_data::for_revision(client::io::ClientRevision::R289)
+        .map_err(|error| format!("game data: {error}"))?;
     world
         .bind_named_bank_facts(&game_data)
         .map_err(|error| format!("bind named bank facts: {error:?}"))?;

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use api::identity::{RequestId, Settlement};
+use nav_planner::contract::PackId;
 use nav_planner::map::identity::Digest;
 use nav_planner::router::FindOptions;
 use nav_planner::tile::Tile;
@@ -14,20 +15,19 @@ use crate::launch::BoundProfile;
 use crate::map_bake::MapBakeGate;
 use crate::surface::{InputEv, InputSender};
 use crate::walk_map::{
-    observed_walk_services, RouteProjectionView, WalkActionError, WalkActionKind, WalkCatalogue,
-    WalkExclude, WalkMap, WalkMapContext, WalkMapDemand, WalkMapDemandHandle, WalkMapJobState,
-    WalkObservedService, WalkReadyCatalogue, WalkSlotStatus,
+    observed_walk_services, RouteProjectionView, WalkActionError, WalkActionErrorKind,
+    WalkActionKind, WalkCatalogue, WalkExclude, WalkMap, WalkMapContext, WalkMapDemand,
+    WalkMapDemandHandle, WalkMapJobState, WalkObservedService, WalkReadyCatalogue, WalkSlotStatus,
 };
 use crate::OperatorSession;
 
 impl<Io> OperatorSession<Io> {
-    /// Bind the map to a navigation identity, catalogue overlay and current
-    /// focused slot. The frontend supplies only stable display identities;
-    /// host focus tokens are captured here.
+    /// Bind the map to a loaded world, catalogue overlay and focused slot.
+    /// The frontend supplies ownership keys. The host captures focus tokens.
     pub fn walk_map_context(
         &self,
         name: Option<&str>,
-        nav: Digest,
+        nav: PackId,
         overlay: Option<Digest>,
         generation: u64,
     ) -> WalkMapContext {
@@ -758,7 +758,7 @@ impl<Io> OperatorSession<Io> {
                 Applied::Done
             }
             Err(error) => {
-                if error.kind() == crate::walk_map::WalkActionErrorKind::NoPath {
+                if preserves_walk_destination(error.kind()) {
                     desk.walk_dest = planned;
                 }
                 if name.is_none() {
@@ -1007,7 +1007,7 @@ impl<Io> OperatorSession<Io> {
         staged: StagedMapAction,
         name: Option<&str>,
     ) -> Result<Tile, WalkActionError> {
-        use host_play::walk_map::WalkRequest;
+        use host_play::walk_map::{WalkActionOutcome, WalkRequest};
 
         let play = self.play.as_ref();
         let profile = play.and_then(|play| play.server_profile());
@@ -1036,17 +1036,40 @@ impl<Io> OperatorSession<Io> {
             let command = staged.command.map_err(WalkActionError::into_host)?;
             command_destination = Some(command.destination());
             let play = play.ok_or(host_play::walk_map::ActionError::NoFocus)?;
-            play.map_walk(
-                command,
-                &staged.context.to_host(),
-                &state,
-                &bank,
-                input,
-                self.walk_arms(),
-            )
+            let name = name.ok_or(host_play::walk_map::ActionError::NoFocus)?;
+            // Keep status-origin routing when no frame is published; the host
+            // still fails closed on gated routes without snapshot context.
+            let context = staged.context.to_host();
+            let arms = self.walk_arms();
+            let mut command = Some(command);
+            self.frames
+                .with_snapshot(name, |snapshot| {
+                    play.map_walk_with_snapshot(
+                        command
+                            .take()
+                            .expect("snapshot dispatch retains its map command"),
+                        &context,
+                        Some(snapshot),
+                        &state,
+                        &bank,
+                        input,
+                        arms,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    play.map_walk_with_snapshot(
+                        command.expect("missing snapshot leaves the map command available"),
+                        &context,
+                        None,
+                        &state,
+                        &bank,
+                        input,
+                        arms,
+                    )
+                })
         });
         match result {
-            Ok(_) => {
+            Ok(WalkActionOutcome::Walking(_) | WalkActionOutcome::PrerequisiteStarted) => {
                 let destination =
                     command_destination.expect("successful map walk consumed a map command");
                 if let Some(name) = name {
@@ -1074,6 +1097,12 @@ impl<Io> OperatorSession<Io> {
             .map(|()| destination)
             .map_err(WalkActionError::from_host)
     }
+}
+fn preserves_walk_destination(kind: WalkActionErrorKind) -> bool {
+    matches!(
+        kind,
+        WalkActionErrorKind::NoPath | WalkActionErrorKind::SearchIncomplete
+    )
 }
 
 fn walk_action_applied(error: WalkActionError) -> super::commands::Applied {
@@ -1157,5 +1186,16 @@ mod tests {
         desk.begin_game_input_frame();
         assert!(!desk.game_input.is_overflowed());
         assert!(!desk.has_staged_game_input());
+    }
+
+    #[test]
+    fn incomplete_search_preserves_walk_destination_for_retry() {
+        assert!(preserves_walk_destination(
+            WalkActionErrorKind::SearchIncomplete
+        ));
+        assert!(preserves_walk_destination(WalkActionErrorKind::NoPath));
+        assert!(!preserves_walk_destination(
+            WalkActionErrorKind::RiskRefused
+        ));
     }
 }

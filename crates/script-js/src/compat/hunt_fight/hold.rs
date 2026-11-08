@@ -118,7 +118,7 @@ fn hold_validate_inner(proj: &Projection, obs: &FightObservation) -> bool {
 }
 
 pub(super) fn walk_wait_settled(token: u64) -> bool {
-    crate::walk_wait::dispatch(&json!({ "op": "settled", "token": token }))
+    crate::scene::walk_wait::dispatch(&json!({ "op": "settled", "token": token }))
         .as_bool()
         .unwrap_or(false)
 }
@@ -412,6 +412,9 @@ mod tests {
 
     #[test]
     fn hold_consumer_emits_the_native_missiles_if_button() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button_com = super::super::seed_protect_observation();
         let mut runtime = HoldRuntime::new(23);
         let projection = super::super::parse_projection(&serde_json::json!({}));
@@ -423,6 +426,9 @@ mod tests {
 
     #[test]
     fn hold_waiting_routes_the_protect_ack_without_aborting_or_advancing_the_mode() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let mut runtime = HoldRuntime::new(23);
         runtime.mode = HoldMode::Waiting;
@@ -453,6 +459,9 @@ mod tests {
 
     #[test]
     fn hold_need_ack_keeps_its_walk_token_when_protection_changes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let button = seed_protect_observation();
         let mut runtime = HoldRuntime::new(23);
         runtime.mode = HoldMode::NeedAck;
@@ -530,8 +539,11 @@ mod tests {
 
     #[test]
     fn hold_reports_unavailable_protection_instead_of_silently_disabling_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         seed_protect_observation();
-        crate::supply_v2::configure(None);
+        crate::scene::supply_v2::configure(None);
         let mut runtime = HoldRuntime::new(23);
         let effect = hold_next_effect(&mut runtime, &parse_projection(&json!({})), None);
         assert_eq!(effect["kind"], "failed");

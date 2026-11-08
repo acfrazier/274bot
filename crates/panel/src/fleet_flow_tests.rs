@@ -90,11 +90,6 @@ impl Rig {
             lowmem: true,
             mainland: false,
         });
-        #[cfg(not(feature = "js"))]
-        play.bind_script_test_data(
-            api::game_data::for_revision(api::selected::ClientRevision::R289)
-                .expect("selected native facts"),
-        );
         for name in loaded {
             play.attach_arm(name, host_play::SlotArm::new(42, false));
             rig.session.core.fleet_mut().add(name);
@@ -284,6 +279,13 @@ impl Rig {
     }
     #[cfg(not(feature = "js"))]
     fn start_scripts(&mut self, names: &[&str]) {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .expect("selected native facts");
+        self.session
+            .core
+            .play_mut_for_test()
+            .expect("test play")
+            .bind_script_test_data(data);
         let card = CompiledCardId::lookup("Gatherer").expect("compiled Gatherer card");
         for name in names {
             self.session
@@ -569,6 +571,10 @@ fn the_card_drop_down_lists_own_focused_then_cards_by_category_order() {
 /// the marks only, at once.
 #[test]
 fn stop_all_asks_first_and_runs_only_after_confirm() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::with_play("fleet-stop-all", &["alice", "bob"], &["alice", "bob"]);
     rig.start_scripts(&["alice", "bob"]);
     rig.settle();
@@ -708,6 +714,10 @@ fn labels_of(names: &[&str], label: &str) -> Vec<String> {
 /// clients in game, not scripts.
 #[test]
 fn stopped_marked_bots_must_not_keep_running_fleet_labels() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::nine_marked_running_with_three_script_walks("panel-state-gap-1023");
     assert_eq!(rig.labels(), labels_of(&NINE, "running"));
     rig.stop_marked(&NINE);
@@ -756,6 +766,10 @@ fn stopped_marked_bots_must_not_keep_running_fleet_labels() {
 /// change or a new script choice.
 #[test]
 fn old_script_walk_labels_do_not_return_after_panel_state_changes() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::nine_marked_running_with_three_script_walks("panel-state-gap-views");
     rig.stop_marked(&NINE);
     let idle = labels_of(&NINE, "idle");
@@ -836,6 +850,10 @@ fn old_script_walk_labels_do_not_return_after_panel_state_changes() {
 /// Stop aimed at him alone is refused for want of a script.
 #[test]
 fn a_manual_walk_stays_visible_after_a_script_stop_and_stop_does_not_target_it() {
+    #[cfg(not(feature = "js"))]
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut rig = Rig::nine_marked_running_with_three_script_walks("panel-state-gap-manual");
     let arm = std::sync::Arc::new(std::sync::Mutex::new(host_play::WalkArm::default()));
     rig.walks

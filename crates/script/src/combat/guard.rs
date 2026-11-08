@@ -67,7 +67,6 @@ pub enum GuardOp {
 pub enum GuardRefusal {
     PrayerTooLow,
     PrayerDisallowed,
-    FoodDisallowed,
     Snapshot,
     Tables,
 }
@@ -178,6 +177,12 @@ pub fn shared_tables() -> Result<Arc<CombatTables>, GuardRefusal> {
     TABLES.clone().ok_or(GuardRefusal::Tables)
 }
 
+/// Borrow the existing table for per-tick consumers without changing its
+/// reference count or constructing another selected-data owner.
+pub(crate) fn shared_tables_ref() -> Option<&'static CombatTables> {
+    TABLES.as_ref().map(Arc::as_ref)
+}
+
 fn prayer_base(snapshot: &SnapshotView<'_>) -> Option<i32> {
     snapshot
         .stats()?
@@ -255,10 +260,7 @@ impl WalkGuard {
         _snapshot: &SnapshotView<'_>,
         tables: Arc<CombatTables>,
     ) -> Result<Self, GuardRefusal> {
-        if !request.allow.food {
-            return Err(GuardRefusal::FoodDisallowed);
-        }
-        Ok(Self::new(tables, true, true))
+        Ok(Self::new(tables, request.allow.food, true))
     }
 
     /// Whether any recognized food remains in the observed inventory.
@@ -480,6 +482,7 @@ impl WalkGuard {
                 hp,
                 hp_max,
                 tick,
+                0,
             )
         } else {
             None
@@ -935,7 +938,9 @@ mod tests {
                 cross: Box::default(),
                 protect: true,
                 food_guard: false,
+                cure_guard: false,
                 allow: Default::default(),
+                avoid: Box::default(),
             }
         }
 
@@ -1131,18 +1136,27 @@ mod tests {
 
     #[test]
     fn begin_refuses_when_no_protect_is_reachable() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let scene = Scene::new(36);
         assert_eq!(scene.begin().err(), Some(GuardRefusal::PrayerTooLow));
     }
 
     #[test]
     fn begin_admits_the_lowest_protect() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let scene = Scene::new(37);
         assert!(scene.begin().is_ok());
     }
 
     #[test]
     fn begin_does_not_own_a_preexisting_protect_for_immediate_end() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         let melee = scene.tables.prayer(PrayerRole::Protect, 2).unwrap();
         scene.set_protect_varp(melee.varp, true);
@@ -1152,6 +1166,9 @@ mod tests {
 
     #[test]
     fn an_externally_observed_protect_is_not_owned_without_guard_admission() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         let missiles_varp = scene.missiles().varp;
         let mut guard = scene.begin().unwrap();
@@ -1162,6 +1179,9 @@ mod tests {
 
     #[test]
     fn a_preexisting_desired_protect_stays_user_owned_after_guard_observation() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         scene.set_missiles(true);
@@ -1175,6 +1195,9 @@ mod tests {
 
     #[test]
     fn a_protect_observed_after_the_admission_window_is_not_owned() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
@@ -1198,6 +1221,9 @@ mod tests {
 
     #[test]
     fn missiles_above_prayer_base_are_unprotectable_and_send_no_click() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(37);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
@@ -1223,6 +1249,9 @@ mod tests {
 
     #[test]
     fn prayer_level_failure_is_once_per_style_without_blocking_other_protects() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(37);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
@@ -1261,6 +1290,9 @@ mod tests {
 
     #[test]
     fn no_prayer_points_without_a_potion_reports_once_for_the_walk() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[5].effective = 0;
         scene.launch_arrow();
@@ -1281,6 +1313,9 @@ mod tests {
 
     #[test]
     fn missiles_protect_clicks_within_two_ticks_of_the_launch() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
@@ -1313,6 +1348,9 @@ mod tests {
 
     #[test]
     fn begin_refuses_when_the_owner_disallows_prayer() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let scene = Scene::new(43);
         let mut request = scene.request();
         request.allow.prayer = false;
@@ -1324,6 +1362,9 @@ mod tests {
 
     #[test]
     fn pending_protect_click_is_not_repeated_before_ack() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
@@ -1359,6 +1400,9 @@ mod tests {
 
     #[test]
     fn refused_protect_admission_retries_without_consuming_pacing() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
@@ -1395,6 +1439,9 @@ mod tests {
 
     #[test]
     fn end_owes_off_for_a_protect_sent_before_acknowledgement() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
@@ -1417,6 +1464,9 @@ mod tests {
 
     #[test]
     fn preexisting_protect_switch_ends_only_the_guard_admitted_new_style() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         let melee_varp = scene.tables.prayer(PrayerRole::Protect, 2).unwrap().varp;
         scene.set_protect_varp(melee_varp, true);
@@ -1460,6 +1510,9 @@ mod tests {
 
     #[test]
     fn end_does_not_click_when_protect_was_turned_off() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
@@ -1486,6 +1539,9 @@ mod tests {
 
     #[test]
     fn end_clicks_only_the_protect_last_observed_on() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_arrow();
         let mut guard = scene.begin().unwrap();
@@ -1512,6 +1568,9 @@ mod tests {
 
     #[test]
     fn prayer_sip_uses_the_shared_c5_floor() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (points, due) in [(27, false), (26, true), (9, true), (8, true)] {
             let mut scene = Scene::new(43);
             scene.stats[5].effective = points;
@@ -1534,6 +1593,9 @@ mod tests {
 
     #[test]
     fn a_prayer_dose_locks_the_follow_for_two_ticks() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[5].effective = 0;
         scene.add_prayer_potion();
@@ -1564,6 +1626,9 @@ mod tests {
 
     #[test]
     fn locked_tick_records_a_brief_melee_onset_before_the_attacker_disappears() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[5].effective = 0;
         scene.add_prayer_potion();
@@ -1643,6 +1708,9 @@ mod tests {
 
     #[test]
     fn known_report_only_mixed_melee_and_thrower_can_switch_on_each_projectile_edge() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // A future pacing fix should invert this report-only characterization.
         let mut scene = Scene::new(43);
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -1730,6 +1798,9 @@ mod tests {
 
     #[test]
     fn a_troll_rock_launch_selects_missiles() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let row = data.npc_by_config("death_troll_thrower1").unwrap();
@@ -1767,6 +1838,9 @@ mod tests {
 
     #[test]
     fn a_ranged_projectile_onset_does_not_select_melee() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let row = data.npc_by_config("death_troll_thrower1").unwrap();
@@ -1814,6 +1888,9 @@ mod tests {
 
     #[test]
     fn incoming_projectile_does_not_override_selected_protect() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_spell();
         let mut guard = scene.begin().unwrap();
@@ -1842,13 +1919,20 @@ mod tests {
 
     #[test]
     fn dragonfire_and_magic_projectiles_agree_on_the_same_protection_varp() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../api/data/game-data/289.json");
+        let path = path.to_string_lossy();
+        let Some(path) = api::test_support::local_asset_path("", &path, "R289 game data") else {
+            return;
+        };
+        let bytes = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read R289 game data at {}: {error}", path.display()));
         let mut scene = Scene::new(43);
         // R289 classifies dragonfire at the attacker, not on a projectile.
         // Extend only this test's classification fixture to exercise the
         // representable incoming Dragonfire + Magic agreement; prayer and
         // NPC facts still come from the selected revision.
-        let mut facts: serde_json::Value =
-            serde_json::from_str(include_str!("../../../api/data/game-data/289.json")).unwrap();
+        let mut facts: serde_json::Value = serde_json::from_str(&bytes).unwrap();
         let dragonfire = facts["style_spotanims"]
             .as_array_mut()
             .unwrap()
@@ -1892,6 +1976,9 @@ mod tests {
 
     #[test]
     fn first_dose_does_not_leave_drink_pending() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[5].effective = 0;
         scene.add_prayer_potion();
@@ -1942,6 +2029,9 @@ mod tests {
 
     #[test]
     fn live_thrower_at_half_max_eats_the_largest_fitting_food() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(37);
         scene.stats[3].effective = 20;
         for slot in 0..4 {
@@ -1961,6 +2051,9 @@ mod tests {
 
     #[test]
     fn zero_danger_does_not_trigger_eating() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 1;
         scene.add_food("lobster", 0, 1);
@@ -1977,6 +2070,9 @@ mod tests {
 
     #[test]
     fn unknown_danger_uses_half_max_and_the_combo_drink_gate() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (hp, should_eat) in [(20, true), (21, false)] {
             let mut scene = Scene::new(43);
             scene.stats[3].effective = hp;
@@ -2014,6 +2110,9 @@ mod tests {
 
     #[test]
     fn ordinary_food_waits_for_its_schedule_clock_after_count_drop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 1;
         scene.launch_arrow();
@@ -2060,6 +2159,9 @@ mod tests {
 
     #[test]
     fn hp_rise_settles_an_admitted_eat() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 1;
         scene.launch_arrow();
@@ -2089,6 +2191,9 @@ mod tests {
 
     #[test]
     fn lagged_karambwan_settles_and_retries_at_the_emergency_line() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_unknown();
         for slot in 0..4 {
@@ -2155,6 +2260,9 @@ mod tests {
 
     #[test]
     fn an_unobserved_eat_times_out_three_times_then_stops() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 1;
         scene.launch_arrow();
@@ -2207,6 +2315,9 @@ mod tests {
 
     #[test]
     fn message_delay_food_locks_the_follow_clock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 10;
         scene.launch_unknown();
@@ -2235,6 +2346,9 @@ mod tests {
 
     #[test]
     fn emergency_eating_precedes_protection_but_protection_wins_above_emergency() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_known_melee_threat();
         scene.add_food("lobster", 0, 1);
@@ -2283,6 +2397,9 @@ mod tests {
 
     #[test]
     fn guard_cure_before_emergency_bite() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_known_melee_threat();
         scene.add_food("lobster", 0, 1);
@@ -2309,6 +2426,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses::default(),
         };
@@ -2343,6 +2461,9 @@ mod tests {
 
     #[test]
     fn never_cure_policy_keeps_due_bite_with_held_antipoison() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_known_melee_threat();
         scene.add_food("lobster", 0, 1);
@@ -2385,11 +2506,15 @@ mod tests {
         assert!(!matches!(op, GuardOp::Drink { .. }));
     }
     #[test]
-    fn food_only_guard_drinks_cure() {
+    fn food_only_guard_drinks_cure_without_biting_when_food_is_disabled() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 10;
         scene.add_antipoison();
-        let condition = BotCondition {
+        scene.add_food("lobster", 1, 1);
+        let mut condition = BotCondition {
             tick: 0,
             session: api::condition::SessionMark::Live,
             hp: 10,
@@ -2400,15 +2525,16 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses::default(),
         };
-        let mut guard = WalkGuard::begin_food_only_with(
-            &scene.request(),
-            &scene.view(),
-            Arc::clone(&scene.tables),
-        )
-        .unwrap();
+        let mut request = scene.request();
+        request.allow.food = false;
+        let mut guard =
+            WalkGuard::begin_food_only_with(&request, &scene.view(), Arc::clone(&scene.tables))
+                .unwrap();
+        assert_eq!(guard.has_food(&scene.view()), Some(false));
         assert!(matches!(
             guard.tick(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded),
             Some(GuardOp::Drink {
@@ -2416,10 +2542,25 @@ mod tests {
                 ..
             })
         ));
+
+        condition.poison = api::condition::PoisonState::Clear;
+        condition.food = api::condition::FoodSummary {
+            ordinary_count: 1,
+            best_heal: 12,
+            smallest_heal: 12,
+            ..api::condition::FoodSummary::default()
+        };
+        assert!(!matches!(
+            guard.tick(&scene.view_at(1), Some(&condition), CurePoison::WhenNeeded),
+            Some(GuardOp::Eat { .. })
+        ));
     }
 
     #[test]
     fn guard_drinks_at_line_before_first_mark() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 60;
         scene.stats[3].base = 99;
@@ -2436,6 +2577,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses::default(),
         };
@@ -2462,6 +2604,9 @@ mod tests {
 
     #[test]
     fn guard_without_poison_unchanged() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_known_melee_threat();
         scene.add_antipoison();
@@ -2477,6 +2622,9 @@ mod tests {
 
     #[test]
     fn antipoison_receipt_settles_on_the_dose_drop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 10;
         scene.add_antipoison();
@@ -2497,6 +2645,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses {
                 antipoison: 1,
@@ -2535,6 +2684,9 @@ mod tests {
 
     #[test]
     fn strange_fruit_receipt_settles_on_the_count_drop() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 10;
         scene.add_food("macro_triffidfruit", 0, 1);
@@ -2555,6 +2707,7 @@ mod tests {
                 q: Some(11),
                 hit_since_line: false,
             },
+            poison_window: None,
             food: api::condition::FoodSummary::default(),
             cures: api::condition::CureDoses::default(),
         };
@@ -2589,6 +2742,9 @@ mod tests {
     }
     #[test]
     fn pending_food_clock_defers_cure_fruit_without_replacing_eat_receipt() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.launch_known_melee_threat();
         scene.add_food("lobster", 0, 1);
@@ -2697,6 +2853,9 @@ mod tests {
     }
     #[test]
     fn food_permission_defaults_true_and_can_disable_eating() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         assert!(crate::native::WalkAllow::default().food);
 
         let mut scene = Scene::new(43);
@@ -2747,11 +2906,15 @@ mod tests {
             hp,
             hp_max,
             0,
+            0,
         )
     }
 
     #[test]
     fn eat_line_adds_next_poison_fire() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.add_food("lobster", 0, 1);
         // Danger Some(0) gives a base eat line of 1. One fire of 6 raises it
@@ -2764,6 +2927,9 @@ mod tests {
 
     #[test]
     fn eat_line_keeps_half_max_when_danger_unknown() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.add_food("lobster", 0, 1);
         // Unknown danger keeps the half-max line of 50 at max HP 99. One fire
@@ -2775,6 +2941,9 @@ mod tests {
 
     #[test]
     fn quiet_poison_tick_reaches_picker() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.add_food("lobster", 0, 1);
         // No attacker danger exists. A poison fire of 1 alone must still
@@ -2785,6 +2954,9 @@ mod tests {
 
     #[test]
     fn eat_never_bites_at_full_hp() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.add_food("lobster", 0, 5);
         // Max HP 10 at full HP with a fire of 11 due. A bite heals nothing.
@@ -2796,6 +2968,9 @@ mod tests {
 
     #[test]
     fn eat_small_account_bites_once_per_fire() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.add_food("lobster", 0, 5);
         // After a fire of 6, HP 4 of 10 bites once. At HP 10 of 10, with the
@@ -2806,6 +2981,9 @@ mod tests {
 
     #[test]
     fn replay_line_exceeds_guard_line_on_quiet_poison() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         // One quiet poisoned case for both real decision paths: a six-damage
         // fire with no attacker. This replaces `replay_and_guard_agree_poisoned`,
         // which supplied its own replay danger and never called the replay.
@@ -2841,24 +3019,22 @@ mod tests {
         )
         .unwrap();
         let plan = crate::combat::risk::RoutePlan::default();
-        let mut input = crate::combat::risk::RiskInput {
-            hp: 8,
-            hp_max: 40,
-            pos: tile(10, 100),
-            poison: api::condition::PoisonState::Poisoned {
-                per_tick: 6,
-                last_mark: 0,
-                hit_since_mark: false,
-            },
-            food_len: 1,
-            // `RiskInput::default()` marks the capture incomplete; this scene
-            // is a complete quiet observation.
-            missing_facts: false,
-            unattributed: false,
-            input_locked: false,
-            overflow: false,
-            ..crate::combat::risk::RiskInput::default()
+        let mut input = crate::combat::risk::RiskInput::default();
+        input.hp = 8;
+        input.hp_max = 40;
+        input.pos = tile(10, 100);
+        input.poison = api::condition::PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 0,
+            hit_since_mark: false,
         };
+        input.food_len = 1;
+        // `RiskInput::default()` marks the capture incomplete; this scene
+        // is a complete quiet observation.
+        input.set_missing_facts(false);
+        input.set_unattributed(false);
+        input.set_input_locked(false);
+        input.set_overflow(false);
         input.food_ids[0] = food_id("lobster");
         input.food_counts[0] = 1;
         let line = crate::combat::risk::eat_line(
@@ -2956,6 +3132,9 @@ mod tests {
 
     #[test]
     fn guard_eats_on_quiet_poison_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.stats[3].effective = 7;
         scene.add_food("lobster", 0, 1);
@@ -2984,6 +3163,9 @@ mod tests {
 
     #[test]
     fn eat_choice_without_poison_unchanged() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.add_food("lobster", 0, 1);
         // With no poison fire and HP below max, every line keeps its old
@@ -3008,6 +3190,9 @@ mod tests {
 
     #[test]
     fn food_by_picker_unchanged() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut scene = Scene::new(43);
         scene.add_food("lobster", 0, 1);
         scene.add_food("shrimp", 1, 1);

@@ -2,6 +2,7 @@ mod banks;
 mod config_parse;
 mod encode;
 mod mapsquare;
+mod multiway;
 mod sidecars;
 mod zones;
 
@@ -9,8 +10,9 @@ pub use banks::derive_banks;
 pub use config_parse::{
     parse_door_config, parse_door_config_ids, parse_door_open_ids, parse_passable_locs,
 };
-pub use encode::{encode, encode_grid};
+pub use encode::{encode, encode_grid, encode_with_atlas};
 pub use mapsquare::{merge_squares, parse_mapsquare_jm2, Mapsquare};
+pub use multiway::{produce_multiway_keys, produce_multiway_keys_from_path, MultiwayError};
 pub use sidecars::{encode_canlight_sidecar, encode_flags_sidecar, encode_reach_sidecar};
 
 #[cfg(test)]

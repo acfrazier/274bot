@@ -5,6 +5,7 @@ import { parseBody, walkStatements } from './gathering-rs2.ts';
 export type DialogueUiIds = {
     scroll_root: number;
     quest_scroll_root: number;
+    chapter_root: number | null;
     book_root: number;
     book_forward: number;
     book_close: number;
@@ -49,10 +50,25 @@ function oneBlock(blocks: Rs2Block[], kind: string, name: string): Rs2Block {
 
 export type InterfaceAliasIdentity = { id: number; line: number };
 
-/** Resolve selected interface.pack aliases without losing duplicate rows. */
-export function resolveInterfaceAliases(content: string, aliases: readonly string[], family: string): Record<string, InterfaceAliasIdentity> {
+/**
+ * Resolve selected interface.pack aliases without losing duplicate rows.
+ * An alias named in `optional` may be absent from the pack, in which case it is
+ * simply not resolved. A present row is still validated: an invalid id, a
+ * duplicate row or a duplicate packed id throws exactly as for a required alias.
+ */
+export function resolveInterfaceAliases(
+    content: string,
+    aliases: readonly string[],
+    family: string,
+    optional: readonly string[] = [],
+): Record<string, InterfaceAliasIdentity> {
     const wanted = new Set(aliases);
     if (wanted.size !== aliases.length) throw new Error(`${family}: requested interface aliases are duplicated`);
+    const optionalWanted = new Set(optional);
+    if (optionalWanted.size !== optional.length) throw new Error(`${family}: requested optional interface aliases are duplicated`);
+    for (const alias of optionalWanted) {
+        if (wanted.has(alias)) throw new Error(`${family}: interface alias ${alias} is both required and optional`);
+    }
 
     const rows = new Map<string, InterfaceAliasIdentity[]>();
     const pack = requireGatherText(content, 'pack/interface.pack');
@@ -62,7 +78,7 @@ export function resolveInterfaceAliases(content: string, aliases: readonly strin
         const equals = line.indexOf('=');
         if (equals <= 0) continue;
         const alias = line.slice(equals + 1);
-        if (!wanted.has(alias)) continue;
+        if (!wanted.has(alias) && !optionalWanted.has(alias)) continue;
         const matches = rows.get(alias) ?? [];
         matches.push({ id: Number(line.slice(0, equals)), line: index + 1 });
         rows.set(alias, matches);
@@ -70,9 +86,13 @@ export function resolveInterfaceAliases(content: string, aliases: readonly strin
 
     const resolved: Record<string, InterfaceAliasIdentity> = {};
     const ids = new Map<number, string>();
-    for (const alias of aliases) {
+    for (const alias of [...aliases, ...optional]) {
         const found = rows.get(alias) ?? [];
-        if (found.length === 0 || (found.length === 1 && (!Number.isInteger(found[0].id) || found[0].id <= 0))) {
+        if (found.length === 0) {
+            if (optionalWanted.has(alias)) continue;
+            throw new Error(`${family}: missing or invalid interface alias ${alias}`);
+        }
+        if (found.length === 1 && (!Number.isInteger(found[0].id) || found[0].id <= 0)) {
             throw new Error(`${family}: missing or invalid interface alias ${alias}`);
         }
         if (found.length !== 1) throw new Error(`${family}: ambiguous interface alias ${alias}`);
@@ -85,7 +105,7 @@ export function resolveInterfaceAliases(content: string, aliases: readonly strin
 }
 
 
-/** Resolve only source-proven generic/quest-completion scrolls and book controls. */
+/** Resolve only source-proven generic, quest-completion, and chapter scrolls and book controls. */
 export function extractDialogueUiFacts(content: string): DialogueUiIds {
     const book = parseRs2Blocks(dialogueUiContentFiles[1], requireGatherText(content, dialogueUiContentFiles[1]));
     const scroll = parseRs2Blocks(dialogueUiContentFiles[2], requireGatherText(content, dialogueUiContentFiles[2]));
@@ -132,10 +152,14 @@ export function extractDialogueUiFacts(content: string): DialogueUiIds {
         forward[0].name,
         'book:close',
         hide[1],
-    ], 'dialogue_ui');
+    ], 'dialogue_ui', ['inter_199']);
     return {
         scroll_root: resolved.scroll.id,
         quest_scroll_root: resolved.questscroll.id,
+        // Revision 274's pack has no `inter_199` row, so that revision
+        // publishes no chapter page. A present-but-invalid or ambiguous row
+        // still throws inside the resolver.
+        chapter_root: resolved.inter_199 ? resolved.inter_199.id : null,
         book_root: resolved.book.id,
         book_forward: resolved[forward[0].name].id,
         book_close: resolved['book:close'].id,

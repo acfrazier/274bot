@@ -385,8 +385,36 @@ pub struct ScriptPane<'a> {
     pub reload_confirm: bool,
     pub native_status: Option<StatusView<'a>>,
     pub walk_risk: Option<&'a str>,
+    pub start_zones: Option<&'a frontend_core::scripts::QuesterStartZones>,
+    pub start_zones_error: Option<&'a str>,
+    pub start_zone_scroll: u16,
 }
 
+fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
+    let width = usize::from(width.max(1));
+    lines
+        .iter()
+        .map(|line| {
+            let mut rows = 0;
+            let mut used = 0;
+            for span in &line.spans {
+                for word in span.content.split_whitespace() {
+                    let word_width = Span::raw(word).width().max(1);
+                    if used == 0 {
+                        rows += word_width.div_ceil(width);
+                        used = word_width % width;
+                    } else if word_width <= width && used + 1 + word_width <= width {
+                        used += 1 + word_width;
+                    } else {
+                        rows += word_width.div_ceil(width);
+                        used = word_width % width;
+                    }
+                }
+            }
+            rows.max(1)
+        })
+        .sum()
+}
 impl<'a> ScriptPane<'a> {
     pub fn new(
         state: ScriptRunState,
@@ -411,6 +439,9 @@ impl<'a> ScriptPane<'a> {
             reload_confirm: false,
             native_status: None,
             walk_risk: None,
+            start_zones: None,
+            start_zones_error: None,
+            start_zone_scroll: 0,
         }
     }
 
@@ -435,6 +466,34 @@ impl<'a> ScriptPane<'a> {
     pub fn with_walk_risk(mut self, reason: Option<&'a str>) -> Self {
         self.walk_risk = reason;
         self
+    }
+
+    pub fn with_start_zone_view(
+        mut self,
+        view: Option<Result<&'a frontend_core::scripts::QuesterStartZones, &'a str>>,
+        scroll: u16,
+    ) -> Self {
+        self.start_zones = None;
+        self.start_zones_error = None;
+        match view {
+            Some(Ok(zones)) => self.start_zones = Some(zones),
+            Some(Err(reason)) => self.start_zones_error = Some(reason),
+            None => {}
+        }
+        self.start_zone_scroll = scroll;
+        self
+    }
+
+    fn start_zone_disclosure_shown(&self) -> bool {
+        #[cfg(feature = "js")]
+        let load_open = self.load_open;
+        #[cfg(not(feature = "js"))]
+        let load_open = false;
+        !self.browse_open
+            && !load_open
+            && matches!(self.state, ScriptRunState::Idle | ScriptRunState::Error)
+            && self.sel.and_then(ScriptChoice::compiled_id) == Some(CompiledCardId::QUESTER)
+            && (self.start_zones.is_some() || self.start_zones_error.is_some())
     }
 
     /// The main row's buttons, left to right (Pause reads Resume while
@@ -565,35 +624,15 @@ impl<'a> ScriptPane<'a> {
         }
         ScriptClick::None
     }
-}
-
-impl Widget for ScriptPane<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        #[cfg(feature = "js")]
-        let title = if self.load_open {
-            "script — load"
-        } else if self.browse_open {
-            "script — browse"
-        } else {
-            "script"
-        };
-        #[cfg(not(feature = "js"))]
-        let title = if self.browse_open {
-            "script — browse"
-        } else {
-            "script"
-        };
-        let block = Block::default().borders(Borders::ALL).title(title);
-        let inner = block.inner(area);
-        block.render(area, buf);
+    fn prefix_lines(&self) -> Vec<Line<'a>> {
         let state = script_status_label(self.state, self.native_status);
-        let sel = self.sel.map_or("—", ScriptChoice::label);
+        let selection = self.sel.map_or("—", ScriptChoice::label);
         let mut buttons = String::new();
         for label in self.main_buttons() {
             push_button(&mut buttons, label);
         }
         let mut lines = vec![
-            Line::from(format!("script: {state}   sel: {sel}")),
+            Line::from(format!("script: {state}   sel: {selection}")),
             Line::from(buttons),
         ];
         if self.bulk_row_shown() {
@@ -621,7 +660,59 @@ impl Widget for ScriptPane<'_> {
         if self.load_open {
             lines.push(Line::from("load: browse for .ts/.js file"));
         }
-        if self.browse_open {
+        if self.start_zone_disclosure_shown() {
+            lines.push(Line::from(frontend_core::scripts::START_ZONE_SCOPE_TITLE));
+            match self.start_zones {
+                Some(zones) => {
+                    lines.push(Line::from(zones.notice()));
+                    if !zones.is_empty() {
+                        lines.push(Line::from(
+                            frontend_core::scripts::START_ZONE_TUI_SCROLL_HINT,
+                        ));
+                    }
+                }
+                None => {
+                    lines.push(Line::from(
+                        frontend_core::scripts::START_ZONE_UNAVAILABLE_NOTICE,
+                    ));
+                    lines.push(Line::from(
+                        frontend_core::scripts::START_ZONE_TUI_SCROLL_HINT,
+                    ));
+                }
+            }
+        }
+        lines
+    }
+
+    fn start_zone_lines(&self) -> Vec<Line<'a>> {
+        if let Some(zones) = self.start_zones {
+            zones
+                .scopes
+                .iter()
+                .flat_map(|scope| {
+                    std::iter::once(Line::from(scope.display_label.as_str())).chain(
+                        scope.zones.iter().flat_map(|zone| {
+                            [
+                                Line::from(zone.display_label.as_str()),
+                                Line::from("Guide reason:"),
+                                Line::from(zone.reason.as_str()),
+                            ]
+                        }),
+                    )
+                })
+                .collect()
+        } else {
+            self.start_zones_error
+                .map(|reason| vec![Line::from(reason)])
+                .unwrap_or_default()
+        }
+    }
+
+    fn content_lines(&self) -> Vec<Line<'a>> {
+        let mut lines = self.prefix_lines();
+        if self.start_zone_disclosure_shown() {
+            lines.extend(self.start_zone_lines());
+        } else if self.browse_open {
             for line in self.browse_lines() {
                 match line {
                     #[cfg(feature = "js")]
@@ -650,9 +741,68 @@ impl Widget for ScriptPane<'_> {
                 }
             }
         }
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .render(inner, buf);
+        lines
+    }
+
+    pub fn max_vertical_scroll(&self, area: Rect) -> u16 {
+        if !self.start_zone_disclosure_shown() {
+            return 0;
+        }
+        let inner = Block::default().borders(Borders::ALL).inner(area);
+        let prefix_count = wrapped_line_count(&self.prefix_lines(), inner.width);
+        let available = usize::from(inner.height).saturating_sub(prefix_count);
+        let content_count = wrapped_line_count(&self.start_zone_lines(), inner.width);
+        content_count
+            .saturating_sub(available)
+            .min(usize::from(u16::MAX)) as u16
+    }
+}
+
+impl Widget for ScriptPane<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        #[cfg(feature = "js")]
+        let title = if self.load_open {
+            "script — load"
+        } else if self.browse_open {
+            "script — browse"
+        } else {
+            "script"
+        };
+        #[cfg(not(feature = "js"))]
+        let title = if self.browse_open {
+            "script — browse"
+        } else {
+            "script"
+        };
+        let block = Block::default().borders(Borders::ALL).title(title);
+        let inner = block.inner(area);
+        block.render(area, buf);
+        if self.start_zone_disclosure_shown() {
+            let prefix_lines = self.prefix_lines();
+            let prefix_height = wrapped_line_count(&prefix_lines, inner.width)
+                .min(usize::from(inner.height)) as u16;
+            let prefix_area = Rect::new(inner.x, inner.y, inner.width, prefix_height);
+            Paragraph::new(prefix_lines)
+                .wrap(Wrap { trim: false })
+                .render(prefix_area, buf);
+            let list_area = Rect::new(
+                inner.x,
+                inner.y.saturating_add(prefix_height),
+                inner.width,
+                inner.height.saturating_sub(prefix_height),
+            );
+            Paragraph::new(self.start_zone_lines())
+                .wrap(Wrap { trim: false })
+                .scroll((
+                    self.start_zone_scroll.min(self.max_vertical_scroll(area)),
+                    0,
+                ))
+                .render(list_area, buf);
+        } else {
+            Paragraph::new(self.content_lines())
+                .wrap(Wrap { trim: false })
+                .render(inner, buf);
+        }
     }
 }
 
@@ -1094,7 +1244,7 @@ mod tests {
         let status = NativeStatus::blocked(
             CompiledCardId::QUESTER,
             "queue-blocked",
-            "quest list unavailable; log in normally, then Stop/Start Quester",
+            "quest list unavailable; log in normally, then start the Quester again",
         );
         let text = render(
             ScriptPane::new(ScriptRunState::Running, None, &[], &[], false, false)
@@ -1104,7 +1254,7 @@ mod tests {
         );
         assert!(text.contains("script: blocked"), "{text:?}");
         assert!(text.contains("quest list unavailable"), "{text:?}");
-        assert!(text.contains("Stop/Start Quester"), "{text:?}");
+        assert!(text.contains("start the Quester again"), "{text:?}");
         assert!(!text.contains("script: running"), "{text:?}");
     }
 

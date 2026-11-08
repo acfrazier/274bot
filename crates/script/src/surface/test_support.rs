@@ -81,6 +81,12 @@ pub enum StubSurfaceOperation {
     OnGameTickAt { tick: u64, input_identity: u64 },
     /// The slot reported a snapshot change.
     OnSnapshotChangeAt { tick: u64, input_identity: u64 },
+    /// The slot dispatched a posted seat page.
+    OnSeatPageAt {
+        tick: u64,
+        input_identity: u64,
+        release_floor: u64,
+    },
     /// The slot drained stamped interactions.
     DrainInteractsStamped,
     /// The slot restored stamped interactions.
@@ -241,6 +247,13 @@ impl StubSurfaceHandle {
             .store(accepted, Ordering::Release);
     }
 
+    /// Set the acceptance result for seat page dispatches.
+    pub fn set_seat_page_acceptance(&self, accepted: bool) {
+        self.state
+            .seat_page_accept
+            .store(accepted, Ordering::Release);
+    }
+
     /// Set the generation returned by [`SurfaceRun::generation`].
     pub fn set_generation(&self, generation: u64) {
         self.state.generation.store(generation, Ordering::Release);
@@ -288,6 +301,16 @@ impl StubSurfaceHandle {
         self.state
             .journal_paint_hidden
             .store(hidden, Ordering::Release);
+    }
+
+    /// Set the result returned by [`SurfaceRun::journal_wait`].
+    pub fn set_journal_wait(&self, wait: Option<super::JournalWait>) {
+        *lock(&self.state.journal_wait) = wait;
+    }
+
+    /// Set the result returned by [`SurfaceRun::expired_hold_owners`].
+    pub fn set_expired_hold_owners(&self, owners: [Option<api::identity::RequestId>; 2]) {
+        *lock(&self.state.expired_hold_owners) = owners;
     }
 
     /// Replace the queued log lines used by `stop`'s retirement completion.
@@ -540,6 +563,18 @@ impl SurfaceRun for StubSurfaceRun {
         );
     }
 
+    fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool {
+        record(
+            &self.state,
+            StubSurfaceOperation::OnSeatPageAt {
+                tick: snap_tick,
+                input_identity,
+                release_floor,
+            },
+        );
+        self.state.seat_page_accept.load(Ordering::Acquire)
+    }
+
     fn drain_interacts_stamped(&self) -> Vec<QueuedInteract> {
         record(&self.state, StubSurfaceOperation::DrainInteractsStamped);
         std::mem::take(&mut *lock(&self.state.interacts))
@@ -650,6 +685,14 @@ impl SurfaceRun for StubSurfaceRun {
             StubSurfaceOperation::JournalPaintHidden { now },
         );
         self.state.journal_paint_hidden.load(Ordering::Acquire)
+    }
+
+    fn journal_wait(&self, _now: Instant) -> Option<super::JournalWait> {
+        *lock(&self.state.journal_wait)
+    }
+
+    fn expired_hold_owners(&self, _now: Instant) -> [Option<api::identity::RequestId>; 2] {
+        *lock(&self.state.expired_hold_owners)
     }
 
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError> {
@@ -813,6 +856,7 @@ struct StubSurfaceState {
     posted_facts: Mutex<Option<PostedSnapshotFacts>>,
     posted_facts_reads: AtomicUsize,
     channel_events_accept: AtomicBool,
+    seat_page_accept: AtomicBool,
     interacts: Mutex<Vec<QueuedInteract>>,
     seat_batches: Mutex<Vec<QueuedSeatBatch>>,
     lifecycle: Mutex<Vec<InteractReq>>,
@@ -824,6 +868,8 @@ struct StubSurfaceState {
     manual_walk_intent_sequence: AtomicU64,
     paint: Mutex<Option<Arc<ScriptPaint>>>,
     journal_paint_hidden: AtomicBool,
+    journal_wait: Mutex<Option<super::JournalWait>>,
+    expired_hold_owners: Mutex<[Option<api::identity::RequestId>; 2]>,
     probe_response: Mutex<Result<serde_json::Value, String>>,
     ignored_randoms: Mutex<Vec<String>>,
     memory_metrics: Mutex<Option<serde_json::Value>>,
@@ -857,6 +903,7 @@ impl StubSurfaceState {
             posted_facts: Mutex::new(None),
             posted_facts_reads: AtomicUsize::new(0),
             channel_events_accept: AtomicBool::new(true),
+            seat_page_accept: AtomicBool::new(true),
             interacts: Mutex::new(Vec::new()),
             seat_batches: Mutex::new(Vec::new()),
             lifecycle: Mutex::new(Vec::new()),
@@ -868,6 +915,8 @@ impl StubSurfaceState {
             manual_walk_intent_sequence: AtomicU64::new(0),
             paint: Mutex::new(None),
             journal_paint_hidden: AtomicBool::new(false),
+            journal_wait: Mutex::new(None),
+            expired_hold_owners: Mutex::new([None; 2]),
             probe_response: Mutex::new(Ok(serde_json::Value::Null)),
             ignored_randoms: Mutex::new(Vec::new()),
             memory_metrics: Mutex::new(None),

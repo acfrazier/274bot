@@ -1909,7 +1909,7 @@ fn apply_tile_click(session: &mut Session, clicked: Option<TileClick>) {
         | TileClick::Select(index)
         | TileClick::World(index) => index,
         TileClick::Move(op) => {
-            session.reorder_profiles(op);
+            session.reorder_profiles(op, frontend_core::ReorderSurface::Fleet);
             return;
         }
     };
@@ -2280,6 +2280,16 @@ fn clamp_hop_label_px(px: i32) -> i32 {
 /// Unlock / create / reset the default vault. Shared by the profile
 /// heading and the Profiles window so a locked vault is not shown as empty.
 fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
+    if let Some(message) = session.vault_refusal().map(ToString::to_string) {
+        if let Some(rename) = saved_data_choice(ui, &message) {
+            session.resolve_vault_refusal(if rename {
+                frontend_core::saved_data::SavedDataChoice::Rename
+            } else {
+                frontend_core::saved_data::SavedDataChoice::Keep
+            });
+        }
+        return;
+    }
     let exists = match session.default_vault_exists() {
         Ok(exists) => exists,
         Err(error) => {
@@ -2773,6 +2783,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             session.cancel_reload();
         }
     }
+    quester_start_zone_disclosure(ui, session, active);
     let (sw, sstack) = scaled_button_row_layout(ui, ui.content_region_avail()[0], SCRIPT_ROW.len());
     {
         let _start = if active {
@@ -2841,6 +2852,49 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .and_then(|detail| detail.walk_risk())
     {
         kv_row(ui, "Walk risk", reason);
+    }
+}
+
+fn quester_start_zone_disclosure(ui: &Ui, session: &mut Session, active: bool) {
+    let selected = session
+        .script_sel
+        .as_ref()
+        .and_then(ScriptChoice::compiled_id)
+        == Some(frontend_core::scripts::CompiledCardId::QUESTER);
+    if !selected {
+        session.scripts.clear_quester_start_zones();
+        return;
+    }
+    if active {
+        return;
+    }
+    let profile = session.core.selected();
+    session
+        .scripts
+        .refresh_quester_start_zones(&session.core, profile);
+    ui.spacing();
+    ui.separator();
+    ui.text_colored(ACCENT, frontend_core::scripts::START_ZONE_SCOPE_TITLE);
+    match session.scripts.quester_start_zone_view() {
+        Some(Ok(zones)) => {
+            ui.text_wrapped(zones.notice());
+            if !zones.is_empty() {
+                ui.text_disabled(frontend_core::scripts::START_ZONE_PANEL_SCROLL_HINT);
+                for scope in &zones.scopes {
+                    ui.text_colored(ACCENT, scope.display_label.as_str());
+                    for zone in &scope.zones {
+                        ui.text_wrapped(zone.display_label.as_str());
+                        ui.text_disabled("Guide reason:");
+                        ui.text_wrapped(zone.reason.as_str());
+                    }
+                }
+            }
+        }
+        Some(Err(reason)) => {
+            ui.text_wrapped(frontend_core::scripts::START_ZONE_UNAVAILABLE_NOTICE);
+            ui.text_wrapped(reason);
+        }
+        None => {}
     }
 }
 
@@ -3534,6 +3588,14 @@ fn routing_feedback(ui: &Ui, session: &mut Session) {
             Setting::Nav(N::AllowBankFetch),
         ),
         (
+            frontend_core::PREREQ_PERMISSION_LABELS[0].1,
+            Setting::Nav(N::AllowPrereqDialogue),
+        ),
+        (
+            frontend_core::PREREQ_PERMISSION_LABELS[1].1,
+            Setting::Nav(N::AllowQuestStart),
+        ),
+        (
             frontend_core::GLOBAL_PERMISSION_LABELS[3].1,
             Setting::DangerRouting,
         ),
@@ -3613,6 +3675,34 @@ fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
     ui.text_disabled(frontend_core::BANK_FETCH_PERMISSION_SCOPE);
     #[cfg(test)]
     record_test_routing_item(ui);
+    {
+        let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+        ui.text_wrapped(frontend_core::PREREQ_SCOPE_NOTE);
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    if ui.checkbox(
+        frontend_core::PREREQ_PERMISSION_LABELS[0].1,
+        &mut nav.allow_prereq_dialogue,
+    ) {
+        changed = true;
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip(
+        "Global permission for walks to run dialogue steps. The script's own grant also allows it; only a per-request Forbid narrows it.",
+    );
+    if ui.checkbox(
+        frontend_core::PREREQ_PERMISSION_LABELS[1].1,
+        &mut nav.allow_quest_start,
+    ) {
+        changed = true;
+    }
+    #[cfg(test)]
+    record_test_routing_item(ui);
+    ui.set_item_tooltip(
+        "Global permission for walks to start quests. The script's own grant also allows it; only a per-request Forbid narrows it.",
+    );
     let danger_level = nav.danger_level();
     ui.text(frontend_core::GLOBAL_PERMISSION_LABELS[3].1);
     #[cfg(test)]
@@ -3654,7 +3744,8 @@ fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
         record_test_routing_item(ui);
     }
     if danger_level == frontend_core::DangerLevel::Always {
-        ui.text_colored(ERROR, frontend_core::GLOBAL_DANGER_WARNING);
+        let _warning = ui.push_style_color(StyleColor::Text, ERROR);
+        ui.text_wrapped(frontend_core::GLOBAL_DANGER_WARNING);
         #[cfg(test)]
         record_test_routing_item(ui);
     }
@@ -3859,6 +3950,18 @@ fn commit_nav_settings(
             "allow_bank_fetch",
             before.allow_bank_fetch,
             after.allow_bank_fetch,
+        ),
+        (
+            P::AllowPrereqDialogue,
+            "allow_prereq_dialogue",
+            before.allow_prereq_dialogue,
+            after.allow_prereq_dialogue,
+        ),
+        (
+            P::AllowQuestStart,
+            "allow_quest_start",
+            before.allow_quest_start,
+            after.allow_quest_start,
         ),
         (
             P::ScriptScopeNoticeAck,
@@ -4357,12 +4460,33 @@ fn script_parameter_rows(
             }
         }
         let label = def.display_label();
-        let resolved = frontend_core::scripts::resolve_parameter_options(
+        let resolved = match frontend_core::scripts::resolve_parameter_options(
             def,
             &bag,
             session.loadouts.store(),
             game_data_ref,
-        );
+        ) {
+            Ok(options) => options,
+            Err(error) => {
+                let text = match bag
+                    .get(def.id())
+                    .map(format_setting_value)
+                    .or_else(|| def.default().map(str::to_owned))
+                {
+                    Some(saved) if !saved.is_empty() => {
+                        format!("{label}: {saved} · options unavailable: {error:?}")
+                    }
+                    _ => format!("{label}: options unavailable: {error:?}"),
+                };
+                ui.text_wrapped(text);
+                script_parameter_error(ui, session, profile.as_deref(), selection, def.id());
+                if session.script_parameter_filter_id.as_deref() == Some(def.id()) {
+                    session.script_parameter_filter.clear();
+                    session.script_parameter_filter_id = None;
+                }
+                continue;
+            }
+        };
         let array_editable = parameter_array_editor_enabled(def, &bag, &resolved);
         if def.options_from().is_some() && resolved.is_empty() && !array_editable {
             ui.text_wrapped(unavailable_parameter_text(label, def, &bag, &resolved));
@@ -4939,6 +5063,9 @@ fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &
     if let Some(random) = d.random() {
         kv_row(ui, "random", random);
     }
+    if let Some(survival) = d.survival() {
+        kv_row(ui, "survival", &survival.to_string());
+    }
     // The current login notice takes the history row's place while it
     // stands (the terminal app's status pane does the same).
     if let Some(notice) = d.login_notice_line() {
@@ -5223,6 +5350,19 @@ pub(crate) fn rail_preview_feedback_line(
     ui.group(|| panel_member_feedback_line(ui, session, &path));
 }
 
+/// General config row: the global "Start fights with players" setting
+/// (`pvp.start_fights`), shared with the TUI. It is off by default; bots always
+/// fight back when a player attacks them.
+fn pvp_start_fights_row(ui: &Ui, session: &mut Session) {
+    session.follow_pvp_start_fights();
+    let mut on = session.pvp_start_fights.shown();
+    if ui.checkbox(frontend_core::START_FIGHTS_LABEL, &mut on) {
+        session.set_pvp_start_fights(on);
+    }
+    ui.set_item_tooltip(frontend_core::START_FIGHTS_NOTE);
+    ui.text_wrapped(frontend_core::START_FIGHTS_NOTE);
+}
+
 fn global_capture_section(ui: &Ui, session: &mut Session) {
     let on = session.draw_shown(DrawSwitch::CaptureInput);
     let mut cur = on;
@@ -5371,6 +5511,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     ui.text_colored(session.ui.chrome.accent_rgba(), slot);
     global_capture_section(ui, session);
     crate::log_pane::session_log_row(ui, session);
+    pvp_start_fights_row(ui, session);
     let mut sidecar = session.draw_shown(DrawSwitch::SidecarFullRate);
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
         session.set_sidecar_50(sidecar);
@@ -5954,7 +6095,8 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         let body_clicked = if preview {
             let body_clicked = rail_body(ui, gpu, state, name, draw);
             if reorder && dropped.is_none() {
-                dropped = crate::fleet::profile_drop_target(ui);
+                dropped = crate::fleet::profile_drop_target(ui)
+                    .and_then(crate::fleet::ProfileDrop::dropped);
             }
             body_clicked
         } else {
@@ -6101,7 +6243,8 @@ fn rail_cap(
     record_test_rail_item(ui);
     if let Some(drag) = drag {
         drag.dragging = crate::fleet::profile_drag_source(ui, drag.identity, row.name());
-        drag.dropped = crate::fleet::profile_drop_target(ui);
+        drag.dropped =
+            crate::fleet::profile_drop_target(ui).and_then(crate::fleet::ProfileDrop::dropped);
         // A drag is not a click: it must not focus the bot.
         clicked &= !drag.dragging;
     }
@@ -6539,21 +6682,25 @@ const PROFILES_REGION_MIN_H: f32 = 72.0;
 /// One profile row.
 const PROFILE_ROW_H: f32 = 24.0;
 
-/// What the operator did in the profile list this frame.
+/// What the operator did in the profile list this frame. A delivered
+/// reorder drop stands alone: it never also picks, edits or deletes.
 #[derive(Default)]
 struct ListPick {
     picked: Option<String>,
     removed: Option<String>,
     edit: Option<String>,
+    reorder: Option<ReorderOp>,
 }
 
-/// Profile picker (single-bot and MultiBox). Click a row to focus it
-/// (and load onto the wall while MultiBox is on); Edit opens the form;
-/// ✕ deletes the vault row only. Load all is MultiBox-only. The list and
-/// the editor pane (the edit form or the rs2b0t import, one at a time)
-/// each scroll on their own, side by side when the window is wide enough
-/// ([`PROFILES_SIDE_BY_SIDE_W`]) and stacked otherwise, with a draggable
-/// divider between them; Close stays at the bottom.
+/// Profile picker (single-bot and MultiBox), in the one saved order the
+/// Fleet uses. Click a row to focus it (and load onto the wall while
+/// MultiBox is on); drag a row's name to reorder the saved order; Edit
+/// opens the form; ✕ deletes the vault row only. Load all is
+/// MultiBox-only. The list and the editor pane (the edit form or the
+/// rs2b0t import, one at a time) each scroll on their own, side by side
+/// when the window is wide enough ([`PROFILES_SIDE_BY_SIDE_W`]) and
+/// stacked otherwise, with a draggable divider between them; Close stays
+/// at the bottom.
 fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
         #[cfg(feature = "js")]
@@ -6589,7 +6736,10 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 let region_h = (ui.content_region_avail()[1] - footer)
                     .max(scale_px(ui, PROFILES_REGION_MIN_H));
                 let pick = profiles_regions(ui, session, right, region_h);
-                if let Some(name) = pick.edit {
+                if let Some(op) = pick.reorder {
+                    // A delivered drop changes the saved order only.
+                    session.reorder_profiles(op, frontend_core::ReorderSurface::Profiles);
+                } else if let Some(name) = pick.edit {
                     session.begin_edit_profile(Some(&name));
                 } else if let Some(name) = pick.removed {
                     session.delete_understood = false;
@@ -6603,6 +6753,12 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 edit_switch_popup(ui, session);
             }
             ui.spacing();
+            // A Load-order write that is pending or failed (a drag in
+            // this list or in the Fleet) says so here, as it does under
+            // the Fleet table: the core holds the state, so it shows on
+            // reopen too and leaves when a later write resolves it or
+            // the error timeout passes.
+            setting_feedback_line(ui, session, Setting::ProfileOrder);
             if let Some(record) = session.core.saves_in_flight().last() {
                 let name = record.destination();
                 ui.text_disabled("saving ");
@@ -6615,12 +6771,11 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             if ui.button_with_size("Close", [w, 0.0]) {
                 session.request_close_profiles();
             }
-            let pending = session.pending_profile_delete.clone();
-            let body = match pending.as_deref() {
-                Some(n) => format!(
+            let body: std::borrow::Cow<'_, str> = match session.pending_profile_delete.as_deref() {
+                Some(n) => std::borrow::Cow::Owned(format!(
                     "Remove {n} from the vault? A running wall member stays up. This cannot be undone."
-                ),
-                None => "Remove this profile from the vault?".into(),
+                )),
+                None => std::borrow::Cow::Borrowed("Remove this profile from the vault?"),
             };
             if scary_confirm_popup(
                 ui,
@@ -6679,16 +6834,22 @@ fn profiles_toolbar(ui: &Ui, session: &mut Session, right: f32) {
     }
 }
 
-/// The height under the split regions: the spacing, the saving line and
-/// Close.
+/// The height under the split regions: the spacing, the Load-order
+/// feedback line while its write is pending or failed, the saving line
+/// and Close.
 fn profiles_footer_height(ui: &Ui, session: &Session) -> f32 {
     let spacing = ui.clone_style().item_spacing()[1];
+    let order = match session.core.setting_status(Setting::ProfileOrder) {
+        SettingStatus::Saved => 0.0,
+        SettingStatus::Pending => ui.text_line_height_with_spacing(),
+        SettingStatus::Failed(text) => wrapped_height(ui, text, ui.content_region_avail()[0]),
+    };
     let saving = if session.core.saves_in_flight().is_empty() {
         0.0
     } else {
         ui.text_line_height_with_spacing()
     };
-    spacing + saving + ui.frame_height_with_spacing()
+    spacing + order + saving + ui.frame_height_with_spacing()
 }
 
 /// The profile list and, when the form or the import is open, the editor
@@ -6743,7 +6904,7 @@ fn profiles_regions(ui: &Ui, session: &mut Session, right: f32, region_h: f32) -
 
 /// The height the whole profile list needs: its heading and every row.
 fn profile_list_height(ui: &Ui, session: &Session) -> f32 {
-    let rows = session.core.profiles().count().max(1);
+    let rows = session.core.profile_order().names().len().max(1);
     ui.text_line_height_with_spacing() + scale_px(ui, rows as f32 * PROFILE_ROW_H + 8.0)
 }
 
@@ -6777,14 +6938,13 @@ fn profiles_divider(ui: &Ui, id: &str, size: [f32; 2], vertical: bool) -> Option
     (active && delta != 0.0).then_some(delta)
 }
 
-/// The profile list in its own scrolling region of `size`.
+/// The profile list in its own scrolling region of `size`, in the one
+/// saved order (the same rows, in the same sequence, as the Fleet's Load
+/// order). It borrows the core's order entries: no per-frame copy.
 fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListPick {
-    let names: Vec<String> = session
-        .core
-        .profiles()
-        .map(|p| p.username().to_string())
-        .collect();
-    let focused = session.focused_name();
+    let order = session.core.profile_order();
+    // The core's own string, borrowed: no per-frame copy of the name.
+    let focused = session.core.selected();
     let members = session.core.members();
     let multibox = session.multibox;
     // The JavaScript import pane keeps its report while writes settle.
@@ -6793,38 +6953,50 @@ fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListP
     #[cfg(not(feature = "js"))]
     let edit_waits = false;
     let mut pick = ListPick::default();
+    let mut dropped: Option<(u64, ProfileIdentity)> = None;
     ui.child_window("##profiles-list")
         .size(size)
         .child_flags(ChildFlags::NAV_FLATTENED)
         .build(ui, || {
             ui.text_colored(ACCENT, "Vault profiles");
-            if names.is_empty() {
+            if order.names().is_empty() {
                 ui.text_disabled("vault is empty — New profile then Save");
                 return;
             }
-            for name in &names {
+            for (name, identity) in order.entries() {
                 let selected = if multibox {
-                    members.iter().any(|m| m == name)
+                    members.iter().any(|member| member.as_str() == name)
                 } else {
-                    focused.as_deref() == Some(name.as_str())
+                    focused == Some(name)
                 };
                 // A profile whose first save is still being written is not
-                // selectable, editable or deletable until the write settles.
+                // selectable, editable, deletable or draggable until the
+                // write settles.
                 let saving = session.core.profile_saving(name);
                 let _saving = saving.then(|| ui.begin_disabled());
-                let (p, r, e) = chooser_row(ui, name, selected, right, edit_waits);
+                let (p, r, e, d) =
+                    chooser_row(ui, order, name, identity, selected, right, edit_waits);
                 if saving {
                     continue;
                 }
-                if e {
-                    pick.edit = Some(name.clone());
+                if let Some(moving) = d {
+                    dropped = Some((moving, identity));
+                } else if e {
+                    pick.edit = Some(name.to_owned());
                 } else if r {
-                    pick.removed = Some(name.clone());
+                    pick.removed = Some(name.to_owned());
                 } else if p {
-                    pick.picked = Some(name.clone());
+                    pick.picked = Some(name.to_owned());
                 }
             }
         });
+    if let Some((moving, target)) = dropped {
+        // The drag payload is an identity's raw value; only a profile in
+        // this order can be its source.
+        if let Some((_, moving)) = order.entries().find(|(_, id)| id.raw() == moving) {
+            pick.reorder = order.drop_op(moving, target);
+        }
+    }
     pick
 }
 
@@ -7624,39 +7796,104 @@ fn lamp_skill_presets() -> Vec<&'static str> {
         .collect()
 }
 
-/// One picker row: name (click focuses / loads), Edit, then red ✕ (vault
-/// delete, confirm). Sibling buttons so an Edit/✕ click never also picks.
-/// The row ends at `right` (see [`chooser_right_edge`]), so Edit and ✕ stay
-/// on screen when the docked window runs past the display. `edit_waits`
-/// disables Edit (an import's writes keep the editor pane).
+std::thread_local! {
+    /// One reused buffer for every formatted Profiles row label (the cut
+    /// name, Edit, ✕), built and consumed label by label: a warm frame
+    /// of the list allocates nothing for them.
+    static ROW_LABEL: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// One picker row: name (click focuses / loads; drag reorders the saved
+/// order, with the same profile payload as a Fleet drag), Edit, then red
+/// ✕ (vault delete, confirm). Sibling buttons so an Edit/✕ click never
+/// also picks. The row ends at `right` (see [`chooser_right_edge`]), so
+/// Edit and ✕ stay on screen when the docked window runs past the
+/// display. A name too wide for its slot is cut with a visible "…"
+/// (drawn from the reused label buffer; the widget id still carries the
+/// whole name), and its tooltip always shows the whole name.
+/// `edit_waits` disables Edit (an import's writes keep the editor pane).
+/// Returns (picked, removed, edit, dropped-profile-raw).
 fn chooser_row(
     ui: &Ui,
+    order: &frontend_core::ProfileOrder,
     name: &str,
+    identity: ProfileIdentity,
     selected: bool,
     right: f32,
     edit_waits: bool,
-) -> (bool, bool, bool) {
+) -> (bool, bool, bool, Option<u64>) {
     const EDIT_W: f32 = 44.0;
     const X_W: f32 = 28.0;
     let avail = on_screen_avail(ui, right);
     let edit_w = scale_px(ui, EDIT_W);
     let x_w = scale_px(ui, X_W);
     let name_w = (avail - edit_w - x_w - scale_px(ui, BUTTON_GAP * 2.0)).max(scale_px(ui, 10.0));
-    let loaded = ui
-        .selectable_config(name)
-        .selected(selected)
-        .close_popups(false)
-        .size([name_w, 0.0])
-        .build();
+    let inner_w = name_w - ui.clone_style().frame_padding()[0] * 2.0;
+    let text_w = ui
+        .current_font()
+        .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, name)[0];
+    let cut = text_w > inner_w;
+    let build_name = |label: &str| {
+        ui.selectable_config(label)
+            .selected(selected)
+            .close_popups(false)
+            .size([name_w, 0.0])
+            .build()
+    };
+    let loaded = if cut {
+        ROW_LABEL.with_borrow_mut(|label| {
+            label.clear();
+            crate::picker::ellipsize_into(ui, name, inner_w, label);
+            label.push_str("##");
+            label.push_str(name);
+            build_name(label)
+        })
+    } else {
+        build_name(name)
+    };
+    let (rect_min, rect_max) = (ui.item_rect_min(), ui.item_rect_max());
+    if ui.is_item_hovered() {
+        ui.set_item_tooltip(if cut { name } else { "drag to reorder" });
+    }
+    crate::fleet::profile_drag_source(ui, identity, name);
+    let dropped = match crate::fleet::profile_drop_target(ui) {
+        Some(crate::fleet::ProfileDrop::Dropped(raw)) => Some(raw),
+        Some(crate::fleet::ProfileDrop::Hover(raw)) => {
+            // The line marks where the drop would land in this order.
+            let moving = order
+                .entries()
+                .find(|(_, id)| id.raw() == raw)
+                .map(|(_, id)| id);
+            if let Some(before) = crate::fleet::insertion_before(
+                moving
+                    .and_then(|moving| order.drop_op(moving, identity))
+                    .as_ref(),
+            ) {
+                crate::fleet::profile_insertion_marker(ui, rect_min, rect_max, before);
+            }
+            None
+        }
+        None => None,
+    };
     gap_line(ui);
     let edit = {
         let _waits = ui.begin_disabled_with_cond(edit_waits);
-        ui.button_with_size(format!("Edit##edit-{name}"), [edit_w, 0.0])
+        ROW_LABEL.with_borrow_mut(|label| {
+            label.clear();
+            label.push_str("Edit##edit-");
+            label.push_str(name);
+            ui.button_with_size(&*label, [edit_w, 0.0])
+        })
     };
     gap_line(ui);
     let _red = ui.push_style_color(StyleColor::Text, ERROR);
-    let removed = ui.button_with_size(format!("✕##{name}"), [x_w, 0.0]);
-    (loaded, removed, edit)
+    let removed = ROW_LABEL.with_borrow_mut(|label| {
+        label.clear();
+        label.push_str("✕##");
+        label.push_str(name);
+        ui.button_with_size(&*label, [x_w, 0.0])
+    });
+    (loaded, removed, edit, dropped)
 }
 
 /// Offline prepare: mint isolated identity, write server-native `.sav` via
@@ -7721,7 +7958,12 @@ fn init_panel_running(
     shot_state: Arc<Mutex<crate::window::ShotState>>,
     permit: InstancePermit,
 ) -> Result<(PanelState, StartupPreparation), window::PanelError> {
-    let mut state = PanelState::with_session(Session::with_instance(permit), shot_state);
+    let session = Session::with_instance(permit).map_err(|error| {
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+        window::PanelError::StartupFailure(message)
+    })?;
+    let mut state = PanelState::with_session(session, shot_state);
     state.session.set_memory_override(args.memory_override);
     state.session.set_nav_paints_override(args.nav_paints);
     state.session.set_catalog_core_enabled(args.catalog_core);
@@ -7820,6 +8062,39 @@ fn instance_conflict_choice(ui: &Ui, conflict: &InstanceConflict) -> Option<bool
         choice
     }
 }
+/// `Some(true)` moves the refused files aside, `Some(false)` keeps them and
+/// exits, and `None` leaves the prompt open.
+fn saved_data_choice(ui: &Ui, refusal: &str) -> Option<bool> {
+    const POPUP: &str = "Saved data from before 0.2.8";
+    if !ui.is_popup_open(POPUP) {
+        ui.open_popup(POPUP);
+    }
+    let mut choice = None;
+    ui.modal_popup(POPUP, || {
+        let height = scale_px(ui, 240.0).min(ui.io().display_size()[1] * 0.5);
+        ui.child_window("##refused-saved-files")
+            .size([scale_px(ui, DIALOG_W - 32.0), height])
+            .build(ui, || ui.text_wrapped(refusal));
+        ui.text_wrapped("Move these files aside and continue?");
+        ui.spacing();
+        let avail = ui.content_region_avail()[0];
+        let (w, stack) = scaled_button_row_layout(ui, avail, 2);
+        if ui.button_with_size("No, quit", [w, 0.0])
+            || ui.is_key_pressed_with_repeat(Key::Escape, false)
+        {
+            choice = Some(false);
+            ui.close_current_popup();
+        }
+        if !stack {
+            ui.same_line();
+        }
+        if ui.button_with_size("Yes, move aside", [w, 0.0]) {
+            choice = Some(true);
+            ui.close_current_popup();
+        }
+    });
+    choice
+}
 
 /// Resolve a normal event-loop return against a failure latched by a terminal
 /// frame. The failure remains fatal if the window closes during that frame.
@@ -7846,12 +8121,6 @@ fn live_exit_code(live: &LiveHarness, failure: Option<&str>) -> Option<i32> {
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
 /// exit 0). `--prepare-fixture` is offline-only and never opens a window.
 pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
-    if let Some(scenario) = args.mode.prepare_fixture_name() {
-        return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
-            eprintln!("FAIL: {e}");
-            exit_after_work_shutdown(1);
-        });
-    }
     let skip_lock = !matches!(args.mode, RunMode::Interactive);
     #[cfg(feature = "memory-profile")]
     let skip_lock = skip_lock
@@ -7859,12 +8128,52 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             .ok()
             .flatten()
             .is_some();
+    let root = frontend_core::saved_data::StateRoot::new(
+        frontend_core::scripts::paths::bot_home().join(".274bot"),
+    );
+    let startup = frontend_core::saved_data::SavedDataStartup::check(&root).map_err(|error| {
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+        window::PanelError::StartupFailure(message)
+    })?;
+    let refusal_text = startup.refusal().map(ToString::to_string);
+    let mut saved_data_prompt = if let Some(message) = refusal_text {
+        if skip_lock {
+            let error = startup
+                .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
+                .expect_err("the preflight found refused saved data");
+            let message = error.to_string();
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+            return Err(window::PanelError::StartupFailure(message));
+        }
+        Some((startup, message))
+    } else {
+        startup
+            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+            .map_err(|error| {
+                let message = error.to_string();
+                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+                window::PanelError::StartupFailure(message)
+            })?;
+        None
+    };
+    if let Some(scenario) = args.mode.prepare_fixture_name() {
+        return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
+            eprintln!("FAIL: {e}");
+            exit_after_work_shutdown(1);
+        });
+    }
     let shot_state = Arc::new(Mutex::new(crate::window::ShotState::default()));
     let mut instance_prompt = None;
+    let mut startup_permit = None;
     let mut running = None;
     match frontend_core::launch::acquire_instance(InstanceKind::Panel, skip_lock) {
         Ok(Ok(permit)) => {
-            running = Some(init_panel_running(&args, Arc::clone(&shot_state), permit)?);
+            if saved_data_prompt.is_some() {
+                startup_permit = Some(permit);
+            } else {
+                running = Some(init_panel_running(&args, Arc::clone(&shot_state), permit)?);
+            }
         }
         Ok(Err(conflict)) => {
             instance_prompt = Some(conflict);
@@ -7900,23 +8209,58 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         Arc::clone(&shot_state),
         move |ui, gpu| {
             let _profile_draw = client::profiling::UI_DRAW.start();
+            let mut initialize = false;
             if let Some(holder) = instance_prompt.as_ref() {
                 match instance_conflict_choice(ui, holder) {
                     None => return false,
                     Some(false) => return true,
                     Some(true) => {
                         instance_prompt = None;
-                        match init_panel_running(
-                            &args,
-                            Arc::clone(&shot_state),
-                            InstancePermit::skip(),
-                        ) {
-                            Ok(ready) => *frame_running.borrow_mut() = Some(ready),
-                            Err(e) => {
-                                eprintln!("panel: {e}");
-                                exit_after_work_shutdown(1);
-                            }
+                        startup_permit = Some(InstancePermit::skip());
+                        initialize = saved_data_prompt.is_none();
+                    }
+                }
+            }
+            if let Some((_, message)) = saved_data_prompt.as_ref() {
+                match saved_data_choice(ui, message) {
+                    None => return false,
+                    Some(false) => {
+                        let (startup, _) = saved_data_prompt
+                            .take()
+                            .expect("the refusal prompt is open");
+                        let error = startup
+                            .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
+                            .expect_err("keeping refused files declines startup");
+                        let message = error.to_string();
+                        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+                        *terminal_failure_frame.lock().unwrap() =
+                            Some(window::PanelError::StartupFailure(message));
+                        return true;
+                    }
+                    Some(true) => {
+                        let (startup, _) = saved_data_prompt
+                            .take()
+                            .expect("the refusal prompt is open");
+                        if let Err(error) =
+                            startup.resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+                        {
+                            let message = error.to_string();
+                            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+                            *terminal_failure_frame.lock().unwrap() =
+                                Some(window::PanelError::StartupFailure(message));
+                            return true;
                         }
+                        initialize = true;
+                    }
+                }
+            }
+            if initialize {
+                let permit = startup_permit.take().unwrap_or_else(InstancePermit::skip);
+                match init_panel_running(&args, Arc::clone(&shot_state), permit) {
+                    Ok(ready) => *frame_running.borrow_mut() = Some(ready),
+                    Err(error) => {
+                        *terminal_failure_frame.lock().unwrap() = Some(error);
+                        return true;
                     }
                 }
             }
@@ -8348,6 +8692,19 @@ fn frame_pumps(
     false
 }
 
+fn finish_vault_decision(
+    session: &mut Session,
+    terminal_failure: &Mutex<Option<window::PanelError>>,
+) -> bool {
+    let Some(error) = session.take_vault_failure() else {
+        return false;
+    };
+    let message = error.to_string();
+    api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel vault unlock: {message}");
+    *terminal_failure.lock().unwrap() = Some(window::PanelError::StartupFailure(message));
+    true
+}
+
 /// The per-frame UI body: the pump phase ([`frame_pumps`]), dock host,
 /// chrome, game pane, the staged GameInput submit, rail.
 fn ui_frame(
@@ -8376,6 +8733,9 @@ fn ui_frame(
     log_window(ui, &mut state.session, state.panel_dock_node);
     ui.set_next_window_class(&panel_class);
     panel_window(ui, &mut state.session, progress);
+    if finish_vault_decision(&mut state.session, terminal_failure) {
+        return true;
+    }
     crate::fleet::window(ui, &mut state.session);
     {
         let focus = state.session.focus.lock().unwrap();
@@ -8394,7 +8754,7 @@ fn ui_frame(
     ui.set_next_window_class(&game_class);
     // Frame owner: identity replacement and close-release happen outside
     // the Game window build closure so a rebind cannot keep stale buffers.
-    let nav = state.session.map_nav_digest();
+    let nav = state.session.map_nav_pack_id();
     let geom = picker::pack().map(|world| {
         (
             world.collision.origin.x,
@@ -8403,7 +8763,7 @@ fn ui_frame(
             world.collision.height as u32,
         )
     });
-    state.walk_map.sync_identity(nav, geom, Some(gpu));
+    state.walk_map.sync_world(nav, geom, Some(gpu));
     if !state.session.walkto_open {
         picker::note_closed();
         state.session.release_walk_map();
@@ -8429,6 +8789,9 @@ fn ui_frame(
     // Called every frame; each returns early while closed and applies an
     // opener's one-shot focus request just before its own Begin.
     chooser_window(ui, &mut state.session, state.panel_dock_node);
+    if finish_vault_decision(&mut state.session, terminal_failure) {
+        return true;
+    }
     settings_window(ui, &mut state.session, state.panel_dock_node);
     debug_panel_window(ui, &mut state.session, state.panel_dock_node);
     browse_window(ui, &mut state.session);
@@ -8446,6 +8809,7 @@ fn ui_frame(
 #[cfg(test)]
 mod parameter_options_tests {
     use super::*;
+
     fn compiled_schema(
         session: &crate::session::Session,
         name: &str,
@@ -8462,7 +8826,11 @@ mod parameter_options_tests {
 
     #[test]
     fn panel_site_filter_uses_selectable_shared_search_results() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let session = crate::session::Session::new();
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = frontend_core::scripts::Loadouts::default();
         let schema = compiled_schema(&session, "Gatherer");
@@ -8478,7 +8846,8 @@ mod parameter_options_tests {
             &bag,
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
 
         let matches = filtered_parameter_indices(&options, "varrock").collect::<Vec<_>>();
         assert!(
@@ -8499,7 +8868,11 @@ mod parameter_options_tests {
 
     #[test]
     fn disabled_panel_site_keeps_the_saved_reason_read_only() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let session = crate::session::Session::new();
+
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let loadouts = frontend_core::scripts::Loadouts::default();
         let schema = compiled_schema(&session, "Gatherer");
@@ -8515,7 +8888,8 @@ mod parameter_options_tests {
             &bag,
             &loadouts,
             Some(data.as_ref()),
-        );
+        )
+        .unwrap();
 
         assert!(options.is_empty());
         let disabled = unavailable_parameter_text("Site", site, &bag, &options);
@@ -8540,7 +8914,8 @@ mod parameter_options_tests {
         bag.insert("quests".into(), serde_json::json!(["hauntedmine"]));
         bag.insert("order_override".into(), serde_json::json!(["hauntedmine"]));
         let options =
-            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
+            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None)
+                .unwrap();
 
         assert!(
             options.is_empty(),
@@ -8564,7 +8939,8 @@ mod parameter_options_tests {
         bag.insert(priority.id().to_owned(), persisted.clone());
         assert_eq!(persisted, serde_json::json!([]));
         let options =
-            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None);
+            frontend_core::scripts::resolve_parameter_options(priority, &bag, &loadouts, None)
+                .unwrap();
         assert!(
             !parameter_array_editor_enabled(priority, &bag, &options),
             "after removal there is no refused stored row to edit"

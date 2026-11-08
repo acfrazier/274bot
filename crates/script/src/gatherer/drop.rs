@@ -1,10 +1,10 @@
+use crate::interact::InteractReq;
 use crate::native::{defer_budget, ActionContext, ActionError, NativeMachine};
-use crate::shim::InteractReq;
 use api::snapshot::ItemView;
 use std::sync::Arc;
 use std::task::Poll;
 
-const MAX_PROTECTED: usize = 8;
+pub const MAX_PROTECTED: usize = 10;
 const MAX_BATCH: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,6 +255,9 @@ mod tests {
 
     #[test]
     fn same_tick_modal_after_disposals_defers_close_until_next_tick() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_inventory(

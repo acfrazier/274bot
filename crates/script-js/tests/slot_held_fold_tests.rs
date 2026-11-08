@@ -1,5 +1,4 @@
 use api::run_policy::RunEnergyMin;
-use api::selected::ClientRevision;
 use api::snapshot::stat_used;
 use script::interact::{InteractReq, QueuedInteract};
 use script::native::seat_rows::QueuedSeatBatch;
@@ -28,9 +27,7 @@ fn paint_slot(source: &str, incarnation: u64) -> SlotScript {
             family,
         }),
         settings_bag: None,
-        game_data: Some(
-            api::game_data::for_revision(ClientRevision::R289).expect("selected game data"),
-        ),
+        game_data: None,
         named_banks: Arc::default(),
         loadouts: Arc::default(),
     })
@@ -185,15 +182,15 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = paint_slot(source, 858);
     paint_tick(&mut slot, 1, false);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     slot.seat_guardian_hold(true);
     for tick in 2..=19 {
         paint_tick(&mut slot, tick, true);
-        let _ = slot.drain_host_interacts();
+        let _ = slot.drain_host_interacts(None);
     }
     let paints = slot.probe("globalThis.__p").unwrap();
     slot.seat_guardian_hold(false);
-    let (policy, _, _) = slot.drain_host_interacts();
+    let (policy, _, _) = slot.drain_host_interacts(None);
     slot.stop();
     assert_eq!(paints, serde_json::json!(19), "the producer ran all paints");
     assert_eq!(
@@ -215,12 +212,12 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = paint_slot(source, 859);
     paint_tick(&mut slot, 1, false);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     slot.seat_guardian_hold(true);
     let dropped_before = dropped(&slot);
     for tick in 2..=143 {
         paint_tick(&mut slot, tick, true);
-        let _ = slot.drain_host_interacts();
+        let _ = slot.drain_host_interacts(None);
     }
     let paints = slot.probe("globalThis.__p").unwrap();
     let yaws: Vec<_> = held_rows(&mut slot)
@@ -262,7 +259,7 @@ export default class T extends LoopingBot {
     let mut slot = paint_slot(source, 860);
     let now = Instant::now();
     paint_tick(&mut slot, 1, false);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     let initial = slot.drain_lifecycle();
     slot.feed_watchdog(now, None, &[], false, true, &initial);
     assert!(slot.watchdog().wait_active());
@@ -271,7 +268,7 @@ export default class T extends LoopingBot {
     paint_tick(&mut slot, 2, false);
     let older = held_rows(&mut slot);
     slot.seat_guardian_hold(true);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     paint_tick(&mut slot, 3, true);
     let pages = take_batches(&mut slot);
     let newer: Vec<_> = pages
@@ -283,7 +280,7 @@ export default class T extends LoopingBot {
         .map(|row| row.request.clone())
         .collect();
     restore_batches(&mut slot, pages);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     assert_eq!(
         slot.probe("globalThis.__hold_wait_parked").unwrap(),
         serde_json::json!(true)
@@ -301,7 +298,7 @@ export default class T extends LoopingBot {
         "the delivered order leaves one wait"
     );
     slot.seat_guardian_hold(false);
-    let _ = slot.drain_host_interacts();
+    let _ = slot.drain_host_interacts(None);
     let folded = slot.drain_lifecycle();
     slot.feed_watchdog(now, None, &[], false, true, &folded);
     let count = slot.watchdog().wait_inflight();
@@ -337,7 +334,7 @@ export default class T extends LoopingBot {
     let dropped_before = dropped(&slot);
     for tick in 2..=170 {
         paint_tick(&mut slot, tick, true);
-        let _ = slot.drain_host_interacts();
+        let _ = slot.drain_host_interacts(None);
     }
     let errors = slot.probe("globalThis.__errors").unwrap();
     let all_posts = slot.probe("globalThis.__p").unwrap().as_u64().unwrap();
@@ -407,13 +404,13 @@ export default class T extends LoopingBot {
     slot.seat_guardian_hold(true);
     for tick in 2..=142 {
         paint_tick(&mut slot, tick, true);
-        let _ = slot.drain_host_interacts();
+        let _ = slot.drain_host_interacts(None);
     }
     let paints = slot.probe("globalThis.__paints").unwrap();
     let held = held_rows(&mut slot);
     let before = dropped(&slot);
     slot.seat_guardian_hold(false);
-    let (_, reqs, _) = slot.drain_host_interacts();
+    let (_, reqs, _) = slot.drain_host_interacts(None);
     let after = dropped(&slot);
     slot.stop();
     assert_eq!(paints, serde_json::json!(142));

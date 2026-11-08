@@ -2,7 +2,7 @@ use crate::native::{ConfigError, SettingsBag, StartError};
 use crate::SettingDef;
 use api::game_data::SelectedGameData;
 use api::gather_methods::{first_gap, GatherCatalog, GatherMethod, GatherSkill, GatherTarget};
-use api::named_banks::{BankPreferences, BANK_CATALOG};
+use api::named_banks::BankPreferences;
 use api::selected::{Knowledge, RequirementKind};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
@@ -82,6 +82,8 @@ pub struct GathererSettings {
     pub fishing_method: String,
     #[serde(default = "default_target_preference")]
     pub target_preference: String,
+    #[serde(default = "default_tick_method")]
+    pub tick_method: String,
     #[serde(default = "default_location")]
     pub location: String,
     #[serde(default)]
@@ -139,6 +141,9 @@ fn default_fishing_method() -> String {
 fn default_target_preference() -> String {
     "Best tier".into()
 }
+fn default_tick_method() -> String {
+    "Off".into()
+}
 fn default_location() -> String {
     "Start".into()
 }
@@ -172,6 +177,7 @@ impl Default for GathererSettings {
             mining_resources: default_mining_resources(),
             fishing_method: default_fishing_method(),
             target_preference: default_target_preference(),
+            tick_method: default_tick_method(),
             location: default_location(),
             site: String::new(),
             custom_tile: None,
@@ -240,6 +246,17 @@ impl GathererSettings {
                 "targetPreference must be Best tier or Nearest",
             ));
         }
+        if self.tick_method.eq_ignore_ascii_case("off") {
+            self.tick_method = "Off".into();
+        } else if self.tick_method.eq_ignore_ascii_case("knife") {
+            self.tick_method = "Knife".into();
+        } else {
+            return Err(ConfigError::new(
+                "tickMethod",
+                "invalid-option",
+                "tickMethod must be Off or Knife",
+            ));
+        }
         if Location::parse(&self.location).is_none() {
             return Err(ConfigError::new(
                 "location",
@@ -277,17 +294,22 @@ impl GathererSettings {
         }
         if self.bank.eq_ignore_ascii_case("nearest") {
             self.bank = "Nearest".into();
-        } else if let Some(bank) = BANK_CATALOG
-            .iter()
-            .find(|bank| bank.name.eq_ignore_ascii_case(self.bank.trim()))
-        {
-            self.bank = bank.name.to_string();
         } else {
-            return Err(ConfigError::new(
-                "bank",
-                "invalid-option",
-                "bank must be Nearest or a named bank from the catalog",
-            ));
+            let catalog = api::named_banks::bank_catalog().map_err(|error| {
+                ConfigError::new("bank", "catalog-unavailable", format!("{error:?}"))
+            })?;
+            if let Some(bank) = catalog
+                .iter()
+                .find(|bank| bank.name.eq_ignore_ascii_case(self.bank.trim()))
+            {
+                self.bank = bank.name.to_string();
+            } else {
+                return Err(ConfigError::new(
+                    "bank",
+                    "invalid-option",
+                    "bank must be Nearest or a named bank from the catalog",
+                ));
+            }
         }
         if !(1..=10_000).contains(&self.bait_target) {
             return Err(ConfigError::new(
@@ -399,6 +421,7 @@ impl GathererSettings {
             || self.woodcutting_resources != other.woodcutting_resources
             || self.mining_resources != other.mining_resources
             || self.fishing_method != other.fishing_method
+            || self.tick_method != other.tick_method
             || self.location != other.location
             || self.site != other.site
             || self.custom_tile != other.custom_tile
@@ -731,6 +754,14 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             None,
         ),
         setting(
+            "tickMethod",
+            "string",
+            Some("Off"),
+            &["Off", "Knife"],
+            Some("{ key: 'skill', anyOf: ['Woodcutting', 'Mining', 'Fishing'] }"),
+            None,
+        ),
+        setting(
             "location",
             "string",
             Some("Start"),
@@ -914,6 +945,36 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn tick_method_is_default_off_validated_and_restart_required_for_all_skills() {
+        let off = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
+        assert_eq!(off.tick_method, "Off");
+        let definition = schema().iter().find(|def| def.id == "tickMethod").unwrap();
+        assert_eq!(definition.default.as_deref(), Some("Off"));
+        assert_eq!(definition.options, ["Off", "Knife"]);
+        assert_eq!(
+            definition.show_if.as_deref(),
+            Some("{ key: 'skill', anyOf: ['Woodcutting', 'Mining', 'Fishing'] }")
+        );
+        for skill in ["Woodcutting", "Mining", "Fishing"] {
+            let mut bag = SettingsBag::new();
+            bag.insert("skill".into(), json!(skill));
+            bag.insert("tickMethod".into(), json!("Knife"));
+            let knife = GathererSettings::from_bag(&bag).unwrap();
+            assert_eq!(knife.tick_method, "Knife");
+            assert!(off.restart_required_changed(&knife));
+            let same_skill_off = GathererSettings {
+                tick_method: "Off".into(),
+                ..knife.clone()
+            };
+            assert!(knife.restart_required_changed(&same_skill_off));
+            bag.insert("tickMethod".into(), json!("Fast"));
+            let error = GathererSettings::from_bag(&bag).unwrap_err();
+            assert_eq!(error.field.as_ref(), "tickMethod");
+            assert_eq!(error.code.as_ref(), "invalid-option");
+        }
+    }
+
+    #[test]
     fn site_is_additive_required_only_when_active_and_restart_required() {
         assert_eq!(super::super::card::CARD.schema_version, 4);
         let old = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
@@ -977,6 +1038,9 @@ mod tests {
 
     #[test]
     fn settings_accept_g3_defaults_and_reject_unsupported_modes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let defaults = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
         assert_eq!(defaults.disposition, "Bank");
         assert_eq!(defaults.bank, "Nearest");
@@ -1016,6 +1080,9 @@ mod tests {
 
     #[test]
     fn gather_aliases_expand_without_rewriting_and_unknown_resource_does_not_block_radius() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let (selected, catalog) = selected_catalog(api::selected::ClientRevision::R274);
         let grouped = selected
             .gather_resources_for("fishing")
@@ -1202,6 +1269,21 @@ mod tests {
             consumes: Knowledge::Known(Arc::from([])),
             requirements: Knowledge::Known(Arc::from([])),
             spots: Knowledge::Known(Arc::from([])),
+            tick_arm: api::gather_methods::TickArm {
+                kind: api::gather_methods::TickArmKind::None,
+                roll_signal: api::gather_methods::TickRollSignal::Never,
+                delay_drop: false,
+                depletes: false,
+                native_arm: None,
+                act_min_d: 0,
+                act_silent: false,
+                no_gain: None,
+                skill_anim: None,
+                roll_anim: None,
+                cast_anim: None,
+                fletch_anim: Some(1),
+                tool_facts: Arc::from([]),
+            },
         };
         method.targets = Knowledge::Partial {
             known: Arc::from([complete, incomplete]),

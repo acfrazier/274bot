@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -54,42 +53,9 @@ export const serverOrderedDecoderSources = [
     'src/engine/script/ScriptValidators.ts',
 ] as const;
 
-/** Other engine source files that define the named server predicates and close effects. */
-export const serverOrderedEngineSourceFiles = [
-    ...serverOrderedDecoderSources,
-    'src/engine/entity/Player.ts',
-    'src/network/game/client/ClientGameProt.ts',
-    'src/network/game/client/handler/CloseModalHandler.ts',
-    'src/network/game/client/handler/IdkSaveDesignHandler.ts',
-    'src/network/game/client/handler/IfButtonHandler.ts',
-    'src/network/game/client/handler/InvButtonHandler.ts',
-    'src/network/game/client/handler/OpHeldUHandler.ts',
-    'src/network/game/client/handler/OpLocHandler.ts',
-    'src/network/game/client/handler/ResumePCountDialogHandler.ts',
-    'src/network/game/client/handler/ResumePauseButtonHandler.ts',
-] as const;
-
-/** Cache files consumed by Component, FontType, and MesanimType. */
-export const serverOrderedEngineCacheFiles = [
-    'data/pack/client/interface',
-    'data/pack/server/interface.dat',
-    'data/pack/client/title',
-    'data/pack/server/mesanim.dat',
-] as const;
-export const serverOrderedEngineInputPaths = [
-    ...serverOrderedEngineSourceFiles,
-    ...serverOrderedEngineCacheFiles,
-] as const;
 
 
 export type ServerOrderedSourceSpan = { file: string; first: number; last: number };
-export type ServerOrderedSelection = {
-    revision: number;
-    engine_commit: string;
-    content_commit: string;
-    cache_id: string;
-    content_id: string;
-};
 
 export type ServerOrderedComponentType = 'layer' | 'unused' | 'inventory' | 'rect' | 'text' | 'sprite' | 'model' | 'inventory_text';
 export type ServerOrderedButtonType = 'none' | 'button' | 'target' | 'close' | 'toggle' | 'select' | 'pause';
@@ -216,11 +182,6 @@ export type ServerOrderedBankerPage = {
 
 export type ServerOrderedCatalog = {
     schema: 1;
-    revision: number;
-    engine_commit: string;
-    content_commit: string;
-    cache_id: string;
-    content_id: string;
     components: ServerOrderedComponent[];
     entries: ServerOrderedEntry[];
     banker_page: ServerOrderedBankerPage | null;
@@ -294,8 +255,7 @@ export type ServerOrderedEngineSources = {
 
 export type ServerOrderedExtractInput = {
     contentRoot: string;
-    selectedPack: ServerOrderedSelection;
-    sourceCommits: { engine_commit: string; content_commit: string };
+    revision: number;
     cache: ServerOrderedCacheSnapshot;
     engineSources: ServerOrderedEngineSources;
 };
@@ -304,10 +264,6 @@ export type ServerOrderedLoadInput = {
     contentRoot: string;
     engineRoot: string;
     revision: number;
-    engineCommit: string;
-    contentCommit: string;
-    cacheId: string;
-    contentId: string;
 };
 
 export type ServerOrderedBankFacts = {
@@ -524,26 +480,9 @@ function mergeSpans(spans: readonly ServerOrderedSourceSpan[]): ServerOrderedSou
     return [...unique.values()].sort((a, b) => a.file.localeCompare(b.file) || a.first - b.first || a.last - b.last);
 }
 
-function assertSelection(selection: ServerOrderedSelection, sourceCommits: { engine_commit: string; content_commit: string }) {
-    if (selection.revision !== SERVER_ORDERED_REVISION) {
-        throw new Error(`server_ordered: ContractUnavailable for unproved revision ${selection.revision}`);
-    }
-    if (!/^[0-9a-f]{40}$/.test(selection.engine_commit) || !/^[0-9a-f]{40}$/.test(selection.content_commit)) {
-        throw new Error('server_ordered: selected engine/content commit pin is missing or invalid');
-    }
-    if (!/^[0-9a-f]{64}$/.test(selection.cache_id) || !/^[0-9a-f]{64}$/.test(selection.content_id)) {
-        throw new Error('server_ordered: selected cache/content identity is missing or invalid');
-    }
-    if (sourceCommits.engine_commit !== selection.engine_commit || sourceCommits.content_commit !== selection.content_commit) {
-        throw new Error('server_ordered: selected pin disagrees with source roots');
-    }
-}
-
-function readGitHead(root: string, label: string): string {
-    try {
-        return execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-    } catch (error) {
-        throw new Error(`server_ordered: cannot prove ${label} source commit`, { cause: error });
+function assertRevision(revision: number) {
+    if (revision !== SERVER_ORDERED_REVISION) {
+        throw new Error(`server_ordered: ContractUnavailable for unproved revision ${revision}`);
     }
 }
 
@@ -1765,10 +1704,10 @@ function buildEntries(
     return entries satisfies ServerOrderedEntry[];
 }
 
-/** Extract the catalog from pinned content and a decoded selected-cache snapshot. */
+/** Extract the catalog from selected content and a decoded cache snapshot. */
 export function extractServerOrderedFacts(input: ServerOrderedExtractInput): ServerOrderedCatalog {
-    const { contentRoot, selectedPack, sourceCommits, cache, engineSources } = input;
-    assertSelection(selectedPack, sourceCommits);
+    const { contentRoot, revision, cache, engineSources } = input;
+    assertRevision(revision);
     for (const relative of serverOrderedContentFiles) requireGatherText(contentRoot, relative);
 
     const bankerPage = tryProveBankerPage(contentRoot, cache);
@@ -1789,11 +1728,6 @@ export function extractServerOrderedFacts(input: ServerOrderedExtractInput): Ser
 
     return {
         schema: SERVER_ORDERED_SCHEMA,
-        revision: selectedPack.revision,
-        engine_commit: selectedPack.engine_commit,
-        content_commit: selectedPack.content_commit,
-        cache_id: selectedPack.cache_id,
-        content_id: selectedPack.content_id,
         components: aliases.map(alias => {
             const component = componentRecords.get(alias);
             if (!component) throw new Error(`server_ordered: component extraction omitted ${alias}`);
@@ -1808,22 +1742,11 @@ export function extractServerOrderedFacts(input: ServerOrderedExtractInput): Ser
 }
 
 /**
- * Load the pinned engine's real cache decoders, then call the fixture-friendly pure extractor.
- * The engine root is read-only. Imports resolve through that pinned engine package's `#` map.
+ * Load the engine's real cache decoders, then call the fixture-friendly pure extractor.
+ * The engine root is read-only. Imports resolve through that engine package's `#` map.
  */
 export async function loadServerOrderedFacts(input: ServerOrderedLoadInput): Promise<ServerOrderedCatalog> {
-    const selectedPack: ServerOrderedSelection = {
-        revision: input.revision,
-        engine_commit: input.engineCommit,
-        content_commit: input.contentCommit,
-        cache_id: input.cacheId,
-        content_id: input.contentId,
-    };
-    const sourceCommits = {
-        engine_commit: readGitHead(input.engineRoot, 'engine'),
-        content_commit: readGitHead(input.contentRoot, 'content'),
-    };
-    assertSelection(selectedPack, sourceCommits);
+    assertRevision(input.revision);
 
     type EngineComponent = {
         id: number;
@@ -1950,8 +1873,7 @@ export async function loadServerOrderedFacts(input: ServerOrderedLoadInput): Pro
 
     return extractServerOrderedFacts({
         contentRoot: input.contentRoot,
-        selectedPack,
-        sourceCommits,
+        revision: input.revision,
         cache: {
             components,
             fonts,

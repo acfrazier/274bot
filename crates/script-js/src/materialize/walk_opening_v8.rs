@@ -4,7 +4,7 @@ use rustyscript::Runtime;
 const FACES: [(i32, i32); 4] = [(-1, 0), (0, 1), (1, 0), (0, -1)];
 const TOWARD_SLACK: f64 = 4.0;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_walk_opening", walk_opening)
 }
 

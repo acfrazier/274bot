@@ -118,6 +118,9 @@ fn same_kind_head_variant_drops_the_distractor_before_triggering() {
 
 #[test]
 fn the_fixtures_seed_only_the_accounts_own_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (name, ..) in GUARDIAN_EVENT_CELLS {
         let scenario = crate::get(name).unwrap();
         for step in &scenario.steps {
@@ -252,6 +255,9 @@ fn strange_box_load_claim_seeds_inventory_and_bounds_the_handoff() {
 
 #[test]
 fn every_evade_npc_has_a_content_chase_range() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = data();
     let rows = &data.npc_names().expect("npc names").rows;
     for (name, _, _, _, oracle) in GUARDIAN_EVENT_CELLS {
@@ -276,6 +282,9 @@ fn every_evade_npc_has_a_content_chase_range() {
 /// real placement of the worked resource in reach (no spawned resource).
 #[test]
 fn the_activity_stands_are_beside_real_resources() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = data();
     let data = Arc::clone(&selected);
     let input = script::preparation::PreparationInput::new(

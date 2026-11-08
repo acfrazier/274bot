@@ -733,13 +733,10 @@ fn catalogue_real_candidate_census() {
         let snapshot = PathBuf::from(
             std::env::var(format!("BOT_MAP_QUALIFY_R{revision}_SNAPSHOT_DIR")).unwrap(),
         );
-        let selected = match revision {
-            274 => ClientRevision::R274,
-            289 => ClientRevision::R289,
-            _ => unreachable!(),
-        };
-        let data = api::game_data::for_revision(selected).unwrap();
-        let content = Digest::from_hex(data.content_id().unwrap()).unwrap();
+        let identity =
+            client::content_identity::compute_decoded_content_identity(revision, &jag, &snapshot)
+                .unwrap();
+        let content = Digest(identity.content_id);
         let input = ClientMapInput::new(revision, content, &jag, &snapshot).unwrap();
         let mut cursor = CatalogueCursor::new(input).unwrap();
         while !matches!(cursor.phase, CataloguePhase::ReaderInit) {

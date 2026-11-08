@@ -11,7 +11,6 @@ use host_play::walk_map::{ActionError, MapContext, MapModel};
 use host_play::{InstancePermit, SlotArm, SlotStatus, WalkArms};
 use nav_planner::bank_fetch::BankRows;
 use nav_planner::collision::WorldCollision;
-use nav_planner::map::identity::Digest;
 use nav_planner::router::{AvoidRect, FindOptions};
 use nav_planner::tile::Tile;
 use nav_planner::transport::{TransportGraph, WildernessRules};
@@ -95,6 +94,23 @@ fn fixture(names: &[&'static str], slots: &[Slot]) -> Fixture {
 }
 
 fn fixture_with_world(names: &[&'static str], slots: &[Slot], world: NavWorld) -> Fixture {
+    fixture_with_world_and_snapshots(names, slots, world, true)
+}
+
+fn fixture_without_observed_snapshot(
+    names: &[&'static str],
+    slots: &[Slot],
+    world: NavWorld,
+) -> Fixture {
+    fixture_with_world_and_snapshots(names, slots, world, false)
+}
+
+fn fixture_with_world_and_snapshots(
+    names: &[&'static str],
+    slots: &[Slot],
+    world: NavWorld,
+    publish_snapshots: bool,
+) -> Fixture {
     let map = MapFixture::new(&world, "local-289");
     let mut play = map.play(slots[0].at);
     for other in &slots[1..] {
@@ -129,21 +145,22 @@ fn fixture_with_world(names: &[&'static str], slots: &[Slot], world: NavWorld) -
     }
     let dest_context = MapContext {
         focus: play.map_focus("alice"),
-        nav: Digest::from_hex(
-            &play
-                .server_profile()
-                .unwrap()
-                .nav_identity()
-                .unwrap()
-                .nav_sha256,
-        )
-        .unwrap(),
+        nav: play.server_profile().unwrap().nav_pack_id().unwrap(),
         overlay: None,
         generation: 1,
     };
     let mut core = OperatorSession::new(InstancePermit::SkipLock);
     core.set_spawn_workers(false);
     core.start(vault, play);
+    if publish_snapshots {
+        for observed in slots {
+            core.frames().publish_test_snapshot(
+                observed.name,
+                api::snapshot::GameSnapshot::new(),
+                WorldState::empty(),
+            );
+        }
+    }
     let _ = std::fs::remove_dir_all(&dir);
     let mut model = MapModel::default();
     model.bind(dest_context);
@@ -237,6 +254,26 @@ fn every_marked_bot_walks_to_the_one_tile_and_unmarked_bots_stay() {
         assert_eq!(f.queued(name), Some(dest), "{name}");
     }
     assert_eq!(f.queued("erin"), None, "an unmarked bot was routed");
+}
+
+#[test]
+fn group_confirmation_without_observed_snapshot_keeps_ordinary_walk_available() {
+    let mut fixture =
+        fixture_without_observed_snapshot(&["alice"], &[slot("alice", t(1, 1, 0))], world(12, &[]));
+    assert!(
+        fixture
+            .core
+            .frames()
+            .with_snapshot("alice", |_| ())
+            .is_none(),
+        "the live slot has not published a frame yet"
+    );
+    let destination = t(10, 3, 0);
+    let report = fixture.walk_to(&marks(&[1]), destination);
+    assert_eq!(report.failed_count(), 0);
+    assert_eq!(report.done_count(), 1);
+    assert_eq!(report.rows()[0].outcome(), &BulkOutcome::Done);
+    assert_eq!(fixture.queued("alice"), Some(destination));
 }
 
 #[test]
@@ -386,4 +423,46 @@ fn a_refused_destination_fails_each_marked_bot_with_one_cause() {
     assert_eq!(report.failed_count(), 2);
     assert_eq!(report.done_count(), 0);
     assert!(f.arms.lock().unwrap().is_empty());
+}
+
+#[test]
+fn frontend_owned_map_staging_arms_the_real_profile_bound_play() {
+    let f = fixture_with_world(
+        &["alice", "bob"],
+        &[slot("alice", t(1, 1, 0)), slot("bob", t(2, 10, 0))],
+        world(12, &[]),
+    );
+    let world = f.core.play().unwrap().world().unwrap();
+    let context = f.core.walk_map_context(
+        None,
+        f.dest_context.nav,
+        f.dest_context.overlay,
+        f.dest_context.generation,
+    );
+    let mut map = crate::walk_map::WalkMap::default();
+    map.bind(context);
+    let destination = t(10, 10, 0);
+    assert_eq!(map.select_tile(&world, destination), Some(destination));
+    let staged = super::StagedMarkedWalk::new(
+        &mut map,
+        context,
+        FindOptions {
+            // This controlled fixture proves geometry, not missing risk facts.
+            zones: nav_planner::zones::ZoneExempt::all(),
+            ..FindOptions::default()
+        },
+    );
+    let report = f.core.confirm_marked_walk(&marks(&[1, 2]), staged);
+    let mut done = report.done();
+    assert_eq!(done.next(), Some("alice"));
+    assert_eq!(done.next(), Some("bob"));
+    assert_eq!(done.next(), None);
+    let arms = f.core.walk_arms();
+    let armed = arms.lock().unwrap();
+    for name in ["alice", "bob"] {
+        assert_eq!(
+            armed.get(name).unwrap().lock().unwrap().queued_tile(),
+            Some(destination)
+        );
+    }
 }

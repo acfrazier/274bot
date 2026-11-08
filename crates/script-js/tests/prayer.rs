@@ -1,8 +1,14 @@
-use script::shim::InteractReq;
-use script_js::wire::{ReachViewInput, SnapshotInput, StatInput, TileInput, VarpInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
+    ReachViewInput, SnapshotInput, StatInput, TileInput, VarpInput,
+};
 use script_js::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
 
 mod common;
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 use common::post_snapshot_input;
 
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
@@ -147,6 +153,11 @@ export default class T extends LoopingBot {
 
 #[test]
 fn v1_queries_trim_case_and_stats_on_both_caches() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     for game_data in both_data() {
         let iso = spawn_v1(V1_QUERY, game_data);
         let stats = [prayer_stat(43, 40)];
@@ -174,6 +185,9 @@ fn v1_queries_trim_case_and_stats_on_both_caches() {
 
 #[test]
 fn v1_available_false_when_points_are_zero() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v1(V1_QUERY, data());
     let stats = [prayer_stat(43, 0)];
     let mut snap = base_snapshot();
@@ -203,6 +217,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v1(src, data());
     post_snapshot_input(&iso, &base_snapshot());
     tick(&iso, 1);
@@ -223,6 +240,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v1(src, data());
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
@@ -250,6 +270,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v1(src, data());
     let stats = [prayer_stat(1, 1)];
     let mut snap = base_snapshot();
@@ -271,6 +294,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v1(src, data());
     let stats = [prayer_stat(1, 0)];
     let varps = [VarpInput {
@@ -304,6 +330,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v1(src, data());
     let stats = [prayer_stat(43, 43)];
     let mut snap = base_snapshot();
@@ -330,6 +359,11 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     for game_data in both_data() {
         let iso = spawn_v1(src, game_data);
         let stats = [prayer_stat(43, 43)];
@@ -374,6 +408,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v1(src, data());
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
@@ -440,6 +477,9 @@ export function tick(api) {
 
 #[test]
 fn v2_queries_are_helper_result_and_if_button_stays_private() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v2(V2_QUERY, data());
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
@@ -486,6 +526,9 @@ export async function tick(api) {
   globalThis.__on = await api.prayerSet({ name: 'Protect from Melee', on: 1 });
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v2(src, data());
     let stats = [prayer_stat(43, 43)];
     let mut snap = base_snapshot();
@@ -512,6 +555,9 @@ export async function tick(api) {
   globalThis.__unavail = await api.prayerSet({ name: 'Protect from Melee', on: true });
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v2(src, data());
     let stats = [prayer_stat(1, 1)];
     let mut snap = base_snapshot();
@@ -535,6 +581,9 @@ export async function tick(api) {
   globalThis.__set = await api.prayerSet({ name: 'Protect from Melee', on: true });
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let iso = spawn_v2(src, data_289());
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
@@ -570,6 +619,9 @@ export async function tick(api) {
   globalThis.__set = await api.prayerSet({ name: 'Protect from Melee', on: true });
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v2(src, data());
     let stats = [prayer_stat(43, 43)];
     let mut snap = base_snapshot();
@@ -595,6 +647,9 @@ export async function tick(api) {
   globalThis.__clear = await api.prayerClear();
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v2(src, data());
     let stats = [prayer_stat(43, 43)];
     let varps = [
@@ -648,6 +703,9 @@ export async function tick(api) {
   globalThis.__set = set;
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v2(src, data());
     let stats = [prayer_stat(43, 43)];
     let mut snap = base_snapshot();
@@ -688,6 +746,9 @@ fn published_example_queries_sets_clears_and_stops() {
     assert_eq!(card.shape, LoadShape::NativeTick);
     assert_eq!(card.api_family, ApiFamily::V2);
     assert!(card.unloadable.is_none(), "{:?}", card.unloadable);
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = LoadIsolate::spawn_with_game_data(card.js, card.shape, vec![], data()).unwrap();
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
@@ -733,6 +794,9 @@ fn published_v1_adapter_imports_prayer_and_stops() {
     let card = library.load(&path).unwrap();
     assert_eq!(card.shape, LoadShape::CompatClass);
     assert!(card.unloadable.is_none(), "{:?}", card.unloadable);
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = LoadIsolate::spawn_with_game_data(card.js, card.shape, vec![], data()).unwrap();
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
@@ -780,6 +844,9 @@ export async function tick(api) {
   await Promise.all([setP, clearP]);
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v2(src, data());
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
@@ -838,6 +905,9 @@ export async function tick(api) {
   await Promise.all([first, second]);
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v2(src, data());
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
@@ -884,6 +954,9 @@ export function tick(api) {
   });
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v2(src, data());
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
@@ -929,6 +1002,9 @@ export async function tick(api) {
   globalThis.__done = true;
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_v2(src, data());
     let stats = [prayer_stat(43, 43)];
     let mut snap = base_snapshot();
@@ -1010,6 +1086,9 @@ export async function tick(api) {
   }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let iso = spawn_v2(query, data_289());
     let stats = [prayer_stat(43, 43)];
     let on = [VarpInput {

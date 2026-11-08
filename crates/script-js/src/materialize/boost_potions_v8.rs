@@ -16,7 +16,7 @@ use script::boost_potions::{
     EMPTY_VIAL, RANGING_POTION, SUPER_SET,
 };
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_boost_potions", boost_potions)
 }
 

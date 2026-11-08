@@ -4,6 +4,7 @@ use api::game_data::{for_revision, SelectedGameData};
 use api::gather_methods::{GatherCatalog, SceneRegionInput};
 use api::identity::Deadline;
 use api::selected::{ClientRevision, FamilyPreparation};
+use api::test_support::local_asset_path;
 use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -71,6 +72,22 @@ fn region(min: i32, max: i32) -> SceneRegionInput {
 
 #[test]
 fn borrowed_placement_and_resource_queries_allocate_nothing() {
+    if local_asset_path(
+        "",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
+        "revision 289 game data for gathering allocation test",
+    )
+    .is_none()
+        || local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/274.json"),
+            "revision 274 game data for gathering allocation test",
+        )
+        .is_none()
+        || !api::test_support::embedded_game_data_available()
+    {
+        return;
+    }
     for revision in [ClientRevision::R289, ClientRevision::R274] {
         let data = for_revision(revision).unwrap();
         let catalog = prepare(&data);
@@ -138,6 +155,9 @@ fn borrowed_placement_and_resource_queries_allocate_nothing() {
         }
         let resource = events() - before;
 
+        eprintln!(
+            "gather allocation {revision:?}: world_take_one={world_take_one} local_full={local_full} resource={resource}"
+        );
         assert!(taken >= CALLS * 2);
         assert_eq!(world_take_one, 0, "{revision:?} world spots(..).take(1)");
         assert_eq!(local_full, 0, "{revision:?} local spots");

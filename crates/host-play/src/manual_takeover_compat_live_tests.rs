@@ -5,7 +5,8 @@
 //! Run each ignored cell in a separate process under the repository's `isohome`
 //! caller. Set `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `LIVE_EVIDENCE_DIR`,
 //! `BOT_ENGINE_DIR`, `BOT_NAV_PACK`, and a fresh per-run `BOT_CACHE_DIR` clone.
-//! The cell uses Engine A on loopback: game port 44594 and asset port 1080.
+//! The cell uses the loopback engine named by `WORLD_GAME_PORT` /
+//! `WORLD_HTTP_PORT`, defaulting to Engine A (game port 44594, asset port 1080).
 //!
 //! Example commands, with the environment above set by `isohome`:
 //!
@@ -223,8 +224,8 @@ impl Receipt {
             target: json!({
                 "game_host": "127.0.0.1",
                 "asset_host": "127.0.0.1",
-                "game_port": 44_594,
-                "http_port": 1_080,
+                "game_port": crate::live_ports::game_port(),
+                "http_port": crate::live_ports::http_port(),
                 "revision": 289,
                 "engine_tick_ms": 600,
             }),
@@ -651,8 +652,8 @@ fn profile_options(
     let cache_dir = canonical_directory("BOT_CACHE_DIR")?;
     let game_host = "127.0.0.1".to_owned();
     let asset_host = game_host.clone();
-    let game_port = 44_594;
-    let http_port = 1_080;
+    let game_port = crate::live_ports::game_port();
+    let http_port = crate::live_ports::http_port();
 
     let options = ProfileOptions {
         profile: Some("local-289".to_owned()),

@@ -7,13 +7,15 @@
 //! `if-button` / `close-modal` for a successful run.
 use std::time::Duration;
 
-use script::shim::InteractReq;
-use script_js::wire::{
-    IsolateBuf, MainModalTextsInput, NativeFactsInput, QuestStatusInput, ReachViewInput,
-    SnapshotFingerprint, SnapshotInput,
-};
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value as Json};
+use {
+    script::native::snapshot_source::{
+        MainModalTextsInput, NativeFactsInput, QuestStatusInput, ReachViewInput, SnapshotInput,
+    },
+    script_js::wire::{IsolateBuf, SnapshotFingerprint},
+};
 
 /// Past the machine's own 3000ms acquisition window.
 const PAST_WINDOW_MS: u64 = 3_100;

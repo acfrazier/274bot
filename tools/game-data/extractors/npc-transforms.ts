@@ -26,7 +26,6 @@ export const NPC_TRANSFORM_CONTENT_PACK_INPUT_PATHS = [
 ] as const;
 
 export type SourceSpan = { file: string; first: number; last: number };
-export type SourceInputDigest = { path: string; bytes: number; sha256: string };
 export type NpcTransformTypeState = 'complete' | 'missing' | 'ambiguous';
 export type NpcTransformTriggerKind = 'type' | 'category' | 'global' | 'unresolved' | 'none';
 export type NpcTransformActionState = 'present' | 'unknown';
@@ -112,7 +111,6 @@ export type NpcTransformEngineSourceRefs = {
 
 export type NpcTransformClosureEvidence = {
     schema: 1;
-    source_inputs: { engine: SourceInputDigest[]; content: SourceInputDigest[] };
     source_spans: SourceSpan[];
     npc_types: NpcTransformNpcType[];
     /** Sorted by (npc_type_id, slot). Only authored, non-hidden options are listed. */
@@ -136,7 +134,7 @@ export type NpcTransformProofInput = {
     engine_source_refs: NpcTransformEngineSourceRefs;
 };
 
-export type NpcTransformInputPaths = { engine: string[]; content: string[] };
+type NpcTransformInputFiles = { engine: string[]; content: string[] };
 
 const NPC_PARAM = /^npc_param\s*\(\s*([A-Za-z0-9_]+)\s*\)$/i;
 const INTEGER = /^\d+$/;
@@ -156,8 +154,7 @@ function sortedUnique(values: string[]) {
     return [...new Set(values)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
 }
 
-/** Return the exact root-relative inventory read by the extractor. */
-export function npcTransformInputPaths(engineRoot: string, contentRoot: string): NpcTransformInputPaths {
+function npcTransformInputFiles(engineRoot: string, contentRoot: string): NpcTransformInputFiles {
     const engine = normalizeEngineRoot(engineRoot);
     const engineFiles = walkContentFiles(engine.source, '.ts').map((file) => path.relative(engine.root, file).split(path.sep).join('/'));
     const scriptsRoot = path.join(contentRoot, 'scripts');
@@ -177,21 +174,12 @@ function hashText(text: string) {
     return crypto.createHash('sha256').update(text).digest('hex');
 }
 
-function readInputs(root: string, files: readonly string[]) {
+function readInputTexts(root: string, files: readonly string[]) {
     const texts = new Map<string, string>();
-    const hashes: SourceInputDigest[] = [];
     for (const relative of files) {
-        const absolute = path.join(root, relative);
-        const bytes = fs.readFileSync(absolute);
-        const text = bytes.toString('utf8');
-        texts.set(relative, text);
-        hashes.push({ path: relative, bytes: bytes.length, sha256: hashTextBytes(bytes) });
+        texts.set(relative, fs.readFileSync(path.join(root, relative), 'utf8'));
     }
-    return { texts, hashes };
-}
-
-function hashTextBytes(bytes: Buffer) {
-    return crypto.createHash('sha256').update(bytes).digest('hex');
+    return texts;
 }
 
 class SourceRegistry {
@@ -1153,26 +1141,21 @@ function scriptCalls(
  */
 export function extractNpcTransformClosure(engineRoot: string, contentRoot: string): NpcTransformClosureEvidence {
     const resolvedEngine = normalizeEngineRoot(engineRoot);
-    const paths = npcTransformInputPaths(engineRoot, contentRoot);
+    const paths = npcTransformInputFiles(engineRoot, contentRoot);
     const contentPaths = paths.content;
-    const engineRead = readInputs(resolvedEngine.root, paths.engine);
-    const contentRead = readInputs(contentRoot, contentPaths);
-    const engineInputs = engineRead.hashes;
-    const contentInputs = contentRead.hashes;
+    const engineFileMap = readInputTexts(resolvedEngine.root, paths.engine);
+    const contentTexts = readInputTexts(contentRoot, contentPaths);
     const sources = new SourceRegistry();
 
-    const npcPackText = contentRead.texts.get('pack/npc.pack');
-    const categoryPackText = contentRead.texts.get('pack/category.pack');
-    const scriptPackText = contentRead.texts.get('pack/script.pack');
-    const paramPackText = contentRead.texts.get('pack/param.pack');
+    const npcPackText = contentTexts.get('pack/npc.pack');
+    const categoryPackText = contentTexts.get('pack/category.pack');
+    const scriptPackText = contentTexts.get('pack/script.pack');
+    const paramPackText = contentTexts.get('pack/param.pack');
     if (!npcPackText || !categoryPackText || !scriptPackText || !paramPackText) throw new Error('npc_transforms: selected pack inputs are incomplete');
     const npcPack = parseStrictPack('pack/npc.pack', npcPackText);
     const categoryPack = parseStrictPack('pack/category.pack', categoryPackText);
     const paramPack = parseStrictPack('pack/param.pack', paramPackText);
-    // The source script table participates in the selected content identity; NPC aliases come from npc.pack.
     if (parsePack(scriptPackText).size === 0) throw new Error('npc_transforms: selected script pack is empty');
-
-    const engineFileMap = engineRead.texts;
     const engine = engineSemantics(engineFileMap, sources);
     const engineText = (relative: string) => engineFileMap.get(`src/${relative}`) ?? engineFileMap.get(relative);
     const triggerText = engineText('engine/script/ServerTriggerType.ts');
@@ -1186,7 +1169,7 @@ export function extractNpcTransformClosure(engineRoot: string, contentRoot: stri
     }
     const allNpcConfigs: NpcConfigFact[] = [];
     for (const file of contentPaths.filter((name) => name.endsWith('.npc'))) {
-        const text = contentRead.texts.get(file);
+        const text = contentTexts.get(file);
         if (text === undefined) continue;
         allNpcConfigs.push(...parseNpcConfigFile(file, text));
     }
@@ -1250,7 +1233,7 @@ export function extractNpcTransformClosure(engineRoot: string, contentRoot: stri
     }
     sortTypes(npcTypes);
 
-    const scriptInputMap = new Map(contentPaths.filter((file) => file.endsWith('.rs2')).map((file) => [file, contentRead.texts.get(file)!]));
+    const scriptInputMap = new Map(contentPaths.filter((file) => file.endsWith('.rs2')).map((file) => [file, contentTexts.get(file)!]));
     const scans = scriptCalls(
         scriptInputMap,
         typeFacts,
@@ -1298,7 +1281,6 @@ export function extractNpcTransformClosure(engineRoot: string, contentRoot: stri
 
     return {
         schema: 1,
-        source_inputs: { engine: engineInputs, content: contentInputs },
         source_spans: sources.spans,
         npc_types: npcTypes,
         actions,

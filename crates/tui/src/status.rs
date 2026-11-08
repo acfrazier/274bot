@@ -95,6 +95,9 @@ impl Widget for StatusPane<'_> {
                 if let Some(random) = d.random() {
                     lines.push(Line::from(format!("random: {random}")));
                 }
+                if let Some(survival) = d.survival() {
+                    lines.push(Line::from(format!("survival: {survival}")));
+                }
                 if let Some(welcome) = d.welcome() {
                     lines.push(Line::from(format!("welcome: {welcome}")));
                 }
@@ -261,6 +264,54 @@ mod tests {
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 80, 12);
         assert_eq!(text.matches(&notice).count(), 1, "{text:?}");
         assert!(!text.contains("last error"), "{text:?}");
+    }
+
+    #[test]
+    fn survival_need_is_visible_in_wide_and_compact_status_captures() {
+        use frontend_core::{
+            SurvivalCureWhy as CureWhy, SurvivalDecision as Decision, SurvivalNeed,
+            SurvivalNeedWhy as NeedWhy, SurvivalOwner as Owner, SurvivalReport,
+        };
+        use std::{fs, path::PathBuf};
+
+        let mut detail = SlotDetail::default();
+        detail.set_survival(SurvivalReport {
+            decision: Decision::Needed,
+            why: Some(CureWhy::Lethal),
+            need: Some(SurvivalNeed::Cure {
+                or_food: 0,
+                ref_heal: 12,
+                why: NeedWhy::Lethal,
+            }),
+            tried: 0,
+            owner: Owner::Step,
+        });
+        let row = "Needed: poisoned: would die; needs antipoison";
+        let capture_dir = std::env::var_os("TUI_CAPTURE_DIR").map(PathBuf::from);
+        for (width, height, label) in [
+            (120, 40, "native-survival-120x40"),
+            (80, 24, "native-survival-80x24"),
+        ] {
+            let capture = render(StatusPane::new(Some(&detail), "—", "lowmem"), width, height);
+            assert!(capture.contains(row), "{width}x{height}: {capture:?}");
+            if let Some(dir) = &capture_dir {
+                fs::create_dir_all(dir).expect("create TUI capture directory");
+                fs::write(dir.join(format!("{label}.txt")), &capture)
+                    .expect("write TUI text capture");
+                let receipt = serde_json::json!({
+                    "surface":"TUI StatusPane",
+                    "cols":width,
+                    "rows":height,
+                    "proof":row,
+                    "text":capture,
+                });
+                fs::write(
+                    dir.join(format!("{label}.json")),
+                    serde_json::to_vec_pretty(&receipt).expect("serialize TUI capture"),
+                )
+                .expect("write TUI capture receipt");
+            }
+        }
     }
 
     #[test]
