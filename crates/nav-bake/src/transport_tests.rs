@@ -3502,6 +3502,33 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
         let data = api::game_data::for_revision(revision).expect("selected revision item data");
         derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(&data))
     };
+    // Old revisions keep the table, regardless of selected-map differences.
+    let baseline = derive_transports(fx.path(), &defs, &wc);
+    for revision in [
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
+    ] {
+        let (legacy, _, _) = derive(revision);
+        let legacy_boats = legacy
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == TransportKind::Boat)
+            .map(|edge| (edge.loc_id, edge.at, edge.to));
+        let baseline_boats = baseline
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == TransportKind::Boat)
+            .map(|edge| (edge.loc_id, edge.at, edge.to));
+        assert!(legacy_boats.eq(baseline_boats));
+    }
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
+    {
+        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+        return;
+    }
     let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
     let positions = npc_positions(fx.path());
     let boats: Vec<_> = graph
@@ -3530,25 +3557,6 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
         assert!(boats
             .iter()
             .any(|edge| { edge.loc_id == npc && edge.at == WorldTile { x, z, level: 0 } }));
-    }
-    // Old revisions keep the table, regardless of selected-map differences.
-    let baseline = derive_transports(fx.path(), &defs, &wc);
-    for revision in [
-        api::selected::ClientRevision::R274,
-        api::selected::ClientRevision::R289,
-    ] {
-        let (legacy, _, _) = derive(revision);
-        let legacy_boats = legacy
-            .edges
-            .iter()
-            .filter(|edge| edge.kind == TransportKind::Boat)
-            .map(|edge| (edge.loc_id, edge.at, edge.to));
-        let baseline_boats = baseline
-            .edges
-            .iter()
-            .filter(|edge| edge.kind == TransportKind::Boat)
-            .map(|edge| (edge.loc_id, edge.at, edge.to));
-        assert!(legacy_boats.eq(baseline_boats));
     }
     // Multiple monks give the same trip, but an absent NPC is unproved.
     fx.write("maps/m44_52.jm2", "==== NPC ====\n");
@@ -10666,6 +10674,14 @@ p_telejump(0_46_149_63_13);
             "legacy extraction stays unchanged"
         );
     }
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
+    {
+        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+        return;
+    }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
         .expect("selected 377 game data");
     let graph = derive(Some(&data));
@@ -10758,6 +10774,14 @@ p_telejump($coord);
             baseline.edges,
             "legacy extraction stays unchanged"
         );
+    }
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
+    {
+        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+        return;
     }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
         .expect("selected 377 game data");
@@ -10886,6 +10910,14 @@ switch_coord (loc_coord) {
         apply_legacy_entrana_fixture_guards(&mut baseline, &data);
         assert_eq!(derive(Some(&data)).edges, baseline.edges);
     }
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
+    {
+        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+        return;
+    }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
         .expect("selected 377 game data");
     let graph = derive(Some(&data));
@@ -10920,6 +10952,14 @@ switch_coord (loc_coord) {
 
 #[test]
 fn revision_377_coordinate_stairs_reject_unproved_handlers() {
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
+    {
+        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+        return;
+    }
     let fx = Fixture::new();
     fx.write("pack/loc.pack", "1723=scenery_1723\n");
     fx.write(
@@ -11020,6 +11060,14 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
             baseline.edges,
             "legacy extraction stays unchanged"
         );
+    }
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
+    {
+        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+        return;
     }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
         .expect("selected 377 game data");
