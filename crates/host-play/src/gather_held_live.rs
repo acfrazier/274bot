@@ -117,9 +117,7 @@ struct FrameFacts {
 /// take sharks out of the pack.
 fn deposit_evidence(bank_sharks_seen: i32, previous: Option<FrameFacts>, now: FrameFacts) -> bool {
     bank_sharks_seen >= 26
-        || previous.is_some_and(|before| {
-            before.bank_open && before.sharks >= 26 && now.sharks == 0
-        })
+        || previous.is_some_and(|before| before.bank_open && before.sharks >= 26 && now.sharks == 0)
 }
 
 fn correct_outcome(
