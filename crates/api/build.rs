@@ -17,10 +17,6 @@ const COOK_CATALOG_JSON: &str = "data/game-data/cook-catalog.json";
 const LOCAL_ASSETS: &[&str] = &[
     "data/game-data/274.json",
     "data/game-data/289.json",
-    "data/game-data/377.json",
-    "data/game-data/377/debug.json",
-    "data/game-data/377/quests.json",
-    "data/game-data/377/gathering.json",
     "data/game-data/274/debug.json",
     "data/game-data/289/debug.json",
     "data/game-data/274/quests.json",
@@ -31,9 +27,16 @@ const LOCAL_ASSETS: &[&str] = &[
     BANK_CATALOG_JSON,
     COOK_CATALOG_JSON,
 ];
+const LOCAL_377_ASSETS: &[&str] = &[
+    "data/game-data/377.json",
+    "data/game-data/377/debug.json",
+    "data/game-data/377/quests.json",
+    "data/game-data/377/gathering.json",
+];
 
 fn main() -> io::Result<()> {
     println!("cargo:rustc-check-cfg=cfg(no_local_game_data)");
+    println!("cargo:rustc-check-cfg=cfg(no_local_game_data_377)");
     println!("cargo:rerun-if-env-changed=GITHUB_ACTIONS");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/test_support/local_asset_path.rs");
@@ -56,6 +59,22 @@ fn main() -> io::Result<()> {
             None => missing = true,
         }
     }
+    let mut paths_377 = Vec::with_capacity(LOCAL_377_ASSETS.len());
+    let mut missing_377 = false;
+    for relative in LOCAL_377_ASSETS {
+        let path = manifest_dir.join(relative);
+        println!("cargo:rerun-if-changed={}", path.display());
+        let path_string = path.to_string_lossy();
+        let description =
+            format!("API local asset `{relative}`; generate it with `{GENERATE_GAME_DATA}`");
+        match local_asset_path::local_asset_path("", &path_string, &description) {
+            Some(path) => paths_377.push(path),
+            None => missing_377 = true,
+        }
+    }
+    if missing_377 {
+        println!("cargo:rustc-cfg=no_local_game_data_377");
+    }
     if missing {
         println!("cargo:rustc-cfg=no_local_game_data");
         return Ok(());
@@ -73,7 +92,11 @@ fn main() -> io::Result<()> {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo sets OUT_DIR"));
     fs::write(out.join("bank_catalog.rs"), bank_catalog_rust)?;
     fs::write(out.join("cook_catalog.rs"), cook_catalog_rust)?;
-    for (revision, source) in [(274, &paths[0]), (289, &paths[1]), (377, &paths[2])] {
+    let source_377 = (!missing_377).then(|| (377, &paths_377[0]));
+    for (revision, source) in [(274, &paths[0]), (289, &paths[1])]
+        .into_iter()
+        .chain(source_377)
+    {
         let mut input = File::open(source)?;
         let output = File::create(out.join(format!("game-data-{revision}.json.gz")))?;
         let mut encoder = GzEncoder::new(output, Compression::best());
