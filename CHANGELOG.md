@@ -3,6 +3,15 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## Next — Unreleased
+
+### Scenario receipts
+
+- Scenario receipts retain ordered step intentions, dispatch results, observed
+  predicates and fixture interventions. WHY preserves the existing step name.
+  Manifests bind run, actor and session identities; PNG sidecars include durable
+  artifact SHA-256 hashes. Disarmed recording adds no tick or paint allocations.
+
 ## [0.2.9] — Unreleased
 
 ### Breaking changes
