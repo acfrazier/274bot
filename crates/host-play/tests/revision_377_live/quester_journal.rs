@@ -823,11 +823,10 @@ fn run_quest(q: Quest) -> Result<(), String> {
         }
         if !relogin_requested && s.relog_detached {
             drop(s);
-            play.arm(&account)
-                .ok_or("377 Quester fixture slot disappeared")?
-                .arm_explicit_login();
-            play.wake(&account);
-            relogin_requested = true;
+            if let Some(arm) = play.arm(&account) {
+                arm.arm_explicit_login();
+                relogin_requested = true;
+            }
             continue;
         }
         // Initial readbacks must precede Start, not race the first quest action.
