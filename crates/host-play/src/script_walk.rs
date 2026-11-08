@@ -675,12 +675,16 @@ fn prayer_cleanup_data(
 fn prayer_cleanup_selects_377_without_changing_legacy_drivers() {
     use api::selected::ClientRevision;
     let has_local_377_data = script::native::has_local_game_data_for_test(ClientRevision::R377);
+    let has_local_legacy_data = api::test_support::game_data_available();
     for revision in [
         ClientRevision::R274,
         ClientRevision::R289,
         ClientRevision::R377,
     ] {
         if revision.is_377() && !has_local_377_data {
+            continue;
+        }
+        if !revision.is_377() && !has_local_legacy_data {
             continue;
         }
         let data = prayer_cleanup_data(revision).expect("cleanup prayer facts");
