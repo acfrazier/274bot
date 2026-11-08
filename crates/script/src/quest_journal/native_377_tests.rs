@@ -84,6 +84,7 @@ fn page(snapshot: &mut GameSnapshot, title: &str, body: &[&str]) {
 
 #[test]
 fn selected_377_captures_the_discontinuous_tail_and_ignores_static_controls() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
     let (mut snapshot, _, title, _) = fixture("sheep");
     let mut body = [""; 100];
     body[0] = "first";
@@ -100,6 +101,7 @@ fn selected_377_captures_the_discontinuous_tail_and_ignores_static_controls() {
 
 #[test]
 fn selected_377_click_capture_close_is_fresh_ordered_and_normalized() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
     for id in [
         "cook",
         "runemysteries",
@@ -165,6 +167,7 @@ fn selected_377_click_capture_close_is_fresh_ordered_and_normalized() {
 
 #[test]
 fn selected_377_adopts_only_matching_fresh_page_and_refuses_foreign_modals() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
     for title in ["Rune Mysteries", "Sheep Shearer Extra"] {
         let (mut snapshot, request, _, _) = fixture("sheep");
         page(&mut snapshot, title, &["body"]);
@@ -209,6 +212,7 @@ fn selected_377_adopts_only_matching_fresh_page_and_refuses_foreign_modals() {
 
 #[test]
 fn selected_377_missing_body_and_button_tables_fail_closed() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
     let (mut snapshot, request, title, _) = fixture("sheep");
     let mut ledger = None;
     let handle = tick(&snapshot, &mut ledger, 1, |t| {
