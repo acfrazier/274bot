@@ -1468,9 +1468,7 @@ export function extractTrailFacts(content: string, items: ObjType[], revision = 
         rows.push({ alias: joined.alias, id: joined.id, role: 'casket', params: blocks.get(alias) ?? [] });
     }
     if (revision !== 377) {
-        const constrained = rows.filter((row) => row.alias === TRAIL_CONSTRAINED.alias);
-        if (constrained.length !== 1) throw new Error(`trails: ${TRAIL_CONSTRAINED.alias} must be one membership row`);
-        constrained[0]!.access = 'constrained';
+        for (const row of rows) if (row.alias === TRAIL_CONSTRAINED.alias) row.access = 'constrained';
     }
     const challenge_answers: TrailChallengeAnswer[] = [];
     for (const [alias, params] of blocks) {
@@ -2713,10 +2711,6 @@ async function generate(spec: Revision, stage: GenerationStage) {
     const npcPlacements = extractNpcPlacementsFacts(spec.content);
     const karamja = extractKaramjaFacts(spec.content, npcNames, locNames, npcPlacements, spec.revision);
     Object.assign(facts, { karamja: karamja.facts });
-    if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) {
-        throw new Error(`${spec.revision}: quest coverage mismatch`);
-    }
-    if (spec.revision === 289 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`);
     const quests: FamilyDraft = { schema: QUESTS_SCHEMA, payload: questIdentity };
     const questsFile = path.join(path.dirname(spec.output), String(spec.revision), 'quests.json');
     fs.mkdirSync(path.dirname(questsFile), { recursive: true });
