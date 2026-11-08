@@ -507,6 +507,9 @@ fn alternating_reachability_stops_after_the_bound_not_the_settle() {
 
 #[test]
 fn use_on_npc_alternatives_rank_all_placed_types_and_keep_exact_identity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile_context_test(|cx| {
         let player = tile(3250, 3280);
         let cow_id = resolve_npc(cx, "cow").unwrap();

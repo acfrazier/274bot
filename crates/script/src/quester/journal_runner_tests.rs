@@ -1595,6 +1595,9 @@ fn completion_row_overtakes_377_journal_without_closing_the_scroll() {
         (ClientRevision::R377, false),
         (ClientRevision::R377, true),
     ] {
+        if revision == ClientRevision::R289 && !api::test_support::game_data_available() {
+            continue;
+        }
         if revision == ClientRevision::R377
             && !crate::native::has_local_game_data_for_test(revision)
         {
