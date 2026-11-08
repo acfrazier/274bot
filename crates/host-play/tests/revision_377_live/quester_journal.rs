@@ -803,6 +803,7 @@ fn run_quest(q: Quest) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(budget);
     let prep = Instant::now() + Duration::from_secs(180);
     let mut started = false;
+    let mut relogin_requested = false;
     let mut complete = false;
     let mut generation = None;
     let mut lifecycle = None;
@@ -819,6 +820,15 @@ fn run_quest(q: Quest) -> Result<(), String> {
         let mut s = state.lock().map_err(|_| "witness poisoned")?;
         if let Some(error) = &s.error {
             return Err(error.clone());
+        }
+        if !relogin_requested && s.relog_detached {
+            drop(s);
+            play.arm(&account)
+                .ok_or("377 Quester fixture slot disappeared")?
+                .arm_explicit_login();
+            play.wake(&account);
+            relogin_requested = true;
+            continue;
         }
         // Initial readbacks must precede Start, not race the first quest action.
         if !started && s.baseline.is_some() && s.reads == 2 {
