@@ -11464,17 +11464,27 @@ fn settings_feedback_panel_requests_own_their_preview_and_failure_by_identity() 
             .unwrap();
     }
     s.ui.chrome.accent = "#334455".into();
+    // A's durable snapshot can publish just before its terminal. Wait for A's
+    // request identity so this assertion cannot race the cache publication.
+    let first_request = match &s.panel_preference_writes[0].update {
+        frontend_core::prefs::Update::Queued(update) => update.request_id(),
+        frontend_core::prefs::Update::Durable => panic!("A is queued behind the test writer"),
+    };
     disk.release_one();
-    // The first write is durable (the document now holds the value): the
-    // second request is still pending and still previews it.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while s.preferences.document().unwrap()["chrome"]["accent"] != "#334455" {
-        s.pump_status();
-        s.poll_panel_preferences();
-        assert!(Instant::now() < deadline, "the first request never landed");
-        thread::sleep(Duration::from_millis(2));
-    }
+    let service = s
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service");
+    assert_ne!(
+        service.wait_request(first_request, Duration::from_secs(30)),
+        host_play::local_state::RequestState::Pending,
+        "the first request never settled"
+    );
     s.poll_panel_preferences();
+    assert_eq!(
+        s.preferences.document().unwrap()["chrome"]["accent"],
+        "#334455"
+    );
     assert_eq!(s.panel_preference_writes_pending(), 1, "B is still pending");
     assert_eq!(s.ui.chrome.accent, "#334455");
     disk.release_one();
