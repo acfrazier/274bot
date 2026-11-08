@@ -282,6 +282,9 @@ fn rune_377_lost_talisman_path_selects_dukes_quest_branch() {
         .collect();
     // duke_horacio.rs2:5,7 offers both forms of the menu. The lost-item
     // branch is reached only through the quest option (:12-15,40-47).
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for choices in [
         vec!["Have you any quests for me?", "Where can I find money?"],
         vec![
@@ -318,6 +321,9 @@ fn sheep_377_path_targets_shearable_forms_and_prefers_freds_hand_in() {
     // fred_the_farmer.rs2:163-166 offers these exact choices once
     // %the_thing_sheared is 1.
     let menu = ["I'm back!", "Fred! Fred! I've seen The Thing!"];
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for (stage, step_id) in [
         ("sheep:1", "hand-held"),
         ("sheep:1", "hand-in"),
@@ -405,7 +411,11 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             "What, you mean improve my magic?",
         ],
     ];
+    let has_local_legacy_data = api::test_support::game_data_available();
     for choices in menus {
+        if !has_local_legacy_data {
+            break;
+        }
         // The emitted `Answer` option is 1-based; the quest branch is first in
         // both menus, so the driver must answer option 1, never fall back to
         // a later non-quest option.

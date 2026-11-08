@@ -174,6 +174,9 @@ class GuestBootstrapTests(unittest.TestCase):
                 lock = input_root / engine / "engine/package-lock.json"
                 lock.parent.mkdir(parents=True)
                 lock.write_text("{}\n", encoding="utf-8")
+            engine_274_lock = input_root / "game-data-274-engine/package-lock.json"
+            engine_274_lock.parent.mkdir(parents=True)
+            engine_274_lock.write_text("{}\n", encoding="utf-8")
             mirror = input_root / "submodules/vendor-fr-client-rust.git"
             mirror.mkdir(parents=True)
             (mirror / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
@@ -188,7 +191,15 @@ class GuestBootstrapTests(unittest.TestCase):
             rustup_home = root / "rustup"
             node_bin = root / "node/bin"
 
-            def successful_command(args, **_kwargs):
+            npm_install_dirs = []
+            def successful_command(args, **kwargs):
+                if args[-2:] == ["ci", "--ignore-scripts"]:
+                    engine_dir = Path(kwargs["cwd"])
+                    npm_install_dirs.append(engine_dir)
+                    tsx = engine_dir / "node_modules/.bin/tsx"
+                    tsx.parent.mkdir(parents=True, exist_ok=True)
+                    tsx.write_text("#!/bin/sh\n", encoding="utf-8")
+                    tsx.chmod(0o755)
                 return subprocess.CompletedProcess(args, 0, stdout="tool version\n", stderr="")
 
             with mock.patch.object(nightly.platform, "system", return_value="Darwin"), \
@@ -212,6 +223,15 @@ class GuestBootstrapTests(unittest.TestCase):
             self.assertTrue((guest_root / "engine-pristine/engine/package-lock.json").is_file())
             self.assertTrue((guest_root / "engine-q-pristine/engine/package-lock.json").is_file())
             self.assertTrue((guest_root / "nav-snapshot").is_dir())
+            self.assertTrue((guest_root / "engine-pristine/engine/node_modules/.bin/tsx").is_file())
+            self.assertEqual(
+                set(npm_install_dirs),
+                {
+                    guest_root / "engine-pristine/engine",
+                    guest_root / "engine-q-pristine/engine",
+                    guest_root / "game-data-274-engine",
+                },
+            )
 
     def test_private_guest_copy_is_writable_but_shared_input_stays_readonly(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -548,6 +568,7 @@ class FakeVM:
             return json.dumps({
                 "python": "/usr/bin/python3", "cargo_home": "/tmp/cargo",
                 "rustup_home": "/tmp/rustup", "node_bin": "/tmp/node/bin",
+                "typescript_runner": "/tmp/engine/node_modules/.bin/tsx",
                 "home": "/tmp/home", "tmp": "/tmp/nightly-tmp",
                 "isohome": "/Users/bot/headed/nightly-test/toolchains/bin/isohome",
             })
@@ -620,6 +641,116 @@ class NightlyOrchestrationTests(unittest.TestCase):
             "NIGHTLY_MAC_SOURCE_REPO": str(source),
             "NIGHTLY_MAC_DISK_ROOT": str(disk_root),
         })
+
+    def test_stages_purged_data_and_configured_274_inputs_into_the_guest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self.make_settings(root)
+            settings.purged_data.mkdir()
+            (settings.purged_data / "manifest.tsv").write_text("manifest\n", encoding="utf-8")
+            (settings.purged_data / "README.md").write_text("instructions\n", encoding="utf-8")
+            (settings.purged_data / "commit.tar").write_bytes(b"archive")
+            settings.game_data_274_engine = root / "game-data-274-engine"
+            settings.game_data_274_content = root / "game-data-274-content"
+            settings.game_data_274_engine.mkdir()
+            settings.game_data_274_content.mkdir()
+            (settings.game_data_274_engine / "engine-input").write_text("engine\n", encoding="utf-8")
+            (settings.game_data_274_engine / "package-lock.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
+            (settings.game_data_274_content / "content-input").write_text("content\n", encoding="utf-8")
+
+            share = root / "session/share"
+            share.mkdir(parents=True)
+            guest_home = root / "guest-home"
+            guest_home.mkdir()
+            vm = FakeVM(settings, lambda: 1000)
+            vm.session = {
+                "id": "stage-test", "vm": "fake-vm", "ip": "192.0.2.10",
+                "guest_home": str(guest_home), "share": str(share),
+            }
+            controller = nightly.NightlyOrchestrator(settings, ["dev"], vm_factory=lambda *_: vm)
+            with mock.patch.object(nightly, "make_readonly"), mock.patch.object(
+                controller, "check_disk", return_value=1000
+            ):
+                controller.stage_inputs()
+
+            staged = controller.input_root
+            self.assertEqual(
+                (staged / "purged-data/manifest.tsv").read_text(encoding="utf-8"),
+                "manifest\n",
+            )
+            self.assertEqual((staged / "purged-data/commit.tar").read_bytes(), b"archive")
+            self.assertEqual(
+                (staged / "game-data-274-engine/engine-input").read_text(encoding="utf-8"),
+                "engine\n",
+            )
+            tools = {
+                "home": str(root / "home"), "tmp": str(root / "tmp"),
+                "node_bin": str(root / "node/bin"), "cargo_home": str(root / "cargo"),
+                "rustup_home": str(root / "rustup"), "isohome": str(root / "isohome"),
+                "python": str(root / "python"),
+                "typescript_runner": str(root / "engine-pristine/engine/node_modules/.bin/tsx"),
+            }
+            environment = controller.job_environment("dev", "main", tools)
+            guest_root = guest_home / "nightly"
+            self.assertEqual(environment["NIGHTLY_PURGED_DATA_DIR"],
+                             str(guest_root / "purged-data"))
+            self.assertEqual(environment["NIGHTLY_GAME_DATA_274_ENGINE"],
+                             str(guest_root / "game-data-274-engine"))
+            self.assertEqual(environment["NIGHTLY_GAME_DATA_274_CONTENT"],
+                             str(guest_root / "game-data-274-content"))
+            self.assertEqual(environment["BUN_EXECUTABLE"], tools["typescript_runner"])
+
+            def fake_command(args, **kwargs):
+                if args[-2:] == ["ci", "--ignore-scripts"]:
+                    engine_dir = Path(kwargs["cwd"])
+                    tsx = engine_dir / "node_modules/.bin/tsx"
+                    tsx.parent.mkdir(parents=True, exist_ok=True)
+                    tsx.write_text("#!/bin/sh\n", encoding="utf-8")
+                    tsx.chmod(0o755)
+                return subprocess.CompletedProcess(args, 0, stdout="ok\n", stderr="")
+
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(
+                    mock.patch.object(nightly.platform, "system", return_value="Darwin")
+                )
+                stack.enter_context(
+                    mock.patch.object(nightly.platform, "machine", return_value="arm64")
+                )
+                stack.enter_context(
+                    mock.patch.object(nightly, "install_python", return_value=root / "python")
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        nightly, "install_node", return_value=(root / "node/bin", "v24")
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        nightly, "install_rust",
+                        return_value=(root / "cargo", root / "rustup"),
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(nightly, "run_command", side_effect=fake_command)
+                )
+                nightly.guest_bootstrap(staged, guest_root, guest_home)
+
+            self.assertEqual(
+                (guest_root / "purged-data/manifest.tsv").read_text(encoding="utf-8"),
+                "manifest\n",
+            )
+            self.assertEqual(
+                (guest_root / "game-data-274-engine/engine-input").read_text(encoding="utf-8"),
+                "engine\n",
+            )
+            self.assertEqual(
+                (guest_root / "game-data-274-content/content-input").read_text(
+                    encoding="utf-8"
+                ),
+                "content\n",
+            )
 
     def test_runs_main_and_quest_for_each_branch_then_stops_and_publishes(self):
         with tempfile.TemporaryDirectory() as temporary:

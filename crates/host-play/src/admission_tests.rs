@@ -112,6 +112,9 @@ fn unavailable_explicit_377_tables_do_not_fall_back_to_289() {
 
     assert!(tables(&world).is_none());
     assert!(condition_tables(&world).is_none());
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(
         script::combat::guard::shared_tables()
             .expect("legacy tables")
@@ -129,6 +132,9 @@ fn unbound_world_keeps_the_legacy_r289_table_default() {
         TransportGraph::default(),
         Vec::new(),
     );
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let legacy = script::combat::guard::shared_tables().expect("legacy tables");
     let (first, _) = condition_tables(&world).expect("legacy default table");
     let (again, _) = condition_tables(&world).expect("cached legacy default table");
