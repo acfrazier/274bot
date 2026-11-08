@@ -7,6 +7,8 @@ use std::path::PathBuf;
 mod catalog_codegen;
 #[path = "src/test_support/local_asset_path.rs"]
 mod local_asset_path;
+#[path = "src/test_support/local_asset_path_377.rs"]
+mod local_asset_path_377;
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -40,6 +42,7 @@ fn main() -> io::Result<()> {
     println!("cargo:rerun-if-env-changed=GITHUB_ACTIONS");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/test_support/local_asset_path.rs");
+    println!("cargo:rerun-if-changed=src/test_support/local_asset_path_377.rs");
     println!("cargo:rerun-if-changed=build_support/catalog_codegen.rs");
     if env::var_os("CARGO_FEATURE_EMBEDDED_GAME_DATA").is_none() {
         return Ok(());
@@ -65,9 +68,8 @@ fn main() -> io::Result<()> {
         let path = manifest_dir.join(relative);
         println!("cargo:rerun-if-changed={}", path.display());
         let path_string = path.to_string_lossy();
-        let description =
-            format!("API local asset `{relative}`; generate it with `{GENERATE_GAME_DATA}`");
-        match local_asset_path::local_asset_path("", &path_string, &description) {
+        let description = format!("API revision-377 local asset `{relative}`");
+        match local_asset_path_377::local_asset_path_377("", &path_string, &description) {
             Some(path) => paths_377.push(path),
             None => missing_377 = true,
         }
