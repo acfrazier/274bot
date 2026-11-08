@@ -63,6 +63,10 @@ fn answer_for(choices: &[&str], prefer: &[Arc<str>]) -> i32 {
 
 #[test]
 fn selected_377_journal_paths_compile_and_recover_source_states() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+        return;
+    };
     api::selected::FamilyPreparation::run(|worker| {
         let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
@@ -102,8 +106,15 @@ fn selected_377_journal_paths_compile_and_recover_source_states() {
             ]),
         ] {
             let bytes = bundled_path_for(ClientRevision::R377, id).unwrap();
-            let path = compile::compile_path(bytes, &selected, &quests, worker, &crate::local_state::OperatorLoadouts::absent(), compile::real_377_nav_lease().zones())
-                .unwrap_or_else(|error| panic!("{id}: {error:?}"));
+            let path = compile::compile_path(
+                bytes,
+                &selected,
+                &quests,
+                worker,
+                &crate::local_state::OperatorLoadouts::absent(),
+                nav.zones(),
+            )
+            .unwrap_or_else(|error| panic!("{id}: {error:?}"));
             for (stage, text) in cases {
                 let read = JournalRead {
                     quest: path.id.clone(), root: 8134,
@@ -150,6 +161,10 @@ fn selected_377_journal_paths_compile_and_recover_source_states() {
 
 #[test]
 fn hetty_377_journal_state_skips_consumed_items_and_selects_cauldron() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+        return;
+    };
     api::selected::FamilyPreparation::run(|worker| {
         let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
@@ -165,7 +180,7 @@ fn hetty_377_journal_state_skips_consumed_items_and_selects_cauldron() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
-            compile::real_377_nav_lease().zones(),
+            nav.zones(),
         )
         .unwrap_or_else(|error| panic!("hetty: {error:?}"));
         super::super::probe::assert_no_shadowed_rules(&path);
@@ -359,6 +374,10 @@ fn romeo_377_missing_message_path_skips_juliet_detour() {
 
 #[test]
 fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+        return;
+    };
     let document: serde_json::Value =
         serde_json::from_slice(bundled_path_for(ClientRevision::R377, "hetty").unwrap()).unwrap();
     let start = document["roles"][0]["sequences"][0]["steps"]
@@ -413,7 +432,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
-            compile::real_377_nav_lease().zones(),
+            nav.zones(),
         )
         .unwrap_or_else(|error| panic!("377 Witch's Potion failed to compile: {error:?}"));
         let gobdip = bundled_path_for(ClientRevision::R377, "gobdip").unwrap();
@@ -423,7 +442,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
-            compile::real_377_nav_lease().zones(),
+            nav.zones(),
         )
         .unwrap_or_else(|error| panic!("377 Goblin Diplomacy failed to compile: {error:?}"));
         let vampire = bundled_path_for(ClientRevision::R377, "vampire").unwrap();
@@ -433,7 +452,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
-            compile::real_377_nav_lease().zones(),
+            nav.zones(),
         )
         .unwrap_or_else(|error| panic!("377 Vampire Slayer failed to compile: {error:?}"));
         let demon = bundled_path_for(ClientRevision::R377, "demon").unwrap();
@@ -443,7 +462,7 @@ fn hetty_377_path_compiles_and_prefers_the_quest_branch() {
             &quests,
             worker,
             &crate::local_state::OperatorLoadouts::absent(),
-            compile::real_377_nav_lease().zones(),
+            nav.zones(),
         )
         .unwrap_or_else(|error| panic!("377 Demon Slayer failed to compile: {error:?}"));
         assert_eq!(
