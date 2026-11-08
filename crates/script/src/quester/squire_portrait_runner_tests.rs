@@ -46,7 +46,7 @@ fn squire_path() -> Option<(
     Arc<QuestCatalog>,
     Arc<CompiledPath>,
 )> {
-    let lease = super::super::compile::real_nav_lease()?;
+    let lease = super::super::compile::real_nav_lease(api::selected::ClientRevision::R289)?;
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let _gathering = super::super::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
