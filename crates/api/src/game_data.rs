@@ -3096,7 +3096,16 @@ pub(crate) fn test_data(revision: ClientRevision) -> Option<Arc<SelectedGameData
             "revision 377 game data for API tests",
         ),
     };
-    crate::test_support::local_asset_path("", path, description)?;
+    if revision == ClientRevision::R377 {
+        crate::test_support::local_asset_path_377("", path, description)?;
+        #[cfg(no_local_game_data_377)]
+        {
+            eprintln!("Skipping revision-377 API tests: local game data was not embedded");
+            return None;
+        }
+    } else {
+        crate::test_support::local_asset_path("", path, description)?;
+    }
     if !crate::test_support::embedded_game_data_available() {
         return None;
     }
