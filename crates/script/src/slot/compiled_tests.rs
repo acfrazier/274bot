@@ -10,6 +10,7 @@ fn selected() -> Arc<api::game_data::SelectedGameData> {
 fn compiled_runs_select_each_supported_game_data_revision() {
     use api::selected::ClientRevision;
 
+    let has_local_legacy_data = api::test_support::game_data_available();
     for revision in [
         ClientRevision::R274,
         ClientRevision::R289,
@@ -18,6 +19,9 @@ fn compiled_runs_select_each_supported_game_data_revision() {
         if revision == ClientRevision::R377
             && !crate::native::has_local_game_data_for_test(revision)
         {
+            continue;
+        }
+        if revision != ClientRevision::R377 && !has_local_legacy_data {
             continue;
         }
         let selected = api::game_data::for_revision(revision).expect("selected revision game data");
