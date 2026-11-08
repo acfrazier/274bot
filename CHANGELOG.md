@@ -62,6 +62,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Tests that require generated game data now use the local-asset policy:
   hosted CI prints a skip reason when the data is absent, while local runs
   still fail with the generation command.
+- The whole-frame allocation test waits on the resource meter's published
+  probe generation instead of a thread-local allocation event.
 - The native Quester route-budget regression drains bounded worker stages
   before checking exact request outcomes. Debug-test wall time is not a search
   limit; production node, memory and goal budgets are unchanged.
