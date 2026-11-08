@@ -217,6 +217,119 @@ fn the_third_refusal_without_a_confirmed_attack_ends_the_fight() {
     );
 }
 
+/// The live state: a refused click leaves the player's target on the engaged
+/// NPC, and no hit lands. The target alone confirms nothing, so the third
+/// refusal still ends the fight.
+#[test]
+fn the_third_refusal_ends_the_fight_while_the_player_target_stays_the_engaged_npc() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("imp");
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack_on(harness.pending(&scene, 1), 7);
+    for (tick, sequence) in [(2, 1), (10, 2)] {
+        say(&mut scene, sequence, REFUSAL);
+        harness.pending_batch(&scene, tick);
+        assert!(harness.machine.end.is_none(), "ended early at tick {tick}");
+        assert_eq!(harness.machine.single_way_lines, sequence as u8);
+    }
+    say(&mut scene, 3, REFUSAL);
+    let report = match harness.poll(&scene.snapshot, 18) {
+        Poll::Ready(Ok(report)) => report,
+        other => panic!("the third refusal must end the fight, got {other:?}"),
+    };
+    assert_eq!(
+        report.end,
+        CombatEnd::Aborted(AbortReason::SingleWayBlocked)
+    );
+}
+
+/// The same refusals with a confirmed attack between them: the count restarts
+/// and the fight goes on. The first hit opens the NPC's health-bar window; the
+/// second only lowers its health inside an open window.
+#[test]
+fn a_confirmed_attack_between_refusals_resets_the_count_and_the_fight_continues() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("imp");
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack_on(harness.pending(&scene, 1), 7);
+    say(&mut scene, 1, REFUSAL);
+    harness.pending_batch(&scene, 2);
+    assert_eq!(harness.machine.single_way_lines, 1);
+    // The window opens and the first hit lands: the health bar opens.
+    scene.npcs[0].in_combat = true;
+    scene.npcs[0].health = 24;
+    scene.refresh();
+    harness.pending_batch(&scene, 3);
+    assert_eq!(harness.machine.single_way_lines, 0);
+    say(&mut scene, 2, REFUSAL);
+    harness.pending_batch(&scene, 10);
+    say(&mut scene, 3, REFUSAL);
+    harness.pending_batch(&scene, 18);
+    assert_eq!(harness.machine.single_way_lines, 2);
+    assert!(harness.machine.end.is_none());
+    // A later hit inside the open window lowers the health: the count restarts
+    // again, so a fourth and fifth refusal do not end the fight.
+    scene.npcs[0].health = 20;
+    scene.refresh();
+    harness.pending_batch(&scene, 19);
+    assert_eq!(harness.machine.single_way_lines, 0);
+    say(&mut scene, 4, REFUSAL);
+    harness.pending_batch(&scene, 26);
+    say(&mut scene, 5, REFUSAL);
+    harness.pending_batch(&scene, 34);
+    assert_eq!(harness.machine.single_way_lines, 2);
+    assert!(harness.machine.end.is_none());
+}
+
+/// An open health-bar window with an unchanged health is not a new hit, and
+/// neither is a hit seen while the bot targets another NPC.
+#[test]
+fn an_old_window_and_a_hit_on_a_target_the_bot_does_not_attack_confirm_nothing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("imp");
+    let mut harness = Harness::new(&scene, scene.request());
+    attack_on(harness.pending(&scene, 1), 7);
+    // The imp's health bar opens while the bot does not target it (another
+    // hit, not ours); then the bot targets it and the first refusal arrives.
+    scene.npcs[0].in_combat = true;
+    scene.refresh();
+    harness.pending_batch(&scene, 2);
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Npc,
+        index: 7,
+    });
+    scene.refresh();
+    say(&mut scene, 1, REFUSAL);
+    harness.pending_batch(&scene, 3);
+    harness.pending_batch(&scene, 4);
+    assert_eq!(harness.machine.single_way_lines, 1);
+    // Health drops, but the bot's target is another NPC.
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Npc,
+        index: 8,
+    });
+    scene.npcs[0].health = 20;
+    scene.refresh();
+    harness.pending_batch(&scene, 5);
+    assert_eq!(harness.machine.single_way_lines, 1);
+}
+
 #[test]
 fn refusals_inside_a_hold_belong_to_the_attack_the_hold_answers() {
     if !api::test_support::game_data_available() {
@@ -235,7 +348,7 @@ fn refusals_inside_a_hold_belong_to_the_attack_the_hold_answers() {
 }
 
 #[test]
-fn a_confirmed_attack_ends_the_run_of_refusals() {
+fn a_hit_on_the_engaged_npc_ends_the_run_of_refusals() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -245,8 +358,11 @@ fn a_confirmed_attack_ends_the_run_of_refusals() {
     say(&mut scene, 1, REFUSAL);
     harness.pending_batch(&scene, 2);
     assert_eq!(harness.machine.single_way_lines, 1);
-    // The window lapsed and the attack landed: the player's target is the imp.
+    // The window lapsed and the attack landed: the player's target is the imp
+    // and the imp's health bar opened.
     scene.install();
+    scene.npcs[0].in_combat = true;
+    scene.npcs[0].health = 26;
     scene.refresh();
     harness.pending_batch(&scene, 3);
     assert_eq!(harness.machine.single_way_lines, 0);

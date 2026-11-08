@@ -2036,9 +2036,11 @@ fn live_quester_families_until_drop_on_entrana() {
 // Black Knights' Fortress banquet hall: `aggressive_black_knight` (vislevel 33,
 // huntrange 5, `huntmode=cowardly`) spawns five times inside it, and no
 // `multiway.csv` row covers the zone, so combat there is single-way
-// (`GameMap.ts:102`). The fixture starts inside the hall: a knight may reach
-// the bot before Start, and the fixture's own pre-Start proof then fails on
-// the bot's stats or side tabs (fixture interference, not a product result).
+// (`GameMap.ts:102`). One knight stands at world (3023,3517), inside its own
+// hunt range of the start tile (3022,3516). The fixture therefore proves the
+// loadout (stats, side tab 3, worn kit, lobsters) at a safe tile first, and
+// the teleport into the hall is its last step: Start goes out on arrival, and
+// this cell's `observe_start` accepts a knight that has already hit the bot.
 const FORTRESS_START: WorldTile = WorldTile {
     x: 3022,
     z: 3516,
@@ -2054,6 +2056,10 @@ const FORTRESS_KNIGHT_SOURCE: &str = "content/maps/m47_54.jm2:7531-7538 (aggress
 /// `player_combat.rs2:112,116` (revision 289, with `!`) and `:137,141` (no mark; the
 /// revision-377 `player_in_combat_check` text).
 const SINGLE_WAY_LINES: [&str; 2] = ["I'm already under attack!", "I'm already under attack"];
+/// How far a knight's first hits may have moved the bot from `FORTRESS_START`
+/// before Start (the player retaliates on its own).
+const FORTRESS_START_RADIUS: i32 = 2;
+const FORTRESS_STAGE_PROOF: &str = "prove the whole fixture profile and loadout before Start";
 /// Sequential fights the cell asks for. A refusal needs an aggressive knight
 /// other than the pick to hit the bot first; each fight is one more start of
 /// that situation. The cell records what it saw and never gates on it.
@@ -2130,29 +2136,93 @@ fn live_quester_families_combat_single_way_retarget() {
         .expect("selected R289 aggressive_black_knight config")
         .id;
     let knight_type = usize::try_from(knight_id).expect("knight type id is nonnegative");
-    let (mut cell, seed, seed_commands) = make_cell(
+    let (mut cell, seed, mut seed_commands) = make_cell(
         "live-quester-families-combat-single-way-retarget",
         ("cook", "Cook's Assistant"),
         0,
         FORTRESS_ITEMS,
-        FORTRESS_START,
+        SAFE_STAND,
         Some(FixtureLoadout::Path("family_melee")),
         Arc::clone(&selected),
     );
     cell.scenario.settings.deadline = Duration::from_secs(600);
+    // The fixture's own proof (exact stats, side tab 3, kit, lobsters) runs at
+    // SAFE_STAND. The hall teleport follows it and is the last step before
+    // Start; nothing waits in the hall.
+    let proof_step = cell
+        .scenario
+        .steps
+        .iter()
+        .position(|step| step.name == FORTRESS_STAGE_PROOF)
+        .expect("the fixture's pre-Start proof step");
+    let hall_teleport =
+        api::interact::tele_args(FORTRESS_START.level, FORTRESS_START.x, FORTRESS_START.z);
+    seed_commands.push(hall_teleport.clone());
+    cell.scenario.steps.splice(
+        proof_step + 1..proof_step + 1,
+        [
+            Step {
+                name: "teleport into the fortress hall after the loadout proof",
+                kind: StepKind::Perform {
+                    send: Box::new(move |client, _| {
+                        api::interact::cheat(client, &hall_teleport).is_sent()
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: FORTRESS_START.x,
+                        z: FORTRESS_START.z,
+                        level: FORTRESS_START.level,
+                        radius: FORTRESS_START_RADIUS,
+                    },
+                    budget_ticks: 100,
+                },
+            },
+            Step {
+                name: "start on arrival in the fortress hall",
+                kind: StepKind::Await {
+                    evidence: "ingame, scene loaded, standing at the fortress hall start tile",
+                    ready: Box::new(|snapshot| {
+                        snapshot.ingame()
+                            && snapshot.scene_state() == 2
+                            && tile(snapshot).is_some_and(|here| {
+                                within(here, FORTRESS_START, FORTRESS_START_RADIUS)
+                            })
+                    }),
+                    summary: None,
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: FORTRESS_START.x,
+                        z: FORTRESS_START.z,
+                        level: FORTRESS_START.level,
+                        radius: FORTRESS_START_RADIUS,
+                    },
+                    budget_ticks: 100,
+                },
+            },
+        ],
+    );
     let start_seed = seed;
     let start_selected = Arc::clone(&selected);
     cell.observe_start = Some(Box::new(move |snapshot| {
-        let seed_receipt = start_seed.observe_start(snapshot)?;
         let here = common_observe_start(snapshot, FORTRESS_START)?;
         let local = snapshot
             .local_player()
             .ok_or("pre-Start fortress snapshot has no local player")?;
+        let me = ActorTargetView {
+            kind: ActorKind::Player,
+            index: local.player.index,
+        };
         let knights: Vec<_> = snapshot
             .npcs()
             .iter()
             .filter(|npc| npc.r#type == Some(knight_type))
-            .map(|npc| json!({"index": npc.index, "tile": npc.tile, "target": npc.target}))
+            .collect();
+        let hitting_me: Vec<_> = knights
+            .iter()
+            .filter(|npc| npc.target == Some(me))
+            .map(|npc| npc.index)
             .collect();
         if knights.len() < 2 {
             return Err(format!(
@@ -2160,6 +2230,19 @@ fn live_quester_families_combat_single_way_retarget() {
                 knights.len()
             ));
         }
+        // A knight that already targets the bot may have hit it: the
+        // hitpoints may be below the seeded base and the tile off the start
+        // by up to FORTRESS_START_RADIUS. Every other stat, the worn kit and
+        // the lobsters are still exact; with no knight on the bot, the tile
+        // and every stat are exact too.
+        let engaged = !hitting_me.is_empty();
+        let seed_receipt = if engaged {
+            start_seed.observe_start_after_hit(snapshot)?
+        } else {
+            let mut at_hall = start_seed.clone();
+            at_hall.stand = FORTRESS_START;
+            at_hall.observe_start(snapshot)?
+        };
         Ok(json!({
             "fixture": "cook:0 Base40",
             "profile_seed": seed_receipt,
@@ -2167,7 +2250,11 @@ fn live_quester_families_combat_single_way_retarget() {
             "tile": here,
             "npc_config": "aggressive_black_knight",
             "npc_type_id": knight_id,
-            "knights_visible_before_start": knights,
+            "knights_visible_before_start": knights.iter()
+                .map(|npc| json!({"index": npc.index, "tile": npc.tile, "target": npc.target}))
+                .collect::<Vec<_>>(),
+            "knights_on_the_bot_at_start": hitting_me,
+            "engaged_at_start": engaged,
             "local_in_combat_before_start": local.player.actor.in_combat,
             "combat_level": local.player.combat_level,
             "inventory_before_start": inventory_receipt(snapshot),

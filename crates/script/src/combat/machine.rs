@@ -218,6 +218,11 @@ pub struct Combat {
     oos_retries: u8,
     /// Consecutive "Someone else is already fighting your opponent." lines.
     single_way_lines: u8,
+    /// The engaged NPC's slot and its health (`g1`, 0-255) on the previous poll
+    /// of an NPC fight; `SW_COMBAT` in `flags2` is its health-bar window on that
+    /// poll. They show a fresh hit on it (`npc_hit_landed`).
+    hit_index: u16,
+    hit_health: u8,
     /// "The duel has not started yet!" lines seen this engagement.
     duel_wait_lines: u8,
     /// `PVP_*` bits; `flags` has all sixteen bits in use.
@@ -273,6 +278,8 @@ const PVP_HOLD: u16 = 1;
 const PVP_KILL_LINE: u16 = 2;
 /// A swing onset of ours was observed this tick (consumed by the switch step).
 const PVP_SWING: u16 = 4;
+/// The engaged NPC's health-bar window was open on the previous poll.
+const SW_COMBAT: u16 = 8;
 /// Ticks an attack row stays held after a single-way line (`add(%lastcombat, 8)`,
 /// `skill_combat/scripts/pvp/pvp_combat.rs2:102`).
 const SINGLE_WAY_WINDOW: u16 = 8;
@@ -403,6 +410,8 @@ impl NativeMachine for Combat {
             pvp_hold_until: 0,
             oos_retries: 0,
             single_way_lines: 0,
+            hit_index: u16::MAX,
+            hit_health: 0,
             duel_wait_lines: 0,
             flags2: 0,
             active: provisional,
@@ -668,27 +677,36 @@ impl NativeMachine for Combat {
             self.switch_observe(&frame, tick);
         }
         if self.player_ident().is_some() {
+            if self.engaged.is_some_and(|actor| {
+                frame
+                    .in_combat
+                    .target
+                    .is_some_and(|target| actor.matches(target))
+            }) {
+                self.single_way_lines = 0;
+            }
             for line in chat.value.iter() {
                 self.pvp_line(&frame, tick, &line.text);
             }
         } else if self
             .engaged
             .is_some_and(|actor| actor.kind == ActorKind::Npc)
-            && chat
+        {
+            // The run of refusals ends only on a confirmed attack: a hit that
+            // landed on the engaged NPC. The player's target is not that proof;
+            // a refused click leaves the target on the refused NPC.
+            if self.npc_hit_landed(&frame) {
+                self.single_way_lines = 0;
+            }
+            if chat
                 .value
                 .iter()
                 .any(|line| SINGLE_WAY_NPC_LINES.contains(&line.text.as_str()))
-        {
-            self.npc_single_way_refusal(&frame, tick);
-        }
-        // A confirmed attack on the engaged actor ends the run of refusals.
-        if self.engaged.is_some_and(|actor| {
-            frame
-                .in_combat
-                .target
-                .is_some_and(|target| actor.matches(target))
-        }) {
-            self.single_way_lines = 0;
+            {
+                self.npc_single_way_refusal(&frame, tick);
+            }
+        } else {
+            self.hit_index = u16::MAX;
         }
         if self.phase == Phase::Escape {
             if let Fallback::Retreat { tile } = self.request.fallback {
@@ -1009,6 +1027,44 @@ impl Combat {
     fn hold_attack(&mut self, tick: u16, ticks: u16) {
         self.pvp_hold_until = tick.wrapping_add(ticks);
         self.flags2 |= PVP_HOLD;
+    }
+    /// A hit landed on the engaged NPC since the previous poll, while the bot
+    /// targets it. The client applies a hit (including a 0) to an NPC with
+    /// `combat_cycle = loop_cycle + 400` and the new `health` bytes
+    /// (`vendor/fr-client-rust/crates/client/src/client/client.rs:10300-10303`,
+    /// `:10371-10374`), so the NPC's health-bar window opening (`in_combat`,
+    /// `api/src/snapshot/decode.rs:1509`) or its health dropping is that hit.
+    /// A hit while the window is already open and the health is unchanged (a
+    /// miss) shows neither; the next real hit does.
+    fn npc_hit_landed(&mut self, frame: &Frame<'_>) -> bool {
+        let Some(actor) = self.engaged.filter(|actor| actor.kind == ActorKind::Npc) else {
+            self.hit_index = u16::MAX;
+            return false;
+        };
+        let Some(row) = frame
+            .npcs
+            .iter()
+            .find(|row| row.index == usize::from(actor.index))
+        else {
+            self.hit_index = u16::MAX;
+            return false;
+        };
+        let health = u8::try_from(row.health.max(0)).unwrap_or(u8::MAX);
+        let seen = self.hit_index == actor.index;
+        let was_open = self.flags2 & SW_COMBAT != 0;
+        let was_health = self.hit_health;
+        self.hit_index = actor.index;
+        self.hit_health = health;
+        if row.in_combat {
+            self.flags2 |= SW_COMBAT;
+        } else {
+            self.flags2 &= !SW_COMBAT;
+        }
+        seen && frame
+            .in_combat
+            .target
+            .is_some_and(|target| actor.matches(target))
+            && ((row.in_combat && !was_open) || health < was_health)
     }
     /// An attack on an NPC was refused by single-way combat. The content lets
     /// the bot attack only the NPC that last attacked it while that attack is

@@ -45,8 +45,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - When single-way combat refuses an attack on an NPC with "I'm already under
   attack" because another NPC is hitting the bot, the fight now attacks that NPC
   if it may, or holds the attack for the game's 8-tick window. After three
-  refusals with no confirmed attack, it ends with `single-way-blocked` instead
-  of repeating the click without end.
+  refusals with no hit landing on the target in between, it ends with
+  `single-way-blocked` instead of repeating the click without end.
 
 ### API and native dispatch
 
