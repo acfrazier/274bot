@@ -105,6 +105,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   outside the cell. It sends the "Climb-to" action from where it stands, and
   the game walks the player, as it does for a human player. Before, the guide
   asked for a walk that cannot exist and stopped on the first rock.
+- Random-event detection avoids temporary lowercase names for non-matching
+  NPCs and hazard locs. Matching and event handling are unchanged.
 
 ### Not in this release
 
