@@ -715,6 +715,7 @@ fn run(case: Case) -> Result<(), String> {
     let preparation_deadline = Instant::now() + Duration::from_secs(180);
     let mut machine_deadline = None;
     let mut started = false;
+    let mut relogin_requested = false;
     let mut script: Option<Box<dyn Script>> = match case {
         Case::Cow => Some(Box::new(FightScript {
             request: Some(request),
@@ -749,6 +750,15 @@ fn run(case: Case) -> Result<(), String> {
         let mut state = state.lock().map_err(|_| "machine state poisoned")?;
         if let Some(error) = &state.error {
             return Err(error.clone());
+        }
+        if !relogin_requested && state.detached {
+            drop(state);
+            play.arm(&account)
+                .ok_or("377 machine fixture slot disappeared")?
+                .arm_explicit_login();
+            play.wake(&account);
+            relogin_requested = true;
+            continue;
         }
         if !started && state.baseline.is_some() {
             if matches!(case, Case::Admission) {
