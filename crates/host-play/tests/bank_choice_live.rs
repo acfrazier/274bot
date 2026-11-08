@@ -981,6 +981,11 @@ fn run_origin(
         let script_error = play.script_last_error(&account);
         let (arrival_at, terminal_gate, state_error, capture_error, scenario_status) = {
             let mut slot = state.lock().map_err(|_| "bank-choice state poisoned")?;
+            if slot.runner.take_relog_login() {
+                if let Some(arm) = play.arm(&account) {
+                    arm.arm_explicit_login();
+                }
+            }
             if run_state == script::RunState::Running {
                 slot.runner.observe_script_running();
             }
@@ -1499,6 +1504,11 @@ fn run_quester_recovery_live() -> Result<(), String> {
         let status = play.script_native_status(&account);
         let run_state = play.script_state(&account);
         let mut runner = runner.lock().unwrap();
+        if runner.take_relog_login() {
+            if let Some(arm) = play.arm(&account) {
+                arm.arm_explicit_login();
+            }
+        }
         let mut witness = witness.lock().unwrap();
         if status.is_some() {
             witness.latest_status = status.clone();

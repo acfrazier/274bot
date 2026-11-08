@@ -403,6 +403,12 @@ mod return_boundary {
         let mut last_status = String::new();
         let mut arrived = false;
         while Instant::now() < deadline {
+            let relog_login = state.lock().unwrap().relog.take_relog_login();
+            if relog_login {
+                if let Some(arm) = play.arm(&account) {
+                    arm.arm_explicit_login();
+                }
+            }
             let ready = matches!(state.lock().unwrap().prep, Prep::Ready);
             if ready && !started {
                 play.script_start(

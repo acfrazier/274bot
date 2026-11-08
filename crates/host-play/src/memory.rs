@@ -2025,6 +2025,11 @@ impl Run {
                     .clone();
                 let (status, on_start, already_started, duel) = {
                     let mut seed = seed_arc.lock().unwrap();
+                    if seed.runner.take_relog_login() {
+                        if let Some(arm) = play.arm(name) {
+                            arm.arm_explicit_login();
+                        }
+                    }
                     let status = seed.runner.status();
                     if let scenario::RunnerStatus::Running { step, .. } = &status {
                         seed.last_step = Some(*step);
