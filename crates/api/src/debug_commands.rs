@@ -350,7 +350,7 @@ mod tests {
         let Some(data) = crate::game_data::test_data(ClientRevision::R377) else {
             return;
         };
-        let Some(path) = crate::test_support::local_asset_path(
+        let Some(path) = crate::test_support::local_asset_path_377(
             "",
             concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/377/debug.json"),
             "revision 377 debug catalog",
