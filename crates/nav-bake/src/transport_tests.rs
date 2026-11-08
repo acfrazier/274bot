@@ -30,22 +30,23 @@ if ($progress = 0) {
 ";
 
 fn selected_revision_data_for_test(
-    revision: api::selected::ClientRevision,
+    description: &str,
+    data: Result<Arc<api::game_data::SelectedGameData>, api::game_data::GameDataError>,
 ) -> Option<Arc<api::game_data::SelectedGameData>> {
-    match api::game_data::for_revision(revision) {
+    match data {
         Ok(data) => Some(data),
         Err(api::game_data::GameDataError::LocalDataUnavailable)
             if std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(OsStr::new("true")) =>
         {
-            eprintln!("Skipping {revision:?} transport assertions: local game data is unavailable");
+            eprintln!(
+                "Skipping {description} transport assertions: local game data is unavailable"
+            );
             None
         }
         Err(api::game_data::GameDataError::LocalDataUnavailable) => {
-            panic!(
-                "missing local game data for {revision:?}; generate it with `python tools/local-data/build.py`"
-            );
+            panic!("missing {description}; generate it with `python tools/local-data/build.py`");
         }
-        Err(error) => panic!("selected revision game data for {revision:?}: {error:?}"),
+        Err(error) => panic!("{description}: {error:?}"),
     }
 }
 
@@ -3529,7 +3530,10 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
-        let Some(data) = selected_revision_data_for_test(revision) else {
+        let Some(data) = selected_revision_data_for_test(
+            "selected revision game data",
+            api::game_data::for_revision(revision),
+        ) else {
             continue;
         };
         let (legacy, _, _) = derive(&data);
@@ -10693,7 +10697,10 @@ p_telejump(0_46_149_63_13);
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
-        let Some(data) = selected_revision_data_for_test(revision) else {
+        let Some(data) = selected_revision_data_for_test(
+            "selected revision game data",
+            api::game_data::for_revision(revision),
+        ) else {
             continue;
         };
         apply_legacy_entrana_fixture_guards(&mut baseline, &data);
@@ -10797,7 +10804,10 @@ p_telejump($coord);
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
-        let Some(data) = selected_revision_data_for_test(revision) else {
+        let Some(data) = selected_revision_data_for_test(
+            "selected revision game data",
+            api::game_data::for_revision(revision),
+        ) else {
             continue;
         };
         apply_legacy_entrana_fixture_guards(&mut baseline, &data);
@@ -10939,7 +10949,10 @@ switch_coord (loc_coord) {
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
-        let Some(data) = selected_revision_data_for_test(revision) else {
+        let Some(data) = selected_revision_data_for_test(
+            "selected revision game data",
+            api::game_data::for_revision(revision),
+        ) else {
             continue;
         };
         apply_legacy_entrana_fixture_guards(&mut baseline, &data);
@@ -11090,7 +11103,10 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
         api::selected::ClientRevision::R274,
         api::selected::ClientRevision::R289,
     ] {
-        let Some(data) = selected_revision_data_for_test(revision) else {
+        let Some(data) = selected_revision_data_for_test(
+            "selected revision game data",
+            api::game_data::for_revision(revision),
+        ) else {
             continue;
         };
         apply_legacy_entrana_fixture_guards(&mut baseline, &data);
