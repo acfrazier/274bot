@@ -15,7 +15,11 @@ use std::sync::Arc;
 const GATHERING_274: &[u8] = include_bytes!("../../data/game-data/274/gathering.json");
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 const GATHERING_289: &[u8] = include_bytes!("../../data/game-data/289/gathering.json");
-#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+#[cfg(all(
+    feature = "embedded-game-data",
+    not(no_local_game_data),
+    not(no_local_game_data_377)
+))]
 const GATHERING_377: &[u8] = include_bytes!("../../data/game-data/377/gathering.json");
 
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
@@ -23,7 +27,10 @@ fn embedded(revision: ClientRevision) -> Option<&'static [u8]> {
     Some(match revision {
         ClientRevision::R274 => GATHERING_274,
         ClientRevision::R289 => GATHERING_289,
+        #[cfg(not(no_local_game_data_377))]
         ClientRevision::R377 => GATHERING_377,
+        #[cfg(no_local_game_data_377)]
+        ClientRevision::R377 => return None,
     })
 }
 
