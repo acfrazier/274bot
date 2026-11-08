@@ -2854,6 +2854,8 @@ const OUTLOOK_AFTER_MARK_6: i32 = 99;
 const POISON_27_MARKS: [i32; 3] = [6, 6, 5];
 /// Marks of `~poison 22`: 22 down to 15 give 5, 5, 4, 4, 4, 4, 4, 3.
 const POISON_22_MARKS: [i32; 8] = [5, 5, 4, 4, 4, 4, 4, 3];
+const PARK_FOOD_RELEASE_STARTING_LOBSTERS: i32 = 9;
+const PARK_FOOD_RELEASE_EAT_FLOOR: i32 = 1;
 const POISON_22_COMMAND: &str = "~poison 22";
 /// `cheat_other.rs2:22-23` queues `damage_player`, which damages the account
 /// itself (`damage.rs2:21-22`).
@@ -3720,13 +3722,144 @@ fn park_false_release_oracle(
 }
 
 /// L-PARK-FOOD-RELEASE (design-final.md:950): held through fires 1 to 7 while
-/// it eats, released within 6 ticks of the eighth mark with four lobsters.
+/// it eats when the product's rule allows, then releases within 6 ticks of
+/// the eighth mark without prescribing the food count.
 fn park_food_release_receipt(
     snapshot: &GameSnapshot,
     _status: Option<&ScriptStatus>,
     witness: &Witness,
 ) -> Result<Option<Value>, String> {
     park_food_release_oracle(snapshot, witness, &survival_log())
+}
+
+/// The current poison pulse is the value in the latest hitmark
+/// (`api/src/condition.rs:266-285`); before the first mark, use the first
+/// scheduled pulse.
+fn park_food_release_fire(marks: &[MarkRow], tick: u32) -> Result<i32, String> {
+    marks
+        .iter()
+        .rev()
+        .find(|mark| mark.tick <= tick)
+        .or_else(|| marks.first())
+        .map(|mark| mark.value)
+        .ok_or_else(|| "no poison mark rows for food-release eat check".to_owned())
+}
+
+fn park_food_release_eat_line(hp_max: i32, poison_fire: i32) -> i32 {
+    script::combat::select::lines(None, hp_max)
+        .with_poison(poison_fire)
+        .eat
+        .max(PARK_FOOD_RELEASE_EAT_FLOOR)
+}
+
+/// The selected lobster `eat_delay` (`consume.rs2:4,122-127`) is the
+/// content argument the product's food schedule interprets.
+fn park_food_release_eat_delay() -> Result<u32, String> {
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .map_err(|error| format!("selected R289 game data: {error}"))?;
+    let delay = selected
+        .consumable(LOBSTER_ALIAS)
+        .and_then(|food| food.eat_delay_arg)
+        .ok_or_else(|| "selected lobster content has no eat_delay".to_owned())?;
+    u32::try_from(delay).map_err(|_| format!("invalid lobster eat_delay {delay}"))
+}
+
+struct ParkFoodReleaseCheck<'a> {
+    track: &'a SurvivalTrack,
+    park_tick: u32,
+    unpark_tick: u32,
+    hp_max: i32,
+    eat_delay: u32,
+    now: u32,
+}
+
+impl<'a> ParkFoodReleaseCheck<'a> {
+    fn opportunity(&self, tick: u32, hp: i32, food: i32) -> Result<bool, String> {
+        if tick < self.park_tick
+            || tick >= self.unpark_tick
+            || food <= 0
+            || hp <= 0
+            || hp >= self.hp_max
+        {
+            return Ok(true);
+        }
+        let fire = park_food_release_fire(&self.track.mark_rows, tick)?;
+        let eat_line = park_food_release_eat_line(self.hp_max, fire);
+        if hp > eat_line {
+            return Ok(true);
+        }
+        let last_bite = self
+            .track
+            .food_drops
+            .iter()
+            .filter(|drop| drop.tick < tick)
+            .map(|drop| drop.tick)
+            .max();
+        if last_bite.is_some_and(|last| tick.saturating_sub(last) <= self.eat_delay) {
+            return Ok(true);
+        }
+        let deadline = tick.saturating_add(self.eat_delay);
+        if !self
+            .track
+            .food_drops
+            .iter()
+            .any(|drop| drop.tick >= tick && drop.tick <= deadline)
+        {
+            if self.now <= deadline {
+                return Ok(false);
+            }
+            return Err(format!(
+                "eligible food frame at tick {tick} had no drop within {} ticks",
+                self.eat_delay
+            ));
+        }
+        Ok(true)
+    }
+}
+
+fn check_park_food_release_eating(
+    track: &SurvivalTrack,
+    park_tick: u32,
+    unpark_tick: u32,
+    hp_max: i32,
+    now: u32,
+    eat_delay: u32,
+) -> Result<bool, String> {
+    for drop in &track.food_drops {
+        let fire = park_food_release_fire(&track.mark_rows, drop.tick)?;
+        let eat_line = park_food_release_eat_line(hp_max, fire);
+        if drop.hp_before > eat_line {
+            return Err(format!(
+                "food drop at tick {} began at {} HP, above the eat line {eat_line}",
+                drop.tick, drop.hp_before
+            ));
+        }
+        if drop.hp_before <= 0 || drop.hp_before >= hp_max {
+            return Err(format!(
+                "food drop at tick {} began at {} HP, outside (0, {hp_max})",
+                drop.tick, drop.hp_before
+            ));
+        }
+    }
+    let check = ParkFoodReleaseCheck {
+        track,
+        park_tick,
+        unpark_tick,
+        hp_max,
+        eat_delay,
+        now,
+    };
+    for frame in &track.frames {
+        if !check.opportunity(frame.tick, frame.hp, frame.food)? {
+            return Ok(false);
+        }
+    }
+    for mark in &track.mark_rows {
+        if !check.opportunity(mark.tick, mark.hp, mark.food)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// The oracle over an explicit hostlog, so unit tests can feed its lines.
@@ -3784,11 +3917,34 @@ fn park_food_release_oracle(
         .iter()
         .rfind(|frame| frame.tick <= unpark)
         .map_or(unpark_frame.food, |frame| frame.food);
-    if food_left != 4 {
+    let food_drop_count = i32::try_from(
+        track
+            .food_drops
+            .iter()
+            .filter(|drop| drop.tick <= unpark)
+            .count(),
+    )
+    .map_err(|_| "too many food drops in the park-food-release track")?;
+    let expected_food_left = witness
+        .expected_food_at_start
+        .checked_sub(food_drop_count)
+        .ok_or_else(|| "food drops exceed the starting lobster count".to_owned())?;
+    if food_left != expected_food_left {
         return Err(format!(
-            "{food_left} lobsters left at the unpark, not 4: drops {:?}",
-            track.food_drops
+            "unpark food count {food_left} does not match starting food {} minus {food_drop_count} drops ({expected_food_left} expected)",
+            witness.expected_food_at_start
         ));
+    }
+    let eat_delay = park_food_release_eat_delay()?;
+    if !check_park_food_release_eating(
+        track,
+        park.tick,
+        unpark,
+        witness.expected_hp,
+        now,
+        eat_delay,
+    )? {
+        return Ok(None);
     }
     let xp_now = stat_xp(snapshot, witness.skill_stat);
     let Some(resumed) = resumed_work(track, unpark, unpark_frame.xp, xp_now) else {
@@ -3802,11 +3958,18 @@ fn park_food_release_oracle(
         "park_tick": park.tick,
         "park_text": park.survival,
         "mark_values": mark_values(marks),
-        "eighth_mark_tick": eighth.tick,
         "fifth_mark_tick": marks[4].tick,
         "unpark_tick": unpark,
+        "eighth_mark_tick": eighth.tick,
+        "starting_lobsters": witness.expected_food_at_start,
+        "food_drop_count": food_drop_count,
         "lobsters_left_at_unpark": food_left,
-        "bite_hp_before": track.food_drops.iter().map(|drop| drop.hp_before).collect::<Vec<_>>(),
+        "bite_hp_before": track
+            .food_drops
+            .iter()
+            .filter(|drop| drop.tick <= unpark)
+            .map(|drop| drop.hp_before)
+            .collect::<Vec<_>>(),
         "skill_xp_at_unpark": unpark_frame.xp,
         "skill_xp_after": xp_now,
         "observed_tick": now,
@@ -4194,16 +4357,19 @@ fn live_l_park_food_release_eats_through_the_hold_and_unparks_at_the_eighth_mark
     let (cell, witness) = track_cell(
         "L-PARK-FOOD-RELEASE",
         10,
-        &[(RUNE_AXE_ALIAS, 1), (LOBSTER_ALIAS, 9)],
+        &[
+            (RUNE_AXE_ALIAS, 1),
+            (LOBSTER_ALIAS, PARK_FOOD_RELEASE_STARTING_LOBSTERS),
+        ],
         0,
-        Some((LOBSTER_ALIAS, 9)),
+        Some((LOBSTER_ALIAS, PARK_FOOD_RELEASE_STARTING_LOBSTERS)),
         vec![POISON_22_COMMAND],
         300,
     );
     let receipt = run_family(
         cell,
         "Gatherer",
-        gatherer_willow_settings(1),
+        gatherer_willow_settings(PARK_FOOD_RELEASE_EAT_FLOOR),
         Arc::clone(&witness),
         vault::CurePoison::WhenNeeded,
         with_track(park_food_release_receipt),
@@ -4211,7 +4377,10 @@ fn live_l_park_food_release_eats_through_the_hold_and_unparks_at_the_eighth_mark
     let proof = &receipt["family_receipt"];
     assert_eq!(proof["cell"], "L-PARK-FOOD-RELEASE");
     assert_eq!(proof["mark_values"], json!(POISON_22_MARKS));
-    assert_eq!(proof["lobsters_left_at_unpark"], 4);
+    assert_eq!(
+        proof["lobsters_left_at_unpark"].as_i64().unwrap(),
+        proof["starting_lobsters"].as_i64().unwrap() - proof["food_drop_count"].as_i64().unwrap()
+    );
 }
 
 #[test]
@@ -4763,6 +4932,16 @@ mod oracle_tests {
             to: from - 1,
             hp_before: 10,
             hp_after: 10 + SHRIMP_HEAL,
+        }
+    }
+
+    fn food_release_drop_at(tick: u32, from: i32, hp_before: i32) -> FoodDrop {
+        FoodDrop {
+            tick,
+            from,
+            to: from - 1,
+            hp_before,
+            hp_after: 10,
         }
     }
 
@@ -5496,6 +5675,9 @@ mod oracle_tests {
 
     fn park_food_release_case() -> Case {
         let mut witness = gatherer_witness();
+        witness.expected_hp = 10;
+        witness.expected_food_at_start = PARK_FOOD_RELEASE_STARTING_LOBSTERS;
+        witness.food_id = Some(alias_id(LOBSTER_ALIAS));
         witness.poison_tick = Some(32);
         witness.poison_marks = poison_marks(&[
             (63, 5),
@@ -5509,23 +5691,45 @@ mod oracle_tests {
         ]);
         let track = &mut witness.track;
         track.runs = vec!["run".to_owned()];
-        track.min_hp = Some(2);
+        track.min_hp = Some(5);
         track.park_frame = Some(parked_at(32, 10, 330));
         track.frames = vec![
             tracked_frame(32, 10, 9, 0, 41238, Some(Decision::Parked)),
-            tracked_frame(120, 12, 6, 0, 41238, Some(Decision::Parked)),
-            tracked_frame(250, 11, 4, 0, 41441, Some(Decision::Parked)),
+            tracked_frame(63, 5, 9, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(64, 10, 8, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(93, 5, 8, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(94, 10, 7, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(123, 6, 7, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(124, 10, 6, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(153, 6, 6, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(154, 10, 5, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(183, 6, 5, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(184, 10, 4, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(213, 10, 4, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(243, 10, 4, 0, 41441, Some(Decision::Parked)),
+            tracked_frame(273, 9, 4, 0, 41441, Some(Decision::Parked)),
+            tracked_frame(274, 9, 4, 0, 41441, None),
+        ];
+        track.mark_rows = vec![
+            mark_row(63, 5, 5, 9, 41238),
+            mark_row(93, 5, 5, 8, 41238),
+            mark_row(123, 4, 6, 7, 41238),
+            mark_row(153, 4, 6, 6, 41238),
+            mark_row(183, 4, 6, 5, 41238),
+            mark_row(213, 4, 10, 4, 41238),
+            mark_row(243, 4, 10, 4, 41441),
+            mark_row(273, 3, 9, 4, 41441),
         ];
         track.food_drops = vec![
-            drop_at(63, 9),
-            drop_at(93, 8),
-            drop_at(153, 7),
-            drop_at(183, 6),
-            drop_at(243, 5),
+            food_release_drop_at(63, 9, 5),
+            food_release_drop_at(93, 8, 5),
+            food_release_drop_at(123, 7, 6),
+            food_release_drop_at(153, 6, 6),
+            food_release_drop_at(183, 5, 6),
         ];
-        track.unpark_frame = Some(tracked_frame(274, 12, 4, 0, 41441, None));
-        track.work_animation_ticks = vec![276];
+        track.unpark_frame = Some(tracked_frame(274, 9, 4, 0, 41441, None));
         track.work_sequences = vec![867];
+        track.work_animation_ticks = vec![276];
         Case {
             snapshot: snapshot_at(276, 41441),
             witness,
@@ -5603,20 +5807,36 @@ mod oracle_tests {
                     case.witness.track.unpark_frame = None;
                     at_tick(case, 281);
                 }),
-                (
-                    "more food left",
-                    "lobsters left at the unpark, not 4",
-                    |case| {
-                        case.witness.track.frames[2].food = 5;
-                    },
-                ),
-                (
-                    "less food left",
-                    "lobsters left at the unpark, not 4",
-                    |case| {
-                        case.witness.track.frames[2].food = 3;
-                    },
-                ),
+                ("more food left", "unpark food count", |case| {
+                    case.witness.track.frames.last_mut().unwrap().food = 5;
+                }),
+                ("less food left", "unpark food count", |case| {
+                    case.witness.track.frames.last_mut().unwrap().food = 3;
+                }),
+                ("a bite above the line", "above the eat line", |case| {
+                    let track = &mut case.witness.track;
+                    track.food_drops.push(food_release_drop_at(273, 4, 9));
+                    track.frames.last_mut().unwrap().food = 3;
+                    track.unpark_frame.as_mut().unwrap().food = 3;
+                }),
+                ("a bite at max HP", "outside (0, 10)", |case| {
+                    case.witness.track.food_drops[0].hp_before = 10;
+                }),
+                ("a missed bite", "eligible food frame at tick 123", |case| {
+                    let track = &mut case.witness.track;
+                    track.food_drops.remove(2);
+                    for drop in track.food_drops.iter_mut().filter(|drop| drop.tick > 123) {
+                        drop.from += 1;
+                        drop.to += 1;
+                    }
+                    for frame in track.frames.iter_mut().filter(|frame| frame.tick > 123) {
+                        frame.food += 1;
+                    }
+                    for mark in track.mark_rows.iter_mut().filter(|mark| mark.tick > 123) {
+                        mark.food += 1;
+                    }
+                    track.unpark_frame.as_mut().unwrap().food += 1;
+                }),
                 ("no park line in the log", "hostlog wants", |case| {
                     case.log.remove(0);
                 }),
@@ -5636,6 +5856,38 @@ mod oracle_tests {
                 }),
             ],
         );
+    }
+
+    #[test]
+    fn park_food_release_oracle_accepts_five_left_when_no_more_bite_is_due() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut case = park_food_release_case();
+        let track = &mut case.witness.track;
+        track.food_drops.pop();
+        for frame in &mut track.frames {
+            if frame.tick == 183 {
+                frame.hp = 10;
+            }
+            if frame.tick > 183 {
+                frame.food += 1;
+            }
+        }
+        for mark in &mut track.mark_rows {
+            if mark.tick == 183 {
+                mark.hp = 10;
+            }
+            if mark.tick > 183 {
+                mark.food += 1;
+            }
+        }
+        track.unpark_frame.as_mut().unwrap().food += 1;
+        let receipt = park_food_release_oracle_of(&case)
+            .expect("the five-lobster receipt follows observed food rules")
+            .expect("the five-lobster receipt is complete");
+        assert_eq!(receipt["food_drop_count"], 4);
+        assert_eq!(receipt["lobsters_left_at_unpark"], 5);
     }
 
     // -- L-CURE-BITE-AFTER-DRINK --
