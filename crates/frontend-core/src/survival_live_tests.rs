@@ -999,10 +999,7 @@ fn run_guard_cure_live(
         session.poll();
         let relog_login = state.lock().runner.take_relog_login();
         if relog_login {
-            if let Some(arm) = session
-                .play_for_test()
-                .and_then(|play| play.arm(account))
-            {
+            if let Some(arm) = session.play_for_test().and_then(|play| play.arm(account)) {
                 arm.arm_explicit_login();
             }
         }
