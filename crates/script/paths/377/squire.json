@@ -983,7 +983,58 @@
           }
         },
         {
-          "id": "dwarf-iron-bar-drops",
+          "id": "deposit-partial-iron-bars",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "deposit",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "iron_bar"
+              }
+            ]
+          },
+          "comment": "Deposit a partial held stack so each until_drop cycle starts without an iron_bar; bars are banked between the one-bar cycles.",
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "iron_bar"
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "iron_bar",
+                    "qty": 2
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "iron_bar"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "dwarf-first-iron-bar",
           "kind": "combat",
           "version": 1,
           "advances": false,
@@ -1023,21 +1074,225 @@
             "loot": [
               {
                 "obj": "iron_bar",
-                "qty": 2
+                "qty": 1
               }
             ],
-            "until": {
-              "Fact": {
-                "kind": "item_count_at_least",
-                "version": 1,
-                "args": {
-                  "obj": "iron_bar",
-                  "qty": 2
-                }
+            "until_drop": {
+              "obj": "iron_bar",
+              "max_kills": 512,
+              "stop": "iron-bar-drop-budget-exhausted"
+            }
+          },
+          "comment": "Retry dwarf kills until one iron_bar drops; each confirmed-kill budget is bounded at 512 and exhaustion blocks at the explicit stop instead of weakening the two-bar requirement. Content: scripts/drop_tables/scripts/dwarf.rs2:13,47-48.",
+          "skip_if": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "iron_bar",
+                "qty": 2
               }
             }
           },
-          "comment": "If the bank has fewer than two bars, fight mapped dwarf_normal NPC118 for real iron_bar drops (3/128; scripts/drop_tables/scripts/dwarf.rs2:13,47-48). This avoids an unrequired Mining 15 / Smithing 15 smelting branch.",
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "iron_bar"
+              }
+            }
+          }
+        },
+        {
+          "id": "deposit-first-iron-bar",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "deposit",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "iron_bar"
+              }
+            ]
+          },
+          "comment": "Bank the first one-bar drop to reset until_drop before the second acquisition cycle.",
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "iron_bar"
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "iron_bar",
+                    "qty": 2
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "iron_bar"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "dwarf-second-iron-bar",
+          "kind": "combat",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": {
+              "npc": "dwarf_normal",
+              "not_targeting_others": true,
+              "pick": "random"
+            },
+            "lost_radius": 34,
+            "area": {
+              "box": [
+                2985,
+                3422,
+                3042,
+                3466,
+                0
+              ],
+              "source": "C maps/m46_53.jm2:8088-8089; maps/m47_53.jm2:7692-7710; scripts/_unpack/377/all.npc:3420 (NPC118 wander range 13)"
+            },
+            "stand": {
+              "tile": [
+                3008,
+                3436,
+                0
+              ],
+              "source": "C maps/m47_53.jm2:7692 (NPC118 at [3008,3436,0])"
+            },
+            "tactic": {
+              "kind": "open",
+              "style": "melee",
+              "engage_radius": 34,
+              "auto_retaliate": true
+            },
+            "loadout": null,
+            "kill_budget_ticks": 50,
+            "loot": [
+              {
+                "obj": "iron_bar",
+                "qty": 1
+              }
+            ],
+            "until_drop": {
+              "obj": "iron_bar",
+              "max_kills": 512,
+              "stop": "iron-bar-drop-budget-exhausted"
+            }
+          },
+          "comment": "Acquire the second bar in a separate bounded until_drop cycle after banking the first. Content: scripts/drop_tables/scripts/dwarf.rs2:13,47-48.",
+          "skip_if": {
+            "Fact": {
+              "kind": "item_count_at_least",
+              "version": 1,
+              "args": {
+                "obj": "iron_bar",
+                "qty": 2
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "iron_bar"
+              }
+            }
+          }
+        },
+        {
+          "id": "deposit-second-iron-bar",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "deposit",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "iron_bar"
+              }
+            ]
+          },
+          "comment": "Bank the second one-bar drop, then withdraw both bars for the existing quest requirement.",
+          "skip_if": {
+            "Any": [
+              {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "iron_bar"
+                    }
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "iron_bar",
+                    "qty": 2
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Not": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "iron_bar"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "withdraw-two-iron-bars",
+          "kind": "bank",
+          "version": 1,
+          "args": {
+            "op": "withdraw",
+            "at": "nearest",
+            "items": [
+              {
+                "obj": "iron_bar",
+                "qty": 2
+              }
+            ],
+            "partial_ok": true
+          },
+          "comment": "Finish with two held bars, preserving the original inventory-count requirement.",
           "skip_if": {
             "Fact": {
               "kind": "item_count_at_least",
