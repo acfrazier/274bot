@@ -18,6 +18,10 @@ use std::path::Path;
 /// to the 8-byte alignment: 91,188,976 B.
 const PROFILE_BOUND_SHARED_NAV_STATE_LIMIT: usize = 91_188_976;
 
+/// R377 decoded world measured on Linux: 84,582,653 B, plus 8 bytes and
+/// rounded up to the same 8-byte alignment as the R289 bound.
+const PROFILE_BOUND_R377_SHARED_NAV_STATE_LIMIT: usize = 84_582_664;
+
 /// Retained bytes of one decoded nav world: the process-shared state that a
 /// bound profile owns once and every bot lease borrows. The `pack` is a
 /// revision's staged `274bot.navpack`; R274, R289 and the PR #6 R377 pack use
@@ -76,6 +80,15 @@ fn real_377_profile_bound_nav_state_stays_inside_its_total_tripwire() {
         return;
     };
     let bytes = profile_bound_nav_state_bytes(&path);
-    eprintln!("revision-377 profile-bound shared navigation state holds {bytes} bytes");
+    eprintln!(
+        "revision-377 profile-bound shared navigation state holds {bytes} bytes \
+         (limit {PROFILE_BOUND_R377_SHARED_NAV_STATE_LIMIT})"
+    );
     assert!(bytes > 1_000_000, "the gate must load the real 377 pack");
+    assert!(
+        bytes <= PROFILE_BOUND_R377_SHARED_NAV_STATE_LIMIT,
+        "revision-377 profile-bound shared navigation state grew to {bytes} bytes \
+         (limit {PROFILE_BOUND_R377_SHARED_NAV_STATE_LIMIT}); update the measured \
+         total and its headroom consciously"
+    );
 }
