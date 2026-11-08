@@ -2755,18 +2755,15 @@
               "advances": false,
               "args": {
                 "target": {
-                  "loc": "ttcellclimbrock1"
-                },
-                "op": "Climb-to",
-                "anchor": {
+                  "loc": "ttcellclimbrock1",
                   "tile": [
-                    3281,
-                    3037,
+                    3280,
+                    3038,
                     0
                   ],
-                  "source": "C maps/m51_47.jm2:4363 (ttcellclimbrock1 2694 at 3280,3038 op2 Climb-to); quest_desertrescue.rs2:231-242,262-274 lands 3279,3038"
+                  "source": "C maps/m51_47.jm2:4363 (ttcellclimbrock1 2694 at 3280,3038 op2 Climb-to); quest_desertrescue.rs2:231-242 is an aploc2 approach trigger (it force-walks to 3282,3037 when farther than 2) and every tile around the rock is blocked ground (maps/m51_47.jm2 flag f1 on x3272-3281 z3037-3041), so the server walks the player; no approach anchor; lands 3279,3038"
                 },
-                "radius": 4,
+                "op": "Climb-to",
                 "settle_ms": 15000,
                 "dialogue": {
                   "prefer": [
@@ -2873,18 +2870,15 @@
               "advances": false,
               "args": {
                 "target": {
-                  "loc": "ttcellclimbrock2"
-                },
-                "op": "Climb-to",
-                "anchor": {
+                  "loc": "ttcellclimbrock2",
                   "tile": [
-                    3279,
-                    3038,
+                    3278,
+                    3039,
                     0
                   ],
-                  "source": "C maps/m51_47.jm2:4331 (ttcellclimbrock2 2695 at 3278,3039 op2 Climb-to); lands 3277,3039"
+                  "source": "C maps/m51_47.jm2:4331 (ttcellclimbrock2 2695 at 3278,3039 op2 Climb-to); quest_desertrescue.rs2:244 is an aploc2 approach trigger and every tile around the rock is blocked ground (maps/m51_47.jm2 flag f1 on x3272-3281 z3037-3041), so the server walks the player; no approach anchor; lands 3277,3039"
                 },
-                "radius": 3,
+                "op": "Climb-to",
                 "settle_ms": 15000
               },
               "hazard": {
@@ -2930,18 +2924,15 @@
               "advances": false,
               "args": {
                 "target": {
-                  "loc": "ttcellclimbrock3"
-                },
-                "op": "Climb-to",
-                "anchor": {
+                  "loc": "ttcellclimbrock3",
                   "tile": [
-                    3277,
-                    3039,
+                    3276,
+                    3040,
                     0
                   ],
-                  "source": "C maps/m51_47.jm2:4309 (ttcellclimbrock3 2696 at 3276,3040 op2 Climb-to); lands 3275,3040"
+                  "source": "C maps/m51_47.jm2:4309 (ttcellclimbrock3 2696 at 3276,3040 op2 Climb-to); quest_desertrescue.rs2:245 is an aploc2 approach trigger and every tile around the rock is blocked ground (maps/m51_47.jm2 flag f1 on x3272-3281 z3037-3041), so the server walks the player; no approach anchor; lands 3275,3040"
                 },
-                "radius": 3,
+                "op": "Climb-to",
                 "settle_ms": 15000
               },
               "hazard": {
@@ -2987,18 +2978,15 @@
               "advances": false,
               "args": {
                 "target": {
-                  "loc": "ttcellclimbrock4"
-                },
-                "op": "Climb down",
-                "anchor": {
+                  "loc": "ttcellclimbrock4",
                   "tile": [
-                    3275,
-                    3040,
+                    3274,
+                    3039,
                     0
                   ],
-                  "source": "C maps/m51_47.jm2:4290 (ttcellclimbrock4 2697 at 3274,3039 op2 Climb down); quest_desertrescue.rs2:247-260 exact-moves to 3270,3039 outside the camp"
+                  "source": "C maps/m51_47.jm2:4290 (ttcellclimbrock4 2697 at 3274,3039 op2 Climb down); quest_desertrescue.rs2:247 is an aploc2 approach trigger and every tile around the rock is blocked ground (maps/m51_47.jm2 flag f1 on x3272-3281 z3037-3041), so the server walks the player; no approach anchor"
                 },
-                "radius": 3,
+                "op": "Climb down",
                 "settle_ms": 15000
               },
               "comment": "quest_desertrescue.rs2:247-260: lands at 3270,3039 west of the camp fence; the gate is then re-entered with the metal key.",

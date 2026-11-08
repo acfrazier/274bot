@@ -1182,96 +1182,167 @@ fn require_o2_applied_bite(receipt: &C0Receipt, frame: &C0Frame) -> Result<(), S
     }
 }
 
+/// Runs every C0 acceptance check in order and returns each failure. A check
+/// whose input an earlier check already reported missing is skipped, so one
+/// missing mark does not produce a second, derived message.
+fn c0_acceptance_failures(receipt: &C0Receipt, logs: &[HostLog]) -> Vec<String> {
+    let mut failures = Vec::new();
+    check_run_health(receipt, logs, &mut failures);
+    check_phase_g(receipt, &mut failures);
+    let (s1, s_drop) = check_phase_l_and_s(receipt, &mut failures);
+    check_step_player_info_lines(logs, s1, s_drop, &mut failures);
+    check_o3_eating_at_high_hp(receipt, &mut failures);
+    check_o2_bites(receipt, &mut failures);
+    check_o6_hazard_logs(logs, &mut failures);
+    check_run_end(receipt, s1, s_drop, &mut failures);
+    failures
+}
+
 fn c0_acceptance_oracle(receipt: &C0Receipt, logs: &[HostLog]) -> Result<(), String> {
+    let failures = c0_acceptance_failures(receipt, logs);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+fn check_run_health(receipt: &C0Receipt, logs: &[HostLog], failures: &mut Vec<String>) {
     if receipt.death {
-        return Err("death before C0 terminal witness".into());
+        failures.push("death before C0 terminal witness".into());
     }
     if let Some(failure) = &receipt.failure {
-        return Err(format!("fixture/scenario failure: {failure}"));
+        failures.push(format!("fixture/scenario failure: {failure}"));
     }
     if !receipt.survival_op_parse_errors.is_empty() {
-        return Err(format!(
+        failures.push(format!(
             "R4-S2: malformed survival OneOp trace: {}",
             receipt.survival_op_parse_errors.join("; ")
         ));
     }
     if logs.iter().any(|line| is_journal_retry(&line.message)) {
-        return Err("SR-8: journal retry observed before acceptance oracle".into());
+        failures.push("SR-8: journal retry observed before acceptance oracle".into());
     }
-    let r0 = receipt
-        .r0
-        .ok_or("R0 missing: journal root 8134 was not observed open then closed")?;
+}
+
+fn check_phase_g(receipt: &C0Receipt, failures: &mut Vec<String>) {
+    let r0 = receipt.r0;
+    if r0.is_none() {
+        failures.push("R0 missing: journal root 8134 was not observed open then closed".into());
+    }
     let g_drop = receipt
         .drops
         .iter()
-        .find(|drop| drop.from == 8 && drop.to == 7)
-        .ok_or("phase G missing: no first lobster drop 8 to 7")?;
-    let g_gap = g_drop.at.gap(r0);
-    if !(0..=3).contains(&g_gap) {
-        return Err(format!(
-            "phase G first drop gap {g_gap} ticks is outside R0..R0+3"
-        ));
+        .find(|drop| drop.from == 8 && drop.to == 7);
+    if g_drop.is_none() {
+        failures.push("phase G missing: no first lobster drop 8 to 7".into());
+    }
+    if let Some((g_drop, r0)) = g_drop.zip(r0) {
+        let g_gap = g_drop.at.gap(r0);
+        if !(0..=3).contains(&g_gap) {
+            failures.push(format!(
+                "phase G first drop gap {g_gap} ticks is outside R0..R0+3"
+            ));
+        }
     }
     let first_prompt_or_climb = receipt
         .frames
         .iter()
         .filter(|frame| frame.prompt_open || frame.new_climb_line)
         .map(|frame| frame.at)
-        .min()
-        .ok_or("no first rocky prompt or climb-start frame was observed")?;
-    if g_drop.at >= first_prompt_or_climb {
-        return Err("phase G drop did not precede the first rock prompt/climb line".into());
+        .min();
+    if first_prompt_or_climb.is_none() {
+        failures.push("no first rocky prompt or climb-start frame was observed".into());
     }
-
-    let l0 = receipt
-        .l0
-        .ok_or("L0 missing: fresh rocky-elevation line was not observed")?;
-    let s_send = receipt
-        .s_send
-        .ok_or("post-L0 stat_drain send was not observed")?;
-    if s_send.poll != l0.poll.saturating_add(1) {
-        return Err(format!(
-            "post-L0 drain send was on client poll {}, expected next poll {}",
-            s_send.poll,
-            l0.poll.saturating_add(1)
-        ));
-    }
-    let s1 = receipt
-        .s1
-        .ok_or("S1 missing: drained Hitpoints frame was not observed")?;
-    let s1_gap = s1.gap(l0);
-    if !(0..=2).contains(&s1_gap) {
-        return Err(format!(
-            "S1 was {s1_gap} ticks after L0; the dropped-click path requires S1 no later than L0+2"
-        ));
-    }
-    let s1_frame = receipt
-        .frames
-        .iter()
-        .find(|frame| frame.at == s1)
-        .ok_or("S1 status frame was not retained")?;
-    if s1_frame.hitpoints > 14
-        || s1_frame.decision != Some(Decision::Eating)
-        || s1_frame.step_id.as_deref() != Some(CLIMB_STEP)
+    if g_drop
+        .zip(first_prompt_or_climb)
+        .is_some_and(|(drop, first)| drop.at >= first)
     {
-        return Err(format!(
-            "S1 must show HP<=14 and Decision::Eating on {CLIMB_STEP}: hp={}, decision={:?}, step={:?}",
-            s1_frame.hitpoints, s1_frame.decision, s1_frame.step_id
-        ));
+        failures.push("phase G drop did not precede the first rock prompt/climb line".into());
+    }
+}
+
+/// Checks L0, the post-L0 drain send, S1 and the phase-S drop. Returns the S1
+/// mark and the phase-S drop for the checks that need them.
+fn check_phase_l_and_s<'a>(
+    receipt: &'a C0Receipt,
+    failures: &mut Vec<String>,
+) -> (Option<Mark>, Option<&'a FoodDrop>) {
+    let l0 = receipt.l0;
+    if l0.is_none() {
+        failures.push("L0 missing: fresh rocky-elevation line was not observed".into());
+    }
+    let s_send = receipt.s_send;
+    if s_send.is_none() {
+        failures.push("post-L0 stat_drain send was not observed".into());
+    }
+    if let Some((l0, s_send)) = l0.zip(s_send) {
+        // The runner starts a Perform step in the same tick the previous Await step
+        // finishes, so a send on the L0 poll is correct. The drain must not come
+        // before L0 and must come no later than one poll after it.
+        let latest_send_poll = l0.poll.saturating_add(1);
+        if s_send.poll < l0.poll || s_send.poll > latest_send_poll {
+            failures.push(format!(
+                "post-L0 drain send was on client poll {}, expected L0 poll {} or the next poll {latest_send_poll}",
+                s_send.poll, l0.poll
+            ));
+        }
+    }
+    let s1 = receipt.s1;
+    if s1.is_none() {
+        failures.push("S1 missing: drained Hitpoints frame was not observed".into());
+    }
+    if let Some((s1, l0)) = s1.zip(l0) {
+        let s1_gap = s1.gap(l0);
+        if !(0..=2).contains(&s1_gap) {
+            failures.push(format!(
+                "S1 was {s1_gap} ticks after L0; the dropped-click path requires S1 no later than L0+2"
+            ));
+        }
+    }
+    if let Some(s1) = s1 {
+        match receipt.frames.iter().find(|frame| frame.at == s1) {
+            None => failures.push("S1 status frame was not retained".into()),
+            Some(s1_frame) => {
+                if s1_frame.hitpoints > 14
+                    || s1_frame.decision != Some(Decision::Eating)
+                    || s1_frame.step_id.as_deref() != Some(CLIMB_STEP)
+                {
+                    failures.push(format!(
+                        "S1 must show HP<=14 and Decision::Eating on {CLIMB_STEP}: hp={}, decision={:?}, step={:?}",
+                        s1_frame.hitpoints, s1_frame.decision, s1_frame.step_id
+                    ));
+                }
+            }
+        }
     }
     let s_drop = receipt
         .drops
         .iter()
-        .find(|drop| drop.from == 7 && drop.to == 6)
-        .ok_or("phase S missing: no second lobster drop 7 to 6")?;
-    let s_drop_gap = s_drop.at.gap(s1);
-    if !(9..=12).contains(&s_drop_gap) {
-        return Err(format!(
-            "phase S drop was {s_drop_gap} ticks after S1; the dropped-first-click retry path requires S1+9..S1+12"
-        ));
+        .find(|drop| drop.from == 7 && drop.to == 6);
+    if s_drop.is_none() {
+        failures.push("phase S missing: no second lobster drop 7 to 6".into());
     }
-    require_phase_s_op_sequence(receipt, s1, s_drop)?;
+    if let Some((s1, s_drop)) = s1.zip(s_drop) {
+        let s_drop_gap = s_drop.at.gap(s1);
+        if !(9..=12).contains(&s_drop_gap) {
+            failures.push(format!(
+                "phase S drop was {s_drop_gap} ticks after S1; the dropped-first-click retry path requires S1+9..S1+12"
+            ));
+        }
+        if let Err(error) = require_phase_s_op_sequence(receipt, s1, s_drop) {
+            failures.push(error);
+        }
+    }
+    (s1, s_drop)
+}
 
+fn check_step_player_info_lines(
+    logs: &[HostLog],
+    s1: Option<Mark>,
+    s_drop: Option<&FoodDrop>,
+    failures: &mut Vec<String>,
+) {
     let step_info = format!("step {CLIMB_STEP} (interact) player_info=");
     let mut found_step_info = false;
     for line in logs
@@ -1279,43 +1350,78 @@ fn c0_acceptance_oracle(receipt: &C0Receipt, logs: &[HostLog]) -> Result<(), Str
         .filter(|line| line.source == "ScriptTrace" && line.message.contains(&step_info))
     {
         found_step_info = true;
-        let tick = line
+        let Some(tick) = line
             .message
             .rsplit_once(" player_info=")
             .and_then(|(_, tick)| tick.parse::<u64>().ok())
-            .ok_or("climb-step ScriptTrace line has no raw PLAYER_INFO generation")?;
-        if tick > s1.tick && tick < s_drop.at.tick {
-            return Err(
-                "a climb-cell-rock-1 step PLAYER_INFO line appeared between S1 and the phase-S drop".into(),
-            );
+        else {
+            failures.push("climb-step ScriptTrace line has no raw PLAYER_INFO generation".into());
+            continue;
+        };
+        if let Some((s1, s_drop)) = s1.zip(s_drop) {
+            if tick > s1.tick && tick < s_drop.at.tick {
+                failures.push(
+                    "a climb-cell-rock-1 step PLAYER_INFO line appeared between S1 and the phase-S drop".into(),
+                );
+            }
         }
     }
     if !found_step_info {
-        return Err("C0 has no climb-cell-rock-1 ScriptTrace PLAYER_INFO line".into());
+        failures.push("C0 has no climb-cell-rock-1 ScriptTrace PLAYER_INFO line".into());
     }
+}
 
+/// True when an applied lobster Eat explains this frame's heal. The status
+/// decision is the survival step's last report and lags the snapshot by one
+/// poll (`crates/script/src/survival/step.rs:200-243` sets it when the bite
+/// runs; the receipt pairs it with the polling snapshot, see
+/// `observability_limits`). So the frame that first shows the heal still reads
+/// Eating. The explaining evidence is a lobster drop on this poll or the poll
+/// before, and an applied Eat end on that drop's tick for the same item and
+/// count.
+fn applied_eat_explains_frame(receipt: &C0Receipt, frame: &C0Frame) -> bool {
+    receipt.drops.iter().any(|drop| {
+        let near = drop.at.poll == frame.at.poll || drop.at.poll.saturating_add(1) == frame.at.poll;
+        near && drop.to == drop.from - 1
+            && receipt.survival_op_events.iter().any(|end| {
+                end.event == (SurvivalOpEventKind::End { applied: true })
+                    && end.player_info == drop.at.tick
+                    && parse_eat_kind(&end.kind) == Some((LOBSTER_ID, drop.from))
+            })
+    })
+}
+
+fn check_o3_eating_at_high_hp(receipt: &C0Receipt, failures: &mut Vec<String>) {
     for frame in &receipt.frames {
         if frame.decision == Some(Decision::Eating)
             && frame.hitpoints > 15
             && !(frame.hit_kind1.is_some() && frame.hitpoints <= 20)
             && !frame.npc_facing_or_attacking
+            && !applied_eat_explains_frame(receipt, frame)
         {
-            return Err(format!(
-                "O3: Eating decision at HP {} without a damage-hit window or NPC on tick {}",
+            failures.push(format!(
+                "O3: Eating decision at HP {} without a damage-hit window or NPC or an applied Eat on tick {}",
                 frame.hitpoints, frame.at.tick
             ));
         }
     }
+}
+
+fn check_o2_bites(receipt: &C0Receipt, failures: &mut Vec<String>) {
     for frame in &receipt.frames {
         let o2_candidate = frame.new_slip_line
             && frame.hit_kind1.is_some()
             && frame.hitpoints <= 20
             && frame.lobsters > 0;
         if o2_candidate {
-            require_o2_applied_bite(receipt, frame)?;
+            if let Err(error) = require_o2_applied_bite(receipt, frame) {
+                failures.push(error);
+            }
         }
     }
+}
 
+fn check_o6_hazard_logs(logs: &[HostLog], failures: &mut Vec<String>) {
     let hazard_logs: Vec<&HostLog> = logs
         .iter()
         .filter(|line| {
@@ -1324,66 +1430,81 @@ fn c0_acceptance_oracle(receipt: &C0Receipt, logs: &[HostLog]) -> Result<(), Str
         })
         .collect();
     if hazard_logs.len() != 1 {
-        return Err(format!(
+        failures.push(format!(
             "O6: expected one selected hazard log for {CLIMB_STEP}, got {}",
             hazard_logs.len()
         ));
-    }
-    let hazard = &hazard_logs[0].message;
-    if !hazard.contains("max=7") || !hazard.contains(HAZARD_SOURCE) || !hazard.contains("line=15") {
-        return Err(format!("O6: selected hazard evidence mismatch: {hazard}"));
+    } else {
+        let hazard = &hazard_logs[0].message;
+        if !hazard.contains("max=7")
+            || !hazard.contains(HAZARD_SOURCE)
+            || !hazard.contains("line=15")
+        {
+            failures.push(format!("O6: selected hazard evidence mismatch: {hazard}"));
+        }
     }
     if logs
         .iter()
         .any(|line| line.message.contains("undeclared damage"))
     {
-        return Err("O6: undeclared damage hostlog line was emitted".into());
+        failures.push("O6: undeclared damage hostlog line was emitted".into());
     }
+}
 
-    let first_slip_after_s1 = receipt
-        .slip_events
-        .iter()
-        .copied()
-        .find(|slip| slip.tick >= s1.tick);
-    let phase_r = receipt.phase_r();
-    match first_slip_after_s1 {
-        Some(_) => {
-            let restart = receipt
-                .restart
-                .ok_or("failed climb did not reopen the restart prompt")?;
-            let restart_gap = restart.gap(s_drop.at);
-            if !(0..=16).contains(&restart_gap) {
-                return Err(format!(
-                    "restart prompt gap {restart_gap} ticks is outside S-drop..S-drop+16"
-                ));
-            }
-            let terminal_after_restart = match receipt.end.as_ref() {
-                Some(End::Step2(at)) => *at >= restart,
-                Some(End::SlipAfterRestart { slip, observed }) => {
-                    *slip > restart && observed.tick >= slip.tick.saturating_add(3)
+fn check_run_end(
+    receipt: &C0Receipt,
+    s1: Option<Mark>,
+    s_drop: Option<&FoodDrop>,
+    failures: &mut Vec<String>,
+) {
+    // Without S1 and the phase-S drop, the earlier checks already failed and
+    // the slip/restart/step2 outcome has no anchor to be judged against.
+    if let Some((s1, s_drop)) = s1.zip(s_drop) {
+        let first_slip_after_s1 = receipt
+            .slip_events
+            .iter()
+            .copied()
+            .find(|slip| slip.tick >= s1.tick);
+        match first_slip_after_s1 {
+            Some(_) => match receipt.restart {
+                None => failures.push("failed climb did not reopen the restart prompt".into()),
+                Some(restart) => {
+                    let restart_gap = restart.gap(s_drop.at);
+                    if !(0..=16).contains(&restart_gap) {
+                        failures.push(format!(
+                            "restart prompt gap {restart_gap} ticks is outside S-drop..S-drop+16"
+                        ));
+                    }
+                    let terminal_after_restart = match receipt.end.as_ref() {
+                        Some(End::Step2(at)) => *at >= restart,
+                        Some(End::SlipAfterRestart { slip, observed }) => {
+                            *slip > restart && observed.tick >= slip.tick.saturating_add(3)
+                        }
+                        None => false,
+                    };
+                    if !terminal_after_restart {
+                        failures.push(
+                            "run did not end at restart slip+3 or step2 after restart".into(),
+                        );
+                    }
                 }
-                None => false,
-            };
-            if !terminal_after_restart {
-                return Err("run did not end at restart slip+3 or step2 after restart".into());
-            }
-        }
-        None => {
-            let step2 = receipt
-                .step2
-                .ok_or("run ended before phase S outcome and step2 status")?;
-            if step2 < s_drop.at || !matches!(receipt.end, Some(End::Step2(_))) {
-                return Err("successful climb did not end on step2 after phase S".into());
-            }
+            },
+            None => match receipt.step2 {
+                None => failures.push("run ended before phase S outcome and step2 status".into()),
+                Some(step2) => {
+                    if step2 < s_drop.at || !matches!(receipt.end, Some(End::Step2(_))) {
+                        failures.push("successful climb did not end on step2 after phase S".into());
+                    }
+                }
+            },
         }
     }
-    if phase_r.is_none() {
-        return Err("phase R/success step2 marker was not recorded".into());
+    if receipt.phase_r().is_none() {
+        failures.push("phase R/success step2 marker was not recorded".into());
     }
     if receipt.end.is_none() {
-        return Err("run ended before phase S and its terminal witness".into());
+        failures.push("run ended before phase S and its terminal witness".into());
     }
-    Ok(())
 }
 
 fn mark_json(mark: Mark) -> Value {
@@ -2009,6 +2130,144 @@ mod tests {
     }
 
     #[test]
+    fn acceptance_oracle_bounds_the_post_l0_drain_send_poll() {
+        let base = valid_receipt(3, 2, 9, 16, 2, 20);
+        let l0 = base.l0.unwrap();
+        let with_send_poll = |poll: u64| {
+            let mut receipt = base.clone();
+            receipt.s_send = Some(Mark {
+                tick: l0.tick,
+                poll,
+            });
+            receipt
+        };
+
+        c0_acceptance_oracle(&with_send_poll(l0.poll), &valid_hazard_logs()).unwrap();
+        c0_acceptance_oracle(&with_send_poll(l0.poll + 1), &valid_hazard_logs()).unwrap();
+        expect_rejected_because(
+            &with_send_poll(l0.poll - 1),
+            &valid_hazard_logs(),
+            "post-L0 drain send",
+        );
+        expect_rejected_because(
+            &with_send_poll(l0.poll + 2),
+            &valid_hazard_logs(),
+            "post-L0 drain send",
+        );
+    }
+
+    /// A receipt whose phase-S drop frame (poll 60) is replaced by the heal
+    /// frame the way the live runs saw it: HP 26 with the decision still Eating.
+    fn receipt_with_eating_heal_frame(poll: u64) -> C0Receipt {
+        let mut receipt = valid_receipt(3, 2, 9, 16, 2, 20);
+        let s_drop = receipt.s_drop.as_ref().unwrap().at;
+        assert_eq!(s_drop.poll, 60);
+        receipt
+            .frames
+            .retain(|frame| frame.at != s_drop || frame.lobsters != 6);
+        let mut heal = frame(
+            Mark {
+                tick: s_drop.tick,
+                poll,
+            },
+            6,
+            26,
+        );
+        heal.decision = Some(Decision::Eating);
+        receipt.frames.push(heal);
+        receipt.frames.sort_by_key(|frame| frame.at);
+        receipt
+    }
+
+    fn o3_failures(receipt: &C0Receipt) -> Vec<String> {
+        c0_acceptance_failures(receipt, &valid_hazard_logs())
+            .into_iter()
+            .filter(|failure| failure.starts_with("O3:"))
+            .collect()
+    }
+
+    #[test]
+    fn o3_accepts_the_heal_frame_on_the_drop_poll_or_the_poll_after_it() {
+        // The status decision lags the applied Eat by one poll: the frame that
+        // first shows the heal can still read Eating.
+        for poll in [60, 61] {
+            let receipt = receipt_with_eating_heal_frame(poll);
+            assert!(
+                o3_failures(&receipt).is_empty(),
+                "poll {poll}: {:?}",
+                o3_failures(&receipt)
+            );
+            c0_acceptance_oracle(&receipt, &valid_hazard_logs()).unwrap();
+        }
+    }
+
+    #[test]
+    fn o3_flags_eating_at_high_hp_when_no_eat_was_applied_around_it() {
+        // Two polls after the drop is outside the one-poll lag.
+        let late = receipt_with_eating_heal_frame(62);
+        assert_eq!(o3_failures(&late).len(), 1, "{:?}", o3_failures(&late));
+
+        // Before the drop is outside it too: the heal cannot precede its Eat.
+        let early = receipt_with_eating_heal_frame(59);
+        assert_eq!(o3_failures(&early).len(), 1, "{:?}", o3_failures(&early));
+
+        // A lobster drop on the same poll without an applied Eat end on its tick
+        // (for example the item was dropped) does not explain the frame.
+        let mut no_applied_eat = receipt_with_eating_heal_frame(60);
+        no_applied_eat.survival_op_events.retain(|event| {
+            !(event.event == (SurvivalOpEventKind::End { applied: true })
+                && event.player_info == no_applied_eat.s_drop.as_ref().unwrap().at.tick)
+        });
+        assert_eq!(
+            o3_failures(&no_applied_eat).len(),
+            1,
+            "{:?}",
+            o3_failures(&no_applied_eat)
+        );
+
+        // An applied Eat of another count does not match the drop either.
+        let mut wrong_count = receipt_with_eating_heal_frame(60);
+        for event in &mut wrong_count.survival_op_events {
+            if event.player_info == wrong_count.s_drop.as_ref().unwrap().at.tick {
+                event.kind = format!("Eat {{ item_id: {LOBSTER_ID}, before_count: 5 }}");
+            }
+        }
+        assert_eq!(
+            o3_failures(&wrong_count).len(),
+            1,
+            "{:?}",
+            o3_failures(&wrong_count)
+        );
+
+        // No drop at all: the original rule applies.
+        let mut no_drop = receipt_with_eating_heal_frame(60);
+        no_drop.drops.retain(|drop| drop.from != 7);
+        assert_eq!(
+            o3_failures(&no_drop).len(),
+            1,
+            "{:?}",
+            o3_failures(&no_drop)
+        );
+    }
+
+    #[test]
+    fn live3_receipt_passes_every_check_with_the_o3_lag_ruling() {
+        // Live3 (head 486df6435, prefix dcp3): HP 7 to 19 and the lobster drop
+        // 7 to 6 first show on poll 280 (tick 89) with the decision still Eating;
+        // the decision clears on poll 281.
+        let text = include_str!("fixtures/c0-receipts/live3-heal-frame-lag.json");
+        assert_eq!(replay_c0_receipt(text).unwrap(), Vec::<String>::new());
+
+        // Move the drop three polls away from the heal frame: O3 must flag it,
+        // and nothing else may change.
+        let mut value: Value = serde_json::from_str(text).unwrap();
+        value["food_drops"][1]["at"]["client_poll"] = json!(270);
+        let failures = replay_c0_receipt(&value.to_string()).unwrap();
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(failures[0].starts_with("O3:"), "{failures:?}");
+    }
+
+    #[test]
     fn acceptance_oracle_rejects_o3_begin_restart_and_o2_failures() {
         let mut high_hp_eating = valid_receipt(3, 2, 9, 16, 2, 20);
         let mut frame = frame(
@@ -2215,6 +2474,327 @@ mod tests {
         assert_eq!(row.quest, QUEST);
         assert_eq!(row.display, DISPLAY);
         assert_eq!(row.profile, TestProfile::Base40);
+    }
+
+    // Offline replay. It rebuilds a `C0Receipt` and its hostlog from the JSON
+    // that `C0Receipt::json` prints, then runs `c0_acceptance_failures`, the
+    // same checks the live cell runs.
+
+    fn json_u64(value: &Value, what: &str) -> Result<u64, String> {
+        value
+            .as_u64()
+            .ok_or_else(|| format!("receipt field {what} is not an unsigned integer"))
+    }
+
+    fn json_i32(value: &Value, what: &str) -> Result<i32, String> {
+        value
+            .as_i64()
+            .and_then(|number| i32::try_from(number).ok())
+            .ok_or_else(|| format!("receipt field {what} is not an i32"))
+    }
+
+    fn mark_from_json(value: &Value, what: &str) -> Result<Mark, String> {
+        Ok(Mark {
+            tick: json_u64(&value["game_tick"], what)?,
+            poll: json_u64(&value["client_poll"], what)?,
+        })
+    }
+
+    fn optional_mark_from_json(value: &Value, what: &str) -> Result<Option<Mark>, String> {
+        if value.is_null() {
+            Ok(None)
+        } else {
+            mark_from_json(value, what).map(Some)
+        }
+    }
+
+    fn drop_from_json(value: &Value, what: &str) -> Result<FoodDrop, String> {
+        Ok(FoodDrop {
+            at: mark_from_json(&value["at"], what)?,
+            from: json_i32(&value["from"], what)?,
+            to: json_i32(&value["to"], what)?,
+        })
+    }
+
+    fn optional_text(value: &Value) -> Option<String> {
+        value.as_str().map(str::to_owned)
+    }
+
+    fn decision_from_json(value: &Value) -> Result<Option<Decision>, String> {
+        Ok(match value.as_str() {
+            None => None,
+            Some("None") => Some(Decision::None),
+            Some("Drinking") => Some(Decision::Drinking),
+            Some("Eating") => Some(Decision::Eating),
+            Some("Needed") => Some(Decision::Needed),
+            Some("Parked") => Some(Decision::Parked),
+            Some(other) => return Err(format!("receipt frame has unknown decision {other:?}")),
+        })
+    }
+
+    fn frame_from_json(value: &Value) -> Result<C0Frame, String> {
+        let flag = |key: &str| value[key].as_bool().unwrap_or(false);
+        let tile = match value["tile"].as_array() {
+            Some(parts) if parts.len() == 3 => Some([
+                json_i32(&parts[0], "frame tile")?,
+                json_i32(&parts[1], "frame tile")?,
+                json_i32(&parts[2], "frame tile")?,
+            ]),
+            _ => None,
+        };
+        Ok(C0Frame {
+            at: mark_from_json(&value["at"], "frame at")?,
+            hitpoints: json_i32(&value["hitpoints"], "frame hitpoints")?,
+            lobsters: json_i32(&value["lobsters"], "frame lobsters")?,
+            main_modal: json_i32(&value["main_modal"], "frame main_modal")?,
+            chat_modal: json_i32(&value["chat_modal"], "frame chat_modal")?,
+            prompt_open: flag("prompt_open"),
+            climb_line: flag("climb_line"),
+            slip_line: flag("slip_line"),
+            new_climb_line: flag("new_climb_line"),
+            new_slip_line: flag("new_slip_line"),
+            hit_kind1: value["hit_kind1"]
+                .as_i64()
+                .and_then(|kind| i32::try_from(kind).ok()),
+            decision: decision_from_json(&value["decision"])?,
+            survival_owner: optional_text(&value["survival_owner"]),
+            native_phase: optional_text(&value["native_phase"]),
+            step_id: optional_text(&value["step_id"]),
+            stage: optional_text(&value["stage"]),
+            npc_facing_or_attacking: flag("npc_facing_or_attacking"),
+            tile,
+            local_player: flag("local_player"),
+            failure: optional_text(&value["failure"]),
+        })
+    }
+
+    fn end_from_json(value: &Value) -> Result<Option<End>, String> {
+        if value.is_null() {
+            return Ok(None);
+        }
+        match value["kind"].as_str() {
+            Some("step2") => Ok(Some(End::Step2(mark_from_json(&value["at"], "end at")?))),
+            Some("slip_after_restart_plus_3") => Ok(Some(End::SlipAfterRestart {
+                slip: mark_from_json(&value["slip"], "end slip")?,
+                observed: mark_from_json(&value["observed_until"], "end observed_until")?,
+            })),
+            other => Err(format!("receipt end has unknown kind {other:?}")),
+        }
+    }
+
+    fn array_of<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>, String> {
+        value[key]
+            .as_array()
+            .ok_or_else(|| format!("receipt has no {key} array"))
+    }
+
+    /// Rebuilds the receipt and hostlog from the receipt JSON. `slip_events`
+    /// and the survival-op events are not stored as their own fields; they come
+    /// from the chat events and the hostlog, as in the live run.
+    fn c0_receipt_from_json(value: &Value) -> Result<(C0Receipt, Vec<HostLog>), String> {
+        let logs = array_of(value, "hostlog")?
+            .iter()
+            .map(|line| {
+                Ok(HostLog {
+                    tick: line["tick"].as_u64(),
+                    source: line["source"]
+                        .as_str()
+                        .ok_or("hostlog line has no source")?
+                        .to_owned(),
+                    message: line["message"]
+                        .as_str()
+                        .ok_or("hostlog line has no message")?
+                        .to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let chat_events = array_of(value, "chat_events")?
+            .iter()
+            .map(|event| {
+                let kind = match event["kind"].as_str() {
+                    Some("climb_start") => "climb_start",
+                    Some("slip") => "slip",
+                    other => return Err(format!("receipt chat event has unknown kind {other:?}")),
+                };
+                Ok(ChatEvent {
+                    at: mark_from_json(&event["at"], "chat event at")?,
+                    sequence: json_i32(&event["sequence"], "chat event sequence")?,
+                    kind,
+                    text: event["text"].as_str().unwrap_or_default().to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let drops = array_of(value, "food_drops")?
+            .iter()
+            .map(|drop| drop_from_json(drop, "food drop"))
+            .collect::<Result<Vec<_>, String>>()?;
+        let frames = array_of(value, "frames")?
+            .iter()
+            .map(frame_from_json)
+            .collect::<Result<Vec<_>, String>>()?;
+        let optional_drop = |key: &str| {
+            if value[key].is_null() {
+                Ok(None)
+            } else {
+                drop_from_json(&value[key], key).map(Some)
+            }
+        };
+        let (survival_op_events, survival_op_parse_errors) = parse_survival_op_logs(&logs);
+        let receipt = C0Receipt {
+            start: optional_mark_from_json(&value["start"], "start")?,
+            start_seed: Some(value["start_seed"].clone()).filter(|seed| !seed.is_null()),
+            pre_drain_send: optional_mark_from_json(
+                &value["pre_start_drain_send"],
+                "pre_start_drain_send",
+            )?,
+            r0: optional_mark_from_json(&value["R0"], "R0")?,
+            g_drop: optional_drop("G_drop")?,
+            l0: optional_mark_from_json(&value["L0"], "L0")?,
+            s_send: optional_mark_from_json(&value["attempt_drain_send"], "attempt_drain_send")?,
+            s1: optional_mark_from_json(&value["S1"], "S1")?,
+            s_drop: optional_drop("S_drop")?,
+            restart: optional_mark_from_json(&value["restart_prompt"], "restart_prompt")?,
+            step2: optional_mark_from_json(&value["step2"], "step2")?,
+            slip_events: chat_events
+                .iter()
+                .filter(|event| event.kind == "slip")
+                .map(|event| event.at)
+                .collect(),
+            slip_after_restart: optional_mark_from_json(
+                &value["slip_after_restart"],
+                "slip_after_restart",
+            )?,
+            end: end_from_json(&value["end"])?,
+            drops,
+            chat_events,
+            frames,
+            survival_op_events,
+            survival_op_parse_errors,
+            death: value["death"].as_bool().unwrap_or(false),
+            failure: optional_text(&value["failure"]),
+        };
+        Ok((receipt, logs))
+    }
+
+    /// Finds the receipt JSON in a saved file: either the file is the receipt,
+    /// or it is a live-cell log that holds it after `C0-ACCEPTANCE `,
+    /// `C0-MEASUREMENT-ONLY ` or the panic text `receipt=`.
+    fn find_c0_receipt_json(text: &str) -> Result<Value, String> {
+        if let Ok(whole) = serde_json::from_str::<Value>(text) {
+            if whole.get("frames").is_some() {
+                return Ok(whole);
+            }
+        }
+        let start = ["C0-ACCEPTANCE {", "C0-MEASUREMENT-ONLY {", "receipt={"]
+            .iter()
+            .filter_map(|marker| text.find(marker).map(|at| at + marker.len() - 1))
+            .min()
+            .ok_or("no C0 receipt JSON or C0-ACCEPTANCE / receipt= marker found")?;
+        serde_json::Deserializer::from_str(&text[start..])
+            .into_iter::<Value>()
+            .next()
+            .ok_or("C0 receipt marker is followed by no JSON")?
+            .map_err(|error| format!("C0 receipt JSON did not parse: {error}"))
+    }
+
+    /// The offline replay: a saved C0 receipt (the receipt JSON, or a live-cell
+    /// log that contains it) goes through every acceptance check in order.
+    /// Returns every failure; an empty list means the receipt is accepted.
+    fn replay_c0_receipt(text: &str) -> Result<Vec<String>, String> {
+        let value = find_c0_receipt_json(text)?;
+        let (receipt, logs) = c0_receipt_from_json(&value)?;
+        Ok(c0_acceptance_failures(&receipt, &logs))
+    }
+
+    /// Replays the files named by `C0_REPLAY_RECEIPT` (paths joined by `:`),
+    /// prints each result, and fails if any receipt has a failure.
+    /// Run: `C0_REPLAY_RECEIPT=a.json:b.log cargo test ... replay_saved_c0_receipts -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "offline replay of the receipts named by C0_REPLAY_RECEIPT"]
+    fn replay_saved_c0_receipts() {
+        let paths = std::env::var("C0_REPLAY_RECEIPT").expect("set C0_REPLAY_RECEIPT");
+        let mut rejected = 0;
+        for path in paths.split(':').filter(|path| !path.is_empty()) {
+            let text = std::fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("read receipt {path}: {error}"));
+            match replay_c0_receipt(&text) {
+                Err(error) => {
+                    rejected += 1;
+                    println!("C0-REPLAY {path}: UNREADABLE: {error}");
+                }
+                Ok(failures) if failures.is_empty() => {
+                    println!("C0-REPLAY {path}: ACCEPTED (0 failures)");
+                }
+                Ok(failures) => {
+                    rejected += 1;
+                    println!("C0-REPLAY {path}: REJECTED ({} failures)", failures.len());
+                    for (index, failure) in failures.iter().enumerate() {
+                        println!("  {}. {failure}", index + 1);
+                    }
+                }
+            }
+        }
+        assert_eq!(rejected, 0, "{rejected} replayed receipt(s) were rejected");
+    }
+
+    #[test]
+    fn replay_reads_the_receipt_json_and_reports_every_failure() {
+        let mut receipt = valid_receipt(3, 2, 9, 16, 2, 20);
+        // The saved receipt stores slips only as chat events.
+        receipt.chat_events = receipt
+            .slip_events
+            .iter()
+            .enumerate()
+            .map(|(index, at)| ChatEvent {
+                at: *at,
+                sequence: i32::try_from(index).unwrap(),
+                kind: "slip",
+                text: SLIP_LINE.to_owned(),
+            })
+            .collect();
+        // The live run derives the survival-op events from hostlog lines, so the
+        // saved hostlog must carry them.
+        let op_logs = receipt
+            .survival_op_events
+            .iter()
+            .map(|event| HostLog {
+                tick: None,
+                source: "ScriptTrace".into(),
+                message: match event.event {
+                    SurvivalOpEventKind::Begin => format!(
+                        "quester survival op event=begin tick={} kind={} applied=pending deadline={} player_info={}",
+                        event.tick, event.kind, event.deadline, event.player_info
+                    ),
+                    SurvivalOpEventKind::End { applied } => format!(
+                        "quester survival op event=end tick={} kind={} applied={applied} deadline={} player_info={}",
+                        event.tick, event.kind, event.deadline, event.player_info
+                    ),
+                },
+            })
+            .collect::<Vec<_>>();
+        let mut logs = valid_hazard_logs();
+        logs.extend(op_logs.clone());
+        let text = receipt.json(RunPurpose::Acceptance, &logs).to_string();
+        assert_eq!(replay_c0_receipt(&text).unwrap(), Vec::<String>::new());
+
+        // Two unrelated defects: the oracle reports both, in check order.
+        let mut broken = receipt.clone();
+        broken.r0 = None;
+        let mut no_hazard = vec![valid_hazard_logs()[1].clone()];
+        no_hazard.extend(op_logs);
+        let text = broken.json(RunPurpose::Acceptance, &no_hazard).to_string();
+        let failures = replay_c0_receipt(&text).unwrap();
+        assert_eq!(failures.len(), 2, "{failures:?}");
+        assert!(failures[0].starts_with("R0 missing"), "{failures:?}");
+        assert!(failures[1].starts_with("O6:"), "{failures:?}");
+
+        // A live-cell log carries the receipt after the C0-ACCEPTANCE marker.
+        let log = format!(
+            "noise\nC0-ACCEPTANCE {:#}\nC0-ACCEPTANCE-RUNNER {{}}\n",
+            receipt.json(RunPurpose::Acceptance, &logs)
+        );
+        assert!(replay_c0_receipt(&log).unwrap().is_empty());
+        assert!(replay_c0_receipt("no receipt here").is_err());
     }
 
     #[test]

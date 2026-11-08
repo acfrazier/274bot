@@ -8876,6 +8876,126 @@ fn desertrescue_stow_extras_skips_the_observed_clean_pack() {
     });
 }
 
+/// The Desert Rescue cell-escape rocks are `aploc2` approach triggers
+/// (`quest_desertrescue.rs2:231-247`) whose whole neighbourhood is blocked
+/// ground (`maps/m51_47.jm2`, flag f1 on x3272-3281 z3037-3041). An approach
+/// anchor made the Quester demand a radius-one walk that no route can meet
+/// (NoPath, C0 live cell). Each rock now pins its exact loc tile and carries no
+/// anchor, so the step sends the operation and the server walks the player.
+#[test]
+fn desertrescue_climb_rocks_pin_their_tile_and_dispatch_without_a_walk() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let rocks = [
+        (
+            "climb-cell-rock-1",
+            "ttcellclimbrock1",
+            "Climb-to",
+            tile(3280, 3038),
+            tile(3282, 3035),
+        ),
+        (
+            "climb-cell-rock-2",
+            "ttcellclimbrock2",
+            "Climb-to",
+            tile(3278, 3039),
+            tile(3279, 3038),
+        ),
+        (
+            "climb-cell-rock-3",
+            "ttcellclimbrock3",
+            "Climb-to",
+            tile(3276, 3040),
+            tile(3277, 3039),
+        ),
+        (
+            "climb-cell-rock-4",
+            "ttcellclimbrock4",
+            "Climb down",
+            tile(3274, 3039),
+            tile(3275, 3040),
+        ),
+    ];
+    compile_context_test(|cx| {
+        let document: crate::quester::path::PathDocument =
+            serde_json::from_str(crate::quester::compile::DESERT_RESCUE_JSON).unwrap();
+        for (id, config, op, rock_tile, player_tile) in rocks {
+            let step = document
+                .roles
+                .iter()
+                .flat_map(|role| &role.sequences)
+                .flat_map(|sequence| &sequence.steps)
+                .find(|step| step.id.0.as_ref() == id)
+                .unwrap_or_else(|| panic!("{id} is in the Desert Rescue Path"));
+            assert_eq!(step.args["target"]["loc"], config, "{id}");
+            assert_eq!(
+                step.args["target"]["tile"],
+                serde_json::json!([rock_tile.x, rock_tile.z, rock_tile.level]),
+                "{id} pins the exact rock tile"
+            );
+            assert!(
+                step.args["target"]["source"]
+                    .as_str()
+                    .is_some_and(|s| !s.is_empty()),
+                "{id} states the source of its pin"
+            );
+            assert!(
+                step.args.get("anchor").is_none(),
+                "{id} has no approach anchor: the server's aploc handler walks"
+            );
+
+            // The rock stands inside blocked ground, as in the real map, and the
+            // player stands on a blocked tile beside it.
+            let mut rock = loc(resolve_loc(cx, config).unwrap(), "Rock", op);
+            rock.tile = rock_tile;
+            rock.shape = 10;
+            rock.block_walk = true;
+            rock.distance = (player_tile.x - rock_tile.x)
+                .abs()
+                .max((player_tile.z - rock_tile.z).abs());
+            let scene = api::snapshot::SceneView {
+                available: true,
+                base_x: rock_tile.x - 5,
+                base_z: rock_tile.z - 5,
+                level: rock_tile.level,
+                width: 11,
+                height: 11,
+                collision_flags: vec![client::dash3d::CollisionFlag::SQ_BLOCKED; 121],
+            };
+            let mut snapshot = ready();
+            snapshot.seed_local_player(local_player(player_tile));
+            snapshot.seed_scene(scene);
+            snapshot.seed_locs(vec![rock]);
+
+            let plan = compile_interact(test_args::<InteractArgs>(step.args.clone()), cx).unwrap();
+            let mut ledger = None;
+            let mut run = with_tick(&snapshot, &mut ledger, 1, |tick| {
+                with_step(tick, |step| plan.begin(step).unwrap())
+            });
+            for tick in 2..=4 {
+                let _ = with_tick(&snapshot, &mut ledger, tick, |tick| {
+                    with_step(tick, |step| run.poll(step))
+                });
+            }
+            assert_eq!(
+                walk_request_count(&ledger),
+                0,
+                "{id} must not request a radius-one walk"
+            );
+            assert!(
+                matches!(
+                    emitted(&ledger),
+                    InteractReq::Loc { x, z, level, action, .. }
+                        if (*x, *z, *level) == (rock_tile.x, rock_tile.z, rock_tile.level)
+                            && action == op
+                ),
+                "{id} sends its operation to the pinned rock"
+            );
+        }
+    });
+}
+
 #[test]
 fn exclusive_loadout_rejects_strip_and_lower_tier_in_step_and_predicate() {
     if !api::test_support::game_data_available() {
