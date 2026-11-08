@@ -1195,6 +1195,9 @@ mod tests {
 
     #[test]
     fn survival_step_adds_the_step_hazard_to_the_danger() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (rows, hp, bites) in [(0, 7, true), (0, 8, false), (1, 11, true), (1, 12, false)] {
             let mut snapshot = hazard_frame(vec![lobster()], hp, 20);
             seed_scorpions(&mut snapshot, rows);
@@ -1240,6 +1243,9 @@ mod tests {
 
     #[test]
     fn survival_step_keeps_a_known_hazard_as_a_floor_under_an_unknown_window() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (hp, overflow, bites) in [(25, false, true), (32, false, false), (25, true, true)] {
             let mut snapshot = hazard_frame(vec![lobster()], hp, 20);
             if overflow {
@@ -1275,6 +1281,9 @@ mod tests {
 
     #[test]
     fn survival_step_reports_a_need_on_an_unattributed_hit_window_and_parks_at_the_next_edge() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (hp, hazard, parks) in [(19, None, false), (7, Some(hazard_constant(3)), true)] {
             let mut snapshot = hazard_frame(vec![], hp, 20);
             seed_hazard_hit(&mut snapshot, 3);
@@ -1303,6 +1312,9 @@ mod tests {
 
     #[test]
     fn survival_step_bites_on_the_hit_window_at_half_max() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for (hp, bites) in [(19, true), (21, false)] {
             let mut snapshot = hazard_frame(vec![lobster()], hp, 20);
             seed_hazard_hit(&mut snapshot, 3);
@@ -1332,6 +1344,9 @@ mod tests {
 
     #[test]
     fn hazard_step_drink_precedes_the_bite() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let id = dose_id();
         let mut snapshot = hazard_frame(vec![held(id, "Antipoison"), lobster()], 7, 20);
         let mut step = SurvivalStep::default();

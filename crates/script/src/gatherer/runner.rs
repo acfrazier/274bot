@@ -3956,6 +3956,9 @@ mod tests {
 
     #[test]
     fn gatherer_passes_no_step_hazard() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::condition::{FoodSummary, PoisonState};
         let fixture = BaitFixture::with_eat_below(1);
         let mut gatherer = fixture.gatherer(GatherRetained::default());
@@ -3989,6 +3992,9 @@ mod tests {
 
     #[test]
     fn gatherer_reports_a_need_on_an_unattributed_hit_window_and_parks_at_the_next_edge() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         use api::condition::{FoodSummary, PoisonState};
         use api::snapshot::{HitmarkView, HitmarksView};
 
