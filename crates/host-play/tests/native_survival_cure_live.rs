@@ -3746,7 +3746,9 @@ fn park_food_release_fire(marks: &[MarkRow], tick: u32) -> Result<i32, String> {
 }
 
 fn park_food_release_eat_line(hp_max: i32, poison_fire: i32) -> i32 {
-    script::combat::select::lines(None, hp_max)
+    // This safe-gathering cell has no known attackers, so the product's
+    // ThreatSet::danger result is Some(0), not unknown-danger None.
+    script::combat::select::lines(Some(0), hp_max)
         .with_poison(poison_fire)
         .eat
         .max(PARK_FOOD_RELEASE_EAT_FLOOR)
@@ -3828,15 +3830,15 @@ fn check_park_food_release_eating(
     for drop in &track.food_drops {
         let fire = park_food_release_fire(&track.mark_rows, drop.tick)?;
         let eat_line = park_food_release_eat_line(hp_max, fire);
-        if drop.hp_before > eat_line {
-            return Err(format!(
-                "food drop at tick {} began at {} HP, above the eat line {eat_line}",
-                drop.tick, drop.hp_before
-            ));
-        }
         if drop.hp_before <= 0 || drop.hp_before >= hp_max {
             return Err(format!(
                 "food drop at tick {} began at {} HP, outside (0, {hp_max})",
+                drop.tick, drop.hp_before
+            ));
+        }
+        if drop.hp_before > eat_line {
+            return Err(format!(
+                "food drop at tick {} began at {} HP, above the eat line {eat_line}",
                 drop.tick, drop.hp_before
             ));
         }
@@ -5691,7 +5693,7 @@ mod oracle_tests {
         ]);
         let track = &mut witness.track;
         track.runs = vec!["run".to_owned()];
-        track.min_hp = Some(5);
+        track.min_hp = Some(2);
         track.park_frame = Some(parked_at(32, 10, 330));
         track.frames = vec![
             tracked_frame(32, 10, 9, 0, 41238, Some(Decision::Parked)),
@@ -5700,34 +5702,35 @@ mod oracle_tests {
             tracked_frame(93, 5, 8, 0, 41238, Some(Decision::Parked)),
             tracked_frame(94, 10, 7, 0, 41238, Some(Decision::Parked)),
             tracked_frame(123, 6, 7, 0, 41238, Some(Decision::Parked)),
-            tracked_frame(124, 10, 6, 0, 41238, Some(Decision::Parked)),
-            tracked_frame(153, 6, 6, 0, 41238, Some(Decision::Parked)),
-            tracked_frame(154, 10, 5, 0, 41238, Some(Decision::Parked)),
-            tracked_frame(183, 6, 5, 0, 41238, Some(Decision::Parked)),
-            tracked_frame(184, 10, 4, 0, 41238, Some(Decision::Parked)),
-            tracked_frame(213, 10, 4, 0, 41238, Some(Decision::Parked)),
-            tracked_frame(243, 10, 4, 0, 41441, Some(Decision::Parked)),
-            tracked_frame(273, 9, 4, 0, 41441, Some(Decision::Parked)),
-            tracked_frame(274, 9, 4, 0, 41441, None),
+            tracked_frame(124, 6, 7, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(153, 2, 7, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(154, 10, 6, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(183, 6, 6, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(184, 6, 6, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(213, 3, 6, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(214, 10, 5, 0, 41238, Some(Decision::Parked)),
+            tracked_frame(243, 6, 5, 0, 41441, Some(Decision::Parked)),
+            tracked_frame(273, 3, 5, 0, 41441, Some(Decision::Parked)),
+            tracked_frame(274, 10, 4, 0, 41441, None),
         ];
         track.mark_rows = vec![
             mark_row(63, 5, 5, 9, 41238),
             mark_row(93, 5, 5, 8, 41238),
             mark_row(123, 4, 6, 7, 41238),
-            mark_row(153, 4, 6, 6, 41238),
-            mark_row(183, 4, 6, 5, 41238),
-            mark_row(213, 4, 10, 4, 41238),
-            mark_row(243, 4, 10, 4, 41441),
-            mark_row(273, 3, 9, 4, 41441),
+            mark_row(153, 4, 2, 7, 41238),
+            mark_row(183, 4, 6, 6, 41238),
+            mark_row(213, 4, 3, 6, 41238),
+            mark_row(243, 4, 6, 5, 41441),
+            mark_row(273, 3, 3, 5, 41441),
         ];
         track.food_drops = vec![
             food_release_drop_at(63, 9, 5),
             food_release_drop_at(93, 8, 5),
-            food_release_drop_at(123, 7, 6),
-            food_release_drop_at(153, 6, 6),
-            food_release_drop_at(183, 5, 6),
+            food_release_drop_at(154, 7, 2),
+            food_release_drop_at(214, 6, 3),
+            food_release_drop_at(274, 5, 3),
         ];
-        track.unpark_frame = Some(tracked_frame(274, 9, 4, 0, 41441, None));
+        track.unpark_frame = Some(tracked_frame(274, 10, 4, 0, 41441, None));
         track.work_sequences = vec![867];
         track.work_animation_ticks = vec![276];
         Case {
@@ -5822,17 +5825,17 @@ mod oracle_tests {
                 ("a bite at max HP", "outside (0, 10)", |case| {
                     case.witness.track.food_drops[0].hp_before = 10;
                 }),
-                ("a missed bite", "eligible food frame at tick 123", |case| {
+                ("a missed bite", "eligible food frame at tick 63", |case| {
                     let track = &mut case.witness.track;
-                    track.food_drops.remove(2);
-                    for drop in track.food_drops.iter_mut().filter(|drop| drop.tick > 123) {
+                    track.food_drops.remove(0);
+                    for drop in track.food_drops.iter_mut().filter(|drop| drop.tick > 63) {
                         drop.from += 1;
                         drop.to += 1;
                     }
-                    for frame in track.frames.iter_mut().filter(|frame| frame.tick > 123) {
+                    for frame in track.frames.iter_mut().filter(|frame| frame.tick > 63) {
                         frame.food += 1;
                     }
-                    for mark in track.mark_rows.iter_mut().filter(|mark| mark.tick > 123) {
+                    for mark in track.mark_rows.iter_mut().filter(|mark| mark.tick > 63) {
                         mark.food += 1;
                     }
                     track.unpark_frame.as_mut().unwrap().food += 1;
@@ -5867,18 +5870,18 @@ mod oracle_tests {
         let track = &mut case.witness.track;
         track.food_drops.pop();
         for frame in &mut track.frames {
-            if frame.tick == 183 {
+            if frame.tick == 273 {
                 frame.hp = 10;
             }
-            if frame.tick > 183 {
+            if frame.tick > 273 {
                 frame.food += 1;
             }
         }
         for mark in &mut track.mark_rows {
-            if mark.tick == 183 {
+            if mark.tick == 273 {
                 mark.hp = 10;
             }
-            if mark.tick > 183 {
+            if mark.tick > 273 {
                 mark.food += 1;
             }
         }
