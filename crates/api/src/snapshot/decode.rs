@@ -2421,7 +2421,7 @@ mod tests {
     }
     const VIEW_RESOLUTION_ITERATIONS: usize = 128;
     const ALLOCATION_ROUNDING_UNIT_BYTES: usize = 8;
-    // R274 and R289 share this measured 128-resolution allocation baseline.
+    // R274, R289 and R377 share this Linux-measured 128-resolution baseline.
     const VIEW_RESOLUTION_BASELINE: [usize; 4] = [640, 21_248, 640, 19_712];
 
     fn snapshot_view_resolution_allocations(revision: ClientRevision) -> [usize; 4] {
