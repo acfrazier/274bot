@@ -2518,7 +2518,11 @@ mod tests {
 
     #[test]
     fn loc_and_npc_view_resolution_allocation_gate_for_each_revision() {
-        for revision in [ClientRevision::R274, ClientRevision::R289] {
+        for revision in [
+            ClientRevision::R274,
+            ClientRevision::R289,
+            ClientRevision::R377,
+        ] {
             let allocations = snapshot_view_resolution_allocations(revision);
             let expected = VIEW_RESOLUTION_BASELINE;
             assert_eq!(
