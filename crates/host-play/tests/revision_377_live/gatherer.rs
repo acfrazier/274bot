@@ -459,6 +459,7 @@ fn run(case: Case) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(900);
     let preparation_deadline = Instant::now() + Duration::from_secs(180);
     let mut started = false;
+    let mut relogin_requested = false;
     let mut last_status = None;
     let result = (|| loop {
         if Path::new("/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock").exists() {
@@ -471,6 +472,15 @@ fn run(case: Case) -> Result<(), String> {
         let mut state = state.lock().map_err(|_| "377 Gatherer state poisoned")?;
         if let Some(error) = &state.error {
             return Err(error.clone());
+        }
+        if !relogin_requested && state.relog_detached {
+            drop(state);
+            play.arm(&account)
+                .ok_or("377 Gatherer fixture slot disappeared")?
+                .arm_explicit_login();
+            play.wake(&account);
+            relogin_requested = true;
+            continue;
         }
         if !started && state.baseline.is_some() {
             drop(state);
