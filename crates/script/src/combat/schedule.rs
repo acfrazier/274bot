@@ -105,6 +105,12 @@ impl Schedule {
             self.lock_valid = false;
         }
     }
+    /// An attack the server refused never began a cycle, so it does not pace
+    /// the next one: `kind` is settled and ready at once.
+    pub fn refused(&mut self, kind: OpKind) {
+        self.settle(kind);
+        self.ready_mask &= !(1 << kind.index());
+    }
     /// Apply only after successful host admission, never after a refused emit.
     pub fn admitted(
         &mut self,

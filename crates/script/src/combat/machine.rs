@@ -278,8 +278,17 @@ const PVP_SWING: u16 = 4;
 const SINGLE_WAY_WINDOW: u16 = 8;
 /// Out-of-scope refusal lines tolerated before `Aborted(Unattackable)`.
 const OOS_RETRY: u8 = 3;
-/// Consecutive "already fighting your opponent" lines that end the run.
+/// Consecutive refusals, with no confirmed attack in between, that end the run:
+/// "already fighting your opponent" lines for a player, "already under attack"
+/// lines for an NPC.
 const SINGLE_WAY_END: u8 = 3;
+/// The refusal lines an attack on an NPC gets in single-way combat: the
+/// revision-289 `player_in_combat_check` text (`player_combat.rs2:112,116`)
+/// and the text with no mark that `player_in_combat_check2` sends
+/// (`player_combat.rs2:137,141`) and the revision-377 `player_in_combat_check`
+/// sends (its `player_combat.rs2:79,83`). The PvP line has a period and stays
+/// in `pvp_line`.
+const SINGLE_WAY_NPC_LINES: [&str; 2] = ["I'm already under attack!", "I'm already under attack"];
 /// "The duel has not started yet!" lines that end the run.
 const DUEL_WAIT_END: u8 = 3;
 const POTION_PREP_SHIFT: u32 = 42;
@@ -659,17 +668,27 @@ impl NativeMachine for Combat {
             self.switch_observe(&frame, tick);
         }
         if self.player_ident().is_some() {
-            if self.engaged.is_some_and(|actor| {
-                frame
-                    .in_combat
-                    .target
-                    .is_some_and(|target| actor.matches(target))
-            }) {
-                self.single_way_lines = 0;
-            }
             for line in chat.value.iter() {
                 self.pvp_line(&frame, tick, &line.text);
             }
+        } else if self
+            .engaged
+            .is_some_and(|actor| actor.kind == ActorKind::Npc)
+            && chat
+                .value
+                .iter()
+                .any(|line| SINGLE_WAY_NPC_LINES.contains(&line.text.as_str()))
+        {
+            self.npc_single_way_refusal(&frame, tick);
+        }
+        // A confirmed attack on the engaged actor ends the run of refusals.
+        if self.engaged.is_some_and(|actor| {
+            frame
+                .in_combat
+                .target
+                .is_some_and(|target| actor.matches(target))
+        }) {
+            self.single_way_lines = 0;
         }
         if self.phase == Phase::Escape {
             if let Fallback::Retreat { tile } = self.request.fallback {
@@ -990,6 +1009,43 @@ impl Combat {
     fn hold_attack(&mut self, tick: u16, ticks: u16) {
         self.pvp_hold_until = tick.wrapping_add(ticks);
         self.flags2 |= PVP_HOLD;
+    }
+    /// An attack on an NPC was refused by single-way combat. The content lets
+    /// the bot attack only the NPC that last attacked it while that attack is
+    /// less than 8 ticks old (`player_combat.rs2:115`; `npc_combat.rs2:367-370`
+    /// sets it on every NPC attack), so the reaction follows the content: attack
+    /// an NPC that is hitting the bot and that the request may fight, or hold
+    /// the attack for the window and send it again. A third refusal with no
+    /// confirmed attack in between ends the fight. Refusals that arrive while a
+    /// hold is running belong to the attack the hold already answers.
+    fn npc_single_way_refusal(&mut self, frame: &Frame<'_>, tick: u16) {
+        // Only a fight that sends attacks reacts: a refusal read after the
+        // fight ended or while it prepares belongs to no attack of this run.
+        if !matches!(self.phase, Phase::Engage | Phase::Fight) || self.flags2 & PVP_HOLD != 0 {
+            return;
+        }
+        self.single_way_lines = self.single_way_lines.saturating_add(1);
+        if self.single_way_lines >= SINGLE_WAY_END {
+            self.finish(CombatEnd::Aborted(AbortReason::SingleWayBlocked), tick);
+            return;
+        }
+        let attacker = select::single_way_attacker(
+            &self.request,
+            self.switch.pending().unwrap_or(self.active),
+            frame,
+            &self.threats,
+            self.engaged,
+        );
+        if let Some(actor) = attacker {
+            self.engage(actor, frame);
+            // The refused click began no attack cycle, and the new target is a
+            // fresh engagement: its attack goes out now under the Engage rules.
+            self.schedule.refused(OpKind::Attack);
+            self.phase = Phase::Engage;
+            self.flags &= !ENGAGEMENT_ATTACK;
+        } else {
+            self.hold_attack(tick, SINGLE_WAY_WINDOW);
+        }
     }
     fn magic_refusal(&mut self, line: &str) {
         let Some(index) = self.magic().selected else {

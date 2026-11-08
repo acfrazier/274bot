@@ -516,7 +516,9 @@ The terminal is the nested `value` of the `done` envelope:
   (`no-food`, `dragonfire`, `no-ammo`, `no-runes`, `unattackable`,
   `prep-failed:<weapon|shield|ammo|staff|arm>`,
   `prep-readiness:combat-root-missing`, `prep-readiness:combat-root-wrong`,
-  `prep-readiness:style-echo-missing`, `unresponsive`,
+  `prep-readiness:style-echo-missing`, `unresponsive`, `single-way-blocked`
+  (single-way combat refused the attack on an NPC three times and no NPC
+  hitting the bot was one the fight may attack),
   `pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>`
   (a player fight the game or the zone stopped mid-fight), ...), the
   engaged `npcType` and the fight's counters (`ticks`, `swings`, `casts`,

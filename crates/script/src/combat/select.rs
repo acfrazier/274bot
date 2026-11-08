@@ -522,75 +522,19 @@ pub fn pick_target(
             types,
             pick,
             not_targeting_others,
-        } => {
-            // Walk to the stand first: a target near the stand is not
-            // engageable from wherever the player happens to be, and a
-            // melee click from outside its walls or fence never lands.
-            if stand_pending(request, frame) {
-                return None;
-            }
-            let origin = request.stand.unwrap_or(frame.here);
-            // Melee uses the posted reach flood when it starts at the
-            // network tile. A stale posted flood gives no pick this poll.
-            // Only a missing flood keeps straight-line picks.
-            let reach = if executable_style == Style::Melee {
-                match frame.reach {
-                    Some(view) => Some(crate::reach_route::live(
-                        Some(view),
-                        Some(frame.local.player.network),
-                    )?),
-                    None => None,
-                }
-            } else {
-                None
-            };
-            let mut best: Option<(ActorRef, u64, u64)> = None;
-            let mut random_state = seed | 1;
-            let mut seen = 0u64;
-            let candidates = frame.npcs.iter().filter_map(|npc| {
-                if corpse(npc)
-                    || !npc.r#type.is_some_and(|id| {
-                        types
-                            .iter()
-                            .any(|wanted| usize::try_from(*wanted).ok() == Some(id))
-                    })
-                    || !within_search_bounds(npc.tile, request.search_bounds.as_deref())
-                    || tile_distance(npc.tile, origin) > u32::from(request.engage_radius)
-                {
-                    return None;
-                }
-                let route_steps = reach.and_then(|view| npc_route_steps(view, npc));
-                if reach.is_some() && route_steps.is_none() {
-                    return None;
-                }
-                if *not_targeting_others && taken_by_another(npc, None, frame.me()) {
-                    return None;
-                }
-                let actor = npc_actor(npc)?;
-                actor_attackable(frame, actor).then_some((npc, actor, route_steps))
-            });
-            for (npc, actor, route_steps) in candidates {
-                seen = seen.saturating_add(1);
-                let distance = route_steps
-                    .map_or_else(|| u64::from(tile_distance(npc.tile, origin)), u64::from);
-                let health = health_rank(npc);
-                let replace = match (pick, best) {
-                    (Pick::Nearest, Some((_, best_distance, _))) => distance < best_distance,
-                    (Pick::LowestHealth, Some((_, _, best_health))) => health < best_health,
-                    (Pick::Random, _) => {
-                        random_state ^= random_state << 13;
-                        random_state ^= random_state >> 7;
-                        random_state ^= random_state << 17;
-                        random_state.is_multiple_of(seen)
-                    }
-                    (_, None) => true,
-                };
-                if replace || best.is_none() {
-                    best = Some((actor, distance, health));
-                }
-            }
-            best.map(|(actor, _, _)| actor)
-        }
+        } => pick_npc(
+            request,
+            executable_style,
+            frame,
+            seed,
+            NpcPick {
+                types,
+                pick,
+                not_targeting_others: *not_targeting_others,
+                attackers_only: false,
+                except: None,
+            },
+        ),
         Target::Attacker { npcs, players } => threats
             .iter(frame.tick)
             .filter(|threat| match threat.actor.kind {
@@ -618,6 +562,180 @@ pub fn pick_target(
                     && player_actor(player).is_some_and(|actor| actor_attackable(frame, actor))
             })
             .and_then(player_actor),
+    }
+}
+
+/// What [`pick_npc`] chooses among.
+#[derive(Clone, Copy)]
+struct NpcPick<'a> {
+    types: &'a [i32],
+    pick: &'a Pick,
+    not_targeting_others: bool,
+    /// Keep only the rows whose target is the local player: the single-way
+    /// retarget ([`single_way_attacker`]) chooses among the NPCs that are
+    /// hitting the bot.
+    attackers_only: bool,
+    /// With `attackers_only`: the actor the server just refused, which the
+    /// retarget never picks again.
+    except: Option<ActorRef>,
+}
+
+/// The authored-NPC pick of [`pick_target`].
+fn pick_npc(
+    request: &CombatRequest,
+    executable_style: Style,
+    frame: &Frame<'_>,
+    seed: u64,
+    filter: NpcPick<'_>,
+) -> Option<ActorRef> {
+    let NpcPick {
+        types,
+        pick,
+        not_targeting_others,
+        attackers_only,
+        except,
+    } = filter;
+    // Walk to the stand first: a target near the stand is not
+    // engageable from wherever the player happens to be, and a
+    // melee click from outside its walls or fence never lands. The stand
+    // gates starting an engagement: an NPC that already hits the bot needs
+    // neither the stand nor a route, because it reached the bot.
+    if !attackers_only && stand_pending(request, frame) {
+        return None;
+    }
+    let origin = request.stand.unwrap_or(frame.here);
+    // Melee uses the posted reach flood when it starts at the
+    // network tile. A stale posted flood gives no pick this poll.
+    // Only a missing flood keeps straight-line picks.
+    let reach = if executable_style == Style::Melee && !attackers_only {
+        match frame.reach {
+            Some(view) => Some(crate::reach_route::live(
+                Some(view),
+                Some(frame.local.player.network),
+            )?),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let mut best: Option<(ActorRef, u64, u64)> = None;
+    let mut random_state = seed | 1;
+    let mut seen = 0u64;
+    let candidates = frame.npcs.iter().filter_map(|npc| {
+        if corpse(npc)
+            || !npc.r#type.is_some_and(|id| {
+                types
+                    .iter()
+                    .any(|wanted| usize::try_from(*wanted).ok() == Some(id))
+            })
+            || !within_search_bounds(npc.tile, request.search_bounds.as_deref())
+            || tile_distance(npc.tile, origin) > u32::from(request.engage_radius)
+        {
+            return None;
+        }
+        if attackers_only
+            && (!targets_player(npc, frame.me())
+                || except.is_some_and(|skip| npc_actor(npc) == Some(skip)))
+        {
+            return None;
+        }
+        let route_steps = reach.and_then(|view| npc_route_steps(view, npc));
+        if reach.is_some() && route_steps.is_none() {
+            return None;
+        }
+        if not_targeting_others && taken_by_another(npc, None, frame.me()) {
+            return None;
+        }
+        let actor = npc_actor(npc)?;
+        actor_attackable(frame, actor).then_some((npc, actor, route_steps))
+    });
+    for (npc, actor, route_steps) in candidates {
+        seen = seen.saturating_add(1);
+        let distance = if attackers_only {
+            // The NPC that is in combat with the bot comes first, then the
+            // nearest to the bot.
+            (u64::from(!npc.in_combat) << 32) | u64::from(tile_distance(npc.tile, frame.here))
+        } else {
+            route_steps.map_or_else(|| u64::from(tile_distance(npc.tile, origin)), u64::from)
+        };
+        let health = health_rank(npc);
+        let replace = match (pick, best) {
+            (Pick::Nearest, Some((_, best_distance, _))) => distance < best_distance,
+            (Pick::LowestHealth, Some((_, _, best_health))) => health < best_health,
+            (Pick::Random, _) => {
+                random_state ^= random_state << 13;
+                random_state ^= random_state >> 7;
+                random_state ^= random_state << 17;
+                random_state.is_multiple_of(seen)
+            }
+            (_, None) => true,
+        };
+        if replace || best.is_none() {
+            best = Some((actor, distance, health));
+        }
+    }
+    best.map(|(actor, _, _)| actor)
+}
+
+/// True when the NPC row's target is the local player.
+fn targets_player(npc: &NpcView, local_slot: usize) -> bool {
+    npc.target
+        .is_some_and(|target| target.kind == ActorKind::Player && target.index == local_slot)
+}
+
+/// The NPC that holds the bot in single-way combat: an attackable NPC the
+/// request may fight whose target is the local player, other than `refused`
+/// (the engaged actor whose attack the server just refused). In single-way
+/// combat the attack is refused unless its target is the NPC that last
+/// attacked the player (`player_combat.rs2:115`, `npc_combat.rs2:367-370`),
+/// so after a refusal this is the target the content allows. The pick keeps
+/// the authored NPC filters (types, search bounds, engage radius) and takes
+/// the NPC in combat with the bot first, then the nearest. `None` when no
+/// such NPC is observed.
+pub fn single_way_attacker(
+    request: &CombatRequest,
+    executable_style: Style,
+    frame: &Frame<'_>,
+    threats: &ThreatSet,
+    refused: Option<ActorRef>,
+) -> Option<ActorRef> {
+    match &request.target {
+        Target::Npc { types, .. } => pick_npc(
+            request,
+            executable_style,
+            frame,
+            0,
+            NpcPick {
+                types,
+                pick: &Pick::Nearest,
+                not_targeting_others: false,
+                attackers_only: true,
+                except: refused,
+            },
+        ),
+        Target::Attacker { npcs: true, .. } => threats
+            .iter(frame.tick)
+            .filter(|threat| threat.actor.kind == ActorKind::Npc)
+            .filter(|threat| Some(threat.actor) != refused)
+            .filter(|threat| {
+                frame
+                    .npcs
+                    .iter()
+                    .find(|row| row.index == usize::from(threat.actor.index))
+                    .is_some_and(|row| targets_player(row, frame.me()))
+            })
+            .filter(|threat| {
+                actor_in_search_bounds(frame, threat.actor, request.search_bounds.as_deref())
+            })
+            .filter(|threat| actor_attackable(frame, threat.actor))
+            .max_by_key(|threat| {
+                (
+                    threat.max_hit_est().unwrap_or(u8::MAX),
+                    u16::MAX.wrapping_sub(frame.tick.wrapping_sub(threat.last_seen)),
+                )
+            })
+            .map(|threat| threat.actor),
+        Target::Attacker { npcs: false, .. } | Target::Player { .. } => None,
     }
 }
 #[inline]

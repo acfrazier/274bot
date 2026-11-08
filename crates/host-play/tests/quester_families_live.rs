@@ -2033,6 +2033,329 @@ fn live_quester_families_until_drop_on_entrana() {
     assert_eq!(receipt["family_receipt"]["target_item_seeded"], false);
 }
 
+// Black Knights' Fortress banquet hall: `aggressive_black_knight` (vislevel 33,
+// huntrange 5, `huntmode=cowardly`) spawns five times inside it, and no
+// `multiway.csv` row covers the zone, so combat there is single-way
+// (`GameMap.ts:102`). The fixture starts inside the hall: a knight may reach
+// the bot before Start, and the fixture's own pre-Start proof then fails on
+// the bot's stats or side tabs (fixture interference, not a product result).
+const FORTRESS_START: WorldTile = WorldTile {
+    x: 3022,
+    z: 3516,
+    level: 0,
+};
+const FORTRESS_STAND: WorldTile = WorldTile {
+    x: 3027,
+    z: 3515,
+    level: 0,
+};
+const FORTRESS_ITEMS: &[(&str, i32)] = &[("lobster", 8)];
+const FORTRESS_KNIGHT_SOURCE: &str = "content/maps/m47_54.jm2:7531-7538 (aggressive_black_knight, level 0); content/pack/npc.pack:180; content/scripts/_unpack/225/all.npc:4142-4172; content/scripts/_unpack/225/all.hunt:[cowardly]; content/maps/multiway.csv (no 0_47_54_* row)";
+/// `player_combat.rs2:112,116` (revision 289, with `!`) and `:137,141` (no mark; the
+/// revision-377 `player_in_combat_check` text).
+const SINGLE_WAY_LINES: [&str; 2] = ["I'm already under attack!", "I'm already under attack"];
+/// Sequential fights the cell asks for. A refusal needs an aggressive knight
+/// other than the pick to hit the bot first; each fight is one more start of
+/// that situation. The cell records what it saw and never gates on it.
+const FORTRESS_KILLS: usize = 3;
+/// The machine ends a fight on the third refusal with no confirmed attack in
+/// between (`SINGLE_WAY_END`), so a run that completed holds at most two per fight.
+const SINGLE_WAY_REFUSAL_BOUND: usize = 2 * FORTRESS_KILLS;
+
+/// The verdict over a finished run. `steps` counts the distinct combat steps
+/// the status showed; the family completes a step when its fight ends, so a
+/// completed run with every step seen proves each fight ended inside its
+/// budgets. The `combat_kills` status is a sampled field, kept as an
+/// observation in the receipt, never a gate.
+fn single_way_outcome(
+    refusals: usize,
+    steps: usize,
+    completed: bool,
+    retargets: usize,
+) -> Result<&'static str, String> {
+    if refusals > SINGLE_WAY_REFUSAL_BOUND {
+        Err(format!(
+            "{refusals} single-way refusal lines (bound {SINGLE_WAY_REFUSAL_BOUND}): the refused attack was not retargeted"
+        ))
+    } else if !completed || steps < FORTRESS_KILLS {
+        Err(format!(
+            "single-way run did not finish its {FORTRESS_KILLS} fights: completed={completed}, steps seen={steps}, refusals={refusals}"
+        ))
+    } else if refusals == 0 {
+        Ok("no_refusal_observed")
+    } else if retargets == 0 {
+        Ok("refused_then_waited_out")
+    } else {
+        Ok("retargeted_after_refusal")
+    }
+}
+
+#[test]
+fn single_way_oracle_accepts_bounded_runs_and_rejects_loop_or_unfinished_runs() {
+    let steps = FORTRESS_KILLS;
+    assert_eq!(
+        single_way_outcome(1, steps, true, 1).unwrap(),
+        "retargeted_after_refusal"
+    );
+    assert_eq!(
+        single_way_outcome(SINGLE_WAY_REFUSAL_BOUND, steps, true, 1).unwrap(),
+        "retargeted_after_refusal"
+    );
+    assert_eq!(
+        single_way_outcome(2, steps, true, 0).unwrap(),
+        "refused_then_waited_out"
+    );
+    assert_eq!(
+        single_way_outcome(0, steps, true, 0).unwrap(),
+        "no_refusal_observed"
+    );
+    assert!(single_way_outcome(SINGLE_WAY_REFUSAL_BOUND + 1, steps, true, 1).is_err());
+    assert!(single_way_outcome(1, steps - 1, true, 1).is_err());
+    assert!(single_way_outcome(1, steps, false, 1).is_err());
+}
+
+fn is_single_way_line(text: &str) -> bool {
+    SINGLE_WAY_LINES.contains(&text)
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the already-running shared local Engine A"]
+fn live_quester_families_combat_single_way_retarget() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (selected, quests) = live_data();
+    let knight_id = selected
+        .npc_by_config("aggressive_black_knight")
+        .expect("selected R289 aggressive_black_knight config")
+        .id;
+    let knight_type = usize::try_from(knight_id).expect("knight type id is nonnegative");
+    let (mut cell, seed, seed_commands) = make_cell(
+        "live-quester-families-combat-single-way-retarget",
+        ("cook", "Cook's Assistant"),
+        0,
+        FORTRESS_ITEMS,
+        FORTRESS_START,
+        Some(FixtureLoadout::Path("family_melee")),
+        Arc::clone(&selected),
+    );
+    cell.scenario.settings.deadline = Duration::from_secs(600);
+    let start_seed = seed;
+    let start_selected = Arc::clone(&selected);
+    cell.observe_start = Some(Box::new(move |snapshot| {
+        let seed_receipt = start_seed.observe_start(snapshot)?;
+        let here = common_observe_start(snapshot, FORTRESS_START)?;
+        let local = snapshot
+            .local_player()
+            .ok_or("pre-Start fortress snapshot has no local player")?;
+        let knights: Vec<_> = snapshot
+            .npcs()
+            .iter()
+            .filter(|npc| npc.r#type == Some(knight_type))
+            .map(|npc| json!({"index": npc.index, "tile": npc.tile, "target": npc.target}))
+            .collect();
+        if knights.len() < 2 {
+            return Err(format!(
+                "fortress hall showed {} aggressive_black_knight rows before Start, need at least 2",
+                knights.len()
+            ));
+        }
+        Ok(json!({
+            "fixture": "cook:0 Base40",
+            "profile_seed": seed_receipt,
+            "seed_commands": &seed_commands,
+            "tile": here,
+            "npc_config": "aggressive_black_knight",
+            "npc_type_id": knight_id,
+            "knights_visible_before_start": knights,
+            "local_in_combat_before_start": local.player.actor.in_combat,
+            "combat_level": local.player.combat_level,
+            "inventory_before_start": inventory_receipt(snapshot),
+            "selected_revision": start_selected.revision().to_string(),
+        }))
+    }));
+
+    let kill_step = |number: usize| {
+        step(
+            &format!("kill-black-knight-{number}"),
+            "combat",
+            json!({
+                "target": {
+                    "npc": "aggressive_black_knight",
+                    "not_targeting_others": true,
+                    "pick": "nearest"
+                },
+                "stand": {
+                    "tile": [FORTRESS_STAND.x, FORTRESS_STAND.z, 0],
+                    "source": FORTRESS_KNIGHT_SOURCE
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 600,
+                "tactic": {
+                    "kind": "open",
+                    "style": "melee",
+                    "engage_radius": 10,
+                    "auto_retaliate": true
+                }
+            }),
+            false,
+            empty_any(),
+            empty_all(),
+        )
+    };
+    let mut document = family_path(
+        "cook",
+        "Single-way combat retarget family fixture",
+        "cook:0",
+        (1..=FORTRESS_KILLS).map(kill_step).collect(),
+        true,
+    );
+    // This proof consumes its steps once while the fixture journal stays cook:0.
+    document.roles[0].sequences[0].order = SequenceOrder::Ordered;
+    let start = family_start(document, Arc::clone(&selected), Arc::clone(&quests));
+    let mut steps_seen: Vec<String> = Vec::new();
+    let mut step_kills: Vec<(String, i64)> = Vec::new();
+    let mut refusal_sequences: Vec<i32> = Vec::new();
+    let mut attackers: Vec<usize> = Vec::new();
+    let mut polls = 0u32;
+    let mut trace: Vec<Value> = Vec::new();
+    // The local target when the last refusal was read, until it changes to a
+    // knight that targets the bot.
+    let mut awaiting_retarget: Option<(u32, Option<usize>)> = None;
+    let mut retargets: Vec<Value> = Vec::new();
+    let observe: ObserveFamily = Box::new(move |snapshot, status, lifecycle| {
+        polls += 1;
+        if let Some(status) = status {
+            if let Some(id) =
+                status_text(status, "step_id").filter(|id| id.starts_with("kill-black-knight-"))
+            {
+                if !steps_seen.iter().any(|seen| seen == id) {
+                    steps_seen.push(id.to_owned());
+                }
+                if let Some(confirmed) = status_integer(Some(status), "combat_kills") {
+                    match step_kills.iter_mut().find(|(step, _)| step == id) {
+                        Some((_, kills)) => *kills = (*kills).max(confirmed),
+                        None => step_kills.push((id.to_owned(), confirmed)),
+                    }
+                }
+            }
+        }
+        let kills: i64 = step_kills.iter().map(|(_, kills)| *kills).sum();
+        let local_index = snapshot.local_player().map(|local| local.player.index);
+        let local_target = snapshot.local_player().and_then(|local| {
+            local
+                .player
+                .actor
+                .target
+                .filter(|target| target.kind == ActorKind::Npc)
+                .map(|target| target.index)
+        });
+        let knight_hits_me = |index: usize| {
+            snapshot.npcs().iter().any(|npc| {
+                npc.index == index
+                    && npc.r#type == Some(knight_type)
+                    && local_index.is_some_and(|me| {
+                        npc.target
+                            == Some(ActorTargetView {
+                                kind: ActorKind::Player,
+                                index: me,
+                            })
+                    })
+            })
+        };
+        for line in snapshot.chat_lines() {
+            if is_single_way_line(&line.text) && !refusal_sequences.contains(&line.sequence) {
+                refusal_sequences.push(line.sequence);
+                awaiting_retarget = Some((polls, local_target));
+                if trace.len() < 60 {
+                    trace.push(json!({"poll": polls, "refusal_sequence": line.sequence,
+                        "here": tile(snapshot), "kills": kills,
+                        "local_target": local_target,
+                        "local_target_hits_me": local_target.map(knight_hits_me),
+                        "knights": snapshot.npcs().iter()
+                            .filter(|npc| npc.r#type == Some(knight_type))
+                            .map(|npc| json!({
+                                "index": npc.index,
+                                "tile": npc.tile,
+                                "targets_me": knight_hits_me(npc.index),
+                                "in_combat": npc.in_combat,
+                            }))
+                            .collect::<Vec<_>>()}));
+                }
+            }
+        }
+        if let Some((refusal_poll, before)) = awaiting_retarget {
+            if let Some(target) = local_target.filter(|target| Some(*target) != before) {
+                if knight_hits_me(target) {
+                    retargets.push(json!({"refusal_poll": refusal_poll, "poll": polls,
+                        "from": before, "to": target}));
+                    awaiting_retarget = None;
+                }
+            }
+        }
+        for npc in snapshot.npcs() {
+            if npc.r#type == Some(knight_type)
+                && knight_hits_me(npc.index)
+                && !attackers.contains(&npc.index)
+            {
+                attackers.push(npc.index);
+            }
+        }
+        if refusal_sequences.len() > SINGLE_WAY_REFUSAL_BOUND + 4 {
+            return Err(format!(
+                "single-way refusal loop: {} lines after {polls} polls, kills={kills}, attackers={attackers:?}, trace={}",
+                refusal_sequences.len(),
+                Value::Array(trace.clone())
+            ));
+        }
+        let Some(lifecycle) = lifecycle else {
+            return Ok(None);
+        };
+        if steps_seen.is_empty() {
+            return Err("single-way receipt never observed its combat step".into());
+        }
+        let completed = completed_lifecycle(Some(lifecycle));
+        let outcome = single_way_outcome(
+            refusal_sequences.len(),
+            steps_seen.len(),
+            completed,
+            retargets.len(),
+        )
+        .map_err(|error| {
+            format!(
+                "{error}; attackers={attackers:?}; trace={}",
+                Value::Array(trace.clone())
+            )
+        })?;
+        Ok(Some(json!({
+            "family_step": "combat",
+            "npc_config": "aggressive_black_knight",
+            "npc_type_id": knight_id,
+            "outcome": outcome,
+            "refusal_lines": refusal_sequences.len(),
+            "refusal_sequences": &refusal_sequences,
+            "retargets_witnessed": &retargets,
+            "attackers_seen": &attackers,
+            "steps_seen": &steps_seen,
+            "status_kills_observed": kills,
+            "step_kills": &step_kills,
+            "polls": polls,
+            "trace": &trace,
+            "inventory_after": inventory_receipt(snapshot),
+            "source": FORTRESS_KNIGHT_SOURCE,
+            "native_status": native_status_receipt(status),
+        })))
+    });
+    let receipt = quester_live::run_family(cell, start, observe)
+        .unwrap_or_else(|error| panic!("single-way retarget live proof failed: {error}"));
+    assert_eq!(
+        receipt["family_receipt"]["steps_seen"]
+            .as_array()
+            .map(Vec::len),
+        Some(FORTRESS_KILLS)
+    );
+}
+
 fn timed_jailer_cell(
     selected: Arc<SelectedGameData>,
 ) -> (Cell, scenario::quester::QuesterSeed, Vec<String>) {

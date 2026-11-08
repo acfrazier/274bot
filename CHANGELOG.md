@@ -40,6 +40,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   event walks on the same tile, and prepare adjacent resource positions before
   the measured Start. The free-world refusal window starts at its real arm.
 
+### Combat
+
+- When single-way combat refuses an attack on an NPC with "I'm already under
+  attack" because another NPC is hitting the bot, the fight now attacks that NPC
+  if it may, or holds the attack for the game's 8-tick window. After three
+  refusals with no confirmed attack, it ends with `single-way-blocked` instead
+  of repeating the click without end.
+
 ### API and native dispatch
 
 - Ordered input uses the raw Client `PLAYER_INFO` generation for both clock
