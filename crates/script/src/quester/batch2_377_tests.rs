@@ -45,6 +45,10 @@ fn selection_snapshot(
 
 #[test]
 fn batch2_377_journals_recover_every_action_boundary() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+        return;
+    };
     api::selected::FamilyPreparation::run(|worker| {
         let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
         let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
@@ -86,7 +90,7 @@ fn batch2_377_journals_recover_every_action_boundary() {
                 &quests,
                 worker,
                 &crate::local_state::OperatorLoadouts::absent(),
-                compile::real_377_nav_lease().zones(),
+                nav.zones(),
             ).unwrap_or_else(|error| panic!("{id}: {error:?}"));
             for (stage, text) in cases {
                 let read = JournalRead {
@@ -190,15 +194,17 @@ fn batch2_377_coin_acquisition_exercises_real_palace_spawns() {
 
 #[test]
 fn vampire_377_authored_stairs_advance_at_the_canonical_landing() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+        return;
+    };
     let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
     let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     let path = compile::compile_uncached_for_test_with_zones(
         &serde_json::from_value(document("vampire")).unwrap(),
         &selected,
         &quests,
-        compile::real_377_nav_lease()
-            .zones()
-            .expect("real 377 zone catalog"),
+        nav.zones().expect("real 377 zone catalog"),
     )
     .unwrap();
     let progress = [progress_for_stage(&path, "vampire:2", &[])];
@@ -256,15 +262,17 @@ fn vampire_377_authored_stairs_advance_at_the_canonical_landing() {
 
 #[test]
 fn demon_377_authored_bone_preparation_advances_after_deposit() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+        return;
+    };
     let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
     let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     let path = compile::compile_uncached_for_test_with_zones(
         &serde_json::from_value(document("demon")).unwrap(),
         &selected,
         &quests,
-        compile::real_377_nav_lease()
-            .zones()
-            .expect("real 377 zone catalog"),
+        nav.zones().expect("real 377 zone catalog"),
     )
     .unwrap();
     let progress = [progress_for_stage(&path, "demon:2", &[])];
@@ -298,15 +306,17 @@ fn demon_377_authored_bone_preparation_advances_after_deposit() {
 
 #[test]
 fn demon_377_authored_drain_sequence_advances_after_the_observed_pour() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+        return;
+    };
     let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
     let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     let path = compile::compile_uncached_for_test_with_zones(
         &serde_json::from_value(document("demon")).unwrap(),
         &selected,
         &quests,
-        compile::real_377_nav_lease()
-            .zones()
-            .expect("real 377 zone catalog"),
+        nav.zones().expect("real 377 zone catalog"),
     )
     .unwrap();
     let progress = [progress_for_stage(&path, "demon:2", &[])];
@@ -359,15 +369,17 @@ fn demon_377_authored_drain_sequence_advances_after_the_observed_pour() {
 
 #[test]
 fn gobdip_377_authored_funding_tracks_the_remaining_dye_cost() {
+    crate::require_local_game_data_for_test!(ClientRevision::R377);
+    let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+        return;
+    };
     let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
     let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     let path = compile::compile_uncached_for_test_with_zones(
         &serde_json::from_value(document("gobdip")).unwrap(),
         &selected,
         &quests,
-        compile::real_377_nav_lease()
-            .zones()
-            .expect("real 377 zone catalog"),
+        nav.zones().expect("real 377 zone catalog"),
     )
     .unwrap();
     let progress = [progress_for_stage(&path, "gobdip:1", &[])];
