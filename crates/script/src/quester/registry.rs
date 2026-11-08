@@ -1756,6 +1756,10 @@ mod tests {
 
     #[test]
     fn revision_377_bundle_loads_and_compiles_its_own_paths() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+            return;
+        };
         FamilyPreparation::run(|worker| {
             let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
             let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
@@ -1816,7 +1820,7 @@ mod tests {
                     &quests,
                     worker,
                     &crate::local_state::OperatorLoadouts::absent(),
-                    compile::real_377_nav_lease().zones(),
+                    nav.zones(),
                 )
                 .unwrap_or_else(|error| panic!("377 {id} failed to compile: {error:?}"));
                 assert_eq!(compiled.id.0.as_ref(), id.as_str());
@@ -1837,6 +1841,10 @@ mod tests {
 
     #[test]
     fn revision_377_imp_bundle_loads_and_compiles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+            return;
+        };
         FamilyPreparation::run(|worker| {
             let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
             let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
@@ -1860,7 +1868,7 @@ mod tests {
                 &quests,
                 worker,
                 &crate::local_state::OperatorLoadouts::absent(),
-                compile::real_377_nav_lease().zones(),
+                nav.zones(),
             )
             .unwrap_or_else(|error| panic!("377 Imp Catcher failed to compile: {error:?}"));
             assert_eq!(compiled.id.0.as_ref(), "imp");
@@ -1874,6 +1882,10 @@ mod tests {
 
     #[test]
     fn revision_377_doric_bundle_loads_and_compiles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+            return;
+        };
         FamilyPreparation::run(|worker| {
             let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
             let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
@@ -1897,7 +1909,7 @@ mod tests {
                 &quests,
                 worker,
                 &crate::local_state::OperatorLoadouts::absent(),
-                compile::real_377_nav_lease().zones(),
+                nav.zones(),
             )
             .unwrap_or_else(|error| panic!("377 Doric failed to compile: {error:?}"));
             assert_eq!(compiled.id.0.as_ref(), "doric");
@@ -1911,6 +1923,7 @@ mod tests {
 
     #[test]
     fn revision_377_folder_validates_without_adding_289_bundles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
         FamilyPreparation::run(|worker| {
             let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
             let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
