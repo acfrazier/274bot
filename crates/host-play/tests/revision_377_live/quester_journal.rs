@@ -55,15 +55,35 @@ const COMBAT_FIXTURE: &[&str] = &[
     "give trout 5",
 ];
 
-// The journal requires Mining 10, and the fresh pie recipe needs Cooking 10.
-// Iron bars are natural dwarf drops, so Smithing remains at its fresh level.
+// The journal needs Mining 10, and the fresh pie recipe needs Cooking 10.
+// This live fixture seeds two bars in the own-account bank to test the
+// existing fast path; the path's iron-bar acquisition route stays unproven.
 // Sources: quest_squire/scripts/squire_journal.rs2:7-12;
-// skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17;
-// drop_tables/scripts/dwarf.rs2:13,47-48.
+// skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17.
 const SQUIRE_MINING_LEVEL: i32 = 10;
 const SQUIRE_SMITHING_LEVEL: i32 = 1;
 const SQUIRE_COOKING_LEVEL: i32 = 10;
 const SQUIRE_REQUIREMENT_FIXTURE: &[&str] = &["setstat mining 10", "setstat cooking 10"];
+#[derive(Clone, Copy)]
+struct BankSeed {
+    label: &'static str,
+    alias: &'static str,
+    count: i32,
+}
+
+const SQUIRE_BANK_SEEDS: &[BankSeed] = &[BankSeed {
+    label: "SEED own-account bank: Squire two-bar fast-path input",
+    alias: "iron_bar",
+    count: 2,
+}];
+
+fn bank_seeds_for(quest: Quest) -> &'static [BankSeed] {
+    if quest.key == "squire" {
+        SQUIRE_BANK_SEEDS
+    } else {
+        &[]
+    }
+}
 
 #[derive(Clone, Copy)]
 struct Quest {
@@ -580,9 +600,26 @@ impl Witness {
             );
         }
         if self.quest.key == "squire" {
-            seeds.push("labelled own-account quest/acquisition minima: setstat mining 10 (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12), setstat cooking 10 (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17); Smithing remains fresh at level 1 / 0 XP because iron bars are natural dwarf drops (content/scripts/drop_tables/scripts/dwarf.rs2:13,47-48)");
+            seeds.push("labelled own-account quest minima: Mining 10 (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12) and Cooking 10 (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17); Smithing remains fresh at level 1 / 0 XP");
         }
-        let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"quest_state_seeds":0,"quest_item_seeds":0,"reward_xp_seeds":0,"quest_point_seeds":0});
+        let bank_seeds = bank_seeds_for(self.quest);
+        for seed in bank_seeds {
+            seeds.push(seed.label);
+        }
+        let bank_seed_rows = bank_seeds
+            .iter()
+            .map(|seed| {
+                json!({
+                    "label": seed.label,
+                    "item_alias": seed.alias,
+                    "count": seed.count,
+                    "command": format!("givebank {} {}", seed.alias, seed.count),
+                    "scope": "own-account bank"
+                })
+            })
+            .collect::<Vec<_>>();
+        let quest_item_seeds = bank_seeds.iter().map(|seed| seed.count).sum::<i32>();
+        let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"bank_seeds":bank_seed_rows,"quest_state_seeds":0,"quest_item_seeds":quest_item_seeds,"reward_xp_seeds":0,"quest_point_seeds":0});
         self.record(receipt.clone())?;
         self.jobs.push(self.writer.submit(EvidenceRequest {
             png_path: self.directory.join(format!("{phase}.png")),
@@ -656,6 +693,17 @@ impl Witness {
                                     _ => "SEED own-account combat-only area fixture",
                                 };
                                 self.record(json!({"phase":phase,"command":command}))?;
+                            }
+                            for seed in bank_seeds_for(self.quest) {
+                                let command = format!("givebank {} {}", seed.alias, seed.count);
+                                if !interact::cheat(client, &command).is_sent() {
+                                    return Err(format!("bank fixture command refused: {command}"));
+                                }
+                                self.record(json!({
+                                    "phase": seed.label,
+                                    "command": command,
+                                    "scope": "own-account bank"
+                                }))?;
                             }
                             self.fixture_seeded = true;
                             return Ok(());
@@ -966,6 +1014,19 @@ fn batch2_witness_accepts_the_377_scroll_and_rejects_a_red_row() {
             quest.key
         );
     }
+}
+
+#[test]
+fn squire_bank_seed_is_labelled_and_scoped_to_squire() {
+    let seeds = bank_seeds_for(SQUIRE);
+    assert_eq!(seeds.len(), 1);
+    assert_eq!(
+        seeds[0].label,
+        "SEED own-account bank: Squire two-bar fast-path input"
+    );
+    assert_eq!((seeds[0].alias, seeds[0].count), ("iron_bar", 2));
+    assert!(bank_seeds_for(SHEEP).is_empty());
+    assert!(bank_seeds_for(HETTY).is_empty());
 }
 
 #[test]
