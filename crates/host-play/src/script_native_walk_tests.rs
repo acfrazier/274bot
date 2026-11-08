@@ -1542,6 +1542,7 @@ fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {
 
 #[test]
 fn admission_capture_uses_bound_377_food_and_preserves_unavailable_binding() {
+    script::require_local_game_data_for_test!(api::selected::ClientRevision::R377);
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R377)
         .expect("selected revision 377 facts");
     let food = selected.item_by_alias("cooked_chompy").unwrap();
@@ -1598,6 +1599,7 @@ fn admission_capture_uses_bound_377_food_and_preserves_unavailable_binding() {
 
 #[test]
 fn native_food_guard_uses_bound_377_tables_for_condition_and_food_rows() {
+    script::require_local_game_data_for_test!(api::selected::ClientRevision::R377);
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R377)
         .expect("selected revision 377 facts");
     let food = selected
