@@ -923,22 +923,64 @@ class LaneEnvironmentTests(unittest.TestCase):
 
     def test_post_adr_test_lanes_use_the_tree_pack_for_each_revision(self):
         with tempfile.TemporaryDirectory() as tmp:
-            tree = Path(tmp) / "post-adr"
+            root = Path(tmp)
+            tree = root / "post-adr"
             generator = tree / "tools" / "local-data" / "build.py"
             generator.parent.mkdir(parents=True)
             generator.write_text("# generator\n", encoding="utf-8")
-            for revision in ("289", "274"):
-                pack = tree / "target" / "local-data" / "nav" / revision / "274bot.navpack"
-                pack.parent.mkdir(parents=True)
-                pack.write_bytes(b"pack")
-                pack.with_suffix(".navflags").write_bytes(b"flags")
-                with mock.patch.object(rn, "REVISION", revision):
-                    lanes = rn.lane_list(tree)
-                for name, _args, extra in lanes:
-                    if name.startswith("test-"):
-                        with self.subTest(revision=revision, lane=name):
-                            for key in ("NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK"):
-                                self.assertEqual(extra[key], str(pack))
+            engine_289 = root / "engine-289"
+            content_289 = root / "content-289"
+            engine_289.mkdir()
+            content_289.mkdir()
+            local_289_inputs = {
+                "NIGHTLY_GAME_DATA_289_ENGINE": str(engine_289),
+                "NIGHTLY_GAME_DATA_289_CONTENT": str(content_289),
+            }
+            with mock.patch.dict(os.environ, local_289_inputs):
+                for revision in ("289", "274"):
+                    pack = tree / "target" / "local-data" / "nav" / revision / "274bot.navpack"
+                    pack.parent.mkdir(parents=True)
+                    pack.write_bytes(b"pack")
+                    pack.with_suffix(".navflags").write_bytes(b"flags")
+                    with mock.patch.object(rn, "REVISION", revision):
+                        lanes = rn.lane_list(tree)
+                    for name, _args, extra in lanes:
+                        if name.startswith("test-"):
+                            with self.subTest(revision=revision, lane=name):
+                                for key in ("NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK"):
+                                    self.assertEqual(extra[key], str(pack))
+                                self.assertEqual(
+                                    extra["ISOLATED_289_ENGINE_DIR"], str(engine_289.resolve())
+                                )
+                                self.assertEqual(
+                                    extra["ISOLATED_289_CONTENT_DIR"], str(content_289.resolve())
+                                )
+
+    def test_post_adr_289_lanes_default_local_assets_to_pristine_engine(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tree = root / "post-adr"
+            generator = tree / "tools" / "local-data" / "build.py"
+            generator.parent.mkdir(parents=True)
+            generator.write_text("# generator\n", encoding="utf-8")
+            pack = tree / "target" / "local-data" / "nav" / "289" / "274bot.navpack"
+            pack.parent.mkdir(parents=True)
+            pack.write_bytes(b"pack")
+            pack.with_suffix(".navflags").write_bytes(b"flags")
+            pristine = root / "engine-pristine"
+            engine_289 = pristine / "engine"
+            content_289 = pristine / "content"
+            engine_289.mkdir(parents=True)
+            content_289.mkdir()
+            with mock.patch.object(rn, "REVISION", "289"):
+                with mock.patch.object(rn, "ENGINE_PRISTINE", pristine):
+                    with mock.patch.dict(os.environ, {
+                            "NIGHTLY_GAME_DATA_289_ENGINE": "",
+                            "NIGHTLY_GAME_DATA_289_CONTENT": "",
+                    }):
+                        env = rn.lane_asset_env(tree)
+        self.assertEqual(env["ISOLATED_289_ENGINE_DIR"], str(engine_289.resolve()))
+        self.assertEqual(env["ISOLATED_289_CONTENT_DIR"], str(content_289.resolve()))
 
     def test_pre_adr_test_lanes_keep_the_reference_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -949,6 +991,8 @@ class LaneEnvironmentTests(unittest.TestCase):
                 env = rn.lane_asset_env(tree)
         for key in ("NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK"):
             self.assertEqual(env[key], str(fixture))
+        self.assertNotIn("ISOLATED_289_ENGINE_DIR", env)
+        self.assertNotIn("ISOLATED_289_CONTENT_DIR", env)
 
     def test_post_adr_missing_pack_or_flags_uses_generator_diagnostic(self):
         with tempfile.TemporaryDirectory() as tmp:

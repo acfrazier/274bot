@@ -968,10 +968,12 @@ error in it. If the task is stopped during that step, the missed night has no su
    `cargo fmt --check` per crate (a workspace-root fmt hits OS error 206 on Windows).
    Each test lane gets the Linux CI test inputs. Post-ADR trees set the three nav
    pack names to `target/local-data/nav/<NIGHTLY_REVISION>/274bot.navpack`
-   and its `.navflags`; pre-ADR trees use the v18 reference fixture. `ENGINE_DIR`
-   and `WORLD_ENGINE_DIR` use the pristine engine copy; `BOT_NAV_SNAPSHOT_ROOT`
-   uses the decoded snapshot folder; `T5W_INSPECT_CAPTURE_BASELINE` uses the
-   inspection fixture when the host holds it.
+   and its `.navflags`; pre-ADR trees use the v18 reference fixture.
+   `ISOLATED_289_ENGINE_DIR` and `ISOLATED_289_CONTENT_DIR` use the exact
+   revision-289 local-data inputs. `ENGINE_DIR` and `WORLD_ENGINE_DIR` use the
+   pristine engine copy; `BOT_NAV_SNAPSHOT_ROOT` uses the decoded snapshot
+   folder. `T5W_INSPECT_CAPTURE_BASELINE` uses the inspection fixture when the
+   host holds it.
    Each lane gets its own throwaway
    `HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA`/`TEMP` with a copy of the
    decoded snapshot, and `BOT_NAV_BUILD=skip`, `CARGO_INCREMENTAL=0`,

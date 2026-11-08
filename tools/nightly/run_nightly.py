@@ -3111,7 +3111,8 @@ def lane_asset_env(tree: Path | None = None, *, require_generated: bool = True) 
     trees keep the configured reference fixture. When a generated pack is
     required, missing outputs use the generator's diagnostic.
     """
-    if tree is not None and (tree / "tools/local-data/build.py").is_file():
+    generated_tree = tree is not None and (tree / "tools/local-data/build.py").is_file()
+    if generated_tree:
         pack_path = tree / "target" / "local-data" / "nav" / str(REVISION) / "274bot.navpack"
         if require_generated:
             for output in (pack_path, pack_path.with_suffix(".navflags")):
@@ -3131,6 +3132,15 @@ def lane_asset_env(tree: Path | None = None, *, require_generated: bool = True) 
         env["BOT_NAV_SNAPSHOT_ROOT"] = str(NAV_SNAPSHOT)
     if INSPECT_BASELINE.is_file():
         env["T5W_INSPECT_CAPTURE_BASELINE"] = str(INSPECT_BASELINE)
+    if generated_tree:
+        engine_289 = os.environ.get("NIGHTLY_GAME_DATA_289_ENGINE")
+        content_289 = os.environ.get("NIGHTLY_GAME_DATA_289_CONTENT")
+        if REVISION == "289":
+            engine_289 = engine_289 or str(ENGINE_PRISTINE / "engine")
+            content_289 = content_289 or str(ENGINE_PRISTINE / "content")
+        if engine_289 and content_289:
+            env["ISOLATED_289_ENGINE_DIR"] = str(Path(engine_289).expanduser().resolve())
+            env["ISOLATED_289_CONTENT_DIR"] = str(Path(content_289).expanduser().resolve())
     return env
 
 
