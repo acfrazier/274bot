@@ -26,24 +26,61 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
+
 /// Add the source commit and worktree state to a live-test receipt.
 #[cfg(any(test, feature = "test-support"))]
 pub fn record_source_identity(receipt: &mut serde_json::Value) {
-    let git = |args: &[&str]| {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .output()
-            .expect("read live receipt source identity");
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).expect("UTF-8 git output")
-    };
-    receipt["commit"] = serde_json::json!(git(&["rev-parse", "HEAD"]).trim());
-    receipt["worktree_dirty"] = serde_json::json!(!git(&["status", "--porcelain"]).is_empty());
+    fn git_identity(root: &std::path::Path) -> (Option<String>, Option<bool>) {
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .ok()?;
+            output
+                .status
+                .success()
+                .then(|| String::from_utf8(output.stdout).ok())
+                .flatten()
+        };
+        let commit = git(&["rev-parse", "HEAD"]).map(|value| value.trim().to_owned());
+        let dirty = git(&["status", "--porcelain"]).map(|value| !value.is_empty());
+        (commit, dirty)
+    }
+
+    let host_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let (host_commit, host_dirty) = git_identity(&host_root);
+    let client_root = host_root.join("vendor/fr-client-rust");
+    let (client_commit, client_dirty) = git_identity(&client_root);
+    if !receipt.is_object() {
+        *receipt = serde_json::json!({});
+    }
+    receipt["commit"] = serde_json::json!(host_commit);
+    receipt["worktree_dirty"] = serde_json::json!(host_dirty);
+    let object = receipt.as_object_mut().expect("receipt object");
+    let manifest = object
+        .entry("manifest")
+        .or_insert_with(|| serde_json::json!({}));
+    if !manifest.is_object() {
+        *manifest = serde_json::json!({});
+    }
+    let sources = manifest
+        .as_object_mut()
+        .expect("manifest object")
+        .entry("sources")
+        .or_insert_with(|| serde_json::json!({}));
+    if !sources.is_object() {
+        *sources = serde_json::json!({});
+    }
+    sources["host"] = serde_json::json!({
+        "commit": host_commit,
+        "worktree_dirty": host_dirty,
+    });
+    sources["client"] = serde_json::json!({
+        "commit": client_commit,
+        "worktree_dirty": client_dirty,
+    });
 }
 
 /// How many captures may wait for the background thread.
@@ -431,7 +468,7 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
             request.height,
             request.pixels.len()
         );
-        return finish_with_sidecar(request, error, 0, 0.0, 0.0, 0.0, 0.0);
+        return finish_with_sidecar(request, error, 0, 0.0, 0.0, 0.0, 0.0, None);
     }
     let convert_start = Instant::now();
     let bytes_per_pixel = match request.color {
@@ -469,7 +506,7 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
     let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
     if let Some(error) = encode_error {
         let error = format!("id={id}: encode {}: {error}", request.png_path.display());
-        return finish_with_sidecar(request, error, 0, convert_ms, encode_ms, 0.0, 0.0);
+        return finish_with_sidecar(request, error, 0, convert_ms, encode_ms, 0.0, 0.0, None);
     }
     let write_start = Instant::now();
     let write_error = std::fs::write(&request.png_path, &encoded)
@@ -479,7 +516,9 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
     if let Some(error) = write_error {
         let _ = std::fs::remove_file(&request.png_path);
         let error = format!("id={id}: write {}: {error}", request.png_path.display());
-        return finish_with_sidecar(request, error, 0, convert_ms, encode_ms, write_ms, 0.0);
+        return finish_with_sidecar(
+            request, error, 0, convert_ms, encode_ms, write_ms, 0.0, None,
+        );
     }
     let sync_start = Instant::now();
     let sync_error = sync_file(&request.png_path)
@@ -496,6 +535,7 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
             encode_ms,
             write_ms,
             sync_ms,
+            None,
         );
     }
     finish_with_sidecar(
@@ -506,6 +546,10 @@ fn write_capture(id: u64, request: &EvidenceRequest) -> EvidenceOutcome {
         encode_ms,
         write_ms,
         sync_ms,
+        request
+            .sidecar
+            .as_ref()
+            .map(|_| format!("{:x}", Sha256::digest(&encoded))),
     )
 }
 
@@ -522,6 +566,7 @@ fn sync_file(path: &std::path::Path) -> std::io::Result<()> {
 /// Complete one capture: patch the receipt's error key on failure, write
 /// and fsync the sidecar when present, then report. An empty `error` means
 /// the PNG (and sidecar) are durable.
+#[allow(clippy::too_many_arguments)]
 fn finish_with_sidecar(
     request: &EvidenceRequest,
     error: String,
@@ -530,6 +575,7 @@ fn finish_with_sidecar(
     encode_ms: f64,
     write_ms: f64,
     sync_ms: f64,
+    png_sha256: Option<String>,
 ) -> EvidenceOutcome {
     let failed = !error.is_empty();
     if let Some(sidecar) = request.sidecar.as_ref() {
@@ -554,6 +600,36 @@ fn finish_with_sidecar(
             if let Some(patch) = sidecar.patch_error.as_ref() {
                 patch(&mut receipt, &error);
             }
+        }
+        if let Some(sha256) = png_sha256.as_deref().filter(|_| !failed) {
+            if !receipt.is_object() {
+                receipt = serde_json::json!({});
+            }
+            let manifest = receipt
+                .as_object_mut()
+                .expect("receipt object")
+                .entry("manifest")
+                .or_insert_with(|| serde_json::json!({}));
+            if !manifest.is_object() {
+                *manifest = serde_json::json!({});
+            }
+            let artifacts = manifest
+                .as_object_mut()
+                .expect("manifest object")
+                .entry("artifacts")
+                .or_insert_with(|| serde_json::json!([]));
+            if !artifacts.is_array() {
+                *artifacts = serde_json::json!([]);
+            }
+            artifacts
+                .as_array_mut()
+                .expect("artifact array")
+                .push(serde_json::json!({
+                    "path": request.png_path.to_string_lossy(),
+                    "bytes": png_bytes,
+                    "sha256": sha256,
+                    "kind": "png",
+                }));
         }
         let sidecar_error = match serde_json::to_vec_pretty(&receipt) {
             Ok(bytes) => std::fs::write(&sidecar.path, &bytes)
@@ -668,8 +744,15 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("scratch");
         let png_path = dir.join("01-final.png");
         let json_path = dir.join("01-final.json");
-        let receipt =
-            serde_json::json!({"scenario": "unit", "png": "01-final.png", "png_error": null});
+        let receipt = serde_json::json!({
+            "scenario": "unit",
+            "png": "01-final.png",
+            "png_error": null,
+            "manifest": {
+                "name": "preserved",
+                "artifacts": [{"path": "existing.bin", "kind": "input"}]
+            }
+        });
         let writer = EvidenceWriter::new(8);
         let job = writer.submit(EvidenceRequest {
             png_path: png_path.clone(),
@@ -691,9 +774,19 @@ mod tests {
         let on_disk = std::fs::read(&png_path).expect("png");
         assert_eq!(on_disk, direct_encode(16, 9, &test_pixels(16, 9)));
         let sidecar = std::fs::read(&json_path).expect("json");
+        let mut expected = receipt.clone();
+        expected["manifest"]["artifacts"]
+            .as_array_mut()
+            .expect("artifact list")
+            .push(serde_json::json!({
+                "path": png_path.to_string_lossy(),
+                "bytes": on_disk.len(),
+                "sha256": format!("{:x}", Sha256::digest(&on_disk)),
+                "kind": "png",
+            }));
         assert_eq!(
             sidecar,
-            serde_json::to_vec_pretty(&receipt).expect("receipt")
+            serde_json::to_vec_pretty(&expected).expect("receipt")
         );
         let stats = writer.stats();
         assert_eq!(
@@ -701,6 +794,66 @@ mod tests {
             (1, 1, 0, 0)
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn png_write_failure_receipt_does_not_claim_artifact() {
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-evidence-write-failure-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let png_path = dir.join("missing").join("shot.png");
+        let json_path = dir.join("failure.json");
+        let writer = EvidenceWriter::new(8);
+        let job = writer.submit(EvidenceRequest {
+            png_path,
+            width: 2,
+            height: 2,
+            pixels: test_pixels(2, 2),
+            color: PngColor::Rgba,
+            sidecar: Some(EvidenceSidecar {
+                path: json_path.clone(),
+                receipt: serde_json::json!({"manifest": {"artifacts": [{"kind": "input"}]}}),
+                patch_error: Some(Box::new(|receipt, error| {
+                    receipt["png_error"] = serde_json::Value::String(error.to_owned());
+                })),
+            }),
+        });
+        let outcome = writer
+            .wait(&job, Duration::from_secs(60))
+            .expect("capture completes");
+        assert!(outcome.error.is_some(), "PNG write must fail");
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&json_path).expect("failure receipt"))
+                .expect("receipt parses");
+        assert_eq!(
+            receipt["manifest"]["artifacts"],
+            serde_json::json!([{"kind": "input"}])
+        );
+        assert!(receipt["png_error"].is_string());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn source_identity_records_host_and_client_in_manifest() {
+        let mut receipt = serde_json::json!({
+            "manifest": {"sources": {"existing": {"keep": true}}},
+            "commit": "old",
+            "worktree_dirty": false
+        });
+        record_source_identity(&mut receipt);
+        let sources = &receipt["manifest"]["sources"];
+        for name in ["host", "client"] {
+            assert!(sources[name]["commit"].is_string(), "{name}: {sources}");
+            assert!(
+                sources[name]["worktree_dirty"].is_boolean(),
+                "{name}: {sources}"
+            );
+        }
+        assert_eq!(receipt["commit"], sources["host"]["commit"]);
+        assert_eq!(receipt["worktree_dirty"], sources["host"]["worktree_dirty"]);
+        assert_eq!(sources["existing"], serde_json::json!({"keep": true}));
     }
 
     #[test]
