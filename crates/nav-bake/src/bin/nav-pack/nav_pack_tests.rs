@@ -55,6 +55,95 @@ fn explicit_274_uses_server_config_next_to_client_cache() {
 }
 
 #[test]
+fn explicit_377_selects_its_own_cache_and_game_data() {
+    let inputs = parse_args([
+        "--revision",
+        "377",
+        "--content",
+        "/fixture/377/content",
+        "--cache",
+        "/fixture/377/cache",
+        "--game-data-dir",
+        "/fixture/game-data",
+        "--server-loc-dat",
+        "/fixture/377/engine/data/pack/server/loc.dat",
+        "--out",
+        "/fixture/nav/377.navpack",
+    ])
+    .unwrap();
+    assert_eq!(inputs.revision, 377);
+    assert_eq!(inputs.maps_dir, PathBuf::from("/fixture/377/content/maps"));
+    assert_eq!(
+        inputs.config_jag,
+        PathBuf::from("/fixture/377/cache/config")
+    );
+    assert_eq!(inputs.game_data_dir, PathBuf::from("/fixture/game-data"));
+    assert_eq!(
+        inputs.server_loc_dat_377,
+        Some(PathBuf::from(
+            "/fixture/377/engine/data/pack/server/loc.dat"
+        ))
+    );
+}
+
+#[test]
+fn explicit_377_requires_an_engine_server_table_without_inferring_cache_layout() {
+    let inputs = [
+        "--revision",
+        "377",
+        "--content",
+        "/content",
+        "--cache",
+        "/published-cache",
+        "--game-data-dir",
+        "/game-data",
+        "--out",
+        "/nav/377.navpack",
+    ];
+    let error = parse_args(inputs).unwrap_err();
+    assert!(error.contains("requires --server-loc-dat"), "{error}");
+    for revision in ["274", "289"] {
+        let error = parse_args([
+            "--revision",
+            revision,
+            "--content",
+            "/content",
+            "--cache",
+            "/cache",
+            "--game-data-dir",
+            "/game-data",
+            "--out",
+            "/nav/output",
+            "--server-loc-dat",
+            "/server/loc.dat",
+        ])
+        .unwrap_err();
+        assert!(error.contains("only supported for revision 377"), "{error}");
+    }
+    let error = parse_args([
+        "--revision",
+        "377",
+        "--content",
+        "/content",
+        "--cache",
+        "/published-cache",
+        "--game-data-dir",
+        "/game-data",
+        "--out",
+        "/nav/377.navpack",
+        "--server-loc-dat",
+        "/server/loc.dat",
+        "--server-loc-dat",
+        "/other/loc.dat",
+    ])
+    .unwrap_err();
+    assert!(
+        error.contains("duplicate explicit option --server-loc-dat"),
+        "{error}"
+    );
+}
+
+#[test]
 fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
     let complete = [
         "--revision",
@@ -74,7 +163,7 @@ fn explicit_mode_rejects_ambiguous_or_incomplete_inputs() {
         vec!["--revision", "289"],
         vec![
             "--revision",
-            "377",
+            "378",
             "--content",
             "/content",
             "--cache",

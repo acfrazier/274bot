@@ -158,7 +158,13 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
         let state = WorldState::from_snapshot(&snapshot);
         let admission = host_play::admission::Admission::manual(
             command.options(),
-            host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
+            host_play::admission::capture(
+                &snapshot,
+                state.map_members,
+                Default::default(),
+                false,
+                None,
+            ),
             0,
             host_play::WalkGlobals::default(),
         );

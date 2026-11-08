@@ -68,6 +68,7 @@ impl ProfileOptions {
             match parse_revision(revision)? {
                 ClientRevision::R274 => "local-274".into(),
                 ClientRevision::R289 => "local-289".into(),
+                ClientRevision::R377 => "local-377".into(),
             }
         } else {
             match env
@@ -79,6 +80,7 @@ impl ProfileOptions {
                     saved_revision.and_then(|revision| parse_revision(&revision.to_string()).ok())
                 }) {
                 Some(ClientRevision::R289) => "local-289".into(),
+                Some(ClientRevision::R377) => "local-377".into(),
                 _ => "local-274".into(),
             }
         };
@@ -167,7 +169,16 @@ impl ProfileOptions {
         let asset_host = first.asset_host.clone();
         let asset_port = first.asset_port;
         let revision = parse_revision(&profile.revision.to_string())?;
-        let is_289 = revision == ClientRevision::R289;
+        let unpack_name = match revision {
+            ClientRevision::R274 => "unpack",
+            ClientRevision::R289 => "unpack-289",
+            ClientRevision::R377 => "unpack-377",
+        };
+        let nav_name = match revision {
+            ClientRevision::R274 => "274bot.navpack",
+            ClientRevision::R289 => "289/274bot.navpack",
+            ClientRevision::R377 => "377/274bot.navpack",
+        };
         let engine_dir = self
             .engine_dir
             .clone()
@@ -186,7 +197,7 @@ impl ProfileOptions {
             .unpack_dir
             .clone()
             .or_else(|| env.unpack_dir.clone())
-            .unwrap_or_else(|| bot_dir.join(if is_289 { "unpack-289" } else { "unpack" }));
+            .unwrap_or_else(|| bot_dir.join(unpack_name));
         let cache_dir = self.cache_dir.clone().unwrap_or_else(|| unpack_dir.clone());
         let nav_pack_overridden = self.nav_pack.is_some() || env.nav_pack.is_some();
         let nav_flags_overridden = self.nav_flags.is_some() || env.nav_flags.is_some();
@@ -194,13 +205,7 @@ impl ProfileOptions {
             .nav_pack
             .clone()
             .or_else(|| env.nav_pack.clone())
-            .unwrap_or_else(|| {
-                bot_dir.join(if is_289 {
-                    "289/274bot.navpack"
-                } else {
-                    "274bot.navpack"
-                })
-            });
+            .unwrap_or_else(|| bot_dir.join(nav_name));
         let nav_flags = self
             .nav_flags
             .clone()
@@ -247,8 +252,10 @@ impl ProfileOptions {
             || self.port.is_some()
             || self.asset_host.is_some()
             || self.http_port.is_some();
-        let supported_server = ((profile.name == "local-274" || profile.name == "local-289")
-            && class == ProfileClass::Local
+        let supported_server = (matches!(
+            profile.name.as_str(),
+            "local-274" | "local-289" | "local-377"
+        ) && class == ProfileClass::Local
             && !endpoint_overridden)
             || (profile.name == "rs2b2t"
                 && transport == client::Transport::Wss

@@ -26,11 +26,18 @@ pub enum GenerationError {
     #[error(transparent)]
     Multiway(#[from] pack::MultiwayError),
     /// A selected release revision is not supported.
-    #[error("unsupported revision {revision}; use 274 or 289")]
+    #[error("unsupported revision {revision}; use 274, 289 or 377")]
     UnsupportedRevision { revision: u16 },
     /// A revision-bound cache path lacks the expected parent.
     #[error("revision 274 cache path has no data/pack parent")]
     CachePathMissingParent { cache_dir: std::path::PathBuf },
+    /// The revision-377 config archive could not be decoded.
+    #[error("revision 377 config {path}: {source}")]
+    ConfigDecode377 {
+        path: std::path::PathBuf,
+        #[source]
+        source: client::config::config_377::DecodeError377,
+    },
     /// A selected revision's local game data could not be decoded.
     #[error("game data revision {revision}: {detail}")]
     SelectedGameDataUnavailable { revision: u16, detail: String },

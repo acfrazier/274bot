@@ -3278,6 +3278,93 @@ switch_coord (loc_coord) {
 }
 
 #[test]
+fn revision_377_lumbridge_stair_names_keep_script_landings_and_costs() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "1738=scenery_1738\n1739=scenery_1739\n1740=scenery_1740\n",
+    );
+    fx.write(
+        "maps/m50_50.jm2",
+        "==== MAP ====\n0 0 0: h1 o6 u50\n==== LOC ====\n0 4 7: 1738 10 0\n1 4 7: 1739 10 0\n2 5 8: 1740 10 0\n",
+    );
+    fx.write(
+        "scripts/ladders+stairs/scripts/stairs.rs2",
+        "[oploc1,scenery_1738]\nswitch_coord (loc_coord) {\ncase 0_50_50_4_7 : p_telejump(1_50_50_5_9);\n}\n\
+         [oploc2,scenery_1739]\nswitch_coord (loc_coord) {\ncase 1_50_50_4_7 : p_telejump(2_50_50_5_9);\n}\n\
+         [oploc3,scenery_1739]\nswitch_coord (loc_coord) {\ncase 1_50_50_4_7 : p_telejump(0_50_50_5_9);\n}\n\
+         [oploc1,scenery_1740]\nswitch_coord (loc_coord) {\ncase 2_50_50_5_8 : p_telejump(1_50_50_5_9);\n}\n",
+    );
+    let defs = loc_defs(&[(1738, 1, 1), (1739, 1, 1), (1740, 1, 1)]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    for (id, option, level) in [(1738, 1, 1), (1739, 2, 2), (1739, 3, 0), (1740, 1, 1)] {
+        let edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.loc_id == id && edge.option == option)
+            .expect("revision-377 staircase is priced and resolved");
+        assert_eq!(edge.kind, TransportKind::Stairs);
+        assert_eq!(
+            edge.to,
+            WorldTile {
+                x: 3205,
+                z: 3209,
+                level
+            }
+        );
+        assert_eq!(edge.ticks, 1);
+    }
+}
+
+#[test]
+fn revision_377_wizards_tower_stairs_keep_script_landings_and_costs() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "12536=fai_wiztower_spiralstairs\n12537=fai_wiztower_spiralstairs_middle\n12538=fai_wiztower_spiralstairstop\n",
+    );
+    fx.write(
+        "maps/m48_49.jm2",
+        "==== MAP ====\n0 0 0: h1 o6 u50\n==== LOC ====\n0 31 23: 12536 10 0\n1 31 23: 12537 10 0\n2 32 24: 12538 10 0\n",
+    );
+    // Canonical 377 stairs.rs2:1175-1201: operation 1 on the middle
+    // opens a choice, while operations 2 and 3 move directly.
+    fx.write(
+        "scripts/ladders+stairs/scripts/stairs.rs2",
+        "[oploc1,fai_wiztower_spiralstairs]\nswitch_coord (loc_coord) {\ncase 0_48_49_31_23 : p_telejump(1_48_49_32_25);\n}\n\
+         [oploc1,fai_wiztower_spiralstairs_middle]\nswitch_coord (loc_coord) {\ncase 1_48_49_31_23 : @stair_options(2_48_49_32_25, 0_48_49_32_25);\n}\n\
+         [oploc2,fai_wiztower_spiralstairs_middle]\nswitch_coord (loc_coord) {\ncase 1_48_49_31_23 : p_telejump(2_48_49_32_25);\n}\n\
+         [oploc3,fai_wiztower_spiralstairs_middle]\nswitch_coord (loc_coord) {\ncase 1_48_49_31_23 : p_telejump(0_48_49_32_25);\n}\n\
+         [oploc1,fai_wiztower_spiralstairstop]\nswitch_coord (loc_coord) {\ncase 2_48_49_32_24 : p_telejump(1_48_49_32_25);\n}\n",
+    );
+    let defs = loc_defs(&[(12536, 1, 1), (12537, 1, 1), (12538, 1, 1)]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &collision);
+    for (id, option, level) in [(12536, 1, 1), (12537, 2, 2), (12537, 3, 0), (12538, 1, 1)] {
+        let edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.loc_id == id && edge.option == option)
+            .expect("377 Wizard's Tower direct staircase is priced and resolved");
+        assert_eq!(edge.kind, TransportKind::Stairs);
+        assert_eq!(
+            edge.to,
+            WorldTile {
+                x: 3104,
+                z: 3161,
+                level
+            }
+        );
+        assert_eq!(edge.ticks, 1);
+    }
+    assert!(!graph
+        .edges
+        .iter()
+        .any(|edge| edge.loc_id == 12537 && edge.option == 1));
+}
+
+#[test]
 fn parse_script_records_unguarded_statements_as_fallback() {
     let mut rules = HashMap::new();
     parse_script(
@@ -3392,6 +3479,154 @@ fn derive_transports_without_door_configs_emits_no_door_edges() {
     let wc = bake_collision(&fx, &defs, &HashSet::new());
     let graph = derive_transports(fx.path(), &defs, &wc);
     assert!(graph.edges.iter().all(|e| e.kind != TransportKind::Door));
+}
+
+#[test]
+fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
+    let fx = Fixture::new();
+    for (map, spawns) in [
+        ("m47_50", "0 18 17: 378\n0 37 36: 657\n"),
+        ("m46_49", "0 9 11: 380\n"),
+        ("m43_50", "0 21 29: 380\n0 20 31: 380\n0 20 25: 380\n"),
+        ("m41_51", "0 55 11: 381\n"),
+        ("m44_52", "0 14 7: 658\n"),
+    ] {
+        fx.write(
+            &format!("maps/{map}.jm2"),
+            &format!("==== MAP ====\n0 0 0: h1 u50\n==== NPC ====\n{spawns}"),
+        );
+    }
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let derive = |revision| {
+        let data = api::game_data::for_revision(revision).expect("selected revision item data");
+        derive_transports_with_audit(fx.path(), &defs, &wc, None, None, Some(&data))
+    };
+    // Old revisions keep the table, regardless of selected-map differences.
+    let baseline = derive_transports(fx.path(), &defs, &wc);
+    for revision in [
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
+    ] {
+        let (legacy, _, _) = derive(revision);
+        let legacy_boats = legacy
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == TransportKind::Boat)
+            .map(|edge| (edge.loc_id, edge.at, edge.to));
+        let baseline_boats = baseline
+            .edges
+            .iter()
+            .filter(|edge| edge.kind == TransportKind::Boat)
+            .map(|edge| (edge.loc_id, edge.at, edge.to));
+        assert!(legacy_boats.eq(baseline_boats));
+    }
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
+        return;
+    }
+    let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
+    let positions = npc_positions(fx.path());
+    let boats: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == TransportKind::Boat)
+        .collect();
+    assert_eq!(boats.len(), 6);
+    assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 2);
+    for edge in &boats {
+        assert!(positions[&edge.loc_id].iter().any(|spawn| {
+            edge.at
+                == WorldTile {
+                    x: spawn.x,
+                    z: spawn.z,
+                    level: spawn.level,
+                }
+        }));
+    }
+    for (npc, x, z) in [
+        (380, 2953, 3147),
+        (380, 2772, 3225),
+        (657, 3045, 3236),
+        (658, 2830, 3335),
+    ] {
+        assert!(boats
+            .iter()
+            .any(|edge| { edge.loc_id == npc && edge.at == WorldTile { x, z, level: 0 } }));
+    }
+    // Multiple monks give the same trip, but an absent NPC is unproved.
+    fx.write("maps/m44_52.jm2", "==== NPC ====\n");
+    fx.write(
+        "maps/m47_50.jm2",
+        "==== NPC ====\n0 18 17: 378\n0 37 36: 657\n0 38 36: 657\n",
+    );
+    let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
+    assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 3);
+    assert!(graph
+        .edges
+        .iter()
+        .any(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 657));
+    assert!(!graph
+        .edges
+        .iter()
+        .any(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 658));
+    // The boundary is within Brimhaven's mapsquare: x=2814 sails to
+    // Ardougne, x=2815 to Port Sarim. Mixed branches must omit the route.
+    for spawns in ["0 62 25: 380\n0 63 25: 380\n", "0 63 25: 380\n"] {
+        fx.write("maps/m43_50.jm2", &format!("==== NPC ====\n{spawns}"));
+        let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
+        assert_eq!(skipped["boat_missing_or_ambiguous_npc_spawn"], 4);
+        assert!(!graph.edges.iter().any(|edge| {
+            edge.kind == TransportKind::Boat
+                && edge.to
+                    == WorldTile {
+                        x: 2683,
+                        z: 3268,
+                        level: 1,
+                    }
+        }));
+    }
+}
+
+#[test]
+#[ignore = "requires NAV_BOAT_PACK and NAV_BOAT_CONTENT from the selected revision"]
+fn selected_pack_boat_and_npc_starts_match_map_spawns() {
+    let pack = std::env::var("NAV_BOAT_PACK").expect("set NAV_BOAT_PACK");
+    let content = std::env::var("NAV_BOAT_CONTENT").expect("set NAV_BOAT_CONTENT");
+    let world = nav_planner::world::NavWorld::load_pack(Path::new(&pack)).unwrap();
+    let positions = npc_positions(Path::new(&content));
+    let mut checked = 0;
+    for edge in world
+        .graph
+        .edges
+        .iter()
+        .filter(|edge| matches!(edge.kind, TransportKind::Boat | TransportKind::Npc))
+    {
+        assert!(
+            positions.get(&edge.loc_id).is_some_and(|spawns| {
+                spawns.iter().any(|spawn| {
+                    edge.at
+                        == WorldTile {
+                            x: spawn.x,
+                            z: spawn.z,
+                            level: spawn.level,
+                        }
+                })
+            }),
+            "NPC {} {:?} start {:?} is not in selected maps",
+            edge.loc_id,
+            edge.kind,
+            edge.at
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "qualification must inspect real NPC journeys");
+    eprintln!("qualified {checked} Boat/Npc starts against selected maps");
 }
 
 #[test]
@@ -10349,4 +10584,591 @@ fn real_content_atlas_stands_match_the_client_reach_strategy() {
             root.display()
         );
     }
+}
+
+fn apply_legacy_entrana_fixture_guards(
+    graph: &mut TransportGraph,
+    data: &api::game_data::SelectedGameData,
+) {
+    // 0.2.9 already derives these guards from selected items. The no-data
+    // baseline has none; use the content fixture to retain whole-edge equality.
+    let boat = graph
+        .edges
+        .iter_mut()
+        .find(|edge| edge.kind == TransportKind::Boat && edge.loc_id == 657)
+        .expect("legacy outbound Entrana boat");
+    for (container, forbidden) in [
+        ("inv", &mut boat.forbidden_held),
+        ("worn", &mut boat.forbidden_worn),
+    ] {
+        let categories = inv_totalcat_categories(ENTRANA_PROC_SOURCE, container);
+        forbidden.clear();
+        for item in data.items() {
+            if item
+                .category
+                .as_deref()
+                .is_some_and(|category| categories.contains(category))
+            {
+                forbidden.push(item.id);
+            }
+        }
+        forbidden.sort_unstable();
+        forbidden.dedup();
+    }
+}
+
+#[test]
+fn revision_377_direct_trapdoor_keeps_content_landing_and_source_delay() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "9472=trapdoor_9472\n9002=guarded_trapdoor\n9003=open_only\n",
+    );
+    fx.write("maps/m47_49.jm2", "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 0 14: 9472 10\n0 1 14: 9002 10\n0 2 14: 9003 10\n");
+    // Canon 377 general_use/scripts/trapdoors.rs2:25-29. This handler climbs
+    // directly: it does not open/change to the standard trapdoor_open loc.
+    fx.write(
+        "scripts/general_use/scripts/trapdoors.rs2",
+        "\
+[oploc1,trapdoor_9472]
+mes(\"You climb down through the trapdoor...\");
+anim(human_pickupfloor, 0);
+p_delay(0);
+p_telejump(0_46_149_63_13);
+[oploc1,guarded_trapdoor]
+if (%quest = 2) { p_telejump(0_46_149_63_13); }
+[oploc1,open_only]
+p_telejump(0_46_149_63_13);
+",
+    );
+    let defs = LocDefs::from_locs(&[
+        LocType {
+            id: 9472,
+            op: vec![Some("Climb-down".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 9002,
+            op: vec![Some("Climb-down".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 9003,
+            op: vec![Some("Open".into())],
+            ..Default::default()
+        },
+    ]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let derive = |data: Option<&api::game_data::SelectedGameData>| {
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
+    };
+    let mut baseline = derive(None);
+    for revision in [
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
+    ] {
+        let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        apply_legacy_entrana_fixture_guards(&mut baseline, &data);
+        assert_eq!(
+            derive(Some(&data)).edges,
+            baseline.edges,
+            "legacy extraction stays unchanged"
+        );
+    }
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
+        return;
+    }
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 game data");
+    let graph = derive(Some(&data));
+    let entry = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 9472)
+        .expect("377 direct trapdoor");
+    assert_eq!(entry.kind, TransportKind::Ladder);
+    assert_eq!(
+        entry.at,
+        WorldTile {
+            x: 3008,
+            z: 3150,
+            level: 0
+        }
+    );
+    assert_eq!(
+        entry.to,
+        WorldTile {
+            x: 3007,
+            z: 9549,
+            level: 0
+        }
+    );
+    assert_eq!(entry.option, 1);
+    assert_eq!(entry.open_loc_id, None, "no invented open phase");
+    assert_eq!(entry.player_delta, None, "absolute content landing");
+    assert_eq!(
+        entry.ticks, 3,
+        "one operation, arrival, and p_delay(0) suspension"
+    );
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| matches!(edge.loc_id, 9002 | 9003)),
+        "never erase a gate or admit a non-climb operation"
+    );
+}
+
+#[test]
+fn revision_377_palace_coin_sewer_ladder_return_is_priced() {
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1755=ladder_1755\n");
+    fx.write(
+        "maps/m50_154.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 30 48: 1755 10 3\n",
+    );
+    fx.write(
+        "maps/m50_149.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 22 52: 1755 10\n",
+    );
+    // Canon 377 ladders.rs2:90-97,178-185 and m50_154.jm2:7787.
+    fx.write(
+        "scripts/ladders+stairs/scripts/ladders.rs2",
+        "\
+[oploc1,ladder_1755]
+def_coord $coord = loc_coord;
+p_arrivedelay;
+if(loc_coord = 0_50_149_22_52) {
+    ~climb_ladder(0_50_49_1_33, true);
+    return;
+}
+~climb_ladder(movecoord(coord(), 0, 0, -6400), true);
+[proc,climb_ladder](coord $coord, boolean $up)
+if ($up = true) { anim(human_reachforladder, 0); } else { anim(human_pickupfloor, 0); }
+p_delay(0);
+p_telejump($coord);
+",
+    );
+    let defs = LocDefs::from_locs(&[LocType {
+        id: 1755,
+        op: vec![Some("Climb-up".into())],
+        ..Default::default()
+    }]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let derive = |data: Option<&api::game_data::SelectedGameData>| {
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
+    };
+    let mut baseline = derive(None);
+    for revision in [
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
+    ] {
+        let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        apply_legacy_entrana_fixture_guards(&mut baseline, &data);
+        assert_eq!(
+            derive(Some(&data)).edges,
+            baseline.edges,
+            "legacy extraction stays unchanged"
+        );
+    }
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
+        return;
+    }
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 game data");
+    let graph = derive(Some(&data));
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 1755 && edge.at.z == 9904)
+        .expect("377 palace coin alcove return");
+    assert_eq!(
+        edge.at,
+        WorldTile {
+            x: 3230,
+            z: 9904,
+            level: 0
+        }
+    );
+    assert_eq!(
+        edge.to,
+        WorldTile {
+            x: 3230,
+            z: 3504,
+            level: 0
+        }
+    );
+    assert_eq!(
+        edge.player_delta,
+        Some(WorldTile {
+            x: 0,
+            z: -6400,
+            level: 0
+        })
+    );
+    assert_eq!(
+        edge.ticks, 3,
+        "arrival plus the canonical climb helper's p_delay(0)"
+    );
+    let zanaris = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 1755 && edge.at.z == 9588)
+        .expect("coordinate-specific ladder rule remains intact");
+    assert_eq!(
+        zanaris.to,
+        WorldTile {
+            x: 3201,
+            z: 3169,
+            level: 0
+        }
+    );
+    assert_eq!(
+        zanaris.player_delta, None,
+        "special branch is absolute, not the fallback"
+    );
+}
+
+#[test]
+fn revision_377_coordinate_stairs_keep_downstairs_and_explicit_middle_options() {
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1723=scenery_1723\n1739=scenery_1739\n");
+    fx.write(
+        "maps/m48_51.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n1 28 2: 1723 10 1\n",
+    );
+    fx.write(
+        "maps/m50_54.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n1 2 41: 1739 10\n",
+    );
+    // Canon stairs.rs2:43-84 repeats the identical 1_49_52_52_62 arm;
+    // it must not invalidate Morgan's separate downstairs placement.
+    // The middle stair's first option (:232-270) remains a choice.
+    fx.write(
+        "scripts/ladders+stairs/scripts/stairs.rs2",
+        "\
+[oploc1,scenery_1723]
+p_arrivedelay;
+switch_coord (loc_coord) {
+    case 1_48_51_28_2 : p_telejump(0_48_51_26_2);
+    case 1_49_52_52_62 : p_telejump(0_49_52_52_60);
+    case 1_49_52_52_62 : p_telejump(0_49_52_52_60);
+    case default : @unhandled_stairs(loc_coord);
+}
+[oploc1,scenery_1739]
+switch_coord (loc_coord) {
+    case 1_50_54_2_41 : @stair_options(2_50_54_4_41, 0_50_54_3_40);
+    case default : @unhandled_stairs(loc_coord);
+}
+[oploc2,scenery_1739]
+switch_coord (loc_coord) {
+    case 1_50_54_2_41 : p_telejump(2_50_54_4_41);
+    case default : @unhandled_stairs(loc_coord);
+}
+[oploc3,scenery_1739]
+switch_coord (loc_coord) {
+    case 1_50_54_2_41 : p_telejump(0_50_54_3_40);
+    case default : @unhandled_stairs(loc_coord);
+}
+",
+    );
+    let defs = LocDefs::from_locs(&[
+        LocType {
+            id: 1723,
+            op: vec![Some("Climb-down".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 1739,
+            op: vec![
+                Some("Climb".into()),
+                Some("Climb-up".into()),
+                Some("Climb-down".into()),
+            ],
+            ..Default::default()
+        },
+    ]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let derive = |data: Option<&api::game_data::SelectedGameData>| {
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
+    };
+    let mut baseline = derive(None);
+    for revision in [
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
+    ] {
+        let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        apply_legacy_entrana_fixture_guards(&mut baseline, &data);
+        assert_eq!(derive(Some(&data)).edges, baseline.edges);
+    }
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
+        return;
+    }
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 game data");
+    let graph = derive(Some(&data));
+    let down = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 1723)
+        .expect("Morgan's renamed downstairs stair must remain routable");
+    assert_eq!(
+        down.to,
+        WorldTile {
+            x: 3098,
+            z: 3266,
+            level: 0
+        }
+    );
+    assert_eq!(down.ticks, 2);
+    assert!(!graph
+        .edges
+        .iter()
+        .any(|edge| edge.loc_id == 1739 && edge.option == 1));
+    for (option, x, z, level) in [(2, 3204, 3497, 2), (3, 3203, 3496, 0)] {
+        let edge = graph
+            .edges
+            .iter()
+            .find(|edge| edge.loc_id == 1739 && edge.option == option)
+            .expect("the palace middle stair's explicit direction is routable");
+        assert_eq!(edge.to, WorldTile { x, z, level });
+        assert_eq!(edge.ticks, 1, "this handler has no arrival delay");
+    }
+}
+
+#[test]
+fn revision_377_coordinate_stairs_reject_unproved_handlers() {
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
+        return;
+    }
+    let fx = Fixture::new();
+    fx.write("pack/loc.pack", "1723=scenery_1723\n");
+    fx.write(
+        "maps/m48_51.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n1 28 2: 1723 10 1\n",
+    );
+    let safe = "\
+p_arrivedelay;
+switch_coord (loc_coord) {
+    case 1_48_51_28_2 : p_telejump(0_48_51_26_2);
+    case default : @unhandled_stairs(loc_coord);
+}";
+    for body in [
+        format!("if (%quest = 2) {{ {safe} }}"),
+        format!("{safe}\nobj_add(0_48_51_26_2, coins, 1, 10);"),
+        safe.replace("p_telejump", "~random_teleport"),
+        safe.replace("@unhandled_stairs(loc_coord)", "@other_handler(loc_coord)"),
+        safe.replace(
+            "case default",
+            "case 1_48_51_28_2 : p_telejump(0_48_51_25_2);\ncase default",
+        ),
+        safe.replace("switch_coord (loc_coord)", "switch_coord (coord)"),
+    ] {
+        fx.write(
+            "scripts/ladders+stairs/scripts/stairs.rs2",
+            &format!("[oploc1,scenery_1723]\n{body}\n"),
+        );
+        let defs = LocDefs::from_locs(&[LocType {
+            id: 1723,
+            op: vec![Some("Climb-down".into())],
+            ..Default::default()
+        }]);
+        let collision = bake_collision(&fx, &defs, &HashSet::new());
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+            .expect("R377 game data");
+        let graph =
+            derive_transports_with_audit(fx.path(), &defs, &collision, None, None, Some(&data)).0;
+        assert!(
+            graph.edges.iter().all(|edge| edge.loc_id != 1723),
+            "unsupported stair body must not gain an unconditional edge: {body}"
+        );
+    }
+}
+
+#[test]
+fn revision_377_palace_manhole_opens_before_player_relative_descent() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/loc.pack",
+        "881=manholeclosed\n882=manholeopen\n883=manhole_cover\n",
+    );
+    fx.write(
+        "maps/m50_54.jm2",
+        "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 37 2: 881 10\n0 40 2: 882 10\n",
+    );
+    // Canon general_use/scripts/manholes.rs2:1-10 and m50_54.jm2:8588.
+    let source = "\
+[oploc1,manholeclosed]
+mes(\"You pull back the cover from over the manhole.\");
+sound_synth(coffin_open, 1, 0);
+loc_change(manholeopen, 400);
+loc_add(movecoord(loc_coord, 0, 0, -1), manhole_cover, loc_angle, loc_shape, 400);
+[oploc1,manholeopen]
+mes(\"You climb down through the manhole.\");
+p_telejump(movecoord(coord(), 0, 0, 6400));
+";
+    fx.write("scripts/general_use/scripts/manholes.rs2", source);
+    let defs = LocDefs::from_locs(&[
+        LocType {
+            id: 881,
+            op: vec![Some("Open".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 882,
+            op: vec![Some("Climb down".into())],
+            ..Default::default()
+        },
+        LocType {
+            id: 883,
+            op: vec![Some("Close".into())],
+            ..Default::default()
+        },
+    ]);
+    let collision = bake_collision(&fx, &defs, &HashSet::new());
+    let derive = |data: Option<&api::game_data::SelectedGameData>| {
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, None, data).0
+    };
+    let mut baseline = derive(None);
+    for revision in [
+        api::selected::ClientRevision::R274,
+        api::selected::ClientRevision::R289,
+    ] {
+        let data = api::game_data::for_revision(revision).expect("selected revision game data");
+        apply_legacy_entrana_fixture_guards(&mut baseline, &data);
+        assert_eq!(
+            derive(Some(&data)).edges,
+            baseline.edges,
+            "legacy extraction stays unchanged"
+        );
+    }
+    if matches!(
+        api::game_data::for_revision(api::selected::ClientRevision::R377),
+        Err(api::game_data::GameDataError::LocalDataUnavailable)
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
+        return;
+    }
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 game data");
+    let graph = derive(Some(&data));
+    let closed = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 881)
+        .expect("377 surface-to-sewer entrance");
+    assert_eq!(closed.kind, TransportKind::Ladder);
+    assert_eq!(
+        closed.at,
+        WorldTile {
+            x: 3237,
+            z: 3458,
+            level: 0
+        }
+    );
+    assert_eq!(
+        closed.to,
+        WorldTile {
+            x: 3237,
+            z: 9858,
+            level: 0
+        }
+    );
+    assert_eq!(
+        closed.player_delta,
+        Some(WorldTile {
+            x: 0,
+            z: 6400,
+            level: 0
+        })
+    );
+    assert_eq!(closed.open_loc_id, Some(882));
+    assert_eq!(closed.option, 1);
+    assert_eq!(
+        closed.ticks, 3,
+        "two source operations plus the arrival tick"
+    );
+    let open = graph
+        .edges
+        .iter()
+        .find(|edge| edge.loc_id == 882)
+        .expect("already-open manhole");
+    assert_eq!(
+        open.at,
+        WorldTile {
+            x: 3240,
+            z: 3458,
+            level: 0
+        }
+    );
+    assert_eq!(
+        open.to,
+        WorldTile {
+            x: 3240,
+            z: 9858,
+            level: 0
+        }
+    );
+    assert_eq!(open.open_loc_id, None);
+    assert_eq!(open.ticks, 2);
+
+    for mutation in [
+        source.replace(
+            "loc_change(manholeopen, 400);",
+            "if (%quest = 2) { loc_change(manholeopen, 400); }",
+        ),
+        source.replace(
+            "loc_change(manholeopen, 400);",
+            "loc_change(manholeopen, 400); inv_del(inv, coins, 1);",
+        ),
+    ] {
+        fx.write("scripts/general_use/scripts/manholes.rs2", &mutation);
+        assert!(
+            !derive(Some(&data))
+                .edges
+                .iter()
+                .any(|edge| edge.loc_id == 881),
+            "never erase an opener gate or side effect"
+        );
+    }
+    fx.write(
+        "scripts/general_use/scripts/manholes.rs2",
+        &source.replace(
+            "p_telejump(movecoord(coord(), 0, 0, 6400));",
+            "if (%quest = 2) { p_telejump(movecoord(coord(), 0, 0, 6400)); }",
+        ),
+    );
+    assert!(
+        !derive(Some(&data))
+            .edges
+            .iter()
+            .any(|edge| matches!(edge.loc_id, 881 | 882)),
+        "a gated descent certifies neither entry state"
+    );
 }

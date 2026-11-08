@@ -54,13 +54,25 @@ pub enum GameDataError {
 const REVISION_274: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/game-data-274.json.gz"));
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 const REVISION_289: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/game-data-289.json.gz"));
+#[cfg(all(
+    feature = "embedded-game-data",
+    not(no_local_game_data),
+    not(no_local_game_data_377)
+))]
+const REVISION_377: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/game-data-377.json.gz"));
 
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 static DATA_274: OnceLock<Result<Arc<SelectedGameData>, GameDataError>> = OnceLock::new();
 #[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
 static DATA_289: OnceLock<Result<Arc<SelectedGameData>, GameDataError>> = OnceLock::new();
+#[cfg(all(
+    feature = "embedded-game-data",
+    not(no_local_game_data),
+    not(no_local_game_data_377)
+))]
+static DATA_377: OnceLock<Result<Arc<SelectedGameData>, GameDataError>> = OnceLock::new();
 
-/// Whether this build embeds the local selected game-data assets.
+/// Whether this build embeds the local revision-274/289 game-data assets.
 pub const fn local_game_data_available() -> bool {
     cfg!(all(feature = "embedded-game-data", not(no_local_game_data)))
 }
@@ -981,8 +993,16 @@ pub enum Transmission {
     Unknown,
 }
 
-/// One seed join. `id` is the seed id. `complete` is one constant, not a range.
-/// `unknown_sides` stays empty. Enum index is not a field.
+const QUEST_IDENTITY_UNKNOWN_SIDES: &[&str] = &[
+    "progress_operand",
+    "varp_pack_id",
+    "completion_operand",
+    "quest_points",
+    "requirements",
+];
+/// One seed join. `id` is the seed id; `complete` is one constant, not a range.
+/// `unknown_sides` names unproved aspects: `progress_operand`, `varp_pack_id`,
+/// `completion_operand`, `quest_points`, or `requirements`. Enum index is not a field.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct QuestIdentityRow {
@@ -2088,8 +2108,14 @@ impl SelectedGameData {
             {
                 return Err("quest_identity empty mustHave is not unknown-satisfied".to_string());
             }
-            if facts.rows.iter().any(|row| !row.unknown_sides.is_empty()) {
-                return Err("quest_identity unknown_sides must stay empty".to_string());
+            if facts.rows.iter().any(|row| {
+                row.unknown_sides
+                    .iter()
+                    .any(|side| !QUEST_IDENTITY_UNKNOWN_SIDES.contains(&side.as_str()))
+            }) {
+                return Err(
+                    "quest_identity contains an unsupported unknown_sides value".to_string()
+                );
             }
             if facts.rows.iter().any(|row| {
                 row.requirements.empty_must_have
@@ -3065,8 +3091,21 @@ pub(crate) fn test_data(revision: ClientRevision) -> Option<Arc<SelectedGameData
             concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
             "revision 289 game data for API tests",
         ),
+        ClientRevision::R377 => (
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/377.json"),
+            "revision 377 game data for API tests",
+        ),
     };
-    crate::test_support::local_asset_path("", path, description)?;
+    if revision == ClientRevision::R377 {
+        crate::test_support::local_asset_path_377("", path, description)?;
+        #[cfg(no_local_game_data_377)]
+        {
+            eprintln!("Skipping revision-377 API tests: local game data was not embedded");
+            return None;
+        }
+    } else {
+        crate::test_support::local_asset_path("", path, description)?;
+    }
     if !crate::test_support::embedded_game_data_available() {
         return None;
     }
@@ -3084,6 +3123,10 @@ pub fn for_revision(revision: ClientRevision) -> Result<Arc<SelectedGameData>, G
     let (cell, bytes) = match revision {
         ClientRevision::R274 => (&DATA_274, REVISION_274),
         ClientRevision::R289 => (&DATA_289, REVISION_289),
+        #[cfg(not(no_local_game_data_377))]
+        ClientRevision::R377 => (&DATA_377, REVISION_377),
+        #[cfg(no_local_game_data_377)]
+        ClientRevision::R377 => return Err(GameDataError::LocalDataUnavailable),
     };
     match cell.get_or_init(|| {
         preflight_combat_facts_version(GzDecoder::new(bytes))?;
@@ -3161,6 +3204,31 @@ mod missing_data_tests {
         assert!(!local_game_data_available());
         assert!(matches!(
             for_revision(ClientRevision::R289),
+            Err(GameDataError::LocalDataUnavailable)
+        ));
+    }
+}
+
+#[cfg(all(
+    test,
+    feature = "embedded-game-data",
+    not(no_local_game_data),
+    no_local_game_data_377
+))]
+mod missing_377_data_tests {
+    use super::*;
+
+    #[test]
+    fn absent_377_assets_preserve_embedded_legacy_revisions() {
+        assert!(local_game_data_available());
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            assert_eq!(
+                for_revision(revision).unwrap().revision(),
+                revision.as_i32()
+            );
+        }
+        assert!(matches!(
+            for_revision(ClientRevision::R377),
             Err(GameDataError::LocalDataUnavailable)
         ));
     }

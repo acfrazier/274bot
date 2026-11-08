@@ -239,7 +239,7 @@ fn walk_arm_to(
     let arms = WalkArms::default();
     let admission = host_play::admission::Admission::manual(
         FindOptions::default(),
-        host_play::admission::capture(snapshot, state.map_members, Default::default(), false),
+        host_play::admission::capture(snapshot, state.map_members, Default::default(), false, None),
         0,
         host_play::WalkGlobals::default(),
     );
