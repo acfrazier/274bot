@@ -3115,9 +3115,6 @@ fn a_script_stop_cancels_the_handshake_of_the_relog_it_was_running_through() {
 /// it parked; the saved auto-login preference does not log it in.
 #[test]
 fn starting_and_stopping_a_script_on_a_parked_bot_leaves_it_parked() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
     let mut play = play_for_script_control();
     let arm = SlotArm::new(7, true);
     play.attach_arm("alice", Arc::clone(&arm));
@@ -3125,6 +3122,9 @@ fn starting_and_stopping_a_script_on_a_parked_bot_leaves_it_parked() {
     let mut client = client_after_connection_loss();
     tick_flags(&mut client, &[], &arm);
     assert!(!should_handshake(&arm, false), "parked");
+    if !api::test_support::game_data_available() {
+        return;
+    }
 
     start_idle_script(&play, "alice");
     crate::play_slots::sync_script_login(&arm, &play.scripts, "alice");
@@ -25916,13 +25916,13 @@ fn worker_runs_idle_timer(scripted: bool) -> bool {
 /// bot ever sent the idle request.)
 #[test]
 fn a_worker_runs_the_idle_timer_only_while_no_script_runs() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
     assert!(
         worker_runs_idle_timer(false),
         "a bot with no script runs the idle timer"
     );
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert!(
         !worker_runs_idle_timer(true),
         "a running script suppresses the idle timer"
