@@ -361,7 +361,18 @@ fn live_quester_walk_optins() {
         })
         .collect();
     let setup_deadline = Instant::now() + SETUP_LIMIT;
+    // Each account logs its scriptless bot out once to bind its side tabs; the
+    // approved scriptless policy then parks it, so post the operator's explicit
+    // Login for each account after its own logout.
+    let mut relog_posted = std::collections::HashSet::new();
     while !states.values().all(|state| state.lock().ready) && Instant::now() < setup_deadline {
+        for account in &names {
+            if states[account].lock().logout_sent && relog_posted.insert(account.clone()) {
+                if let Some(arm) = play.arm(account) {
+                    arm.arm_explicit_login();
+                }
+            }
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
     for (index, account) in names.iter().enumerate() {

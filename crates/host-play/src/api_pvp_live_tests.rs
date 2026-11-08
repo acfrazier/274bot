@@ -34,6 +34,9 @@ const LUMBRIDGE: WorldTile = WorldTile {
 /// What each account of the pair is seeded with.
 struct Seat {
     observed: Arc<Mutex<Observed>>,
+    /// The account's slot arm: the fixture relogs a scriptless bot before its
+    /// script starts, so it posts the operator Login after its own logout.
+    arm: Arc<SlotArm>,
     cheats: Vec<String>,
     ready: Box<dyn Fn(&api::snapshot::GameSnapshot) -> bool + Send + Sync>,
     /// Set for the duel cell: the handshake this account drives after ready.
@@ -145,11 +148,13 @@ fn start_pair(
             .as_str()
             .to_owned()
     };
+    let arms = [SlotArm::new(uids[0], true), SlotArm::new(uids[1], true)];
     let mut seats = std::collections::HashMap::new();
     seats.insert(
         names[0].clone(),
         Seat {
             observed: Arc::clone(&observed[0]),
+            arm: Arc::clone(&arms[0]),
             cheats: if duel {
                 pen_attacker_seed()
             } else {
@@ -168,6 +173,7 @@ fn start_pair(
         names[1].clone(),
         Seat {
             observed: Arc::clone(&observed[1]),
+            arm: Arc::clone(&arms[1]),
             cheats: if victim {
                 victim_seed()
             } else {
@@ -195,7 +201,15 @@ fn start_pair(
                 return;
             };
             let mut state = seat.observed.lock().expect("observed lock");
-            frame(client, &mut state, &seat.cheats, &[], &*seat.ready, dest);
+            frame(
+                client,
+                &seat.arm,
+                &mut state,
+                &seat.cheats,
+                &[],
+                &*seat.ready,
+                dest,
+            );
             if state.ready {
                 if let Some(drive) = &seat.drive {
                     duel_step(
@@ -239,7 +253,7 @@ fn start_pair(
             },
             None,
             None,
-            None,
+            Some(Arc::clone(&arms[index])),
         )
         .expect("spawn fresh pvp account");
     }

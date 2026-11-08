@@ -1197,6 +1197,7 @@ fn run_cell(case: PairCase) -> Result<(), String> {
         None,
     )?;
 
+    let mut relog_posted = [false; 2];
     let mut phase = 0_u8;
     let mut deadline = Instant::now() + Duration::from_secs(PREP_DEADLINE_SECS);
     let outcome = loop {
@@ -1236,6 +1237,17 @@ fn run_cell(case: PairCase) -> Result<(), String> {
                 pair.1.prep,
             )
         };
+        // Each account logs its scriptless bot out to bind its side tabs; the
+        // approved scriptless policy then parks it, so post the operator's
+        // explicit Login once per account at its relog wait.
+        for (index, prep) in [snapshot.3, snapshot.4].into_iter().enumerate() {
+            if prep == Prep::WaitRelog && !relog_posted[index] {
+                relog_posted[index] = true;
+                if let Some(arm) = play.arm(&names[index]) {
+                    arm.arm_explicit_login();
+                }
+            }
+        }
         let timed_out = Instant::now() >= deadline;
         if phase == 0 {
             match snapshot.0 {
