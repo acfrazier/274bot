@@ -1251,6 +1251,7 @@ impl LiveRun {
 
     fn wait_setup_ready(&self) -> Result<(), String> {
         let deadline = Instant::now() + SETUP_DEADLINE;
+        let mut login_posted = false;
         let mut after = self.hook.observed_host_frame();
         loop {
             {
@@ -1260,6 +1261,15 @@ impl LiveRun {
                     .map_err(|_| "tick-engine setup poisoned")?;
                 if let Some(error) = &setup.error {
                     return Err(error.clone());
+                }
+                // The fixture logs its scriptless bot out to complete the tutorial; the
+                // approved scriptless policy then parks it, so post the operator's
+                // explicit Login once after that logout.
+                if setup.phase == SetupPhase::WaitRelogin && !login_posted {
+                    login_posted = true;
+                    if let Some(arm) = self.play().arm(&self.account) {
+                        arm.arm_explicit_login();
+                    }
                 }
                 if setup.phase == SetupPhase::Ready {
                     return Ok(());

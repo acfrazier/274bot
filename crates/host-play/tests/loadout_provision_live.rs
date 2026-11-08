@@ -841,6 +841,11 @@ fn run_cell() -> Result<(), String> {
             break Err(format!("script error: {error}"));
         }
         let mut state = state.lock().unwrap();
+        if state.relogger.take_relog_login() {
+            if let Some(arm) = play.arm(&account) {
+                arm.arm_explicit_login();
+            }
+        }
         if let Some(error) = state.start_error.take() {
             break Err(error);
         }

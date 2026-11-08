@@ -1899,6 +1899,16 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
     play.focus(&account);
     let deadline = Instant::now() + Duration::from_secs(240);
     let (outcome, error) = loop {
+        let relog_login = state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .runner
+            .take_relog_login();
+        if relog_login {
+            if let Some(arm) = play.arm(&account) {
+                arm.arm_explicit_login();
+            }
+        }
         let stop_candidate = {
             let current = state.lock().unwrap_or_else(|e| e.into_inner());
             if mode == W1Mode::StopMidCrossing
