@@ -49,7 +49,10 @@ fn generated_game_data_gzip_preserves_every_source_byte() {
         let compressed = Some(match revision {
             ClientRevision::R274 => REVISION_274,
             ClientRevision::R289 => REVISION_289,
+            #[cfg(not(no_local_game_data_377))]
             ClientRevision::R377 => REVISION_377,
+            #[cfg(no_local_game_data_377)]
+            ClientRevision::R377 => continue,
         });
         #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
         let compressed: Option<&[u8]> = None;
