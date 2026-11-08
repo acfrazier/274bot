@@ -3253,6 +3253,7 @@ mod tests {
 
     #[test]
     fn step_hazard_requires_source_bounds_and_a_supported_family() {
+        crate::require_local_game_data_for_test!(ClientRevision::R289);
         const SOURCE: &str = "content/scripts/quests/quest_mcannon/scripts/locs/railings.rs2:87-91";
         let mut fixture = decode_cook().unwrap();
         let mut interact = fixture.quest.as_ref().unwrap().acquire["acquire:egg"][0].clone();
@@ -3350,7 +3351,8 @@ mod tests {
         assert_eq!(std::mem::size_of::<StepHazard>(), 6);
         assert_eq!(std::mem::size_of::<Option<StepHazard>>(), 6);
         assert_eq!(std::mem::size_of::<Option<Arc<str>>>(), 16);
-        assert_eq!(std::mem::size_of::<CompiledStep>(), 168);
+        assert_eq!(std::mem::size_of::<Option<StepAttemptBudget>>(), 24);
+        assert_eq!(std::mem::size_of::<CompiledStep>(), 192);
     }
 
     fn acquire_recipe_step(id: &str, recipe: &str) -> StepDocument {

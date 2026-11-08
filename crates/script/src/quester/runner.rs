@@ -5561,7 +5561,7 @@ mod tests {
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
-        assert_eq!(bytes, 3264, "Quester changed its measured per-bot layout");
+        assert_eq!(bytes, 3640, "Quester changed its measured per-bot layout");
         assert!(
             std::mem::size_of::<crate::survival::SurvivalStep>() <= 192,
             "SurvivalStep={} exceeds its 192 B bound",
@@ -7348,6 +7348,9 @@ mod tests {
 
         const CHILD: &str = "QUESTER_SURVIVAL_TRACE_TEST_CHILD";
         const TEST: &str = "quester::runner::tests::quester_survival_trace_pairs_a_retried_bite";
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let item_id = api::game_data::for_revision(api::selected::ClientRevision::R289)
             .unwrap()
             .item_by_alias("lobster")

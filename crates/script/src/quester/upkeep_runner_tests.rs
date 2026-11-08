@@ -800,6 +800,9 @@ fn install_make_document(document: &mut PathDocument) {
 
 #[test]
 fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = survival_step_fixture("interact");
     let completes = Arc::new(AtomicBool::new(false));
     let began = Arc::new(AtomicUsize::new(0));
@@ -1039,6 +1042,9 @@ fn quester_prices_the_hazard_from_selection_until_another_step_is_selected() {
 
 #[test]
 fn food_park_on_a_hazard_step_holds_across_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, counts) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -1108,6 +1114,9 @@ fn food_park_on_a_hazard_step_holds_across_ticks() {
 
 #[test]
 fn regeneration_to_the_line_plus_one_releases_the_park_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, counts) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -1182,6 +1191,9 @@ fn regeneration_to_the_line_plus_one_releases_the_park_once() {
 
 #[test]
 fn food_that_appears_while_parked_is_eaten() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -1237,6 +1249,9 @@ fn food_that_appears_while_parked_is_eaten() {
 
 #[test]
 fn a_dropped_bite_keeps_its_hazard_until_the_retry_settles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -1348,6 +1363,9 @@ fn a_dropped_bite_keeps_its_hazard_until_the_retry_settles() {
 
 #[test]
 fn a_real_step_transition_removes_the_old_hazard() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = survival_step_fixture("interact");
     let first_begins = Arc::new(AtomicUsize::new(0));
     let second_begins = Arc::new(AtomicUsize::new(0));
@@ -1439,6 +1457,9 @@ fn a_real_step_transition_removes_the_old_hazard() {
 
 #[test]
 fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, counts) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -1629,6 +1650,9 @@ fn quester_defers_the_begin_of_a_newly_selected_hazard_step_one_tick() {
 
 #[test]
 fn quester_refuses_a_hazard_the_account_cannot_clear_at_full_hitpoints() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let lethal = StepHazard {
         of: HazardStat::None,
         mul: 0,
@@ -1703,6 +1727,9 @@ fn quester_refuses_a_hazard_the_account_cannot_clear_at_full_hitpoints() {
 }
 #[test]
 fn quester_waits_for_hitpoints_before_admitting_a_hazard_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, counts) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -1769,6 +1796,9 @@ fn quester_waits_for_hitpoints_before_admitting_a_hazard_step() {
 
 #[test]
 fn no_selected_step_clears_the_old_hazard_before_the_next_eat_line() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -1808,6 +1838,9 @@ fn no_selected_step_clears_the_old_hazard_before_the_next_eat_line() {
 
 #[test]
 fn run_change_clears_the_old_hazard_before_the_next_eat_line() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -1848,6 +1881,9 @@ fn run_change_clears_the_old_hazard_before_the_next_eat_line() {
 
 #[test]
 fn death_clears_the_old_hazard_before_the_next_eat_line() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -1895,6 +1931,9 @@ fn death_clears_the_old_hazard_before_the_next_eat_line() {
 
 #[test]
 fn session_ended_clears_the_old_hazard_before_the_next_eat_line() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -1922,6 +1961,9 @@ fn session_ended_clears_the_old_hazard_before_the_next_eat_line() {
 
 #[test]
 fn quester_eats_inside_a_hazard_step_and_restarts_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, counts) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -2014,6 +2056,9 @@ fn quester_eats_inside_a_hazard_step_and_restarts_it() {
 }
 #[test]
 fn quester_closes_dialogue_page_before_bite_on_a_hazard_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, counts) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -2107,6 +2152,9 @@ fn quester_closes_dialogue_page_before_bite_on_a_hazard_step() {
 }
 #[test]
 fn quester_logs_an_undeclared_damage_source_once_per_step_identity() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = survival_step_fixture("interact");
     let complete = Arc::new(AtomicBool::new(false));
     let began = Arc::new(AtomicUsize::new(0));
@@ -2313,6 +2361,9 @@ fn quester_logs_an_undeclared_damage_source_once_per_step_identity() {
 
 #[test]
 fn quester_unattributed_hit_bites_at_half_max_on_its_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", None);
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -2370,6 +2421,9 @@ fn quester_unattributed_hit_bites_at_half_max_on_its_window() {
 
 #[test]
 fn food_park_closes_an_open_dialogue_page_on_the_need_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -2431,6 +2485,9 @@ fn food_park_closes_an_open_dialogue_page_on_the_need_tick() {
 
 #[test]
 fn food_park_closes_the_page_on_the_next_tick_when_the_event_is_spent() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -2508,6 +2565,9 @@ fn food_park_closes_the_page_on_the_next_tick_when_the_event_is_spent() {
 }
 #[test]
 fn food_park_revokes_a_retained_prayer_clear_and_closes_the_page() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, counts) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -2599,6 +2659,9 @@ fn food_park_revokes_a_retained_prayer_clear_and_closes_the_page() {
 }
 #[test]
 fn food_park_retries_a_refused_close() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -2676,6 +2739,9 @@ fn food_park_retries_a_refused_close() {
 
 #[test]
 fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -2824,6 +2890,9 @@ fn food_park_retries_an_unapplied_close_on_the_same_tick_and_stops_on_tick_24() 
 
 #[test]
 fn food_park_stops_on_tick_24_under_permanent_refusal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -2885,6 +2954,9 @@ fn food_park_stops_on_tick_24_under_permanent_refusal() {
 
 #[test]
 fn food_park_closes_a_page_that_opens_after_the_park_began() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -2971,6 +3043,9 @@ fn food_park_closes_a_page_that_opens_after_the_park_began() {
 
 #[test]
 fn food_park_closes_an_open_interface() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -3168,6 +3243,9 @@ fn hit_bound_run(unpark_tick: u64) -> (bool, Vec<String>, Quester) {
 
 #[test]
 fn food_park_recomputes_the_bound_after_the_committed_hit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (released_at_bound, lines, script) = hit_bound_run(425);
     assert!(
         released_at_bound,
@@ -3191,6 +3269,9 @@ fn food_park_recomputes_the_bound_after_the_committed_hit() {
 
 #[test]
 fn food_park_before_any_attempt_ends_only_by_regeneration() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, counts) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -3288,6 +3369,9 @@ fn food_park_before_any_attempt_ends_only_by_regeneration() {
 
 #[test]
 fn food_park_release_uses_the_line_of_the_current_hitpoints() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let hazard = StepHazard {
         of: HazardStat::Current,
         mul: 25,
@@ -3381,6 +3465,9 @@ fn food_park_release_uses_the_line_of_the_current_hitpoints() {
 
 #[test]
 fn food_park_bound_does_not_apply_with_a_live_row() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let world = crate::combat_session::tests::World::new("scorpion");
     let template = world.snapshot.npcs()[0].clone();
@@ -3456,6 +3543,9 @@ fn food_park_bound_does_not_apply_with_a_live_row() {
 
 #[test]
 fn pause_and_resume_keep_a_pending_bite_and_a_hazard_park_safe() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot, _) = fixture("interact", Some(RAILING_HAZARD));
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -3599,6 +3689,9 @@ fn pause_and_resume_keep_a_pending_bite_and_a_hazard_park_safe() {
 
 #[test]
 fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut document = super::super::compile::decode_cook().expect("Cook path document");
     install_make_document(&mut document);
     let (mut script, mut snapshot) = status_fixture(document);
