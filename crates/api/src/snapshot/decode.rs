@@ -2478,7 +2478,7 @@ mod tests {
                 12,
                 18,
                 Some((3_210, 3_405)),
-                &client.cache,
+                &client,
             ));
         };
         let resolve_npc = || {
@@ -2489,7 +2489,7 @@ mod tests {
                 1,
                 6,
                 100,
-                &client.cache,
+                &client,
             ));
         };
 
