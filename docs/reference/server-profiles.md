@@ -82,8 +82,15 @@ paths separate from the 274/289 paths.
 
 Native Quester dispatch, combat preparation and slot-owned bank requests admit
 the selected 377 tables.
-The 377 Path compilation fixtures require `NAV_377_PACK` for their real zone
-catalogue; do not substitute the 289 reference pack for that input.
+The 377 Path compilation fixtures use `NAV_377_PACK` or the default
+`target/local-data/nav/377/274bot.navpack` for their real zone catalogue.
+Do not substitute the 289 reference pack for that input.
+
+`tools/local-data/build.py` produces only 274/289 assets. Missing default 377
+game-data files or navigation packs therefore skip 377 asset-backed tests on
+every host, including non-CI hosts. Builds omit embedded 377 data when any
+required 377 file is absent. An explicit `NAV_377_PACK` must name a valid pack.
+Missing or invalid explicit inputs fail on every host, including CI.
 
 For the client's frozen Java-oracle tests, `CLIENT_377_CACHE_DIR` must name the
 eight-JAG fixture that matches the checked-in oracle. A newly packed running
