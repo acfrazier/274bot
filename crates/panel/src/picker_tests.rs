@@ -627,7 +627,7 @@ fn probability_picker_session(
         }; 4],
         loop_cycle: 0,
     });
-    let input = host_play::admission::capture(&snapshot, false, None, false);
+    let input = host_play::admission::capture(&snapshot, false, None, false, None);
     assert_eq!(input.hp, 1);
     assert!(!input.missing_facts(), "{input:?}");
     let state = nav_planner::WorldState::from_snapshot(&snapshot);

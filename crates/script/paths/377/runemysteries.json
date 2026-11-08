@@ -1,0 +1,735 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "runemysteries",
+  "display_name": "Rune Mysteries",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      {
+        "obj": "air_talisman",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "research_package",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      },
+      {
+        "obj": "research_notes",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": null
+      }
+    ],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:air_talisman",
+      "obj:research_package",
+      "obj:research_notes"
+    ],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:runemysteries",
+      "progress": {
+        "colour": {
+          "not_started": "runemysteries:0",
+          "in_progress": "runemysteries:1",
+          "complete": "runemysteries:6"
+        },
+        "rules": [
+          {
+            "stage": "runemysteries:6",
+            "all": [
+              "i delivered the notes to sedridor"
+            ]
+          },
+          {
+            "stage": "runemysteries:5",
+            "all": [
+              "gave me his own research notes",
+              "i should take the notes to sedridor"
+            ]
+          },
+          {
+            "stage": "runemysteries:4",
+            "all": [
+              "i took the research package to varrock and delivered it",
+              "i should speak to aubury again"
+            ]
+          },
+          {
+            "stage": "runemysteries:3",
+            "all": [
+              "i should take this research package to aubury in varrock"
+            ]
+          },
+          {
+            "stage": "runemysteries:2",
+            "all": [
+              "i gave the talisman to the head wizard",
+              "i should talk to the head wizard again"
+            ]
+          },
+          {
+            "stage": "runemysteries:1",
+            "all": [
+              "i spoke to duke horacio",
+              "i need to find the head wizard and give him the talisman"
+            ]
+          },
+          {
+            "stage": "runemysteries:0",
+            "all": [
+              "i can start this quest by speaking to duke horacio"
+            ]
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "runemysteries:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-duke",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "duke_of_lumbridge",
+                "anchor": {
+                  "tile": [
+                    3212,
+                    3220,
+                    1
+                  ],
+                  "source": "C maps/m50_50.jm2:10724 (NPC 741 at 1 12 20); pack/npc.pack:742 (741=duke_of_lumbridge); areas/area_lumbridge/scripts/duke_horacio.rs2:7-8,21-38"
+                },
+                "leash": 6,
+                "prefer": [
+                  "Have you any quests for me?",
+                  "Sure, no problem."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "runemysteries",
+                    "is": "in_progress"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "runemysteries:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "withdraw-talisman",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [
+                  {
+                    "obj": "air_talisman",
+                    "qty": 1
+                  }
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "air_talisman"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "air_talisman"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "air_talisman"
+                  }
+                }
+              }
+            },
+            {
+              "id": "recover-duke",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "duke_of_lumbridge",
+                "anchor": {
+                  "tile": [
+                    3212,
+                    3220,
+                    1
+                  ],
+                  "source": "C maps/m50_50.jm2:10724 (NPC 741 at 1 12 20); pack/npc.pack:742 (741=duke_of_lumbridge); areas/area_lumbridge/scripts/duke_horacio.rs2:40-51"
+                },
+                "leash": 6,
+                "prefer": ["Have you any quests for me?"]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "air_talisman"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "research_package"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "research_notes"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "air_talisman"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "research_package"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "research_notes"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "id": "deliver-talisman",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "head_wizard",
+                "anchor": {
+                  "tile": [
+                    3103,
+                    9571,
+                    0
+                  ],
+                  "source": "C maps/m48_149.jm2:6535 (NPC 300 at 0 31 35); pack/npc.pack:301 (300=head_wizard); areas/area_wizard_tower/scripts/sedridor.rs2:52-75,98-109"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm looking for the head wizard.",
+                  "Ok, here you are.",
+                  "Yes, certainly."
+                ]
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "air_talisman"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_package"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "runemysteries:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "accept-package",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "head_wizard",
+                "anchor": {
+                  "tile": [
+                    3103,
+                    9571,
+                    0
+                  ],
+                  "source": "C maps/m48_149.jm2:6535 (NPC 300 at 0 31 35); pack/npc.pack:301 (300=head_wizard); areas/area_wizard_tower/scripts/sedridor.rs2:111-134"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Yes, certainly."
+                ]
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_package"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_package"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "runemysteries:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "withdraw-package",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [
+                  {
+                    "obj": "research_package",
+                    "qty": 1
+                  }
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "research_package"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "research_package"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_package"
+                  }
+                }
+              }
+            },
+            {
+              "id": "recover-package",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "head_wizard",
+                "anchor": {
+                  "tile": [
+                    3103,
+                    9571,
+                    0
+                  ],
+                  "source": "C maps/m48_149.jm2:6535 (NPC 300 at 0 31 35); pack/npc.pack:301 (300=head_wizard); areas/area_wizard_tower/scripts/sedridor.rs2:11-23"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_package"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_package"
+                  }
+                }
+              }
+            },
+            {
+              "id": "deliver-package",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "aubury",
+                "anchor": {
+                  "tile": [
+                    3253,
+                    3402,
+                    0
+                  ],
+                  "source": "C maps/m50_53.jm2:12955 (NPC 553 at 0 53 10); pack/npc.pack:554 (553=aubury); areas/area_varrock/scripts/aubury.rs2:25-26,35-37,49-61"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I have been sent here with a package for you."
+                ]
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "research_package"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "research_package"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "runemysteries:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "collect-notes",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "aubury",
+                "anchor": {
+                  "tile": [
+                    3253,
+                    3402,
+                    0
+                  ],
+                  "source": "C maps/m50_53.jm2:12955 (NPC 553 at 0 53 10); pack/npc.pack:554 (553=aubury); areas/area_varrock/scripts/aubury.rs2:2-8"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_notes"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_notes"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "runemysteries:5",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "withdraw-notes",
+              "kind": "bank",
+              "version": 1,
+              "args": {
+                "op": "withdraw",
+                "at": "nearest",
+                "items": [
+                  {
+                    "obj": "research_notes",
+                    "qty": 1
+                  }
+                ]
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "research_notes"
+                      }
+                    }
+                  },
+                  {
+                    "All": [
+                      {
+                        "Fact": {
+                          "kind": "bank_known",
+                          "version": 1,
+                          "args": {}
+                        }
+                      },
+                      {
+                        "Not": {
+                          "Fact": {
+                            "kind": "bank_has",
+                            "version": 1,
+                            "args": {
+                              "obj": "research_notes"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_notes"
+                  }
+                }
+              }
+            },
+            {
+              "id": "recover-notes",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "aubury",
+                "anchor": {
+                  "tile": [
+                    3253,
+                    3402,
+                    0
+                  ],
+                  "source": "C maps/m50_53.jm2:12955 (NPC 553 at 0 53 10); pack/npc.pack:554 (553=aubury); areas/area_varrock/scripts/aubury.rs2:9-20"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_notes"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "research_notes"
+                  }
+                }
+              }
+            },
+            {
+              "id": "deliver-notes",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "head_wizard",
+                "anchor": {
+                  "tile": [
+                    3103,
+                    9571,
+                    0
+                  ],
+                  "source": "C maps/m48_149.jm2:6535 (NPC 300 at 0 31 35); pack/npc.pack:301 (300=head_wizard); areas/area_wizard_tower/scripts/sedridor.rs2:140-180"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "research_notes"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "runemysteries",
+                    "is": "complete"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        {
+          "stage": "runemysteries:6",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

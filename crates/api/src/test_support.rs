@@ -1,7 +1,10 @@
 #[path = "test_support/local_asset_path.rs"]
 mod local_asset_path;
+#[path = "test_support/local_asset_path_377.rs"]
+mod local_asset_path_377;
 
 pub use local_asset_path::local_asset_path;
+pub use local_asset_path_377::local_asset_path_377;
 
 /// Check the local inputs needed by tests that use embedded game data.
 ///

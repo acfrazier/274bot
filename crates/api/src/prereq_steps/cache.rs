@@ -16,7 +16,7 @@ const PREREQ_STEPS_289: &[u8] = include_bytes!("../../data/game-data/289/prereq_
 fn embedded(revision: ClientRevision) -> Option<&'static [u8]> {
     match revision {
         ClientRevision::R289 => Some(PREREQ_STEPS_289),
-        ClientRevision::R274 => None,
+        ClientRevision::R274 | ClientRevision::R377 => None,
     }
 }
 
@@ -116,4 +116,16 @@ pub(crate) fn cached(data: &SelectedGameData) -> Option<Arc<PrereqCatalog>> {
 
 fn load(family: &[u8]) -> Result<PrereqCatalog, FactError> {
     wire::decode(family)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_revisions_do_not_receive_289_prerequisites() {
+        for revision in [ClientRevision::R274, ClientRevision::R377] {
+            assert!(embedded(revision).is_none());
+        }
+    }
 }

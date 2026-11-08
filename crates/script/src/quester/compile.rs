@@ -562,6 +562,7 @@ pub fn compile_path_for_gang(
     let revision = match selected.revision() {
         274 => 274,
         289 => 289,
+        377 => 377,
         _ => return Err(CompileError::code("unsupported-revision")),
     };
     let key = CacheKey {
@@ -2431,20 +2432,43 @@ pub fn decode_cook() -> Result<PathDocument, CompileError> {
 }
 
 #[cfg(test)]
-pub(crate) fn real_nav_lease() -> Option<&'static nav_planner::contract::NavLease> {
-    static NAV: std::sync::LazyLock<Option<nav_planner::contract::NavLease>> =
-        std::sync::LazyLock::new(|| {
-            let pack = api::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")?;
-            let bytes = std::fs::read(&pack)
-                .unwrap_or_else(|error| panic!("read real 289 pack {}: {error}", pack.display()));
-            let world = nav_planner::world::NavWorld::from_bytes(&bytes)
-                .unwrap_or_else(|error| panic!("load real 289 pack {}: {error}", pack.display()));
-            Some(
-                nav_planner::contract::NavLease::wrap(Arc::new(world))
-                    .expect("create a lease for the real 289 zone catalog"),
-            )
-        });
-    NAV.as_ref()
+pub(crate) fn real_nav_lease(
+    revision: api::selected::ClientRevision,
+) -> Option<&'static nav_planner::contract::NavLease> {
+    use api::selected::ClientRevision;
+    use std::sync::OnceLock;
+
+    static NAV_289: OnceLock<Option<nav_planner::contract::NavLease>> = OnceLock::new();
+    static NAV_377: OnceLock<Option<nav_planner::contract::NavLease>> = OnceLock::new();
+    let (nav, env_key, default_path) = match revision {
+        ClientRevision::R289 => (&NAV_289, "NAV_PACK", ""),
+        ClientRevision::R377 => (
+            &NAV_377,
+            "NAV_377_PACK",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../target/local-data/nav/377/274bot.navpack"
+            ),
+        ),
+        ClientRevision::R274 => panic!("no real revision-274 navigation fixture"),
+    };
+    nav.get_or_init(|| {
+        let description = format!("real {} nav pack", revision.as_i32());
+        let pack = if revision == ClientRevision::R377 {
+            api::test_support::local_asset_path_377(env_key, default_path, &description)?
+        } else {
+            api::test_support::local_asset_path(env_key, default_path, &description)?
+        };
+        let bytes = std::fs::read(&pack)
+            .unwrap_or_else(|error| panic!("read {description} {}: {error}", pack.display()));
+        let world = nav_planner::world::NavWorld::from_bytes(&bytes)
+            .unwrap_or_else(|error| panic!("load {description} {}: {error}", pack.display()));
+        Some(
+            nav_planner::contract::NavLease::wrap(Arc::new(world))
+                .expect("create a lease for the real zone catalog"),
+        )
+    })
+    .as_ref()
 }
 
 #[cfg(test)]
@@ -2469,7 +2493,7 @@ mod tests {
     fn quester_compile_policy_timing() {
         let _home = crate::IsolatedEnv::enter("quester-compile-policy-timing");
         crate::require_local_game_data_for_test!(ClientRevision::R289);
-        let Some(nav) = real_nav_lease() else {
+        let Some(nav) = real_nav_lease(ClientRevision::R289) else {
             return;
         };
         FamilyPreparation::run(move |worker| {

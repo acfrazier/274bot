@@ -12,6 +12,7 @@ The file is created on first use with these built-ins:
 | --- | --- | --- | --- | --- | --- |
 | `local-274` | 274 | TCP | `127.0.0.1:43594` | HTTP `:80` | `~/.274bot/vault` |
 | `local-289` | 289 | TCP | `127.0.0.1:44594` | HTTP `:1080` | `~/.274bot/vault-289` |
+| `local-377` | 377 | TCP | `127.0.0.1:43595` | HTTP `:81` | `~/.274bot/vault-377` |
 | `rs2b2t` | 289 | WSS | first roster world (default `w1.rs2b2t.com:443`) | HTTPS `:443` | `~/.274bot/vault-prod` |
 
 Select any stored name with `--profile NAME` on `host-play`, `panel-play`, and
@@ -52,8 +53,8 @@ Each profile stores its vault filename explicitly. See the
 
 Each panel/TUI map Walk confirmation emits one Info-level `WalkTo` outcome per requested slot through the shared host log sink, including refusals. It records origin, the routed destination (including snapping), teleport/wilderness/bank-fetch options, effective WORLD membership and compact provenance (`unknown`, `explicit`, `rs2b2t` or `local-world-json`), then route legs/walk steps/transports or the refusal reason. Local declaration paths and digests are not included. Unfocused refusals appear in the Process log; an empty group keeps its selection and reports “no bots selected.” Availability checks and frame-by-frame following do not emit request lines.
 
-Without an explicit profile, the saved panel revision chooses `local-274` or
-`local-289`; otherwise local 274 is the default.
+Without an explicit profile, `--revision`, `BOT_REVISION`, or the saved revision
+chooses the matching local profile. Otherwise, local 274 remains the default.
 
 Local engine roots are never inferred from `HOME`. A local profile resolves
 the root in this order: `--engine`, `ENGINE_DIR`, then `login_key.engine_dir`
@@ -61,6 +62,45 @@ in `~/.274bot/servers.json`. New `servers.json` files leave that path unset;
 without an explicit value, a local profile fails fast with setup guidance.
 The public WSS profile does not need an engine root.
 
-All profiles cache fetched client archives under `~/.274bot/unpack` (274) or `~/.274bot/unpack-289` (289) unless `--cache`/`--unpack` overrides them. This repo ships no Jagex assets; the client fetches `/crc` and jags from the selected profile's asset endpoint.
+Profiles cache fetched client archives under `~/.274bot/unpack` (274),
+`~/.274bot/unpack-289` (289), or `~/.274bot/unpack-377` (377), unless
+`--cache`/`--unpack` overrides them. This repo ships no Jagex assets.
+The client fetches `/crc` and jags from the selected profile's asset endpoint.
 
 Beta's **tested** path is the **local** engine on revision **289**. Revision 274 is best-effort: it may run, but it is neither tested nor claimed. The public world is built in for login/asset fetch; it is **not** a hosted wall, **not** Jagex, and there is **no** public-world CI or SLA.
+
+Revision 377 is an explicit local development target. `host-play --revision 377
+--engine PATH` selects Fairy Ring's local endpoint. It uses the pinned 377
+client decoder, including revision-specific config and interface fields.
+Low- and high-memory clients keep separate mode-dependent tables.
+
+Select a real revision-377 cache, decoded snapshot and navigation pack.
+The driver uses revision-specific decoders; it does not relabel revision-289
+resources. Generated facts are local inputs. The runtime does not authenticate
+their source revision, commit or content hash (ADR 0019). Keep the 377 resource
+paths separate from the 274/289 paths.
+
+Native Quester dispatch, combat preparation and slot-owned bank requests admit
+the selected 377 tables.
+The 377 Path compilation fixtures use `NAV_377_PACK` or the default
+`target/local-data/nav/377/274bot.navpack` for their real zone catalogue.
+Do not substitute the 289 reference pack for that input.
+
+`tools/local-data/build.py` produces only 274/289 assets. Missing default 377
+game-data files or navigation packs therefore skip 377 asset-backed tests on
+every host, including non-CI hosts. Builds omit embedded 377 data when any
+required 377 file is absent. An explicit `NAV_377_PACK` must name a valid pack.
+Missing or invalid explicit inputs fail on every host, including CI.
+
+For the client's frozen Java-oracle tests, `CLIENT_377_CACHE_DIR` must name the
+eight-JAG fixture that matches the checked-in oracle. A newly packed running
+engine cache is not that frozen fixture. Keep this test path separate from the
+cache used by a live host run.
+
+The bounded `client_377` scenario uses the existing
+`panel-play --revision 377 --live script_client_377` harness. After the normal
+mainland seed, it captures scene 2. It sends a short direct courtyard walk without
+the whole-world router and waits for the exact destination. It then talks to the
+live NPC with selected-cache type 0 (Hans). It requires a closed dialogue before
+the send and captures the new dialogue. This client qualification does not qualify
+combat, gathering, questing, banking, or other game-data-dependent families.

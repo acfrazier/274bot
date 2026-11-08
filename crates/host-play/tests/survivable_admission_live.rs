@@ -247,7 +247,7 @@ impl CompatLive {
         if !snapshot.ingame() || !snapshot.attached() || snapshot.scene_state() != 2 {
             return;
         }
-        let input = admission::capture(snapshot, self.members, None, false);
+        let input = admission::capture(snapshot, self.members, None, false, None);
         if input.hp_max > 0 && input.hp == 0 {
             self.failure = Some(format!("compat live death at {:?}", snapshot.tile()));
             return;
@@ -431,7 +431,7 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
                     state.phase,
                     state.snapshot.scene_state(),
                     state.snapshot.inventory_size(),
-                    admission::capture(&state.snapshot, state.members, None, false)
+                    admission::capture(&state.snapshot, state.members, None, false, None)
                 );
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -505,7 +505,7 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
         let receipt =
             {
                 let state = state.lock().expect("fixture state");
-                let input = admission::capture(&state.snapshot, state.members, None, false);
+                let input = admission::capture(&state.snapshot, state.members, None, false, None);
                 let food = state
                     .snapshot
                     .inventory()

@@ -391,7 +391,7 @@ fn consumer_rejects_stale_stamp() {
         poison: PoisonState::Clear,
         ..Default::default()
     };
-    let input = crate::admission::capture(&snapshot, true, Some(&stale), false);
+    let input = crate::admission::capture(&snapshot, true, Some(&stale), false, None);
     assert!(matches!(input.poison, PoisonState::Unknown { .. }));
 }
 
@@ -1411,9 +1411,7 @@ fn repeated_interactions_keep_login_poison_unknown() {
 
 /// The dispatch-checkpoint/trace gate runs the client the slot loop binds,
 /// so the revision decides the opcode mapping `observe_dispatch` walks.
-/// R274 maps its own table; R289 walks the stage-3 table. A revision-377
-/// merge adds `dispatch_checkpoint_allocations_gate_r377` calling this
-/// helper with `ClientRevision::R377` (CI-MEMORY-GATE-1106 slice C).
+/// Each supported revision walks its own opcode table.
 fn dispatch_checkpoint_allocations_gate(revision: client::io::ClientRevision) {
     if !api::test_support::game_data_available() {
         return;
@@ -1437,6 +1435,11 @@ fn dispatch_checkpoint_allocations_gate_r274() {
 #[test]
 fn dispatch_checkpoint_allocations_gate_r289() {
     dispatch_checkpoint_allocations_gate(client::io::ClientRevision::R289);
+}
+
+#[test]
+fn dispatch_checkpoint_allocations_gate_r377() {
+    dispatch_checkpoint_allocations_gate(client::io::ClientRevision::R377);
 }
 
 #[test]
@@ -1500,17 +1503,15 @@ fn admission_capture_reads_slot_condition() {
     let mut snapshot = frame(1);
     hit(&mut snapshot, 2, 6, 1);
     owner.observe_frame(&snapshot, &drain(true, true), false);
-    let input = crate::admission::capture(&snapshot, false, owner.current(), false);
+    let input = crate::admission::capture(&snapshot, false, owner.current(), false, None);
     assert_eq!(input.poison, owner.current().unwrap().poison);
     owner.complete = false;
-    let input = crate::admission::capture(&snapshot, false, owner.current(), false);
+    let input = crate::admission::capture(&snapshot, false, owner.current(), false, None);
     assert!(matches!(input.poison, PoisonState::Unknown { .. }));
 }
 
 /// The steady and line-frame gates observe the snapshot the slot loop
-/// publishes; the revision names the client the frames arrive from, so the
-/// 377 merge adds `condition_frame_allocations_gate_r377` beside the two
-/// below (CI-MEMORY-GATE-1106 slice C).
+/// publishes for each supported revision.
 fn condition_frame_allocations_gate(revision: client::io::ClientRevision) {
     let _ = revision;
     if !api::test_support::game_data_available() {
@@ -1549,6 +1550,11 @@ fn condition_frame_allocations_gate_r274() {
 #[test]
 fn condition_frame_allocations_gate_r289() {
     condition_frame_allocations_gate(client::io::ClientRevision::R289);
+}
+
+#[test]
+fn condition_frame_allocations_gate_r377() {
+    condition_frame_allocations_gate(client::io::ClientRevision::R377);
 }
 
 #[test]
@@ -1782,4 +1788,9 @@ fn warmed_tick_frame_allocations_gate_r274() {
 #[test]
 fn warmed_tick_frame_allocations_gate_r289() {
     warmed_tick_frame_allocations_gate(client::io::ClientRevision::R289);
+}
+
+#[test]
+fn warmed_tick_frame_allocations_gate_r377() {
+    warmed_tick_frame_allocations_gate(client::io::ClientRevision::R377);
 }

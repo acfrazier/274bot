@@ -778,11 +778,7 @@ impl SlotScript {
         let revision = identity
             .game_data
             .as_ref()
-            .and_then(|data| match data.revision() {
-                274 => Some(api::selected::ClientRevision::R274),
-                289 => Some(api::selected::ClientRevision::R289),
-                _ => None,
-            });
+            .and_then(|data| super::compiled::selected_revision(data).ok());
         let Some(revision) = revision else {
             let mut rows = std::mem::take(&mut bank.rows);
             for row in rows.drain(..) {
