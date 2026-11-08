@@ -709,19 +709,19 @@ fn content_reengagement_budget(budget_ticks: u16) -> u32 {
 /// from the per-fight `kill_budget_ticks` and the non-kill `reengage_budget`.
 ///
 /// Policy: one shared constant for every loot-and-`until` step, sized from
-/// Doric's Quest as the hardest known case. A step whose drop is rarer than
-/// Doric's, or whose target is larger, may therefore end at this limit.
+/// the hardest known authored case. A step whose drop is rarer, or whose
+/// target is larger, may therefore end at this limit.
 ///
-/// Rule: enough kills that the target of Doric's Quest is at least 99% likely
-/// to be reached. Its Path (`paths/377/doric.json`, step
-/// `gather-iron-from-dwarves`) holds two iron ores; a dwarf rolls
-/// `random(128)` and drops one iron ore on rolls 89..=92, 4/128 = 1/32
-/// (content `scripts/drop tables/scripts/dwarf.rs2:13,39-42`). The smallest
-/// `n` with P(Binomial(n, 1/32) >= 2) >= 0.99 is 210 (0.99011; 209 gives
-/// 0.98984). Other authored steps in the same 210 kills: Ikov's 20 limpwurt
-/// roots at 22/128 (`hobgoblin.rs2:63-64`) reach 0.9994; three goblin armour
-/// at 5/128 (`goblin.rs2:51-53`, Gobdip) reach 0.989.
-const DROP_LOOP_KILL_BUDGET: u32 = 210;
+/// Rule: enough kills that the hardest known target is at least 99% likely to
+/// be reached. That is The Knight's Sword on 377 (`paths/377/squire.json`,
+/// step `dwarf-iron-bar-drops`): two iron bars, which a dwarf drops on 3 of
+/// `random(128)` (content `scripts/drop tables/scripts/dwarf.rs2:47-48`). The
+/// smallest `n` with P(Binomial(n, 3/128) >= 2) >= 0.99 is 281 (0.99012; 280
+/// gives 0.98992). In the same 281 kills: Doric's two iron ores at 4/128
+/// (`dwarf.rs2:13,39-42`) reach 0.99866; Ikov's 20 limpwurt roots at 22/128
+/// (`hobgoblin.rs2:63-64`) reach 0.9994 or more; Gobdip's three goblin armour
+/// at 5/128 (`goblin.rs2:75-76`) reach 0.99894.
+const DROP_LOOP_KILL_BUDGET: u32 = 281;
 
 fn compile_finish(
     args: FinishArgs,

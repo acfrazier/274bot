@@ -6132,7 +6132,7 @@ fn the_drop_loop_kill_budget_ends_the_step_with_the_last_detail() {
     match spent {
         Poll::Ready(Err(ActionError::Failed(detail))) => {
             assert!(
-                detail.contains("required combat loot was not acquired within 210 kills"),
+                detail.contains("required combat loot was not acquired within 281 kills"),
                 "{detail}"
             );
             assert!(detail.contains("last report:"), "{detail}");
