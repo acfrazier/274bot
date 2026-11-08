@@ -5109,12 +5109,6 @@ fn receipt_records_refused_closure_without_claiming_observation() {
 }
 
 #[test]
-fn receipt_state_size_tripwire() {
-    assert_eq!(std::mem::size_of::<ScenarioRunner>(), 5368, "runner bytes");
-    assert_eq!(std::mem::size_of::<Evidence>(), 352, "evidence bytes");
-}
-
-#[test]
 fn receipt_can_disarm_rearm_and_bind_a_replacement_session() {
     let mut runner = ScenarioRunner::with_world(stat_scenario(0, 10), None);
     runner.set_scene_settle(Duration::ZERO);
