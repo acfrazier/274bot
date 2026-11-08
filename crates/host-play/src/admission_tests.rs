@@ -31,6 +31,7 @@ fn selected_combat() -> Arc<CombatTables> {
 
 #[test]
 fn explicit_377_tables_keep_selected_food_prayer_dose_and_condition_identity() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
     let selected =
         api::game_data::for_revision(ClientRevision::R377).expect("selected revision 377 facts");
     let world = NavWorld::from_parts(
