@@ -168,7 +168,11 @@ mod tests {
                 "revision 377 gathering family for API tests",
             ),
         };
-        let path = crate::test_support::local_asset_path("", path, description)?;
+        let path = if revision == ClientRevision::R377 {
+            crate::test_support::local_asset_path_377("", path, description)?
+        } else {
+            crate::test_support::local_asset_path("", path, description)?
+        };
         if let Some(bytes) = embedded(revision) {
             return Some((Cow::Borrowed(bytes), bytes.len()));
         }
