@@ -185,25 +185,20 @@ fn the_whole_frame_refresh_allocates_nothing() {
                 "warm frame {tick} moved"
             );
         }
-        // One more due sample arms the resource meter's probe thread once
-        // more; the probe completes on the real clock. Drain it with
-        // real-time polls so no publication can land in the measured
-        // window (at the fixed steady instant the cadences are inside
-        // their periods and never request again).
+        // Make a resource sample due, then wait for the worker's state to
+        // show completion. A published sample need not allocate or change the
+        // view on this polling thread.
+        let before_drain = session.resource_probe_generation();
         session.poll_at(t0 + Duration::from_secs(6));
-        let drain_deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            std::thread::sleep(Duration::from_millis(20));
-            let before = events();
-            session.poll_at(t0 + Duration::from_millis(6_500));
-            if events() > before {
-                break;
-            }
-            assert!(
-                Instant::now() < drain_deadline,
-                "the resource meter never published during the drain"
-            );
+        let steady = t0 + Duration::from_millis(6_500);
+        while session.resource_probe_in_flight() {
+            session.poll_at(steady);
+            std::thread::yield_now();
         }
+        assert!(
+            session.resource_probe_generation() > before_drain,
+            "the resource meter did not publish during the drain"
+        );
         assert!(!model.refresh(&session), "the drain frame moved");
 
         // The measured frames repeat one instant: both cadences skip, the
