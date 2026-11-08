@@ -54,8 +54,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   revision-selected. Unproved 289-only controls and tactics remain unavailable;
   they are not copied into the 377 data.
 
-- Shop lookups now report revision-377 facts as unavailable instead of
-  returning legacy revision-289 stock, price or keeper values.
+- Shop lookups use revision-377 stock, prices and keeper facts from their
+  selected local assets. They do not substitute revision-289 values.
 
 ### Navigation
 
@@ -67,26 +67,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Revision 377's packed-name door admission now requires a closed category
   for named configs. The refused Black Knights' Fortress doors no longer
   create crossings. Numeric 274/289 declarations remain unchanged.
-- Quester checks the selected pin before revision admission, preserving the
-  revision-274/289 pin-mismatch error precedence.
-- Revision 377 cache manifests now pass the navigation identity checks.
-  Revision mismatches and changed archive bytes still fail.
 - Route-admission inputs now use the navigation world's selected food, prayer,
   shield and threat facts. Unavailable 377 bindings remain unavailable rather
   than reading revision-289 rows.
   Prayer cleanup also reads the revision-377 driver's prayer rows.
-- The existing navigation baker accepts explicit revision 377 inputs and
-  reads their config through the revision-377 decoder. The pack format
-  remains version 17.
 - Revision 377's named Lumbridge stair handlers retain their script-derived
   landings and one-tick cost. An explicit real-pack qualification covers
   city routes, bidirectional doors, stairs and the Port Sarim ship journey.
-- An offline quest-family bake verifies the actual core, manifest, family
-  bytes and source provenance before navigation exists. Runtime selected pins
-  still require the final real navigation and flags digests.
 - Source-derived service POI sidecars accept explicit revision 377 packs.
-  Client-derived image/catalogue jobs keep their existing decoder admission,
-  and sidecar revision and digest mismatches still fail.
+  Client-derived image/catalogue jobs keep their existing decoder admission.
 - Revision 377 boat starts admit multiple selected-map NPC spawns when
   their script rules select the same journey, restoring Brimhaven to
   Ardougne. Missing spawns and conflicting journey branches remain refused.
