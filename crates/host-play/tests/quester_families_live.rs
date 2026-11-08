@@ -2064,9 +2064,29 @@ const FORTRESS_STAGE_PROOF: &str = "prove the whole fixture profile and loadout 
 /// other than the pick to hit the bot first; each fight is one more start of
 /// that situation. The cell records what it saw and never gates on it.
 const FORTRESS_KILLS: usize = 3;
-/// The machine ends a fight on the third refusal with no confirmed attack in
-/// between (`SINGLE_WAY_END`), so a run that completed holds at most two per fight.
-const SINGLE_WAY_REFUSAL_BOUND: usize = 2 * FORTRESS_KILLS;
+/// The engine refuses an attack on any NPC but the one that attacked last for
+/// 8 ticks (`player_combat.rs2:115`). The machine counts a refusal once per such
+/// window, so the cell counts windows the same way, in observed game ticks.
+const SINGLE_WAY_WINDOW_TICKS: u32 = 8;
+/// The machine ends a fight when the third window with a refusal and no landed
+/// hit closes, so a loop shows as windows piling up. The bound is a tripwire,
+/// loose on purpose: a landed hit restarts the machine's own count.
+const SINGLE_WAY_WINDOW_BOUND: usize = 3 * FORTRESS_KILLS;
+
+/// Refusal windows in `ticks` (ascending game ticks of refusal lines): a window
+/// opens at its first refusal and runs `SINGLE_WAY_WINDOW_TICKS` ticks; a
+/// refusal after it opens the next one.
+fn single_way_windows(ticks: &[u32]) -> usize {
+    let mut windows = 0;
+    let mut closes = 0u32;
+    for &tick in ticks {
+        if windows == 0 || tick >= closes {
+            windows += 1;
+            closes = tick + SINGLE_WAY_WINDOW_TICKS;
+        }
+    }
+    windows
+}
 
 /// The verdict over a finished run. `steps` counts the distinct combat steps
 /// the status showed; the family completes a step when its fight ends, so a
@@ -2075,17 +2095,18 @@ const SINGLE_WAY_REFUSAL_BOUND: usize = 2 * FORTRESS_KILLS;
 /// observation in the receipt, never a gate.
 fn single_way_outcome(
     refusals: usize,
+    windows: usize,
     steps: usize,
     completed: bool,
     retargets: usize,
 ) -> Result<&'static str, String> {
-    if refusals > SINGLE_WAY_REFUSAL_BOUND {
+    if windows > SINGLE_WAY_WINDOW_BOUND {
         Err(format!(
-            "{refusals} single-way refusal lines (bound {SINGLE_WAY_REFUSAL_BOUND}): the refused attack was not retargeted"
+            "{refusals} single-way refusal lines in {windows} windows (bound {SINGLE_WAY_WINDOW_BOUND}): the refused attack was not retargeted"
         ))
     } else if !completed || steps < FORTRESS_KILLS {
         Err(format!(
-            "single-way run did not finish its {FORTRESS_KILLS} fights: completed={completed}, steps seen={steps}, refusals={refusals}"
+            "single-way run did not finish its {FORTRESS_KILLS} fights: completed={completed}, steps seen={steps}, refusals={refusals}, windows={windows}"
         ))
     } else if refusals == 0 {
         Ok("no_refusal_observed")
@@ -2097,27 +2118,42 @@ fn single_way_outcome(
 }
 
 #[test]
+fn single_way_windows_count_one_per_engine_window() {
+    assert_eq!(single_way_windows(&[]), 0);
+    // Refusals on consecutive ticks are one window.
+    assert_eq!(single_way_windows(&[100, 101, 102, 107]), 1);
+    // The tick the window closes opens the next one.
+    assert_eq!(single_way_windows(&[100, 108]), 2);
+    assert_eq!(single_way_windows(&[100, 101, 108, 109, 116]), 3);
+}
+
+#[test]
 fn single_way_oracle_accepts_bounded_runs_and_rejects_loop_or_unfinished_runs() {
     let steps = FORTRESS_KILLS;
     assert_eq!(
-        single_way_outcome(1, steps, true, 1).unwrap(),
+        single_way_outcome(1, 1, steps, true, 1).unwrap(),
+        "retargeted_after_refusal"
+    );
+    // Many refusal lines inside one window are not a loop.
+    assert_eq!(
+        single_way_outcome(9, 1, steps, true, 1).unwrap(),
         "retargeted_after_refusal"
     );
     assert_eq!(
-        single_way_outcome(SINGLE_WAY_REFUSAL_BOUND, steps, true, 1).unwrap(),
+        single_way_outcome(2, SINGLE_WAY_WINDOW_BOUND, steps, true, 1).unwrap(),
         "retargeted_after_refusal"
     );
     assert_eq!(
-        single_way_outcome(2, steps, true, 0).unwrap(),
+        single_way_outcome(2, 2, steps, true, 0).unwrap(),
         "refused_then_waited_out"
     );
     assert_eq!(
-        single_way_outcome(0, steps, true, 0).unwrap(),
+        single_way_outcome(0, 0, steps, true, 0).unwrap(),
         "no_refusal_observed"
     );
-    assert!(single_way_outcome(SINGLE_WAY_REFUSAL_BOUND + 1, steps, true, 1).is_err());
-    assert!(single_way_outcome(1, steps - 1, true, 1).is_err());
-    assert!(single_way_outcome(1, steps, false, 1).is_err());
+    assert!(single_way_outcome(2, SINGLE_WAY_WINDOW_BOUND + 1, steps, true, 1).is_err());
+    assert!(single_way_outcome(1, 1, steps - 1, true, 1).is_err());
+    assert!(single_way_outcome(1, 1, steps, false, 1).is_err());
 }
 
 fn is_single_way_line(text: &str) -> bool {
@@ -2303,6 +2339,8 @@ fn live_quester_families_combat_single_way_retarget() {
     let mut steps_seen: Vec<String> = Vec::new();
     let mut step_kills: Vec<(String, i64)> = Vec::new();
     let mut refusal_sequences: Vec<i32> = Vec::new();
+    let mut refusal_ticks: Vec<u32> = Vec::new();
+    let mut refusal_log: Vec<Value> = Vec::new();
     let mut attackers: Vec<usize> = Vec::new();
     let mut polls = 0u32;
     let mut trace: Vec<Value> = Vec::new();
@@ -2353,9 +2391,23 @@ fn live_quester_families_combat_single_way_retarget() {
         for line in snapshot.chat_lines() {
             if is_single_way_line(&line.text) && !refusal_sequences.contains(&line.sequence) {
                 refusal_sequences.push(line.sequence);
+                refusal_ticks.push(snapshot.tick());
                 awaiting_retarget = Some((polls, local_target));
+                eprintln!(
+                    "single-way refusal line: tick {} poll {polls} sequence {} text {:?} local_target {local_target:?}",
+                    snapshot.tick(),
+                    line.sequence,
+                    line.text
+                );
+                // Every refusal line, read from the chat window, with the game
+                // tick of the poll that first saw it.
+                refusal_log.push(json!({"sequence": line.sequence, "text": &line.text,
+                    "tick": snapshot.tick(), "poll": polls,
+                    "local_target": local_target,
+                    "local_target_hits_me": local_target.map(knight_hits_me)}));
                 if trace.len() < 60 {
-                    trace.push(json!({"poll": polls, "refusal_sequence": line.sequence,
+                    trace.push(json!({"poll": polls, "tick": snapshot.tick(),
+                        "refusal_sequence": line.sequence,
                         "here": tile(snapshot), "kills": kills,
                         "local_target": local_target,
                         "local_target_hits_me": local_target.map(knight_hits_me),
@@ -2388,10 +2440,12 @@ fn live_quester_families_combat_single_way_retarget() {
                 attackers.push(npc.index);
             }
         }
-        if refusal_sequences.len() > SINGLE_WAY_REFUSAL_BOUND + 4 {
+        if single_way_windows(&refusal_ticks) > SINGLE_WAY_WINDOW_BOUND + 1 {
             return Err(format!(
-                "single-way refusal loop: {} lines after {polls} polls, kills={kills}, attackers={attackers:?}, trace={}",
-                refusal_sequences.len(),
+                "single-way refusal loop: {} lines in {} windows after {polls} polls, kills={kills}, attackers={attackers:?}, log={}, trace={}",
+                refusal_ticks.len(),
+                single_way_windows(&refusal_ticks),
+                Value::Array(refusal_log.clone()),
                 Value::Array(trace.clone())
             ));
         }
@@ -2403,7 +2457,8 @@ fn live_quester_families_combat_single_way_retarget() {
         }
         let completed = completed_lifecycle(Some(lifecycle));
         let outcome = single_way_outcome(
-            refusal_sequences.len(),
+            refusal_ticks.len(),
+            single_way_windows(&refusal_ticks),
             steps_seen.len(),
             completed,
             retargets.len(),
@@ -2419,8 +2474,10 @@ fn live_quester_families_combat_single_way_retarget() {
             "npc_config": "aggressive_black_knight",
             "npc_type_id": knight_id,
             "outcome": outcome,
-            "refusal_lines": refusal_sequences.len(),
+            "refusal_lines": refusal_ticks.len(),
+            "refusal_windows": single_way_windows(&refusal_ticks),
             "refusal_sequences": &refusal_sequences,
+            "refusal_log": &refusal_log,
             "retargets_witnessed": &retargets,
             "attackers_seen": &attackers,
             "steps_seen": &steps_seen,

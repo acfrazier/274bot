@@ -618,6 +618,12 @@ fn pick_npc(
     } else {
         None
     };
+    // In single-way combat an attack on any NPC but the one that last hit the
+    // bot is refused for 8 ticks (`player_combat.rs2:115`), so the nearest
+    // pick takes an NPC that is already in combat with the bot first. Another
+    // pick order is the request's own, and a multiway map has no such rule.
+    let attacker_first =
+        !attackers_only && matches!(pick, Pick::Nearest) && !frame.world.multi_combat;
     let mut best: Option<(ActorRef, u64, u64)> = None;
     let mut random_state = seed | 1;
     let mut seen = 0u64;
@@ -656,7 +662,13 @@ fn pick_npc(
             // nearest to the bot.
             (u64::from(!npc.in_combat) << 32) | u64::from(tile_distance(npc.tile, frame.here))
         } else {
-            route_steps.map_or_else(|| u64::from(tile_distance(npc.tile, origin)), u64::from)
+            let near =
+                route_steps.map_or_else(|| u64::from(tile_distance(npc.tile, origin)), u64::from);
+            if attacker_first {
+                (u64::from(!(npc.in_combat && targets_player(npc, frame.me()))) << 32) | near
+            } else {
+                near
+            }
         };
         let health = health_rank(npc);
         let replace = match (pick, best) {

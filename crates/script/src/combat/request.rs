@@ -397,11 +397,12 @@ pub enum AbortReason {
     /// A mid-fight refusal: the server or the zone gate stopped the attack on
     /// a player.
     PvpRefused(PvpRefusal),
-    /// Single-way combat refused the attack on an NPC three times with no
-    /// confirmed attack in between. After each refusal the machine attacked
-    /// an NPC that was hitting the bot and that the request may fight, or held
-    /// the attack for the 8-tick window; the content allows the bot to attack
-    /// only the NPC that last attacked it (`player_combat.rs2:115`).
+    /// Single-way combat refused the attack on an NPC in three 8-tick windows
+    /// in a row with no confirmed attack in between (refusals inside one
+    /// window count once). After each refusal the machine attacked an NPC that
+    /// was hitting the bot and that the request may fight, or held the attack
+    /// for the rest of the window; the content allows the bot to attack only
+    /// the NPC that last attacked it (`player_combat.rs2:115`).
     SingleWayBlocked,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

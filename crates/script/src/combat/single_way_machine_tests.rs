@@ -35,6 +35,18 @@ fn has_attack(batch: &DrainedBatch) -> bool {
     })
 }
 
+/// Poll once and take the batch; a fight that ended on this poll fails the
+/// test with its end and tick instead of a bare "not pending".
+fn pending_unless_ended(harness: &mut Harness, scene: &Scene, tick: u64) -> DrainedBatch {
+    match harness.poll(&scene.snapshot, tick) {
+        Poll::Pending => harness.drain(None),
+        other => panic!(
+            "the fight ended at tick {tick} after {} counted windows: {other:?}",
+            harness.machine.single_way_lines
+        ),
+    }
+}
+
 fn faces_the_bot(row: &mut NpcView) {
     row.target = Some(ActorTargetView {
         kind: ActorKind::Player,
@@ -111,7 +123,9 @@ fn a_refusal_prefers_the_npc_in_combat_and_then_moves_to_the_other_attacker() {
     attack_on(harness.pending(&scene, 2), 8);
     say(&mut scene, 2, REFUSAL);
     attack_on(harness.pending(&scene, 3), 9);
-    assert_eq!(harness.machine.single_way_lines, 2);
+    // The second refusal falls in the window the first one opened: it
+    // retargets but does not count.
+    assert_eq!(harness.machine.single_way_lines, 1);
 }
 
 /// The stand gates starting an engagement; an NPC already hitting the bot is
@@ -189,23 +203,28 @@ fn an_attacker_the_request_may_not_fight_is_not_retargeted() {
 }
 
 #[test]
-fn the_third_refusal_without_a_confirmed_attack_ends_the_fight() {
+fn the_third_window_without_a_confirmed_attack_ends_the_fight() {
     if !api::test_support::game_data_available() {
         return;
     }
     let mut scene = Scene::new("imp");
     let mut harness = Harness::new(&scene, scene.request());
     attack_on(harness.pending(&scene, 1), 7);
-    // One refusal per hold window: ticks 2 and 10 hold, tick 18 ends.
+    // One refusal per hold window: ticks 2, 10 and 18 each open a window, and
+    // the third one closes at tick 26.
     for (tick, sequence) in [(2, 1), (10, 2)] {
         say(&mut scene, sequence, REFUSAL);
-        harness.pending_batch(&scene, tick);
+        pending_unless_ended(&mut harness, &scene, tick);
         assert!(harness.machine.end.is_none(), "ended early at tick {tick}");
     }
     say(&mut scene, 3, REFUSAL);
-    let report = match harness.poll(&scene.snapshot, 18) {
+    for tick in 18..26 {
+        pending_unless_ended(&mut harness, &scene, tick);
+        assert!(harness.machine.end.is_none(), "ended early at tick {tick}");
+    }
+    let report = match harness.poll(&scene.snapshot, 26) {
         Poll::Ready(Ok(report)) => report,
-        other => panic!("the third refusal must end the fight, got {other:?}"),
+        other => panic!("the third window must end the fight, got {other:?}"),
     };
     assert_eq!(
         report.end,
@@ -221,7 +240,7 @@ fn the_third_refusal_without_a_confirmed_attack_ends_the_fight() {
 /// NPC, and no hit lands. The target alone confirms nothing, so the third
 /// refusal still ends the fight.
 #[test]
-fn the_third_refusal_ends_the_fight_while_the_player_target_stays_the_engaged_npc() {
+fn the_third_window_ends_the_fight_while_the_player_target_stays_the_engaged_npc() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -235,14 +254,18 @@ fn the_third_refusal_ends_the_fight_while_the_player_target_stays_the_engaged_np
     attack_on(harness.pending(&scene, 1), 7);
     for (tick, sequence) in [(2, 1), (10, 2)] {
         say(&mut scene, sequence, REFUSAL);
-        harness.pending_batch(&scene, tick);
+        pending_unless_ended(&mut harness, &scene, tick);
         assert!(harness.machine.end.is_none(), "ended early at tick {tick}");
         assert_eq!(harness.machine.single_way_lines, sequence as u8);
     }
     say(&mut scene, 3, REFUSAL);
-    let report = match harness.poll(&scene.snapshot, 18) {
+    for tick in 18..26 {
+        pending_unless_ended(&mut harness, &scene, tick);
+        assert!(harness.machine.end.is_none(), "ended early at tick {tick}");
+    }
+    let report = match harness.poll(&scene.snapshot, 26) {
         Poll::Ready(Ok(report)) => report,
-        other => panic!("the third refusal must end the fight, got {other:?}"),
+        other => panic!("the third window must end the fight, got {other:?}"),
     };
     assert_eq!(
         report.end,
@@ -423,4 +446,194 @@ fn a_refusal_read_after_the_fight_ended_changes_nothing() {
             index: 7
         })
     );
+}
+
+/// Four knights hit the bot, as in live run 2 of round 2: the engine allows
+/// only the one that attacked last, and that one changes from tick to tick.
+fn four_attackers() -> Scene {
+    let mut scene = two_imps();
+    for (index, x) in [(9, 2602), (10, 2604)] {
+        let mut extra = scene.npcs[0].clone();
+        extra.index = index;
+        extra.tile = tile(x, 3200);
+        extra.network = extra.tile;
+        extra.distance = (x - 2600).abs();
+        scene.npcs.push(extra);
+    }
+    for row in &mut scene.npcs {
+        faces_the_bot(row);
+        row.health = 30;
+        row.total_health = 30;
+    }
+    scene.refresh();
+    scene
+}
+
+/// Refusals on consecutive ticks inside one engine window count once, and the
+/// machine still retargets on each of them. Before the window rule the third
+/// refusal (tick 4) ended the fight.
+#[test]
+fn refusals_on_consecutive_ticks_inside_one_window_count_once() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = four_attackers();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack_on(harness.pending(&scene, 1), 7);
+    // The first refusal is read at tick 2; its window runs through tick 9.
+    for (tick, sequence) in (2..=9).zip(1..) {
+        say(&mut scene, sequence, REFUSAL);
+        let batch = pending_unless_ended(&mut harness, &scene, tick);
+        assert!(
+            harness.machine.end.is_none(),
+            "the fight ended at tick {tick} after {} counted refusals",
+            harness.machine.single_way_lines
+        );
+        assert!(has_attack(&batch), "no retarget attack at tick {tick}");
+    }
+    assert_eq!(
+        harness.machine.single_way_lines, 1,
+        "eight refusals in one window count once"
+    );
+}
+
+/// Three windows in a row with a refusal and no landed hit end the fight, about
+/// 24 ticks after the first refusal; refusals inside a window retarget and do
+/// not count.
+#[test]
+fn three_windows_with_refusals_and_no_hit_end_as_single_way_blocked() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = four_attackers();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack_on(harness.pending(&scene, 1), 7);
+    let mut sequence = 0;
+    // Windows open at ticks 2, 10 and 18 (each closes 8 ticks later); a second
+    // refusal follows one tick after each opening.
+    for tick in 2..26 {
+        if matches!(tick, 2 | 3 | 10 | 11 | 18 | 19) {
+            sequence += 1;
+            say(&mut scene, sequence, REFUSAL);
+        }
+        pending_unless_ended(&mut harness, &scene, tick);
+        assert!(
+            harness.machine.end.is_none(),
+            "the fight ended at tick {tick}, before the third window closed"
+        );
+    }
+    assert_eq!(harness.machine.single_way_lines, 3);
+    let report = match harness.poll(&scene.snapshot, 26) {
+        Poll::Ready(Ok(report)) => report,
+        other => panic!("the third window must end the fight at tick 26, got {other:?}"),
+    };
+    assert_eq!(
+        report.end,
+        CombatEnd::Aborted(AbortReason::SingleWayBlocked)
+    );
+    assert_eq!(
+        report.engaged_npc_type,
+        scene.npcs[0].r#type.unwrap() as i32
+    );
+}
+
+/// A landed hit on the engaged NPC resets the count of windows: two windows,
+/// a hit, then two more windows do not end the fight.
+#[test]
+fn a_landed_hit_resets_the_window_count() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = four_attackers();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack_on(harness.pending(&scene, 1), 7);
+    let mut sequence = 0;
+    for tick in 2..=11 {
+        if matches!(tick, 2 | 10) {
+            sequence += 1;
+            say(&mut scene, sequence, REFUSAL);
+        }
+        pending_unless_ended(&mut harness, &scene, tick);
+        assert!(harness.machine.end.is_none(), "ended at tick {tick}");
+    }
+    assert_eq!(harness.machine.single_way_lines, 2);
+    // The bot targets the engaged NPC and its health drops: a hit landed.
+    let engaged = usize::from(harness.machine.engaged.unwrap().index);
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Npc,
+        index: engaged,
+    });
+    scene
+        .npcs
+        .iter_mut()
+        .find(|row| row.index == engaged)
+        .unwrap()
+        .health = 20;
+    scene.refresh();
+    harness.pending_batch(&scene, 12);
+    assert_eq!(harness.machine.single_way_lines, 0);
+    // Two more windows, with no hit, are one window short of the end.
+    for tick in 13..=41 {
+        if matches!(tick, 18 | 26) {
+            sequence += 1;
+            say(&mut scene, sequence, REFUSAL);
+        }
+        pending_unless_ended(&mut harness, &scene, tick);
+        assert!(
+            harness.machine.end.is_none(),
+            "ended at tick {tick} with {} windows since the hit",
+            harness.machine.single_way_lines
+        );
+    }
+    assert_eq!(harness.machine.single_way_lines, 2);
+}
+
+/// In single-way combat the first pick takes the NPC that is in combat with
+/// the bot over a nearer idle one: the engine would refuse the nearer one.
+#[test]
+fn the_first_pick_prefers_an_engaged_attacker_over_a_nearer_idle_npc() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = two_imps();
+    // 8 is three tiles away and fights the bot; 7 is beside the bot and idle.
+    faces_the_bot(&mut scene.npcs[1]);
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack_on(harness.pending(&scene, 1), 8);
+}
+
+/// A multiway map has no such rule, so the nearest pick stays the nearest.
+#[test]
+fn the_first_pick_stays_nearest_on_a_multiway_map() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = two_imps();
+    faces_the_bot(&mut scene.npcs[1]);
+    scene.refresh();
+    scene.snapshot.seed_world(WorldStateView {
+        map_base_x: 2560,
+        map_base_z: 3160,
+        members: true,
+        multi_combat: true,
+        ..WorldStateView::default()
+    });
+    let mut harness = Harness::new(&scene, scene.request());
+    attack_on(harness.pending(&scene, 1), 7);
+}
+
+/// An NPC that only faces the bot, with no health bar open, has not attacked
+/// it; it does not outrank the nearest NPC.
+#[test]
+fn the_first_pick_ignores_an_npc_that_faces_the_bot_but_is_not_in_combat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = two_imps();
+    faces_the_bot(&mut scene.npcs[1]);
+    scene.npcs[1].in_combat = false;
+    scene.refresh();
+    let mut harness = Harness::new(&scene, scene.request());
+    attack_on(harness.pending(&scene, 1), 7);
 }
