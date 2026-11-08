@@ -4228,6 +4228,9 @@ pub(crate) mod tests {
         };
         let world = real_nav_world();
         let lease = test_real_nav_lease();
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.saltfish.op3").unwrap();
         let bank = WorldTile {
@@ -4855,6 +4858,9 @@ pub(crate) mod tests {
         else {
             return;
         };
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let (method, index, spot) = fishing_guild_spot(&catalog);
         let bounds = movement_bounds(spot).expect("guild movement");
@@ -4948,6 +4954,9 @@ pub(crate) mod tests {
         else {
             return;
         };
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let (method, index, spot) = fishing_guild_spot(&catalog);
         let bounds = movement_bounds(spot).expect("guild movement");
@@ -5111,6 +5120,9 @@ pub(crate) mod tests {
             GameSnapshot, ItemActionFamily, ItemContainer, ItemView, SnapshotView, StatView,
         };
 
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let (method, index, _spot) = fishing_guild_spot(&catalog);
         let lease = test_real_nav_lease();
@@ -5281,6 +5293,9 @@ pub(crate) mod tests {
         else {
             return;
         };
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let world = real_nav_world();
         let lease = test_real_nav_lease();
@@ -5836,6 +5851,9 @@ pub(crate) mod tests {
         };
         let world = real_nav_world();
         let lease = test_real_nav_lease();
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let catalog = real_catalog();
         let method = catalog.method("fishing.rarefish.op3").unwrap();
         let index = method_index(&catalog, method);
