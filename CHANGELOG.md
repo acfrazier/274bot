@@ -112,6 +112,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Saved-settings fixtures keep current envelopes and explicit malformed-format
   refusal checks.
   Picker fixtures use the decoded world owned by their checked profile.
+- The Quester's Tourist Trap guide no longer walks to the rocks of the slope
+  outside the cell. It sends the "Climb-to" action from where it stands, and
+  the game walks the player, as it does for a human player. Before, the guide
+  asked for a walk that cannot exist and stopped on the first rock.
 - Random-event detection avoids temporary lowercase names for non-matching
   NPCs and hazard locs. Matching and event handling are unchanged.
 
@@ -839,6 +843,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   `talkThrough`) applies the same rule, so a script that talks to Sir Mordred
   or Morgan Le Faye no longer gets `false` from a conversation that ended
   normally.
+- The Quester now eats during quest steps with declared damage, including
+  the Tourist Trap cell climb and mine cart, not only in fights and on walks.
+  Each guide cites the game's own script for its damage bound.
+- The Quester waits for Hitpoints data before it checks if a step hazard is
+  survivable.
+- The Quester clears the old hazard after a run change, a death, a session end,
+  or when no step is selected.
 
 ### Fixed (panel)
 

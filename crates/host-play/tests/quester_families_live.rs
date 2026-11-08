@@ -481,6 +481,7 @@ fn step(
         stop: None,
         skip_if,
         settle,
+        hazard: None,
     }
 }
 

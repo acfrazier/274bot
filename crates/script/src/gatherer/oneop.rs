@@ -66,6 +66,13 @@ pub struct OneOp {
     continued_root: Option<i32>,
 }
 
+impl OneOp {
+    /// Read-only operation evidence for the runner's gated debug trace.
+    pub(crate) fn trace_state(&self) -> (OneOpKind, u64) {
+        (self.kind, self.deadline)
+    }
+}
+
 impl OneOpArgs {
     /// Shared Gatherer policy for a stray skill/unlock page or main modal.
     pub(crate) fn stray_modal(snapshot: api::snapshot::SnapshotView<'_>) -> Option<Self> {

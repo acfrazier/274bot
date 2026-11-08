@@ -2237,7 +2237,9 @@ impl Gatherer {
         let before = self.survival.report();
         let was_parked = self.survival.parked().is_some();
         let eat_floor = self.survival_eat_floor(tick);
-        let want = self.survival.want(&tick.cx, eat_floor);
+        let want = self
+            .survival
+            .want(&tick.cx, crate::survival::step::Upkeep::floor(eat_floor));
         if was_parked && self.survival.parked().is_none() {
             // The un-park resumes work the way `Interrupt::Resume` does
             // (design A6.5 item 2). The park was not idle gathering, so the
@@ -3950,6 +3952,128 @@ mod tests {
                 )) if action == "Eat"
             ));
         });
+    }
+
+    #[test]
+    fn gatherer_passes_no_step_hazard() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::condition::{FoodSummary, PoisonState};
+        let fixture = BaitFixture::with_eat_below(1);
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_tick(20);
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 40,
+            effective: 7,
+            xp: 0,
+            used: true,
+        }]);
+        let mut condition = survival_condition(PoisonState::Clear, 7, FoodSummary::default());
+        condition.hp_max = 40;
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 20, |tick| {
+            tick.cx.condition = Some(condition);
+            assert_eq!(gatherer.survival_eat_floor(tick), 1);
+            assert!(!gatherer.poll_survival(tick));
+        });
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::None
+        );
+        assert!(gatherer.survival.parked().is_none());
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    }
+
+    #[test]
+    fn gatherer_reports_a_need_on_an_unattributed_hit_window_and_parks_at_the_next_edge() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::condition::{FoodSummary, PoisonState};
+        use api::snapshot::{HitmarkView, HitmarksView};
+
+        let fixture = BaitFixture::new();
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        gatherer.needs_validate = false;
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_tick(20);
+        snapshot.seed_stats(vec![StatView {
+            index: 3,
+            name: "hitpoints".into(),
+            base: 40,
+            effective: 19,
+            xp: 0,
+            used: true,
+        }]);
+        let bank_tile = WorldTile {
+            x: 3245,
+            z: 3423,
+            level: 0,
+        };
+        gatherer.trip = TripStep::Open;
+        gatherer.scratch.selected_bank = Some(SelectedBank {
+            bank_index: 0,
+            access_tile: bank_tile,
+            kind: PickKind::Reachable,
+            access: Some(Arc::new(crate::bank::BankStandAccess {
+                bank: api::named_banks::NamedBank::new("Draynor", bank_tile),
+                stand_tile: bank_tile,
+                kind: crate::bank::AccessKind::Booth,
+                stand_op: 2,
+                name: Some(Arc::from("Bank booth")),
+                choose: None,
+            })),
+        });
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 19, |tick| {
+            gatherer.begin_trip(tick);
+        });
+        assert!(matches!(gatherer.active, Active::Open(_)));
+        let mut marks = [HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4];
+        marks[0] = HitmarkView {
+            value: 3,
+            kind: 1,
+            cycle: 630,
+        };
+        snapshot.seed_hitmarks(HitmarksView {
+            marks,
+            loop_cycle: 600,
+        });
+        let mut condition = survival_condition(PoisonState::Clear, 19, FoodSummary::default());
+        condition.hp_max = 40;
+        with_tick(&snapshot, &mut ledger, 20, |tick| {
+            tick.cx.condition = Some(condition);
+            assert!(!gatherer.poll_survival(tick));
+        });
+        assert_eq!(
+            gatherer.survival.report().decision,
+            crate::survival::Decision::Needed
+        );
+        assert!(gatherer.survival.parked().is_none());
+        assert!(
+            matches!(gatherer.active, Active::Open(_)),
+            "the one-window need must not cancel the live machine"
+        );
+        assert!(!gatherer.needs_validate);
+
+        snapshot.seed_tick(21);
+        with_tick(&snapshot, &mut ledger, 21, |tick| {
+            tick.cx.condition = Some(condition);
+            assert!(gatherer.poll_survival(tick));
+        });
+        assert!(gatherer.survival.parked().is_some());
+        assert!(gatherer.active_matches_none());
+        assert!(gatherer.needs_validate);
     }
 
     /// A supply-only bait trip with a held Strange box stack and free slots

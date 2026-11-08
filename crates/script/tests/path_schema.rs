@@ -5,7 +5,7 @@ use script::quester::compile::{
     compile_uncached_for_test, compile_uncached_for_test_as_with_zones,
     compile_uncached_for_test_with_zones, CompileError,
 };
-use script::quester::path::PathDocument;
+use script::quester::path::{PathDocument, StepDocument};
 use script::quester::queue::ReleaseIndex;
 use script::quester::schema::{path_schema_path, render};
 use serde_json::{json, Value};
@@ -476,6 +476,63 @@ fn generated_schema_rejects_blank_make_source_and_until_drop_stop() {
         schema["$defs"]["UntilDropArgs"]["properties"]["stop"]["pattern"],
         json!("\\S")
     );
+}
+
+#[test]
+fn generated_step_schema_accepts_optional_hazard() {
+    let schema: Value = serde_json::from_str(&render()).expect("generated Path schema");
+    let interact = &schema["$defs"]["step.interact.v1"];
+    let hazard = &interact["properties"]["hazard"];
+    assert_eq!(hazard["anyOf"][0]["$ref"], json!("#/$defs/HazardDocument"));
+    assert_eq!(hazard["anyOf"][1]["type"], json!("null"));
+    assert!(!interact["required"]
+        .as_array()
+        .expect("required step fields")
+        .contains(&json!("hazard")));
+
+    let hazard_schema = &schema["$defs"]["HazardDocument"];
+    assert_eq!(hazard_schema["required"], json!(["of", "source"]));
+    assert_eq!(hazard_schema["properties"]["mul"]["default"], json!(0));
+    assert_eq!(hazard_schema["properties"]["div"]["default"], json!(1));
+    assert_eq!(hazard_schema["properties"]["plus"]["default"], json!(0));
+    assert_eq!(
+        hazard_schema["properties"]["cap"]["type"],
+        json!(["integer", "null"])
+    );
+
+    let authored = json!({
+        "id": "hazard-schema",
+        "kind": "interact",
+        "version": 1,
+        "args": {},
+        "advances": false,
+        "skip_if": {"Any": []},
+        "settle": {"All": []},
+        "hazard": {
+            "of": "none",
+            "plus": 7,
+            "source": "content/scripts/quests/quest_desertrescue/scripts/quest_desertrescue.rs2:271"
+        }
+    });
+    let decoded: StepDocument =
+        serde_json::from_value(authored).expect("optional hazard step decodes");
+    let decoded_hazard = decoded.hazard.expect("authored hazard is present");
+    assert_eq!(decoded_hazard.mul, 0);
+    assert_eq!(decoded_hazard.div, 1);
+    assert_eq!(decoded_hazard.plus, 7);
+    assert_eq!(decoded_hazard.cap, None);
+
+    let omitted: StepDocument = serde_json::from_value(json!({
+        "id": "no-hazard",
+        "kind": "interact",
+        "version": 1,
+        "args": {},
+        "advances": false,
+        "skip_if": {"Any": []},
+        "settle": {"All": []}
+    }))
+    .expect("hazard omission stays valid");
+    assert!(omitted.hazard.is_none());
 }
 #[test]
 #[ignore]

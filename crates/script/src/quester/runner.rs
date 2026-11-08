@@ -51,6 +51,41 @@ const JOURNAL_RETRY_QUIET_TICKS: u64 = 3;
 const SAME_TICK_PASSES: u8 = 3;
 /// Provisioning outcomes one tick may re-plan after (TICK-FIX #7).
 const PROVISION_REPLANS: u8 = 3;
+/// Three 8-tick close operations fit within 24 open-page observations.
+/// Refused begins and spent interaction events use the same bound.
+const PARK_PAGE_LIMIT: u8 = 24;
+
+/// A selected step's position, independent of its live machine handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StepSlot {
+    in_prelude: bool,
+    seq_index: usize,
+    step_index: usize,
+}
+
+/// Survival owns this damage until selection names a different step.
+#[derive(Debug, Clone, Copy, Default)]
+struct SelectedHazard {
+    slot: Option<StepSlot>,
+    hazard: Option<crate::survival::StepHazard>,
+    /// Whether hazard admission finished or the runner emitted an undeclared-damage warning.
+    handled: bool,
+}
+
+impl SelectedHazard {
+    fn select(&mut self, slot: StepSlot, hazard: Option<crate::survival::StepHazard>) {
+        if self.slot == Some(slot) {
+            return;
+        }
+        self.slot = Some(slot);
+        self.hazard = hazard;
+        self.handled = false;
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
 
 /// One provisioning poll as the runner sees it.
 enum Provisioned {
@@ -120,6 +155,7 @@ enum QuesterFailureKind {
     ManualMovement,
     MaxDeaths,
     NeedsEvidence,
+    HazardUnsurvivable,
 }
 
 struct ParkedStep {
@@ -474,6 +510,10 @@ pub struct Quester {
     survival_action: Option<ActionHandle<OneOp>>,
     survival_deferred: bool,
     survival_interrupting: bool,
+    selected_hazard: SelectedHazard,
+    park_page_ticks: u8,
+    park_page_seen: bool,
+    park_bound_hp: i32,
     /// Freshness boundary for the active step; overwritten at each successful begin.
     step_after: EvidenceStamp,
     failed_acquisition_child: Option<(Arc<str>, Arc<str>)>,
@@ -819,6 +859,10 @@ impl Quester {
             survival_action: None,
             survival_deferred: false,
             survival_interrupting: false,
+            selected_hazard: SelectedHazard::default(),
+            park_page_ticks: 0,
+            park_page_seen: false,
+            park_bound_hp: 0,
             step_after: api::quest_progress::EvidenceStamp {
                 run,
                 tick: 0,
@@ -1172,6 +1216,7 @@ impl Quester {
     }
 
     fn finish_quest(&mut self, tick: &mut NativeTick<'_>) -> ScriptFlow {
+        self.selected_hazard.clear();
         self.step_index = self
             .path
             .sequences
@@ -1229,6 +1274,7 @@ impl Quester {
                 QuesterFailureKind::ManualMovement => "manual-movement",
                 QuesterFailureKind::MaxDeaths => "max-deaths",
                 QuesterFailureKind::NeedsEvidence => "needs-evidence",
+                QuesterFailureKind::HazardUnsurvivable => "hazard-unsurvivable",
                 QuesterFailureKind::Other => "parked",
             }),
             message: self
@@ -1862,6 +1908,20 @@ impl Quester {
         let kind = args.kind;
         match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
             Ok(handle) => {
+                if api::hostlog::enabled(api::hostlog::Category::ScriptTrace) {
+                    if let Some(((kind, deadline), snapshot)) = handle
+                        .inspect(OneOp::trace_state)
+                        .zip(tick.frame().snapshot())
+                    {
+                        api::host_log!(
+                            api::hostlog::Category::ScriptTrace,
+                            api::hostlog::Level::Debug,
+                            "quester survival op event=begin tick={} kind={kind:?} applied=pending deadline={deadline} player_info={}",
+                            tick.cx.evidence().tick,
+                            snapshot.gens().player_info
+                        );
+                    }
+                }
                 self.survival_action = Some(handle);
                 self.survival_deferred = false;
                 self.survival.record_sent(kind, &tick.cx);
@@ -1900,11 +1960,20 @@ impl Quester {
     fn poll_survival(&mut self, tick: &mut NativeTick<'_>) {
         let before = self.survival.report();
         let was_parked = self.survival.parked().is_some();
-        let want = self.survival.want(&tick.cx, 0);
+        let want = self.survival.want(
+            &tick.cx,
+            crate::survival::step::Upkeep {
+                eat_floor: 0,
+                hazard: self.selected_hazard.hazard,
+            },
+        );
+        self.warn_undeclared_hazard(tick);
         if was_parked && self.survival.parked().is_none() {
             // The un-park resumes the way `Interrupt::Resume` does (design
             // A6.5 item 2): a fresh read, with no step.
             self.needs_read = true;
+            self.park_page_ticks = 0;
+            self.park_page_seen = false;
         }
         if self.survival_action.is_none() {
             match want {
@@ -1935,8 +2004,16 @@ impl Quester {
                         self.interrupt_survival_transfer(tick);
                         self.survival_deferred = true;
                     } else {
+                        self.cancel_prayer_clear_for_survival(tick);
                         self.cancel_work_for_survival(tick, true);
                         self.survival.park(need, &tick.cx);
+                        self.park_page_ticks = 0;
+                        self.park_page_seen = false;
+                        self.park_bound_hp = tick
+                            .cx
+                            .condition()
+                            .map_or(0, |condition| i32::from(condition.hp));
+                        self.log_hazard_park_bound("edge", tick);
                     }
                 }
             }
@@ -1944,6 +2021,95 @@ impl Quester {
         if self.survival.report() != before {
             self.dirty = true;
         }
+    }
+
+    fn warn_undeclared_hazard(&mut self, tick: &mut NativeTick<'_>) {
+        if self.selected_hazard.hazard.is_some()
+            || self.selected_hazard.slot.is_none()
+            || self.selected_hazard.handled
+        {
+            return;
+        }
+        let Some(hit) = self.survival.unattributed_hit(&tick.cx) else {
+            return;
+        };
+        let Some(step) = self.current_step() else {
+            return;
+        };
+        tick.output.log(
+            api::hostlog::Level::Warn,
+            &format!(
+                "quester undeclared damage step={} hit={hit} hp={}",
+                step.id.0,
+                tick.cx.condition().map_or(0, |condition| condition.hp)
+            ),
+        );
+        self.selected_hazard.handled = true;
+    }
+
+    fn log_hazard_park_bound(&self, cause: &'static str, tick: &mut NativeTick<'_>) {
+        let Some(hazard) = self.selected_hazard.hazard else {
+            return;
+        };
+        if !matches!(
+            self.survival.parked(),
+            Some(crate::survival::math::SurvivalNeed::Food { .. })
+        ) || !self.survival.quiet_hazard_recovery(&tick.cx)
+        {
+            return;
+        }
+        let Some(condition) = tick.cx.condition().filter(|condition| condition.hp_known) else {
+            return;
+        };
+        let hp = i32::from(condition.hp);
+        let Some(release_hp) = hazard.release_hitpoints(hp, i32::from(condition.hp_max), 0) else {
+            return;
+        };
+        let Some(step) = self.current_step() else {
+            return;
+        };
+        // login.rs2:38 installs health_regen at 100 ticks. stat.rs2:59-60
+        // heals one point. The final tick lets the poll observe the release.
+        let bound_ticks = (release_hp - hp) * 100 + 1;
+        tick.output.log(
+            api::hostlog::Level::Info,
+            &format!(
+                "quester hazard park step={} cause={cause} anchor_tick={} hp={hp} release_hp={release_hp} bound_ticks={bound_ticks}",
+                step.id.0,
+                tick.cx.evidence().tick
+            ),
+        );
+    }
+
+    fn reconcile_park_page(&mut self, tick: &mut NativeTick<'_>) {
+        if self.survival.parked().is_none() || self.parked {
+            return;
+        }
+        if let Some(condition) = tick.cx.condition().filter(|condition| condition.hp_known) {
+            let hp = i32::from(condition.hp);
+            if hp < self.park_bound_hp {
+                self.park_bound_hp = hp;
+                self.log_hazard_park_bound("hit", tick);
+            }
+        }
+        let close = OneOpArgs::close_modal_if_open(tick.cx.snapshot());
+        let page_open = close.is_some();
+        if !page_open && self.park_page_seen {
+            self.log_hazard_park_bound("close", tick);
+        }
+        if let Some(close) = close {
+            self.park_page_ticks = self.park_page_ticks.saturating_add(1);
+            if self.park_page_ticks > PARK_PAGE_LIMIT {
+                self.parked = true;
+                self.record_failure(ActionError::Blocked(Arc::from(
+                    "survival park: the page did not close within 24 parked ticks",
+                )));
+                self.dirty = true;
+            } else if self.survival_action.is_none() {
+                self.begin_survival_click(close, tick);
+            }
+        }
+        self.park_page_seen = page_open;
     }
 
     /// Poll the survival op. Returns true while it stays live, or when it
@@ -1955,7 +2121,26 @@ impl Quester {
         let Some(handle) = self.survival_action.as_ref() else {
             return false;
         };
-        let applied = match tick.actions.poll(handle, &mut tick.cx) {
+        let trace = api::hostlog::enabled(api::hostlog::Category::ScriptTrace)
+            .then(|| {
+                let ((kind, deadline), snapshot) = handle
+                    .inspect(OneOp::trace_state)
+                    .zip(tick.frame().snapshot())?;
+                Some((kind, deadline, snapshot.gens().player_info))
+            })
+            .flatten();
+        let result = tick.actions.poll(handle, &mut tick.cx);
+        if let (Some((kind, deadline, player_info)), Poll::Ready(result)) = (trace, &result) {
+            api::host_log!(
+                api::hostlog::Category::ScriptTrace,
+                api::hostlog::Level::Debug,
+                "quester survival op event=end tick={} kind={kind:?} applied={} deadline={deadline} player_info={}",
+                tick.cx.evidence().tick,
+                matches!(result, Ok(true)),
+                player_info
+            );
+        }
+        let applied = match result {
             Poll::Pending => {
                 self.publish(tick.output);
                 return true;
@@ -3353,6 +3538,7 @@ impl Quester {
             };
             self.selection_since = None;
             let Some((index, advances, prelude)) = selected else {
+                self.selected_hazard.clear();
                 if self
                     .path
                     .sequences
@@ -3431,6 +3617,61 @@ impl Quester {
             } else {
                 &self.path.sequences[self.seq_index].steps[index]
             };
+            self.selected_hazard.select(
+                StepSlot {
+                    in_prelude: prelude,
+                    seq_index: self.seq_index,
+                    step_index: index,
+                },
+                step.hazard,
+            );
+            if let Some(hazard) = step.hazard.filter(|_| !self.selected_hazard.handled) {
+                let Some(hp_max) = tick
+                    .cx
+                    .snapshot()
+                    .stats()
+                    .and_then(|stats| stats.value.iter().find(|stat| stat.index == 3))
+                    .map(|stat| stat.base)
+                else {
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
+                };
+                let max = hazard.max_damage(hp_max, hp_max);
+                let line = crate::combat::select::lines(Some(max), hp_max).eat;
+                tick.output.log(
+                    api::hostlog::Level::Info,
+                    &format!(
+                        "quester hazard step={} max={max} source={} line={line}",
+                        step.id.0,
+                        step.hazard_source.as_deref().unwrap_or("")
+                    ),
+                );
+                self.selected_hazard.handled = true;
+                if line >= hp_max {
+                    let id = Arc::clone(&step.id.0);
+                    self.parked_step = Some(ParkedStep {
+                        sequence_index: self.seq_index,
+                        step_index: index,
+                        in_prelude: prelude,
+                        id: Arc::clone(&id),
+                    });
+                    self.set_last_error(
+                        QuesterFailureKind::HazardUnsurvivable,
+                        Arc::from(format!(
+                            "step {id}: its damage {max} needs more than {hp_max} Hitpoints to clear the eat line {line}"
+                        )),
+                    );
+                    self.parked = true;
+                    self.dirty = true;
+                    self.trace_parked(tick.output);
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+                }
+                self.survival_deferred = true;
+                self.dirty = true;
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
             let pair_step = step.kind.as_ref() == "partner";
             self.chat_since = super::families::reach::last_chat_seq(&tick.cx);
             let required_after = tick.cx.evidence();
@@ -3441,6 +3682,9 @@ impl Quester {
                 .stage
                 .as_ref()
                 .map_or("unknown", |stage| stage.0.as_ref());
+            let trace_snapshot = api::hostlog::enabled(api::hostlog::Category::ScriptTrace)
+                .then(|| tick.frame().snapshot())
+                .flatten();
             trace_root_event(
                 &mut self.trace,
                 tick.output,
@@ -3450,6 +3694,17 @@ impl Quester {
                 step,
                 format_args!("begin"),
             );
+            if let Some(snapshot) = trace_snapshot {
+                api::host_log!(
+                    api::hostlog::Category::ScriptTrace,
+                    api::hostlog::Level::Info,
+                    "quester {}: stage {stage} step {} ({}) player_info={}",
+                    self.path.id.0,
+                    step.id.0,
+                    step.kind,
+                    snapshot.gens().player_info
+                );
+            }
             #[cfg(test)]
             self.begun.push(Arc::clone(&step.id.0));
             let resume_page = self.open_page_retry.take() == Some((prelude, self.seq_index, index));
@@ -3773,6 +4028,9 @@ impl Script for Quester {
             self.survival_action = None;
             self.survival_deferred = false;
             self.survival_interrupting = false;
+            self.selected_hazard.clear();
+            self.park_page_ticks = 0;
+            self.park_page_seen = false;
             self.pair_admission = None;
             self.pair_admission_since = None;
             self.waiting = None;
@@ -3822,6 +4080,9 @@ impl Script for Quester {
             self.survival_action = None;
             self.survival_deferred = false;
             self.survival_interrupting = false;
+            self.selected_hazard.clear();
+            self.park_page_ticks = 0;
+            self.park_page_seen = false;
             self.prayer_cleanup_owned = RaisedPrayers::empty();
             self.prayer_cleanup_pending = false;
             self.last_combat = None;
@@ -3861,6 +4122,11 @@ impl Script for Quester {
         let survival_op_live = self.poll_survival_action(tick);
         if !self.parked {
             self.poll_survival(tick);
+            self.reconcile_park_page(tick);
+        }
+        if self.parked && self.survival.parked().is_some() {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Blocked(self.blocked_failure()));
         }
         if survival_op_live || self.survival_action.is_some() {
             self.publish(tick.output);
@@ -4056,6 +4322,9 @@ impl Script for Quester {
                 self.survival_action = None;
                 self.survival_deferred = false;
                 self.survival_interrupting = false;
+                self.selected_hazard.clear();
+                self.park_page_ticks = 0;
+                self.park_page_seen = false;
                 self.capture_prayer_cleanup();
                 self.step = None;
                 self.provisioner.cancel();
@@ -5303,6 +5572,11 @@ mod tests {
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
+        // 3640 B before the dev 900f2dccd merge. Dev's revision-377 journal work
+        // added `layout: Layout` to `quest_journal::native::JournalMachine`
+        // (192 -> 200 B); the Quester holds two `ActionHandle<JournalMachine>`
+        // (`journal`, `gang_reader`), +8 B each. No Quester field of this input grew.
+        assert_eq!(bytes, 3656, "Quester changed its measured per-bot layout");
         assert!(
             std::mem::size_of::<crate::survival::SurvivalStep>() <= 192,
             "SurvivalStep={} exceeds its 192 B bound",
@@ -5310,6 +5584,15 @@ mod tests {
         );
         assert!(std::mem::size_of::<QueuedQuester>() < 4096);
         eprintln!("Quester size_of={bytes}; bank memory borrowed, heap=0");
+        eprintln!(
+            "upkeep layouts SelectedHazard={} StepHazard={} CompiledStep={} SurvivalStep={} SurvivalReport={} OneOp={}",
+            std::mem::size_of::<SelectedHazard>(),
+            std::mem::size_of::<crate::survival::StepHazard>(),
+            std::mem::size_of::<CompiledStep>(),
+            std::mem::size_of::<crate::survival::SurvivalStep>(),
+            std::mem::size_of::<crate::survival::step::SurvivalReport>(),
+            std::mem::size_of::<OneOp>(),
+        );
         assert!(bytes < 4096, "Quester is {bytes} bytes");
     }
     #[test]
@@ -5923,6 +6206,7 @@ mod tests {
                 advances: Some(false),
                 max_attempts: None,
                 stop: None,
+                hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
             })
@@ -6027,6 +6311,7 @@ mod tests {
                 advances: Some(false),
                 max_attempts: None,
                 stop: None,
+                hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
             })
@@ -6153,6 +6438,7 @@ mod tests {
                 advances: Some(false),
                 max_attempts: None,
                 stop: None,
+                hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
             })
@@ -6272,12 +6558,12 @@ mod tests {
         );
     }
 
-    struct SurvivalTestCounts {
-        began: std::sync::atomic::AtomicUsize,
-        cancelled: std::sync::atomic::AtomicUsize,
+    pub(super) struct SurvivalTestCounts {
+        pub(super) began: std::sync::atomic::AtomicUsize,
+        pub(super) cancelled: std::sync::atomic::AtomicUsize,
     }
 
-    fn survival_condition(
+    pub(super) fn survival_condition(
         poison: api::condition::PoisonState,
         hp: u8,
     ) -> api::condition::BotCondition {
@@ -6297,7 +6583,7 @@ mod tests {
 
     /// A Quester on the Cook path whose first step is a never-settling `kind`
     /// step, with HP 5 of 99, one held antipoison dose and a complete frame.
-    fn survival_step_fixture(
+    pub(super) fn survival_step_fixture(
         kind: &str,
     ) -> (
         Quester,
@@ -7068,6 +7354,106 @@ mod tests {
             script.survival_action.is_none(),
             "the count drop settles the bite"
         );
+    }
+
+    #[test]
+    fn quester_survival_trace_pairs_a_retried_bite() {
+        use api::condition::PoisonState;
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, StatView};
+
+        const CHILD: &str = "QUESTER_SURVIVAL_TRACE_TEST_CHILD";
+        const TEST: &str = "quester::runner::tests::quester_survival_trace_pairs_a_retried_bite";
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let item_id = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .unwrap()
+            .item_by_alias("lobster")
+            .unwrap()
+            .id;
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env(CHILD, "1")
+                .env("BOT_DEBUG", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "trace child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let lines: Vec<_> = stderr
+                .lines()
+                .filter_map(|line| {
+                    line.split_once("quester survival op ")
+                        .map(|(_, event)| event)
+                })
+                .collect();
+            assert_eq!(
+                lines,
+                [
+                    format!("event=begin tick=2 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=pending deadline=10 player_info=0"),
+                    format!("event=end tick=10 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=false deadline=10 player_info=0"),
+                    format!("event=begin tick=10 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=pending deadline=18 player_info=0"),
+                    format!("event=end tick=11 kind=Eat {{ item_id: {item_id}, before_count: 2 }} applied=true deadline=18 player_info=0"),
+                ],
+                "the first bite must end unapplied before its same-tick retry begins"
+            );
+            return;
+        }
+
+        let (mut script, mut snapshot, _) = survival_step_fixture("gather");
+        let food = |count| {
+            vec![ItemView {
+                def: super::super::families::tests::def(item_id, "Lobster"),
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: 0,
+                count,
+                actions: vec![Some("Eat".into())],
+                component_id: 0,
+            }]
+        };
+        let set_hp = |snapshot: &mut api::snapshot::GameSnapshot, effective| {
+            snapshot.seed_stats(vec![StatView {
+                index: 3,
+                name: "hitpoints".into(),
+                base: 99,
+                effective,
+                xp: 0,
+                used: true,
+            }]);
+        };
+        snapshot.seed_inventory(food(2), 28);
+        set_hp(&mut snapshot, 60);
+        let mut ledger = None;
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 1, |tick| {
+            tick.cx.condition = Some(survival_condition(PoisonState::Clear, 60));
+            script.tick(tick).unwrap();
+        });
+        let poison = PoisonState::Poisoned {
+            per_tick: 3,
+            last_mark: 20,
+            hit_since_mark: false,
+        };
+        set_hp(&mut snapshot, 4);
+        for observed in 2..=10 {
+            super::super::families::tests::with_tick(&snapshot, &mut ledger, observed, |tick| {
+                tick.cx.condition = Some(survival_condition(poison, 4));
+                script.tick(tick).unwrap();
+            });
+            assert!(script.survival_action.is_some());
+        }
+        snapshot.seed_inventory(food(1), 28);
+        set_hp(&mut snapshot, 16);
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, 11, |tick| {
+            tick.cx.condition = Some(survival_condition(poison, 16));
+            script.tick(tick).unwrap();
+        });
+        assert!(script.survival_action.is_none());
     }
 
     #[test]
@@ -8381,6 +8767,8 @@ mod tests {
 
         let (mut script, mut snapshot, _, _) = provisioning_survival_fixture();
         snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_main_modal(-1, Vec::new());
+        snapshot.seed_chat_modal(-1, Vec::new());
         let condition = BotCondition {
             tick: 20,
             session: SessionMark::Live,
@@ -9074,6 +9462,7 @@ mod tests {
             advances: Some(false),
             max_attempts: None,
             stop: None,
+            hazard: None,
             skip_if,
             settle,
         }
@@ -9544,6 +9933,7 @@ mod tests {
                 advances: Some(false),
                 max_attempts: None,
                 stop: None,
+                hazard: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: PredicateDocument::All(vec![]),
             }],
@@ -9557,6 +9947,7 @@ mod tests {
             advances: Some(false),
             max_attempts: None,
             stop: None,
+            hazard: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: PredicateDocument::All(vec![]),
         }];
@@ -9982,6 +10373,7 @@ mod tests {
             advances: Some(false),
             max_attempts: None,
             stop: None,
+            hazard: None,
             skip_if,
             settle,
         };
@@ -11283,6 +11675,10 @@ mod squire_bank_tests;
 #[cfg(test)]
 #[path = "squire_portrait_runner_tests.rs"]
 mod squire_portrait_tests;
+
+#[cfg(test)]
+#[path = "upkeep_runner_tests.rs"]
+mod upkeep_tests;
 
 #[cfg(test)]
 #[path = "open_page_retry_runner_tests.rs"]
