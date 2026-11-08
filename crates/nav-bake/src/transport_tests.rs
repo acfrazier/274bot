@@ -3524,9 +3524,10 @@ fn revision_377_boats_use_selected_npc_spawns_and_omit_unproven_starts() {
     if matches!(
         api::game_data::for_revision(api::selected::ClientRevision::R377),
         Err(api::game_data::GameDataError::LocalDataUnavailable)
-    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
-    {
-        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
         return;
     }
     let (graph, skipped, _) = derive(api::selected::ClientRevision::R377);
@@ -10677,9 +10678,10 @@ p_telejump(0_46_149_63_13);
     if matches!(
         api::game_data::for_revision(api::selected::ClientRevision::R377),
         Err(api::game_data::GameDataError::LocalDataUnavailable)
-    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
-    {
-        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
         return;
     }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
@@ -10778,9 +10780,10 @@ p_telejump($coord);
     if matches!(
         api::game_data::for_revision(api::selected::ClientRevision::R377),
         Err(api::game_data::GameDataError::LocalDataUnavailable)
-    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
-    {
-        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
         return;
     }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
@@ -10913,9 +10916,10 @@ switch_coord (loc_coord) {
     if matches!(
         api::game_data::for_revision(api::selected::ClientRevision::R377),
         Err(api::game_data::GameDataError::LocalDataUnavailable)
-    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
-    {
-        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
         return;
     }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
@@ -10955,9 +10959,10 @@ fn revision_377_coordinate_stairs_reject_unproved_handlers() {
     if matches!(
         api::game_data::for_revision(api::selected::ClientRevision::R377),
         Err(api::game_data::GameDataError::LocalDataUnavailable)
-    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
-    {
-        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
         return;
     }
     let fx = Fixture::new();
@@ -11064,9 +11069,10 @@ p_telejump(movecoord(coord(), 0, 0, 6400));
     if matches!(
         api::game_data::for_revision(api::selected::ClientRevision::R377),
         Err(api::game_data::GameDataError::LocalDataUnavailable)
-    ) && std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true"))
-    {
-        eprintln!("Skipping revision-377 transport assertions: local game data is unavailable (GITHUB_ACTIONS=true)");
+    ) {
+        eprintln!(
+            "Skipping revision-377 transport assertions: optional local game data is unavailable"
+        );
         return;
     }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R377)
