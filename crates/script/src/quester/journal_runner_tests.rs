@@ -1595,10 +1595,18 @@ fn completion_row_overtakes_377_journal_without_closing_the_scroll() {
         (ClientRevision::R377, false),
         (ClientRevision::R377, true),
     ] {
+        if revision == ClientRevision::R377
+            && !crate::native::has_local_game_data_for_test(revision)
+        {
+            continue;
+        }
         let (mut script, mut snapshot, component, name) = if revision == ClientRevision::R289 {
             let (script, snapshot) = fixture(true);
             (script, snapshot, 42, "Cook's Assistant")
         } else {
+            let Some(nav) = super::super::compile::real_nav_lease(ClientRevision::R377) else {
+                continue;
+            };
             let data = api::game_data::for_revision(revision).unwrap();
             let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
             let document =
@@ -1607,9 +1615,7 @@ fn completion_row_overtakes_377_journal_without_closing_the_scroll() {
                 &document,
                 &data,
                 &quests,
-                super::super::compile::real_377_nav_lease()
-                    .zones()
-                    .expect("real 377 zone catalog"),
+                nav.zones().expect("real 377 zone catalog"),
             )
             .unwrap();
             let script = Quester::new(
