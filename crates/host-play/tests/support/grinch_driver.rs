@@ -3689,6 +3689,13 @@ fn capture_live_inner(case: Case, inputs: &LiveInputs) -> Result<SessionData, St
                     break;
                 }
             };
+            for actor in &mut state.actors {
+                if actor.relogger.take_relog_login() {
+                    if let Some(arm) = play.arm(&actor.account) {
+                        arm.arm_explicit_login();
+                    }
+                }
+            }
             state.start_if_ready(&start_handle);
             if let Some(error) = state.error.clone() {
                 runtime_error = Some(error);

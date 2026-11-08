@@ -512,6 +512,7 @@ fn wait_for_destination(cell: &LiveCell) -> Result<u32, String> {
     let started = cell.preparation.lock().preparation_started;
     let deadline = started + PREPARATION_DEADLINE;
     loop {
+        bank_core_live::post_relog_login(&cell.play, &cell.account, &cell.preparation);
         let status = cell
             .play
             .statuses()

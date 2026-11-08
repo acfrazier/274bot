@@ -281,6 +281,16 @@ fn run_seed_cell() -> Value {
             RunnerStatus::Failed(error) => break ("FAIL", Some(error)),
             _ => {}
         }
+        let relog_login = state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .runner
+            .take_relog_login();
+        if relog_login {
+            if let Some(arm) = play.arm(&account) {
+                arm.arm_explicit_login();
+            }
+        }
         assert!(
             Instant::now() < deadline,
             "{scenario_name} for {account} timed out after {deadline_seconds:?}"

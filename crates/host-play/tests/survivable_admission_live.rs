@@ -413,8 +413,13 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
         let deadline = Instant::now() + Duration::from_secs(90);
         let destination = loop {
             {
-                let state = state.lock().expect("fixture state");
+                let mut state = state.lock().expect("fixture state");
                 assert!(state.failure.is_none(), "{:?}", state.failure);
+                if state.relogger.take_relog_login() {
+                    if let Some(arm) = play.arm(&name) {
+                        arm.arm_explicit_login();
+                    }
+                }
                 if state.ready {
                     break state.endpoints.expect("seeded endpoints").1;
                 }

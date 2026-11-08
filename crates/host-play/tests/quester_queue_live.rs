@@ -495,6 +495,11 @@ fn run_quester_queue() -> Result<(), String> {
         }
         let (runner_status, start_count, error) = {
             let mut slot = state.lock().map_err(|_| "Quester live state poisoned")?;
+            if slot.runner.take_relog_login() {
+                if let Some(arm) = play.arm(&account) {
+                    arm.arm_explicit_login();
+                }
+            }
             if run_state == script::RunState::Running {
                 slot.runner.observe_script_running();
             }
