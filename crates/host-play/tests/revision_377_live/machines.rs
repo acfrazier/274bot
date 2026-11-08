@@ -902,6 +902,7 @@ fn machines_377_clue_hans_hard() -> Result<(), String> {
 
 #[test]
 fn selected_377_operands_and_machine_oracles_do_not_accept_fixture_only_state() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
     let data = api::game_data::for_revision(ClientRevision::R377).unwrap();
     let facts = Facts::selected(&data, Case::Cow).unwrap();
     assert_eq!(facts.cow, 81);
@@ -942,6 +943,7 @@ fn oracle_baseline(case: Case) -> Sample {
 
 #[test]
 fn admission_witness_requires_advisory_food_and_successful_native_arrival() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
     let baseline = oracle_baseline(Case::Admission);
     let mut sample = baseline.clone();
     sample.tick += 1;
@@ -1209,6 +1211,7 @@ fn survival_cure_witness_requires_chat_inventory_and_owner_immunity() {
 #[cfg(feature = "js")]
 #[test]
 fn selected_hans_clue_witnesses_require_real_handoffs() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
     script_js::install_cards().expect("install the production Sherlock card");
     assert!(script::compiled_card(script::CompiledId("Sherlock")).is_some());
     let data = api::game_data::for_revision(ClientRevision::R377).unwrap();
