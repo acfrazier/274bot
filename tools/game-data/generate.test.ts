@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { bankCatalogJson, cookCatalogJson } from './generate.ts';
 import {
     assertTrioGiverNpcJoins,
@@ -34,11 +35,13 @@ import {
     parsePrayerInterface,
     parseQuestEnumEntry,
 } from './generate.ts';
+
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
 import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, GATHERING_SCHEMA, isKnownGatherTarget, SITE_OVERRIDES, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
 import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
+import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 import { DEBUG_SCHEMA_VERSION, QUESTS_SCHEMA, buildDebugArtifact, categoryName, debugArtifactBytes, extractQuestsFamily, familyBytes, parseGenerationArgs, revisions, runtimeNpcOperations } from './generate.ts';
 import { extractCombatStyleFacts, parseCombatScripts, extractSpecialWeaponFacts, extractItemCombatBonus, extractMeleeWeaponTiers } from './extractors/combat.ts';
@@ -53,6 +56,7 @@ import './npc-transforms.test.ts';
 import './npc-stat-default.test.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
 import type { NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
+import { extractCookSurfaces } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 const bankJsonFixture = bankCatalogJson([
@@ -950,6 +954,37 @@ try {
 } finally {
     fs.writeFileSync(combatParamFile, combatParams);
 }
+
+// Every revision retains the declared default and validates explicit wire rates.
+fs.writeFileSync(combatParamFile, combatParams
+    .replace(declaredRate, '[attackrate]\ntype=int\ndefault=6')
+    + '[attackrange]\ntype=int\ndefault=0\n[levelrequire]\ntype=int\ndefault=0\n');
+try {
+    for (const revision of [274, 289, 377]) {
+        const weapon = (rate: number | string | undefined) => ({
+            id: 52,
+            category: 12,
+            params: new Map<number, number | string>(rate === undefined ? [] : [[9, rate]]),
+        });
+        const extractRate = (rate: number | string | undefined) =>
+            extractCombatStyleFacts(content, [weapon(rate)], [], combatScripts, true, revision).weapon_styles[0]!.attackrate;
+        assert.equal(extractRate(undefined), 6, `${revision}: selected attackrate fallback`);
+        for (const rate of [0, 4, 255]) {
+            assert.equal(extractRate(rate), rate, `${revision}: valid explicit attackrate ${rate}`);
+        }
+        assert.throws(() => extractRate('4'), /obj 52: attackrate is not numeric/, `${revision}: reject a string rate`);
+        for (const rate of [-1, 256, 1.5, NaN, Infinity, -Infinity]) {
+            assert.throws(
+                () => extractRate(rate),
+                new RegExp(`obj 52: attackrate ${String(rate).replace('.', '\\.')} is out of range`),
+                `${revision}: reject invalid explicit attackrate ${rate}`,
+            );
+        }
+    }
+} finally {
+    fs.writeFileSync(combatParamFile, combatParams);
+}
+
 const combatParamIds = parsePack(fs.readFileSync(path.join(pack, 'param.pack'), 'utf8'));
 const itemCombatBonuses = extractItemCombatBonus(content, [
     {
@@ -1183,6 +1218,18 @@ assert.equal(herbs.herbs[0].level, 3, 'guam uses identify.param default, not cos
 assert.equal(herbs.herbs[1].key, 'snake weed');
 assert.equal(herbs.herbs[1].level, 5, 'an explicit herbs.obj level overrides the identify.param default');
 
+const herb377Content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-herb377-fixture-'));
+fs.cpSync(herblore, path.join(herb377Content, 'scripts/skill_herblore'), { recursive: true });
+fs.mkdirSync(path.join(herb377Content, 'scripts/_unpack/377'), { recursive: true });
+const [guam377Config, snake377Config] = fs.readFileSync(path.join(herblore, 'configs/herbs.obj'), 'utf8').split('[snake_weed]');
+assert.ok(snake377Config);
+fs.writeFileSync(path.join(herb377Content, 'scripts/skill_herblore/configs/herbs.obj'), guam377Config);
+fs.writeFileSync(path.join(herb377Content, 'scripts/_unpack/377/all.obj'), `[snake_weed]${snake377Config}`);
+assert.deepEqual(extractHerbFacts(herb377Content, herbItems, 377), herbs, '377 joins its unpacked quest herbs without substituting legacy levels');
+fs.rmSync(path.join(herb377Content, 'scripts/_unpack/377/all.obj'));
+assert.throws(() => extractHerbFacts(herb377Content, herbItems, 377), /all\.obj/, '377 requires its actual quest-herb input');
+fs.rmSync(herb377Content, { recursive: true });
+
 const dropContent = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-drop-fixture-'));
 const dropScripts = path.join(dropContent, 'scripts/drop tables/scripts');
 const npcConfigs = path.join(dropContent, 'scripts/_unpack/225');
@@ -1265,6 +1312,28 @@ assert.deepEqual(drops.find((row) => row.name === 'Fire giant')?.items, [
 ]);
 assert.deepEqual(drops.find((row) => row.name === 'Green dragon')?.display_names, ['Dragon bones', 'Dragonhide']);
 assert.deepEqual(drops.find((row) => row.name === 'Kalphite Queen')?.display_names, ['Rune spear']);
+
+const drop377Content = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-drop377-fixture-'));
+fs.cpSync(path.join(dropContent, 'scripts/drop tables'), path.join(drop377Content, 'scripts/drop_tables'), { recursive: true });
+fs.mkdirSync(path.join(drop377Content, 'scripts/_unpack/377'), { recursive: true });
+fs.mkdirSync(path.join(drop377Content, 'scripts/npc/configs'), { recursive: true });
+fs.mkdirSync(path.join(drop377Content, 'scripts/areas/area_kalphite/configs'), { recursive: true });
+const [giantDropConfigs, greenDragonDropConfig] = fs.readFileSync(path.join(npcConfigs, 'all.npc'), 'utf8').split('[green_dragon]');
+assert.ok(greenDragonDropConfig);
+fs.writeFileSync(path.join(drop377Content, 'scripts/_unpack/377/all.npc'), giantDropConfigs);
+fs.writeFileSync(path.join(drop377Content, 'scripts/npc/configs/dragons.npc'), `[green_dragon]${greenDragonDropConfig}`);
+fs.copyFileSync(path.join(kqConfigs, 'kalphite.npc'), path.join(drop377Content, 'scripts/areas/area_kalphite/configs/kalphite.npc'));
+const moss377File = path.join(drop377Content, 'scripts/drop_tables/scripts/moss_giant.rs2');
+const moss377Source = fs.readFileSync(moss377File, 'utf8');
+const moss377Wrapped = `[ai_queue3,mossgiant] @moss_drop;\n[label,moss_drop]\n${moss377Source.replace(/^\[ai_queue3,mossgiant\]\r?\n/, '')}`;
+fs.writeFileSync(moss377File, moss377Wrapped);
+assert.deepEqual(extractDropFacts(drop377Content, dropItems, dropNpcs, 377), drops, '377 joins its own drop-table and split NPC sources');
+fs.writeFileSync(moss377File, '[ai_queue3,mossgiant] @missing_drop;\n');
+assert.throws(() => extractDropFacts(drop377Content, dropItems, dropNpcs, 377), /missing drop block label:missing_drop/, '377 cannot silently drop an unresolved label');
+fs.writeFileSync(moss377File, moss377Wrapped);
+fs.rmSync(path.join(drop377Content, 'scripts/npc/configs/dragons.npc'));
+assert.throws(() => extractDropFacts(drop377Content, dropItems, dropNpcs, 377), /missing content input scripts\/npc\/configs\/dragons\.npc/, '377 cannot fall back to legacy dragon config');
+fs.rmSync(drop377Content, { recursive: true });
 
 fs.rmSync(path.join(dropScripts, 'shared_droptables.rs2'));
 assert.throws(
@@ -1488,6 +1557,11 @@ assert.equal(karil?.disposition, 'absent');
 assert.equal(karil?.absent_class, 'no_exact_selected_match');
 assert.equal(equipmentFacts.exact_name_join.bolts.generic_is_substitute, false);
 
+// revision 377 derives the same equipment rows; only the frozen-bolt note is revision-specific
+const equipmentFacts377 = extractEquipmentNamesFacts(equipmentItems, equipmentPack, repoRoot, 377);
+assert.deepEqual(equipmentFacts377.bows.map((row) => row.requested_name), equipmentFacts.bows.map((row) => row.requested_name));
+assert.equal(equipmentFacts377.exact_name_join.bolts.note, 'Frozen bolt names are exact queries. Each row derives its selected identity or absence; generic Bolts / Bolts(p) are never substituted for a tier name.');
+
 const noteOnly = extractEquipmentNamesFacts([
     { alias: 'cert_shortbow', id: 842, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: 841, certificate_template: 799, wear_position: -1, wear_position_2: -1, wear_position_3: -1 },
 ], new Map([['cert_shortbow', 842]]));
@@ -1509,6 +1583,15 @@ assert.throws(
     /ambiguous joins Bronze scimitar/,
     'duplicate wieldable display names must fail closed at generate time',
 );
+const shortbow377 = equipmentItems.find(item => item.alias === 'shortbow')!;
+const ambiguous377Equipment = extractEquipmentNamesFacts(
+    [...equipmentItems, { ...shortbow377, id: 19000, alias: 'quest_shortbow' }],
+    new Map([...equipmentPack, ['quest_shortbow', 19000]]), undefined, 377,
+).bows.find(row => row.requested_name === 'Shortbow')!;
+assert.equal(ambiguous377Equipment.disposition, 'ambiguous');
+assert.equal(ambiguous377Equipment.id, undefined, '377 ambiguity does not invent a selected id');
+assert.equal(ambiguous377Equipment.alias, undefined, '377 ambiguity is not a silent preferred variant');
+assert.deepEqual(ambiguous377Equipment.candidates?.map(row => row.alias), ['shortbow', 'quest_shortbow']);
 assert.throws(
     () => extractEquipmentNamesFacts(equipmentItems, new Map([['shortbow', 999], ['black_dagger', 1217], ['deathdagger', 746], ['bronze_arrow', 882]])),
     /obj\.pack shortbow=999/,
@@ -1531,8 +1614,10 @@ assert.equal(
 
 assert.deepEqual(parseGenerationArgs(['--stage', '1']), { stage: 1, revisions: [274, 289] });
 assert.deepEqual(parseGenerationArgs(['--revision', '289', '--stage', '2']), { stage: 2, revisions: [289] });
+assert.deepEqual(parseGenerationArgs(['--stage', '2', '--revision', '377']), { stage: 2, revisions: [377] });
 assert.throws(() => parseGenerationArgs([]), /usage/);
 assert.throws(() => parseGenerationArgs(['--stage', '1', '--revision', '999']), /usage/);
+
 function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
     const files: Record<string, string> = {
         'scripts/general/scripts/quests.rs2': `~send_quest_progress_colour($component, $progress, $complete_progress);
@@ -2076,7 +2161,7 @@ const TRAIL_FIXTURE_IDS: Record<string, number> = {
     trail_clue_hard_sextant028: 3554,
     trail_clue_hard_sextant028_casket: 3555,
 };
-const trailFixtureItems = Object.entries(TRAIL_FIXTURE_IDS).map(([debugname, id]) => ({
+const trailFixtureItems: Parameters<typeof extractTrailFacts>[1] = Object.entries(TRAIL_FIXTURE_IDS).map(([debugname, id]) => ({
     id,
     debugname,
     name: debugname.endsWith('_casket') ? 'Casket' : 'Clue scroll',
@@ -2088,7 +2173,8 @@ const trailFixtureItems = Object.entries(TRAIL_FIXTURE_IDS).map(([debugname, id]
     wearpos: -1,
     wearpos2: 0,
     wearpos3: 0,
-})) as any;
+    manwear: -1,
+}));
 
 function writeTrailFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
     const files: Record<string, string> = {
@@ -2258,14 +2344,15 @@ assert.equal(trailFacts.rows.some((row) => row.alias === 'trail_clue_medium_anag
 assert.equal(trailFacts.rows.every((row) => row.params.every((param) => typeof param.value === 'string' && typeof param.key === 'string')), true);
 
 // the six answers are a sibling list on the challenge aliases, never a membership row
-assert.deepEqual(trailFacts.challenge_answers, [
+const expectedTrailChallengeAnswers = [
     { alias: 'trail_clue_medium_anagram001_challenge', id: 2842, answer: '6859' },
     { alias: 'trail_clue_medium_anagram002_challenge', id: 2844, answer: '9' },
     { alias: 'trail_clue_medium_anagram003_challenge', id: 2846, answer: '40' },
     { alias: 'trail_clue_medium_anagram006_challenge', id: 2850, answer: '5' },
     { alias: 'trail_clue_medium_anagram007_challenge', id: 2852, answer: '48' },
     { alias: 'trail_clue_medium_anagram008_challenge', id: 2854, answer: '5096' },
-]);
+];
+assert.deepEqual(trailFacts.challenge_answers, expectedTrailChallengeAnswers);
 assert.equal(trailFacts.rows.some((row) => row.alias.endsWith('_challenge')), false);
 assert.equal(trailFacts.rows.some((row) => row.params.some((param) => param.key === 'trail_challenge_answer')), false);
 // the answer is not copied onto the parent that shares its prefix, and no link is invented
@@ -2301,6 +2388,48 @@ const constrainedRows = trailFacts.rows.filter((row) => 'access' in row);
 assert.deepEqual(constrainedRows.map((row) => [row.alias, row.id, row.access]), [['trail_clue_hard_sextant028', 3554, 'constrained']]);
 assert.equal(constrainedRows[0].role, 'clue');
 assert.equal(JSON.stringify(trailFacts).includes('"open"'), false);
+
+const repackedConstrainedId = 9001;
+const repackedTrailFacts = extractTrailFacts(trailFixture((files) => {
+    files['pack/obj.pack'] = files['pack/obj.pack'].replace('3554=trail_clue_hard_sextant028\n', `${repackedConstrainedId}=trail_clue_hard_sextant028\n`);
+}), trailFixtureItems.map((item: Parameters<typeof extractTrailFacts>[1][number]) =>
+    Object.assign({}, item, item.debugname === 'trail_clue_hard_sextant028' ? { id: repackedConstrainedId } : {})));
+assert.equal(trailRow(repackedTrailFacts, 'trail_clue_hard_sextant028').id, repackedConstrainedId);
+assert.equal(trailRow(repackedTrailFacts, 'trail_clue_hard_sextant028').access, 'constrained');
+
+for (const revision of [274, 289] as const) {
+    const withoutConstrained = extractTrailFacts(trailFixture((files) => {
+        files[`${TRAIL_CONFIG}/trail_hard.enum`] =
+            files[`${TRAIL_CONFIG}/trail_hard.enum`].replace('val=4,trail_clue_hard_sextant028\n', '');
+    }), trailFixtureItems, revision);
+    assert.equal(withoutConstrained.rows.some((row) => row.access !== undefined), false,
+        `${revision}: an absent constrained clue must not reject the corpus`);
+
+    const repeatedConstrained = extractTrailFacts(trailFixture((files) => {
+        files[`${TRAIL_CONFIG}/trail_hard.enum`] += 'val=5,trail_clue_hard_sextant028\n';
+    }), trailFixtureItems, revision);
+    assert.deepEqual(repeatedConstrained.rows.filter((row) => row.access !== undefined)
+        .map((row) => row.access), ['constrained', 'constrained'],
+        `${revision}: annotate every matching membership row without a count pin`);
+}
+
+// revision 377 derives the same membership but never inherits the 289 constrained-clue annotation
+const selectedTrailAnswerParam = 5;
+const selectedTrailAnswers = new Map(expectedTrailChallengeAnswers.map(({ alias, answer }) => [alias, Number(answer)]));
+const selectedTrailItems = trailFixtureItems.map((item) => {
+    const answer = selectedTrailAnswers.get(item.debugname!);
+    return { ...item, params: answer === undefined ? undefined : new Map([[selectedTrailAnswerParam, answer]]) };
+});
+const selectedTrailContent = trailFixture((files) => {
+    files['pack/param.pack'] = `${selectedTrailAnswerParam}=trail_challenge_answer\n`;
+    files['scripts/_unpack/377/all.obj'] = ['easy', 'medium', 'hard', 'casket']
+        .map((tier) => files[`${TRAIL_CONFIG}/trail_${tier}.obj`]).join('\n');
+});
+const trailFacts377 = extractTrailFacts(selectedTrailContent, selectedTrailItems, 377);
+assert.equal(trailFacts377.rows.some((row) => 'access' in row), false);
+assert.deepEqual(trailFacts377.rows.map((row) => row.alias).sort(), trailFacts.rows.map((row) => row.alias).sort());
+assert.deepEqual(trailFacts377.challenge_answers, expectedTrailChallengeAnswers);
+fs.rmSync(selectedTrailContent, { recursive: true });
 
 // a constant-table coordinate is not selected when the obj param is absent
 assert.deepEqual(trailRow(trailFacts, 'trail_clue_easy_vague003').params, [{ key: 'trail_desc', value: 'Dig near the drawers.' }]);
@@ -2711,6 +2840,16 @@ function trioGiverRow(facts: TrioGiverFacts, alias: string) {
 
 const trioGiverFacts = extractTrioGiversFacts(trioGiverFixture());
 
+const trioGiver377Root = trioGiverFixture((files) => {
+    files['scripts/_unpack/377/all.npc'] = Object.values(TRIO_GIVER_CONFIGS).map(file => files[file]).join('\n');
+    for (const file of Object.values(TRIO_GIVER_CONFIGS)) delete files[file];
+});
+const trioGiver377 = extractTrioGiversFacts(trioGiver377Root, 377);
+assert.deepEqual(trioGiver377, trioGiverFacts, '377 joins its actual unpacked NPC configs without legacy per-area paths');
+fs.rmSync(path.join(trioGiver377Root, 'scripts/_unpack/377/all.npc'));
+assert.throws(() => extractTrioGiversFacts(trioGiver377Root, 377), /all\.npc: required file missing/);
+fs.rmSync(trioGiver377Root, { recursive: true });
+
 // The closed set in file order: one row per giver, one packed id, one .npc name,
 // one world tile converted from the mapsquare filename and the local coordinates.
 assert.deepEqual(trioGiverFacts, {
@@ -2838,6 +2977,68 @@ assert.equal(family289Rows(baseline, 'fishing.freshfish.op1'), 1);
 assert.equal(family289Rows(baseline, 'fishing.freshfish.op3'), 1);
 assert.equal(baseline.payload.placements.length, 1);
 assert.equal(baseline.payload.methods.some((method) => method.id === hemensterCarpMethod), true, 'the anchored direct-yield extractor admits the selected quest handler');
+
+const woodcutScript = 'scripts/skill_woodcutting/scripts/woodcut.rs2';
+function structWoodcuttingFixture(mutate?: (rootDir: string) => void) {
+    return gatheringFixture((rootDir) => {
+        const script = path.join(rootDir, woodcutScript);
+        const before = fs.readFileSync(script, 'utf8');
+        const after = before.replaceAll('anim(oc_param($axe, woodcutting_anim), 0)', 'anim(struct_param(oc_param($axe, woodcutting_struct), skill_anim), 0)');
+        assert.notEqual(after, before, 'the selected woodcutting loop uses its tool animation');
+        fs.writeFileSync(script, after);
+        const structs: string[] = [];
+        for (const relative of listContentFiles(rootDir, 'scripts', '.obj')) {
+            const file = path.join(rootDir, relative);
+            const source = fs.readFileSync(file, 'utf8');
+            const changed = source.replace(/^param=woodcutting_anim,([^\r\n]+)$/gm, (_line, animation: string) => {
+                const alias = `fixture_${animation}`;
+                structs.push(`[${alias}]\nparam=skill_anim,${animation}\n`);
+                return `param=woodcutting_struct,${alias}`;
+            });
+            if (changed !== source) fs.writeFileSync(file, changed);
+        }
+        fs.writeFileSync(path.join(rootDir, 'scripts/skill_woodcutting/configs/fixture.struct'), structs.join('\n'));
+        mutate?.(rootDir);
+    });
+}
+assert.deepEqual(extractGatheringFamily(structWoodcuttingFixture(), 377).payload, baseline.payload,
+    '377 resolves each axe animation through its selected struct without changing the gathering facts');
+assert.throws(() => extractGatheringFamily(structWoodcuttingFixture()), /unrecognized loop/,
+    'historical revisions do not admit the 377 woodcutting shape');
+assert.throws(() => extractGatheringFamily(structWoodcuttingFixture((rootDir) => {
+    fs.rmSync(path.join(rootDir, 'scripts/skill_woodcutting/configs/fixture.struct'));
+}), 377), /expected one skill_anim parameter/,
+    '377 cannot substitute a legacy animation when the selected tool struct is missing');
+
+const mixedIron = extractGatheringFamily(structWoodcuttingFixture((rootDir) => {
+    replaceIn(rootDir, 'scripts/skill_mining/configs/rocks.loc',
+        'recol1d=6242\ncategory=mining_rock_fast\nparam=next_loc_stage_mining,rocks1',
+        'recol1d=6242\ncategory=mining_rock_normal\nparam=next_loc_stage_mining,rocks1');
+}), 377);
+const mixedIronMethods = mixedIron.payload.methods.filter((method) => method.resources.includes('iron'));
+assert.deepEqual(mixedIronMethods.map((method) => [method.id, method.tick_arm.delay_drop]).sort(),
+    [['mining.iron', true], ['mining.iron.get_ore_fast', false]]);
+assert.deepEqual(mixedIronMethods.flatMap((method) => targetsOf(method, 'resource').map((target) => target.id)).sort((a, b) => a - b),
+    targetsOf(baseline.payload.methods.find((method) => method.id === 'mining.iron')!, 'resource').map((target) => target.id).sort((a, b) => a - b),
+    'each incompatible 377 iron target stays available with exactly its own tick timing');
+
+function renameWaterfallSpot(rootDir: string) {
+    for (const relative of ['pack/loc.pack', 'scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2',
+        ...listContentFiles(rootDir, 'scripts', '.loc')]) {
+        const file = path.join(rootDir, relative);
+        const before = fs.readFileSync(file, 'utf8');
+        const after = before.replace(/\bloc_2027\b/g, 'fishing_spot_2027');
+        if (after !== before) fs.writeFileSync(file, after);
+    }
+}
+const namedWaterfall = extractGatheringFamily(structWoodcuttingFixture(renameWaterfallSpot), 377);
+for (const slot of [1, 2]) {
+    assert.deepEqual(namedWaterfall.payload.methods.find((method) => method.id === `fishing.fishing_spot_2027.op${slot}`)?.tick_arm,
+        baseline.payload.methods.find((method) => method.id === `fishing.loc_2027.op${slot}`)!.tick_arm,
+        '377 named waterfall entries retain source-checked timing and roll blocks');
+}
+assert.throws(() => extractGatheringFamily(gatheringFixture(renameWaterfallSpot)), /no reviewed fishing tick specification/,
+    'historical revisions do not admit the 377 fishing entry identity');
 const waterfallScript = 'scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2';
 for (const [from, to] of [
     ['p_oploc(2);\n        return;', 'p_oploc(2);'],
@@ -3027,6 +3228,7 @@ assert.throws(() => extractGatheringFamily(gatheringFixture((rootDir) => replace
 
 
 
+
 // The debug artifact shape: schema 1, no base item name duplication, strict bytes.
 const debugBuilt = buildDebugArtifact(289, { commands: [{ name: '~extra' }], names: { npc: [{ id: 1, alias: 'man', name: 'Man' }] } });
 assert.equal(debugBuilt.schema_version, DEBUG_SCHEMA_VERSION);
@@ -3135,6 +3337,21 @@ assert.deepEqual(gatherResources(synFacts([synOak]), synNames), [
 assert.deepEqual(gatherResources(synFacts([synJungle]), new Map()), [
     { skill: 'woodcutting', method: 'woodcutting.jungle', methods: ['woodcutting.jungle'], aliases: [], key: 'jungle', resources: ['jungle'], label: 'Jungle', level: 0, selectable: false, forbidden_states: [], gap: 'no-resource-target' },
 ], 'a refused method keeps its row with a humanized fallback label');
+const synIron = synMethod('mining.iron', 'mining', ['iron'], synKnownIds([{ item: 440, level: 15 }]), synKnownIds([]));
+const synIronWall = synMethod('mining.iron.method_2', 'mining', ['iron'], synKnownIds([{ item: 440, level: 35 }]), synKnownIds([]), { forbidden_states: ['monkey-form'] });
+assert.deepEqual(gatherResources(synFacts([synIron, synIronWall]), new Map([[440, 'Iron ore']])), [
+    {
+        skill: 'mining', method: 'mining.iron', methods: ['mining.iron', 'mining.iron.method_2'],
+        aliases: [], key: 'iron', resources: ['iron'], label: 'Iron ore', level: 15,
+        selectable: true, forbidden_states: ['monkey-form'], gap: null,
+    },
+], 'distinct source-proved methods share one resource option and retain both method IDs');
+assert.deepEqual(
+    gatherResources(synFacts([synIron, { ...synIronWall, tools: synUnknownGap('wall-tool') }]), new Map([[440, 'Iron ore']]))
+        .map((row) => [row.selectable, row.gap]),
+    [[false, 'wall-tool']],
+    'a grouped resource cannot hide a refused method',
+);
 const synFresh = synMethod('fishing.freshfish.op1', 'fishing', ['raw_trout', 'raw_salmon'], synKnownIds([{ item: 335, level: 20 }, { item: 331, level: 30 }]), synKnownIds([]));
 const synFreshAlias = synMethod('fishing.freshfish.op2', 'fishing', ['raw_salmon', 'raw_trout'], synKnownIds([{ item: 331, level: 30 }, { item: 335, level: 20 }]), synKnownIds([]));
 const freshGroups = gatherResources(synFacts([synFresh, synFreshAlias]), synNames);
@@ -3407,6 +3624,15 @@ const noOverrides: readonly SiteOverride[] = [];
         /Luthas coin message\/grant disagree \(43\/44\)/,
         'the full-crate payout is the amount the content actually grants',
     );
+    write(luthasPath, luthasScript);
+    const legacyPlantation = path.join(content, 'scripts/areas/area_karamja/configs/plantation.loc');
+    const unpackedPlantation = 'scripts/_unpack/377/all.loc';
+    write(unpackedPlantation, fs.readFileSync(legacyPlantation, 'utf8'));
+    fs.rmSync(legacyPlantation);
+    const selected377 = extractKaramjaFacts(content, npcNames, locNames, npcPlacements, 377);
+    assert.deepEqual(selected377.facts, result.facts, '377 uses its actual unpacked loc configs without requiring a legacy plantation path');
+    fs.rmSync(path.join(content, unpackedPlantation));
+    assert.throws(() => extractKaramjaFacts(content, npcNames, locNames, npcPlacements, 377), /all\.loc: required file missing/);
 }
 
 // Overrides name, require or drop a published row by id: the id and region never change.
@@ -3470,6 +3696,27 @@ const noOverrides: readonly SiteOverride[] = [];
     assert.throws(() => extractDuelZones(fixture), /expected 3 fight and 3 obstacle pens, got 3\/2/);
 
     // The parser reads the strength argument from the ordinary tier gate.
+    // 377 emits only handler-proven rule buttons through the same parser.
+    const duel377Fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'duel-rules-377-'));
+    fs.mkdirSync(path.join(duel377Fixture, 'pack'), { recursive: true });
+    fs.mkdirSync(path.join(duel377Fixture, 'scripts/minigames/game_duelarena/configs'), { recursive: true });
+    fs.mkdirSync(path.join(duel377Fixture, 'scripts/minigames/game_duelarena/scripts'), { recursive: true });
+    const duel377Constants = path.join(duel377Fixture, 'scripts/minigames/game_duelarena/configs/duelarena.constant');
+    const duel377Settings = path.join(duel377Fixture, 'scripts/minigames/game_duelarena/scripts/duel_arena_settings.rs2');
+    fs.writeFileSync(path.join(duel377Fixture, 'pack/interface.pack'), '101=duel_select_type:no_forfeit\n113=duel_select_type:no_specs\n');
+    fs.writeFileSync(duel377Constants, '^no_forfeit = 0\n^no_specs = 13\n');
+    const selected377Settings = '[if_button,duel_select_type:no_forfeit]\n~toggle_duel_setting(^no_forfeit);\n[if_button,duel_select_type:no_specs]\n~toggle_duel_setting(^no_specs);\n[proc,toggle_duel_setting](int $setting)\n%dueloptions = togglebit(%dueloptions, $setting);\n';
+    fs.writeFileSync(duel377Settings, selected377Settings);
+    assert.deepEqual(extractDuelRuleButtons(duel377Fixture, 377), [{ bit: 0, component: 101 }, { bit: 13, component: 113 }], '377 emits only handler-proven rule buttons, retaining their selected bit positions');
+    assert.throws(() => extractDuelRuleButtons(duel377Fixture), /not the 14 known rules/, 'the legacy full-rule contract is unchanged');
+    fs.writeFileSync(duel377Settings, selected377Settings.replace('~toggle_duel_setting(^no_specs);', '~toggle_duel_setting(^no_forfeit);'));
+    assert.throws(() => extractDuelRuleButtons(duel377Fixture, 377), /no_specs handler does not toggle its named setting/);
+    fs.writeFileSync(duel377Settings, selected377Settings.replace('%dueloptions = togglebit(%dueloptions, $setting);', '%dueloptions = 0;'));
+    assert.throws(() => extractDuelRuleButtons(duel377Fixture, 377), /toggle proc does not toggle dueloptions/);
+    fs.writeFileSync(duel377Settings, selected377Settings);
+    fs.writeFileSync(duel377Constants, '^no_forfeit = 0\n^no_specs = 14\n');
+    assert.throws(() => extractDuelRuleButtons(duel377Fixture, 377), /invalid or duplicate bit/);
+    fs.rmSync(duel377Fixture, { recursive: true, force: true });
     const strengthFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'melee-tier-fixture-'));
     const tierDirectory = path.join(strengthFixture, 'scripts/levelrequire/scripts');
     fs.mkdirSync(tierDirectory, { recursive: true });
@@ -3481,15 +3728,40 @@ const noOverrides: readonly SiteOverride[] = [];
     const weaponStyles = [{ obj_id: 1, category: 0 }];
     const aliases = new Map([[1, 'test_halberd']]);
     assert.deepEqual(
-        extractMeleeWeaponTiers(strengthFixture, weaponStyles, aliases),
+        extractMeleeWeaponTiers(strengthFixture, weaponStyles, aliases).rows,
         [{ obj_id: 1, tier: 30, quest_gated: false, strength: 15 }],
     );
     fs.writeFileSync(path.join(tierDirectory, 'tier30.rs2'), '[opheld2,test_halberd] @levelrequire_attack_and_strength(30);\n');
     assert.throws(
-        () => extractMeleeWeaponTiers(strengthFixture, weaponStyles, aliases),
+        () => extractMeleeWeaponTiers(strengthFixture, weaponStyles, aliases).rows,
         /missing the strength level/,
         'a one-argument strength gate throws',
     );
+    const tier377Fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'melee-tier-377-'));
+    fs.mkdirSync(path.join(tier377Fixture, 'scripts/levelrequire/scripts'), { recursive: true });
+    for (const tier of [1, 5, 10, 20, 30, 40, 45, 50, 60, 70]) {
+        fs.writeFileSync(path.join(tier377Fixture, `scripts/levelrequire/scripts/tier${tier}.rs2`), '// no fixture gate\n');
+    }
+    const direct377Gate = '[opheld2,literal_maul]\nif (stat_base(attack) < 51 | stat_base(strength) < 49) {\nmes("Requirements not met.");\nreturn;\n}\n~equip(last_slot);\n';
+    const direct377File = path.join(tier377Fixture, 'scripts/levelrequire/scripts/tier50.rs2');
+    fs.writeFileSync(direct377File, direct377Gate
+        + '[opheld2,slayer_spear]\nif (stat_base(slayer) < 55 | stat_base(attack) < 50) {\nmes("Requirements not met.");\nreturn;\n}\n~equip(last_slot);\n');
+    fs.writeFileSync(path.join(tier377Fixture, 'scripts/levelrequire/scripts/tier60.rs2'), '[opheld2,quest_scimitar] @levelrequire_mm_quest_attack(61, last_slot);\n');
+    fs.writeFileSync(path.join(tier377Fixture, 'scripts/levelrequire/scripts/tier70.rs2'), '[opheld2,paired_hammers] @levelrequire_attack_and_strength2(71, last_slot);\n');
+    const tier377Styles = [1, 2, 3, 4, 5].map(obj_id => ({ obj_id, category: 0 }));
+    const tier377Aliases = new Map([[1, 'literal_maul'], [2, 'slayer_spear'], [3, 'quest_scimitar'], [4, 'paired_hammers'], [5, 'unproved']]);
+    const tiers377 = extractMeleeWeaponTiers(tier377Fixture, tier377Styles, tier377Aliases, 377);
+    assert.deepEqual(tiers377.rows, [
+        { obj_id: 1, tier: 51, quest_gated: false, strength: 49 },
+        { obj_id: 3, tier: 61, quest_gated: true, strength: 0 },
+        { obj_id: 4, tier: 71, quest_gated: false, strength: 71 },
+    ], '377 direct, quest and same-level attack/strength gates derive their selected operands');
+    assert.deepEqual(tiers377.unknown.map(row => row.alias), ['slayer_spear', 'unproved'], 'unsupported skills and missing gates do not acquire a false tier-0 or complete eligibility claim');
+    fs.writeFileSync(direct377File, direct377Gate.replace('return;', 'mes("No refusal.");'));
+    assert.equal(extractMeleeWeaponTiers(tier377Fixture, tier377Styles, tier377Aliases, 377).rows.some(row => row.obj_id === 1), false, 'a missing refusal does not prove a wield requirement');
+    fs.writeFileSync(direct377File, direct377Gate.replace('stat_base(attack) < 51', 'stat_base(attack) > 51'));
+    assert.equal(extractMeleeWeaponTiers(tier377Fixture, tier377Styles, tier377Aliases, 377).rows.some(row => row.obj_id === 1), false, 'an inverted condition is not a minimum tier');
+    fs.rmSync(tier377Fixture, { recursive: true, force: true });
 }
 
 {
@@ -3534,6 +3806,105 @@ default=1000
         { id: 2, params: new Map() },
     ]);
     assert.deepEqual(bonus, [], 'sa_energy is not a worn combat bonus');
+}
+
+{
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'cook-surfaces-377-'));
+    const files = {
+        'scripts/skill_cooking/scripts/cooking.rs2': '[oplocu,_cooking_oven] @attempt_cook_item(last_useitem);\n[oplocu,_cooking_fire]\n@attempt_cook_item(last_useitem);\n',
+        'scripts/test.loc': '[new_oven]\nname=Selected oven\ncategory=cooking_oven\n[new_fire]\nname=Selected fire\ncategory=cooking_fire\n[legacy_name_only]\nname=Range\n',
+        'pack/loc.pack': '700=new_oven\n701=new_fire\n702=legacy_name_only\n',
+        'maps/m50_50.jm2': '==== LOC ====\n0 1 2: 700\n0 3 4: 701\n0 5 6: 702\n',
+    };
+    for (const [relative, text] of Object.entries(files)) {
+        fs.mkdirSync(path.dirname(path.join(content, relative)), { recursive: true });
+        fs.writeFileSync(path.join(content, relative), text);
+    }
+
+    const selected = extractCookSurfaces(content, undefined, 377);
+    assert.deepEqual(selected.facts.rows, [
+        { x: 3201, z: 3202, level: 0, name: 'Selected oven', debugname: 'new_oven', kind: 'oven' },
+        { x: 3203, z: 3204, level: 0, name: 'Selected fire', debugname: 'new_fire', kind: 'fire' },
+    ], '377 kinds and identities derive from selected categories, not frozen aliases or display names');
+    fs.writeFileSync(path.join(content, 'scripts/skill_cooking/scripts/cooking.rs2'), '[oplocu,_cooking_fire] @attempt_cook_item(last_useitem);\n');
+    assert.throws(() => extractCookSurfaces(content, undefined, 377), /cooking_oven cooking handler is not derived/);
+    fs.rmSync(content, { recursive: true });
+}
+
+// The real 377 selected corpus exercises the same source joins, never the
+// 274/289 identity/count/coordinate pins. Optional only for legacy-only runs.
+if (process.env.GAME_DATA_377_CONTENT) {
+    const spec377 = revisions.find(spec => spec.revision === 377)!;
+    const payload = JSON.parse(fs.readFileSync(spec377.output, 'utf8'));
+    assert.equal(payload.revision, 377);
+    assert.deepEqual(payload.prayers, extractPrayerFacts(spec377.content).prayers);
+    // GAME_DATA_377_ENGINE selects the checkout at runtime; a static import would bind another corpus.
+    const selectedObjectModule: { default: { load(dir: string): void; configs: Parameters<typeof extractTrailFacts>[1] } } = await import(pathToFileURL(path.join(spec377.engine, 'src/cache/config/ObjType.ts')).href);
+    selectedObjectModule.default.load(path.join(spec377.engine, 'data/pack'));
+    const decoded377Items = selectedObjectModule.default.configs;
+    const selectedObjectIds = new Map(decoded377Items.map((item) => [item.debugname, item.id]));
+    // The engine checkout is selected by GAME_DATA_377_ENGINE at runtime.
+    const selectedInventoryModule: {
+        default: {
+            load(dir: string): void;
+            getByName(name: string): { stockobj: Uint16Array | null; stockcount: Uint16Array | null; stockrate: Int32Array | null } | null;
+        };
+    } = await import(pathToFileURL(path.join(spec377.engine, 'src/cache/config/InvType.ts')).href);
+    selectedInventoryModule.default.load(path.join(spec377.engine, 'data/pack'));
+    for (const shop of payload.shops) {
+        const packed = selectedInventoryModule.default.getByName(shop.inv);
+        assert.ok(packed?.stockobj && packed.stockcount && packed.stockrate, `${shop.inv}: selected packed inventory is required`);
+        const stock = Array.from(packed.stockobj, (id, index) => [id, packed.stockcount![index], packed.stockrate![index]]);
+        // UpdateInvFullEncoder writes id + 1 as u16; 0xffff is an empty wire slot.
+        for (const [id, count, rate] of stock) {
+            if (id === 0xffff) assert.deepEqual([count, rate], [0, 0], `${shop.inv}: an absent stock slot has no count or rate`);
+        }
+        assert.deepEqual(
+            shop.items.map((row: { obj: string; baseline: number; restockTicks: number }) =>
+                [selectedObjectIds.get(row.obj), row.baseline, row.restockTicks]),
+            stock.filter(([id]) => id !== 0xffff),
+            `${shop.inv}: source stock must match the selected server inventory`,
+        );
+    }
+    assert.deepEqual(payload.trails, extractTrailFacts(spec377.content, decoded377Items, 377));
+    const overriddenChallenge = 'trail_clue_medium_anagram003_challenge';
+    assert.equal(payload.trails.challenge_answers.find((row: { alias: string }) => row.alias === overriddenChallenge)?.answer, '40', '377 answer follows the actual decoded parameter override, not the earlier raw 32');
+    const challengeItem = decoded377Items.find(item => item.debugname === overriddenChallenge)!;
+    const answerParamId = parsePack(fs.readFileSync(path.join(spec377.content, 'pack/param.pack'), 'utf8')).get('trail_challenge_answer')!;
+    const originalParams = challengeItem.params;
+    try {
+        challengeItem.params = new Map(originalParams);
+        challengeItem.params.set(answerParamId, -1);
+        assert.throws(() => extractTrailFacts(spec377.content, decoded377Items, 377), /decoded trail_challenge_answer does not match selected source params/, 'a mismatched decoded value cannot become a selected answer');
+    } finally {
+        challengeItem.params = originalParams;
+    }
+    assert.equal(payload.trails.rows.some((row: { access?: string }) => row.access !== undefined), false, '377 must not inherit the 289 constrained-clue annotation');
+    assert.deepEqual(payload.talk_key, extractTalkKeyFacts(spec377.content, decoded377Items));
+    assert.deepEqual(payload.trio_givers, extractTrioGiversFacts(spec377.content, 377));
+    assert.deepEqual(payload.quest_identity, extractQuestIdentityFacts(spec377.content, 377));
+    assert.deepEqual(payload.quest_starts, extractQuestStartFacts(spec377.content, payload.quest_identity.rows, 377));
+    assert.deepEqual(payload.teleports, extractTeleportSpells(spec377.content, decoded377Items));
+    const magic377 = extractMagicFacts(spec377.content, decoded377Items);
+    assert.deepEqual(payload.spells, magic377.spells);
+    assert.deepEqual(payload.staves, magic377.staves);
+    assert.deepEqual(payload.herbs, extractHerbFacts(spec377.content, decoded377Items, 377).herbs);
+    const equipment377 = extractEquipmentNamesFacts(payload.items, parsePack(fs.readFileSync(path.join(spec377.content, 'pack/obj.pack'), 'utf8')), repoRoot, 377);
+    assert.deepEqual(payload.equipment_names, JSON.parse(JSON.stringify(equipment377)), 'the wire omits undefined optional metadata');
+    assert.deepEqual(payload.cook_surfaces, extractCookSurfaces(spec377.content, undefined, 377).facts);
+    const aliases377 = new Map<number, string>();
+    for (const item of payload.items) if (typeof item.alias === 'string') aliases377.set(item.id, item.alias);
+    const tiers377 = extractMeleeWeaponTiers(spec377.content, payload.weapon_styles, aliases377, 377);
+    assert.deepEqual(payload.melee_weapon_tiers, tiers377.rows);
+    assert.ok(tiers377.unknown.length > 0 && payload.coverage.some((row: { family: string }) => row.family === 'melee_weapon_tiers'), 'unproved 377 melee gates need named UNKNOWN coverage');
+    const ruleButtons377 = new Map(extractDuelRuleButtons(spec377.content, 377).map(row => [row.bit, row.component]));
+    assert.deepEqual(payload.duel.rule_buttons, Array.from({ length: 14 }, (_, bit) => ruleButtons377.get(bit) ?? 0), 'absent selected rule handlers retain unavailable slots, not legacy components');
+    assert.deepEqual(payload.duel.rule_buttons.flatMap((id: number, bit: number) => id === 0 ? [bit] : []), [2, 3, 11]);
+    assert.throws(() => extractDialogueUiFacts(spec377.content), /quest completion does not open the authored quest scroll in both branches/, '377 must not weaken the single-common-root proof or select just one completion branch');
+    for (const family of ['autocast', 'special', 'special_weapons', 'nurmof_essence', 'flour_six', 'dialogue_ui', 'server_ordered']) {
+        assert.equal(family in payload, false, `${family}: no legacy facts may be substituted on 377`);
+        assert.ok(payload.coverage.some((row: { family: string; status: string; reason: string }) => row.family === family && row.status === 'UNKNOWN' && row.reason.length > 0), `${family}: omitted family needs named UNKNOWN coverage`);
+    }
 }
 
 console.log('generate fixture passed');

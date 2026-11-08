@@ -9,7 +9,7 @@ use api::game_data::SelectedGameData;
 use api::gather_methods::GatherCatalog;
 use api::identity::WorkIdentity;
 use api::quest_facts::QuestCatalog;
-use api::selected::FamilyPreparation;
+use api::selected::{ClientRevision, FamilyPreparation};
 use nav_planner::contract::{NavLease, ZoneTableView};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{File, ReadDir};
@@ -129,6 +129,7 @@ struct FolderDocument {
 
 #[derive(Debug)]
 pub struct FolderPaths {
+    base_revision: ClientRevision,
     index: ReleaseIndex,
     documents: HashMap<String, FolderDocument>,
     rows: Vec<PathRow>,
@@ -136,11 +137,13 @@ pub struct FolderPaths {
     report: Option<Arc<str>>,
 }
 
-/// Bundled snapshots remain allocation-free and their documents remain static.
+/// The default 289 bundle is allocation-free. Prepared snapshots also carry
+/// process-shared revision-specific bundles with static document bytes.
 #[derive(Clone, Debug, Default)]
 pub enum PathRegistry {
     #[default]
     Bundled,
+    /// A prepared registry, from a folder or another revision's shared bundle.
     Folder(Arc<FolderPaths>),
 }
 
@@ -153,6 +156,74 @@ impl std::ops::Deref for PathRegistry {
 
 pub static BUNDLED_INDEX: LazyLock<ReleaseIndex> =
     LazyLock::new(|| serde_json::from_str(compile::INDEX_JSON).expect("bundled Path index"));
+
+static BUNDLED_377_INDEX: LazyLock<ReleaseIndex> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../paths/377/index.json"))
+        .expect("bundled revision-377 Path index")
+});
+
+pub(super) fn bundled_index_for(revision: ClientRevision) -> &'static ReleaseIndex {
+    match revision {
+        ClientRevision::R377 => &BUNDLED_377_INDEX,
+        ClientRevision::R274 | ClientRevision::R289 => &BUNDLED_INDEX,
+    }
+}
+
+fn bundled_path_for(revision: ClientRevision, id: &str) -> Option<&'static [u8]> {
+    if revision != ClientRevision::R377 {
+        return bundled_path(id);
+    }
+    BUNDLED_377_INDEX
+        .paths
+        .iter()
+        .any(|row| {
+            row.id == id
+                && row.unavailable.is_none()
+                && row
+                    .file
+                    .as_deref()
+                    .and_then(|file| file.strip_suffix(".json"))
+                    == Some(id)
+        })
+        .then(|| match id {
+            "cook" => Some(include_bytes!("../../paths/377/cook.json").as_slice()),
+            "imp" => Some(include_bytes!("../../paths/377/imp.json").as_slice()),
+            "doric" => Some(include_bytes!("../../paths/377/doric.json").as_slice()),
+            "sheep" => Some(include_bytes!("../../paths/377/sheep.json").as_slice()),
+            "runemysteries" => {
+                Some(include_bytes!("../../paths/377/runemysteries.json").as_slice())
+            }
+            "romeojuliet" => Some(include_bytes!("../../paths/377/romeojuliet.json").as_slice()),
+            "hetty" => Some(include_bytes!("../../paths/377/hetty.json").as_slice()),
+            "gobdip" => Some(include_bytes!("../../paths/377/gobdip.json").as_slice()),
+            "vampire" => Some(include_bytes!("../../paths/377/vampire.json").as_slice()),
+            "demon" => Some(include_bytes!("../../paths/377/demon.json").as_slice()),
+            "squire" => Some(include_bytes!("../../paths/377/squire.json").as_slice()),
+            _ => None,
+        })
+        .flatten()
+}
+
+fn bundled_for_revision(revision: i32) -> PathRegistry {
+    if revision != 377 {
+        return PathRegistry::Bundled;
+    }
+    static BUNDLE: LazyLock<Arc<FolderPaths>> = LazyLock::new(|| {
+        Arc::new(FolderPaths {
+            base_revision: ClientRevision::R377,
+            index: BUNDLED_377_INDEX.clone(),
+            documents: HashMap::new(),
+            rows: BUNDLED_377_INDEX
+                .paths
+                .iter()
+                .map(|entry| bundled_row_for(ClientRevision::R377, entry))
+                .collect(),
+            diagnostics: Vec::new(),
+            report: None,
+        })
+    });
+    PathRegistry::Folder(Arc::clone(&BUNDLE))
+}
 
 pub fn bundled_path(id: &str) -> Option<&'static [u8]> {
     bundled_in(&BUNDLED_INDEX, id)
@@ -175,10 +246,15 @@ pub(super) fn bundled_in(index: &ReleaseIndex, id: &str) -> bool {
 }
 
 fn bundled_row(entry: &ReleasePath) -> PathRow {
+    bundled_row_for(ClientRevision::R289, entry)
+}
+
+fn bundled_row_for(revision: ClientRevision, entry: &ReleasePath) -> PathRow {
     let display = entry.name.clone().unwrap_or_else(|| {
-        let document: PathDocument =
-            serde_json::from_slice(bundled_path(&entry.id).expect("bundled roster document"))
-                .expect("bundled Path document");
+        let document: PathDocument = serde_json::from_slice(
+            bundled_path_for(revision, &entry.id).expect("bundled roster document"),
+        )
+        .expect("bundled Path document");
         document.display_name
     });
     let mut label = entry
@@ -336,7 +412,7 @@ pub(super) fn reload_with_catalog(
     let source = {
         let state = STATE.lock().unwrap_or_else(|error| error.into_inner());
         if !state.source.enabled {
-            return Ok(PathRegistry::Bundled);
+            return Ok(bundled_for_revision(selected.revision()));
         }
         state.source.clone()
     };
@@ -372,6 +448,7 @@ impl PathRegistry {
     #[cfg(test)]
     pub(super) fn from_index(index: ReleaseIndex) -> Self {
         Self::Folder(Arc::new(FolderPaths {
+            base_revision: ClientRevision::R289,
             index,
             documents: HashMap::new(),
             rows: Vec::new(),
@@ -394,7 +471,9 @@ impl PathRegistry {
     pub fn path_source(&self, id: &str) -> PathSource {
         match self {
             Self::Bundled => PathSource::Bundled,
-            Self::Folder(folder) => classify_source(id, &folder.index, &folder.documents),
+            Self::Folder(folder) => {
+                classify_source(folder.base_revision, id, &folder.index, &folder.documents)
+            }
         }
     }
     pub fn bytes(&self, id: &str) -> Option<PathBytes> {
@@ -413,7 +492,11 @@ impl PathRegistry {
                 return Some(PathBytes::Folder(Arc::clone(&document.bytes)));
             }
         }
-        bundled_path(id).map(PathBytes::Bundled)
+        let revision = match self {
+            Self::Bundled => ClientRevision::R289,
+            Self::Folder(folder) => folder.base_revision,
+        };
+        bundled_path_for(revision, id).map(PathBytes::Bundled)
     }
     #[cfg(test)]
     pub fn compile(
@@ -553,6 +636,7 @@ struct PendingDocument {
 /// reduction unit and retains bounded state for the next call.
 pub struct RegistryPreparation<'a> {
     source: FolderSource,
+    base_revision: ClientRevision,
     selected: SelectedOwner<'a>,
     quests: QuestOwner<'a>,
     zones: Option<ZoneTableView<'a>>,
@@ -683,6 +767,12 @@ impl<'a> RegistryPreparation<'a> {
             FolderSource::default()
         };
         let enabled = source.enabled;
+        let base_revision = if selected.get().revision() == 377 {
+            ClientRevision::R377
+        } else {
+            ClientRevision::R289
+        };
+        let registry = (!enabled).then(|| bundled_for_revision(selected.get().revision()));
         let phase = if !enabled {
             RegistryPreparationPhase::Complete
         } else if matches!(&quests, QuestOwner::Deferred) {
@@ -692,12 +782,13 @@ impl<'a> RegistryPreparation<'a> {
         };
         Self {
             source,
+            base_revision,
             selected,
             quests,
             zones,
             nav,
             phase,
-            registry: (!enabled).then_some(PathRegistry::Bundled),
+            registry,
             scan_started: false,
             scanned_entries: 0,
             entries: None,
@@ -783,9 +874,9 @@ impl<'a> RegistryPreparation<'a> {
                 self.phase = Phase::CheckRevision;
             }
             Phase::CheckRevision => {
-                if self.selected.get().revision() != 289 {
+                if !matches!(self.selected.get().revision(), 289 | 377) {
                     return Err(CompileError::code("unsupported-revision")
-                        .with_detail("Folder Paths support revision 289 only"));
+                        .with_detail("Folder Paths support revisions 289 and 377 only"));
                 }
                 self.phase = Phase::ScanFolder;
             }
@@ -968,7 +1059,7 @@ impl<'a> RegistryPreparation<'a> {
                 let Some(id) = self.candidate_ids.get(self.candidate_position) else {
                     self.total_documents = Some(self.ordered.len());
                     self.index = Some(ReleaseIndex {
-                        schema: BUNDLED_INDEX.schema,
+                        schema: bundled_index_for(self.base_revision).schema,
                         paths: Vec::with_capacity(MAX_REGISTRY_ROWS),
                     });
                     self.base_index_position = 0;
@@ -981,7 +1072,10 @@ impl<'a> RegistryPreparation<'a> {
                 self.candidate_position += 1;
             }
             Phase::BuildBaseIndex => {
-                let Some(row) = BUNDLED_INDEX.paths.get(self.base_index_position) else {
+                let Some(row) = bundled_index_for(self.base_revision)
+                    .paths
+                    .get(self.base_index_position)
+                else {
                     self.phase = Phase::PrepareDocument;
                     return Ok(None);
                 };
@@ -998,7 +1092,8 @@ impl<'a> RegistryPreparation<'a> {
                         std::mem::take(&mut self.diagnostics).finish(&self.source.folder);
                     self.final_diagnostics = diagnostics;
                     self.diagnostic_count = count;
-                    self.rows = Vec::with_capacity(BUNDLED_INDEX.paths.len());
+                    self.rows =
+                        Vec::with_capacity(bundled_index_for(self.base_revision).paths.len());
                     self.base_row_position = 0;
                     self.phase = Phase::BuildBaseRows;
                     return Ok(None);
@@ -1085,8 +1180,11 @@ impl<'a> RegistryPreparation<'a> {
                 self.phase = Phase::ReadDocument;
             }
             Phase::BuildBaseRows => {
-                if let Some(entry) = BUNDLED_INDEX.paths.get(self.base_row_position) {
-                    self.rows.push(bundled_row(entry));
+                if let Some(entry) = bundled_index_for(self.base_revision)
+                    .paths
+                    .get(self.base_row_position)
+                {
+                    self.rows.push(bundled_row_for(self.base_revision, entry));
                     self.base_row_position += 1;
                 } else {
                     self.phase = Phase::ReduceRows;
@@ -1274,7 +1372,7 @@ impl<'a> RegistryPreparation<'a> {
                     .map(|document| document.display.as_str())
                     .or(entry.name.as_deref())
                     .unwrap_or(&entry.id);
-                let source = classify_source(&entry.id, index, &self.documents);
+                let source = classify_source(self.base_revision, &entry.id, index, &self.documents);
                 self.row_position += 1;
                 if source == PathSource::Bundled && entry.unavailable.is_none() {
                     return Ok(None);
@@ -1311,6 +1409,7 @@ impl<'a> RegistryPreparation<'a> {
                 } else {
                     let index = self.index.take().expect("combined index is prepared");
                     self.registry = Some(PathRegistry::Folder(Arc::new(FolderPaths {
+                        base_revision: self.base_revision,
                         index,
                         documents: std::mem::take(&mut self.documents),
                         rows: std::mem::take(&mut self.rows),
@@ -1415,11 +1514,16 @@ impl<'a> RegistryPreparation<'a> {
 }
 
 fn classify_source(
+    revision: ClientRevision,
     id: &str,
     index: &ReleaseIndex,
     documents: &HashMap<String, FolderDocument>,
 ) -> PathSource {
-    if BUNDLED_INDEX.paths.iter().any(|row| row.id == id) {
+    if bundled_index_for(revision)
+        .paths
+        .iter()
+        .any(|row| row.id == id)
+    {
         if documents.contains_key(id) {
             PathSource::Folder
         } else {
@@ -1590,6 +1694,13 @@ fn document_uses_gathering(document: &PathDocument) -> bool {
 }
 
 #[cfg(test)]
+#[path = "batch2_377_tests.rs"]
+mod batch2_377_tests;
+#[cfg(test)]
+#[path = "journal_377_tests.rs"]
+mod journal_377_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use api::selected::{ClientRevision, FamilyPreparation};
@@ -1637,6 +1748,216 @@ mod tests {
             let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
             let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
             test(selected, quests, worker);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn revision_377_bundle_loads_and_compiles_its_own_paths() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+            return;
+        };
+        FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+            let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            let mut preparation = RegistryPreparation::from_refs(
+                FolderSource {
+                    enabled: false,
+                    folder: PathBuf::new(),
+                },
+                &selected,
+                &quests,
+                None,
+            )
+            .unwrap();
+            let registry = preparation.step(worker).unwrap().unwrap().registry;
+            let mut ids = registry.ids();
+            ids.sort();
+            assert_eq!(
+                ids,
+                [
+                    "cook",
+                    "demon",
+                    "doric",
+                    "gobdip",
+                    "hetty",
+                    "imp",
+                    "romeojuliet",
+                    "runemysteries",
+                    "sheep",
+                    "squire",
+                    "vampire"
+                ]
+            );
+            assert!(
+                registry.bytes("dragon").is_none(),
+                "never substitute an unregistered 289 Path"
+            );
+            assert_eq!(registry.path_source("cook"), PathSource::Bundled);
+            let bytes = registry.bytes("cook").unwrap();
+            assert_ne!(bytes.as_ref(), bundled_path("cook").unwrap());
+            let document: serde_json::Value = serde_json::from_slice(bytes.as_ref()).unwrap();
+            let bin = document["quest"]["acquire"]["acquire:flour"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|step| step["id"] == "empty-millbase")
+                .unwrap();
+            let config = bin["args"]["target"]["loc"].as_str().unwrap();
+            assert_eq!(
+                selected.loc_by_config(config).unwrap().id,
+                1781,
+                "target the placed millbase, not its visible morph leaf"
+            );
+            for id in ids {
+                let bytes = registry.bytes(&id).unwrap();
+                let compiled = compile::compile_path(
+                    bytes.as_ref(),
+                    &selected,
+                    &quests,
+                    worker,
+                    &crate::local_state::OperatorLoadouts::absent(),
+                    nav.zones(),
+                )
+                .unwrap_or_else(|error| panic!("377 {id} failed to compile: {error:?}"));
+                assert_eq!(compiled.id.0.as_ref(), id.as_str());
+                if id == "cook" {
+                    assert_eq!(compiled.display_name.as_ref(), "Cook's Assistant");
+                    assert_eq!(compiled.colour_complete.0.as_ref(), "cook:2");
+                    assert!(
+                        compiled.progress.rules.is_empty(),
+                        "Cook needs no journal interface"
+                    );
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn revision_377_imp_bundle_loads_and_compiles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+            return;
+        };
+        FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+            let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            let mut preparation = RegistryPreparation::from_refs(
+                FolderSource {
+                    enabled: false,
+                    folder: PathBuf::new(),
+                },
+                &selected,
+                &quests,
+                None,
+            )
+            .unwrap();
+            let registry = preparation.step(worker).unwrap().unwrap().registry;
+            assert_eq!(registry.path_source("imp"), PathSource::Bundled);
+            let bytes = registry.bytes("imp").unwrap();
+            assert_ne!(bytes.as_ref(), bundled_path("imp").unwrap());
+            let compiled = compile::compile_path(
+                bytes.as_ref(),
+                &selected,
+                &quests,
+                worker,
+                &crate::local_state::OperatorLoadouts::absent(),
+                nav.zones(),
+            )
+            .unwrap_or_else(|error| panic!("377 Imp Catcher failed to compile: {error:?}"));
+            assert_eq!(compiled.id.0.as_ref(), "imp");
+            assert_eq!(compiled.colour_complete.0.as_ref(), "imp:2");
+            assert!(compiled.progress.rules.is_empty());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn revision_377_doric_bundle_loads_and_compiles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let Some(nav) = compile::real_nav_lease(ClientRevision::R377) else {
+            return;
+        };
+        FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+            let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            let mut preparation = RegistryPreparation::from_refs(
+                FolderSource {
+                    enabled: false,
+                    folder: PathBuf::new(),
+                },
+                &selected,
+                &quests,
+                None,
+            )
+            .unwrap();
+            let registry = preparation.step(worker).unwrap().unwrap().registry;
+            assert_eq!(registry.path_source("doric"), PathSource::Bundled);
+            let bytes = registry.bytes("doric").unwrap();
+            assert_ne!(bytes.as_ref(), bundled_path("doric").unwrap());
+            let compiled = compile::compile_path(
+                bytes.as_ref(),
+                &selected,
+                &quests,
+                worker,
+                &crate::local_state::OperatorLoadouts::absent(),
+                nav.zones(),
+            )
+            .unwrap_or_else(|error| panic!("377 Doric failed to compile: {error:?}"));
+            assert_eq!(compiled.id.0.as_ref(), "doric");
+            assert_eq!(compiled.colour_complete.0.as_ref(), "doric:100");
+            assert!(compiled.progress.rules.is_empty());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn revision_377_folder_validates_without_adding_289_bundles() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        FamilyPreparation::run(|worker| {
+            let selected = api::game_data::for_revision(ClientRevision::R377).unwrap();
+            let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+            let folder = Folder::new();
+            std::fs::write(
+                folder.0.join("cook.json"),
+                bundled_path_for(ClientRevision::R377, "cook").unwrap(),
+            )
+            .unwrap();
+            let registry =
+                PathRegistry::load(&folder.source(true), &selected, &quests, worker, None).unwrap();
+            assert_eq!(
+                registry.ids(),
+                [
+                    "cook",
+                    "imp",
+                    "doric",
+                    "sheep",
+                    "runemysteries",
+                    "romeojuliet",
+                    "hetty",
+                    "gobdip",
+                    "vampire",
+                    "demon",
+                    "squire"
+                ]
+            );
+            assert!(
+                registry.diagnostics().is_empty(),
+                "{:?}",
+                registry.diagnostics()
+            );
+            assert_eq!(registry.path_source("cook"), PathSource::Folder);
+            assert!(registry.bytes("dragon").is_none());
         })
         .unwrap()
         .join()

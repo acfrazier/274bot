@@ -775,6 +775,26 @@ fn navpois_round_trips_and_rejects_bad_framing_and_version() {
     ));
 }
 
+#[test]
+fn client_map_jobs_still_reject_revision_377() {
+    assert!(matches!(
+        ImageIdentity {
+            revision: 377,
+            ..image_identity()
+        }
+        .key(),
+        Err(MapError::Invalid("revision"))
+    ));
+    assert!(matches!(
+        CatalogueIdentity {
+            revision: 377,
+            ..catalogue_identity()
+        }
+        .key(),
+        Err(MapError::Invalid("revision"))
+    ));
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {

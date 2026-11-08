@@ -46,8 +46,8 @@ pub(super) struct BoatRoute {
     varp_req: Option<(i32, i32)>,
 }
 
-/// The 2004 boat journeys: `~set_sail(` landings from area scripts, NPC
-/// tiles from jm2, and disembark locs from `gangplank.loc` / loc.pack.
+/// The legacy 274/289 boat journeys: `~set_sail(` landings from area scripts,
+/// NPC tiles from jm2, and disembark locs from `gangplank.loc` / loc.pack.
 /// The two Entrana board planks are included below; the other four board
 /// planks are intentionally out of scope, not treated as movement refusals.
 pub(super) const GANGPLANK_TICKS: i32 = 2;
@@ -401,22 +401,70 @@ fn entrana_restrictions(data: &api::game_data::SelectedGameData) -> (Vec<i32>, V
 
 const ENTRANA_SAIL_NPC: i32 = 657;
 
-/// Boat edges from the explicit 2004 route table: one `Talk-to` edge per
-/// journey (NPC tile → `set_sail` deck), plus loc-backed gangplank crossings.
-/// Kind is Ladder: these are level-changing loc ops, not NPCs.
+/// Revision 377 resolves each dock NPC from the selected maps. The legacy
+/// origin identifies only the dock's mapsquare and plane, never a fallback.
+/// All candidates must select this journey under the script's spawn rule;
+/// choose the lexicographically first proven spawn, independent of map order.
+/// Legacy revisions retain their exact route table.
+fn boat_start_377(
+    route: &BoatRoute,
+    positions: &HashMap<i32, Vec<NpcPlacement>>,
+) -> Option<WorldTile> {
+    let candidates = positions.get(&route.npc)?.iter().filter(|spawn| {
+        spawn.level == route.at.level
+            && spawn.x.div_euclid(64) == route.at.x.div_euclid(64)
+            && spawn.z.div_euclid(64) == route.at.z.div_euclid(64)
+    });
+    let mut selected = None;
+    for spawn in candidates {
+        // customs_officer.rs2:82 selects Ardougne iff coordx(npc_coord)
+        // < 2815; fare and delay are identical on both branches. The other
+        // curated handlers do not branch on the NPC's spawn coordinate.
+        let matches_trip = match route.npc {
+            380 => match (route.to.x, route.to.z, route.to.level) {
+                (2683, 3268, 1) => spawn.x < 2815,
+                (3032, 3217, 1) => spawn.x >= 2815,
+                _ => false,
+            },
+            378 | 381 | 518 | 657 | 658 => true,
+            _ => false,
+        };
+        if !matches_trip {
+            return None;
+        }
+        let tile = (spawn.x, spawn.z, spawn.level);
+        selected = Some(selected.map_or(tile, |previous| std::cmp::min(previous, tile)));
+    }
+    selected.map(|(x, z, level)| WorldTile { x, z, level })
+}
+
+/// One `Talk-to` edge per admitted journey, plus loc-backed gangplanks.
 pub(super) fn boat_edges(
+    content_root: &Path,
     graph: &mut TransportGraph,
     gates: &ObservableGates,
     audit: &mut VarpGateAudit,
     game_data: Option<&api::game_data::SelectedGameData>,
+    skipped: &mut HashMap<&'static str, usize>,
 ) {
+    let positions = game_data
+        .filter(|data| data.revision() == 377)
+        .map(|_| npc_positions(content_root));
     for r in BOAT_ROUTES {
+        let at = if let Some(positions) = &positions {
+            let Some(at) = boat_start_377(r, positions) else {
+                bump(skipped, "boat_missing_or_ambiguous_npc_spawn", 1);
+                continue;
+            };
+            at
+        } else {
+            r.at
+        };
         let (forbidden_held, forbidden_worn) = if r.npc == ENTRANA_SAIL_NPC {
             game_data.map(entrana_restrictions).unwrap_or_default()
         } else {
             (Vec::new(), Vec::new())
         };
-
         gates.admit_edge(
             graph,
             TransportEdge {
@@ -426,7 +474,7 @@ pub(super) fn boat_edges(
                 forbidden_worn,
                 kind: TransportKind::Boat,
                 player_delta: None,
-                at: r.at,
+                at,
                 to: r.to,
                 loc_id: r.npc,
                 option: 1,

@@ -9,7 +9,7 @@ use api::hostlog::{Category, Level};
 use api::snapshot::WorldTile;
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
-use client::io::JagFile;
+use client::io::{ClientRevision, JagFile};
 use host::login_queue::LoginQueue;
 use nav_planner::world::NavWorld;
 use parking_lot::Mutex as QueueMutex;
@@ -175,14 +175,30 @@ pub struct ProfilePlayOptions {
     pub mainland: bool,
 }
 
-/// One validated asset decode for a process profile. Preparing clients clones
-/// only the shared Arcs; mutable interface overlays remain per client.
-pub struct SharedClientTemplate {
-    profile: Arc<ServerProfile>,
-    game_data: Option<Arc<api::game_data::SelectedGameData>>,
+struct SharedClientTables {
     cache: Arc<Cache>,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
     ifaces_mut: Arc<Vec<Option<Arc<IfTypeMut>>>>,
+}
+
+impl From<IfaceTables> for SharedClientTables {
+    fn from((cache, ifaces, ifaces_mut): IfaceTables) -> Self {
+        Self {
+            cache: Arc::new(cache),
+            ifaces: Arc::new(ifaces),
+            ifaces_mut: Arc::new(ifaces_mut),
+        }
+    }
+}
+
+/// Validated assets shared by one process profile. Revision 377's location
+/// decode depends on memory mode, so each requested mode has its own tables.
+/// Mutable interface overlays remain per client.
+pub struct SharedClientTemplate {
+    profile: Arc<ServerProfile>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    tables: SharedClientTables,
+    highmem_377: std::sync::OnceLock<Result<SharedClientTables, String>>,
     world: Option<Arc<NavWorld>>,
     scatter: std::sync::OnceLock<Vec<WorldTile>>,
 }
@@ -274,8 +290,12 @@ impl SharedClientTemplate {
             0,
             4,
         ));
-        let (cache, ifaces, ifaces_mut) =
-            load_template_checked(profile.client().cache_dir(), observer)?;
+        let tables = load_template_checked(
+            profile.client().cache_dir(),
+            profile.revision(),
+            true,
+            observer,
+        )?;
         let game_data = profile.game_data();
         if let Some(data) = game_data.as_ref() {
             if let Some(worker) = worker {
@@ -310,12 +330,17 @@ impl SharedClientTemplate {
             4,
         ));
         let world = profile.world();
+        if profile.revision().is_377() {
+            if let Some(world) = world.as_deref() {
+                crate::admission::bind_377_tables(world, game_data.clone())
+                    .map_err(|reason| format!("revision 377 combat tables: {reason:?}"))?;
+            }
+        }
         Ok(Arc::new(Self {
             profile,
             game_data,
-            cache: Arc::new(cache),
-            ifaces: Arc::new(ifaces),
-            ifaces_mut: Arc::new(ifaces_mut),
+            tables: tables.into(),
+            highmem_377: std::sync::OnceLock::new(),
             world,
             scatter: std::sync::OnceLock::new(),
         }))
@@ -333,7 +358,7 @@ impl SharedClientTemplate {
 
     /// Return the consuming handoff required by [`run_prepared_template`].
     /// Navigation is the already-loaded world; a post-load disk edit does not
-    /// replace it. Cache identity was checked at load; this does not re-hash.
+    /// replace it.
     pub fn validate_for_play(self: &Arc<Self>) -> Result<ValidatedTemplate, String> {
         self.validate_for_play_with_progress(&progress::ProfileProgressObserver::default())
     }
@@ -364,14 +389,31 @@ impl SharedClientTemplate {
     /// This constructor is usable for protocol qualification before bot action
     /// support is released. It does not start a host loop or any bot policy.
     pub fn prepare_client(&self, uid: i32, lowmem: bool) -> Result<Client, String> {
+        let tables = if self.profile.revision().is_377() && !lowmem {
+            self.highmem_377
+                .get_or_init(|| {
+                    let observer = progress::ProfileProgressObserver::default();
+                    load_template_checked(
+                        self.profile.client().cache_dir(),
+                        self.profile.revision(),
+                        false,
+                        &observer,
+                    )
+                    .map(SharedClientTables::from)
+                })
+                .as_ref()
+                .map_err(Clone::clone)?
+        } else {
+            &self.tables
+        };
         let mut client = host::prepare_client_with_profile(
             Arc::clone(self.profile.client()),
             uid,
             self.profile.map_members(),
             lowmem,
-            Arc::clone(&self.cache),
-            Arc::clone(&self.ifaces),
-            Arc::clone(&self.ifaces_mut),
+            Arc::clone(&tables.cache),
+            Arc::clone(&tables.ifaces),
+            Arc::clone(&tables.ifaces_mut),
         )?;
         client.set_cheat_admission(match self.profile.profile_class() {
             crate::ProfileClass::Local => client::CheatAdmission::Granted,
@@ -478,9 +520,9 @@ impl Play {
                 mainland,
             },
             template.game_data.clone(),
-            Arc::clone(&template.cache),
-            Arc::clone(&template.ifaces),
-            Arc::clone(&template.ifaces_mut),
+            Arc::clone(&template.tables.cache),
+            Arc::clone(&template.tables.ifaces),
+            Arc::clone(&template.tables.ifaces_mut),
             template.world.clone(),
         )
     }
@@ -730,14 +772,38 @@ pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
     }
 }
 
-/// Unpack the config/interface jags once and share the tables across slots
-/// (the client's `load_cache` is private; this mirrors it with the same
-/// public `Cache::unpack` / `IfType::unpack` entry points).
+/// Decode config/interfaces with the selected revision's decoder and retain
+/// every revision-specific sidecar. No 377 input reaches a legacy unpacker.
 type IfaceTables = (Cache, Vec<Option<Box<IfType>>>, Vec<Option<Arc<IfTypeMut>>>);
 fn load_template_checked(
     cache_dir: &Path,
+    revision: ClientRevision,
+    lowmem: bool,
     observer: &progress::ProfileProgressObserver,
 ) -> Result<IfaceTables, String> {
+    if revision.is_377() {
+        observer.report(progress::ProfileProgress::steps(
+            progress::ProfileProgressStage::LoadingGameData,
+            1,
+            4,
+        ));
+        let cache_path = cache_dir
+            .to_str()
+            .ok_or("revision 377 cache directory is not valid UTF-8")?;
+        let mut loaded = client::config::runtime_377::load_cache_377(cache_path, lowmem)
+            .map_err(|error| format!("revision 377 config/interface archives: {error}"))?;
+        require_template_tables(&loaded.cache, &loaded.ifaces, cache_dir)?;
+        loaded.cache.revision_377 = Some(Box::new(client::config::CacheRevision377 {
+            config: loaded.cache_fields_377,
+            interfaces: loaded.interface_fields_377,
+        }));
+        observer.report(progress::ProfileProgress::steps(
+            progress::ProfileProgressStage::LoadingGameData,
+            3,
+            4,
+        ));
+        return Ok((loaded.cache, loaded.ifaces, loaded.ifaces_mut));
+    }
     let config =
         std::fs::read(cache_dir.join("config")).map_err(|e| format!("config archive: {e}"))?;
     let interface = std::fs::read(cache_dir.join("interface"))
@@ -760,16 +826,7 @@ fn load_template_checked(
             3,
             4,
         ));
-        if cache.objs.is_empty()
-            || cache.npcs.is_empty()
-            || cache.locs.is_empty()
-            || !ifaces.iter().any(Option::is_some)
-        {
-            return Err(format!(
-                "missing required config/interface tables at {}",
-                cache_dir.display()
-            ));
-        }
+        require_template_tables(&cache, &ifaces, cache_dir)?;
         Ok((
             cache,
             ifaces,
@@ -785,6 +842,24 @@ fn load_template_checked(
             cache_dir.display()
         )
     })?
+}
+
+fn require_template_tables(
+    cache: &Cache,
+    ifaces: &[Option<Box<IfType>>],
+    cache_dir: &Path,
+) -> Result<(), String> {
+    if cache.objs.is_empty()
+        || cache.npcs.is_empty()
+        || cache.locs.is_empty()
+        || !ifaces.iter().any(Option::is_some)
+    {
+        return Err(format!(
+            "missing required config/interface tables at {}",
+            cache_dir.display()
+        ));
+    }
+    Ok(())
 }
 
 fn load_template(cache_dir: &str) -> IfaceTables {
@@ -810,4 +885,45 @@ fn load_template(cache_dir: &str) -> IfaceTables {
         Err(_) => (Vec::new(), Vec::new()),
     };
     (cache, ifaces, ifaces_mut)
+}
+
+#[cfg(test)]
+mod template_revision_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_templates_keep_legacy_tables_for_both_memory_modes() {
+        let cache_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profile");
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            for lowmem in [true, false] {
+                let (cache, ifaces, _) = load_template_checked(
+                    &cache_dir,
+                    revision,
+                    lowmem,
+                    &progress::ProfileProgressObserver::default(),
+                )
+                .unwrap();
+                assert!(cache.revision_377.is_none());
+                assert!(!cache.objs.is_empty());
+                assert!(ifaces.iter().any(Option::is_some));
+            }
+        }
+    }
+
+    #[test]
+    fn revision_377_never_falls_back_to_legacy_fixture_tables() {
+        let cache_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profile");
+        for lowmem in [true, false] {
+            let result = load_template_checked(
+                &cache_dir,
+                ClientRevision::R377,
+                lowmem,
+                &progress::ProfileProgressObserver::default(),
+            );
+            let Err(error) = result else {
+                panic!("the legacy fixture must not hydrate a revision-377 template");
+            };
+            assert!(error.contains("revision 377"), "{error}");
+        }
+    }
 }

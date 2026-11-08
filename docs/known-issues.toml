@@ -12,6 +12,20 @@
 # tools/known-issues/known_issues.py.
 
 [[item]]
+id = "revision-377-host-qualification"
+kind = "not-in-release"
+area = "Host"
+text = """Revision 377 is an explicit local development target, selected with
+  `host-play --revision 377`. It requires revision-377 cache, navigation and
+  generated game data; revision-289 artifacts are not substitutes.
+  The bounded `client_377` scenario covers scene rendering, a direct courtyard
+  walk and a fresh Hans dialogue, not the broader gameplay families."""
+first = "0.2.9"
+target = "0.2.9"
+severity = "low"
+owner = "Fairy Ring downstream integration"
+
+[[item]]
 id = "bank-native-planned"
 kind = "not-in-release"
 area = "Scripts"

@@ -110,6 +110,24 @@ const removedProductionGate = handler.replace("cmd === 'setvarother' && Environm
 assert.throws(() => assertEngineCommandDrift(removedProductionGate), /production gate drift/);
 const removedNonProductionGate = handler.replace("cmd === 'givebank' && !Environment.node.production", "cmd === 'givebank'");
 assert.throws(() => assertEngineCommandDrift(removedNonProductionGate), /production gate drift/);
+const flatHandler = handler.replaceAll('Environment.node.production', 'Environment.NODE_PRODUCTION');
+assert.deepEqual(assertEngineCommandDrift(flatHandler), assertEngineCommandDrift(handler));
+assert.throws(
+    () => assertEngineCommandDrift(flatHandler.replace("cmd === 'setvarother' && Environment.NODE_PRODUCTION", "cmd === 'setvarother'")),
+    /production gate drift/,
+);
+assert.throws(
+    () => assertEngineCommandDrift(flatHandler.replace("cmd === 'givebank' && !Environment.NODE_PRODUCTION", "cmd === 'givebank'")),
+    /production gate drift/,
+);
+if (process.env.GAME_DATA_377_ENGINE) {
+    const handler377 = fs.readFileSync(path.join(revisions.find(spec => spec.revision === 377)!.engine, engineHandlerRelative()), 'utf8');
+    assertEngineCommandDrift(handler377);
+    assert.throws(
+        () => assertEngineCommandDrift(handler377.replace("cmd === 'givebank' && !Environment.NODE_PRODUCTION", "cmd === 'givebank'")),
+        /production gate drift/,
+    );
+}
 
 const content = fs.mkdtempSync(path.join(os.tmpdir(), 'debug-catalog-'));
 fs.mkdirSync(path.join(content, 'scripts/_test/scripts/cheats'), { recursive: true });

@@ -1,8 +1,8 @@
 # Generate the selected game data
 
-> **Audience:** contributors who regenerate the game data that ships in the
-> `api` crate. You need local checkouts of the 274 and 289 engines and content.
-> This text moved here from CONTRIBUTING.md; only relative links changed.
+> **Audience:** contributors who regenerate the local game data embedded by the
+> `api` crate. Use engine and content checkouts for each selected revision.
+> Revision 377 is selected explicitly; it is not a default.
 
 Generate game data and navigation before you build 274bot. Use your own local
 engine and content checkouts. The builder does not download inputs or select a
@@ -35,6 +35,68 @@ The generator writes the bank and cook catalogs as `bank-catalog.json` and
 converts them to static Rust tables in Cargo's `OUT_DIR`. No Rust source is
 generated beneath the ignored data directory. The application retains borrowed
 static tables, not another JSON copy or a runtime catalog parser.
+
+### Revision 377
+
+Add the selected 377 source roots alongside the historical roots above:
+
+```bash
+export GAME_DATA_377_ENGINE=/absolute/path/to/377-engine
+export GAME_DATA_377_CONTENT=/absolute/path/to/377-content
+bun tools/game-data/generate.ts --stage 1 --revision 377
+```
+
+Use existing packed server and client data with a members-world decode
+(`NODE_MEMBERS=true`). The generator reads the engine checkout; it does not
+build, repack, start or stop an engine.
+
+Weapon attack rates must be integers in `0..=255` for every revision, including
+explicit per-object parameters. Invalid rates refuse generation with the
+object ID; they are not clamped or replaced. Missing rates use the selected
+`combat.param` default on 274, 289 and 377.
+
+The API embeds local `377.json` and its `377/{gathering,quests,debug}.json`
+families. Like the historical revisions, these inputs are not committed or
+verified by file identity. Ordinary format and decode errors still apply.
+Revision 289's prerequisite projection remains part of the historical staged
+flow; it is not substituted for 377 content.
+
+The 377 core records named `UNKNOWN` gaps in `coverage`. In particular, it does
+not inherit the 289 autocast control contract, special-attack arm timing, the
+frozen `SPECIAL_SPECS` effect table, Nurmof/essence and flour stand tactics,
+constrained-clue access annotation, the
+single-common-root dialogue document contract, or server-ordered/NPC-transform
+proof. Optional families stay absent when their contract is not derived; the
+API does not replace them with another revision. In 377, ordinary quest
+completion uses `questscroll_death`, while Seaslug/Watchtower use `questscroll`;
+neither alone proves the existing single-root contract.
+Frozen equipment and bank lists select queries, not numeric 377 facts: resolved
+rows must join the selected configs, packs and map placements. Missing matches
+remain absent or explicitly missing.
+Same-name eligible variants remain ambiguous with their selected candidate IDs;
+the frozen query does not establish a preferred 377 variant.
+The NPC attack-kind field is nullable for both proven melee and unclassified
+custom attack bodies. The 377 coverage record names this schema limit as
+UNKNOWN; a null value is not an independent melee-only proof.
+377 melee tiers omit unsupported or unproved wield gates instead of inheriting
+the legacy tier-0 fallback. Their alias/ID-specific reasons are in `coverage`.
+Duel rules retain their selected bit positions: an unproved button stays at
+the existing unavailable sentinel 0, which `rule_button` returns as `None`.
+
+Shared extraction retains the 0.2.9 source-join rules. It does not require
+frozen corpus row counts, item IDs, prayer button ranges or display names.
+Missing definitions, duplicate joins and malformed source shapes still fail.
+
+Regression fixtures must supply the selected facts their consumers require.
+Legacy navigation controls retain the selected revision's Entrana inventory
+and equipment guards; a graph derived without item data lacks those guards.
+A 377 NPC menu fixture needs an interactive current-form entry in
+`CacheRevision377.config.npcs` as well as its shared `NpcType` row.
+Without that entry, the NPC's menu actions remain absent.
+
+A generated result proves consistency with the selected Fairy Ring scripts.
+It does not prove historical RuneScape accuracy.
+
 
 Build a product only after the builder succeeds. For example:
 
@@ -99,6 +161,14 @@ resolved from the selected sequence pack.
 Mining and woodcutting keep item-sorted per-tool facts. Mining rates and skill
 animations come from the selected tool parameters. The decoder rejects missing
 classifications, unknown kinds, and tool rows that are duplicate or incomplete.
+
+Revision 377 resolves woodcutting animations through the selected tool struct's
+`skill_anim` parameter. It separates incompatible mining handlers into distinct
+methods for the same resource. Named fishing entrypoints keep the same
+source-shape checks as the historical loops. Shop keepers come from the
+selected unpacked NPC definitions. Shop inventories join their unique definitions
+in the selected content tree.
+The 377 run does not rewrite the tracked historical hidden-site catalogue.
 
 Regenerate both revisions when changing this family schema. A revision 274
 catalog cannot retain schema 3 when the decoder requires schema 4. These facts

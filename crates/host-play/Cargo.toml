@@ -60,6 +60,10 @@ name = "grinch_live"
 required-features = ["live-harness", "test-support"]
 
 [[test]]
+name = "revision_377_live"
+required-features = ["test-support"]
+
+[[test]]
 name = "script_api_live"
 required-features = ["test-support", "js"]
 

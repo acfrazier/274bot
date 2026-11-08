@@ -1,19 +1,23 @@
 use super::rs2_syntax::{lex, parse_body, parse_expr, Expr, Stmt};
 use super::*;
 
+#[path = "vertical_377.rs"]
+mod revision_377;
+pub(super) use revision_377::supplemental_edges_377;
+
 // ---------------------------------------------------------------------------
 // Ladders and stairs (m8aq `resolvePlacements` port).
 // ---------------------------------------------------------------------------
 
 /// Per-placement outcome resolution, m8aq-style: a landing, or a skip reason.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum Outcome {
     Landing(Landing),
     Skipped(&'static str),
 }
 
 /// How the script moves the player (m8aq `Landing`).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Landing {
     Abs { level: i32, x: i32, z: i32 },
     LocDelta { dx: i32, d_level: i32, dz: i32 },

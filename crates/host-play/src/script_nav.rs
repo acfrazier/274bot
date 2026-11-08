@@ -550,7 +550,8 @@ impl RouteSubmission {
         let assessment_future_bytes =
             route_assessment_future_layout_bytes(&request.world, lease, request.admission)
                 .ok_or(RouteJobError::Budget)?;
-        let risk_tables_bytes = risk_tables_build_peak_bytes().ok_or(RouteJobError::Budget)?;
+        let risk_tables_bytes =
+            risk_tables_build_peak_bytes(&request.world).ok_or(RouteJobError::Budget)?;
         let candidate_bytes = candidate_capacity
             .checked_mul(std::mem::size_of::<WorldTile>())
             .ok_or(RouteJobError::Budget)?;
@@ -874,8 +875,8 @@ fn route_exclusions_heap_bytes(exclusions: &ScriptRouteExclusions) -> Option<usi
     Some(bytes)
 }
 
-fn risk_tables_build_peak_bytes() -> Option<usize> {
-    let Ok(combat) = script::combat::guard::shared_tables() else {
+fn risk_tables_build_peak_bytes(world: &NavWorld) -> Option<usize> {
+    let Some(combat) = crate::admission::combat_tables_for_estimate(world) else {
         return Some(0);
     };
     let rows = combat
@@ -5557,7 +5558,10 @@ impl ScriptWalkArm {
         }
         if request.protect {
             let view = SnapshotView::new(Some(snapshot), evidence);
-            if let Err(reason) = script::combat::WalkGuard::begin(&request, &view) {
+            let admission = super::admission::condition_tables(world)
+                .map(|(tables, _)| script::combat::WalkGuard::begin_with(&request, &view, tables))
+                .unwrap_or(Err(script::combat::guard::GuardRefusal::Tables));
+            if let Err(reason) = admission {
                 refusal(&format!("Walk protection: {reason:?}"));
                 return;
             }
@@ -5617,6 +5621,7 @@ impl ScriptWalkArm {
                 state.map_members,
                 bot.and_then(|bot| bot.condition.current()),
                 bot.is_some_and(|bot| bot.walk_guard_off.is_some()),
+                Some(world),
             );
             // A v1 card keeps frozen danger routing on the machine-owned
             // native walks too, as on its compiled walks (`compiled_options`).
@@ -5756,10 +5761,19 @@ impl ScriptWalkArm {
                     sequence: 0,
                 },
             );
-            let admission = if protect {
-                script::combat::WalkGuard::begin(&request, &view)
+            let tables = if let Some(world) = self.world.as_deref() {
+                super::admission::condition_tables(world).map(|(tables, _)| tables)
             } else {
-                script::combat::WalkGuard::begin_food_only(&request, &view)
+                script::combat::guard::shared_tables().ok()
+            };
+            let admission = match tables {
+                Some(tables) if protect => {
+                    script::combat::WalkGuard::begin_with(&request, &view, tables)
+                }
+                Some(tables) => {
+                    script::combat::WalkGuard::begin_food_only_with(&request, &view, tables)
+                }
+                None => Err(script::combat::guard::GuardRefusal::Tables),
             };
             match admission {
                 Ok(guard) => Some(guard),
@@ -5816,6 +5830,7 @@ impl ScriptWalkArm {
                 self.state.as_ref().is_some_and(|state| state.map_members),
                 condition.as_ref(),
                 off_debt,
+                self.world.as_deref(),
             ),
             generation: 0,
             compat_v1,
@@ -6463,6 +6478,7 @@ impl ScriptWalkArm {
                             .and_then(|bot| bot.condition.current().copied())
                             .as_ref(),
                         false,
+                        self.world.as_deref(),
                     )
                 })
             });
