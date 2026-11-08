@@ -116,6 +116,47 @@ runs. `NIGHTLY_RUNS_ROOT` can put finished runs outside the runner work root.
 Cargo builds use `<NIGHTLY_ROOT>/sccache`, outside their disposable homes, so
 cache writes cannot race per-lane cleanup.
 
+## Local build data
+
+Trees with `tools/local-data/build.py` generate the purged game data and nav
+payloads before any Cargo lane or build. The generator needs exact engine and content
+roots for both revisions 274 and 289. The 274 lane therefore needs revision-289
+roots too; each 289 lane needs revision-274 roots. For the selected revision,
+the runner uses `NIGHTLY_ENGINE_PRISTINE` plus `/engine` and `/content`;
+configure the other revision with `NIGHTLY_GAME_DATA_<REV>_ENGINE` and
+`NIGHTLY_GAME_DATA_<REV>_CONTENT`. These must be the matching revision's
+engine and content trees. On Linux and Windows, set them in the runner
+environment. On Mac, stage the 274 pair with
+`NIGHTLY_MAC_GAME_DATA_274_ENGINE` and `NIGHTLY_MAC_GAME_DATA_274_CONTENT`;
+the guest receives them as `NIGHTLY_GAME_DATA_274_*`. When an exact root is
+absent, the runner names the missing setting and source and fails the build
+instead of substituting another revision's input.
+
+Preparation runs before `lanes`, so post-ADR test lanes use their tree's
+`target/local-data/nav/<NIGHTLY_REVISION>/274bot.navpack` and adjacent
+`.navflags` for `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK`. A missing
+generated output fails with the generator diagnostic; it never falls back to
+the v18 reference. Pre-ADR trees keep the configured `NIGHTLY_NAV_FIXTURE`.
+
+The Mac guest installs locked npm dependencies for the staged Engine A and
+optional 274 engine roots, then uses Engine A's `tsx` executable as
+`BUN_EXECUTABLE`; the staged trees need not include `node_modules` or a global
+Bun.
+
+The cache lives at `NIGHTLY_ROOT/local-data-cache`. Its key includes both
+revisions' engine/content trees, the local-data and game-data generator
+sources, Cargo inputs, and the catalog. A later build restores the generated
+outputs from that cache; a changed input identity generates a new entry.
+The Mac controller stages purged legacy archives from
+`NIGHTLY_PURGED_DATA_DIR`, defaulting to `NIGHTLY_MAC_ROOT/purged-data`.
+
+Pre-ADR-0019 trees without `tools/local-data/build.py` restore the `crates/api/data`
+archive for HEAD or its newest matching ancestor from
+`NIGHTLY_PURGED_DATA_DIR` (default `NIGHTLY_ROOT/purged-data`). Each archive's
+SHA-256 is checked against `manifest.tsv` before extraction. If no matching
+archive is available, the build fails with the commit and the archive
+README path instead of trying to compile with missing data.
+
 ## Reading a run
 
 ```
@@ -677,9 +718,9 @@ administrator, once.
    and content; it is never started), `rs2b0t\` (the catalog, as on the Linux VM),
    `nav-snapshot\<16-hex>\` (a decoded client-cache snapshot; the runner makes it again
    when it is missing or stale), `fixtures\274bot-289-v18.navpack` with its sidecars
-   (`.navpack.json`, `.navflags`, `.navreach`, `.navcanlight`, `.navpois`; each test
-   lane's `NAV_PACK`, `WORLD_NAV_PACK` and `NAV_ARRIVAL_PACK`, the v18 reference pack
-   named in `docs/api/nav.md`), `fixtures\inspect.fb` (the old inspection capture
+   (`.navpack.json`, `.navflags`, `.navreach`, `.navcanlight`, `.navpois`) for
+   pre-ADR test lanes. Post-ADR lanes use the tested tree's generated navpack;
+   `fixtures\inspect.fb` (the old inspection capture
    `T5W_INSPECT_CAPTURE_BASELINE` for the host-play route-inspect test) and
    `fixtures\rusty_v8_release_x86_64-pc-windows-msvc.lib.gz` (the platform gate's
    prebuilt V8, for `v8` 137.2.1; replace it when `Cargo.lock` moves `v8`).
@@ -925,11 +966,13 @@ error in it. If the task is stopped during that step, the missed night has no su
    `test-host-performance`, `test-panel-memory` (every target, including the
    desktop-only `ime_frame`), `test-panel-render-diagnostics`, `test-tui-memory`, and
    `cargo fmt --check` per crate (a workspace-root fmt hits OS error 206 on Windows).
-   Each test lane gets the Linux CI test inputs: the three nav pack names set to
-   the v18 fixture, `ENGINE_DIR` and `WORLD_ENGINE_DIR` set to the pristine engine
-   copy, `BOT_NAV_SNAPSHOT_ROOT` set to the decoded snapshot folder, and
-   `T5W_INSPECT_CAPTURE_BASELINE` set to the inspection fixture when the host holds
-   it. Each lane gets its own throwaway
+   Each test lane gets the Linux CI test inputs. Post-ADR trees set the three nav
+   pack names to `target/local-data/nav/<NIGHTLY_REVISION>/274bot.navpack`
+   and its `.navflags`; pre-ADR trees use the v18 reference fixture. `ENGINE_DIR`
+   and `WORLD_ENGINE_DIR` use the pristine engine copy; `BOT_NAV_SNAPSHOT_ROOT`
+   uses the decoded snapshot folder; `T5W_INSPECT_CAPTURE_BASELINE` uses the
+   inspection fixture when the host holds it.
+   Each lane gets its own throwaway
    `HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA`/`TEMP` with a copy of the
    decoded snapshot, and `BOT_NAV_BUILD=skip`, `CARGO_INCREMENTAL=0`,
    `CARGO_PROFILE_DEV_DEBUG=0`; the target directory is `target\<branch>-ci`.
