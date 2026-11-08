@@ -76,6 +76,11 @@ fn combat_table_preparation_retains_each_selected_revision() {
         ClientRevision::R289,
         ClientRevision::R377,
     ] {
+        if revision == ClientRevision::R377
+            && !crate::native::has_local_game_data_for_test(revision)
+        {
+            continue;
+        }
         let data = api::game_data::for_revision(revision).unwrap();
         let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
         let cx = fixture_compile_context(
