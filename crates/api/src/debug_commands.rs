@@ -92,7 +92,10 @@ impl DebugCatalog {
         let bytes: &[u8] = match revision {
             ClientRevision::R274 => include_bytes!("../data/game-data/274/debug.json"),
             ClientRevision::R289 => include_bytes!("../data/game-data/289/debug.json"),
+            #[cfg(not(no_local_game_data_377))]
             ClientRevision::R377 => include_bytes!("../data/game-data/377/debug.json"),
+            #[cfg(no_local_game_data_377)]
+            ClientRevision::R377 => return Err(DebugCatalogError::LocalDataUnavailable),
         };
         Self::decode(bytes, revision, items)
     }
