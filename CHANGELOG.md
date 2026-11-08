@@ -193,9 +193,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   one normal log. The Gatherer keeps both through bank trips and tops them up
   only when it can meet both minimums, and gathering carries on without them.
   Eating pauses the technique for one cycle. The status shows the method and its
-  counters. Live fly-fishing, net-fishing, oak-chopping and iron-mining checks
-  passed the fixed cadence gate. Not in this release lists what Knife does not
-  cover.
+  counters. Not in this release lists what Knife does not cover.
 - Fishing at a fixed loc spot now selects the observed loc, approaches it when
   unloaded, and returns to it after banking. Moving NPC spots keep their own
   observation and return paths.
@@ -471,9 +469,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Navigation
 
-- Route admission now checks an upper bound on the chance of death. The limit
-  is 1%, without credit for food, prayer or escape. Declared danger-zone grants
-  no longer bypass this check. Unknown poison can hold a walk before exposure
+- The default Danger routing setting, **When survivable**, still acts as Never.
+  This does not fix that known issue; see Known issues. Explicit danger-zone
+  grants now check an upper bound on the chance of death. The limit is 1%,
+  without credit for food, prayer or escape. Those grants no longer bypass this
+  check. Unknown poison can hold a walk before exposure
   for the rest of one 31-tick clean window. Always and rs2b0t-compatible walks
   keep their existing permission contract and show the bound as information.
   Known poison remains in the bound and reason when a walk crosses no NPC zone.
