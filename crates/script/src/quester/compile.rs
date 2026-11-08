@@ -2454,7 +2454,11 @@ pub(crate) fn real_nav_lease(
     };
     nav.get_or_init(|| {
         let description = format!("real {} nav pack", revision.as_i32());
-        let pack = api::test_support::local_asset_path(env_key, default_path, &description)?;
+        let pack = if revision == ClientRevision::R377 {
+            api::test_support::local_asset_path_377(env_key, default_path, &description)?
+        } else {
+            api::test_support::local_asset_path(env_key, default_path, &description)?
+        };
         let bytes = std::fs::read(&pack)
             .unwrap_or_else(|error| panic!("read {description} {}: {error}", pack.display()));
         let world = nav_planner::world::NavWorld::from_bytes(&bytes)
