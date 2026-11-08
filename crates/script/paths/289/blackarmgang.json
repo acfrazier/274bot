@@ -1,0 +1,1591 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "blackarmgang",
+  "display_name": "Shield of Arrav",
+  "required": [],
+  "tested_stats": null,
+  "partner": {
+    "protocol": "arrav",
+    "roles": [
+      {
+        "id": "phoenix",
+        "gang": "Phoenix"
+      },
+      {
+        "id": "blackarm",
+        "gang": "BlackArm"
+      }
+    ]
+  },
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 20,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:phoenixkey2",
+      "obj:phoenix_crossbow",
+      "obj:intelligence_report",
+      "obj:the_shield_of_arrav",
+      "obj:arravshield1",
+      "obj:arravshield2",
+      "obj:arravcertificate"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": "phoenix",
+      "progress_binding": "journal:blackarmgang",
+      "progress": {
+        "colour": {
+          "not_started": "p:0",
+          "in_progress": "p:1",
+          "complete": "p:done"
+        },
+        "rules": [
+          {
+            "stage": "p:9",
+            "all": [
+              "allowed me to join the phoenix gang"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "p:8",
+            "all": [
+              "join the gang in return for killing jonny the beard"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "p:4",
+            "all": [
+              "i should find them and join"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "p:3",
+            "all": [
+              "reldo told me that the fur trader"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "p:2",
+            "all": [
+              "i should ask reldo in the varrock palace library"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "p:1",
+            "all": [
+              "reldo says there is a quest hidden"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "p:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "p-start",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "reldo",
+                "anchor": {
+                  "tile": [
+                    3209,
+                    3495,
+                    0
+                  ],
+                  "source": "maps/m50_54.jm2:11744"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I'm in search of a quest."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "any": [
+                      "p:1"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/reldo.rs2:5-11,30-37",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "p:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "p-book",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "questbookcase",
+                  "tile": [
+                    3212,
+                    3493,
+                    0
+                  ],
+                  "source": "maps/m50_54.jm2:7300"
+                },
+                "op": "Check",
+                "anchor": {
+                  "tile": [
+                    3212,
+                    3493,
+                    0
+                  ],
+                  "source": "maps/m50_54.jm2:7300"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "the_shield_of_arrav"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "the_shield_of_arrav"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/quest_blackarmgang.rs2:1-12",
+              "advances": false
+            },
+            {
+              "id": "p-read",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "held": "the_shield_of_arrav"
+                },
+                "op": "Read"
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "any": [
+                      "p:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/arrav_book.rs2:2-11",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "p:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "p-reldo",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "reldo",
+                "anchor": {
+                  "tile": [
+                    3209,
+                    3495,
+                    0
+                  ],
+                  "source": "maps/m50_54.jm2:11744"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "any": [
+                      "p:3"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/reldo.rs2:39-44",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "p:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "p-baraek",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "baraek",
+                "anchor": {
+                  "tile": [
+                    3218,
+                    3435,
+                    0
+                  ],
+                  "source": "maps/m50_53.jm2:12902"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Can you tell me where I can find the Phoenix Gang?",
+                  "Okay. Have 20 gold coins."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "any": [
+                      "p:4"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/baraek.rs2:99-117",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "p:4",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "p-straven",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "straven",
+                "anchor": {
+                  "tile": [
+                    3246,
+                    9780,
+                    0
+                  ],
+                  "source": "maps/m50_152.jm2:4117"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I know who you are!",
+                  "I'd like to offer you my services."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "any": [
+                      "p:8"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/straven.rs2:24-50",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "p:8",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "p-pick-fight-food", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "cabbage"}, "op": "Pick", "anchor": {"tile": [3046, 3287, 0], "source": "content/maps/m47_51.jm2:5743-5756"}, "radius": 12, "wait_if_missing": true, "until": {"obj": "cabbage", "qty": 10}, "settle_ms": 180000},
+              "skip_if": {"Any": [{"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "intelligence_report"}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}},
+              "comment": "Pick food for Jonny: content/scripts/general_use/scripts/pickables.rs2:42-51; content/scripts/player/configs/consumption/consume_normal.dbrow:32-38."
+            },
+            {
+              "id": "p-jonny",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "jonny_the_beard",
+                  "pick": "nearest",
+                  "not_targeting_others": true
+                },
+                "stand": {
+                  "tile": [
+                    3223,
+                    3395,
+                    0
+                  ],
+                  "source": "maps/m50_53.jm2:12905"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 6,
+                  "auto_retaliate": true
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 200,
+                "loot": [
+                  "intelligence_report"
+                ]
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "intelligence_report"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "intelligence_report"
+                  }
+                }
+              },
+              "comment": "scripts/drop tables/scripts/jonny_the_beard.rs2:3-10; scripts/areas/area_varrock/scripts/straven.rs2:47-49; maps/m50_53.jm2:12905",
+              "advances": false
+            },
+            {
+              "id": "p-join",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "straven",
+                "anchor": {
+                  "tile": [
+                    3246,
+                    9780,
+                    0
+                  ],
+                  "source": "maps/m50_152.jm2:4117"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "any": [
+                      "p:9"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/straven.rs2:63-76",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "p:9",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "p-key",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "arrav-key",
+                "give": [
+                  {
+                    "obj": "phoenixkey2",
+                    "qty": 1
+                  }
+                ],
+                "take": [],
+                "rendezvous": {
+                  "tile": [
+                    3208,
+                    3391,
+                    0
+                  ],
+                  "source": "maps/m50_52.jm2:8228; public Tramp spawn"
+                },
+                "timeout_ticks": 6000
+              },
+              "skip_if": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "phoenixkey2"
+                    }
+                  }
+                }
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "phoenixkey2"
+                    }
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:134-142,154-166; scripts/areas/area_varrock/scripts/curator.rs2:7-22"
+            },
+            {
+              "id": "p-open-chest",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "phoenixshutchest",
+                  "tile": [
+                    3235,
+                    9761,
+                    0
+                  ],
+                  "source": "maps/m50_152.jm2:3604"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3235,
+                    9761,
+                    0
+                  ],
+                  "source": "maps/m50_152.jm2:3604"
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "arravshield1"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "partner_item_count_at_least",
+                          "version": 1,
+                          "args": {
+                            "obj": "arravshield1",
+                            "qty": 1
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "arravcertificate"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "partner_item_count_at_least",
+                          "version": 1,
+                          "args": {
+                            "obj": "arravcertificate",
+                            "qty": 1
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "phoenixopenchest"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "phoenixopenchest"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/quest_blackarmgang.rs2:32-41; configs/quest_blackarmgang.loc:65-81",
+              "advances": false
+            },
+            {
+              "id": "p-half",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "phoenixopenchest",
+                  "tile": [
+                    3235,
+                    9761,
+                    0
+                  ],
+                  "source": "maps/m50_152.jm2:3604"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    3235,
+                    9761,
+                    0
+                  ],
+                  "source": "maps/m50_152.jm2:3604"
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravshield1"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "partner_item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravshield1",
+                        "qty": 1
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravcertificate"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "partner_item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravcertificate",
+                        "qty": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "arravshield1"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/quest_blackarmgang.rs2:34-41",
+              "advances": false
+            },
+            {
+              "id": "p-half-give",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "arrav-half",
+                "give": [
+                  {
+                    "obj": "arravshield1",
+                    "qty": 1
+                  }
+                ],
+                "take": [],
+                "rendezvous": {
+                  "tile": [
+                    3208,
+                    3391,
+                    0
+                  ],
+                  "source": "maps/m50_52.jm2:8228; public Tramp spawn"
+                },
+                "timeout_ticks": 6000
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "partner_item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravshield1",
+                        "qty": 1
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravcertificate"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "partner_item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravcertificate",
+                        "qty": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "partner_item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "arravshield1",
+                    "qty": 1
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:134-142,154-166; scripts/areas/area_varrock/scripts/curator.rs2:7-22"
+            },
+            {
+              "id": "p-cert-receive",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "arrav-cert",
+                "give": [],
+                "take": [
+                  {
+                    "obj": "arravcertificate",
+                    "qty": 1
+                  }
+                ],
+                "rendezvous": {
+                  "tile": [
+                    3208,
+                    3391,
+                    0
+                  ],
+                  "source": "maps/m50_52.jm2:8228; public Tramp spawn"
+                },
+                "timeout_ticks": 6000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "arravcertificate"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "arravcertificate"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:134-142,154-166; scripts/areas/area_varrock/scripts/curator.rs2:7-22"
+            },
+            {
+              "id": "p-roald",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "king_roald",
+                "anchor": {
+                  "tile": [
+                    3222,
+                    3476,
+                    0
+                  ],
+                  "source": "maps/m50_54.jm2:11752"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/king_roald.rs2:8-27; scripts/quests/quest_blackarmgang/scripts/quest_blackarmgang.rs2:118-128",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "p:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    },
+    {
+      "role": "blackarm",
+      "progress_binding": "journal:blackarmgang",
+      "progress": {
+        "colour": {
+          "not_started": "b:0",
+          "in_progress": "b:1",
+          "complete": "b:done"
+        },
+        "rules": [
+          {
+            "stage": "b:3",
+            "all": [
+              "allowed me to join the black arm gang"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "b:2",
+            "all": [
+              "she offered to let me join the gang in return for"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          },
+          {
+            "stage": "b:1",
+            "all": [
+              "he directed me to speak to katrine"
+            ],
+            "any": [],
+            "not": [],
+            "varp": null
+          }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "b:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "b-tramp",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "tramppg",
+                "anchor": {
+                  "tile": [
+                    3208,
+                    3391,
+                    0
+                  ],
+                  "source": "maps/m50_52.jm2:8228"
+                },
+                "leash": 8,
+                "prefer": [
+                  "Is there anything down this alleyway?",
+                  "Do you think they would let me join?"
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "any": [
+                      "b:1"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/tramp.rs2:26-46",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "b:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "b-katrine",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "katrine",
+                "anchor": {
+                  "tile": [
+                    3186,
+                    3385,
+                    0
+                  ],
+                  "source": "maps/m49_52.jm2:8860"
+                },
+                "leash": 8,
+                "prefer": [
+                  "I've heard you're the Black Arm Gang.",
+                  "I'd rather not reveal my sources.",
+                  "I want to become a member of your gang.",
+                  "Well, you can give me a try can't you?",
+                  "Ok, no problem."
+                ]
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "any": [
+                      "b:2"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/katrine.rs2:14-73",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "b:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "b-key",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "arrav-key",
+                "give": [],
+                "take": [
+                  {
+                    "obj": "phoenixkey2",
+                    "qty": 1
+                  }
+                ],
+                "rendezvous": {
+                  "tile": [
+                    3208,
+                    3391,
+                    0
+                  ],
+                  "source": "maps/m50_52.jm2:8228; public Tramp spawn"
+                },
+                "timeout_ticks": 6000
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "phoenixkey2"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "phoenix_crossbow",
+                        "qty": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "phoenixkey2"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:134-142,154-166; scripts/areas/area_varrock/scripts/curator.rs2:7-22"
+            },
+            {
+              "id": "b-pick-fight-food", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "cabbage"}, "op": "Pick", "anchor": {"tile": [3046, 3287, 0], "source": "content/maps/m47_51.jm2:5743-5756"}, "radius": 12, "wait_if_missing": true, "until": {"obj": "cabbage", "qty": 10}, "settle_ms": 180000},
+              "skip_if": {"Any": [{"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "phoenix_crossbow", "qty": 2}}}, {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}}]},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "cabbage", "qty": 10}}},
+              "comment": "Pick food before entering the weapons store: content/scripts/general_use/scripts/pickables.rs2:42-51; content/scripts/player/configs/consumption/consume_normal.dbrow:32-38."
+            },
+            {
+              "id": "b-unlock",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "phoenixkey2",
+                "target": {
+                  "loc": "phoenixdoor2"
+                },
+                "anchor": {
+                  "tile": [
+                    3251,
+                    3385,
+                    0
+                  ],
+                  "source": "maps/m50_52.jm2:6939"
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "phoenix_crossbow",
+                    "qty": 2
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3251,
+                      3385,
+                      0
+                    ],
+                    "radius": 2
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/quest_blackarmgang.rs2:45-64",
+              "advances": false
+            },
+            {
+              "id": "b-weaponsmaster",
+              "kind": "combat",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "weaponsmaster",
+                  "pick": "nearest",
+                  "not_targeting_others": true
+                },
+                "stand": {
+                  "tile": [
+                    3246,
+                    3384,
+                    1
+                  ],
+                  "source": "maps/m50_52.jm2:8259"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 6,
+                  "auto_retaliate": true
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 200,
+                "loot": []
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "phoenix_crossbow",
+                    "qty": 2
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "combat_end",
+                  "version": 1,
+                  "args": {
+                    "end": "killed"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/quest_blackarmgang.rs2:88-97; maps/m50_52.jm2:8259",
+              "advances": false
+            },
+            {
+              "id": "b-crossbows",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "ground": "phoenix_crossbow"
+                },
+                "op": "Take",
+                "anchor": {
+                  "tile": [
+                    3243,
+                    3383,
+                    1
+                  ],
+                  "source": "maps/m50_52.jm2:8264-8266"
+                },
+                "radius": 8,
+                "until": {
+                  "obj": "phoenix_crossbow",
+                  "qty": 2
+                }
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "phoenix_crossbow",
+                    "qty": 2
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "phoenix_crossbow",
+                    "qty": 2
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/quest_blackarmgang.rs2:88-97; maps/m50_52.jm2:8264-8266",
+              "advances": false
+            },
+            {
+              "id": "b-join",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "katrine",
+                "anchor": {
+                  "tile": [
+                    3186,
+                    3385,
+                    0
+                  ],
+                  "source": "maps/m49_52.jm2:8860"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "any": [
+                      "b:3"
+                    ]
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/katrine.rs2:90-98",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "b:3",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "b-open-cupboard",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "blackarmcupboardshut",
+                  "tile": [
+                    3188,
+                    3385,
+                    1
+                  ],
+                  "source": "maps/m49_52.jm2:8346"
+                },
+                "op": "Open",
+                "anchor": {
+                  "tile": [
+                    3188,
+                    3385,
+                    1
+                  ],
+                  "source": "maps/m49_52.jm2:8346"
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "arravshield2"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "arravcertificate"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "partner_item_count_at_least",
+                          "version": 1,
+                          "args": {
+                            "obj": "arravcertificate",
+                            "qty": 1
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "loc_present",
+                      "version": 1,
+                      "args": {
+                        "loc": "blackarmcupboardopen"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "loc_present",
+                  "version": 1,
+                  "args": {
+                    "loc": "blackarmcupboardopen"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/quest_blackarmgang.rs2:107-116; configs/quest_blackarmgang.loc:34-55",
+              "advances": false
+            },
+            {
+              "id": "b-half",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "blackarmcupboardopen",
+                  "tile": [
+                    3188,
+                    3385,
+                    1
+                  ],
+                  "source": "maps/m49_52.jm2:8346"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    3188,
+                    3385,
+                    1
+                  ],
+                  "source": "maps/m49_52.jm2:8346"
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravshield2"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravcertificate"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "partner_item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravcertificate",
+                        "qty": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "arravshield2"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/quest_blackarmgang.rs2:110-116",
+              "advances": false
+            },
+            {
+              "id": "b-half-receive",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "arrav-half",
+                "give": [],
+                "take": [
+                  {
+                    "obj": "arravshield1",
+                    "qty": 1
+                  }
+                ],
+                "rendezvous": {
+                  "tile": [
+                    3208,
+                    3391,
+                    0
+                  ],
+                  "source": "maps/m50_52.jm2:8228; public Tramp spawn"
+                },
+                "timeout_ticks": 6000
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravshield1"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravcertificate"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "partner_item_count_at_least",
+                      "version": 1,
+                      "args": {
+                        "obj": "arravcertificate",
+                        "qty": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "arravshield1"
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:134-142,154-166; scripts/areas/area_varrock/scripts/curator.rs2:7-22"
+            },
+            {
+              "id": "b-curator",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "curator",
+                "anchor": {
+                  "tile": [
+                    3255,
+                    3445,
+                    0
+                  ],
+                  "source": "maps/m50_53.jm2:12923"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "arravcertificate"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "arravcertificate",
+                    "qty": 2
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/curator.rs2:7-22",
+              "advances": false
+            },
+            {
+              "id": "b-cert-give",
+              "kind": "partner",
+              "version": 1,
+              "args": {
+                "phase": "arrav-cert",
+                "give": [
+                  {
+                    "obj": "arravcertificate",
+                    "qty": 1
+                  }
+                ],
+                "take": [],
+                "rendezvous": {
+                  "tile": [
+                    3208,
+                    3391,
+                    0
+                  ],
+                  "source": "maps/m50_52.jm2:8228; public Tramp spawn"
+                },
+                "timeout_ticks": 6000
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "partner_item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "arravcertificate",
+                    "qty": 1
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "partner_item_count_at_least",
+                  "version": 1,
+                  "args": {
+                    "obj": "arravcertificate",
+                    "qty": 1
+                  }
+                }
+              },
+              "comment": "scripts/quests/quest_blackarmgang/scripts/blackarmgang_journal.rs2:134-142,154-166; scripts/areas/area_varrock/scripts/curator.rs2:7-22"
+            },
+            {
+              "id": "b-roald",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "king_roald",
+                "anchor": {
+                  "tile": [
+                    3222,
+                    3476,
+                    0
+                  ],
+                  "source": "maps/m50_54.jm2:11752"
+                },
+                "leash": 8,
+                "prefer": []
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "blackarmgang",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "scripts/areas/area_varrock/scripts/king_roald.rs2:8-27; scripts/quests/quest_blackarmgang/scripts/quest_blackarmgang.rs2:118-128",
+              "advances": true
+            }
+          ],
+          "order": "ordered"
+        },
+        {
+          "stage": "b:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

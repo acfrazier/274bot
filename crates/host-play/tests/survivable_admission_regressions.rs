@@ -72,21 +72,20 @@ fn corridor(width: usize, spawns: &[i32]) -> NavWorld {
 }
 
 fn input(hp: u8, poison: PoisonState) -> RiskInput {
-    RiskInput {
-        pos: tile(0, 1),
-        poison,
-        tick: 10,
-        hp,
-        hp_max: 99,
-        prayer: 10,
-        prayer_base: 10,
-        combat: Some(50),
-        missing_facts: false,
-        unattributed: false,
-        input_locked: false,
-        overflow: false,
-        ..RiskInput::default()
-    }
+    let mut input = RiskInput::default();
+    input.pos = tile(0, 1);
+    input.poison = poison;
+    input.tick = 10;
+    input.hp = hp;
+    input.hp_max = 99;
+    input.prayer = 10;
+    input.prayer_base = 10;
+    input.combat = Some(50);
+    input.set_missing_facts(false);
+    input.set_unattributed(false);
+    input.set_input_locked(false);
+    input.set_overflow(false);
+    input
 }
 
 fn find(world: &NavWorld, from: WorldTile, to: WorldTile) -> Route {
@@ -165,6 +164,7 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             read("malformed", Some("{nav:")).unwrap_or_else(|_| WalkGlobals::fail_closed()),
         ),
     ];
+    let world = api::test_support::game_data_available().then(|| corridor(40, &[20]));
     for (name, globals) in sources {
         assert_eq!(
             globals.effective_danger_level(),
@@ -188,23 +188,19 @@ fn probe_gated_default_is_never_for_every_preference_source() {
             !manual.enforce,
             "{name}: held inherited verdict is advisory"
         );
-        let world = corridor(40, &[20]);
-        for (from, to) in [(tile(0, 1), tile(20, 1)), (tile(20, 1), tile(0, 1))] {
-            let route = find(&world, from, to);
-            let request = Admission::manual(
-                globals.manual_options(false),
-                RiskInput {
-                    pos: from,
-                    ..input(99, PoisonState::default())
-                },
-                1,
-                globals,
-            );
-            let assessment = admission::assess(&route, &world, &request);
-            assert!(
-                admission::permits(&route, &world, &request, &assessment),
-                "{name}: {from:?}->{to:?}"
-            );
+        if let Some(world) = world.as_ref() {
+            for (from, to) in [(tile(0, 1), tile(20, 1)), (tile(20, 1), tile(0, 1))] {
+                let route = find(world, from, to);
+                let mut risk_input = input(99, PoisonState::default());
+                risk_input.pos = from;
+                let request =
+                    Admission::manual(globals.manual_options(false), risk_input, 1, globals);
+                let assessment = admission::assess(&route, world, &request);
+                assert!(
+                    admission::permits(&route, world, &request, &assessment),
+                    "{name}: {from:?}->{to:?}"
+                );
+            }
         }
         eprintln!(
             "probe source={name} stored={:?} effective={:?} native=Avoid manual=Avoid",
@@ -240,33 +236,48 @@ fn probe_gated_default_is_never_for_every_preference_source() {
 
 #[test]
 fn held_default_admits_router_endpoint_and_opt_in_proceeds() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = corridor(40, &[20]);
     let route = find(&world, tile(0, 1), tile(20, 1));
     let request = default_admission(input(99, PoisonState::default()));
     assert_eq!(request.policy, RiskPolicy::Avoid);
+    assert_eq!(request.grants, ZoneExempt::NONE);
+    assert!(
+        !request.enforce,
+        "the held default keeps its existing routing mode"
+    );
     let assessment = admission::assess(&route, &world, &request);
-    eprintln!(
-        "probe endpoint verdict={:?} intervals={} crossings={} reason={}",
-        assessment.verdict,
-        assessment.plan.intervals.len(),
-        assessment.plan.crossings.len(),
-        assessment.reason
-    );
-    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
+    assert!(assessment.plan.complete);
+    assert_eq!(assessment.plan.intervals.len(), 1);
+    assert_eq!(assessment.plan.crossings.len(), 1);
+    assert!(matches!(
+        assessment.input.poison,
+        PoisonState::Unknown { .. }
+    ));
+    assert_eq!(assessment.verdict, Verdict::Survivable);
+    assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
+    assert!(matches!(
+        assessment.poison_test,
+        script::combat::risk::PoisonTest::PassesCharged { charged }
+            if charged <= script::combat::risk::consts::DEATH_BOUND
+    ));
     assert!(admission::permits(&route, &world, &request, &assessment));
-    assert_eq!(
-        admission::verdict_refusal(assessment.verdict),
-        WalkRefusal::Unknown(UnknownWhy::Poison)
-    );
     let opt_in = Admission {
         policy: RiskPolicy::Proceed,
         ..request
     };
+    assert_eq!(opt_in.policy, RiskPolicy::Proceed);
+    assert_eq!(opt_in.grants, ZoneExempt::NONE);
     assert!(admission::permits(&route, &world, &opt_in, &assessment));
 }
 
 #[test]
 fn walking_out_from_inside_a_zone_is_not_an_entering_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = corridor(80, &[2]);
     let route = find(&world, tile(2, 1), tile(78, 1));
     let mut start = input(99, PoisonState::default());
@@ -303,10 +314,13 @@ fn walking_out_from_inside_a_zone_is_not_an_entering_crossing() {
 
 #[test]
 fn no_crossing_walk_is_admitted_under_unknown_attacker_and_missing_facts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = corridor(16, &[]);
     let route = find(&world, tile(0, 1), tile(10, 1));
     let mut engaged = input(99, PoisonState::default());
-    engaged.unattributed = true;
+    engaged.set_unattributed(true);
     let request = default_admission(engaged);
     let assessment = admission::assess(&route, &world, &request);
     eprintln!(
@@ -323,7 +337,7 @@ fn no_crossing_walk_is_admitted_under_unknown_attacker_and_missing_facts() {
     assert!(admission::permits(&route, &world, &request, &assessment));
 
     let mut missing = input(99, PoisonState::default());
-    missing.missing_facts = true;
+    missing.set_missing_facts(true);
     let request = default_admission(missing);
     let assessment = admission::assess(&route, &world, &request);
     eprintln!(
@@ -341,6 +355,9 @@ fn no_crossing_walk_is_admitted_under_unknown_attacker_and_missing_facts() {
 
 #[test]
 fn input_problems_refuse_only_entering_crossings_in_every_enforcing_mode() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use script::combat::risk::LiveRow;
     use script::combat::{ActorKind, ActorRef};
 
@@ -349,15 +366,15 @@ fn input_problems_refuse_only_entering_crossings_in_every_enforcing_mode() {
     let crossing_route = find(&world, tile(0, 1), tile(20, 1));
     let clean = input(99, PoisonState::Clear);
     let mut unattributed = clean;
-    unattributed.unattributed = true;
+    unattributed.set_unattributed(true);
     let mut missing = clean;
-    missing.missing_facts = true;
+    missing.set_missing_facts(true);
     let mut overflow = clean;
-    overflow.overflow = true;
+    overflow.set_overflow(true);
     let mut too_many = clean;
     too_many.live_len = 5;
     let mut locked = clean;
-    locked.input_locked = true;
+    locked.set_input_locked(true);
     let mut unknown_npc = clean;
     unknown_npc.live_len = 1;
     unknown_npc.live[0] = LiveRow {
@@ -408,6 +425,9 @@ fn input_problems_refuse_only_entering_crossings_in_every_enforcing_mode() {
 
 #[test]
 fn reentering_after_an_origin_escape_is_a_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = corridor(40, &[2]);
     let mut tiles: Vec<_> = (2..=20).map(|x| tile(x, 1)).collect();
     tiles.extend((2..20).rev().map(|x| tile(x, 1)));
@@ -416,21 +436,33 @@ fn reentering_after_an_origin_escape_is_a_crossing() {
         dest: tile(2, 1),
         ticks: 20.0,
     };
+    let mut risk_input = input(99, PoisonState::default());
+    risk_input.pos = tile(2, 1);
     let request = Admission {
         enforce: true,
-        ..default_admission(RiskInput {
-            pos: tile(2, 1),
-            ..input(99, PoisonState::default())
-        })
+        ..default_admission(risk_input)
     };
     let assessment = admission::assess(&route, &world, &request);
+    assert_eq!(request.policy, RiskPolicy::Avoid);
+    assert_eq!(request.grants, ZoneExempt::NONE);
+    assert!(request.enforce);
     assert!(assessment.plan.complete);
     assert_eq!(assessment.plan.intervals.len(), 2);
     assert!(assessment.plan.intervals[0].escaping());
     assert!(!assessment.plan.intervals[1].escaping());
     assert_eq!(assessment.plan.crossings.len(), 1);
-    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Poison));
-    assert!(!admission::permits(&route, &world, &request, &assessment));
+    assert!(matches!(
+        assessment.input.poison,
+        PoisonState::Unknown { .. }
+    ));
+    assert_eq!(assessment.verdict, Verdict::Survivable);
+    assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
+    assert!(matches!(
+        assessment.poison_test,
+        script::combat::risk::PoisonTest::PassesCharged { charged }
+            if charged <= script::combat::risk::consts::DEATH_BOUND
+    ));
+    assert!(admission::permits(&route, &world, &request, &assessment));
 }
 
 fn find_through(world: &NavWorld, from: WorldTile, to: WorldTile) -> Route {
@@ -462,18 +494,22 @@ fn ice_r(world: &NavWorld) -> i32 {
 /// admission judges; only an engaged origin's walk out is an escape.
 #[test]
 fn fringe_origin_walk_into_the_acquisition_set_is_a_judged_crossing() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let spawn = 30;
     let world = corridor(70, &[spawn]);
     let r = ice_r(&world);
     let dest = tile(69, 1);
-    let enforcing = |from: WorldTile, hp: u8| Admission {
-        policy: RiskPolicy::Inherit,
-        enforce: true,
-        grants: ZoneExempt::NONE,
-        ..default_admission(RiskInput {
-            pos: from,
-            ..input(hp, PoisonState::Clear)
-        })
+    let enforcing = |from: WorldTile, hp: u8| {
+        let mut risk_input = input(hp, PoisonState::Clear);
+        risk_input.pos = from;
+        Admission {
+            policy: RiskPolicy::Inherit,
+            enforce: true,
+            grants: ZoneExempt::NONE,
+            ..default_admission(risk_input)
+        }
     };
     for from_x in [spawn - r, spawn - r - 1] {
         let from = tile(from_x, 1);
@@ -511,14 +547,14 @@ fn fringe_origin_walk_into_the_acquisition_set_is_a_judged_crossing() {
     assert!(admission::permits(&route, &world, &request, &assessment));
 }
 
-/// R3 M-B: a failed assessment (`Unknown(Overflow)` from a crossing whose
-/// summed volley/floor exceeds every HP) carries an incomplete plan. Every
-/// enforcing non-Proceed request refuses it; held, Proceed and compat v1
-/// keep admitting it.
+/// Old: display overflow made this Unknown with an incomplete plan.
+/// New: the timeline has a numeric death bound; display totals saturate.
 #[test]
-fn failed_assessment_is_refused_by_every_enforcing_request() {
-    // Forty-one overlapping ice warrior envelopes: the summed way-out floor
-    // exceeds the u8 report bound, so the estimate itself fails.
+fn saturated_display_is_refused_numerically_by_every_enforcing_request() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    // Forty-one overlapping ice warrior envelopes exceed the display floor.
     let spawns: Vec<i32> = (20..=60).collect();
     let world = corridor(100, &spawns);
     let route = find_through(&world, tile(0, 1), tile(99, 1));
@@ -528,8 +564,9 @@ fn failed_assessment_is_refused_by_every_enforcing_request() {
         "probe failed-assessment verdict={:?} complete={} reason={}",
         assessment.verdict, assessment.plan.complete, assessment.reason
     );
-    assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Overflow));
-    assert!(!assessment.plan.complete);
+    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+    assert!(assessment.bound > script::combat::risk::consts::DEATH_BOUND);
+    assert!(assessment.plan.complete);
     assert!(!held.enforce);
     assert!(admission::permits(&route, &world, &held, &assessment));
     for policy in [RiskPolicy::Avoid, RiskPolicy::Inherit, RiskPolicy::Proceed] {
@@ -554,19 +591,26 @@ fn failed_assessment_is_refused_by_every_enforcing_request() {
     }
     assert_eq!(
         admission::verdict_refusal(assessment.verdict),
-        WalkRefusal::Unknown(UnknownWhy::Overflow)
+        WalkRefusal::Unsurvivable
     );
 }
 
-/// R3 M-B on the real pack (reviewer probe `timing_long_assessments`):
-/// Lumbridge to Ardougne/Catherby through White Wolf Mountain at combat 50
-/// has a crossing whose way-out floor (547 HP) exceeds every HP. The
-/// estimate reports `Unknown(Overflow)`; enforcing Avoid must refuse it.
+/// A real long crossing formerly failed while narrowing the display floor.
+/// The bound now decides admission, independently of saturated display totals.
 #[test]
 #[ignore = "needs WORLD_NAV_PACK (a real 289 pack)"]
-fn real_pack_overflowed_assessment_is_refused_by_enforcing_avoid() {
-    let path = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK");
-    let world = NavWorld::load_pack(std::path::Path::new(&path)).unwrap();
+fn real_pack_display_overflow_is_judged_numerically_by_enforcing_avoid() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let Some(path) = api::test_support::local_asset_path(
+        "WORLD_NAV_PACK",
+        "",
+        "real 289 navigation pack for survivability regression",
+    ) else {
+        return;
+    };
+    let world = NavWorld::load_pack(&path).unwrap();
     let state = WorldState::default().with_map_members(true);
     let from = tile(3222, 3218);
     for to in [tile(2662, 3305), tile(2809, 3436)] {
@@ -583,13 +627,12 @@ fn real_pack_overflowed_assessment_is_refused_by_enforcing_avoid() {
             &[],
         )
         .expect("real router route");
+        let mut risk_input = input(60, PoisonState::Clear);
+        risk_input.pos = from;
         let request = Admission {
             policy: RiskPolicy::Avoid,
             enforce: true,
-            ..default_admission(RiskInput {
-                pos: from,
-                ..input(60, PoisonState::Clear)
-            })
+            ..default_admission(risk_input)
         };
         let assessment = admission::assess(&route, &world, &request);
         let permitted = admission::permits(&route, &world, &request, &assessment);
@@ -600,7 +643,9 @@ fn real_pack_overflowed_assessment_is_refused_by_enforcing_avoid() {
             assessment.verdict,
             assessment.plan.complete
         );
-        assert_eq!(assessment.verdict, Verdict::Unknown(UnknownWhy::Overflow));
+        assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+        assert!(assessment.plan.complete);
+        assert!(assessment.bound > script::combat::risk::consts::DEATH_BOUND);
         assert!(!permitted);
     }
 }

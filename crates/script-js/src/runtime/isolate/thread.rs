@@ -1,5 +1,6 @@
 use super::teardown::*;
 use super::*;
+use script::native::seat_rows::{MAX_SEAT_GAMEPLAY_ROWS, MAX_SEAT_RESERVED_ROWS};
 
 // Turn browser timer operations into catchable JS errors. Isolates run on
 // plain threads, so deno's timer ops cannot safely enter a Tokio reactor.
@@ -33,11 +34,11 @@ pub(super) struct MouseGestureIdentities {
 }
 
 fn stamp_mouse_gesture_identity(
-    req: &mut script::shim::InteractReq,
+    req: &mut script::interact::InteractReq,
     input_identity: u64,
     gestures: &mut MouseGestureIdentities,
 ) {
-    let script::shim::InteractReq::Mouse { down, identity, .. } = req else {
+    let script::interact::InteractReq::Mouse { down, identity, .. } = req else {
         return;
     };
     if *down {
@@ -61,7 +62,7 @@ fn stamp_mouse_gesture_identity(
 }
 
 pub(super) fn stamp_mouse_gesture_identities(
-    reqs: &mut [script::shim::InteractReq],
+    reqs: &mut [script::interact::InteractReq],
     input_identity: u64,
     gestures: &mut MouseGestureIdentities,
 ) {
@@ -71,7 +72,10 @@ pub(super) fn stamp_mouse_gesture_identities(
 }
 
 fn stamp_mouse_gesture_lineage_pairs(
-    reqs: &mut [(script::shim::InteractReq, crate::machine::CapturedLineage)],
+    reqs: &mut [(
+        script::interact::InteractReq,
+        crate::machine::CapturedLineage,
+    )],
     input_identity: u64,
     gestures: &mut MouseGestureIdentities,
 ) {
@@ -90,7 +94,7 @@ enum HostValue<'a> {
 /// Set `__rs2b0t_host[key]` through V8 directly: typed, no script eval.
 /// `false` when the host handle is missing or the write failed.
 fn set_host_field(runtime: &mut Runtime, key: &str, value: HostValue<'_>) -> bool {
-    super::super::lineage_v8::enter_root(runtime, |runtime| {
+    crate::materialize::lineage_v8::enter_root(runtime, |runtime| {
         let scope = &mut runtime.deno_runtime().handle_scope();
         let global = scope.get_current_context().global(scope);
         let (Ok(host_key), Ok(field)) =
@@ -122,12 +126,12 @@ fn record_tick(runtime: &mut Runtime, n: u64) {
     set_host_field(runtime, "tick", HostValue::Number(n as f64));
 }
 fn current_observed_walk_outcome_seq() -> u64 {
-    crate::observed::with(|scene| scene.latest().walk_outcome_seq().unwrap_or(0))
+    crate::scene::observed::with(|scene| scene.latest().walk_outcome_seq().unwrap_or(0))
 }
 
 /// `!!globalThis[name]`, read through V8 without compiling a script.
 fn global_flag(runtime: &mut Runtime, name: &str) -> bool {
-    super::super::lineage_v8::enter_root(runtime, |runtime| {
+    crate::materialize::lineage_v8::enter_root(runtime, |runtime| {
         let scope = &mut runtime.deno_runtime().handle_scope();
         let global = scope.get_current_context().global(scope);
         let Ok(key) = key_string(scope, name) else {
@@ -143,9 +147,9 @@ fn global_flag(runtime: &mut Runtime, name: &str) -> bool {
 struct MachinesStop;
 impl Drop for MachinesStop {
     fn drop(&mut self) {
-        crate::quest_journal::on_stop();
+        crate::compat::quest_journal::on_stop();
         crate::machine::on_stop();
-        crate::hunt::on_stop();
+        crate::compat::hunt::on_stop();
     }
 }
 
@@ -153,7 +157,7 @@ impl Drop for MachinesStop {
 struct ObjRecordsStop;
 impl Drop for ObjRecordsStop {
     fn drop(&mut self) {
-        super::super::selected_facts_v8::reset_obj_records_cache();
+        crate::materialize::selected_facts_v8::reset_obj_records_cache();
     }
 }
 
@@ -188,15 +192,17 @@ pub(super) fn isolate_main(
     setup: Sender<SetupMessage>,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     walking_ownership: std::sync::Arc<crate::machine::WalkingOwnership>,
-    compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
+    compat_journal: Option<std::sync::Arc<crate::compat::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     proof: std::sync::Arc<TeardownProofInner>,
     execution: Option<api::identity::ExecutionId>,
-    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
+    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
+        crate::runtime::memory_profile::Counters,
+    >,
 ) {
     #[cfg(feature = "memory-profile")]
-    let _heap_lifetime = crate::memory_profile::HeapLifetime(counters.clone());
+    let _heap_lifetime = crate::runtime::memory_profile::HeapLifetime(counters.clone());
     // Declared before `runtime` so the counter decrements only after the
     // Runtime destructor has completed.
     let _runtime_lifetime: RuntimeLifetime;
@@ -238,17 +244,17 @@ pub(super) fn isolate_main(
     counters
         .heap_live
         .store(1, std::sync::atomic::Ordering::Relaxed);
-    let carrier_ready = super::super::lineage_v8::install(&mut runtime, execution.is_some())
+    let carrier_ready = crate::materialize::lineage_v8::install(&mut runtime, execution.is_some())
         .and_then(|()| {
-            super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
-                super::super::lineage_v8::install_interact_capture(runtime)
+            crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
+                crate::materialize::lineage_v8::install_interact_capture(runtime)
             })
         });
     if let Err(e) = carrier_ready {
         let _ = setup.send(SetupMessage::Ready(Err(e)));
         return;
     }
-    let wired = super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+    let wired = crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
         wire_runtime(runtime, &source, shape, &siblings, game_data, named_banks)
     });
     if let Err(e) = wired {
@@ -263,17 +269,18 @@ pub(super) fn isolate_main(
     // for them would grow a queue nothing drains. A future v2
     // `api.on(...)` only has to define the flush global; delivery turns
     // back on here with no other change.
-    let events_consumed = super::super::lineage_v8::eval::<bool>(
+    let events_consumed = crate::materialize::lineage_v8::eval::<bool>(
         &mut runtime,
         "typeof globalThis.__rs2b0t_flush_native_events === 'function'",
     )
     .unwrap_or(false);
     let v2_native = shape == LoadShape::NativeTick
         && matches!(
-            super::shape::parse_declared_api_version(&source),
+            crate::library::shape::parse_declared_api_version(&source),
             Ok(Some(2))
         );
-    let _ = super::super::lineage_v8::eval::<serde_json::Value>(&mut runtime, INSTALL_HOST_HOOKS);
+    let _ =
+        crate::materialize::lineage_v8::eval::<serde_json::Value>(&mut runtime, INSTALL_HOST_HOOKS);
     let _ = setup.send(SetupMessage::Ready(Ok(())));
     tick_loop(
         runtime,
@@ -295,7 +302,7 @@ pub(super) fn isolate_main(
 
 fn deliver_native_events(
     runtime: &mut Runtime,
-    events: &[crate::events::NativeEvent],
+    events: &[crate::scene::events::NativeEvent],
     out: &Sender<ThreadMsg>,
     n: u64,
     generation: u64,
@@ -332,7 +339,7 @@ fn deliver_native_events(
 /// paints only on ticks it runs.
 fn compat_may_paint(runner: &Runner) -> bool {
     runner.start_ok
-        && crate::observed::with(|scene| {
+        && crate::scene::observed::with(|scene| {
             let scene = scene.latest();
             match scene.ingame() {
                 None => true,
@@ -354,9 +361,9 @@ fn forward_paint_if_changed(
     out: &Sender<ThreadMsg>,
     n: u64,
     generation: u64,
-    last: &mut Option<std::sync::Arc<script::shim::ScriptPaint>>,
+    last: &mut Option<std::sync::Arc<script::paint::ScriptPaint>>,
     paint_generation: &std::sync::atomic::AtomicU64,
-    mut frame: script::shim::ScriptPaint,
+    mut frame: script::paint::ScriptPaint,
 ) {
     frame.generation = paint_generation.load(std::sync::atomic::Ordering::Acquire);
     if last.as_deref() == Some(&frame) {
@@ -469,27 +476,30 @@ fn take_tick_output(
     }
 }
 
-fn append_wait_facts(reqs: &mut Vec<script::shim::InteractReq>, enqueued: u32, settled: u32) {
+fn append_wait_facts(reqs: &mut Vec<script::interact::InteractReq>, enqueued: u32, settled: u32) {
     for _ in 0..enqueued {
-        reqs.push(script::shim::InteractReq::WaitEnqueued);
+        reqs.push(script::interact::InteractReq::WaitEnqueued);
     }
     for _ in 0..settled {
-        reqs.push(script::shim::InteractReq::WaitSettled);
+        reqs.push(script::interact::InteractReq::WaitSettled);
     }
 }
 
-fn seat_interact_is_reserved(request: &script::shim::InteractReq) -> bool {
+fn seat_interact_is_reserved(request: &script::interact::InteractReq) -> bool {
     matches!(
         request,
-        script::shim::InteractReq::AbortWalk { .. }
-            | script::shim::InteractReq::GatherStop { .. }
-            | script::shim::InteractReq::CombatStop { .. }
-            | script::shim::InteractReq::RunPolicyOverride { .. }
+        script::interact::InteractReq::AbortWalk { .. }
+            | script::interact::InteractReq::GatherStop { .. }
+            | script::interact::InteractReq::CombatStop { .. }
+            | script::interact::InteractReq::RunPolicyOverride { .. }
     )
 }
 
 fn append_seat_wait_facts(
-    rows: &mut Vec<(script::shim::InteractReq, crate::machine::CapturedLineage)>,
+    rows: &mut Vec<(
+        script::interact::InteractReq,
+        crate::machine::CapturedLineage,
+    )>,
     enqueued: u32,
     settled: u32,
 ) -> usize {
@@ -497,19 +507,19 @@ fn append_seat_wait_facts(
         .iter()
         .filter(|(request, _)| !seat_interact_is_reserved(request))
         .count();
-    let available = crate::wire::MAX_SEAT_GAMEPLAY_ROWS.saturating_sub(gameplay_rows);
+    let available = MAX_SEAT_GAMEPLAY_ROWS.saturating_sub(gameplay_rows);
     let enqueue_rows = (enqueued as usize).min(available);
     let settle_rows = (settled as usize).min(available - enqueue_rows);
     rows.reserve(enqueue_rows + settle_rows);
     for _ in 0..enqueue_rows {
         rows.push((
-            script::shim::InteractReq::WaitEnqueued,
+            script::interact::InteractReq::WaitEnqueued,
             crate::machine::CapturedLineage::default(),
         ));
     }
     for _ in 0..settle_rows {
         rows.push((
-            script::shim::InteractReq::WaitSettled,
+            script::interact::InteractReq::WaitSettled,
             crate::machine::CapturedLineage::default(),
         ));
     }
@@ -518,14 +528,17 @@ fn append_seat_wait_facts(
         .saturating_add((settled as usize).saturating_sub(settle_rows))
 }
 
-type EncodedSeatBatch = (Vec<u8>, Vec<crate::machine::MachineEvent>);
+type EncodedSeatBatch = (Vec<u8>, Vec<script::native::seat_rows::SeatMachineEvent>);
 
 fn encode_seat_batch(
     ipc: &mut crate::wire::IsolateBuf,
-    rows: &[(script::shim::InteractReq, crate::machine::CapturedLineage)],
+    rows: &[(
+        script::interact::InteractReq,
+        crate::machine::CapturedLineage,
+    )],
     dropped: &mut usize,
 ) -> Result<Option<EncodedSeatBatch>, String> {
-    let pending_stops = crate::api_session::pending_stop_intents();
+    let pending_stops = crate::api_v2::api_session::pending_stop_intents();
     if !crate::machine::has_pending_seat_batch()
         && rows.is_empty()
         && pending_stops.iter().all(Option::is_none)
@@ -539,8 +552,7 @@ fn encode_seat_batch(
         let has_control_work = carry.has_work();
         let starts = carry.starts?;
         let decisions = &carry.decisions;
-        let max_rows =
-            crate::wire::MAX_SEAT_RESERVED_ROWS.saturating_add(crate::wire::MAX_SEAT_GAMEPLAY_ROWS);
+        let max_rows = MAX_SEAT_RESERVED_ROWS.saturating_add(MAX_SEAT_GAMEPLAY_ROWS);
         let mut requests = Vec::with_capacity(
             rows.len()
                 .saturating_add(pending_stops.iter().flatten().count())
@@ -558,7 +570,7 @@ fn encode_seat_batch(
                 continue;
             }
             let keep = match request {
-                script::shim::InteractReq::AbortWalk { request_id } => {
+                script::interact::InteractReq::AbortWalk { request_id } => {
                     if walk_releases[..walk_release_count].contains(request_id) {
                         false
                     } else if walk_release_count < walk_releases.len() {
@@ -570,18 +582,18 @@ fn encode_seat_batch(
                         false
                     }
                 }
-                script::shim::InteractReq::GatherStop { .. } if gather_stop => false,
-                script::shim::InteractReq::GatherStop { .. } => {
+                script::interact::InteractReq::GatherStop { .. } if gather_stop => false,
+                script::interact::InteractReq::GatherStop { .. } => {
                     gather_stop = true;
                     true
                 }
-                script::shim::InteractReq::CombatStop { .. } if combat_stop => false,
-                script::shim::InteractReq::CombatStop { .. } => {
+                script::interact::InteractReq::CombatStop { .. } if combat_stop => false,
+                script::interact::InteractReq::CombatStop { .. } => {
                     combat_stop = true;
                     true
                 }
-                script::shim::InteractReq::RunPolicyOverride { .. } if run_policy => false,
-                script::shim::InteractReq::RunPolicyOverride { .. } => {
+                script::interact::InteractReq::RunPolicyOverride { .. } if run_policy => false,
+                script::interact::InteractReq::RunPolicyOverride { .. } => {
                     run_policy = true;
                     true
                 }
@@ -613,7 +625,7 @@ fn encode_seat_batch(
             if seat_interact_is_reserved(request) || lineage.dropped {
                 continue;
             }
-            if gameplay_rows < crate::wire::MAX_SEAT_GAMEPLAY_ROWS {
+            if gameplay_rows < MAX_SEAT_GAMEPLAY_ROWS {
                 gameplay_rows += 1;
                 requests.push(crate::wire::SeatInteractRequest {
                     lineage: lineage.lineage,
@@ -646,7 +658,7 @@ fn take_seat_interact_overflow(
     tick: u64,
     generation: u64,
 ) -> usize {
-    match super::super::lineage_v8::take_interact_overflow(runtime) {
+    match crate::materialize::lineage_v8::take_interact_overflow(runtime) {
         Ok(dropped) => dropped,
         Err(error) => {
             let _ = out.send(ThreadMsg::TickError {
@@ -730,12 +742,12 @@ struct AfterTick {
 
 /// The user `Paint.end` record. Read on its own terms: a malformed record
 /// is logged without losing the rest of the after-tick read.
-struct PaintRecord(Result<Option<script::shim::ScriptPaint>, String>);
+struct PaintRecord(Result<Option<script::paint::ScriptPaint>, String>);
 
 impl<'de> serde::Deserialize<'de> for PaintRecord {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         Ok(Self(
-            Option::<script::shim::ScriptPaint>::deserialize(d).map_err(|e| e.to_string()),
+            Option::<script::paint::ScriptPaint>::deserialize(d).map_err(|e| e.to_string()),
         ))
     }
 }
@@ -752,7 +764,7 @@ fn finish_tick(
     script_paint: bool,
     suppress_user_callbacks: bool,
     teardown: &Mutex<TeardownState>,
-    last_paint: &mut Option<std::sync::Arc<script::shim::ScriptPaint>>,
+    last_paint: &mut Option<std::sync::Arc<script::paint::ScriptPaint>>,
     paint_generation: &std::sync::atomic::AtomicU64,
     last_ignored: &mut Vec<String>,
 ) -> Option<String> {
@@ -813,7 +825,7 @@ fn finish_tick(
     let frame = if script_paint {
         paint.map(script::canvas::compose_paint)
     } else {
-        Some(script::shim::ScriptPaint::default())
+        Some(script::paint::ScriptPaint::default())
     };
     if let Some(frame) = frame {
         forward_paint_if_changed(out, n, generation, last_paint, paint_generation, frame);
@@ -821,7 +833,7 @@ fn finish_tick(
     if !suppress_user_callbacks {
         pump_event_loop(runtime, out, n, generation, teardown);
     }
-    if super::super::lineage_v8::take_foreign_diagnostic(runtime) {
+    if crate::materialize::lineage_v8::take_foreign_diagnostic(runtime) {
         let _ = out.send(ThreadMsg::Log(
             "foreign async context encountered; interact ancestry falls back to the active hook or root"
                 .to_string(),
@@ -833,7 +845,7 @@ fn finish_tick(
 /// ScriptRunner.stop's flag and bounded reason, read off the host handle
 /// through V8 (no script).
 fn requested_stop(runtime: &mut Runtime) -> Option<String> {
-    super::super::lineage_v8::enter_root(runtime, |runtime| {
+    crate::materialize::lineage_v8::enter_root(runtime, |runtime| {
         let scope = &mut runtime.deno_runtime().handle_scope();
         let global = scope.get_current_context().global(scope);
         let host_key = key_string(scope, "__rs2b0t_host").ok()?;
@@ -867,14 +879,15 @@ fn call_interruptible<T, E>(
     teardown: &Mutex<TeardownState>,
     call: impl FnOnce(&mut Runtime) -> Result<T, E>,
 ) -> Result<T, E> {
-    let result = super::super::lineage_v8::enter_root(runtime, call);
+    let result = crate::materialize::lineage_v8::enter_root(runtime, call);
     let direct_termination = runtime
         .deno_runtime()
         .v8_isolate()
         .is_execution_terminating();
     let interrupted = teardown.lock().unwrap().execution_interrupt.is_some();
     let consumed_here = interrupted
-        && (direct_termination || super::super::lineage_v8::eval::<()>(runtime, "void 0").is_ok());
+        && (direct_termination
+            || crate::materialize::lineage_v8::eval::<()>(runtime, "void 0").is_ok());
     if consumed_here {
         if let Some(interrupt) = &mut teardown.lock().unwrap().execution_interrupt {
             interrupt.consumed = true;
@@ -957,7 +970,7 @@ impl Runner {
         };
         self.start_ok |= !is_loop && err.is_none();
         if !is_loop && err.is_none() {
-            crate::recovery_startup_complete();
+            crate::runtime::recovery_hints_v8::startup_complete();
         }
         match err {
             Some(e) => {
@@ -1112,7 +1125,7 @@ fn run_tick_phases(
 
 /// Sample recoveryAnchor on the isolate thread. Invalid/missing/throw → none.
 fn eval_recovery_anchor(runtime: &mut Runtime) -> Option<(i32, i32, i32)> {
-    let value: Result<Option<Vec<i32>>, rustyscript::Error> = super::super::lineage_v8::eval(
+    let value: Result<Option<Vec<i32>>, rustyscript::Error> = crate::materialize::lineage_v8::eval(
         runtime,
         r#"(() => {
                 try {
@@ -1252,9 +1265,13 @@ fn extends_stale_window(cmd: &IsolateCmd, generation: u64, latest: &mut u64) -> 
         IsolateCmd::Tick {
             tick,
             generation: g,
+            mode,
             ..
         } => {
-            if *g == generation {
+            // A queued seat page keeps the window open and raises nothing:
+            // the skip drops game ticks and evidence wakes, never the page
+            // that carries an accepted seat answer.
+            if *g == generation && !matches!(mode, TickMode::SeatPage { .. }) {
                 *latest = (*latest).max(*tick);
             }
             true
@@ -1272,37 +1289,37 @@ fn sync_work_freeze(applied: &mut bool, frozen: bool) {
     }
     *applied = frozen;
     if frozen {
-        crate::periodic_bank::on_pause();
-        crate::cake_stall::on_pause();
-        crate::walk_wait::on_pause();
-        crate::inspect_wait::on_pause();
+        crate::compat::periodic_bank::on_pause();
+        crate::compat::cake_stall::on_pause();
+        crate::scene::walk_wait::on_pause();
+        crate::scene::inspect_wait::on_pause();
         crate::machine::on_pause();
-        crate::hunt_fight::on_pause();
-        crate::hunt_lair::on_pause();
-        crate::hunt_leave::on_pause();
-        crate::hunt_key::on_pause();
-        crate::hunt_cell::on_pause();
-        crate::hunt_bank::on_pause();
-        crate::quest_journal::on_pause();
-        crate::clue::on_pause();
+        crate::compat::hunt_fight::on_pause();
+        crate::compat::hunt_lair::on_pause();
+        crate::compat::hunt_leave::on_pause();
+        crate::compat::hunt_key::on_pause();
+        crate::compat::hunt_cell::on_pause();
+        crate::compat::hunt_bank::on_pause();
+        crate::compat::quest_journal::on_pause();
+        crate::compat::clue::on_pause();
     } else {
-        crate::periodic_bank::on_resume();
-        crate::cake_stall::on_resume();
-        crate::walk_wait::on_resume();
-        crate::inspect_wait::on_resume();
+        crate::compat::periodic_bank::on_resume();
+        crate::compat::cake_stall::on_resume();
+        crate::scene::walk_wait::on_resume();
+        crate::scene::inspect_wait::on_resume();
         crate::machine::on_resume();
-        crate::hunt_fight::on_resume();
-        crate::hunt_lair::on_resume();
-        crate::hunt_leave::on_resume();
-        crate::hunt_key::on_resume();
-        crate::hunt_cell::on_resume();
-        crate::hunt_bank::on_resume();
-        crate::quest_journal::on_resume();
-        crate::clue::on_resume();
+        crate::compat::hunt_fight::on_resume();
+        crate::compat::hunt_lair::on_resume();
+        crate::compat::hunt_leave::on_resume();
+        crate::compat::hunt_key::on_resume();
+        crate::compat::hunt_cell::on_resume();
+        crate::compat::hunt_bank::on_resume();
+        crate::compat::quest_journal::on_resume();
+        crate::compat::clue::on_resume();
     }
     // Frozen `ScriptContext.resume` shifts parked waits by the paused span
     // (`ScriptContext.ts:101-117`).
-    crate::wait_clock::set_paused(frozen, Instant::now());
+    crate::runtime::wait_clock::set_paused(frozen, Instant::now());
 }
 
 /// One broker delivery held for the script's next tick.
@@ -1341,7 +1358,7 @@ fn tick_loop(
     cmds: CmdQueue,
     out: Sender<ThreadMsg>,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    compat_journal: Option<std::sync::Arc<crate::quest_journal::CompatJournalLease>>,
+    compat_journal: Option<std::sync::Arc<crate::compat::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     proof: std::sync::Arc<TeardownProofInner>,
@@ -1349,14 +1366,16 @@ fn tick_loop(
     events_consumed: bool,
     compat: bool,
     mut execution: Option<api::identity::ExecutionId>,
-    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
+    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
+        crate::runtime::memory_profile::Counters,
+    >,
 ) {
     let _finish = TickLoopFinish(proof.clone());
     // Locals drop before the `runtime` parameter: machine rows (and any
     // V8 handles they hold) never outlive the isolate.
     let _machines = MachinesStop;
     if let Some(lease) = compat_journal.as_ref() {
-        crate::quest_journal::bind_compat_runtime(lease.clone());
+        crate::compat::quest_journal::bind_compat_runtime(lease.clone());
     }
     #[cfg(feature = "memory-profile")]
     let mut last_heap_sample = None::<Instant>;
@@ -1374,11 +1393,11 @@ fn tick_loop(
     // Host-owned hold gate (SEC-004): set from the posted FlatBuffer
     // snapshot, never from a JS-writable `__rs2b0t_host.hold`.
     let mut host_hold = false;
-    let mut event_producer = crate::events::NativeEventProducer::new();
+    let mut event_producer = crate::scene::events::NativeEventProducer::new();
     // One reusable encode buffer for this V8 isolate's interact batches
     // (`reset` between messages). Paint frames cross typed, not encoded.
     let mut ipc = crate::wire::IsolateBuf::new();
-    let mut last_forwarded_paint: Option<std::sync::Arc<script::shim::ScriptPaint>> = None;
+    let mut last_forwarded_paint: Option<std::sync::Arc<script::paint::ScriptPaint>> = None;
     // The ignore list last forwarded; the host starts from the same empty
     // list, so a bot without one never sends it.
     let mut last_ignored_randoms: Vec<String> = Vec::new();
@@ -1421,19 +1440,19 @@ fn tick_loop(
                         // A native terminal may share this snapshot with
                         // its family's final page. Make the page visible
                         // before the seat settles the JS promise.
-                        crate::observed::apply(&snap);
+                        crate::scene::observed::apply(&snap);
                         if let Err(error) = crate::machine::on_snapshot(&snap) {
                             let _ = out.send(ThreadMsg::Log(format!("seat page: {error}")));
                         }
-                        super::reach_query::apply(&snap);
-                        crate::walk_wait::on_snapshot(&snap);
-                        crate::inspect_wait::on_snapshot(&snap);
+                        crate::materialize::reach_query::apply(&snap);
+                        crate::scene::walk_wait::on_snapshot(&snap);
+                        crate::scene::inspect_wait::on_snapshot(&snap);
                         if let Some((seq, inspect_generation)) =
-                            crate::inspect_wait::take_pending_ack()
+                            crate::scene::inspect_wait::take_pending_ack()
                         {
                             let generation =
                                 work_generation.load(std::sync::atomic::Ordering::Acquire);
-                            let req = script::shim::InteractReq::InspectAck {
+                            let req = script::interact::InteractReq::InspectAck {
                                 seq,
                                 generation: inspect_generation,
                             };
@@ -1466,29 +1485,29 @@ fn tick_loop(
                                 });
                             }
                         }
-                        crate::reach::on_snapshot(&snap);
+                        crate::compat::reach::on_snapshot(&snap);
                         if snap.has_hold() {
                             host_hold = snap.hold();
-                            crate::periodic_bank::on_hold(host_hold);
-                            crate::cake_stall::on_hold(host_hold);
-                            crate::walk_wait::on_hold(host_hold);
-                            crate::inspect_wait::on_hold(host_hold);
+                            crate::compat::periodic_bank::on_hold(host_hold);
+                            crate::compat::cake_stall::on_hold(host_hold);
+                            crate::scene::walk_wait::on_hold(host_hold);
+                            crate::scene::inspect_wait::on_hold(host_hold);
                             crate::machine::on_hold(host_hold);
-                            crate::hunt_fight::on_hold(host_hold);
-                            crate::hunt_lair::on_hold(host_hold);
-                            crate::hunt_leave::on_hold(host_hold);
-                            crate::hunt_key::on_hold(host_hold);
-                            crate::hunt_cell::on_hold(host_hold);
-                            crate::hunt_bank::on_hold(host_hold);
-                            crate::quest_journal::on_hold(host_hold);
-                            crate::clue::on_hold(host_hold);
+                            crate::compat::hunt_fight::on_hold(host_hold);
+                            crate::compat::hunt_lair::on_hold(host_hold);
+                            crate::compat::hunt_leave::on_hold(host_hold);
+                            crate::compat::hunt_key::on_hold(host_hold);
+                            crate::compat::hunt_cell::on_hold(host_hold);
+                            crate::compat::hunt_bank::on_hold(host_hold);
+                            crate::compat::quest_journal::on_hold(host_hold);
+                            crate::compat::clue::on_hold(host_hold);
                         }
                         if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                             let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
                         } else {
                             if snap.has_chat_lines() {
                                 if let Err(e) =
-                                    super::super::chatbox_v8::ingest_posted(&mut runtime)
+                                    crate::materialize::chatbox_v8::ingest_posted(&mut runtime)
                                 {
                                     let _ =
                                         out.send(ThreadMsg::Log(format!("chatbox snapshot: {e}")));
@@ -1511,7 +1530,7 @@ fn tick_loop(
                 Ok(rows) => {
                     for row in rows {
                         let event = match row {
-                            script::shim::InteractReq::ChannelMessage {
+                            script::interact::InteractReq::ChannelMessage {
                                 channel_id,
                                 sender,
                                 data,
@@ -1529,7 +1548,7 @@ fn tick_loop(
                                     continue;
                                 }
                             },
-                            script::shim::InteractReq::ChannelStatus {
+                            script::interact::InteractReq::ChannelStatus {
                                 channel_id,
                                 message,
                             } => ChannelEvent::Refused {
@@ -1558,8 +1577,8 @@ fn tick_loop(
                     )));
                 }
             },
-            IsolateCmd::Loadouts(rows) => super::loadout_v8::post(rows),
-            IsolateCmd::RecoveryHints(hints) => crate::post_recovery_hints(hints),
+            IsolateCmd::Loadouts(rows) => crate::materialize::loadout_v8::post(rows),
+            IsolateCmd::RecoveryHints(hints) => crate::runtime::recovery_hints_v8::post(hints),
             IsolateCmd::Settings(bag) => {
                 if let Err(e) = materialize_settings_bag(&mut runtime, &bag) {
                     let _ = out.send(ThreadMsg::Log(format!("settings: {e}")));
@@ -1570,8 +1589,13 @@ fn tick_loop(
                 generation,
                 input_identity,
                 evidence_sequence,
-                wait_only,
+                mode,
             } => {
+                let wait_only = mode != TickMode::Full;
+                let seat_page = match mode {
+                    TickMode::SeatPage { release_floor } => Some(release_floor),
+                    TickMode::Full | TickMode::WaitOnly => None,
+                };
                 if !wait_only
                     && session_held
                     && generation == work_generation.load(std::sync::atomic::Ordering::Acquire)
@@ -1605,6 +1629,12 @@ fn tick_loop(
                         report_errors: false,
                     });
                     continue;
+                }
+                #[cfg(feature = "test-hooks")]
+                if seat_page.is_some() {
+                    if let Ok(mut state) = teardown.lock() {
+                        state.executed_seat_pages += 1;
+                    }
                 }
                 let start = Instant::now();
                 let walk_outcome_seq_at_tick = current_observed_walk_outcome_seq();
@@ -1658,32 +1688,44 @@ fn tick_loop(
                         )
                     });
                 }
-                let script_interrupt = if machines_halted(&teardown) {
-                    false
-                } else {
-                    call_interruptible(&mut runtime, &teardown, |runtime| {
-                        runtime.call_function_immediate::<bool>(
-                            None,
-                            "__rs2b0t_interrupt_pending",
-                            json_args!(),
-                        )
-                    })
-                    .unwrap_or(false)
-                };
-                crate::event_signal::set(script_interrupt);
+                // A seat page dispatch runs no script phase: it neither
+                // samples the interrupt flag nor moves the tick's event signal.
+                if seat_page.is_none() {
+                    let script_interrupt = if machines_halted(&teardown) {
+                        false
+                    } else {
+                        call_interruptible(&mut runtime, &teardown, |runtime| {
+                            runtime.call_function_immediate::<bool>(
+                                None,
+                                "__rs2b0t_interrupt_pending",
+                                json_args!(),
+                            )
+                        })
+                        .unwrap_or(false)
+                    };
+                    crate::scene::event_signal::set(script_interrupt);
+                }
                 // Normal ticks step every machine; snapshot-only dispatch
-                // rechecks opted-in rows without advancing tick-owned waits.
+                // rechecks opted-in rows without advancing tick-owned waits;
+                // a seat page steps only the native rows that page changed.
+                let mut stepped = crate::machine::SteppedRows::default();
                 if !machines_halted(&teardown) {
                     let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
-                        if wait_only {
-                            super::machine_v8::snapshot_step(
+                        if seat_page.is_some() {
+                            stepped = crate::materialize::machine_v8::seat_step(runtime, &|| {
+                                machines_halted(&teardown)
+                            });
+                        } else if wait_only {
+                            crate::materialize::machine_v8::snapshot_step(
                                 runtime,
                                 n,
                                 evidence_sequence,
                                 &|| machines_halted(&teardown),
                             );
                         } else {
-                            super::machine_v8::step(runtime, &|| machines_halted(&teardown));
+                            crate::materialize::machine_v8::step(runtime, &|| {
+                                machines_halted(&teardown)
+                            });
                         }
                         Ok::<(), rustyscript::Error>(())
                     });
@@ -1771,24 +1813,25 @@ fn tick_loop(
                             .saturating_sub(output.settled);
                     }
                     let (lineages, mut dropped) = if execution.is_some() {
-                        let lineages =
-                            match super::super::lineage_v8::take_interact_lineages(&mut runtime) {
-                                Ok(lineages) => lineages,
-                                Err(error) => {
-                                    let _ = out.send(ThreadMsg::TickError {
-                                        tick: n,
-                                        generation,
-                                        message: format!("interact lineage: {error}"),
-                                    });
-                                    Vec::new()
-                                }
-                            };
+                        let lineages = match crate::materialize::lineage_v8::take_interact_lineages(
+                            &mut runtime,
+                        ) {
+                            Ok(lineages) => lineages,
+                            Err(error) => {
+                                let _ = out.send(ThreadMsg::TickError {
+                                    tick: n,
+                                    generation,
+                                    message: format!("interact lineage: {error}"),
+                                });
+                                Vec::new()
+                            }
+                        };
                         (
                             lineages,
                             take_seat_interact_overflow(&mut runtime, &out, n, generation),
                         )
                     } else {
-                        super::super::lineage_v8::clear_interact_lineages(&mut runtime);
+                        crate::materialize::lineage_v8::clear_interact_lineages(&mut runtime);
                         crate::machine::drop_ops();
                         (Vec::new(), 0)
                     };
@@ -1827,11 +1870,11 @@ fn tick_loop(
                             };
                         if !v2_native && runner.poll(&mut runtime, &out, n, generation) && compat {
                             rows.push((
-                                script::shim::InteractReq::LoopSettled,
+                                script::interact::InteractReq::LoopSettled,
                                 crate::machine::CapturedLineage::default(),
                             ));
                         }
-                        if let Some(policy) = super::run_policy_v8::take_pending() {
+                        if let Some(policy) = crate::materialize::run_policy_v8::take_pending() {
                             rows.push((policy, crate::machine::CapturedLineage::default()));
                         }
                         stamp_mouse_gesture_lineage_pairs(
@@ -1839,7 +1882,10 @@ fn tick_loop(
                             input_identity,
                             &mut mouse_gestures,
                         );
-                        crate::inspect_wait::filter_public_inspect_wire(&mut rows, |(req, _)| req);
+                        crate::scene::inspect_wait::filter_public_inspect_wire(
+                            &mut rows,
+                            |(req, _)| req,
+                        );
                         dropped = dropped.saturating_add(append_seat_wait_facts(
                             &mut rows,
                             output.enqueued,
@@ -1847,13 +1893,13 @@ fn tick_loop(
                         ));
                         seat_rows = Some(rows);
                     } else {
-                        let mut lifecycle: Vec<script::shim::InteractReq> = if v2_native {
+                        let mut lifecycle: Vec<script::interact::InteractReq> = if v2_native {
                             output
                                 .rows
                                 .into_iter()
                                 .filter_map(|row| match row {
                                     crate::shim::MaybeInteractReq::Req(
-                                        req @ script::shim::InteractReq::LoopSettled,
+                                        req @ script::interact::InteractReq::LoopSettled,
                                     ) => Some(req),
                                     _ => None,
                                 })
@@ -1862,9 +1908,9 @@ fn tick_loop(
                             Vec::new()
                         };
                         if !v2_native && runner.poll(&mut runtime, &out, n, generation) && compat {
-                            lifecycle.push(script::shim::InteractReq::LoopSettled);
+                            lifecycle.push(script::interact::InteractReq::LoopSettled);
                         }
-                        if let Some(policy) = super::run_policy_v8::take_pending() {
+                        if let Some(policy) = crate::materialize::run_policy_v8::take_pending() {
                             lifecycle.push(policy);
                         }
                         legacy_lifecycle = Some(lifecycle);
@@ -1934,6 +1980,9 @@ fn tick_loop(
                     // A callback or operator action claimed this execution:
                     // no later user phase may start through that boundary.
                     Ok(())
+                } else if seat_page.is_some() {
+                    // No pump, listener, loop or runner: the page's rows only.
+                    Ok(())
                 } else if wait_only {
                     call_interruptible(&mut runtime, &teardown, |runtime| {
                         runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))
@@ -1998,16 +2047,35 @@ fn tick_loop(
                 // unrelated to the lifecycle single-flight.
                 if !machines_halted(&teardown) {
                     let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
-                        super::machine_v8::resume_callbacks(runtime, &|| {
-                            machines_halted(&teardown)
-                        });
+                        if seat_page.is_some() {
+                            crate::materialize::machine_v8::resume_callbacks_seat(
+                                runtime,
+                                &stepped,
+                                &|| machines_halted(&teardown),
+                            );
+                        } else {
+                            crate::materialize::machine_v8::resume_callbacks(runtime, &|| {
+                                machines_halted(&teardown)
+                            });
+                        }
                         Ok::<(), rustyscript::Error>(())
                     });
                 }
                 // A row that ended here settles its machine wait in this tick.
                 if !machines_halted(&teardown) {
                     let settled = call_interruptible(&mut runtime, &teardown, |runtime| {
-                        super::machine_v8::settle_waits(runtime, &|| machines_halted(&teardown))?;
+                        match seat_page {
+                            Some(release_floor) => {
+                                crate::materialize::machine_v8::settle_waits_seat(
+                                    runtime,
+                                    release_floor,
+                                    &|| machines_halted(&teardown),
+                                )?
+                            }
+                            None => crate::materialize::machine_v8::settle_waits(runtime, &|| {
+                                machines_halted(&teardown)
+                            })?,
+                        }
                         runtime.block_on_event_loop(
                             rustyscript::deno_core::PollEventLoopOptions::default(),
                             Some(Duration::from_millis(10)),
@@ -2021,7 +2089,7 @@ fn tick_loop(
                         });
                     }
                 }
-                if !v2_native && !machines_halted(&teardown) {
+                if !v2_native && seat_page.is_none() && !machines_halted(&teardown) {
                     // A loop that finished in the drain frees the
                     // single-flight for the next tick.
                     let settled = runner.poll(&mut runtime, &out, n, generation);
@@ -2050,7 +2118,7 @@ fn tick_loop(
                     .saturating_sub(taken.settled);
                 taken.log_rejected(&out, n, generation);
                 let lineages = if execution.is_some() {
-                    match super::super::lineage_v8::take_interact_lineages(&mut runtime) {
+                    match crate::materialize::lineage_v8::take_interact_lineages(&mut runtime) {
                         Ok(lineages) => lineages,
                         Err(error) => {
                             let _ = out.send(ThreadMsg::TickError {
@@ -2062,7 +2130,7 @@ fn tick_loop(
                         }
                     }
                 } else {
-                    super::super::lineage_v8::clear_interact_lineages(&mut runtime);
+                    crate::materialize::lineage_v8::clear_interact_lineages(&mut runtime);
                     Vec::new()
                 };
                 let mut dropped = if execution.is_some() {
@@ -2084,7 +2152,7 @@ fn tick_loop(
                                 Vec::new()
                             }
                         };
-                    if let Some(policy) = super::run_policy_v8::take_pending() {
+                    if let Some(policy) = crate::materialize::run_policy_v8::take_pending() {
                         rows.push((policy, crate::machine::CapturedLineage::default()));
                     }
                     stamp_mouse_gesture_lineage_pairs(
@@ -2092,17 +2160,20 @@ fn tick_loop(
                         input_identity,
                         &mut mouse_gestures,
                     );
-                    crate::inspect_wait::filter_public_inspect_wire(&mut rows, |(req, _)| req);
+                    crate::scene::inspect_wait::filter_public_inspect_wire(
+                        &mut rows,
+                        |(req, _)| req,
+                    );
                     if v2_native
-                        && rows
-                            .iter()
-                            .any(|(req, _)| matches!(req, script::shim::InteractReq::LoopSettled))
+                        && rows.iter().any(|(req, _)| {
+                            matches!(req, script::interact::InteractReq::LoopSettled)
+                        })
                     {
                         iteration_completed = true;
                     }
                     if loop_settled {
                         rows.push((
-                            script::shim::InteractReq::LoopSettled,
+                            script::interact::InteractReq::LoopSettled,
                             crate::machine::CapturedLineage::default(),
                         ));
                     }
@@ -2132,20 +2203,20 @@ fn tick_loop(
                     log_seat_interact_drops(&out, dropped);
                 } else {
                     let mut reqs = crate::machine::merge_ops(taken.rows);
-                    if let Some(policy) = super::run_policy_v8::take_pending() {
+                    if let Some(policy) = crate::materialize::run_policy_v8::take_pending() {
                         reqs.push(policy);
                     }
                     stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
-                    crate::inspect_wait::filter_public_inspect_wire(&mut reqs, |req| req);
+                    crate::scene::inspect_wait::filter_public_inspect_wire(&mut reqs, |req| req);
                     if v2_native
                         && reqs
                             .iter()
-                            .any(|req| matches!(req, script::shim::InteractReq::LoopSettled))
+                            .any(|req| matches!(req, script::interact::InteractReq::LoopSettled))
                     {
                         iteration_completed = true;
                     }
                     if loop_settled {
-                        reqs.push(script::shim::InteractReq::LoopSettled);
+                        reqs.push(script::interact::InteractReq::LoopSettled);
                     }
                     append_wait_facts(&mut reqs, taken.enqueued, taken.settled);
                     if !reqs.is_empty() {
@@ -2231,7 +2302,7 @@ fn tick_loop(
                         pending.retain(|cmd| {
                             at += 1;
                             at > window
-                                || !matches!(cmd, IsolateCmd::Tick { generation: g, .. } if *g == generation)
+                                || !matches!(cmd, IsolateCmd::Tick { generation: g, mode, .. } if *g == generation && !matches!(mode, TickMode::SeatPage { .. }))
                         });
                         let _ =
                             out.send(ThreadMsg::Log(format!("skipped stale ticks -> {latest}")));
@@ -2251,7 +2322,7 @@ fn tick_loop(
                 }
             }
             IsolateCmd::RearmDiscardedWalk(token) => {
-                crate::walk_wait::rearm_discarded(token);
+                crate::scene::walk_wait::rearm_discarded(token);
             }
             IsolateCmd::AlignExecution(owner_execution) => {
                 execution = Some(owner_execution);
@@ -2268,32 +2339,32 @@ fn tick_loop(
                     lease.set_generation(reset_generation);
                     lease.revoke();
                 }
-                crate::quest_journal::on_reset();
+                crate::compat::quest_journal::on_reset();
                 // The scene caches belong to the ended connection: the host
                 // posts a keyframe for the next one.
-                crate::observed::on_reset();
-                super::super::entity_pages::reset(&mut runtime);
-                if let Err(e) = super::super::chatbox_v8::reset_session(&mut runtime) {
+                crate::scene::observed::on_reset();
+                crate::materialize::entity_pages::reset(&mut runtime);
+                if let Err(e) = crate::materialize::chatbox_v8::reset_session(&mut runtime) {
                     let _ = out.send(ThreadMsg::Log(format!("chatbox reset: {e}")));
                 }
                 super::reach_query::on_reset();
                 if !keep_work {
-                    crate::cake_stall::on_reset();
-                    crate::walk_wait::on_reset();
-                    crate::inspect_wait::on_reset();
-                    crate::death_recovery::on_reset();
+                    crate::compat::cake_stall::on_reset();
+                    crate::scene::walk_wait::on_reset();
+                    crate::scene::inspect_wait::on_reset();
+                    crate::compat::death_recovery::on_reset();
                     crate::machine::on_reset();
-                    crate::hunt_fight::on_reset();
-                    crate::hunt_lair::on_reset();
-                    crate::hunt_leave::on_reset();
-                    crate::hunt_key::on_reset();
-                    crate::hunt_cell::on_reset();
-                    crate::hunt_bank::on_reset();
-                    crate::clue::on_reset();
-                    crate::duel::on_reset();
+                    crate::compat::hunt_fight::on_reset();
+                    crate::compat::hunt_lair::on_reset();
+                    crate::compat::hunt_leave::on_reset();
+                    crate::compat::hunt_key::on_reset();
+                    crate::compat::hunt_cell::on_reset();
+                    crate::compat::hunt_bank::on_reset();
+                    crate::compat::clue::on_reset();
+                    crate::compat::duel::on_reset();
                 }
                 crate::machine::set_execution(execution);
-                crate::event_signal::clear();
+                crate::scene::event_signal::clear();
                 // Held channel deliveries stay: the channel membership
                 // belongs to the script run, not to the connection.
                 event_producer.reset();
@@ -2302,7 +2373,7 @@ fn tick_loop(
                     // events that were staged but not yet flushed. A
                     // reconnect must not replay them into the new
                     // session, and must not leave the trim window full.
-                    let _ = super::super::lineage_v8::eval::<()>(
+                    let _ = crate::materialize::lineage_v8::eval::<()>(
                         &mut runtime,
                         "globalThis.__rs2b0t_pending_native_event_batch = null",
                     );
@@ -2318,24 +2389,24 @@ fn tick_loop(
                     crate::machine::on_session_hold(true);
                     sync_work_freeze(&mut work_frozen, true);
                     for token in undelivered_walks {
-                        crate::walk_wait::rearm_discarded(token);
+                        crate::scene::walk_wait::rearm_discarded(token);
                     }
                 } else if v2_native {
-                    let _ = super::super::lineage_v8::eval::<()>(
+                    let _ = crate::materialize::lineage_v8::eval::<()>(
                         &mut runtime,
                         "if (typeof globalThis.__rs_v2_reset_session === 'function') globalThis.__rs_v2_reset_session()",
                     );
                     // Machine rows are gone: settle their awaits now, so a
                     // stale promise cannot take a later snapshot's facts.
                     if crate::machine::any_settled() {
-                        let _ = super::super::lineage_v8::call_function_immediate::<()>(
+                        let _ = crate::materialize::lineage_v8::call_function_immediate::<()>(
                             &mut runtime,
                             None,
                             "__rs2b0t_settle_machines",
                             json_args!(),
                         );
                     }
-                    if let Err(e) = super::super::lineage_v8::block_on_event_loop(
+                    if let Err(e) = crate::materialize::lineage_v8::block_on_event_loop(
                         &mut runtime,
                         rustyscript::deno_core::PollEventLoopOptions::default(),
                         Some(Duration::from_millis(10)),
@@ -2345,7 +2416,7 @@ fn tick_loop(
                 }
                 // Connection-scoped rows queued during the reset drain go,
                 // machine ops with them.
-                let _ = super::super::lineage_v8::eval::<()>(
+                let _ = crate::materialize::lineage_v8::eval::<()>(
                     &mut runtime,
                     "globalThis.__rs2b0t_host.interact = []",
                 );
@@ -2354,10 +2425,10 @@ fn tick_loop(
                 // latest replacement in the new connection generation; this
                 // also covers a callback whose old-generation batch lost the
                 // race with ResetSession.
-                super::run_policy_v8::requeue_current();
+                crate::materialize::run_policy_v8::requeue_current();
                 clear_unconsumed_paint_click(&mut runtime);
-                super::paint_chrome::reset();
-                super::paint_jive::reset();
+                crate::materialize::paint_chrome::reset();
+                crate::materialize::paint_jive::reset();
                 // The host zeroed its parked-wait count at every reset; the
                 // waits still parked are counted again once, by the reset of
                 // the current generation (an older queued reset was followed
@@ -2367,12 +2438,11 @@ fn tick_loop(
                         == work_generation.load(std::sync::atomic::Ordering::Acquire)
                 {
                     if execution.is_some() {
-                        let wait_rows =
-                            parked_waits.min(crate::wire::MAX_SEAT_GAMEPLAY_ROWS as u32) as usize;
+                        let wait_rows = parked_waits.min(MAX_SEAT_GAMEPLAY_ROWS as u32) as usize;
                         let mut rows = Vec::with_capacity(wait_rows);
                         for _ in 0..wait_rows {
                             rows.push((
-                                script::shim::InteractReq::WaitEnqueued,
+                                script::interact::InteractReq::WaitEnqueued,
                                 crate::machine::CapturedLineage::default(),
                             ));
                         }
@@ -2393,8 +2463,10 @@ fn tick_loop(
                         }
                         log_seat_interact_drops(&out, dropped);
                     } else {
-                        let facts =
-                            vec![script::shim::InteractReq::WaitEnqueued; parked_waits as usize];
+                        let facts = vec![
+                            script::interact::InteractReq::WaitEnqueued;
+                            parked_waits as usize
+                        ];
                         let _ = out.send(ThreadMsg::Interact {
                             bytes: ipc.encode_interact_batch(&facts),
                             generation: reset_generation,
@@ -2441,7 +2513,7 @@ fn tick_loop(
                 {
                     continue;
                 }
-                super::paint_chrome::store_select(&key, &name);
+                crate::materialize::paint_chrome::store_select(&key, &name);
             }
             IsolateCmd::RecoveryAnchor { generation } => {
                 // Pause / generation still reject. host_hold freezes
@@ -2474,9 +2546,9 @@ fn tick_loop(
                 .unwrap_or(None)
                 {
                     Some((x, z, level)) => {
-                        script::shim::InteractReq::RecoveryAnchor { x, z, level }
+                        script::interact::InteractReq::RecoveryAnchor { x, z, level }
                     }
-                    None => script::shim::InteractReq::RecoveryAnchorNone,
+                    None => script::interact::InteractReq::RecoveryAnchorNone,
                 };
                 let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
                 let pause_interrupted = interrupt.is_some_and(|interrupt| {
@@ -2509,11 +2581,34 @@ fn tick_loop(
             }
             IsolateCmd::Probe(expr, reply) => {
                 let value: Result<serde_json::Value, String> =
-                    super::super::lineage_v8::eval(&mut runtime, expr).map_err(|e| e.to_string());
+                    crate::materialize::lineage_v8::eval(&mut runtime, expr)
+                        .map_err(|e| e.to_string());
                 let _ = reply.send(value);
             }
+            #[cfg(feature = "test-hooks")]
+            IsolateCmd::TestNoop => {}
+            #[cfg(feature = "test-hooks")]
+            IsolateCmd::TestCollectHeap(reply) => {
+                let isolate = runtime.deno_runtime().v8_isolate();
+                isolate.low_memory_notification();
+                let used_heap_size = isolate.get_heap_statistics().used_heap_size();
+                let _ = reply.send(used_heap_size);
+            }
+            #[cfg(feature = "test-hooks")]
+            IsolateCmd::TestBlock { release, entered } => {
+                {
+                    let (lock, cv) = &*entered;
+                    *lock.lock().unwrap() = true;
+                    cv.notify_all();
+                }
+                let (lock, cv) = &*release;
+                let mut open = lock.lock().unwrap();
+                while !*open {
+                    open = cv.wait(open).unwrap();
+                }
+            }
             IsolateCmd::Stop { invoke_hook } => {
-                crate::event_signal::clear();
+                crate::scene::event_signal::clear();
                 teardown_once(&mut runtime, &out, invoke_hook, &teardown, &proof);
                 break;
             }

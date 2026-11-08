@@ -336,7 +336,7 @@ CATALOG = Path(os.environ.get("NIGHTLY_CATALOG", str(ROOT / "rs2b0t")))
 NAV_SNAPSHOT = Path(os.environ.get("NIGHTLY_NAV_SNAPSHOT", str(ROOT / "nav-snapshot")))
 NAV_FIXTURE = Path(os.environ.get(
     "NIGHTLY_NAV_FIXTURE",
-    str(ROOT / "fixtures" / "274bot-289-v17.navpack"),
+    str(ROOT / "fixtures" / "274bot-289-v18.navpack"),
 ))
 # The old inspection capture the host-play route-inspect test compares
 # against. The test's built-in default path exists only on merlot, so each
@@ -2710,7 +2710,7 @@ def lane_asset_env() -> dict:
     """The local test inputs each test lane gets, as on Linux CI.
 
     GitHub CI and the merge-check script set the three nav pack names to
-    the one v17 reference pack for every test lane. The engine content
+    the one v18 reference pack for every test lane. The engine content
     comes from the pristine copy. It exists before the lanes step. The
     per-step engine-run copy does not exist yet at that point. The
     snapshot root and the inspection baseline join only when the host

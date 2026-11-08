@@ -1,0 +1,1287 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "itexam",
+  "display_name": "Digsite Quest",
+  "required": [
+    "thieving:25"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 2,
+    "requirements": [
+      {
+        "id": "thieving:25",
+        "kind": {
+          "Skill": {
+            "skill": "thieving",
+            "level": 25
+          }
+        },
+        "at": "Start",
+        "source": "content/scripts/quests/quest_itexam/scripts/itexam_journal.rs2:5-25"
+      }
+    ],
+    "items": [],
+    "acquire": {
+      "acquire:orange-sample": [
+        {
+          "id": "fill-panning-tray",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "loc": "panning_point"
+            },
+            "op": "Look",
+            "anchor": {
+              "tile": [
+                3376,
+                3372,
+                0
+              ],
+              "source": "content/maps/m52_52.jm2:6072; pack/loc.pack:2364"
+            },
+            "radius": 12
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "tray_mud"
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "rock_sample2"
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "tray_mud"
+              }
+            }
+          },
+          "comment": "content/scripts/quests/quest_itexam/scripts/area_digsite.rs2:5-29",
+          "advances": false
+        },
+        {
+          "id": "search-panning-tray",
+          "kind": "interact",
+          "version": 1,
+          "args": {
+            "target": {
+              "held": "tray_mud"
+            },
+            "op": "Search"
+          },
+          "skip_if": {
+            "Not": {
+              "Fact": {
+                "kind": "has_item",
+                "version": 1,
+                "args": {
+                  "obj": "tray_mud"
+                }
+              }
+            }
+          },
+          "settle": {
+            "Fact": {
+              "kind": "has_item",
+              "version": 1,
+              "args": {
+                "obj": "tray_empty"
+              }
+            }
+          },
+          "comment": "content/scripts/quests/quest_itexam/scripts/area_digsite.rs2:34-68",
+          "advances": false
+        }
+      ]
+      ,
+      "acquire:opal": [
+        {"id":"fill-tray-for-opal","kind":"interact","version":1,"advances":false,"args":{"target":{"loc":"panning_point"},"op":"Look","anchor":{"tile":[3376,3372,0],"source":"content/maps/m52_52.jm2:6072"},"radius":12},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_mud"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"uncut_opal"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"opal"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_mud"}}},"comment":"content/scripts/quests/quest_itexam/scripts/area_digsite.rs2:5-29"},
+        {"id":"search-tray-for-opal","kind":"interact","version":1,"advances":false,"args":{"target":{"held":"tray_mud"},"op":"Search"},"skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_mud"}}}},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_empty"}}},"comment":"content/scripts/quests/quest_itexam/scripts/area_digsite.rs2:34-68"},
+        {"id":"cut-panned-opal","kind":"use_on","version":1,"advances":false,"args":{"item":"chisel","target":{"item":"uncut_opal"}},"skip_if":{"Not":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"uncut_opal"}}}},"settle":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"opal"}}},{"Fact":{"kind":"message","version":1,"args":{"any":["smash the Opal"]}}}]},"comment":"content/scripts/skill_crafting/scripts/gem/uncut_gem.rs2:1-5,28-63; content/scripts/skill_crafting/configs/gem/gem.dbrow:34-39"}
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": [
+      "obj:digplainletter",
+      "obj:recommendedletter",
+      "obj:rock_sample1",
+      "obj:rock_sample2",
+      "obj:rock_sample3",
+      "obj:tray_empty",
+      "obj:tray_mud",
+      "obj:cup_of_tea",
+      "obj:opal",
+      "obj:trowel",
+      "obj:specimen_jar",
+      "obj:specimen_brush"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:itexam",
+      "progress": {
+        "colour": {
+          "not_started": "itexam:0",
+          "in_progress": "itexam:stamping",
+          "complete": "itexam:done"
+        },
+        "rules": [
+          {
+            "stage": "itexam:find",
+            "all": [
+              "i need a find from the site to impress the archeological expert"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 5
+          },
+          {
+            "stage": "itexam:third",
+            "all": [
+              "i need to study for my third exam"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 4
+          },
+          {
+            "stage": "itexam:second",
+            "all": [
+              "i need to study for my second exam"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 3
+          },
+          {
+            "stage": "itexam:first",
+            "all": [
+              "i need to study for my first exam"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 2
+          },
+          {
+            "stage": "itexam:stamping",
+            "all": [
+              "i should take the letter the examiner has given me"
+            ],
+            "any": [],
+            "not": [],
+            "varp": 1
+          }
+        ],
+        "flags": [
+          {
+            "flag": "green-first",
+            "any": [
+              "i need to speak to the student in the green top about the exams. he gave me an answer"
+            ],
+            "all": []
+          },
+          {
+            "flag": "purple-first",
+            "any": [
+              "i need to speak to the student in the purple shirt about the exams. she gave me an answer"
+            ],
+            "all": []
+          },
+          {
+            "flag": "orange-first",
+            "any": [
+              "i need to speak to the student in the orange top about the exams. he gave me an answer"
+            ],
+            "all": []
+          },
+          {
+            "flag": "ready-second",
+            "any": [
+              "i should talk to the examiner to take my second exam"
+            ],
+            "all": []
+          },
+          {
+            "flag": "ready-third",
+            "any": [
+              "i should talk to the examiner to take my third exam"
+            ],
+            "all": []
+          },
+          {
+            "flag": "opal-needed",
+            "any": [
+              "i need to bring her an opal"
+            ],
+            "all": []
+          }
+        ],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "itexam:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "request-exam",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "examiner",
+                "anchor": {
+                  "tile": [
+                    3360,
+                    3343,
+                    0
+                  ],
+                  "source": "content/maps/m52_52.jm2:6728; pack/npc.pack:619"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Can I take an exam?"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "is": "in_progress"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/examiner.rs2:40-55",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itexam:stamping",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "stamp-letter",
+              "kind": "use_on",
+              "version": 1,
+              "args": {
+                "item": "digplainletter",
+                "target": {
+                  "npc": "curator"
+                },
+                "anchor": {
+                  "tile": [
+                    3255,
+                    3445,
+                    0
+                  ],
+                  "source": "content/maps/m50_53.jm2:12923; pack/npc.pack:647"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "recommendedletter"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "recommendedletter"
+                  }
+                }
+              },
+              "comment": "content/scripts/areas/area_varrock/scripts/curator.rs2:42-44,52-69",
+              "advances": false
+            },
+            {
+              "id": "submit-letter",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "examiner",
+                "anchor": {
+                  "tile": [
+                    3360,
+                    3343,
+                    0
+                  ],
+                  "source": "content/maps/m52_52.jm2:6728; pack/npc.pack:619"
+                },
+                "leash": 10,
+                "prefer": [
+                  "The study of gardening, planting and fruiting vegetation.",
+                  "Magic users, miners and their escorts.",
+                  "Heat-resistant clothing to be worn at all times."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "any": [
+                      "itexam:first"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/examiner.rs2:68-77,174-203,204-228,229-253",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itexam:first",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "steal-green-sample",
+              "kind": "thieve",
+              "version": 1,
+              "args": {
+                "target": {
+                  "npc": "digworkman1"
+                },
+                "until": {
+                  "obj": "rock_sample1",
+                  "qty": 1
+                },
+                "anchor": {
+                  "tile": [
+                    3359,
+                    3401,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7415; pack/npc.pack:614"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "rock_sample1"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itexam",
+                        "flag": "green-first"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "rock_sample1"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/digsite_workman.rs2:45-95",
+              "advances": false
+            },
+            {
+              "id": "ask-green-student",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student1",
+                "anchor": {
+                  "tile": [
+                    3359,
+                    3401,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7416; pack/npc.pack:616"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "green-first"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student1.rs2:30-48",
+              "advances": false
+            },
+            {
+              "id": "give-green-sample",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student1",
+                "anchor": {
+                  "tile": [
+                    3359,
+                    3401,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7416; pack/npc.pack:616"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "green-first"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "green-first"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student1.rs2:45-48,63-69",
+              "advances": true
+            },
+            {
+              "id": "search-purple-bush",
+              "kind": "interact",
+              "version": 1,
+              "args": {
+                "target": {
+                  "loc": "digsitebushsample"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    3357,
+                    3372,
+                    0
+                  ],
+                  "source": "content/maps/m52_52.jm2:5429; pack/loc.pack:2359"
+                },
+                "radius": 12
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "rock_sample3"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itexam",
+                        "flag": "purple-first"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "rock_sample3"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/area_digsite.rs2:79-90",
+              "advances": false
+            },
+            {
+              "id": "ask-purple-student",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student2",
+                "anchor": {
+                  "tile": [
+                    3348,
+                    3424,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7407; pack/npc.pack:618"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "purple-first"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student3.rs2:27-44",
+              "advances": false
+            },
+            {
+              "id": "give-purple-sample",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student2",
+                "anchor": {
+                  "tile": [
+                    3348,
+                    3424,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7407; pack/npc.pack:618"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "purple-first"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "purple-first"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student3.rs2:42-44,60-66",
+              "advances": true
+            },
+            {
+              "id": "ask-orange-student",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student3",
+                "anchor": {
+                  "tile": [
+                    3349,
+                    3410,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7409; pack/npc.pack:617"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "orange-first"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student2.rs2:30-47",
+              "advances": false
+            },
+            {"id":"buy-panning-tea","kind":"buy","version":1,"advances":false,"args":{"shop":{"npc":"tea_seller","anchor":{"tile":[3271,3411,0],"source":"content/maps/m51_53.jm2:6733; content/pack/npc.pack:596"}},"obj":"cup_of_tea","qty":1,"est_gp":10},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"cup_of_tea"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"rock_sample2"}}},{"Fact":{"kind":"flag","version":1,"args":{"quest":"itexam","flag":"orange-first"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"cup_of_tea"}}},"comment":"content/scripts/areas/area_varrock/configs/varrock.inv:179-186; varrock.npc:907-912; content/scripts/skill_cooking/configs/cooking_generic/cooking.obj:328-331; content/scripts/shop/scripts/shop.rs2:131-147,182-187. At base stock 10 × 1000 / 1000 = 10 coins."},
+            {"id":"take-panning-tray","kind":"interact","version":1,"advances":false,"args":{"target":{"ground":"tray_empty"},"op":"Take","anchor":{"tile":[3369,3378,0],"source":"content/maps/m52_52.jm2:6734-6735; content/pack/obj.pack:678"},"radius":2,"wait_if_missing":true},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_empty"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_mud"}}},{"Fact":{"kind":"has_item","version":1,"args":{"obj":"rock_sample2"}}},{"Fact":{"kind":"flag","version":1,"args":{"quest":"itexam","flag":"orange-first"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"tray_empty"}}},"comment":"content/maps/m52_52.jm2:6734-6735; content/pack/obj.pack:678."},
+            {
+              "id": "give-panning-guide-tea",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "panning_guide",
+                "anchor": {
+                  "tile": [
+                    3376,
+                    3377,
+                    0
+                  ],
+                  "source": "content/maps/m52_52.jm2:6732; pack/npc.pack:621"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "rock_sample2"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itexam",
+                        "flag": "orange-first"
+                      }
+                    }
+                  },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "has_item",
+                        "version": 1,
+                        "args": {
+                          "obj": "cup_of_tea"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/panning_guide.rs2:1-25",
+              "advances": false
+            },
+            {
+              "id": "pan-for-orange-sample",
+              "kind": "acquire",
+              "version": 1,
+              "args": {
+                "recipe": "acquire:orange-sample",
+                "max_restarts": 128
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "rock_sample2"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itexam",
+                        "flag": "orange-first"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "rock_sample2"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/area_digsite.rs2:5-68"
+            },
+            {
+              "id": "give-orange-sample",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student3",
+                "anchor": {
+                  "tile": [
+                    3349,
+                    3410,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7409; pack/npc.pack:617"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "orange-first"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "orange-first"
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student2.rs2:45-47,63-69",
+              "advances": true
+            },
+            {
+              "id": "pass-first-exam",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "examiner",
+                "anchor": {
+                  "tile": [
+                    3360,
+                    3343,
+                    0
+                  ],
+                  "source": "content/maps/m52_52.jm2:6728; pack/npc.pack:619"
+                },
+                "leash": 10,
+                "prefer": [
+                  "Yes, I certainly am.",
+                  "The study of the earth, its contents, and history.",
+                  "All that have passed the appropriate Earth Sciences exam.",
+                  "Gloves and boots to be worn at all times"
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "any": [
+                      "itexam:second"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/examiner.rs2:106-113,174-277",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itexam:second",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "second-green",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student1",
+                "anchor": {
+                  "tile": [
+                    3359,
+                    3401,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7416; pack/npc.pack:616"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "ready-second"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student1.rs2:71-78",
+              "advances": true
+            },
+            {
+              "id": "second-purple",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student2",
+                "anchor": {
+                  "tile": [
+                    3348,
+                    3424,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7407; pack/npc.pack:618"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "ready-second"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student3.rs2:68-75",
+              "advances": true
+            },
+            {
+              "id": "second-orange",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student3",
+                "anchor": {
+                  "tile": [
+                    3349,
+                    3410,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7409; pack/npc.pack:617"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "ready-second"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student2.rs2:71-79",
+              "advances": true
+            },
+            {
+              "id": "pass-second-exam",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "examiner",
+                "anchor": {
+                  "tile": [
+                    3360,
+                    3343,
+                    0
+                  ],
+                  "source": "content/maps/m52_52.jm2:6728; pack/npc.pack:619"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I am ready for the next exam.",
+                  "Samples taken in rough form; kept only in sealed containers.",
+                  "Finds must be carefully handled, and gloves worn.",
+                  "Always handle with care; strike cleanly on its cleaving point."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "any": [
+                      "itexam:third"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/examiner.rs2:123-130,296-398",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itexam:third",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "third-green",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student1",
+                "anchor": {
+                  "tile": [
+                    3359,
+                    3401,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7416; pack/npc.pack:616"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "ready-third"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student1.rs2:80-87",
+              "advances": true
+            },
+            {
+              "id": "third-orange",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student3",
+                "anchor": {
+                  "tile": [
+                    3349,
+                    3410,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7409; pack/npc.pack:617"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "ready-third"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student2.rs2:81-89",
+              "advances": true
+            },
+            {
+              "id": "ask-for-opal",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student2",
+                "anchor": {
+                  "tile": [
+                    3348,
+                    3424,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7407; pack/npc.pack:618"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itexam",
+                        "flag": "opal-needed"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "itexam",
+                        "flag": "ready-third"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student3.rs2:77-91",
+              "advances": true
+            },
+            {"id":"pan-and-cut-opal","kind":"acquire","version":1,"args":{"recipe":"acquire:opal","max_restarts":128},"skip_if":{"Any":[{"Fact":{"kind":"has_item","version":1,"args":{"obj":"opal"}}},{"Fact":{"kind":"flag","version":1,"args":{"quest":"itexam","flag":"ready-third"}}}]},"settle":{"Fact":{"kind":"has_item","version":1,"args":{"obj":"opal"}}},"comment":"content/scripts/quests/quest_itexam/scripts/area_digsite.rs2:40-54; content/scripts/skill_crafting/scripts/gem/uncut_gem.rs2:28-63."},
+            {
+              "id": "give-opal",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "student2",
+                "anchor": {
+                  "tile": [
+                    3348,
+                    3424,
+                    0
+                  ],
+                  "source": "content/maps/m52_53.jm2:7407; pack/npc.pack:618"
+                },
+                "leash": 10,
+                "prefer": [],
+                "strict": true
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "flag": "ready-third"
+                  }
+                }
+              },
+              "settle": {
+                "All": []
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/student3.rs2:92-103",
+              "advances": true
+            },
+            {
+              "id": "pass-third-exam",
+              "kind": "talk",
+              "version": 1,
+              "args": {
+                "npc": "examiner",
+                "anchor": {
+                  "tile": [
+                    3360,
+                    3343,
+                    0
+                  ],
+                  "source": "content/maps/m52_52.jm2:6728; pack/npc.pack:619"
+                },
+                "leash": 10,
+                "prefer": [
+                  "I am ready for the last exam",
+                  "Samples cleaned, and carried only in specimen jars.",
+                  "Brush carefully and slowly using short strokes.",
+                  "Handle bones very carefully and keep them away from other samples."
+                ],
+                "strict": true
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "itexam",
+                    "any": [
+                      "itexam:find"
+                    ]
+                  }
+                }
+              },
+              "comment": "content/scripts/quests/quest_itexam/scripts/examiner.rs2:145-152,417-520",
+              "advances": true
+            }
+          ]
+        },
+        {
+          "stage": "itexam:find",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "reach-level-three-soil",
+              "kind": "walk",
+              "version": 1,
+              "args": {
+                "tile": [
+                  3354,
+                  3408,
+                  0
+                ],
+                "source": "content/maps/m52_53.jm2:5400; scripts/quests/quest_itexam/scripts/area_digsite.rs2:171-176",
+                "radius": 0
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3354,
+                      3408,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "near",
+                  "version": 1,
+                  "args": {
+                    "tile": [
+                      3354,
+                      3408,
+                      0
+                    ],
+                    "radius": 0
+                  }
+                }
+              },
+              "comment": "content/maps/m52_53.jm2:5400; scripts/quests/quest_itexam/scripts/area_digsite.rs2:171-176"
+            }
+          ]
+        },
+        {
+          "stage": "itexam:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

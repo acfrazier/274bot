@@ -9,7 +9,7 @@ use crate::quester::families::tests::{
 use crate::quester::path::{PredicateDocument, ProgressRuleDocument};
 use api::selected::Truth;
 use api::snapshot::{GameSnapshot, QuestStatusView, VarpView};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 fn fixture(journal: bool) -> (Quester, GameSnapshot) {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
@@ -88,6 +88,105 @@ fn fixture(journal: bool) -> (Quester, GameSnapshot) {
     )
 }
 
+struct AcceptedUseOnPlan(Arc<AtomicUsize>);
+
+struct AcceptedUseOnMachine {
+    request_id: Option<u64>,
+}
+
+impl NativeMachine for AcceptedUseOnMachine {
+    type Args = ();
+    type Output = api::quest_progress::EvidenceStamp;
+
+    fn begin(_: Self::Args, _: &mut ActionContext<'_>) -> Result<Self, ActionError> {
+        Ok(Self { request_id: None })
+    }
+
+    fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
+        if let Some(request_id) = self.request_id {
+            return match cx.interaction_receipt(request_id) {
+                Some(receipt) if receipt.accepted => Poll::Ready(Ok(receipt.evidence)),
+                Some(_) => Poll::Ready(Err(ActionError::Failed(Arc::from(
+                    "use_on interaction was rejected",
+                )))),
+                None => Poll::Pending,
+            };
+        }
+        match cx.emit(crate::interact::InteractReq::UseOn {
+            name: "Rotten apple".into(),
+            kind: "loc".into(),
+            target_name: Some("Mourner's cauldron".into()),
+            x: 0,
+            z: 0,
+            level: 0,
+            index: Some(0),
+            source_item_id: Some(1),
+            source_item_slot: Some(0),
+            target_item_id: None,
+            target_item_slot: None,
+        }) {
+            Ok(request_id) => {
+                self.request_id = Some(request_id);
+                Poll::Pending
+            }
+            Err(ActionError::BudgetExhausted) => Poll::Pending,
+            Err(error) => Poll::Ready(Err(error)),
+        }
+    }
+}
+
+impl super::super::compile::StepPlan for AcceptedUseOnPlan {
+    fn begin(
+        &self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Result<Box<dyn super::super::compile::StepRun>, ActionError> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        let handle = cx
+            .tick
+            .actions
+            .begin::<AcceptedUseOnMachine>((), &mut cx.tick.cx)?;
+        Ok(Box::new(AcceptedUseOnRun {
+            handle: Some(handle),
+        }))
+    }
+}
+
+struct AcceptedUseOnRun {
+    handle: Option<ActionHandle<AcceptedUseOnMachine>>,
+}
+
+impl super::super::compile::StepRun for AcceptedUseOnRun {
+    fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
+        let result = {
+            let Some(handle) = self.handle.as_ref() else {
+                return Poll::Ready(Err(ActionError::Cancelled));
+            };
+            cx.tick.actions.poll(handle, &mut cx.tick.cx)
+        };
+        match result {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(evidence)) => {
+                self.handle.take();
+                Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence,
+                    receipt: None,
+                }))
+            }
+            Poll::Ready(Err(error)) => {
+                self.handle.take();
+                Poll::Ready(Err(error))
+            }
+        }
+    }
+
+    fn cancel(&mut self, actions: &mut NativeActions) {
+        if let Some(handle) = self.handle.take() {
+            actions.cancel(handle);
+        }
+    }
+}
+
 type Ledger = Option<Box<crate::native::ledger::Ledger>>;
 fn drive(
     script: &mut Quester,
@@ -150,14 +249,14 @@ fn finish_read(
     drive(script, snapshot, ledger, tick);
     assert!(matches!(
         ack(ledger, tick),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
     ));
     journal(snapshot, body);
     drive(script, snapshot, ledger, tick + 1);
     drive(script, snapshot, ledger, tick + 2);
     assert!(matches!(
         ack(ledger, tick + 2),
-        HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+        HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
     ));
     snapshot.seed_main_modal(-1, vec![]);
     drive(script, snapshot, ledger, tick + 3);
@@ -176,7 +275,7 @@ impl NativeMachine for PendingNativeAction {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
-        match cx.emit(crate::shim::InteractReq::IfButton { component_id: 9000 }) {
+        match cx.emit(crate::interact::InteractReq::IfButton { component_id: 9000 }) {
             Ok(_) => Poll::Pending,
             Err(error) => Poll::Ready(Err(error)),
         }
@@ -223,7 +322,48 @@ fn random_event() -> DetectedRandom {
 }
 
 #[test]
-fn random_event_revokes_active_step_owner_and_rereads_progress() {
+fn a_random_event_alone_keeps_the_active_step_owner() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut script, mut snapshot) = fixture(true);
+    Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan = Arc::new(IdlePlan);
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    with_tick(&snapshot, &mut ledger, 6, |tick| {
+        let handle = tick
+            .actions
+            .begin::<PendingNativeAction>(Arc::clone(&cancelled), &mut tick.cx)
+            .unwrap();
+        assert!(matches!(
+            tick.actions.poll(&handle, &mut tick.cx),
+            Poll::Pending
+        ));
+        script.step = Some(Box::new(OwnedActionStep {
+            handle: Some(handle),
+        }));
+    });
+    let authority = ledger.as_ref().unwrap().outbox[0].authority();
+    let cursor = script.cursor;
+
+    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    assert!(!cancelled.load(Ordering::Acquire));
+    assert!(authority.live());
+    assert!(script.step.is_some());
+    assert!(script.progress.is_some());
+    assert_eq!(script.cursor, cursor);
+    assert!(!script.needs_read);
+}
+
+#[test]
+fn a_teleport_during_a_hold_revokes_active_step_owner_and_rereads_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan = Arc::new(IdlePlan);
     let mut ledger = None;
@@ -257,11 +397,13 @@ fn random_event_revokes_active_step_owner_and_rereads_progress() {
     script.unreadable_since = Some(Duration::from_secs(6));
     script.dirty = false;
 
-    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    // The hold's frames showed a teleport: the next tick drops the step
+    // (`Quester::tick`, `take_hold_teleport`).
+    script.drop_step_for_teleport();
     assert!(cancelled.load(Ordering::Acquire));
     assert!(!authority.live());
     assert!(script.step.is_none());
-    assert!(script.progress.is_none());
+    assert!(script.progress.is_some());
     assert!(script.needs_read && script.dirty);
     assert!(!script.prayer_cleanup_pending);
     assert_eq!(script.attempts, 0);
@@ -283,7 +425,10 @@ fn random_event_revokes_active_step_owner_and_rereads_progress() {
 }
 
 #[test]
-fn random_event_revokes_journal_owner_and_discards_settlement_state() {
+fn a_teleport_during_a_hold_revokes_journal_owner_and_keeps_settlement_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -302,13 +447,19 @@ fn random_event_revokes_journal_owner_and_discards_settlement_state() {
     script.journal_quiet_since = NonZeroU32::new(3);
     script.dirty = false;
 
-    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    // The hold's frames showed a teleport: the next tick drops the step
+    // (`Quester::tick`, `take_hold_teleport`).
+    script.drop_step_for_teleport();
     assert!(!authority.live());
     assert!(script.journal.is_none());
-    assert!(script.progress.is_none());
-    assert!(script.last_outcome.is_none());
-    assert!(!script.settling);
-    assert_eq!(script.settle_deadline, Duration::ZERO);
+    assert!(
+        script.progress.is_some(),
+        "a moving event keeps the quest progress and the ordered cursor"
+    );
+    assert!(
+        script.settling && script.last_outcome.is_some(),
+        "a completed step keeps settling on its own settle predicate"
+    );
     assert_eq!(script.journal_attempts, 0);
     assert!(!script.journal_retry_pending);
     assert!(script.journal_quiet_since.is_none());
@@ -323,7 +474,10 @@ fn random_event_revokes_journal_owner_and_discards_settlement_state() {
 }
 
 #[test]
-fn random_event_revokes_clear_prayer_owner_and_preserves_parked_state() {
+fn a_teleport_during_a_hold_revokes_clear_prayer_owner_and_preserves_parked_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let prayer_varp = script.selected.prayers()[0].varp;
     snapshot.seed_varps(vec![VarpView {
@@ -342,7 +496,9 @@ fn random_event_revokes_clear_prayer_owner_and_preserves_parked_state() {
     let authority = ledger.as_ref().unwrap().outbox[0].authority();
     assert!(authority.live());
 
-    assert_eq!(script.on_random(&random_event()), RandomClaim::Host);
+    // The hold's frames showed a teleport: the next tick drops the step
+    // (`Quester::tick`, `take_hold_teleport`).
+    script.drop_step_for_teleport();
     assert!(!authority.live());
     assert!(script.clear_prayers.is_none());
     assert!(script.prayer_cleanup_pending);
@@ -355,6 +511,9 @@ fn random_event_revokes_clear_prayer_owner_and_preserves_parked_state() {
 
 #[test]
 fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::snapshot::{ActorKind, ActorTargetView, NpcView, ProjectileView, StatView, WorldTile};
     for wraps_recipe in [false, true] {
         let (mut script, mut snapshot) = fixture(false);
@@ -501,9 +660,9 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
             .outbox
             .iter()
             .filter_map(|action| match &action.effect {
-                HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id }) => {
-                    Some(*component_id)
-                }
+                HostEffect::Interaction(crate::interact::InteractReq::IfButton {
+                    component_id,
+                }) => Some(*component_id),
                 _ => None,
             })
             .collect();
@@ -524,7 +683,7 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
         drive(&mut script, &snapshot, &mut ledger, 3);
         assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
         assert!(matches!(ack(&mut ledger, 3),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { component_id })
             if component_id == replacement.button_com));
         snapshot.seed_varps(cleared_varps);
         drive(&mut script, &snapshot, &mut ledger, 4);
@@ -563,6 +722,9 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
 
 #[test]
 fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_hold() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use api::snapshot::{
         ActorKind, ActorTargetView, ChatLineView, NpcView, ProjectileView, StatView, VarpView,
         WorldTile,
@@ -584,6 +746,7 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
                     &quests,
                     cap,
                     &crate::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             }
         })
@@ -735,16 +898,16 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
             .outbox
             .iter()
             .filter_map(|action| match &action.effect {
-                HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id }) => {
-                    Some(*component_id)
-                }
+                HostEffect::Interaction(crate::interact::InteractReq::IfButton {
+                    component_id,
+                }) => Some(*component_id),
                 _ => None,
             })
             .collect();
         assert_eq!(buttons, vec![raised.button_com]);
         assert!(matches!(
             ack(&mut ledger, 2),
-            HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+            HostEffect::Interaction(crate::interact::InteractReq::IfButton { component_id })
                 if component_id == raised.button_com
         ));
         assert!(script
@@ -804,7 +967,7 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
                 .iter()
                 .all(|action| !matches!(
                     &action.effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+                    HostEffect::Interaction(crate::interact::InteractReq::IfButton { component_id })
                         if *component_id == raised.button_com
                 )),
             "resumption must not send the old Combat-owned prayer clear"
@@ -814,6 +977,9 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
 
 #[test]
 fn unknown_skip_never_dispatches_and_wait_is_bounded() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(false);
     let path = Arc::get_mut(&mut script.path).unwrap();
     struct InventoryUnknown;
@@ -854,6 +1020,9 @@ fn unknown_skip_never_dispatches_and_wait_is_bounded() {
 /// journal is begun, not a tick later.
 #[test]
 fn journal_read_clicks_its_row_on_the_begin_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -861,7 +1030,7 @@ fn journal_read_clicks_its_row_on_the_begin_tick() {
     assert!(ledger.as_ref().is_some_and(|ledger| matches!(
         ledger.outbox.first().map(|action| &action.effect),
         Some(HostEffect::Interaction(
-            crate::shim::InteractReq::IfButton { .. }
+            crate::interact::InteractReq::IfButton { .. }
         ))
     )));
 }
@@ -871,6 +1040,9 @@ fn journal_read_clicks_its_row_on_the_begin_tick() {
 /// row on that same tick.
 #[test]
 fn advancing_step_rereads_on_its_completion_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -880,7 +1052,7 @@ fn advancing_step_rereads_on_its_completion_tick() {
     assert!(ledger.as_ref().is_some_and(|ledger| matches!(
         ledger.outbox.first().map(|action| &action.effect),
         Some(HostEffect::Interaction(
-            crate::shim::InteractReq::IfButton { .. }
+            crate::interact::InteractReq::IfButton { .. }
         ))
     )));
 }
@@ -925,6 +1097,12 @@ impl StepRun for KillRun {
             flick_resets: 0,
             flick_misses: 0,
             flick_fallback: false,
+            pvp_blocked: 0,
+            pvp_source: None,
+            kill_line_seen: false,
+            switches: 0,
+            switch_failed: 0,
+            active_style: crate::combat::Style::Melee,
         };
         Poll::Ready(Ok(StepOutcome {
             progress: None,
@@ -932,6 +1110,7 @@ impl StepRun for KillRun {
             receipt: Some(Arc::new(super::super::families::combat::CombatReceipt {
                 report,
                 target_gone_restarts: 0,
+                kills: 1,
             })),
         }))
     }
@@ -986,6 +1165,9 @@ fn dying_npc(index: usize) -> api::snapshot::NpcView {
 /// the kill tick and then waiting out the settle window (live pip2p: 336).
 #[test]
 fn advancing_kill_reads_progress_once_the_killed_npc_is_gone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan = Arc::new(KillPlan);
     snapshot.seed_npcs(vec![dying_npc(7)]);
@@ -1007,7 +1189,7 @@ fn advancing_kill_reads_progress_once_the_killed_npc_is_gone() {
     drive(&mut script, &snapshot, &mut ledger, 7);
     assert!(matches!(
         ack(&mut ledger, 7),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
     ));
 }
 
@@ -1015,6 +1197,9 @@ fn advancing_kill_reads_progress_once_the_killed_npc_is_gone() {
 /// `KILL_READ_BOUND_TICKS`.
 #[test]
 fn advancing_kill_read_wait_is_bounded() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan = Arc::new(KillPlan);
     snapshot.seed_npcs(vec![dying_npc(7)]);
@@ -1028,12 +1213,15 @@ fn advancing_kill_read_wait_is_bounded() {
     drive(&mut script, &snapshot, &mut ledger, 11);
     assert!(matches!(
         ack(&mut ledger, 11),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
     ));
 }
 
 #[test]
 fn advances_rereads_before_stage_settle_then_retargets_new_sequence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -1061,7 +1249,134 @@ fn advances_rereads_before_stage_settle_then_retargets_new_sequence() {
 }
 
 #[test]
+fn advancing_settle_timeout_rereads_before_retrying_after_delayed_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut script, mut snapshot) = fixture(true);
+    snapshot.seed_varps(vec![VarpView {
+        index: 314,
+        value: 0,
+    }]);
+    let begins = Arc::new(AtomicUsize::new(0));
+    let path = Arc::get_mut(&mut script.path).unwrap();
+    let step = &mut path.sequences[1].steps[0];
+    step.kind = Arc::from("use_on");
+    step.plan = Arc::new(AcceptedUseOnPlan(Arc::clone(&begins)));
+
+    let mut ledger = None;
+    drive(&mut script, &snapshot, &mut ledger, 1);
+    finish_read(&mut script, &mut snapshot, &mut ledger, 2, "seeded branch");
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert_eq!(begins.load(Ordering::Relaxed), 1);
+    drive(&mut script, &snapshot, &mut ledger, 6);
+    assert!(
+        matches!(
+            ledger
+                .as_ref()
+                .and_then(|ledger| ledger.outbox.first())
+                .map(|action| &action.effect),
+            Some(HostEffect::Interaction(
+                crate::interact::InteractReq::UseOn { .. }
+            ))
+        ),
+        "use-on was not emitted: begins={}, active={}, streak={}, error={:?}, parked={}",
+        begins.load(Ordering::Relaxed),
+        script.step.is_some(),
+        script.fail_streak,
+        script.last_error,
+        script.parked
+    );
+    assert!(matches!(
+        ack(&mut ledger, 6),
+        HostEffect::Interaction(crate::interact::InteractReq::UseOn { .. })
+    ));
+
+    drive(&mut script, &snapshot, &mut ledger, 7);
+    assert!(script.settling && script.needs_read);
+    assert!(matches!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .first()
+            .map(|action| &action.effect),
+        Some(HostEffect::Interaction(
+            crate::interact::InteractReq::IfButton { .. }
+        ))
+    ));
+    assert!(matches!(
+        ack(&mut ledger, 7),
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
+    ));
+    journal(&mut snapshot, "seeded branch");
+    drive(&mut script, &snapshot, &mut ledger, 8);
+    drive(&mut script, &snapshot, &mut ledger, 9);
+    assert!(matches!(
+        ack(&mut ledger, 9),
+        HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
+    ));
+    snapshot.seed_main_modal(-1, vec![]);
+    drive(&mut script, &snapshot, &mut ledger, 10);
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:1");
+    assert!(script.settling && !script.needs_read);
+
+    // The content writes its progress varp after the early journal read.
+    snapshot.seed_varps(vec![VarpView {
+        index: 314,
+        value: 1,
+    }]);
+    for tick in 11..=40 {
+        drive(&mut script, &snapshot, &mut ledger, tick);
+        if !script.settling {
+            break;
+        }
+    }
+    assert!(!script.settling, "the settle window must have timed out");
+    assert_eq!(begins.load(Ordering::Relaxed), 1);
+    assert!(
+        script.needs_read,
+        "the timeout must request a journal read before another attempt"
+    );
+
+    drive(&mut script, &snapshot, &mut ledger, 22);
+    assert!(matches!(
+        ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .first()
+            .map(|action| &action.effect),
+        Some(HostEffect::Interaction(
+            crate::interact::InteractReq::IfButton { .. }
+        ))
+    ));
+    assert_eq!(begins.load(Ordering::Relaxed), 1);
+    assert!(matches!(
+        ack(&mut ledger, 22),
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
+    ));
+    journal(&mut snapshot, "next branch");
+    drive(&mut script, &snapshot, &mut ledger, 23);
+    drive(&mut script, &snapshot, &mut ledger, 24);
+    assert!(matches!(
+        ack(&mut ledger, 24),
+        HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
+    ));
+    snapshot.seed_main_modal(-1, vec![]);
+    assert_eq!(
+        drive(&mut script, &snapshot, &mut ledger, 25),
+        ScriptFlow::Complete
+    );
+    assert_eq!(script.stage().unwrap().0.as_ref(), "cook:mid");
+    assert_eq!(begins.load(Ordering::Relaxed), 1);
+}
+
+#[test]
 fn no_match_parks_with_raw_lines_and_no_invented_stage() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -1091,6 +1406,9 @@ fn no_match_parks_with_raw_lines_and_no_invented_stage() {
 
 #[test]
 fn explicit_read_is_boundary_latched_and_colour_only_never_opens_journal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, snapshot) = fixture(false);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -1110,6 +1428,9 @@ fn explicit_read_is_boundary_latched_and_colour_only_never_opens_journal() {
 
 #[test]
 fn recipe_advances_preserves_recipe_until_fresh_stage_settles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let step = &mut Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0];
     step.plan = Arc::new(super::super::families::AcquirePlan {
@@ -1143,6 +1464,9 @@ fn recipe_advances_preserves_recipe_until_fresh_stage_settles() {
 
 #[test]
 fn stopping_mid_read_revokes_host_click_and_quiet_lease() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -1156,12 +1480,19 @@ fn stopping_mid_read_revokes_host_click_and_quiet_lease() {
 
 #[test]
 fn blocked_slot_read_journal_is_terminal_and_retains_its_diagnostic() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, snapshot) = fixture(true);
     script.parked = true;
     script.run.session = 0;
     let mut slot = crate::SlotScript::new();
     slot.bind_incarnation(1);
-    slot.start_test_script(Box::new(script), None).unwrap();
+    slot.start_test_script(
+        Box::new(script),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     let run = slot.native_run().unwrap();
     slot.on_game_tick(&mut crate::ScriptCtx {
         driver: &mut crate::ctx::test_support::NullDriver::default(),
@@ -1189,8 +1520,17 @@ fn blocked_slot_read_journal_is_terminal_and_retains_its_diagnostic() {
 
 #[test]
 fn a_transient_foreign_main_modal_waits_before_the_journal_begins() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
-    snapshot.seed_main_modal(6554, vec![]);
+    let root = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .unwrap()
+        .dialogue_ui()
+        .unwrap()
+        .chapter_root
+        .expect("revision 289 publishes the chapter page root");
+    snapshot.seed_main_modal(root, vec![]);
     snapshot.seed_main_modal_texts(vec!["Close Window".into()]);
     let mut ledger = None;
 
@@ -1203,7 +1543,7 @@ fn a_transient_foreign_main_modal_waits_before_the_journal_begins() {
     assert!(ledger
         .as_ref()
         .is_none_or(|ledger| ledger.outbox.is_empty()));
-    assert_eq!(snapshot.modals().main, 6554, "the owner keeps its window");
+    assert_eq!(snapshot.modals().main, root, "the owner keeps its window");
 
     snapshot.seed_main_modal(-1, vec![]);
     snapshot.seed_main_modal_texts(vec![]);
@@ -1214,6 +1554,9 @@ fn a_transient_foreign_main_modal_waits_before_the_journal_begins() {
 
 #[test]
 fn a_persistent_foreign_main_modal_uses_the_existing_read_cap_without_clicks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     snapshot.seed_main_modal(777, vec![]);
     snapshot.seed_main_modal_texts(vec!["Trade confirmation".into()]);
@@ -1245,6 +1588,9 @@ fn a_persistent_foreign_main_modal_uses_the_existing_read_cap_without_clicks() {
 
 #[test]
 fn a_foreign_quest_journal_title_still_fails_instead_of_waiting() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     snapshot.seed_main_modal(
         8134,
@@ -1266,6 +1612,9 @@ fn a_foreign_quest_journal_title_still_fails_instead_of_waiting() {
 
 #[test]
 fn transient_busy_during_read_retries_but_repeated_busy_is_bounded() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     // The begin tick's event is spent, so the click waits for tick 2, where a
@@ -1300,6 +1649,9 @@ fn transient_busy_during_read_retries_but_repeated_busy_is_bounded() {
 
 #[test]
 fn repeated_busy_transactions_report_retry_limit_and_cause() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     drive_spent(&mut script, &snapshot, &mut ledger, 1);
@@ -1333,6 +1685,9 @@ fn repeated_busy_transactions_report_retry_limit_and_cause() {
 
 #[test]
 fn ownership_lost_before_close_retries_without_closing_another_modal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -1357,13 +1712,16 @@ fn ownership_lost_before_close_retries_without_closing_another_modal() {
 
 #[test]
 fn journal_modal_timeout_retries_the_read_instead_of_parking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
     drive(&mut script, &snapshot, &mut ledger, 2);
     assert!(matches!(
         ack(&mut ledger, 2),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
     ));
     // The accepted click never shows the journal within the acquire window.
     for tick in 3..=7 {
@@ -1382,6 +1740,9 @@ fn journal_modal_timeout_retries_the_read_instead_of_parking() {
 
 #[test]
 fn repeated_journal_modal_timeouts_cap_row_clicks_and_name_the_cause() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, snapshot) = fixture(true);
     let mut ledger = None;
     let mut clicks = 0;
@@ -1393,7 +1754,7 @@ fn repeated_journal_modal_timeouts_cap_row_clicks_and_name_the_cause() {
         {
             assert!(matches!(
                 ack(&mut ledger, tick),
-                HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+                HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
             ));
             clicks += 1;
         }
@@ -1411,6 +1772,9 @@ fn repeated_journal_modal_timeouts_cap_row_clicks_and_name_the_cause() {
 
 #[test]
 fn transient_journal_retry_requires_continuously_closed_observed_ticks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -1445,6 +1809,9 @@ fn transient_journal_retry_requires_continuously_closed_observed_ticks() {
 
 #[test]
 fn repeated_journal_ownership_loss_caps_row_clicks_per_read() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     let mut clicks = 0;
@@ -1463,7 +1830,7 @@ fn repeated_journal_ownership_loss_caps_row_clicks_per_read() {
             assert!(
                 matches!(
                     ack(&mut ledger, tick),
-                    HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+                    HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
                 ),
                 "a lost page must never emit a compensating close"
             );
@@ -1487,6 +1854,9 @@ fn repeated_journal_ownership_loss_caps_row_clicks_per_read() {
 
 #[test]
 fn colour_only_read_wait_preserves_colour_failure_with_open_chat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(false);
     snapshot.seed_quest_statuses(vec![], false);
     snapshot.seed_chat_modal(4882, vec!["Aubury".into()]);
@@ -1507,6 +1877,9 @@ fn colour_only_read_wait_preserves_colour_failure_with_open_chat() {
 
 #[test]
 fn quiet_gate_wait_names_open_chat_when_it_parks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     let mut ledger = None;
     drive(&mut script, &snapshot, &mut ledger, 1);
@@ -1536,6 +1909,9 @@ fn quiet_gate_wait_names_open_chat_when_it_parks() {
 
 #[test]
 fn named_chat_at_read_start_waits_then_recovers_or_names_the_timeout() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     snapshot.seed_chat_modal(4882, vec!["Aubury".into()]);
     let mut ledger = None;
@@ -1560,6 +1936,9 @@ fn named_chat_at_read_start_waits_then_recovers_or_names_the_timeout() {
 
 #[test]
 fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::quester::families::tests::{def, seed_dialogue_combat};
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, WorldTile};
 
@@ -1578,7 +1957,7 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
                     .and_then(|ledger| ledger.outbox.first())
                     .map(|action| &action.effect),
                 Some(HostEffect::Interaction(
-                    crate::shim::InteractReq::IfButton { .. }
+                    crate::interact::InteractReq::IfButton { .. }
                 ))
             ),
             "a quest-changing handoff must query fresh journal progress before recovery"
@@ -1595,7 +1974,7 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         drive(script, snapshot, ledger, tick + 2);
         assert!(matches!(
             ack(ledger, tick + 2),
-            HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+            HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
         ));
         snapshot.seed_main_modal(-1, vec![]);
         drive(script, snapshot, ledger, tick + 3);
@@ -1704,14 +2083,14 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         drive(&mut script, &snapshot, &mut ledger, 6);
         assert!(matches!(
             ack(&mut ledger, 6),
-            HostEffect::Interaction(crate::shim::InteractReq::Npc { .. })
+            HostEffect::Interaction(crate::interact::InteractReq::Npc { .. })
         ));
         snapshot.seed_chat_modal(4893, vec!["A handoff page".into()]);
         snapshot.seed_chat_options(vec![], 4899);
         drive(&mut script, &snapshot, &mut ledger, 7);
         assert!(matches!(
             ack(&mut ledger, 7),
-            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+            HostEffect::Interaction(crate::interact::InteractReq::ContinueDialog {
                 component_id: None
             })
         ));
@@ -1726,7 +2105,7 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
             ledger.outbox.first().is_some_and(|action| {
                 matches!(
                     action.effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+                    HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
                 )
             })
         }) {
@@ -1787,7 +2166,7 @@ impl NativeOutput for StatusCapture {
     fn status(&mut self, status: ScriptStatus) {
         self.0.push(status);
     }
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, _: &str) {}
     fn settings_applied(&mut self, _: u64) {}
 }
@@ -1825,6 +2204,9 @@ fn run_needs_evidence_step(gates: Arc<[api::selected::QuestGate]>) -> (Quester, 
 
 #[test]
 fn empty_gate_needs_evidence_uses_active_step_wait_detail_before_drop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let empty_gates: Arc<[api::selected::QuestGate]> = Arc::from([]);
     let (script, flow) = run_needs_evidence_step(empty_gates);
 
@@ -1844,7 +2226,10 @@ fn empty_gate_needs_evidence_uses_active_step_wait_detail_before_drop() {
 }
 
 #[test]
-fn nonempty_gate_needs_evidence_keeps_navigation_reason() {
+fn nonempty_gate_needs_evidence_reports_quest_and_state() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let gates: Arc<[api::selected::QuestGate]> = Arc::from([api::selected::QuestGate::Complete(
         api::selected::FactKey::new("cook:mid"),
     )]);
@@ -1856,12 +2241,15 @@ fn nonempty_gate_needs_evidence_keeps_navigation_reason() {
     ));
     assert_eq!(
         script.last_error.as_deref(),
-        Some("walk needs authoritative quest-gate evidence")
+        Some("needs evidence: quest cook:mid; completion; evidence state unknown")
     );
 }
 
 #[test]
 fn typed_bank_deposit_failures_keep_user_text_in_quester_status_and_trace() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::bank::ops::DepositFailure;
 
     let (mut script, _) = fixture(false);
@@ -1900,6 +2288,9 @@ fn typed_bank_deposit_failures_keep_user_text_in_quester_status_and_trace() {
 
 #[test]
 fn provisioner_pending_preserves_semantic_outcome_and_status() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::combat::{CombatEnd, CombatReport};
     use api::quest_progress::EvidenceStamp;
 
@@ -1955,6 +2346,12 @@ fn provisioner_pending_preserves_semantic_outcome_and_status() {
                 flick_resets: 0,
                 flick_misses: 0,
                 flick_fallback: false,
+                pvp_blocked: 0,
+                pvp_source: None,
+                kill_line_seen: false,
+                switches: 0,
+                switch_failed: 0,
+                active_style: crate::combat::Style::Melee,
             };
             fixture.script.last_outcome = Some(StepOutcome {
                 progress: None,
@@ -1962,6 +2359,7 @@ fn provisioner_pending_preserves_semantic_outcome_and_status() {
                 receipt: Some(Arc::new(crate::quester::families::combat::CombatReceipt {
                     report,
                     target_gone_restarts: 1,
+                    kills: 0,
                 })),
             });
             semantic_evidence = Some(evidence);
@@ -2015,6 +2413,9 @@ fn provisioner_pending_preserves_semantic_outcome_and_status() {
 
 #[test]
 fn sheep_complete_colour_publishes_complete_and_slot_keeps_completed_receipt() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, snapshot) = sheep_complete_snapshot();
     let mut ledger = None;
     let mut output = StatusCapture::default();
@@ -2043,7 +2444,11 @@ fn sheep_complete_colour_publishes_complete_and_slot_keeps_completed_receipt() {
     let (script, snapshot) = sheep_complete_snapshot();
     let mut slot = crate::SlotScript::new();
     slot.bind_incarnation(1);
-    slot.start_test_script(Box::new(script), None).unwrap();
+    slot.start_test_script(
+        Box::new(script),
+        Some(crate::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     for tick in 1..=8 {
         slot.on_game_tick(&mut crate::ScriptCtx {
             driver: &mut crate::ctx::test_support::NullDriver::default(),
@@ -2061,9 +2466,9 @@ fn sheep_complete_colour_publishes_complete_and_slot_keeps_completed_receipt() {
         }
     }
     assert_eq!(slot.state(), crate::RunState::Idle);
-    assert!(
-        slot.native_status().is_none(),
-        "teardown drops compiled status; observers must use the lifecycle receipt"
+    assert_eq!(
+        slot.native_status().expect("completed native status").phase,
+        NativePhase::Complete
     );
     assert_eq!(
         slot.lifecycle_receipt().expect("completed receipt").state,
@@ -2111,7 +2516,15 @@ impl NestedBankFixture {
             ledger.outbox.first().is_some_and(|action| {
                 matches!(
                     &action.effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                    HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. })
+                )
+            })
+        });
+        let close_pending = self.ledger.as_ref().is_some_and(|ledger| {
+            ledger.outbox.first().is_some_and(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(crate::interact::InteractReq::Close)
                 )
             })
         });
@@ -2127,7 +2540,7 @@ impl NestedBankFixture {
                         tick,
                         sequence: tick,
                     },
-                    selected: crate::bank::SelectedBank {
+                    outcome: crate::bank::BankPickOutcome::Selected(crate::bank::SelectedBank {
                         bank_index: 0,
                         access_tile: self.bank_tile,
                         kind: crate::bank::PickKind::Reachable,
@@ -2139,19 +2552,26 @@ impl NestedBankFixture {
                             name: None,
                             choose: None,
                         })),
-                    },
+                    }),
                 },
             );
             self.selected_bank = true;
         } else if open_stand_pending {
             assert!(matches!(
                 ack(&mut self.ledger, tick),
-                HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. })
             ));
             self.snapshot
                 .seed_bank_observation(1, tick, Some(vec![]), vec![]);
             self.opened_bank = true;
             self.visits += 1;
+        } else if close_pending {
+            assert!(matches!(
+                ack(&mut self.ledger, tick),
+                HostEffect::Interaction(crate::interact::InteractReq::Close)
+            ));
+            self.snapshot
+                .seed_bank_observation(-1, tick, None, Vec::new());
         } else if self
             .ledger
             .as_ref()
@@ -2197,6 +2617,8 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
             args: serde_json::json!({"recipe": "acquire:egg-bank-scan"}),
             comment: None,
             advances: Some(false),
+            max_attempts: None,
+            stop: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: bank_empty.clone(),
         }],
@@ -2218,6 +2640,8 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
                 }),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: bank_known,
             },
@@ -2237,6 +2661,8 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
                 }),
                 comment: None,
                 advances: Some(false),
+                max_attempts: None,
+                stop: None,
                 skip_if: bank_empty.clone(),
                 settle: bank_empty.clone(),
             },
@@ -2338,6 +2764,9 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
 
 #[test]
 fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _isolated = crate::IsolatedEnv::enter("quester-nested-bank-receipt");
     let mut fixture = nested_bank_fixture(true);
     let mut flow = ScriptFlow::Continue;
@@ -2398,6 +2827,9 @@ fn nested_acquire_carries_empty_bank_receipt_to_dependent_and_outer_settle() {
 
 #[test]
 fn provisioner_acquire_run_keeps_session_bank_memory_without_second_trip() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _isolated = crate::IsolatedEnv::enter("quester-provision-bank-receipt");
     let mut fixture = nested_bank_fixture(false);
     let mut acquiring_seen = false;
@@ -2554,12 +2986,7 @@ fn step_progress_fixture(stamp: ProgressOutcomeStamp) -> (Quester, GameSnapshot,
     let (mut script, snapshot) = fixture(false);
     let mut ledger = None;
     let progress = with_tick(&snapshot, &mut ledger, 0, |tick| {
-        resolve_colour(
-            &script.path,
-            QuestListStatus::Complete,
-            tick.cx.evidence(),
-            Arc::new(tick.cx.pin().clone()),
-        )
+        resolve_colour(&script.path, QuestListStatus::Complete, tick.cx.evidence())
     });
     Arc::get_mut(&mut script.path).unwrap().sequences[1].steps[0].plan =
         Arc::new(ProgressOutcomePlan { progress, stamp });
@@ -2576,6 +3003,9 @@ fn step_progress_fixture(stamp: ProgressOutcomeStamp) -> (Quester, GameSnapshot,
 
 #[test]
 fn step_outcome_progress_accepts_fresh_same_stamp_and_settles_to_completion() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for stamp in [
         ProgressOutcomeStamp::Fresh,
         ProgressOutcomeStamp::PreviousPoll,
@@ -2621,6 +3051,9 @@ fn step_outcome_progress_accepts_fresh_same_stamp_and_settles_to_completion() {
 
 #[test]
 fn step_outcome_progress_rejects_stale_uncorrelated_future_and_foreign_receipts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for stamp in [
         ProgressOutcomeStamp::StepBegin,
         ProgressOutcomeStamp::BeforeStep,
@@ -2644,6 +3077,9 @@ fn step_outcome_progress_rejects_stale_uncorrelated_future_and_foreign_receipts(
 
 #[test]
 fn custom_progress_requires_fresh_correlated_declared_owned_evidence() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (script, snapshot) = fixture(false);
     let mut ledger = None;
     with_tick(&snapshot, &mut ledger, 5, |tick| {
@@ -2656,7 +3092,6 @@ fn custom_progress_requires_fresh_correlated_declared_owned_evidence() {
             &script.path,
             QuestListStatus::NotStarted,
             tick.cx.evidence(),
-            Arc::new(tick.cx.pin().clone()),
         );
         assert!(script.valid_progress(tick, &progress, after));
         let mut bad = progress.clone();
@@ -2707,6 +3142,9 @@ fn custom_progress_requires_fresh_correlated_declared_owned_evidence() {
 
 #[test]
 fn ordinary_recovery_keeps_completed_admission_but_pause_and_new_run_do_not() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, snapshot) = fixture(false);
     script.pair_admitted = true;
     let mut ledger = None;
@@ -2745,12 +3183,15 @@ fn close_chat(snapshot: &mut GameSnapshot) {
 fn is_continue(effect: &HostEffect) -> bool {
     matches!(
         effect,
-        HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::ContinueDialog { .. })
     )
 }
 
 #[test]
 fn unowned_chat_continue_is_drained_then_the_journal_is_read() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     seed_player_chat(&mut snapshot, "I think this is far enough.");
     let mut ledger = None;
@@ -2769,14 +3210,14 @@ fn unowned_chat_continue_is_drained_then_the_journal_is_read() {
     let tick = tick - 1;
     assert!(matches!(
         ack(&mut ledger, tick),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
     ));
     journal(&mut snapshot, "seeded branch");
     drive(&mut script, &snapshot, &mut ledger, tick + 1);
     drive(&mut script, &snapshot, &mut ledger, tick + 2);
     assert!(matches!(
         ack(&mut ledger, tick + 2),
-        HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+        HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
     ));
     snapshot.seed_main_modal(-1, vec![]);
     drive(&mut script, &snapshot, &mut ledger, tick + 3);
@@ -2787,6 +3228,9 @@ fn unowned_chat_continue_is_drained_then_the_journal_is_read() {
 
 #[test]
 fn a_live_step_keeps_its_latched_continue_busy_and_unclicked() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     script.step = Some(Box::new(OwnedActionStep { handle: None }));
     seed_player_chat(&mut snapshot, "A page the step's dialogue owns.");
@@ -2804,6 +3248,9 @@ fn a_live_step_keeps_its_latched_continue_busy_and_unclicked() {
 
 #[test]
 fn a_continue_page_that_ignores_clicks_parks_after_the_drain_cap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     seed_player_chat(&mut snapshot, "A page that will not advance.");
     let mut ledger = None;
@@ -2822,9 +3269,13 @@ fn a_continue_page_that_ignores_clicks_parks_after_the_drain_cap() {
         }
     }
     assert!(script.parked);
+    // Each drain presses the page at its first tick and again after every
+    // accepted receipt that matures on an unchanged page, until the 10-tick
+    // bound of that first press ends the drain: six presses (ticks 0, 2, 4,
+    // 6, 8 and 10 of the drain).
     assert_eq!(
-        continues, 3,
-        "one continue per drain, three drains per read"
+        continues, 18,
+        "six presses per drain, three drains per read"
     );
     assert_eq!(
         script.blocked_failure().message.as_ref(),
@@ -2834,6 +3285,9 @@ fn a_continue_page_that_ignores_clicks_parks_after_the_drain_cap() {
 
 #[test]
 fn a_continue_page_that_keeps_reopening_parks_within_the_drain_window() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let (mut script, mut snapshot) = fixture(true);
     seed_player_chat(&mut snapshot, "page 0");
     let mut ledger = None;
@@ -2872,6 +3326,9 @@ fn a_continue_page_that_keeps_reopening_parks_within_the_drain_window() {
 /// and no `IfButton` while the document is open.
 #[test]
 fn the_drain_leaves_a_scroll_its_continue_opened() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let ids = *api::game_data::for_revision(api::selected::ClientRevision::R289)
         .unwrap()
         .dialogue_ui()
@@ -2894,8 +3351,8 @@ fn the_drain_leaves_a_scroll_its_continue_opened() {
                 !matches!(
                     effect,
                     HostEffect::Interaction(
-                        crate::shim::InteractReq::CloseModal
-                            | crate::shim::InteractReq::IfButton { .. }
+                        crate::interact::InteractReq::CloseModal
+                            | crate::interact::InteractReq::IfButton { .. }
                     )
                 ),
                 "tick {tick}: the drain closed or clicked the scroll"
@@ -2912,7 +3369,7 @@ fn the_drain_leaves_a_scroll_its_continue_opened() {
 struct TraceLog(Vec<String>);
 impl NativeOutput for TraceLog {
     fn status(&mut self, _: ScriptStatus) {}
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, message: &str) {
         self.0.push(message.to_owned());
     }
@@ -2973,6 +3430,9 @@ fn begin_imp_combat_step(
 /// and the next poll ends the step with one `manual-movement` terminal.
 #[test]
 fn manual_takeover_watch_ends_the_quester_combat_step_once_when_pause_is_off() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::WalkCancelReason;
     let (mut script, snapshot) = fixture(false);
     let mut ledger = None;
@@ -3019,6 +3479,9 @@ fn manual_takeover_watch_ends_the_quester_combat_step_once_when_pause_is_off() {
 /// that new begin does not end it.
 #[test]
 fn manual_takeover_watch_resume_restarts_the_quester_combat_step_without_a_terminal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crate::native::WalkCancelReason;
     let (mut script, snapshot) = fixture(false);
     let mut ledger = None;

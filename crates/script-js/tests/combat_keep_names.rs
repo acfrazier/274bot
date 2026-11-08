@@ -1,5 +1,9 @@
-use script_js::wire::{ItemRowInput, ReachViewInput, SnapshotInput};
+use script::native::snapshot_source::{ItemRowInput, ReachViewInput, SnapshotInput};
 use script_js::{LoadIsolate, LoadShape};
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn item(name: &'static str, id: i32, slot: i32) -> ItemRowInput<'static> {
     ItemRowInput {
@@ -95,6 +99,9 @@ fn snapshot<'a>(
 
 #[test]
 fn snapshot_loot_and_equipment_are_not_implicitly_kept() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 import { combatKeepNames } from '../../api/combat/keepList.js';
 import { foodForms } from '../../api/combat/food.js';
@@ -135,6 +142,11 @@ export default class T extends LoopingBot {
 
 #[test]
 fn selected_revision_facts_cover_fire_giant_green_dragon_and_cake_shapes() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let src = r#"
 import { combatKeepNames } from '../../api/combat/keepList.js';
 import { foodForms } from '../../api/combat/food.js';

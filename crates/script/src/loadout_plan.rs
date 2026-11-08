@@ -131,6 +131,9 @@ mod tests {
 
     #[test]
     fn food_of_uses_fixed_heals_not_ambiguous_eat() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
         assert_eq!(
             food_of(
@@ -149,6 +152,9 @@ mod tests {
 
     #[test]
     fn food_names_accept_item_aliases_and_return_selected_display_names() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
         let (food, alias) = data
             .fixed_food_heals()

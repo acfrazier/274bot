@@ -39,7 +39,6 @@ export type QuestStartRow = {
 export type QuestStartFacts = {
     schema: 1;
     revision: number;
-    content_id: string;
     rows: QuestStartRow[];
 };
 
@@ -223,7 +222,6 @@ export function extractQuestStartFacts(
     content: string,
     quests: readonly QuestIdentityRow[],
     revision: number,
-    contentId: string,
 ): QuestStartFacts {
     const files = questStartContentFiles(content).map((file) => path.join(content, file));
     const handlers: Section[] = [];
@@ -256,5 +254,5 @@ export function extractQuestStartFacts(
         || a.target.kind.localeCompare(b.target.kind)
         || a.target.id - b.target.id
         || a.op - b.op));
-    return { schema: 1, revision, content_id: contentId, rows };
+    return { schema: 1, revision, rows };
 }

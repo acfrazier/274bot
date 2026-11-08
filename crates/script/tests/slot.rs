@@ -123,8 +123,11 @@ fn idle_has_no_script_and_tick_is_noop() {
 #[test]
 fn start_pause_resume_stop() {
     let mut s = SlotScript::new();
-    s.start_test_script(Box::new(Counter { n: 0 }), None)
-        .unwrap();
+    s.start_test_script(
+        Box::new(Counter { n: 0 }),
+        Some(script::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     assert_eq!(s.state(), RunState::Running);
     assert!(s.want_run);
     s.pause();
@@ -140,10 +143,16 @@ fn start_pause_resume_stop() {
 #[test]
 fn start_while_active_refuses() {
     let mut s = SlotScript::new();
-    s.start_test_script(Box::new(Counter { n: 0 }), None)
-        .unwrap();
+    s.start_test_script(
+        Box::new(Counter { n: 0 }),
+        Some(script::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     let err = s
-        .start_test_script(Box::new(Counter { n: 0 }), None)
+        .start_test_script(
+            Box::new(Counter { n: 0 }),
+            Some(script::native::minimal_selected_data_for_test()),
+        )
         .unwrap_err();
     assert!(err.contains("active") || err.contains("Stop"));
 }
@@ -151,8 +160,11 @@ fn start_while_active_refuses() {
 #[test]
 fn not_is_up_skips_tick_keeps_instance_auto_resumes() {
     let mut s = SlotScript::new();
-    s.start_test_script(Box::new(Counter { n: 0 }), None)
-        .unwrap();
+    s.start_test_script(
+        Box::new(Counter { n: 0 }),
+        Some(script::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     s.on_is_up(false);
     assert_eq!(s.state(), RunState::Paused);
     assert!(
@@ -179,8 +191,11 @@ fn not_is_up_skips_tick_keeps_instance_auto_resumes() {
 #[test]
 fn operator_pause_survives_login() {
     let mut s = SlotScript::new();
-    s.start_test_script(Box::new(Counter { n: 0 }), None)
-        .unwrap();
+    s.start_test_script(
+        Box::new(Counter { n: 0 }),
+        Some(script::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     s.pause();
     s.on_is_up(false);
     s.on_is_up(true);
@@ -212,7 +227,7 @@ fn game_tick_dispatches_only_while_running() {
         Box::new(Probe {
             ticks: ticks.clone(),
         }),
-        None,
+        Some(script::native::minimal_selected_data_for_test()),
     )
     .unwrap();
     let mut d = Rec::default();
@@ -295,7 +310,11 @@ fn panicking_tick_sets_error_and_drops_instance() {
     }
 
     let mut s = SlotScript::new();
-    s.start_test_script(Box::new(Panic), None).unwrap();
+    s.start_test_script(
+        Box::new(Panic),
+        Some(script::native::minimal_selected_data_for_test()),
+    )
+    .unwrap();
     let mut d = Rec::default();
     let mut ctx = ScriptCtx {
         driver: &mut d,
@@ -333,7 +352,10 @@ fn panicking_tick_sets_error_and_drops_instance() {
 
     // Start from Error is allowed and clears the error.
     assert!(s
-        .start_test_script(Box::new(Counter { n: 0 }), None)
+        .start_test_script(
+            Box::new(Counter { n: 0 }),
+            Some(script::native::minimal_selected_data_for_test()),
+        )
         .is_ok());
     assert_eq!(s.state(), RunState::Running);
     assert!(s.last_error().is_none());
@@ -365,7 +387,7 @@ fn stop_runs_on_stop_hook() {
         Box::new(Teardown {
             calls: calls.clone(),
         }),
-        None,
+        Some(script::native::minimal_selected_data_for_test()),
     )
     .unwrap();
     s.stop();

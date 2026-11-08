@@ -224,7 +224,12 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
         .bind()
         .unwrap();
     assert_eq!(profile.client().game_host(), "127.0.0.1");
-    assert_eq!(profile.client().game_port(), 44594, "Engine A only");
+    let game_port = crate::live_ports::game_port();
+    assert_eq!(
+        profile.client().game_port(),
+        game_port,
+        "the cell must use the configured engine"
+    );
     let bag = settings();
     let cell = Arc::new(Mutex::new(Cell::new(
         BOUND,
@@ -385,7 +390,8 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
     std::fs::write(
         evidence_dir.join("receipt.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
-            "request": "GATHERER-HELD-FOREVER-R4", "account": account, "engine": "127.0.0.1:44594",
+            "request": "GATHERER-HELD-FOREVER-R4", "account": account,
+            "engine": format!("127.0.0.1:{game_port}"),
             "seed": SEED, "settings": bag, "random_events_enabled": false,
             "passed": passed, "bank_opened": obs.bank_opened, "sharks_banked": obs.sharks_banked,
             "deposit_tick": obs.deposit_tick, "deposit_elapsed_ms": obs.deposit_elapsed_ms,

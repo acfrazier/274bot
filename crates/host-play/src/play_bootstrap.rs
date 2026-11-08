@@ -201,6 +201,47 @@ impl ValidatedTemplate {
     }
 }
 
+fn prepare_navigation_families(
+    data: &api::game_data::SelectedGameData,
+    worker: &mut api::selected::FamilyPreparation,
+) -> Result<(), api::selected::FactError> {
+    data.prepare_quests(worker)?;
+    if data.revision() == client::io::ClientRevision::R289.as_i32() {
+        data.prepare_prereq_steps(worker)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod navigation_preparation_tests {
+    use super::*;
+
+    #[test]
+    fn profile_preparation_warms_navigation_families_before_routes_start() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        api::selected::FamilyPreparation::run(|worker| {
+            for revision in [
+                client::io::ClientRevision::R274,
+                client::io::ClientRevision::R289,
+            ] {
+                let data = api::game_data::for_revision(revision).unwrap();
+                prepare_navigation_families(&data, worker).unwrap();
+                assert!(data.try_quests().is_some());
+                if revision == client::io::ClientRevision::R289 {
+                    assert_eq!(data.try_prereq_steps().unwrap().len(), 5);
+                } else {
+                    assert!(data.try_prereq_steps().is_none());
+                }
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    }
+}
+
 impl SharedClientTemplate {
     pub fn load(profile: Arc<ServerProfile>) -> Result<Arc<Self>, String> {
         Self::load_with_progress(profile, &progress::ProfileProgressObserver::default())
@@ -228,7 +269,6 @@ impl SharedClientTemplate {
         observer: &progress::ProfileProgressObserver,
         worker: Option<&mut api::selected::FamilyPreparation>,
     ) -> Result<Arc<Self>, String> {
-        profile.validate_resources_with_progress(observer)?;
         observer.report(progress::ProfileProgress::steps(
             progress::ProfileProgressStage::LoadingGameData,
             0,
@@ -241,8 +281,8 @@ impl SharedClientTemplate {
             if let Some(worker) = worker {
                 // The enclosing profile job already owns the preparation
                 // worker and its scratch/result reservation.
-                data.prepare_quests(worker)
-                    .map_err(|error| format!("quest family preparation: {error:?}"))?;
+                prepare_navigation_families(data, worker)
+                    .map_err(|error| format!("navigation family preparation: {error:?}"))?;
             } else {
                 let data = Arc::clone(data);
                 let input = script::preparation::PreparationInput::new(
@@ -251,17 +291,17 @@ impl SharedClientTemplate {
                     8 * 1024 * 1024,
                     2 * 1024 * 1024,
                 )
-                .map_err(|error| format!("quest family charge: {error}"))?;
+                .map_err(|error| format!("navigation family charge: {error}"))?;
                 script::preparation::submit(
                     script::preparation::PreparationKind::Profile,
                     api::identity::Scope::Process,
                     input,
-                    move |worker| data.prepare_quests(worker),
+                    move |worker| prepare_navigation_families(&data, worker),
                 )
-                .map_err(|error| format!("quest family preparation: {error}"))?
+                .map_err(|error| format!("navigation family preparation: {error}"))?
                 .join()
-                .map_err(|error| format!("quest family preparation: {error}"))?
-                .map_err(|error| format!("quest family preparation: {error:?}"))?;
+                .map_err(|error| format!("navigation family preparation: {error}"))?
+                .map_err(|error| format!("navigation family preparation: {error:?}"))?;
             }
         }
         observer.report(progress::ProfileProgress::steps(

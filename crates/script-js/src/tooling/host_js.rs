@@ -1,10 +1,10 @@
 //! Generated Host JS types (`host-js/index.d.ts`) from our verb tables.
-//! Snapshot fields, [`crate::shim::InteractReq`] ops, and nav
+//! Snapshot fields, [`script::interact::InteractReq`] ops, and nav
 //! [`crate::FindOptions`] — not rs2b0t names. NativeTick Load is planned for a later release.
 
+use script::card::SettingDef;
 use script::gatherer::settings::schema;
 use script::gatherer::status::{FieldKind, KEYS};
-use script::SettingDef;
 use std::path::{Path, PathBuf};
 
 struct TsField {
@@ -51,7 +51,7 @@ pub fn write_host_js_dts_to(path: &Path) -> Result<(), String> {
 pub fn render_host_js_dts() -> String {
     let mut out = String::from(
         "// Generated from host verb tables — do not edit by hand.\n\
-         // Regen: cargo test -p script --test host_js regen_host_js -- --ignored\n\
+         // Regen: cargo test -p script-js --test host_js regen_host_js -- --ignored\n\
          // NativeTick Load is planned for a later release. JS API v2 is NativeApi (explicit export const apiVersion = 2).\n\
          // Not a clone of rs2b0t-api.\n\n",
     );
@@ -976,11 +976,12 @@ fn render_gather_session(out: &mut String) {
 /// `CombatReport`, `CombatEnd` and `CombatOutcome`: one `api.combat`
 /// session over the native Combat machine (`api_combat.rs`).
 fn render_combat_session(out: &mut String) {
-    out.push_str("/** What a combat session fights. Exactly one key. `npc` names are selected npc config names (`'cow'`), or display names (`'Chicken'`) matching every attackable npc so named; `npcId` takes npc type ids. `attackers` engages only actors already attacking the bot: it never starts a fight with a player who is not. */\n");
+    out.push_str("/** What a combat session fights. Exactly one key. `npc` names are selected npc config names (`'cow'`), or display names (`'Chicken'`) matching every attackable npc so named; `npcId` takes npc type ids. `attackers` engages only actors already attacking the bot: it never starts a fight with a player who is not. `player` starts a fight with the named player (the name as the game shows it) where the game allows player combat: the Wilderness and a duel pen. It needs `pvp: true` on the request or the operator's `pvp.start_fights` setting; without either the fight is refused `invalid-setting:target:pvp-not-allowed`. */\n");
     out.push_str("export type CombatTarget =\n");
     out.push_str("  | { npc: string | string[] }\n");
     out.push_str("  | { npcId: number | number[] }\n");
-    out.push_str("  | { attackers: 'npcs' | 'players' | 'any' };\n\n");
+    out.push_str("  | { attackers: 'npcs' | 'players' | 'any' }\n");
+    out.push_str("  | { player: string };\n\n");
     out.push_str("/** One `api.combat.fight` request, mapped onto the native Combat request. Every key but `target` is optional. A malformed object (unknown key, wrong type, non-integer number) is refused `invalid-settings`; a semantic failure is refused `invalid-setting:<field>:<code>`. */\n");
     out.push_str("export interface CombatRequest {\n");
     out.push_str("  target: CombatTarget;\n");
@@ -1024,6 +1025,8 @@ fn render_combat_session(out: &mut String) {
         "  /** fight budget in game ticks, 1..65535; default 1500 (settles `budget`) */\n",
     );
     out.push_str("  budgetTicks?: number;\n");
+    out.push_str("  /** player targets: opt in to start the fight. The operator's `pvp.start_fights` setting also opts in; a request without either is refused. Fighting back (`attackers`) needs neither; default false */\n");
+    out.push_str("  pvp?: boolean;\n");
     out.push_str("}\n\n");
     out.push_str(
         "/** The live combat card's status. `engaged_index` is -1 when nothing is engaged. */\n",
@@ -1043,7 +1046,7 @@ fn render_combat_session(out: &mut String) {
     out.push_str("  /** `null` until the card publishes its first status */\n");
     out.push_str("  status: CombatStatus | null;\n");
     out.push_str("}\n\n");
-    out.push_str("/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive'. */\n");
+    out.push_str("/** What the Combat machine reported for one fight. `reason` is set only for `aborted`: 'no-food' | 'dragonfire' | 'no-ammo' | 'no-runes' | 'unattackable' | 'safespot-broken' | 'retreated' | 'retreat-failed' | 'prep-failed:<weapon|shield|ammo|staff|arm>' | 'prep-readiness:<combat-root-missing|combat-root-wrong|style-echo-missing>' | 'unresponsive' | 'pvp-<no-attack-op|outside-wilderness|opponent-outside|level-range|challenge-area|not-opponent|duel-not-started>'. */\n");
     out.push_str("export interface CombatReport {\n");
     out.push_str(
         "  end: 'killed' | 'target-gone' | 'no-target' | 'budget' | 'died' | 'aborted';\n",
@@ -1060,6 +1063,8 @@ fn render_combat_session(out: &mut String) {
     out.push_str("  boostDoses: number;\n");
     out.push_str("  antifireDoses: number;\n");
     out.push_str("  protectSwitches: number;\n");
+    out.push_str("  /** what authorised a fight started with a player: the request's `pvp`, the operator's `pvp.start_fights` setting, or both; `null` for every other fight (an npc, or fighting back) */\n");
+    out.push_str("  pvpSource: 'request' | 'global' | 'both' | null;\n");
     out.push_str("}\n\n");
     out.push_str("/** How a session ended (the `value` of a `done` outcome). `fought`: Combat settled and reported. `interrupted`: a Pause, a death or a reconnect ended the fight before Combat settled it (the bot first cleared only the prayers it raised; death needs no clearing). `refused`: the host refused the request after admission (a name it could not resolve, `busy`, the machine refusing to begin) and nothing was fought. `failed`: a machine error or card panic. Moving the bot by hand mid-fight is never `done`: the seat revokes the session after the same scoped prayer clear, and the promise settles `{ kind: 'aborted', reason: 'user-input' }`. */\n");
     out.push_str("export type CombatEnd =\n");

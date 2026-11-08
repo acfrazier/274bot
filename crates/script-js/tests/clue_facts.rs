@@ -2,8 +2,13 @@
 //! clue machine's live host path over posted snapshots.
 use api::clue_facts::CluePin;
 use client::io::ClientRevision;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
+
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn facts(revision: ClientRevision) -> api::game_data::TrailFacts {
     api::game_data::for_revision(revision)
@@ -44,6 +49,11 @@ fn missing_family_is_the_method_token_before_the_key() {
 
 #[test]
 fn every_landed_row_is_copied_without_invented_fields() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let facts = facts(revision);
         assert_eq!(facts.rows.len(), 257);
@@ -87,6 +97,11 @@ fn every_landed_row_is_copied_without_invented_fields() {
 
 #[test]
 fn the_bounded_row_is_access_constrained_and_not_playable() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let sextant = row(revision, CluePin::Id(3554)).unwrap();
         assert_eq!(sextant["alias"], "trail_clue_hard_sextant028");
@@ -125,6 +140,11 @@ fn the_bounded_row_is_access_constrained_and_not_playable() {
 
 #[test]
 fn params_stay_raw_strings_in_file_order_and_empty_arrays_stay() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let simple = row(revision, CluePin::Id(2677)).unwrap();
         assert_eq!(
@@ -155,6 +175,11 @@ fn params_stay_raw_strings_in_file_order_and_empty_arrays_stay() {
 
 #[test]
 fn non_members_and_challenge_rows_are_unknown_id() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         for id in [
             3533,
@@ -211,7 +236,7 @@ fn non_members_and_challenge_rows_are_unknown_id() {
 struct PostedPuzzle<'a> {
     component_id: i32,
     size: i32,
-    items: &'a [script_js::wire::ItemRowInput<'a>],
+    items: &'a [script::native::snapshot_source::ItemRowInput<'a>],
     generation: u64,
 }
 
@@ -222,25 +247,25 @@ struct PostedPuzzle<'a> {
 /// encounter adds the posted npc page, the local-player slot and target pair,
 /// the posted overlay varps and the posted stat rows.
 struct Scene<'a> {
-    here: Option<script_js::wire::TileInput>,
-    locs: &'a [script_js::wire::SceneEntityInput<'a>],
+    here: Option<script::native::snapshot_source::TileInput>,
+    locs: &'a [script::native::snapshot_source::SceneEntityInput<'a>],
     hold: bool,
     ours: bool,
     /// The posted ground page: the same `SceneEntity` shape as `locs`.
-    ground: &'a [script_js::wire::SceneEntityInput<'a>],
+    ground: &'a [script::native::snapshot_source::SceneEntityInput<'a>],
     /// The posted main modal id on this keyframe.
     main_modal_id: i32,
     /// Display names for the page rows, by obj id. The identify page stays the
     /// `(id, count)` pair; this is the `snapshot.inv` name the Drop resolves.
     names: &'a [(i32, &'a str)],
     /// The posted npc page the guarded encounter observes after its Dig.
-    npcs: &'a [script_js::wire::SceneEntityInput<'a>],
+    npcs: &'a [script::native::snapshot_source::SceneEntityInput<'a>],
     /// The posted varps: the encounter reads the selected Protect from Magic
     /// overlay — index 95 — out of this page.
-    varps: &'a [script_js::wire::VarpInput],
+    varps: &'a [script::native::snapshot_source::VarpInput],
     /// The posted stat rows: the encounter reads the `hitpoints` effective out
     /// of this page for its mid-fight wait.
-    stats: &'a [script_js::wire::StatInput<'a>],
+    stats: &'a [script::native::snapshot_source::StatInput<'a>],
     /// The posted local-player table slot the `targetsMe` read compares with.
     self_slot: i32,
     /// The posted local-player target pair. A page with no target posts
@@ -258,7 +283,7 @@ struct Scene<'a> {
     chat_continue: bool,
     /// The posted chat choices the trio acquire chain reads, in posted order:
     /// the row's own 1-based slot is its position here.
-    chat_options: &'a [script_js::wire::ChatOptionInput<'a>],
+    chat_options: &'a [script::native::snapshot_source::ChatOptionInput<'a>],
     /// Whether the posted pack carries the held coordinate trio: a sextant
     /// row's own acquire chain owns the row until it does, so every dig scene
     /// in this file posts it.
@@ -271,17 +296,17 @@ struct Scene<'a> {
     /// names no short" — the vector rides the walk outcome family, whose posted
     /// seq every keyframe here carries — and a page that names no short is
     /// never a shopping list.
-    missing_carry: &'a [script_js::wire::CarryInput<'a>],
+    missing_carry: &'a [script::native::snapshot_source::CarryInput<'a>],
     /// The posted shop interface the gate-toll trip reads: the interface flag
     /// and the stock rows the buy click's own identity rides.
     shop_open: bool,
-    shop_stock: &'a [script_js::wire::ItemRowInput<'a>],
+    shop_stock: &'a [script::native::snapshot_source::ItemRowInput<'a>],
     /// The posted worn page the Entrana strip reads: the raw
     /// `host().snapshot.equipment` rows with their own slot.
-    equipment: &'a [script_js::wire::ItemRowInput<'a>],
+    equipment: &'a [script::native::snapshot_source::ItemRowInput<'a>],
     /// The posted nearest Use-quickly booth the strip's and the restore's bank
     /// trip opens.
-    nearest_booth: Option<&'a script_js::wire::NearestBoothInput<'a>>,
+    nearest_booth: Option<&'a script::native::snapshot_source::NearestBoothInput<'a>>,
     /// The posted bank interface: the strip's deposit and the restore's claim
     /// go out only behind a posted open one.
     bank_open: bool,
@@ -326,8 +351,8 @@ fn scene_loc<'a>(
     z: i32,
     level: i32,
     actions: &'a [String],
-) -> script_js::wire::SceneEntityInput<'a> {
-    script_js::wire::SceneEntityInput {
+) -> script::native::snapshot_source::SceneEntityInput<'a> {
+    script::native::snapshot_source::SceneEntityInput {
         index: 7,
         id,
         name: None,
@@ -377,30 +402,32 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
     if scene.trio {
         held.extend(TRIO_ITEMS.iter().map(|(id, _)| (*id, 1)));
     }
-    let rows: Vec<script_js::wire::ItemRowInput<'_>> = held
+    let rows: Vec<script::native::snapshot_source::ItemRowInput<'_>> = held
         .iter()
-        .map(|(id, count)| script_js::wire::ItemRowInput {
-            name: scene
-                .names
-                .iter()
-                .find(|(row_id, _)| row_id == id)
-                .map(|(_, name)| *name)
-                .or_else(|| {
-                    TRIO_ITEMS
-                        .iter()
-                        .find(|(row_id, _)| row_id == id)
-                        .map(|(_, name)| *name)
-                }),
-            count: *count,
-            id: *id,
-            ops: &[],
-            noted: false,
-            cert: -1,
-            component_id: -1,
-            slot: -1,
-        })
+        .map(
+            |(id, count)| script::native::snapshot_source::ItemRowInput {
+                name: scene
+                    .names
+                    .iter()
+                    .find(|(row_id, _)| row_id == id)
+                    .map(|(_, name)| *name)
+                    .or_else(|| {
+                        TRIO_ITEMS
+                            .iter()
+                            .find(|(row_id, _)| row_id == id)
+                            .map(|(_, name)| *name)
+                    }),
+                count: *count,
+                id: *id,
+                ops: &[],
+                noted: false,
+                cert: -1,
+                component_id: -1,
+                slot: -1,
+            },
+        )
         .collect();
-    let input = script_js::wire::SnapshotInput {
+    let input = script::native::snapshot_source::SnapshotInput {
         tick,
         here: scene.here,
         ingame: true,
@@ -445,16 +472,16 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         side_tab_ifaces: &[],
         spell_buttons: &[],
         chat_lines: &[],
-        nearest_booth: scene
-            .nearest_booth
-            .map(|booth| script_js::wire::NearestBoothInput {
+        nearest_booth: scene.nearest_booth.map(|booth| {
+            script::native::snapshot_source::NearestBoothInput {
                 x: booth.x,
                 z: booth.z,
                 level: booth.level,
                 id: booth.id,
                 name: booth.name,
                 op: booth.op,
-            }),
+            }
+        }),
         bank_note_on: -1,
         bank_note_off: -1,
         scene_state: 0,
@@ -474,7 +501,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         trade_decline_id: -1,
         shop_open: scene.shop_open,
         shop_stock: scene.shop_stock,
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: scene.self_target_kind,
         self_target_index: scene.self_target_index,
@@ -482,22 +509,21 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         user_move_intent_seq: 0,
         walk_outcome_cancel_reason: Default::default(),
     };
-    let native = script_js::wire::NativeFactsInput {
-        puzzle_board: scene
-            .puzzle
-            .as_ref()
-            .map(|puzzle| script_js::wire::PuzzleBoardInput {
+    let native = script::native::snapshot_source::NativeFactsInput {
+        puzzle_board: scene.puzzle.as_ref().map(|puzzle| {
+            script::native::snapshot_source::PuzzleBoardInput {
                 component_id: puzzle.component_id,
                 size: puzzle.size,
                 items: puzzle.items,
                 generation: puzzle.generation,
-            }),
+            }
+        }),
         // The family's own seq: it is what makes the posted carry vector above
         // a family post at all, and every keyframe here carries it so a page
         // that names a short is observed as one.
         walk_outcome_seq: POSTED_WALK_OUTCOME_SEQ,
         walk_missing_carry: scene.missing_carry,
-        ..script_js::wire::NativeFactsInput::default()
+        ..script::native::snapshot_source::NativeFactsInput::default()
     };
     iso.post_snapshot(script_js::wire::encode_snapshot_with_native(&input, native));
 }
@@ -525,17 +551,13 @@ fn probe_page(src: &str, revision: ClientRevision, page: &[(i32, i32)]) -> serde
     serde_json::from_str(value.as_str().unwrap()).unwrap()
 }
 
-/// A schema-4 selected slot that decodes with no trail family at all.
+/// Minimal selected data with valid empty bootstrap families and no trail family.
 fn data_without_trails() -> std::sync::Arc<api::game_data::SelectedGameData> {
     let raw = r#"{
         "schema_version": 5,
         "revision": 274,
-        "provenance": {
-            "cache_identity": {"cache_id": "x"},
-            "inputs": [],
-            "content_inputs": [],
-            "decoder_sources": []
-        },
+        "shops": [],
+        "cook_surfaces": { "rows": [] },
         "items": [],
         "consumption": [],
         "pickpocket": []
@@ -545,6 +567,11 @@ fn data_without_trails() -> std::sync::Arc<api::game_data::SelectedGameData> {
 
 #[test]
 fn v2_clue_row_is_a_sync_helper_result() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -627,6 +654,9 @@ export function tick(api) {
 
 #[test]
 fn v2_clue_row_rejects_a_converted_id() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -690,6 +720,11 @@ export function tick(api) {
 
 #[test]
 fn v2_clue_held_step_is_a_sync_helper_result_over_the_posted_page() {
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -732,6 +767,9 @@ export function tick(api) {
 
 #[test]
 fn v2_clue_held_step_takes_the_first_held_step_and_else_none_held() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -789,6 +827,10 @@ export function tick(api) {
         "game data unavailable: this server's content isn't verified (see profile/engine settings)",
         "{value:?}"
     );
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
 
     // A selected slot without the trail family: the family token, before
     // none-held, even with an empty page.
@@ -801,8 +843,13 @@ export function tick(api) {
     .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let value: serde_json::Value =
-        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let value: serde_json::Value = serde_json::from_str(
+        iso.probe("globalThis.__probe")
+            .unwrap_or_else(|error| panic!("{error}; isolate setup: {:?}", iso.poll_ready()))
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     iso.join();
     assert_eq!(
         value["step"]["error"], "family-unavailable:trails",
@@ -845,6 +892,10 @@ export function tick(api) {
             "{key} {empty:?}"
         );
     }
+    // Selected-slot startup also loads the generated cook-location catalog.
+    if !api::test_support::game_data_available() {
+        return;
+    }
 
     let iso = LoadIsolate::spawn_with_game_data(
         src.into(),
@@ -855,8 +906,13 @@ export function tick(api) {
     .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let missing: serde_json::Value =
-        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let missing: serde_json::Value = serde_json::from_str(
+        iso.probe("globalThis.__probe")
+            .unwrap_or_else(|error| panic!("{error}; isolate setup: {:?}", iso.poll_ready()))
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     iso.join();
     assert_eq!(missing["omitted"]["error"], "invalid-args", "{missing:?}");
     assert_eq!(missing["stringId"]["error"], "invalid-args", "{missing:?}");
@@ -871,6 +927,9 @@ export function tick(api) {
 
 #[test]
 fn example_clue_facts_v2_is_one_read_only_row_call() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("clue_facts_v2.ts");
@@ -906,6 +965,9 @@ fn example_clue_facts_v2_is_one_read_only_row_call() {
 
 #[test]
 fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("clue_held_step_v2.ts");
@@ -941,6 +1003,9 @@ fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
 
 #[test]
 fn v2_clue_run_without_hooks_defaults_enabled_true_and_progresses() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 let started = false;
@@ -974,7 +1039,7 @@ export async function tick(api) {
         2,
         &[(2677, 1)],
         &Scene {
-            here: Some(script_js::wire::TileInput {
+            here: Some(script::native::snapshot_source::TileInput {
                 x: 3200,
                 z: 3218,
                 level: 1,
@@ -995,6 +1060,8 @@ export async function tick(api) {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -1026,6 +1093,9 @@ export async function tick(api) {
 /// settles the one promise.
 #[test]
 fn v2_clue_run_invokes_hooks_and_maps_wait_walk_loc_and_terminal_yield() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 let started = false;
@@ -1092,7 +1162,7 @@ export async function tick(api) {
         2,
         &page,
         &Scene {
-            here: Some(script_js::wire::TileInput {
+            here: Some(script::native::snapshot_source::TileInput {
                 x: 3200,
                 z: 3218,
                 level: 1,
@@ -1113,6 +1183,8 @@ export async function tick(api) {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
+            allow_prereq_dialogue: None,
+            allow_quest_start: None,
             request_id: 0,
             avoid: Vec::new(),
             cross: Vec::new(),
@@ -1128,7 +1200,7 @@ export async function tick(api) {
         3,
         &page,
         &Scene {
-            here: Some(script_js::wire::TileInput {
+            here: Some(script::native::snapshot_source::TileInput {
                 x: 3209,
                 z: 3218,
                 level: 1,
@@ -1158,7 +1230,7 @@ export async function tick(api) {
         4,
         &page,
         &Scene {
-            here: Some(script_js::wire::TileInput {
+            here: Some(script::native::snapshot_source::TileInput {
                 x: 3209,
                 z: 3218,
                 level: 1,
@@ -1247,6 +1319,8 @@ fn clue_walk(x: i32, z: i32, level: i32) -> InteractReq {
         request_id: 0,
         avoid: Vec::new(),
         cross: Vec::new(),
+        allow_prereq_dialogue: None,
+        allow_quest_start: None,
     }
 }
 
@@ -1254,11 +1328,11 @@ fn clue_npc<'a>(
     index: i32,
     id: i32,
     name: &'a str,
-    tile: script_js::wire::TileInput,
+    tile: script::native::snapshot_source::TileInput,
     distance: i32,
     actions: &'a [String],
-) -> script_js::wire::SceneEntityInput<'a> {
-    script_js::wire::SceneEntityInput {
+) -> script::native::snapshot_source::SceneEntityInput<'a> {
+    script::native::snapshot_source::SceneEntityInput {
         index,
         id,
         name: Some(name),
@@ -1284,8 +1358,13 @@ fn clue_npc<'a>(
     }
 }
 
-fn clue_stock(id: i32, name: &str, slot: i32, component: i32) -> script_js::wire::ItemRowInput<'_> {
-    script_js::wire::ItemRowInput {
+fn clue_stock(
+    id: i32,
+    name: &str,
+    slot: i32,
+    component: i32,
+) -> script::native::snapshot_source::ItemRowInput<'_> {
+    script::native::snapshot_source::ItemRowInput {
         name: Some(name),
         count: 500,
         id,
@@ -1299,6 +1378,9 @@ fn clue_stock(id: i32, name: &str, slot: i32, component: i32) -> script_js::wire
 
 #[test]
 fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     const PASS: i32 = 1854;
     const SHANTAY: i32 = 836;
     const DEST: (i32, i32, i32) = (3209, 3218, 1);
@@ -1306,7 +1388,7 @@ fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
     let iso = spawn_live_clue_run();
     let page = [(2677, 1)];
     let packed = [(2677, 1), (PASS, 1)];
-    let named = [script_js::wire::CarryInput {
+    let named = [script::native::snapshot_source::CarryInput {
         id: PASS,
         count: 1,
         name: Some("Shantay pass"),
@@ -1318,7 +1400,7 @@ fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
         12,
         SHANTAY,
         "Shantay",
-        script_js::wire::TileInput {
+        script::native::snapshot_source::TileInput {
             x: SPAWN.0,
             z: SPAWN.1,
             level: SPAWN.2,
@@ -1326,12 +1408,12 @@ fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
         1,
         &trade,
     )];
-    let away = script_js::wire::TileInput {
+    let away = script::native::snapshot_source::TileInput {
         x: 3200,
         z: 3218,
         level: 1,
     };
-    let spawn = script_js::wire::TileInput {
+    let spawn = script::native::snapshot_source::TileInput {
         x: SPAWN.0,
         z: SPAWN.1,
         level: SPAWN.2,
@@ -1479,17 +1561,20 @@ fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
 
 #[test]
 fn v2_clue_run_reads_guarded_combat_scene_and_redigs_owned_death() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_live_clue_run();
     let page = [(2723, 1), (952, 1)];
     let names = [(952, "Spade")];
-    let stats = [script_js::wire::StatInput {
+    let stats = [script::native::snapshot_source::StatInput {
         index: 3,
         name: "hitpoints",
         xp: 0,
         base: 40,
         effective: 40,
     }];
-    let arrived = script_js::wire::TileInput {
+    let arrived = script::native::snapshot_source::TileInput {
         x: 3058,
         z: 3884,
         level: 0,
@@ -1518,6 +1603,9 @@ fn v2_clue_run_reads_guarded_combat_scene_and_redigs_owned_death() {
 
 #[test]
 fn v2_clue_run_abandons_a_keeper_row_and_refuses_the_next_begin() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let src = r#"
 export const apiVersion = 2;
 let phase = 0;
@@ -1545,7 +1633,7 @@ export async function tick(api) {
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     let page = [(2831, 1)];
-    let spawn = script_js::wire::TileInput {
+    let spawn = script::native::snapshot_source::TileInput {
         x: 3039,
         z: 3700,
         level: 0,
@@ -1576,7 +1664,7 @@ export async function tick(api) {
 const PUZZLE_PIECE_B: i32 = 2749;
 const PUZZLE_COMPONENT: i32 = 6600;
 
-fn puzzle_rows(solved: bool) -> Vec<script_js::wire::ItemRowInput<'static>> {
+fn puzzle_rows(solved: bool) -> Vec<script::native::snapshot_source::ItemRowInput<'static>> {
     let mut rows = Vec::with_capacity(24);
     for slot in 0..25 {
         let target = if solved {
@@ -1589,7 +1677,7 @@ fn puzzle_rows(solved: bool) -> Vec<script_js::wire::ItemRowInput<'static>> {
             Some(slot)
         };
         if let Some(target) = target {
-            rows.push(script_js::wire::ItemRowInput {
+            rows.push(script::native::snapshot_source::ItemRowInput {
                 name: Some("Sliding piece"),
                 count: 1,
                 id: PUZZLE_PIECE_B + target,
@@ -1606,6 +1694,9 @@ fn puzzle_rows(solved: bool) -> Vec<script_js::wire::ItemRowInput<'static>> {
 
 #[test]
 fn v2_clue_run_reads_puzzle_board_and_generation() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn_live_clue_run();
     let page = [(2794, 1), (2795, 1)];
     assert_eq!(

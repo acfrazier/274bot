@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 #[cfg(test)]
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::nav_settings::NavSettings;
 
@@ -17,6 +17,22 @@ use frontend_core::log::Level;
 use frontend_core::UiPreferences as Preferences;
 use serde_json::{Map, Value};
 
+#[derive(Debug, thiserror::Error)]
+#[error("panel preferences at {path}: invalid panel preferences: {source}")]
+pub struct PanelUiStateError {
+    path: PathBuf,
+    #[source]
+    source: serde_json::Error,
+}
+
+impl PanelUiStateError {
+    fn new(path: &Path, source: serde_json::Error) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PanelUiState {
     pub last_focus: Option<String>,
@@ -34,7 +50,7 @@ pub struct PanelUiState {
     #[serde(default = "default_true")]
     pub lowmem: bool,
     /// Server revision selected before the process profile is bound.
-    /// Old preference files migrate to revision 274.
+    /// The default is used when the preference is absent.
     #[serde(default = "default_server_revision")]
     pub server_revision: u16,
     /// Strip collapsing-header order. Empty = [`crate::chrome::HEADING_ORDER`].
@@ -80,7 +96,7 @@ pub struct PanelUiState {
     #[serde(default)]
     pub chrome: crate::theme::ChromeColors,
     /// Remembered answer to the local WalkTo terrain bake warning, shared
-    /// with the TUI. Absent (0.1.8.1) or unknown = ask.
+    /// with the TUI. Absent or unknown = ask.
     #[serde(default)]
     pub map_bake: frontend_core::MapBakeChoice,
     /// Write a per-session log file under `~/.274bot/logs/` (shared with the
@@ -183,27 +199,31 @@ pub fn default_section_closed(id: &str) -> bool {
 /// writes (`CORE_OWNED_KEYS`) still come from the store once their command
 /// has written them, as they do outside tests; [`load_from`] always reads
 /// the store.
-pub fn load(preferences: &Preferences) -> PanelUiState {
+pub fn load(preferences: &Preferences) -> Result<PanelUiState, PanelUiStateError> {
     let Ok(document) = preferences.document() else {
         #[cfg(test)]
-        return TEST_STATE.with(|state| state.borrow().clone());
+        return Ok(TEST_STATE.with(|state| state.borrow().clone()));
         #[cfg(not(test))]
-        return PanelUiState::default();
+        return Ok(PanelUiState::default());
     };
-    load_snapshot(&document)
+    load_snapshot(&preferences.path(), &document)
 }
 
-pub(crate) fn load_snapshot(document: &Map<String, Value>) -> PanelUiState {
+pub(crate) fn load_snapshot(
+    path: &Path,
+    document: &Map<String, Value>,
+) -> Result<PanelUiState, PanelUiStateError> {
     #[cfg(test)]
     {
         if DOCUMENT_READER.with(std::cell::Cell::get) {
-            return from_document(document);
+            return from_document(document).map_err(|source| PanelUiStateError::new(path, source));
         }
         let stand_in = TEST_STATE.with(|state| state.borrow().clone());
         with_core_owned_keys(stand_in, document)
+            .map_err(|source| PanelUiStateError::new(path, source))
     }
     #[cfg(not(test))]
-    from_document(document)
+    from_document(document).map_err(|source| PanelUiStateError::new(path, source))
 }
 
 /// Test seam: while the returned guard lives, this test thread reads the
@@ -227,11 +247,11 @@ impl Drop for DocumentReader {
     }
 }
 
-/// `state` with the [`CORE_OWNED_KEYS`] the store holds: their command rows
-/// write the store, never the stand-in, so a key the store holds wins over
-/// the stand-in's (seeded) value, and a key it lacks keeps it.
 #[cfg(test)]
-fn with_core_owned_keys(state: PanelUiState, document: &Map<String, Value>) -> PanelUiState {
+fn with_core_owned_keys(
+    state: PanelUiState,
+    document: &Map<String, Value>,
+) -> Result<PanelUiState, serde_json::Error> {
     let mut merged = serde_json::to_value(&state).expect("PanelUiState serializes");
     let keys = merged
         .as_object_mut()
@@ -241,7 +261,7 @@ fn with_core_owned_keys(state: PanelUiState, document: &Map<String, Value>) -> P
             keys.insert((*key).into(), stored.clone());
         }
     }
-    serde_json::from_value(merged).unwrap_or(state)
+    serde_json::from_value(merged)
 }
 
 /// Seed the per-thread fixture for the panel's own preferences.
@@ -270,24 +290,23 @@ pub(crate) fn commit_test_member(path: &[String], value: &Option<Value>) {
 }
 
 /// The panel preferences `preferences` holds: defaults when the file is
-/// absent, when the service refused it (unreadable), or when it does not
-/// read as panel preferences.
+/// absent or when the service refuses it (unreadable). A readable document
+/// that does not match the panel preferences schema returns its path and
+/// decode error without changing the saved bytes.
 #[cfg(test)]
-pub fn load_from(preferences: &Preferences) -> PanelUiState {
+pub fn load_from(preferences: &Preferences) -> Result<PanelUiState, PanelUiStateError> {
     let Ok(document) = preferences.document() else {
-        return PanelUiState::default();
+        return Ok(PanelUiState::default());
     };
-    from_document(&document)
+    from_document(&document).map_err(|source| PanelUiStateError::new(&preferences.path(), source))
 }
 
-pub(crate) fn from_document(document: &Map<String, Value>) -> PanelUiState {
-    match serde_json::from_value::<PanelUiState>(Value::Object(document.clone())) {
-        Ok(mut state) => {
-            state.debug_panel.normalize();
-            state
-        }
-        Err(_) => PanelUiState::default(),
-    }
+pub(crate) fn from_document(
+    document: &Map<String, Value>,
+) -> Result<PanelUiState, serde_json::Error> {
+    let mut state = serde_json::from_value::<PanelUiState>(Value::Object(document.clone()))?;
+    state.debug_panel.normalize();
+    Ok(state)
 }
 
 /// `state` with the previews of the requests still pending laid over it,
@@ -335,13 +354,14 @@ pub(crate) fn is_launch_choice(path: &[String]) -> bool {
 /// stay. A member this does not name follows the document, so a new
 /// panel-owned member is rebased by default.
 pub(crate) fn rebased<'a>(
+    path: &Path,
     current: &PanelUiState,
     document: &Map<String, Value>,
     pending: impl IntoIterator<Item = (&'a [String], &'a Option<Value>)>,
     bot_focused: bool,
-) -> PanelUiState {
+) -> Result<PanelUiState, PanelUiStateError> {
     let next = apply_pending_members(
-        load_snapshot(document),
+        load_snapshot(path, document)?,
         pending
             .into_iter()
             .filter(|(path, _)| !is_launch_choice(path)),
@@ -350,6 +370,8 @@ pub(crate) fn rebased<'a>(
         allow_teleports: current.nav.allow_teleports,
         allow_wilderness: current.nav.allow_wilderness,
         allow_bank_fetch: current.nav.allow_bank_fetch,
+        allow_prereq_dialogue: current.nav.allow_prereq_dialogue,
+        allow_quest_start: current.nav.allow_quest_start,
         allow_danger_zones: current.nav.allow_danger_zones,
         survivable_routing: current.nav.survivable_routing,
         script_scope_notice_ack: current.nav.script_scope_notice_ack,
@@ -363,7 +385,7 @@ pub(crate) fn rebased<'a>(
     } else {
         (next.raster, next.lowmem)
     };
-    PanelUiState {
+    Ok(PanelUiState {
         capture: current.capture,
         sidecar_50: current.sidecar_50,
         focused_50: current.focused_50,
@@ -376,7 +398,7 @@ pub(crate) fn rebased<'a>(
         server_revision: current.server_revision,
         nav,
         ..next
-    }
+    })
 }
 
 fn apply_json_member(root: &mut Map<String, Value>, path: &[String], value: &Option<Value>) {
@@ -423,6 +445,8 @@ const MERGED_NAV_KEYS: &[(&str, bool)] = &[
     ("allow_teleports", false),
     ("allow_wilderness", false),
     ("allow_bank_fetch", false),
+    ("allow_prereq_dialogue", true),
+    ("allow_quest_start", true),
     ("allow_danger_zones", false),
     ("survivable_routing", true),
     ("script_scope_notice_ack", false),
@@ -595,13 +619,10 @@ mod tests {
     }
 
     #[test]
-    fn old_nav_object_without_allow_wilderness_keeps_focus_and_colors() {
-        // A pre-Task-1 prefs file carries a `nav` object with no
-        // `allow_wilderness` key. It must load with the new field defaulted
-        // (false) instead of failing deserialize and resetting the whole
-        // `PanelUiState` (`load_from` falls back to `PanelUiState::default()`,
-        // wiping focus / collapsed / colors).
-        let (_dir, prefs) = scratch("ui-old-nav");
+    fn partial_nav_object_without_allow_wilderness_keeps_focus_and_colors() {
+        // A supported partial preference document may omit `allow_wilderness`.
+        // Its default must not make deserialization reset the whole UI state.
+        let (_dir, prefs) = scratch("ui-partial-nav");
         crate::test_support::write_private_fixture(
             prefs.path(),
             r##"{
@@ -628,11 +649,11 @@ mod tests {
         )
         .unwrap();
         prefs.reload().unwrap();
-        let back = load_from(&prefs);
+        let back = load_from(&prefs).unwrap();
         assert_eq!(
             back.last_focus.as_deref(),
             Some("alice"),
-            "focus must survive an old nav object"
+            "focus must survive a partial nav object"
         );
         assert!(back.collapsed["bob"]["nav"]);
         assert!(
@@ -651,7 +672,7 @@ mod tests {
         assert_eq!(back.nav.color_path, "#AABBCC");
         assert!(
             back.nav.survivable_routing,
-            "an old nav object migrates to When survivable"
+            "missing survivable routing defaults to When survivable"
         );
     }
 
@@ -689,7 +710,7 @@ mod tests {
         )
         .map(|()| true)
         .unwrap();
-        let loaded = load_from(&prefs);
+        let loaded = load_from(&prefs).unwrap();
         assert_eq!(loaded.last_focus.as_deref(), Some("alice"));
         assert!(!loaded.capture);
         assert!(
@@ -709,7 +730,7 @@ mod tests {
         )
         .map(|()| true)
         .unwrap();
-        let loaded = load_from(&prefs);
+        let loaded = load_from(&prefs).unwrap();
         assert!(loaded.nav.pause_script_on_manual_walk_abort);
         assert!(
             loaded.nav.show_special_areas,
@@ -784,6 +805,8 @@ mod tests {
         assert_eq!(after_panel_save["nav"]["allow_teleports"], true);
         assert_eq!(after_panel_save["nav"]["allow_wilderness"], false);
         assert_eq!(after_panel_save["nav"]["allow_bank_fetch"], false);
+        assert_eq!(after_panel_save["nav"]["allow_prereq_dialogue"], true);
+        assert_eq!(after_panel_save["nav"]["allow_quest_start"], true);
         assert_eq!(after_panel_save["nav"]["allow_danger_zones"], false);
         assert_eq!(after_panel_save["nav"]["survivable_routing"], false);
         assert_eq!(after_panel_save["nav"]["script_scope_notice_ack"], false);
@@ -826,6 +849,8 @@ mod tests {
         assert!(!refreshed_nav.allow_teleports);
         assert!(refreshed_nav.allow_wilderness);
         assert!(refreshed_nav.allow_bank_fetch);
+        assert!(refreshed_nav.allow_prereq_dialogue);
+        assert!(refreshed_nav.allow_quest_start);
         assert!(refreshed_nav.allow_danger_zones);
         assert!(refreshed_nav.survivable_routing);
         assert!(refreshed_nav.script_scope_notice_ack);
@@ -883,7 +908,7 @@ mod tests {
         state.debug_panel.favorites = vec!["~reset".into()];
         save_to(&prefs, &state);
 
-        let loaded = load_from(&prefs);
+        let loaded = load_from(&prefs).unwrap();
         assert_eq!(loaded.last_focus.as_deref(), Some("bob"));
         assert!(loaded.collapsed["bob"]["nav"]);
         assert_eq!(loaded.debug_panel.recents, vec!["~give"]);
@@ -893,16 +918,14 @@ mod tests {
     #[test]
     fn load_missing_file_is_default() {
         let (_dir, prefs) = scratch("ui-missing");
-        let loaded = load_from(&prefs);
+        let loaded = load_from(&prefs).unwrap();
         assert!(loaded.last_focus.is_none());
         assert!(loaded.collapsed.is_empty());
     }
 
-    /// A corrupt preferences file (not JSON) is refused by reads, so the
-    /// panel starts from defaults; the panel's next save moves it aside
-    /// byte for byte to `panel-ui.json.corrupt-<time>` and lands in fresh
-    /// preferences (T5.2 r4, the recovery the old shared writer made); no
-    /// `.new` side file.
+    /// A corrupt preferences file (not JSON) is refused by reads, so the panel
+    /// uses defaults in memory. The established next-save recovery moves the
+    /// original bytes aside before writing fresh preferences.
     #[test]
     fn corrupt_prefs_are_moved_aside_and_the_save_lands_in_fresh_preferences() {
         let (dir, prefs) = scratch("ui-corrupt");
@@ -911,7 +934,7 @@ mod tests {
         prefs
             .reload()
             .expect_err("a corrupt preferences file is refused by reads");
-        assert_eq!(load_from(&prefs), PanelUiState::default());
+        assert_eq!(load_from(&prefs).unwrap(), PanelUiState::default());
         assert_eq!(std::fs::read(prefs.path()).unwrap(), corrupt);
         let state = PanelUiState {
             last_focus: Some("alice".into()),
@@ -931,7 +954,10 @@ mod tests {
         assert_eq!(backups.len(), 1, "{backups:?}");
         assert_eq!(std::fs::read(&backups[0]).unwrap(), corrupt);
         assert!(!dir.join("panel-ui.json.new").exists());
-        assert_eq!(load_from(&prefs).last_focus.as_deref(), Some("alice"));
+        assert_eq!(
+            load_from(&prefs).unwrap().last_focus.as_deref(),
+            Some("alice")
+        );
     }
 
     /// A preferences file refused for the file itself (here: larger than
@@ -961,7 +987,7 @@ mod tests {
             siblings.iter().all(|name| name.ends_with(".lock")),
             "no `.new` side file and no `.corrupt-` backup: {siblings:?}"
         );
-        assert_eq!(load_from(&prefs), PanelUiState::default());
+        assert_eq!(load_from(&prefs).unwrap(), PanelUiState::default());
     }
 
     /// A document that is valid JSON but not panel preferences is refused
@@ -988,7 +1014,11 @@ mod tests {
             !dir.join("panel-ui.json.new").exists(),
             "the panel's state is not redirected to a side file"
         );
-        assert_eq!(load_from(&prefs), PanelUiState::default());
+        let error = load_from(&prefs).expect_err("a readable non-panel document is refused");
+        assert!(
+            error.to_string().contains(prefs.path().to_str().unwrap()),
+            "the refusal names the file: {error}"
+        );
     }
 
     /// The per-thread stand-in behind `load`/`save` never touches the store.
@@ -1000,7 +1030,7 @@ mod tests {
             ..Default::default()
         };
         save(&prefs, &state);
-        assert_eq!(load(&prefs).last_focus.as_deref(), Some("carol"));
+        assert_eq!(load(&prefs).unwrap().last_focus.as_deref(), Some("carol"));
         assert!(
             !prefs.path().exists(),
             "the stand-in does not write the preferences file"
@@ -1029,7 +1059,7 @@ mod tests {
             ..Default::default()
         };
         save_to(&prefs, &state);
-        let loaded = load_from(&prefs);
+        let loaded = load_from(&prefs).unwrap();
         assert_eq!(
             loaded.script_category_order,
             vec!["Prayer", "Combat", "Skilling"]
@@ -1045,7 +1075,7 @@ mod tests {
             ..Default::default()
         };
         save_to(&prefs, &state);
-        let loaded = load_from(&prefs);
+        let loaded = load_from(&prefs).unwrap();
         assert_eq!(
             loaded.script_catalog_last_dir,
             Some(std::path::PathBuf::from("/tmp/rs2b0t"))
@@ -1089,16 +1119,16 @@ mod tests {
         );
     }
 
-    /// An old file has none of the new keys: the render-all warning is still
-    /// asked, sidecar 50 fps is off and focused 50 fps stays on, as before the
-    /// choices were saved.
+    /// A supported partial document omits these optional keys: the
+    /// render-all warning is still asked, sidecar 50 fps is off and focused
+    /// 50 fps stays on.
     #[test]
-    fn missing_render_ack_and_50_fps_keys_behave_as_before() {
-        let old: PanelUiState =
+    fn missing_render_ack_and_50_fps_keys_keep_their_defaults() {
+        let partial: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
-        assert!(!old.render_all_warning_ack);
-        assert!(!old.sidecar_50);
-        assert!(old.focused_50);
+        assert!(!partial.render_all_warning_ack);
+        assert!(!partial.sidecar_50);
+        assert!(partial.focused_50);
     }
 
     /// The acknowledgement and both 50 fps choices survive a panel save and
@@ -1114,7 +1144,7 @@ mod tests {
         set_patiently(&prefs, "focused_50", serde_json::json!(false));
         set_patiently(&prefs, "capture", serde_json::json!(false));
         save_to(&prefs, &PanelUiState::default());
-        let back = load_from(&prefs);
+        let back = load_from(&prefs).unwrap();
         assert!(back.render_all_warning_ack);
         assert!(back.sidecar_50);
         assert!(!back.focused_50);
@@ -1150,14 +1180,14 @@ mod tests {
         let (_dir, prefs) = scratch("ui-capture");
         set_patiently(&prefs, "capture", serde_json::json!(false));
         save_to(&prefs, &PanelUiState::default());
-        assert!(!load_from(&prefs).capture);
+        assert!(!load_from(&prefs).unwrap().capture);
     }
 
     #[test]
-    fn session_log_file_is_off_for_old_prefs_and_survives_a_panel_save() {
-        let old: PanelUiState =
+    fn session_log_file_is_off_for_partial_prefs_and_survives_a_panel_save() {
+        let partial: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
-        assert!(!old.session_log_file, "absent key: no session file");
+        assert!(!partial.session_log_file, "absent key: no session file");
         // The TUI writes the shared key; a later panel save must keep it.
         let on: PanelUiState = serde_json::from_str(&format!(
             r#"{{"last_focus":null,"collapsed":{{}},"{}":true}}"#,
@@ -1171,17 +1201,17 @@ mod tests {
     }
 
     #[test]
-    fn old_prefs_without_chrome_keep_theme_defaults() {
+    fn partial_prefs_without_chrome_keep_theme_defaults() {
         let back: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
         assert_eq!(back.chrome, crate::theme::ChromeColors::default());
     }
 
     #[test]
-    fn old_prefs_default_revision_to_274_and_289_roundtrips() {
-        let old: PanelUiState =
+    fn partial_prefs_default_revision_to_274_and_289_roundtrip() {
+        let partial: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
-        assert_eq!(old.server_revision, 274);
+        assert_eq!(partial.server_revision, 274);
 
         let state = PanelUiState {
             server_revision: 289,
@@ -1195,9 +1225,13 @@ mod tests {
     #[test]
     fn map_bake_choice_defaults_to_ask_and_a_bad_value_keeps_the_other_prefs() {
         use frontend_core::MapBakeChoice;
-        let old: PanelUiState =
+        let partial: PanelUiState =
             serde_json::from_str(r#"{"last_focus":"alice","collapsed":{}}"#).unwrap();
-        assert_eq!(old.map_bake, MapBakeChoice::Ask, "0.1.8.1 file asks");
+        assert_eq!(
+            partial.map_bake,
+            MapBakeChoice::Ask,
+            "absent choice defaults to Ask"
+        );
         let odd: PanelUiState =
             serde_json::from_str(r#"{"last_focus":"alice","map_bake":7,"capture":false}"#).unwrap();
         assert_eq!(odd.map_bake, MapBakeChoice::Ask);
@@ -1212,6 +1246,6 @@ mod tests {
         })
         .unwrap();
         save_to(&prefs, &PanelUiState::default());
-        assert_eq!(load_from(&prefs).map_bake, MapBakeChoice::Always);
+        assert_eq!(load_from(&prefs).unwrap().map_bake, MapBakeChoice::Always);
     }
 }

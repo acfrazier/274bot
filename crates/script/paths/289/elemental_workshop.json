@@ -1,0 +1,1522 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "elemental_workshop",
+  "display_name": "Elemental Workshop",
+  "required": [
+    "mining:20",
+    "smithing:20",
+    "crafting:20"
+  ],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": true,
+    "quest_points": 1,
+    "requirements": [
+      {
+        "id": "mining:20",
+        "kind": {
+          "Skill": {
+            "skill": "mining",
+            "level": 20
+          }
+        },
+        "at": "Start",
+        "source": "C scripts/quests/quest_elemental_workshop/scripts/elemental_workshop_journal.rs2:63-84"
+      },
+      {
+        "id": "smithing:20",
+        "kind": {
+          "Skill": {
+            "skill": "smithing",
+            "level": 20
+          }
+        },
+        "at": "Start",
+        "source": "C scripts/quests/quest_elemental_workshop/scripts/elemental_workshop_journal.rs2:63-84"
+      },
+      {
+        "id": "crafting:20",
+        "kind": {
+          "Skill": {
+            "skill": "crafting",
+            "level": 20
+          }
+        },
+        "at": "Start",
+        "source": "C scripts/quests/quest_elemental_workshop/scripts/elemental_workshop_journal.rs2:63-84"
+      }
+    ],
+    "items": [],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 1,
+    "loadouts": {},
+    "areas": {
+      "workshop": {
+        "boxes": [
+          [
+            2688,
+            9856,
+            2751,
+            9919,
+            0
+          ]
+        ],
+        "source": "C maps/m42_154.jm2:4878-7267; scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:36-44"
+      },
+      "wall_room": {
+        "boxes": [
+          [
+            2709,
+            3496,
+            2710,
+            3498,
+            0
+          ]
+        ],
+        "source": "C maps/m42_54.jm2:7294,7342; scripts/doors/scripts/open_and_close_double_doors.rs2:91-112; scripts/doors/scripts/door_procs.rs2:1-8"
+      }
+    },
+    "tools": [
+      "obj:knife",
+      "obj:needle",
+      "obj:leather",
+      "obj:thread",
+      "obj:hammer",
+      "obj:bronze_pickaxe",
+      "obj:coal",
+      "obj:elemental_workshop_shield_book",
+      "obj:elemental_workshop_key"
+    ],
+    "owns_inventory": true
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:elemental_workshop",
+      "progress": {
+        "colour": {
+          "not_started": "elemental_workshop:0",
+          "in_progress": "elemental_workshop:1",
+          "complete": "elemental_workshop:done"
+        },
+        "rules": [
+          {
+            "stage": "elemental_workshop:done",
+            "all": [
+              "quest complete!"
+            ]
+          },
+          {
+            "stage": "elemental_workshop:workshop",
+            "all": [
+              "where is this workshop and how do i get in?",
+              "i have found a secret door"
+            ]
+          },
+          {
+            "stage": "elemental_workshop:2",
+            "all": [
+              "cutting open the spine of the book"
+            ]
+          },
+          {
+            "stage": "elemental_workshop:1",
+            "all": [
+              "it tells of magic ore and a workshop created to fashion it"
+            ]
+          },
+          {
+            "stage": "elemental_workshop:0",
+            "all": [
+              "i can start this quest by reading a"
+            ]
+          }
+        ],
+        "flags": [
+          {
+            "flag": "water",
+            "any": [
+              "i managed to get the waterwheel"
+            ]
+          },
+          {
+            "flag": "bellows",
+            "any": [
+              "the bellows in the eastern air area are now fixed"
+            ]
+          },
+          {
+            "flag": "furnace",
+            "any": [
+              "i lit the furnace with lava"
+            ]
+          }
+        ],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "elemental_workshop:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "buy-thread", "kind": "buy", "version": 1,
+              "args": {"shop": {"npc": "tailorp", "anchor": {"tile": [3281, 3398, 0], "source": "content/maps/m51_53.jm2:6739"}}, "obj": "thread", "qty": 1, "est_gp": 1},
+              "comment": "content/scripts/areas/area_varrock/configs/varrock.inv:114-115; content/scripts/areas/area_varrock/configs/varrock.npc:392-397; content/scripts/skill_crafting/configs/crafting.obj:131-141; content/scripts/shop/scripts/shop.rs2:138-147,182-187. Default cost is 1 and the purchase floor is 1.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "thread"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "thread"}}}
+            },
+            {
+              "id": "mine-four-coal", "kind": "gather", "version": 1, "advances": false,
+              "args": {"skill": "mining", "resource": "coal", "until": {"obj": "coal", "qty": 4}, "anchor": {"tile": [2582, 3479, 0], "source": "content/maps/m40_54.jm2:4815; content/pack/loc.pack:2097; content/scripts/skill_mining/configs/mine.dbrow:62-74"}, "radius": 6, "settle_ms": 600000},
+              "comment": "content/scripts/skill_mining/configs/mine.dbrow:62-74 requires Mining 30 and produces coal. content/scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:226-237 consumes four coal.",
+              "skip_if": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}},
+              "settle": {"Fact": {"kind": "item_count_at_least", "version": 1, "args": {"obj": "coal", "qty": 4}}}
+            },
+            {
+              "id": "find-book",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_bookcase"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2716,
+                    3481,
+                    0
+                  ],
+                  "source": "C maps/m42_54.jm2:7613; pack/loc.pack:3390"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_shield_book"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_shield_book"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:1-12"
+            },
+            {
+              "id": "read-book",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": {
+                  "held": "elemental_workshop_shield_book"
+                },
+                "op": "Read"
+              },
+              "skip_if": {
+                "Any": []
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "elemental_workshop",
+                    "is": "in_progress"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/elemental_workshop_shield_book.rs2:1-10"
+            }
+          ]
+        },
+        {
+          "stage": "elemental_workshop:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "cut-book",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "knife",
+                "target": {
+                  "item": "elemental_workshop_shield_book"
+                },
+                "product": "elemental_workshop_key"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_key"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_key"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/elemental_workshop_shield_book.rs2:12-22"
+            }
+          ]
+        },
+        {
+          "stage": "elemental_workshop:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": [
+            {
+              "id": "recover-book-before-entry",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_bookcase"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2716,
+                    3481,
+                    0
+                  ],
+                  "source": "C maps/m42_54.jm2:7613; pack/loc.pack:3390"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "workshop"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_shield_book"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_shield_book"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:1-12 Recover the book before returning underground."
+            },
+            {
+              "id": "recover-key-before-entry",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "knife",
+                "target": {
+                  "item": "elemental_workshop_shield_book"
+                },
+                "product": "elemental_workshop_key"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "workshop"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_key"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_key"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/elemental_workshop_shield_book.rs2:12-22. The previously read book yields another key when none is carried."
+            },
+            {
+              "id": "unlock-wall",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "elemental_workshop_key",
+                "target": {
+                  "loc": "elemental_workshop_oddwall_l"
+                },
+                "anchor": {
+                  "tile": [
+                    2709,
+                    3495,
+                    0
+                  ],
+                  "source": "C maps/m42_54.jm2:7294; pack/loc.pack:3392"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "workshop"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "wall_room"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "wall_room"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:14-34; scripts/doors/scripts/open_and_close_double_doors.rs2:91-112; scripts/doors/scripts/door_procs.rs2:1-8. The door teleports the player through and closes after three ticks."
+            },
+            {
+              "id": "descend",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_spiralstairstop"
+                },
+                "op": "Climb-down",
+                "anchor": {
+                  "tile": [
+                    2710,
+                    3497,
+                    0
+                  ],
+                  "source": "C maps/m42_54.jm2:7342; pack/loc.pack:3416"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "workshop"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "workshop"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:36-41"
+            }
+          ]
+        },
+        {
+          "stage": "elemental_workshop:workshop",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "order": "ordered",
+          "steps": [
+            {
+              "id": "recover-book-on-surface",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_bookcase"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2716,
+                    3481,
+                    0
+                  ],
+                  "source": "C maps/m42_54.jm2:7613; pack/loc.pack:3390"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "workshop"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_shield_book"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_shield_book"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:1-12 Recover the book before returning underground."
+            },
+            {
+              "id": "recover-key-on-surface",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "knife",
+                "target": {
+                  "item": "elemental_workshop_shield_book"
+                },
+                "product": "elemental_workshop_key"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "workshop"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_key"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_key"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/elemental_workshop_shield_book.rs2:12-22. The previously read book yields another key when none is carried."
+            },
+            {
+              "id": "return-through-wall",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "elemental_workshop_key",
+                "target": {
+                  "loc": "elemental_workshop_oddwall_l"
+                },
+                "anchor": {
+                  "tile": [
+                    2709,
+                    3495,
+                    0
+                  ],
+                  "source": "C maps/m42_54.jm2:7294; pack/loc.pack:3392"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "workshop"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "in_area",
+                      "version": 1,
+                      "args": {
+                        "area": "wall_room"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "wall_room"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:14-34; scripts/doors/scripts/open_and_close_double_doors.rs2:91-112; scripts/doors/scripts/door_procs.rs2:1-8. The door teleports the player through and closes after three ticks."
+            },
+            {
+              "id": "return-down-stairs",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_spiralstairstop"
+                },
+                "op": "Climb-down",
+                "anchor": {
+                  "tile": [
+                    2710,
+                    3497,
+                    0
+                  ],
+                  "source": "C maps/m42_54.jm2:7342; pack/loc.pack:3416"
+                },
+                "radius": 4
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "workshop"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "in_area",
+                  "version": 1,
+                  "args": {
+                    "area": "workshop"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:36-41"
+            },
+            {
+              "id": "search-leather-box", "kind": "interact", "version": 1, "advances": false,
+              "args": {"target": {"loc": "elemental_workshop_box_4"}, "op": "Search", "anchor": {"tile": [2724, 9894, 0], "source": "content/maps/m42_154.jm2:6702; content/pack/loc.pack:3398"}, "radius": 4},
+              "comment": "content/scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:62-68 gives one leather from this box. content/scripts/_unpack/244/all.loc:70-73 names the Search operation.",
+              "skip_if": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "leather"}}},
+              "settle": {"Fact": {"kind": "has_item", "version": 1, "args": {"obj": "leather"}}}
+            },
+            {
+              "id": "fix-bellows",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_bellows_l"
+                },
+                "op": "Fix",
+                "anchor": {
+                  "tile": [
+                    2734,
+                    9882,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:7266; pack/loc.pack"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "elemental_workshop",
+                        "flag": "bellows"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_bar"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "elemental_workshop",
+                    "flag": "bellows"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:164-183"
+            },
+            {
+              "id": "reset-water",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_water_lever"
+                },
+                "op": "Pull",
+                "anchor": {
+                  "tile": [
+                    2722,
+                    9906,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:6605; pack/loc.pack"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "elemental_workshop",
+                        "flag": "water"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_bar"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "message",
+                  "version": 1,
+                  "args": {
+                    "any": [
+                      "flow gates resetting",
+                      "water wheel starting up"
+                    ]
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:107-130 Pulling starts the wheel if both valves were already set. Otherwise it resets both valves. The progress read detects a running wheel."
+            },
+            {
+              "id": "turn-right-valve",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_valve_1"
+                },
+                "op": "Turn",
+                "anchor": {
+                  "tile": [
+                    2726,
+                    9908,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:6815; pack/loc.pack"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "elemental_workshop",
+                        "flag": "water"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_bar"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "message",
+                  "version": 1,
+                  "args": {
+                    "any": [
+                      "you turn the handle"
+                    ]
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:79-148"
+            },
+            {
+              "id": "turn-left-valve",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_valve_2"
+                },
+                "op": "Turn",
+                "anchor": {
+                  "tile": [
+                    2713,
+                    9908,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:6188; pack/loc.pack"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "elemental_workshop",
+                        "flag": "water"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_bar"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "message",
+                  "version": 1,
+                  "args": {
+                    "any": [
+                      "you turn the handle"
+                    ]
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:79-148"
+            },
+            {
+              "id": "start-water",
+              "kind": "interact",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_water_lever"
+                },
+                "op": "Pull",
+                "anchor": {
+                  "tile": [
+                    2722,
+                    9906,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:6605; pack/loc.pack"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "elemental_workshop",
+                        "flag": "water"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_bar"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "flag",
+                  "version": 1,
+                  "args": {
+                    "quest": "elemental_workshop",
+                    "flag": "water"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:79-148"
+            },
+            {
+              "id": "start-air",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_air_lever"
+                },
+                "op": "Pull",
+                "anchor": {
+                  "tile": [
+                    2734,
+                    9887,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:7267; pack/loc.pack"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_bar"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "message",
+                  "version": 1,
+                  "args": {
+                    "any": [
+                      "bellows stop pumping air",
+                      "bellows pump air down the pipe"
+                    ]
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:79-148"
+            },
+            {
+              "id": "restart-air-if-stopped",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_air_lever"
+                },
+                "op": "Pull",
+                "anchor": {
+                  "tile": [
+                    2734,
+                    9887,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:7267; pack/loc.pack"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_bar"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "message_state",
+                      "version": 1,
+                      "args": {
+                        "set": [
+                          "bellows pump air down the pipe"
+                        ],
+                        "clear": [
+                          "bellows stop pumping air"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "message",
+                  "version": 1,
+                  "args": {
+                    "any": [
+                      "bellows pump air down the pipe"
+                    ]
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:79-148"
+            },
+            {
+              "id": "find-bowl",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_box_1"
+                },
+                "op": "Search",
+                "anchor": {
+                  "tile": [
+                    2717,
+                    9894,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:6368; pack/loc.pack"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_lava_bowl"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_lava_bowl_full"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "elemental_workshop",
+                        "flag": "furnace"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_bar"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_lava_bowl"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:46-52"
+            },
+            {
+              "id": "fill-bowl",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "elemental_workshop_lava_bowl",
+                "target": {
+                  "loc": "elemental_workshop_trough"
+                },
+                "anchor": {
+                  "tile": [
+                    2706,
+                    9876,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:5762; pack/loc.pack:3415"
+                },
+                "radius": 6,
+                "product": "elemental_workshop_lava_bowl_full"
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_lava_bowl_full"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "elemental_workshop",
+                        "flag": "furnace"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_bar"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_lava_bowl_full"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:150-160"
+            },
+            {
+              "id": "light-furnace",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "elemental_workshop_lava_bowl_full",
+                "target": {
+                  "loc": "elemental_workshop_furnace"
+                },
+                "anchor": {
+                  "tile": [
+                    2724,
+                    9874,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:6686; pack/loc.pack:3414"
+                },
+                "radius": 6
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "flag",
+                      "version": 1,
+                      "args": {
+                        "quest": "elemental_workshop",
+                        "flag": "furnace"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_bar"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "message",
+                  "version": 1,
+                  "args": {
+                    "any": ["the furnace bursts in to life"]
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:208-220. The lit message follows p_delay(4), so settle on that message rather than an early journal read."
+            },
+            {
+              "id": "wake-earth-elemental",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "loc": "elemental_workshop_rock"
+                },
+                "op": "Mine",
+                "anchor": {
+                  "tile": [
+                    2693,
+                    9906,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:5061; pack/loc.pack"
+                },
+                "radius": 5
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Any": [
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "elemental_workshop_ore"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "elemental_workshop_bar"
+                          }
+                        }
+                      },
+                      {
+                        "Fact": {
+                          "kind": "has_item",
+                          "version": 1,
+                          "args": {
+                            "obj": "elemental_shield"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "Fact": {
+                      "kind": "npc_present",
+                      "version": 1,
+                      "args": {
+                        "npc": "earth_elemental_rock_version"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "npc_present",
+                  "version": 1,
+                  "args": {
+                    "npc": "earth_elemental_rock_version"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:185-206"
+            },
+            {
+              "id": "fight-earth-elemental",
+              "kind": "combat",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": {
+                  "npc": "earth_elemental_rock_version",
+                  "not_targeting_others": true,
+                  "pick": "nearest"
+                },
+                "tactic": {
+                  "kind": "open",
+                  "style": "melee",
+                  "engage_radius": 8,
+                  "auto_retaliate": true
+                },
+                "stand": {
+                  "tile": [
+                    2693,
+                    9906,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:5061; scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:185-205"
+                },
+                "lost_radius": 12,
+                "kill_budget_ticks": 500,
+                "loot": [
+                  "elemental_workshop_ore"
+                ],
+                "until": {
+                  "Fact": {
+                    "kind": "has_item",
+                    "version": 1,
+                    "args": {
+                      "obj": "elemental_workshop_ore"
+                    }
+                  }
+                }
+              },
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_ore"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_workshop_bar"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "elemental_shield"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_ore"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/elemental_earth.rs2:1-7; scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:185-206"
+            },
+            {
+              "id": "smelt-bar",
+              "kind": "use_on",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "item": "elemental_workshop_ore",
+                "target": {
+                  "loc": "elemental_workshop_furnace"
+                },
+                "anchor": {
+                  "tile": [
+                    2724,
+                    9874,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:6686; pack/loc.pack:3414"
+                },
+                "radius": 6,
+                "product": "elemental_workshop_bar"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_bar"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_workshop_bar"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:222-243"
+            },
+            {
+              "id": "smith-shield",
+              "kind": "use_on",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "item": "elemental_workshop_bar",
+                "target": {
+                  "loc": "elemental_workshop_workbench"
+                },
+                "anchor": {
+                  "tile": [
+                    2717,
+                    9887,
+                    0
+                  ],
+                  "source": "C maps/m42_154.jm2:6365; pack/loc.pack:3403"
+                },
+                "radius": 5,
+                "product": "elemental_shield"
+              },
+              "skip_if": {
+                "Fact": {
+                  "kind": "has_item",
+                  "version": 1,
+                  "args": {
+                    "obj": "elemental_shield"
+                  }
+                }
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "quest_colour",
+                  "version": 1,
+                  "args": {
+                    "quest": "elemental_workshop",
+                    "is": "complete"
+                  }
+                }
+              },
+              "comment": "C scripts/quests/quest_elemental_workshop/scripts/quest_elemental_workshop.rs2:246-278"
+            }
+          ]
+        },
+        {
+          "stage": "elemental_workshop:done",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "order": "authored",
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

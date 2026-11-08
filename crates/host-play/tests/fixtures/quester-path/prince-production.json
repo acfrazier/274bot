@@ -1,0 +1,21 @@
+{
+  "stage": "prince:20",
+  "stand": [3092, 3242, 0],
+  "loadout": {"path": "melee"},
+  "extra_items": [
+    ["shears", 1],
+    ["wool", 3],
+    ["keyprint", 1],
+    ["copper_ore", 1],
+    ["tin_ore", 1],
+    ["yellowdye", 1],
+    ["skinpaste", 1],
+    ["pink_skirt", 1],
+    ["rope", 2],
+    ["coins", 1000]
+  ],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": ["prince:30"],
+  "mode": "stage"
+}

@@ -12,12 +12,12 @@
 //! before each batch (for sellAll, each click). A queued click is not
 //! a transfer: a batch is only counted once the posted container counts moved.
 
+use crate::compat::walk::{Resilient, HOP_ATTEMPTS};
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::observed::{self, ItemRow, Scene, Text};
-use crate::walk::{Resilient, HOP_ATTEMPTS};
+use crate::scene::observed::{self, ItemRow, Scene, Text};
 use api::WorldTile;
+use script::interact::InteractReq;
 use script::reach_route;
-use script::shim::InteractReq;
 use script::shop_open::{self, Decision, Facts, Keeper, OpenCore, Session};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -65,8 +65,8 @@ fn trace(event: &str, tick: Option<u64>, detail: std::fmt::Arguments<'_>) {
 
 /// Bound of the nav walk to an unreachable keeper: the frozen
 /// `walkResilient` baked timeout and hop attempts the other approach walks
-/// use ([`crate::walk::BAKED_TIMEOUT_MS`], [`crate::walk::HOP_ATTEMPTS`]).
-const KEEPER_WALK_MS: u64 = crate::walk::BAKED_TIMEOUT_MS;
+/// use ([`crate::compat::walk::BAKED_TIMEOUT_MS`], [`crate::compat::walk::HOP_ATTEMPTS`]).
+const KEEPER_WALK_MS: u64 = crate::compat::walk::BAKED_TIMEOUT_MS;
 
 /// One posted container row (stock, shop player pack or backpack).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,7 +184,7 @@ impl KeeperFact<'_> {
                     level: t.level,
                 });
                 let rows = session.npcs().map_or(&[][..], Vec::as_slice);
-                crate::reach_query::with_view(|view| {
+                crate::materialize::reach_query::with_view(|view| {
                     let live = here.and_then(|here| {
                         reach_route::live(Some(view), Some(here)).map(|view| (view, here))
                     });
@@ -523,7 +523,7 @@ impl Shop {
         cx: &mut Cx<'_>,
     ) -> Step<Value> {
         if let Some(Reply::Value(picked)) = reply {
-            if crate::trade::truthy(&picked) {
+            if crate::compat::trade::truthy(&picked) {
                 let row = self.candidates.remove(0);
                 self.candidates.clear();
                 if self.all {
@@ -870,49 +870,51 @@ pub(crate) struct BuyoutPlanResult {
 
 /// Rust-owned buyout selection/ranking/stock-price/budget. JS only marshals
 /// primitives into this in-isolate helper.
-pub fn run_buyout_plan(req: &BuyoutPlanRequest) -> BuyoutPlanResult {
+pub fn run_buyout_plan(
+    req: &BuyoutPlanRequest,
+) -> Result<BuyoutPlanResult, api::selected::FactError> {
     GAME_DATA.with(|slot| {
         let data = slot.borrow();
         let Some(data) = data.as_deref() else {
-            return BuyoutPlanResult {
+            return Ok(BuyoutPlanResult {
                 ok: false,
                 reason: "missing shop facts".into(),
                 items: Vec::new(),
-            };
+            });
         };
         let shop = if !req.inv.is_empty() {
-            match api::shop_facts::shop_by_inv(data, &req.inv) {
+            match api::shop_facts::shop_by_inv(data, &req.inv)? {
                 Some(shop) => shop,
                 None => {
-                    return BuyoutPlanResult {
+                    return Ok(BuyoutPlanResult {
                         ok: false,
                         reason: format!("unsupported shop {}", req.inv),
                         items: Vec::new(),
-                    }
+                    });
                 }
             }
         } else if !req.keeper.is_empty() {
-            match api::shop_facts::shop_by_keeper(data, &req.keeper) {
+            match api::shop_facts::shop_by_keeper(data, &req.keeper)? {
                 Some(shop) => shop,
                 None => {
-                    return BuyoutPlanResult {
+                    return Ok(BuyoutPlanResult {
                         ok: false,
                         reason: "unknown shopkeeper".into(),
                         items: Vec::new(),
-                    }
+                    });
                 }
             }
         } else {
-            return BuyoutPlanResult {
+            return Ok(BuyoutPlanResult {
                 ok: false,
                 reason: "missing shop identity".into(),
                 items: Vec::new(),
-            };
+            });
         };
         let stock: HashMap<String, i32> = req.stock.iter().cloned().collect();
         let chosen: HashSet<String> = req.chosen.iter().cloned().collect();
         let items = api::shop_facts::buyout_plan(&shop, &stock, req.coins, &chosen);
-        BuyoutPlanResult {
+        Ok(BuyoutPlanResult {
             ok: true,
             reason: String::new(),
             items: items
@@ -924,7 +926,7 @@ pub fn run_buyout_plan(req: &BuyoutPlanRequest) -> BuyoutPlanResult {
                     est_cost: row.est_cost,
                 })
                 .collect(),
-        }
+        })
     })
 }
 
@@ -999,7 +1001,7 @@ fn plan(remaining: i32) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task_clock::InstantTaskClock;
+    use crate::scene::task_clock::InstantTaskClock;
     use script::shop_open::{KeeperRoute, OPEN_ATTEMPTS, OPEN_CAP_TICKS, OPEN_SLACK_TICKS};
     use std::time::{Duration, Instant};
 

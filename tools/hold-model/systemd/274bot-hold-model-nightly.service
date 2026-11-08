@@ -1,0 +1,24 @@
+# chardonnay (user unit): the nightly full profile runs of tools/hold-model
+# (ADR 0017). The script runs every profile one at a time, each in its own
+# 16 GB memory scope, and exits non-zero when one does not end clean.
+# Install: ~/.config/systemd/user/274bot-hold-model-nightly.service and
+# 274bot-hold-model-nightly.timer, then
+#   systemctl --user daemon-reload && systemctl --user enable --now 274bot-hold-model-nightly.timer
+# The unit runs the checkout at %h/experiments/274bot; its revision is in the
+# first summary line. Read the result with
+#   journalctl --user -u 274bot-hold-model-nightly -n 20
+# The raw output of each profile and summary.txt are under
+# %h/.local/state/274bot-hold-model/<UTC time>/ (prune old ones by hand).
+[Unit]
+Description=274bot hold-model nightly profile runs
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/experiments/274bot
+Environment=PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/bash %h/experiments/274bot/tools/hold-model/nightly.sh
+# The seven profiles take about 8 minutes in all, plus the build.
+TimeoutStartSec=1h
+Nice=10

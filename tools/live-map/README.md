@@ -37,11 +37,30 @@ ISOHOME=/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome \
   python3 -B tools/live-map/live_map.py --verify-cells
 ```
 
-The verifier extracts each test selector and runs `cargo test ... -- --list`.
-It fails if the selector exits with an error or lists no tests. For a
-`cargo run` cell, the third field is only a proxy selector. The verifier does
-not validate the `cargo run` command, the `--live` name, the input values, or
-the assigned host. It does not run the live cell.
+The verifier extracts a cargo-test selector and runs `cargo test ... -- --list`.
+The cell format is `name|command|selector`. A `cargo test` command may omit the
+third field because the map derives it from the command. A `cargo run` command
+or custom shell wrapper needs an explicit third-field selector.
+It fails if the selector exits with an error or lists no tests. The selector is
+a proxy: verification does not validate the live command, wrapper arguments,
+`--live` name, inputs or assigned host. It does not run the live cell.
+
+The combat-summary cell uses a `harness = false` executable, which cannot list
+libtest tests. Its explicit proxy lists the cached-summary heap unit test.
+The actual cell still runs the full summary-shape executable.
+The headed survival cell lists its `app::tests` status-card proxy.
+Neither proxy listing proves a headed frame or a live game result.
+
+## Clean logout
+
+A gameplay pass does not excuse a failed shutdown. Live terminal runs and the
+Quester path helper stop scripts and wait for Stop acknowledgement before
+requesting logout. If an account stays connected, another logout request waits
+for 16 more observed game ticks. R289 content sets this combat lockout in
+`content/scripts/login_logout/logout.rs2:26-30`. The wait does not count render
+frames or wall-clock seconds. A fixed 30-second deadline bounds the whole
+shutdown, including Stop. A forced worker close is not a clean logout.
+
 
 ## Cell hosts
 
@@ -53,24 +72,97 @@ All cells not listed below normally run on merlot. Engine A uses game port
 |---|---|
 | `host.npc-hop-engine-b` | Run on chardonnay. The command sets `WORLD_CACHE_DIR` and `LIVE_EVIDENCE_DIR`. Engine B is reached through the loopback tunnel at game port `45594` and HTTP port `2080`. |
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
-| `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host. This setup uses merlot at `127.0.0.1:44694` and `127.0.0.1:1180`. Set `QUESTER_TICK_MS=300` only for these cells. |
+| `host.quester-path-engine-q`, `host.quester-sheep-spin-engine-q`, `host.quester-prince-smelt-wig-spin-engine-q`, `host.quester-qualified-priest-engine-q`, `host.quester-jonny-stand-engine-q`, `host.quester-mordred-continuation-engine-q`, `host.quester-digsite-thieve-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host at game port `44694` and HTTP port `1180`. Engine Q uses fixed 300 ms ticks. Leave `QUESTER_TICK_MS` unset. Do not send `::speed`. |
+| `host.quester-bank-teller-engine-q`, `host.quester-bank-player-open-engine-q`, `host.quester-bank-chest-engine-q` | Use the Engine Q endpoint and tick rules in the row above. |
+| `script.release-path-refusal` | Run on a build-enabled lab host with an isolated HOME and `LIVE_EVIDENCE_DIR`. It builds production release libraries but opens no game session. |
+| `host.walk-no-route-live` | Run on aubaine against the 600 ms Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`, using its assigned lab scope and the per-cell I/O admission gate. The release command maps the read-only Engine L tree from `BOT_ENGINE_DIR` and uses the `NAV_PACK_289`, `NAV_FLAGS_289`, `BOT_CACHE_DIR`, and `CATALOG_ROOT` inputs for the local R289 client profile. It writes the test receipts under `LIVE_EVIDENCE_DIR`. |
+| `host.quester-partner-trade` | Run on a build-enabled lab host against a shared 289 engine with two free accounts. It needs the Sherlock inputs and also `BOT_LIVE_PARTNER_NAME_PREFIX` (1 to 4 bytes, different from `BOT_LIVE_NAME_PREFIX`). The command names Engine A's ports. On chardonnay set `WORLD_GAME_PORT=47594` and `WORLD_HTTP_PORT=3080` to run it on Engine L. Leave `QUESTER_TICK_MS` unset. The cell passes only when the Phoenix key moves between the two accounts and both log out. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
-| `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |
+| `host.transport-relog`, `host.transport-dead-server`, `host.transport-idle-held`, `host.scriptless-park-protocol-error`, `host.scriptless-park-dead-server`, `host.scriptless-idle-logout` | Run on any host with Engine A at `127.0.0.1:44594` and `127.0.0.1:1080` (on aubaine that is a relay to Engine L). The scripted cells (`transport-*`) run a native script that does nothing, so the bot keeps its reconnect. The `scriptless-*` cells run a bot with no script: it parks after the exit and stays logged out for 30 s until the cell logs it in. Local engines run with `debug: true`, which ignores the idle request. The `scriptless-idle-logout` cell therefore waits for the client's own idle request (90 s), then answers with the Logout packet a production server sends. |
+| `host.nav-zanaris-entrana` | Run on aubaine with Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`. Set `ENGINE_A_DIR` to the Engine L directory. Also set `BOT_CACHE_DIR`, `NAV_PACK_289`, `LIVE_EVIDENCE_DIR`, `CATALOG_ROOT`, and `QUESTER_PATH_DIR`. Use the composed head's pack and its merged Zanaris Path source. This cell proves entry to the Entrana dungeon, not completion of Lost City. |
+| `host.sherlock-entrana-walk-arrive`, `host.sherlock-entrana-content-categories` | Run on aubaine through Engine L's relay at `127.0.0.1:44594` and `127.0.0.1:1080`. Set the standard Engine A, pack, cache, catalog, and evidence variables. |
+| `host.gatherer-fly-tick`, `host.gatherer-net-tick`, `host.gatherer-mine-iron-tick`, `host.gatherer-oak-tick`, `host.gatherer-tick-refused-rune` | Run on aubaine against the 600 ms Engine L relay at game port `47594` and HTTP port `3080`. Set `GATHERER_ENGINE_DIR` to the read-only local Engine L client tree. Each cell uses a fresh account prefix and evidence path. Do not start, stop, or change Engine L. |
+| `tui.live-duel-arena-pair-core` | Run on merlot or chardonnay against Engine A at `44594/1080`. The registered `duel_arena` scenario drives two real accounts through TUI's `--pair-core` gate; both names use the unique `BOT_LIVE_NAME_PREFIX`. This cell does not use `BOT_LIVE_PARTNER_NAME_PREFIX`. |
+| `vendor.midi-pcm-differential` | Run on a build-enabled lab with the DEPS-BATCH-025 corpus and frozen PCM fixtures. It needs no game service and writes captures to a fresh per-cell/pass evidence directory. |
+
+**Focused Quester content**
+
+These cells use `live_quester_path_smoke` with committed seeds under
+`crates/host-play/tests/fixtures/quester-path/`. Success requires an observed
+transition beyond the seeded stage, or actual quest completion.
+
+| Cell | Seed and required result |
+|---|---|
+| `host.quester-qualified-priest-engine-q` | `priest-start.json`: Father Aereck advances the qualified Path from `priest:0` to `priest:1`. |
+| `host.quester-jonny-stand-engine-q` | `blackarm-jonny.json`: one explicit pre-Start `phoenixgang=8` seed selects the journal-only `p:8` stage (`quest_blackarmgang.constant:11`; journal:33-46). The Phoenix role walks from the cabbage field, fights real Jonny, and hands in his report to reach `p:9`. The report and joined state are not seeded. |
+| `host.quester-mordred-continuation-engine-q` | `arthur-mordred.json`: Base40 fights real Mordred and continues Morgan's dialogue to reach `arthur:4`. Neither success state is seeded. |
+| `host.quester-digsite-thieve-engine-q` | `itexam-thieve.json`: Thieving25 approaches the workman from the recorded route start and advances from the first exam to the second. Only the unrelated orange and purple samples are seeded. |
+
+The three drafted Paths require the command's explicit test-support feature.
+These focused receipts do not qualify a complete draft guide for release.
+
+The bank ownership cells use `quester_bank_ownership_live` and the same explicit
+test-support features. The Shilo teller case completes only the account's bank
+access prerequisite before Start. It requires an automatic Quester close after
+the withdrawal. The Gundai case requires a player-open bank to remain open in
+the same generation. The Duel Arena case requires the naturally closed lid to
+open before the actual bank opens. It refuses an already-open shared chest
+without resetting world content.
+
+**Draft release refusal**
+
+The exact draft files in the `script.release-path-refusal` row do not ship as
+runnable guides. This cell proves refusal only. It does not execute their quest
+bodies or qualify them for release. Run its paired qualified-Priest live cell as
+well.
+
+The cell first builds `script` with `cargo build --release --locked --lib`.
+It selects the exact rlib and one rmeta from that invocation's Cargo artifact
+record. The rmeta's parent supplies the dependency search directory: Cargo can
+publish the rlib in `target/release` and its rmeta in `target/release/deps`.
+Missing or ambiguous metadata is refused, with no directory search or fallback.
+The test-artifact, debug-assertion, `test-hooks` and ambiguous-rlib checks remain.
+The external Rust consumer calls the public production queue entry point for
+each mapped draft, with both an explicit pick and an explicit priority. It
+requires the typed `UnqualifiedPath` reason and its complete display text, even
+when saved settings request draft inclusion. It also checks that Priest remains
+selectable. This uses the external-library proof pattern in
+`tools/architecture/nav_clippy.py`; no probe crate or product API is added.
+
+The second part runs the real shared picker model against every bundled draft.
+It requires a non-selectable saved row with the full refusal reason in both the
+quest and priority pickers. These labels are the panel/TUI presentation source.
+The production-library part is separate because the script and frontend test
+targets deliberately enable test hooks through their self dev-dependencies.
+Running a release-mode unit test alone would not prove release admission.
+
+Each draft's own run stays with the quest campaign. Before changing its status
+to qualified, that campaign must qualify it. The same diff must remove the exact
+file from refusal coverage and add its real quest cell. The production probe
+fails if a qualified row remains in the refusal map. A Priest pass does not
+substitute for that quest's live qualification.
+
+`python3 -B tools/live-map/release_refusal.py --self-test` checks exact-path and
+artifact selection. `--verify-cells` lists only this cell's picker-test selector;
+it does not run or validate the external production-library proof.
+
 
 
 Client submodule paths have separate coverage. The gitlink and the client
 workspace and package manifests select the GPU headed cell, including for a
 test-only client bump. `client/client.rs`,
 `client/actor_289.rs`, `render/draw.rs`, and `render/backend/cpu.rs` select
-both headed cells. `client/client.rs` also selects both relog cells because it
+both headed cells. `client/client.rs` also selects the six relog and park cells
+(`host.transport-*` and `host.scriptless-*`) because it
 contains `Client::login` (`vendor/fr-client-rust/crates/client/src/client/client.rs:3445`).
-Changes under `client/src/io/**` select both relog cells. The CPU headed cell
+Changes under `client/src/io/**` select the same six cells. The CPU headed cell
 sets `BOT_CPU=1`; the GPU cell removes it.
 
 The map lists test-only paths in `not_live.globs`. A path in
-`not_live.exceptions` stays live when it also matches a live glob. The
-ScriptWalkArm admission test is the only current exception.
+`not_live.exceptions` stays live when it also matches a live glob.
+The current exceptions are the ScriptWalkArm admission test and the Engine L
+no-route live test.
 Sherlock requires the inputs listed at `crates/host-play/tests/common/quester_live.rs:28-32,332-359`.
 Its profile reads `WORLD_GAME_PORT` and `WORLD_HTTP_PORT` at
 `crates/host-play/tests/common/quester_live.rs:358-359`.
@@ -81,7 +173,10 @@ It checks `LIVE=1` and writes receipts when `LIVE_EVIDENCE_DIR` is set at
 
 ## ScriptWalkArm call paths
 
-The `script_nav.rs` and `script_walk.rs` row selects five live cells: four scenario cells and the compat-v1 crossing cell.
+Six existing live cells select `script_nav.rs` and `script_walk.rs`: the five
+cells in the row below plus `panel.state-gap-stop-live` from the shared command
+row. The added `host.walk-no-route-live` cell also covers `script_nav.rs` and
+`crates/script/src/native/walk.rs`.
 A separate row maps `survivable_admission_live.rs` to both admission tests.
 
 | Cell | Call path |
@@ -90,12 +185,68 @@ A separate row maps `survivable_admission_live.rs` to both admission tests.
 | `host.gatherer-bank-cost-fallback` | The cell runs the live test at `crates/host-play/tests/gatherer_live.rs:7945-7949`.<br>`gatherer::runner::trip_walk` submits `Walk` at `crates/script/src/gatherer/runner.rs:445-472`.<br>`crates/host-play/src/script_observe.rs:1546-1572` creates `ScriptWalkArm` and calls `queue_native_route` at `crates/host-play/src/script_nav.rs:4567-4573`. |
 | `host.grinch-cross-region-return` | The live selector is at `crates/host-play/tests/grinch_live.rs:119-123`.<br>Return recovery submits `Walk` at `crates/script/src/grinch.rs:885-903`.<br>`crates/host-play/src/script_observe.rs:1546-1572` creates `ScriptWalkArm` and calls `queue_native_route` at `crates/host-play/src/script_nav.rs:4567-4573`. |
 | `host.sherlock-search-live` | The live cell starts compiled Sherlock at `crates/host-play/tests/clue_walk_arrive_live.rs:193-212`.<br>The walk-near step is at `crates/script-js/src/compat/clue/isolate.rs:1640-1653`.<br>`crates/host-play/src/script_interact.rs:529-585` creates `ScriptWalkArm` and calls `queue_route_in_snapshot_avoiding` at `crates/host-play/src/script_nav.rs:4932-4957`. |
+| `host.walk-no-route-live` | The ignored Engine L test starts a fresh account without a Dusty key and begins a native `Walk` request to the radius-5 Taverley gate cell (`crates/host-play/tests/walk_no_route_live.rs:289-322,406-421`). It records the origin, request/terminal game ticks, typed result and Quester arrival conversion, then asserts `WalkEnd::NoPath` retains the diagnosed gate or explicit diagnostic-budget reason and becomes `Blocked(detail)` (`:437-497`). |
 | `host.survivable-admission` | The live test checks refusal and opt-in at `crates/host-play/tests/survivable_admission_live.rs:283-286`. |
-| `host.survivable-compat-v1-crossing` | The live test loads a real compat-v1 class whose `Traversal.walkTo` call is at `crates/host-play/tests/survivable_admission_live.rs:837-870,943-950`. It asserts the live admission snapshot and crossing assessment at `:963-983`; the selector is `real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp` (`:868-870`). |
+| `host.survivable-compat-v1-crossing` | The live test loads a real compat-v1 class whose `Traversal.walkTo` call is at `crates/host-play/tests/survivable_admission_live.rs:837-870,943-950`. It asserts the live admission snapshot and crossing assessment at `:963-983`; the selector is `real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp` (`:868-870`). `Traversal.walkTo` emits `InspectRoute` from `compat/walk.rs:1463-1495`. The host sends it through `script_interact.rs:759-835` to `route_inspect::queue_inspect_shared` in `route_inspect.rs:2441-2457`. |
+| `host.gatherer-bank-cost-fallback` | The live selector is `gatherer_live.rs:7946-7949`. It selects a cost-ranked reachable bank and checks the winner at `:5018-5055`. `native_bank.rs:2524-2553` emits `HostEffect::BankPick`; `script_observe.rs:1713-1742` queues it through `script_bank.rs:1875-1909`. |
+
 
 The four scenario cells advance routes through the live slot loop at
 `crates/host-play/src/play_slots.rs:1909-1929` and
 `crates/host-play/src/script_walk.rs:867-885`.
+
+## Death recovery
+
+`host.gatherer-death-return` runs the `gatherer_death_return` test in
+`crates/host-play/tests/gatherer_live.rs`. It starts the compiled Gatherer on
+an authored oak at `3017,3170,0`, then sends the engine's `~death` debugproc
+(`content/scripts/_test/scripts/cheats/cheat_other.rs2:25-26`, a real
+`damage_self(999)`). Each death must recover through respawn, supply, worn
+tool, return and fresh product and XP; the cell kills twice with a haul
+between and pauses over the first death. The fixture seeds only the account's
+own bronze axe in the bank and its inventory fillers, and never injects a
+product or XP. Inputs: `LIVE=1`, `BOT_LIVE_NAME_PREFIX`, `GATHERER_NAV_PACK`,
+`GATHERER_NAV_FLAGS`, `GATHERER_ENGINE_DIR`, `GATHERER_CATALOG_ROOT`,
+`BOT_CACHE_DIR`, `CLIENT_UNPACK_DIR`, and `LIVE_EVIDENCE_DIR`;
+`GATHERER_WC_BANK_TILE` pins the fixture tile. Run it on Engine L (aubaine or
+its 44594/1080 relay).
+
+## Bank trip relog
+
+`host.gatherer-bank-relog-access`, `-open`, `-deposit` and `-deposit-dead-server` run
+the `gatherer_bank_trip_relog` test in
+`crates/host-play/tests/gatherer_live.rs`. The test starts the compiled
+Gatherer on the oak fixture of the reconnect cell, with the bank holding only
+the account's own bronze axe. It cuts the connection on the first frame where
+the published trip step is the planned step. `GATHERER_RELOG_STEP` selects
+`Access` (the walk to the bank is under way), `Open` (the table is not
+loaded) or `Deposit` (the table is loaded). `GATHERER_RELOG_FAULT=protocol-error` dispatches an unknown opcode
+through the client, as `host.transport-relog` does, and a fresh login
+follows. `GATHERER_RELOG_FAULT=dead-server` starts a relay in front of the
+engine and stops the server-to-client bytes of the game connection (the one
+whose first byte is the login opcode), as `host.transport-dead-server`
+does, and a soft reconnect follows.
+
+The Access cut waits until the character has walked 20 tiles from where the
+walk to the bank began (the oak fixture is 75 tiles from the bank), so the
+new session restarts a walk that was under way. The cell turns off the
+product's mainland hop for the run: the product re-sends that hop (a
+teleport to 3220,3220 and `setvar tutorial 1000`) at every new session of a
+`--mainland` run (`crates/host-play/src/play_slots.rs:1461,1801-1804`), and
+the first Access cells logged `mainland hop queued` after the cut and then
+failed `OffScene` at 3220,3220. The cell's own preparation sends the hop once,
+before the cut, and the cut is never followed by one.
+
+The cell passes only when all of these hold: the client's session counter
+rose, the Gatherer logged `gatherer-bank-trip-restart` at the planned step,
+the published steps after the new session include Access, Open and Deposit in
+that order, the bank closed, the trip count reached 1, and the run produced
+fresh products and XP. The test never presses Start again and never injects
+bank rows or receipts. Inputs are the death-recovery inputs, plus
+`GATHERER_RELOG_STEP` and `GATHERER_RELOG_FAULT`. The fixture tile and level
+come from `GATHERER_RECONNECT_RETURN_TILE` and
+`GATHERER_RECONNECT_RETURN_LEVEL`. Run it on Engine L (aubaine or its
+44594/1080 relay).
 
 ## State-gap and refusal paths
 
@@ -213,32 +364,71 @@ does not replace or gate the 289 cell.
 | `nav.essence-289-engine-a` | `tui-play --live script_nav_essence` runs the registered scenario. It follows Aubury's wizard entry into the mine, sets an `EssenceSession`, then routes back through the exit portal (`crates/scenario/src/catalog.rs:81`, `crates/scenario/src/scenarios/navigation.rs:616-714`). |
 | `nav.essence-follow` | The e2e test runs the same scenario in `nav_essence_follow` and needs a local 274 engine (`crates/e2e/tests/nav_essence.rs:233-255,271-298`). |
 
+## Navigation generator inputs
+
+The explicit `not_live` entries for `crates/nav-bake/src/` generator code,
+its command-line producer and its embedded `.rs2` templates are not live
+runtime paths. They do not exempt a change to the generated navigation
+from proof. This includes the Entrana restricted-item list in
+`transport/static_routes.rs` and the staged-door and Legends generators.
+
+After a generator change, bake the navigation pack from the composed
+generator head, compare the route corpus with the accepted reference, and
+run the affected mapped cells with that pack and its matching flags and
+sidecars. Classify every changed route as an improvement or justify it from
+content. For the Entrana list, run `host.nav-zanaris-entrana`,
+`host.sherlock-entrana-walk-arrive` and
+`host.sherlock-entrana-content-categories`.
+
+For a batch, do this after the final generator-source merge. An interim
+source-only check is not the combined-pack corpus or live proof.
+
+## Offline build metadata
+
+The exact `not_live` entries for `.cargo/audit.toml`, `rust-toolchain.toml`,
+`vendor/fr-client-rust/Cargo.lock` and
+`vendor/fr-client-rust/rust-toolchain.toml` select audit, toolchain or
+dependency checks, not gameplay routes. They retain full CI and vendor
+verification. This classification does not replace the required
+same-toolchain and same-engine performance qualification.
+
 ## Input values
 
-These are the 19 names reviewed in round 2. Three inputs are fixed in the map.
-The caller must not replace the gather tile, Path, or seeds file.
+Input names vary with the selected cells; this table documents shared and
+task-specific values. Five values are fixed in the map.
+The caller must not replace the gather tile, Path, seeds file, or Engine L ports.
 
 | Name | Value or owner |
 |---|---|
 | `ISOHOME` | Use the absolute wrapper path on the host. Merlot: `/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome`. Chardonnay: `/home/acfrazier/experiments/274bot/.superpowers/bin/isohome`. |
 | `BOT_LIVE_NAME_PREFIX` | Choose a unique prefix of 1 to 4 characters for each run. The Sherlock receipt in this round uses `l2r`. See `STANDING-RULINGS.md:33` and `crates/host-play/src/play_bootstrap.rs:67-75`. |
-| `LIVE_EVIDENCE_DIR` | Use a fresh directory outside the throwaway HOME. Merlot: `/Volumes/dev-scratch/274bot-evidence/LIVE-MAP-1023/fix-r2/live/<cell>`. Chardonnay: `/srv/dev/scratch/274bot-evidence/LIVE-MAP-1023/fix-r2/live/<cell>`. |
-| `ENGINE_A_DIR` | Merlot: `/Users/acfrazier/experiments/lostcity-289/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289/engine`. Keep the directory read-only. |
+| `LIVE_EVIDENCE_DIR` | Use a fresh per-cell directory outside the throwaway HOME under the current task's evidence root. The no-route test creates its own timestamped subdirectory. |
+| `ENGINE_A_DIR` | Merlot: `/Users/acfrazier/experiments/lostcity-289/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289/engine`. Aubaine: `/Volumes/dev-scratch/engines/lostcity-289-l/engine` for Engine L relay cells. Keep the directory read-only. |
+| `BOT_ENGINE_DIR` | Set to the read-only local Engine L R289 client tree on chardonnay; the Engine L runner accepts it as an override (`COMBAT-PREP-ESCAPE/r3/live.sh:5`). |
 | `ENGINE_B_DIR` | For the chardonnay tunnel cell, use the local R289 client tree at `/home/acfrazier/experiments/lostcity-289/engine`. This optional client path is not the Engine B service. The service is the tunnel at `45594/2080`. |
 | `ENGINE_Q_DIR` | Use the Engine Q tree on its host. Merlot: `/Users/acfrazier/experiments/lostcity-289-q/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289-q/engine`. |
 | `ENGINE_274_DIR` | The orchestrator supplies the 274 engine directory when it starts the 274 service. This value is not set in this map round. |
-| `NAV_PACK_289` | Use the CI reference v17 pack. Merlot: `/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack`. Chardonnay: `/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack`. See `STANDING-RULINGS.md:16`. |
-| `NAV_FLAGS_289` | Use the matching `274bot-289-v17.navflags` in the same reference-v17 directory as `NAV_PACK_289`. |
+| `NAV_PACK_289` | Use the CI reference v18 pack for ordinary and reference-contract cells. Merlot: `/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack`. Chardonnay: `/srv/dev/scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack`. Final-producer combined-pack cells use the qualified batch pack with its full hash in each receipt. See `STANDING-RULINGS.md:16`. |
+| `NAV_FLAGS_289` | Use the matching `274bot-289-v18.navflags` in the same reference-v18 directory as `NAV_PACK_289`. |
+| `WORLD_GAME_PORT` | The map fixes the no-route cell to Engine L's game port, `47594`, on chardonnay. |
+| `WORLD_HTTP_PORT` | The map fixes the no-route cell to Engine L's HTTP port, `3080`, on chardonnay. |
 | `NAV_SNAPSHOT_ROOT_289` | Use the read-only decoded snapshot that `isohome` exposes as `BOT_NAV_SNAPSHOT_ROOT`. The default paths are `/Users/acfrazier/.274bot/unpack-289` on merlot and `/home/acfrazier/.274bot/unpack-289` on chardonnay. See `AGENTS.md:149`. |
 | `BOT_CACHE_DIR` | Make a fresh copy of the selected engine's `data/pack/client` at `<LIVE_EVIDENCE_DIR>/cache-289`. The Quester helper copies this source into its isolated run cache. |
-| `CATALOG_ROOT` | Use the local `rs2b0t` checkout root. Merlot: `/Users/acfrazier/experiments/rs2b0t`. Chardonnay: `/home/acfrazier/experiments/rs2b0t`. |
+| `CATALOG_ROOT` | Use the local `rs2b0t` checkout root. Merlot: `/Users/acfrazier/experiments/rs2b0t`. Chardonnay: `/home/acfrazier/experiments/rs2b0t`. Aubaine: `/Users/acfrazier/experiments/rs2b0t-fix-gnome-chop`, the catalog used by the reviewed Entrana cells. |
 | `CLIENT_UNPACK_DIR` | Use a fresh writable directory at `<LIVE_EVIDENCE_DIR>/client-unpack`. Do not use the operator's real HOME. |
 | `PANEL_LIVE_HOME` | Use a fresh throwaway HOME. Set it below `ISOHOME_ROOT`: `/Volumes/dev-scratch/isohome/panel-<prefix>` on merlot or `/srv/dev/scratch/isohome/panel-<prefix>` on chardonnay. |
 | `GATHERER_WC_TILE` | The map fixes `3197,3209,0`, backed by the R289 normal-tree placement `maps/m49_50.jm2:5342` (`crates/api/data/game-data/289/gathering.json:17173-17190,38398`). It is outside LocationAuto's `AUTO_NEXT_TILES` (`crates/host-play/tests/gatherer_live.rs:107`) and stump fixture (`:197-243,5791-5812`). The caller does not choose it. |
-| `QUESTER_PATH` | The map fixes `cook`, which selects the committed Cook Path. The map owner selected this path. The caller does not choose it. |
-| `QUESTER_SEEDS` | The map points to `${PWD}/crates/host-play/tests/fixtures/quester-path/cook.json`. This file copies the `COOK_SEEDS` value at `quester_path_live.rs:186-195`. Run the command from the repository root. Do not use a caller-written seeds file. |
-| `NAV_PACK_274` | Use `274bot-274-v17.navpack` in the same reference-v17 directory as `NAV_PACK_289`. The orchestrator supplies this path to `nav.essence-follow` when it starts the 274 service. |
+| `QUESTER_PATH` | The map fixes `cook`, `sheep`, and `prince` for the Cook, sheep-spinning, and Prince-production cells. The caller does not choose it. |
+| `QUESTER_SEEDS` | The map points to the committed Cook, sheep-spin, and Prince-production seed files in `crates/host-play/tests/fixtures/quester-path/`. Run the command from the repository root. The caller does not supply seed data. |
+| `QUESTER_PATH_DIR` | Set to `${PWD}/crates/script/paths/289` from the composed repository root. The Zanaris Path source must be merged into the tested head. Do not substitute an unmerged external Path checkout. |
+| `NAV_PACK_274` | Use `274bot-274-v18.navpack` in the same reference-v18 directory as `NAV_PACK_289`. The orchestrator supplies this path to `nav.essence-follow` when it starts the 274 service. |
 | `BOT_UNPACK_DIR` | Use a fresh writable unpack directory at `<LIVE_EVIDENCE_DIR>/client-unpack`. This can be the same path as `CLIENT_UNPACK_DIR`. |
+| `GATHERER_ENGINE_DIR` | Use the absolute read-only client tree for the 600 ms Engine L service at `47594/3080`. Aubaine: `/Volumes/dev-scratch/engines/lostcity-289-l/engine`; on chardonnay, use the local Engine L tree supplied as `BOT_ENGINE_DIR`. |
+| `GATHERER_TICK_EVIDENCE` | Each of the five native tick cells writes to a fresh, nonexistent absolute path below its `LIVE_EVIDENCE_DIR`; the map assigns a distinct subdirectory per cell and pass. |
+| `DEPS_BATCH_025_PCM_CORPUS` | Required pinned corpus at `/Volumes/dev-scratch/274bot-evidence/DEPS-BATCH-025/impl/corpus/audio/289`. Do not substitute synthetic or alternate inputs. |
+| `DEPS_BATCH_025_PCM_FIXTURE_DIR` | Required frozen fixtures at `/Volumes/dev-scratch/274bot-evidence/DEPS-BATCH-025/impl/pcm-fixtures`. The parent runner hashes the fixture files before the version matrix. |
+| `DEPS_BATCH_025_PCM_CAPTURE_DIR` | Derived output `<LIVE_EVIDENCE_DIR>/midi-pcm-capture`, fresh for each cell/pass; the map sets it inline. |
+| `DEPS_BATCH_025_PCM_BASELINE_DIR` | Optional earlier capture directory. Leave unset unless an approved baseline is supplied; comparison is bit-exact and applies no tolerance or normalization. |
 
 Run commands from the repository root. Keep writable cache and unpack paths in
 fresh run directories. `AGENTS.md:149` requires a throwaway HOME for product
@@ -249,16 +439,82 @@ runs and `isohome` exposes the read-only navigation snapshot.
 The exact core paths beside `script-js/src/runtime/**`, `script-js/src/materialize/**` and `script-js/src/library/**` share the external-script
 start, snapshot, tick and Stop boundary. They do not add a second loader.
 
+The canonical host declaration, declared catalog producer and generated runtime
+surface use the same script-load, runtime-load and Jive cells.
+The runtime cells exercise the consumer boundary.
+They do not replace declaration freshness checks.
+The full `script-js` suite owns `host_js_dts_is_fresh` and
+`declared_surface_matches_generator`.
+
 | Cell | Call path |
 |---|---|
 | `host.script-runtime-load` | `script_api_live::runtime_cell` starts through `Play::script_start_load`, `SlotScript::start_surface` and `JsSurfaceFactory::spawn` in `script-js/src/surface.rs`. It observes a real tick, then Stop and physical retirement. |
 | `host.api-gather-wire-shadow` | The v2 Gatherer request enters `SlotScript::start_api_gather`. The real reconnect and wire-shadow checks cross the shared native fact and seat rows. |
 | `scenario.auto-fighter-mage-live` | The registered `auto_fighter_mage` scenario starts the catalog AutoFighter with Fire Strike. Its `Autocast.arm` call enters the Rust `Autocast` family and its observation accessor. |
 | `host.script-progress-journal` | `journal_cell` reads Romeo & Juliet twice. The second read uses `script_api_live_read_again`; the progress requests enter `SlotScript::start_api_progress`. The cell compares the closed-journal stamps and verifies that the quiet paint lease ends. |
+| `host.script-compat-journal-twice` | `compat_journal_twice_cell` loads a v2 script that calls `api.questJournalBegin` and `api.questJournalRun` for Romeo & Juliet twice in a row. The second begin runs in the tick the first read settles. The reads go through the compatibility journal machine and `CompatJournalLease`; each read's token and work generation are the key of its auto-run hold (`SlotScript::script_interaction_wait`). |
 
 Classify compiler-only or test-only changed hunks in the task report when
 they have no game behavior to exercise. Keep their compile or test proof.
 Do not hide a whole production file in `not_live` for such a change.
+
+Exact core rows use named headless commands for workspace registration,
+selected-cache facts and controlled host scheduling states. Those commands
+are not game witnesses. In particular, revision-274 quest facts do not prove
+revision-274 gameplay.
+
+`host.quest-watch-seed-engine-q` proves only the unstarted seed, bank, relog
+and final logout. It does not start or qualify the campaign quest. Its speed
+helpers have controlled tests; Engine Q speed changes remain forbidden.
+
+Navigation positives intended to prove the composed head must use its
+canonical local-data output and matching revision-keyed pack, flags and
+sidecars from `tools/local-data/build.py`. Retain the exact build receipt with
+each run; a stale or unbound artifact cannot substitute for that proof.
+Reference-v18 remains valid only for cells classified as ordinary or
+reference-contract in the input table. This is artifact provenance, not a
+quest-family identity claim. Keep the semantic quest gates and positive
+arrival/door cells below; pack identity does not replace their in-game evidence.
+
+## BATCH-029-INT release integration
+
+These rows supplement the existing runtime witnesses. They do not replace the
+real bank, Gatherer, Quest, GPU or navigation cells.
+
+| Cell(s) | Evidence and limit |
+|---|---|
+| `host.nav-assets-headless`, `host.nav-bundle-274`, `host.nav-bundle-289` | The module test covers resource-layout rules. The two ignored integration tests stage canonical final-head local-data outputs for each revision into a per-pass `BOT_NAV_RESOURCE_DIR`, decode pack, flags, reach, canlight and POI resources, then bind through the ordinary `Profile` path. These are staging/decoder proofs, not gameplay evidence. |
+| `host.map-bind-headless`, `host.map-cache-headless`, `host.profile-config-headless`, `host.session-profile-headless`, `host.public-worlds-headless` | Run the changed map binding/cache and profile selection/public-world tests. These controlled tests do not create game state. |
+| `nav.planner-canlight-headless`, `nav.map-contract-headless`, `nav.planner-producer-headless`, `nav.planner-pack-sidecars-headless` | Exercise the planner's map contracts, format/identity/POI producers, sidecars, canlight and producer modules. These are controlled Rust tests, not navigation runtime witnesses. |
+| `panel.walk-map-headless`, `frontend-core.map-walk-headless` | The panel cell exercises its walk-map module; the existing frontend-core cell remains the controlled real `Play`/map-arm flow. Keep the existing headed GPU and navigation runtime cells separate. |
+| `script.native-services-headless`, `script.native-equipment-headless`, `host.quester-qualified-priest-engine-q` | The service test borrows real native actions and checks owner authority; it is not synthetic JavaScript coverage. The equipment state-machine tests are paired with the real Priest Path, which executes its amulet equip step. |
+| `host.gatherer-fly-tick`, `host.gatherer-net-tick`, `host.gatherer-mine-iron-tick`, `host.gatherer-oak-tick`, `host.gatherer-tick-refused-rune` | Each ignored cell uses Engine L and the native tick-cycle driver. The four positive cases require observed gathering cycles; Rune is the explicit no-gain refusal. Use a distinct fresh evidence path per cell/pass. |
+| `scenario.gatherer-live` | The existing registered Gatherer scenario remains a separate real script/runtime witness and compiles the scenario manifest; the native tick cells do not replace it. |
+| `host.paired-core-watch-headless`, `tui.live-duel-arena-pair-core` | The watch suite is controlled evidence only. The TUI cell runs the registered two-account Duel Arena scenario with `--pair-core` and is a real paired runtime witness; it is distinct from the one-account `host.api-pvp-duel` cell. |
+| `vendor.midi-pcm-differential` | Runs the ignored production PCM capture against the pinned DEPS-BATCH-025 corpus and frozen fixtures, with an optional approved baseline. It records raw PCM and compares bits without tolerance, normalization or clipping. |
+
+The staged bundle cells require canonical `target/local-data/nav` assets for
+both revisions, generated from the final composed head with the local-data
+procedure above. `BOT_NAV_BUILD=skip` is not valid for these two cells.
+
+The PCM cell uses its shared frozen fixture directory as an input and a fresh
+capture directory per pass. A baseline is optional; do not invent corpus
+assets, fixture hashes or acceptance tolerances.
+
+The paired TUI scenario mints both account names from its unique
+`BOT_LIVE_NAME_PREFIX`; it is not a paired quest/trade cell and needs no
+partner-prefix input.
+
+## Background work health
+
+`script.work-admission-headless` controls a native step and the monotonic clock.
+It proves that a slow returned step permits later work, that shutdown reports
+an unreturned worker, and that panic and start failure keep their conditions.
+It also consumes a completed terminal before an uncontained cleanup panic,
+then checks that the worker exits and releases its retained resource custody.
+These states cannot be created by game content. `panel.headed-nav-script`
+complements this proof with real profile and cache preparation before the live
+script starts.
 
 ## Add a cell
 
@@ -268,6 +524,11 @@ Do not hide a whole production file in `not_live` for such a change.
 4. Add test-only files to `[not_live]`, not `[live]`.
 5. Run the tool on the change. Confirm that it lists the new cell and no changed live path remains uncovered.
 
+Use the Rust module names from `cargo test ... -- --list` for exact selectors.
+A `#[path = "compat/dialog.rs"] mod dialog` declaration names `dialog::...`,
+not `compat::dialog::...`. The source directory is not a module prefix.
+A zero-test selector is not proof, even when Cargo exits successfully.
+
 An explicit exception in `not_live.exceptions` keeps a path live only when it
 also matches a live glob. Add the cover row for that path.
 
@@ -276,3 +537,193 @@ The scenario registry and nightly cell lists are separate from changed-path matc
 ```sh
 python3 -B tools/nightly/run_nightly.py --list
 ```
+
+## Controlled legacy adapter limits
+
+`compat.dialog-combat-close-adapter` and `compat.make-x-clock-adapter` are
+**adapter proof, not a game witness**. No catalog script reaches these branches
+in a fixed-deadline cell. The first test checks the legacy dialogue result for
+combat with a visible NPC or player targeting this account, unrelated targets,
+and self-damage without an attacker. The second checks the legacy Make-X
+count-open, count-close and menu-close deadlines. Native Mordred dialogue and
+native Sheep spinning do not exercise these adapters.
+
+Keep both limits in the W6 report. W5 also adds its direct makeOne game cell;
+that cell does not prove the Make-X count/menu waits. The retained **3 s / 3 s /
+5 s wall-clock waits** in `compat/production.rs` are an open item for the compat
+track, in the same class as its queued `WaitChoiceAck` and Main-doc 3000 ms
+waits. That track must count these waits in observed ticks. This mapping does
+not fix or retire the timing debt.
+
+## Run cells
+
+The runner uses the command from `map.toml`. It does not duplicate per-cell commands.
+Use `live_map.py run` so one tool lists and runs cells. `run_cells.py` holds the
+run logic and imports `live_map.py`. This split keeps listing stable while the runner
+evolves. No `map.toml` schema change was needed. Every current cell is one shell
+string with `name|command`. Port choice stays in the runner by rewrite, not in the map.
+
+```sh
+python3 -B tools/live-map/live_map.py run --repo <lab clone> \
+  --cells frontend-core.driver-command-headless,host-play.local-state-headless \
+  --prefix lcr --evidence /path/to/evidence --passes 1
+
+python3 -B tools/live-map/live_map.py run --repo <lab clone> \
+  --diff BASE..HEAD --prefix lcr --evidence /path/to/evidence --passes 3 \
+  --engine-game-port 44594 --engine-http-port 1080 \
+  --quest-game-port 44694 --quest-http-port 1180
+
+python3 -B tools/live-map/live_map.py run --repo <lab clone> \
+  --cells host.script-runtime-load,panel.state-gap-stop-live,nav.route-search-live \
+  --prefix lcr --evidence /path/to/evidence --passes 1 \
+  --engine-game-port 47594 --engine-http-port 3080 \
+  --catalog-root /home/acfrazier/experiments/rs2b0t \
+  --unpack-source /home/acfrazier/.274bot/unpack-289
+```
+
+The runner refuses to start when the clone has uncommitted tracked changes. It runs
+cells one at a time and never stops on a failure. Populate `<cell>/cache-289` with
+the copied cache seed. For each pass, the runner copies that seed without symlinks
+to `<cell>/passN/evidence/cache-289`. This copy is `BOT_CACHE_DIR`, inside that
+pass's `LIVE_EVIDENCE_DIR`; writes in one pass do not change the seed or another
+pass's cache. The runner also creates per-cell unpack dirs and a kept panel home.
+It sets `BOT_LIVE_NAME_PREFIX`, `BOT_NAV_BUILD=skip`,
+`WORLD_GAME_PORT`/`WORLD_HTTP_PORT` from the selected engine ports. Explicit caller
+engine and nav paths take precedence over discovered reference-v17 defaults.
+It sets `ISOHOME_DIR` to `<LIVE_EVIDENCE_DIR>/home`
+for each cell and pass, so `isohome` keeps `HOME` under `BOT_EVIDENCE_DIR`
+(`crates/host-play/tests/script_api_live.rs:503-507`). Panel cells override this
+with the inline `ISOHOME_DIR=${PANEL_LIVE_HOME:?}` in the map command. Quest cells use the quest ports and set
+`QUESTER_SPEED_RESTORE=0`. The runner leaves `QUESTER_TICK_MS` unset and refuses
+any cell whose command sets it. Engine Q stays at 300 ms; never send `::speed`.
+It rewrites inline `_GAME_PORT`, `_HTTP_PORT`, `--port`, and `--http-port` values
+to the selected ports.
+`ISOHOME` comes from the host wrapper where the map command names it. Each cell runs
+by `bash -lc` from the repo root.
+
+Paired quest cells, including `host.quester-jonny-stand-engine-q`, also require
+`BOT_LIVE_PARTNER_NAME_PREFIX`. Export a distinct partner prefix in the same
+remote shell that invokes the runner (for example, partner `b2q` with
+`--prefix b29`). The runner inherits that value; a Merlot-only environment
+assignment is not forwarded by the lab wrapper. It still sets the primary
+prefix from `--prefix`.
+
+For batch proofs that require the composed head, export its canonical pack and
+matching flags/sidecars with the local-data build receipt. Do not substitute a
+discovered reference pack for those cells; the named reference pack remains
+valid only for ordinary and reference-contract cells. This identity requirement
+is artifact provenance, not quest-family binding.
+
+Use `--catalog-root <path>` for the local `rs2b0t` checkout root. The flag is
+required when any selected cell uses `${CATALOG_ROOT}`. The runner exports it as
+`CATALOG_ROOT` and refuses to start without it. Use `--unpack-source <path>` for
+the revision decoded unpack directory. The flag is required when any selected
+cell uses `${PANEL_LIVE_HOME}`. For each such cell and pass the runner copies the
+source tree (never a symlink) to `panel-home/.274bot/unpack-289`, as the panel
+live test expects (`crates/panel/src/manual_click_live_tests.rs:77-90`). The copy
+runs once per panel home and the receipt records it as `unpack_source`
+(`<source>#<hash>`).
+The merged `live-port-env` repair (`8b9e84e2691d`) makes its covered live tests
+read the selected ports through `live_ports`. The runner does not rewrite
+ports embedded in Rust code. The five Engine B sites left outside that repair
+retain their 45594/2080 contract; changing them needs a separate brief.
+Non-quest lab cells use Engine L. On aubaine the 44594/1080 defaults reach Engine L
+through the relay. On chardonnay pass `--engine-game-port 47594 --engine-http-port 3080`
+(the forwarded Engine L) and never use 44594/1080 there. Quest cells use Engine Q.
+
+Each cell and pass writes `passN/cell.log` and `passN/receipt.txt` with `cell`, `pass`,
+repo `head`, `command`, `start_utc`, `end_utc`, `exit_code`, `log`, `evidence_dir`,
+`isohome_dir`, plus `catalog_root` when `--catalog-root` is set and `unpack_source`
+when the cell stages a panel unpack. The runner prints a
+summary table and writes `summary.txt`. The table lists `cell`, `pass`, `exit`, `seconds`,
+`start_utc`, `end_utc`, and `log`, followed by one `command`, `start_utc`, and `end_utc`
+line per cell and pass. A non-zero exit means at least one cell failed.
+
+### Support proof boundaries
+
+`api.hostlog-write-headless` passes a failing writer to the logging sink. It
+checks that the write does not panic. This is process logging proof, not a
+game witness or a full API-suite pass.
+
+`panel.profiles-close-headless` drives the panel facade: Cancel without a
+form is refused and leaves the list open; window close with no form or a
+clean form succeeds. Main's headed Profiles check is still required.
+
+The existing `host.survivable-admission` cell covers the selected-port helper
+because its real profile reads both `live_ports` functions. Run it through
+the shared runner with the selected Engine L ports. `bank_npc_live.rs` is
+test-harness-only: `host-play/src/lib.rs:634-635` gates it to tests or both
+`live-harness` and `test-support`. Its endpoint assertion/receipt change is
+not shipped game behavior.
+
+For Fleet order captures, set `TUI_CAPTURE_DIR` while running the TUI test
+`bin::tests::alt_keys_reorder_the_saved_load_order_and_the_drawn_table`.
+It checks the moved table at 80x24 and 120x40 and writes text plus coloured-cell
+JSON under `<TUI_CAPTURE_DIR>/fleet-order`. The proof records the saved and
+drawn order after the real Alt+Down key path. This is controlled UI proof,
+not a game witness or a per-bot memory measurement.
+
+### BATCH-P proof scope
+
+The memory-profile cells are controlled contract tests, not live capacity
+measurements. The scatter test prepares ten slots and checks both active and
+idle workloads with `stress50` and `stress50-full`; it does not measure fifty
+running clients. The Chicken bank boundary and the twelve
+`chicken_bank_oracle_` cases are controlled proof. The separate
+`scenario.chicken-killer-bank-live` command must prove real combat, fresh
+loot and deposit, return, and further work.
+
+The W6 memory workload modules share the controlled memory contract selector.
+It covers scenario names, paired counts, explicit unused controls and field types.
+It is not the gameplay or memory proof for those workloads. The separate
+candidate-only lab lanes must exercise the real Priest page, object caches,
+native trade, native API owner and repeated routing. The existing V8 unit test
+provides the fast-properties invariant. The measured binary keeps shipped V8
+settings and does not query intrinsics.
+
+The bank-memory owner cell uses its real local-state service tests. In this
+batch the changed code is the private saved-hint fixture. The cell is controlled
+state-service proof, not a gameplay or trade witness.
+
+`scenario.boat-fare-retry-live` runs the same three real cases in order:
+`boat_fare_v1_ts`, `boat_fare_far_start_v1_ts`, and
+`boat_fare_reconnect_v1_ts`. Each uses the caller's explicit engine, pack and
+navflags, and its own `<LIVE_EVIDENCE_DIR>/<case>/home`. The first failing
+case stops the command. Export `ENGINE_A_DIR` for the selected Engine L root
+(the name is historical), and the matching `NAV_PACK_289` and
+`NAV_FLAGS_289`. Record the engine identity before the live command.
+
+### Queued tooling item: nightly supplied-pack reuse
+
+Status: **queued**; no nightly-runner change is part of this batch.
+
+`run_nightly.py` drops the inherited nav environment
+(`tools/nightly/run_nightly.py:1893-1898`, `tui_cmd:1992-1997`), so nightly
+cells rebake instead of using a given pack. `NIGHTLY_NAV_FIXTURE` supplies
+CI lanes, not those live CLI invocations. Until the nightly tool can use the
+selected pack, the fare map row calls the existing CLI directly. This is a
+validation-tool limit, not a change to the product's route behavior.
+
+### Map and snapshot coverage boundaries
+
+`frontend-core.map-walk-headless` runs the full frontend library with the
+selected pack, navflags and engine paths, with `LIVE` unset. Its real-seam
+test is `group_walk::tests::frontend_owned_map_staging_arms_the_real_profile_bound_play`:
+`OperatorSession::walk_map_context` creates the frontend context;
+`WalkMap::confirm_walk_plan` stages its selection; then
+`OperatorSession::confirm_marked_walk` calls `Play::map_walk_group`.
+The test uses a real profile-bound `Play` and verifies its actual walk arms.
+Only the game client is absent. The same suite checks typed incomplete-search
+details and retention of a failed walk's destination. This is controlled
+contract proof, not a real budget-exhausted live walk or an arrival witness.
+
+The snapshot, optional FlatBuffer field and native observation paths share
+the existing wire-shadow, runtime and dialog-close-adapter cells. Those
+declarations do not turn the adapter into a live combat-close witness.
+Actual changed dialogue cells and final three-pass coverage remain required.
+
+`crates/nav-planner/examples/route_parity.rs` is an offline real-pack
+diagnostic example, not a product runtime. Its exact `not_live` classification
+does not waive the release corpus, changed-route comparison or final combined-pack
+qualification.
+

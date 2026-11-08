@@ -4,6 +4,7 @@ use api::game_data::{for_revision, SelectedGameData};
 use api::gather_methods::GatherCatalog;
 use api::identity::Deadline;
 use api::selected::{ClientRevision, FamilyPreparation};
+use api::test_support::local_asset_path;
 use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -23,6 +24,22 @@ fn prepare(data: &Arc<SelectedGameData>) -> Arc<GatherCatalog> {
 
 #[test]
 fn the_catalog_is_lazy_shared_and_retained_for_the_process() {
+    if local_asset_path(
+        "",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/289.json"),
+        "revision 289 game data for gather catalog lifecycle test",
+    )
+    .is_none()
+        || local_asset_path(
+            "",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/data/game-data/274.json"),
+            "revision 274 game data for gather catalog lifecycle test",
+        )
+        .is_none()
+        || !api::test_support::embedded_game_data_available()
+    {
+        return;
+    }
     let data = for_revision(ClientRevision::R289).unwrap();
     assert!(
         data.try_gathering().is_none(),
@@ -52,7 +69,7 @@ fn the_catalog_is_lazy_shared_and_retained_for_the_process() {
     let again = prepare(&data);
     assert!(Arc::ptr_eq(&again, &cached), "the family is decoded once");
 
-    // The other pinned revision occupies its own one of the two fixed slots.
+    // The other supported revision owns its own one of the two fixed cache slots.
     let data_274 = for_revision(ClientRevision::R274).unwrap();
     assert!(data_274.try_gathering().is_none());
     let old = prepare(&data_274);

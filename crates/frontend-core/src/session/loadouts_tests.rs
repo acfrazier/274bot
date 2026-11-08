@@ -706,6 +706,9 @@ fn a_member_is_observable_only_in_game_with_a_snapshot() {
 /// in the slot the game data names (the helper the row calls).
 #[test]
 fn copy_equipment_resolves_slots_from_game_data() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let data = api::game_data::for_revision(api::selected::ClientRevision::R274).unwrap();
     let mut form = LoadoutForm::over(Loadouts::detached(vec![melee()]));
     form.stage_selection(0);

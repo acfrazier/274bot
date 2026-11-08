@@ -6,7 +6,6 @@ use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 use client::dash3d::{CollisionFlag, LocShape};
 use nav_planner::collision::WorldCollision;
-use nav_planner::quest_gates::QuestFamilyId;
 use nav_planner::transport::{
     DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
     CELLAR_SHIFT, SHILO_CART_ROUTES, WEB_USE_OPTION,
@@ -21,6 +20,7 @@ mod doors;
 mod gates;
 mod gliders;
 mod index;
+mod legends;
 mod levers;
 mod magic_guild;
 mod membergate;
@@ -58,6 +58,7 @@ pub(crate) use index::{
     loc_ids_by_name, loc_positions, npc_ids_by_name, npc_positions, visit_loc_configs,
     visit_npc_configs, Placement,
 };
+use legends::*;
 use levers::*;
 use magic_guild::*;
 use membergate::*;
@@ -87,7 +88,6 @@ use zanaris::*;
 mod tests;
 
 pub(crate) struct QuestSource<'a> {
-    pub(crate) family: QuestFamilyId,
     pub(crate) facts: &'a api::game_data::QuestIdentityFacts,
 }
 
@@ -96,7 +96,7 @@ pub fn derive_transports(
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> TransportGraph {
-    derive_transports_with_audit(content_root, loc_defs, collision, None, None).0
+    derive_transports_with_audit(content_root, loc_defs, collision, None, None, None).0
 }
 /// The graph and accounting for source gates the live snapshot cannot prove.
 pub(crate) fn derive_transports_for_bake(
@@ -106,6 +106,7 @@ pub(crate) fn derive_transports_for_bake(
     configured_door_ids: &HashSet<i32>,
     parsed_door_configs: &[PathBuf],
     quests: Option<&QuestSource<'_>>,
+    game_data: &api::game_data::SelectedGameData,
 ) -> (TransportGraph, VarpGateAudit) {
     let (graph, skipped, audit) = derive_transports_with_audit(
         content_root,
@@ -113,6 +114,7 @@ pub(crate) fn derive_transports_for_bake(
         collision,
         Some((configured_door_ids, parsed_door_configs)),
         quests,
+        Some(game_data),
     );
     report(content_root, &graph, &skipped);
     (graph, audit)
@@ -125,7 +127,7 @@ fn derive_transports_with_skips(
     collision: &WorldCollision,
 ) -> (TransportGraph, HashMap<&'static str, usize>) {
     let (graph, skipped, _) =
-        derive_transports_with_audit(content_root, loc_defs, collision, None, None);
+        derive_transports_with_audit(content_root, loc_defs, collision, None, None, None);
     (graph, skipped)
 }
 
@@ -135,14 +137,12 @@ fn derive_transports_with_audit(
     collision: &WorldCollision,
     preloaded_doors: Option<(&HashSet<i32>, &[PathBuf])>,
     quests: Option<&QuestSource<'_>>,
+    game_data: Option<&api::game_data::SelectedGameData>,
 ) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
-    let mut graph = TransportGraph {
-        quest_family: quests.map(|quests| quests.family),
-        ..TransportGraph::default()
-    };
+    let mut graph = TransportGraph::default();
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
     let mut audit = VarpGateAudit::default();
-    let gates = ObservableGates::from_content(content_root);
+    let gates = ObservableGates::from_content(content_root, quests);
 
     let ids = loc_ids_by_name(content_root);
     let positions = loc_positions(content_root);
@@ -218,7 +218,7 @@ fn derive_transports_with_audit(
         collision,
         &mut skipped,
     );
-    boat_edges(&mut graph, &gates, &mut audit);
+    boat_edges(&mut graph, &gates, &mut audit, game_data);
     cart_edges(
         &mut graph,
         gates.completed_quest_name("zombiequeen", "zombiequeen_complete"),
@@ -258,6 +258,15 @@ fn derive_transports_with_audit(
         &mut skipped,
     );
     zanaris_door_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
+    legends_edges(
+        content_root,
+        &positions,
+        loc_defs,
+        &mut graph,
+        collision,
+        &mut skipped,
+        quests,
+    );
     // After every other loc-backed producer: a named wall or ladder opener
     // no producer above admitted is evaluated per crossing.
     stage_door_edges(

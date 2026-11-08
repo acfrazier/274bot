@@ -9,7 +9,7 @@
 //! its own, held here by slot so the JS instance carries only the slot, and
 //! observes exactly the `anim` its caller passes.
 
-use crate::observed;
+use crate::scene::observed;
 use std::cell::{Cell, RefCell};
 
 /// Animation ids and ticks are JS numbers; the frozen clock compares them

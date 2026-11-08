@@ -2,20 +2,18 @@
 //!
 //! The [`MapDemandManager`] is created on first map open, never at boot.
 
+use crate::install_resource_root;
 use crate::map_cache::{
     MapCacheError, MapCacheRoot, MapDemand, MapDemandHandle, MapDemandManager, MapJobStatus,
     MapProfileDescriptor, PreparedMapInput, ReadyCatalogue, ReadyImages, ReadyMap, ShippedMap,
     ShippedMapBundle,
 };
 use crate::map_producer::{map_artifact_policies, NativeMapProducer};
-use crate::nav_identity::install_resource_root;
-use crate::walk_map::AuthenticatedServices;
 use crate::ServerProfile;
 use api::work::{
     Checkpoint, CooperativeJob, RetainedState, StepContext, StepOutcome, WalkMapDecodePhase,
 };
-use nav_planner::map::formats::{ServicePois, NAVPOIS_HEADER_BYTES};
-use nav_planner::map::identity::Digest;
+use nav_planner::map::formats::ServicePois;
 use std::fs;
 use std::io::Cursor;
 use std::path::Path;
@@ -415,34 +413,15 @@ fn decode_walk_map_png(bytes: &[u8]) -> Result<Vec<u8>, WalkMapDecodeFailure> {
     Ok(rgba)
 }
 
-/// Authenticated navpois next to the bound pack. Missing/stale/wrong-identity
-/// is `None` — callers keep that explicit.
-pub fn load_navpois(
-    profile: &ServerProfile,
-    content: Digest,
-    nav: Digest,
-) -> Option<AuthenticatedServices> {
-    let identity = profile.nav_identity()?;
-    let expected_file = Digest::from_hex(identity.pois_sha256.as_deref()?).ok()?;
+/// Decode the service records beside the bound navigation pack.
+pub fn load_navpois(profile: &ServerProfile) -> Option<Arc<ServicePois>> {
     let pack = profile.nav_pack();
     let candidates = [
         pack.with_extension("navpois"),
         pack.with_file_name("274bot.navpois"),
     ];
     let bytes = candidates.iter().find_map(|path| fs::read(path).ok())?;
-    if Digest::of(&bytes) != expected_file || bytes.len() < NAVPOIS_HEADER_BYTES {
-        return None;
-    }
-    let document: ServicePois = serde_json::from_slice(&bytes[NAVPOIS_HEADER_BYTES..]).ok()?;
-    let services = AuthenticatedServices::decode(&bytes, document.identity, expected_file).ok()?;
-    let bound = services.document().identity;
-    if bound.revision != profile.revision().as_i32() as u16
-        || bound.content != content
-        || bound.nav_sha256 != nav
-    {
-        return None;
-    }
-    Some(services)
+    ServicePois::decode_navpois(&bytes).ok().map(Arc::new)
 }
 
 #[cfg(test)]

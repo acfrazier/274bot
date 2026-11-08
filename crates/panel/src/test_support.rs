@@ -4,9 +4,13 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 use frontend_core::scripts::{LoadoutForm, Loadouts, LoadoutsErrorKind};
+use host_play as map_host;
 use host_play::local_state::{
     transient_wait, wait_outcome, LocalStateService, StateRoot, WaitOutcome,
 };
+
+#[path = "../../host-play/tests/support/map_fixture.rs"]
+pub(crate) mod map_fixture;
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
@@ -200,6 +204,37 @@ fn retry_waits<E>(
 pub(crate) fn patiently(attempt: impl FnMut() -> Result<(), String>) -> Result<(), String> {
     retry_waits(attempt, |error: &String| transient_text_wait(error))
 }
+
+#[test]
+fn patiently_waits_for_fixture_readback_and_write_settlement() {
+    let mut results = [
+        Err("preferences: preferences is not ready (panel-ui.json)".to_string()),
+        Err("the write was not durable within 5s; it stays queued".to_string()),
+        Ok(()),
+    ]
+    .into_iter();
+    assert_eq!(
+        patiently(|| results.next().expect("unexpected extra attempt")),
+        Ok(())
+    );
+    assert!(results.next().is_none());
+}
+
+#[test]
+fn patiently_returns_other_failures_without_retry() {
+    for failure in ["preferences permissions refused", "preference conflict"] {
+        let mut attempts = 0;
+        assert_eq!(
+            patiently(|| {
+                attempts += 1;
+                Err(failure.to_string())
+            }),
+            Err(failure.to_string())
+        );
+        assert_eq!(attempts, 1);
+    }
+}
+
 /// A preferences write through a scratch service, retried past the two
 /// bounded waits (see [`retry_waits`]). The typed classifier sees the
 /// fixture's `NotReady` code. The update re-reads and re-applies its

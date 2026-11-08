@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::rs2b0t_registry::{ScriptKind, ScriptSource};
 use crate::transpile_ts;
+use script::card::{ScriptKind, ScriptSource};
 
 /// One cached transpile result.
 #[derive(Debug, Clone, PartialEq, Eq)]

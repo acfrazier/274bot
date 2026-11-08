@@ -86,7 +86,7 @@ export function optionalText(value) {
 }
 
 // The host's Pause/Resume and Stop paint controls (ids match
-// `script::shim::HOST_*_CONTROL_ID`; the operator front ends own their
+// `script::paint::HOST_*_CONTROL_ID`; the operator front ends own their
 // labels and commands). One frozen list per isolate: `Paint`'s `buttons`
 // records these descriptors without a copy.
 export const HOST_CONTROLS = Object.freeze([

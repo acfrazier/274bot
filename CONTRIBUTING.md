@@ -52,68 +52,55 @@ data, the other programs and the live-test commands are in
 
 ## Run the checks
 
-Run these before you push. CI runs the same commands on every pull request. The
-client submodule has its own manifest, so the format, lint and test commands
-run twice.
+### Before you open a PR
 
-| Check | What it catches | Command |
-| --- | --- | --- |
-| Format | Code that `rustfmt` would change | `cargo fmt --all -- --check` |
-| Format (client) | The same, in the client | `cargo fmt --all --manifest-path vendor/fr-client-rust/Cargo.toml -- --check` |
-| Lint suppressions | More `#[allow]` or `#[expect]` than the saved count | `python3 -B tools/lint-ratchet/lint_ratchet.py` |
-| Clippy | Warnings; any warning fails | `cargo clippy --workspace --all-targets --no-deps -- -D warnings` |
-| Clippy (client) | The same, in the client | `cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings` |
-| Tests | Failing tests | `cargo test --workspace` |
-| Tests (client) | The same, in the client | `cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace` |
-| Architecture | A crate dependency the rules do not allow | `tools/architecture/run.sh` (on `dev`; for a release branch see below) |
+Run the full CI check set:
 
-CI runs with `BOT_NAV_BUILD=skip` and `SKIP_GPU=1`: no navigation pack is
-bundled into the build, and tests skip the graphics adapter. Set the same on a
-machine that has no engine or GPU.
+```sh
+cargo run --locked -p xtask -- ci --all
+```
 
-`tools/architecture/run.sh` uses the same checker rules as CI on `dev`, where
-pull requests go. A `release/<version>` branch is checked against its own
-`release-<version>` rules instead; to reproduce that,
-[Architecture check in detail](docs/dev/architecture-check.md) shows how to run
-`run.sh` against a local copy of the rules at that branch.
+This command runs the formatting checks, lint checks, architecture check,
+FlatBuffer check, all Clippy commands, and every test lane from GitHub CI.
+It writes one log file per step and a `summary.txt` file to
+`target/xtask-ci/`. A failing step also prints its last 200 log lines to stdout.
 
-Some tests need a local file, such as a navigation pack. On GitHub they skip and
-print the reason. On your machine they fail and name the environment variable
-to set.
+Use `cargo run --locked -p xtask -- ci --list` to print the step names. Run selected steps with
+`cargo run --locked -p xtask -- ci <step>...`. Use `--log-dir <path>` to choose another log
+directory.
+You may add a personal Cargo alias in your user-level Cargo config; keep it
+outside the repository.
 
-### What else CI runs
+The `xtask` package is a workspace member. The workspace `default-members`
+list excludes it, so plain `cargo test` and `cargo clippy` do not build it.
+Commands that use `--workspace`, including CI, include `xtask`.
 
-- **Clippy and test lanes for features.** CI also lints every feature build the
-  Clippy job in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) lists, and
-  tests these. Run the lane for the crate you changed:
+### Requirements
 
-  ```bash
-  cargo test -p script --features load --tests
-  cargo test -p script --no-default-features
-  cargo test -p host-play --features live-harness,test-support --test grinch_live
-  cargo test -p host-play --features memory-profile
-  cargo test -p host-play --features memory-profile-no-alloc --lib
-  cargo test -p host --features performance-profile
-  cargo test -p panel --features memory-profile
-  cargo test -p panel --features render-diagnostics --lib
-  cargo test -p tui --features memory-profile
-  ```
+- Install Rust 1.98.1 through rustup. Include the `rustfmt` and `clippy`
+  components. Clone the repository with its client submodule.
+- Run the full checks on Linux x86_64. The current pinned `rust-analyzer` and
+  `flatc` builds support that platform. `xtask` downloads them with `curl` and
+  checks their hashes in `~/.cache/274bot-ci`.
+- Install Python 3, `git`, `curl`, `sha256sum`, `gzip`, `unzip` and `diff`.
+  Linux test lanes also need the ALSA and window headers used by CI. The panel
+  memory lane needs `xvfb`.
+- Local test lanes need the same 289 navigation pack, decoded snapshots and
+  other local test assets that the tests name. Set `NAV_PACK`,
+  `WORLD_NAV_PACK`, `NAV_ARRIVAL_PACK`, `BOT_NAV_SNAPSHOT_ROOT`, `ENGINE_DIR`
+  or `T5W_INSPECT_CAPTURE_BASELINE` when the test error names them.
+- The architecture check uses the `main` branch of `274bot-arch`. Set
+  `ARCH_REF` to check another branch or commit. Set `ARCH_REPO` to use a local
+  checkout. `ARCH_RUST_ANALYZER_URL` can point to a mirror of the pinned tool.
 
-  On Linux the panel also has a test that needs a virtual display (install
-  `xvfb`):
-  `xvfb-run -a cargo test -p panel --features memory-profile --test ime_frame`.
-- **FlatBuffer bindings.** If you change `crates/script/schema/isolate.fbs`,
-  regenerate the bindings with the `flatc` version CI pins (see `ci.yml`):
-  `flatc --rust -o crates/script/schema/generated crates/script/schema/isolate.fbs`.
-- **Architecture check.** `tools/architecture/run.sh` needs Python 3.11 or newer
-  and a pinned `rust-analyzer` on your `PATH`. A new crate dependency, feature
-  link or checker change needs a change in the separate `274bot-arch` repository,
-  which a maintainer makes. Details are in
-  [Architecture check in detail](docs/dev/architecture-check.md); the crate
-  layout is in [Architecture](docs/dev/architecture.md).
+On GitHub, tests skip a missing local asset only when
+`GITHUB_ACTIONS=true`. A local run fails and names the missing asset.
+
+The full check runs every CI lane in sequence. Allow several hours for a
+cold build. Warm Cargo and pinned-tool caches reduce the time.
 
 CI never sets `LIVE=1`. A green CI run does not show that a bot works in the
-game: run the live tests for any change that affects behavior in the game.
+game. Run the live tests for any change that affects behavior in the game.
 
 ## Live-test rules
 

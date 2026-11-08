@@ -70,7 +70,6 @@ fn grid_header(width: u32, height: u32) -> Vec<u8> {
 fn pack_header(width: u32, height: u32) -> Vec<u8> {
     let mut bytes = b"274V".to_vec();
     bytes.push(nav_planner::pack::VERSION);
-    bytes.push(0); // no quest-family binding
     for value in [0i32, 0, 0] {
         bytes.extend_from_slice(&value.to_le_bytes());
     }

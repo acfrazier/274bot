@@ -1,6 +1,6 @@
 //! Frozen `createReturnToAnchorTask` (`Anchor.ts:85–128`) through the shim.
 
-use script_js::wire::TileInput;
+use script::native::snapshot_source::TileInput;
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

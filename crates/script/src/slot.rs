@@ -66,6 +66,12 @@ pub struct SeatProbe {
     pub results: usize,
     pub reserved_releases: usize,
     pub mirror_revokes_consumed: u64,
+    pub answer_seq: u64,
+    pub answer_dispatched: u64,
+    pub terminal_dispatched: u64,
+    pub result_seq: u64,
+    pub untaken_answers: usize,
+    pub seat_pages: crate::native::seat::SeatPageCounts,
 }
 
 /// The host outcome id uses the producer's namespace. Native ledger walks
@@ -436,16 +442,27 @@ pub enum StartPoll {
     NotOwed,
 }
 
+/// The script's own wait for the result of its own interaction, as read on
+/// one host frame ([`SlotScript::script_interaction_wait`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InteractionWait {
+    /// Changes with each new wait.
+    pub key: u64,
+    /// The observed tick by which a polled owner has ended this wait itself.
+    pub deadline_tick: u64,
+}
+
 /// Per-uid runner. Compiled XOR Load (a JS isolate) — never both.
 pub struct SlotScript {
     pub want_run: bool,
     state: RunState,
     compiled: Option<Box<CompiledRun>>,
-    /// Diagnostic only: a blocked run has no instance or restart authority.
+    /// The last status of a blocked, failed, or completed run, for diagnostics only.
+    /// It grants no instance or restart authority.
     terminal_native_status: Option<Arc<crate::native::ScriptStatus>>,
     preparing: Option<Box<Preparation>>,
-    /// One bounded native Start retained across temporary Full admission.
-    pending_compiled_start: Option<compiled::PendingCompiledStart>,
+    /// A full admission queue retains one native Start without enlarging every slot.
+    pending_compiled_start: Option<Box<compiled::PendingCompiledStart>>,
     /// A watchdog restart awaiting capacity keeps its current instance until
     /// the replacement job is accepted on a later slot turn.
     pending_compiled_restart: bool,
@@ -555,6 +572,10 @@ pub struct SlotScript {
     bank_op_result_seq: u64,
     bank_op_result: bool,
     work_epoch: u64,
+    /// Logical route run retained only across internal manual WalkTo handovers.
+    manual_route_run: Option<api::selected::RunKey>,
+    /// Manual outer walk policy for the active internal WalkTo card.
+    manual_route_bank_fetch: Option<bool>,
     /// Frozen source/settings used for watchdog recreate. Cleared on
     /// operator Stop / new manual Start.
     surface_start: Option<SurfaceStart>,
@@ -661,6 +682,8 @@ impl SlotScript {
             bank_op_result_seq: 0,
             bank_op_result: false,
             work_epoch: 0,
+            manual_route_run: None,
+            manual_route_bank_fetch: None,
 
             surface_start: None,
             factories: [None; SurfaceKind::COUNT],
@@ -698,6 +721,113 @@ impl SlotScript {
     /// The bound local-state capability, if any.
     pub fn local_state(&self) -> Option<&Arc<crate::local_state::SlotState>> {
         self.local_state.as_ref()
+    }
+
+    /// The gameplay owner's key, including its actual host session.
+    /// Scene-only work invalidation does not replace this key.
+    pub fn seat_run(&self) -> Option<api::selected::RunKey> {
+        self.seat.as_ref().map(|seat| seat.run())
+    }
+
+    /// The logical evidence run retained across scene reloads and an internal
+    /// WalkTo generation. A connection boundary or replacement Start revokes it.
+    pub fn manual_route_run(&self) -> Option<api::selected::RunKey> {
+        self.manual_route_run
+            .filter(|run| run.slot == self.incarnation)
+    }
+
+    /// Capture the manual route's causal stamp before its traveller starts.
+    pub fn capture_manual_route_run(&mut self) -> api::selected::RunKey {
+        let run = self
+            .manual_route_run()
+            .or_else(|| self.native_run())
+            .or_else(|| self.seat_run())
+            .unwrap_or(api::selected::RunKey {
+                slot: self.incarnation,
+                run: self.runtime_generation,
+                session: self.work_epoch,
+            });
+        self.set_manual_route_run(Some(run));
+        run
+    }
+
+    pub(crate) fn set_manual_route_run(&mut self, run: Option<api::selected::RunKey>) {
+        self.manual_route_run = run.filter(|run| run.slot == self.incarnation);
+    }
+    pub fn manual_route_bank_fetch(&self) -> Option<bool> {
+        self.manual_route_bank_fetch.filter(|_| {
+            self.state == RunState::Running
+                && self
+                    .native_run()
+                    .is_some_and(|run| run.slot == self.incarnation)
+                && self
+                    .compiled
+                    .as_ref()
+                    .is_some_and(|run| run.config.card() == crate::CompiledId("WalkTo"))
+        })
+    }
+
+    pub(crate) fn set_manual_route_bank_fetch(&mut self, allow: Option<bool>) {
+        self.manual_route_bank_fetch = allow;
+    }
+    /// Carry manual prerequisite knowledge under the run that actually
+    /// observed it. The hidden WalkTo's terminal is not evidence by itself.
+    fn update_manual_route_run_from_fact_writer(&mut self) {
+        if self.manual_route_run().is_none() || self.manual_route_bank_fetch().is_none() {
+            return;
+        }
+        let Some(run) = self.native_run() else {
+            return;
+        };
+        let Some(state) = self.local_state.as_ref() else {
+            return;
+        };
+        let writer_run = state.with_prereq_memory(|memory| {
+            memory
+                .facts()
+                .iter()
+                .find(|fact| fact.observed.run == run)
+                .map(|fact| fact.observed.run)
+        });
+        if let Some(writer_run) = writer_run {
+            self.set_manual_route_run(Some(writer_run));
+        }
+    }
+
+    /// Record a refusal only for the current native or retained manual-route run.
+    ///
+    /// The host calls this before delivering the terminal to a native owner or
+    /// choosing a handover, so consent denial and cancellation cannot erase the
+    /// observation. A stale run or session never writes into the slot memory.
+    pub fn record_gate_refusal(
+        &self,
+        run: api::selected::RunKey,
+        observation: &api::prereq_knowledge::RefusalObservation,
+    ) -> bool {
+        let current =
+            self.native_run()
+                .or_else(|| self.seat_run())
+                .unwrap_or(api::selected::RunKey {
+                    slot: self.incarnation,
+                    run: self.runtime_generation,
+                    session: self.work_epoch,
+                });
+        // A scene-only down observation advances the work epoch, not this
+        // logical route. Actual owner boundaries clear the retained run.
+        let manual_current = self.manual_route_run() == Some(run) && current.slot == run.slot;
+        if (current != run && !manual_current) || observation.fact.observed.run != run {
+            return false;
+        }
+        let Some(api::identity::Scope::Slot(key)) = self.work_scope() else {
+            return false;
+        };
+        if key.incarnation().get() != run.slot {
+            return false;
+        }
+        let Some(state) = self.local_state.as_ref() else {
+            return false;
+        };
+        state.record_prereq_fact(observation.fact.clone())
     }
     /// Align the compiled execution with the actual host session gate, not
     /// `work_epoch` (which also advances for transient down observations).
@@ -764,6 +894,15 @@ impl SlotScript {
     /// Guardian authority precedes every request foreground. Called even
     /// when the host suppresses the compiled tick itself.
     pub fn seat_guardian_hold(&mut self, held: bool) {
+        if held != self.guardian_held {
+            // The edges tell native machines that a hold interrupted them
+            // ([`crate::native::NativeMachine::after_hold`]).
+            if held {
+                self.native_runtime.budget.hold_begin();
+            } else {
+                self.native_runtime.budget.hold_end();
+            }
+        }
         self.guardian_held = held;
         if let Some(seat) = &mut self.seat {
             seat.hold(held || self.seat_session_held);
@@ -775,6 +914,23 @@ impl SlotScript {
         } else {
             self.flush_held_walk_terminal();
         }
+    }
+
+    /// One host frame's observed player position, for the teleport rule
+    /// ([`crate::native::is_teleport`]). The host calls it on every frame,
+    /// after [`Self::seat_guardian_hold`], held or not: the script does not run
+    /// while the guardian holds the slot, and the guardian's Maze and Mime
+    /// events move the player and return it to the tile it left, so only the
+    /// frames of the hold itself can show the jump.
+    pub fn observe_player_fix(
+        &mut self,
+        tick: u64,
+        snapshot: Option<&api::snapshot::GameSnapshot>,
+    ) {
+        let tile = snapshot
+            .and_then(|snapshot| snapshot.local_player())
+            .map(|player| player.player.network);
+        self.native_runtime.budget.observe_fix(tick, tile);
     }
 
     /// The slot loop's frame hold that is not the guardian's: the scene is
@@ -841,6 +997,12 @@ impl SlotScript {
             results: seat.results().len(),
             reserved_releases: seat.reserved_releases(),
             mirror_revokes_consumed: seat.mirror_revokes_consumed(),
+            answer_seq: seat.answer_seq(),
+            answer_dispatched: seat.answer_dispatched(),
+            terminal_dispatched: seat.terminal_dispatched(),
+            result_seq: seat.result_seq(),
+            untaken_answers: seat.untaken_answer_count(),
+            seat_pages: seat.seat_page_counts(),
         })
     }
     /// The host test rig derives its independent session gate from the same
@@ -1113,6 +1275,8 @@ impl SlotScript {
         self.bank_op_result_seq = 0;
         self.bank_op_result = false;
         self.cut_restart_times = [None; CUT_RESTART_LIMIT];
+        self.manual_route_run = None;
+        self.manual_route_bank_fetch = None;
         self.cut_restart_next = 0;
     }
 
@@ -1218,6 +1382,8 @@ impl SlotScript {
         self.pending_withdraw_x = None;
         self.pending_bank_op = None;
         self.work_epoch = self.work_epoch.wrapping_add(1);
+        self.manual_route_run = None;
+        self.manual_route_bank_fetch = None;
         self.state = RunState::Idle;
         self.source_identity = None;
         self.runtime_generation = self.runtime_generation.wrapping_add(1);
@@ -1340,6 +1506,8 @@ impl SlotScript {
         self.pending_withdraw_x = None;
         self.pending_bank_op = None;
         self.work_epoch = self.work_epoch.wrapping_add(1);
+        self.manual_route_run = None;
+        self.manual_route_bank_fetch = None;
         match std::mem::replace(&mut self.after_stop, AfterStop::Idle) {
             AfterStop::Idle => {
                 self.teardown_compiled(StopReason::Operator);
@@ -1502,6 +1670,8 @@ impl SlotScript {
             });
         }
         self.control_generation = self.control_generation.saturating_add(1);
+        self.manual_route_run = None;
+        self.manual_route_bank_fetch = None;
         self.preparing = None;
         self.pending_compiled_start = None;
         self.pending_compiled_restart = false;
@@ -1626,6 +1796,8 @@ impl SlotScript {
         self.native_runtime.revoke();
         self.evidence_wait_run = None;
         self.native_runtime.clock.observe(Instant::now(), false);
+        self.manual_route_run = None;
+        self.manual_route_bank_fetch = None;
         self.on_is_up(false);
 
         let discarded_walks = if reconnect {
@@ -1811,6 +1983,15 @@ impl SlotScript {
                 .map(Arc::clone)
         });
         selected
+    }
+
+    /// Permit the ordinary-fishing-type exception only for this active built-in run.
+    /// This does not grant packet authority or permission to any surface/API seat.
+    pub fn is_builtin_gatherer_run(&self, run: api::selected::RunKey) -> bool {
+        self.state == RunState::Running
+            && self.compiled.as_ref().is_some_and(|compiled| {
+                compiled.run == run && compiled.config.card() == crate::CompiledId("Gatherer")
+            })
     }
 
     /// Apply registered card lifecycle hooks on the owning slot thread.
@@ -2092,17 +2273,79 @@ impl SlotScript {
     }
 
     /// Whether a native or compatibility journal currently owns the hidden
-    /// paint lease. Both paths are wall-clock revalidated on every read.
+    /// paint lease. Both paths are wall-clock revalidated on every read. The
+    /// native read hides the page for at most its 10 s paint cap from the
+    /// begin, however long its hold lasts.
     pub fn journal_paint_hidden(&mut self, now: std::time::Instant) -> bool {
-        if self.native_quiet_read(now).is_some() {
+        if self
+            .native_runtime
+            .ledger
+            .as_mut()
+            .is_some_and(|ledger| ledger.quiet_paint_hidden(now))
+        {
             return true;
         }
-
         {
             self.surface
                 .as_ref()
                 .is_some_and(|surface| surface.journal_paint_hidden(now))
         }
+    }
+
+    /// The script's own wait for the result of its own interaction, read once
+    /// per host frame with that frame's observed game tick. While it is
+    /// `Some`, the host holds its auto-run press. The key changes with each
+    /// new wait. Three owner-fenced leases count: a native modal wait
+    /// (`Dialogue`), the native quiet read (the journal machine, from before
+    /// its click to its observed close) and the compatibility journal. Stop,
+    /// replacement and a session boundary revoke the native leases. The
+    /// native quiet read also ends at its own 10 s wall bound, from its begin
+    /// and renewed at each window its owner arms (its click, its capture, its
+    /// close); the compatibility journal's hold ends at its own 10 s wall
+    /// bound from its begin, renewed at its click.
+    ///
+    /// Each wait carries the deadline its owner enforces itself, as an
+    /// observed tick, in the owner's own clock at this sample. A native
+    /// active-clock bound is read against the runtime's active clock at
+    /// `now`, which Pause, hold, not-ready and Blocked stop: it is not due
+    /// until that clock reaches it, and the first sample that sees it reached
+    /// fixes the deadline at that tick. A wall bound is not due until it has
+    /// passed.
+    pub fn script_interaction_wait(
+        &mut self,
+        now: std::time::Instant,
+        tick: u64,
+    ) -> Option<InteractionWait> {
+        // Modal-wait lease numbers and request ids are separate sequences that
+        // count up from one; the tag keeps their keys apart. Compatibility
+        // journal keys have the top bit.
+        const MODAL_WAIT_KEY_TAG: u64 = 1 << 62;
+        const COMPAT_JOURNAL_KEY_TAG: u64 = 1 << 63;
+        if let Some((lease, deadline_tick)) = self.native_runtime.modal_wait_tick(now, tick) {
+            return Some(InteractionWait {
+                key: lease.get() | MODAL_WAIT_KEY_TAG,
+                deadline_tick,
+            });
+        }
+        if let Some((quiet, deadline_tick)) = self.native_runtime.quiet_read_wait(now, tick) {
+            return Some(InteractionWait {
+                key: quiet.request_id.get(),
+                deadline_tick,
+            });
+        }
+        let journal = self.surface.as_ref()?.journal_wait(now)?;
+        // The read's transaction identity: the token counts every begin of the
+        // run and the generation every work reset, so the next read (even one
+        // that begins before any free sample) has a new key.
+        Some(InteractionWait {
+            key: COMPAT_JOURNAL_KEY_TAG
+                | (((journal.generation << 32) ^ journal.token) & !COMPAT_JOURNAL_KEY_TAG),
+            deadline_tick: crate::native::WaitDeadline::self_ending_tick(
+                journal.deadline,
+                now,
+                tick,
+            ),
+        })
     }
 
     /// Live walk ownership, not a retained destination or reconnect carry.
@@ -2175,6 +2418,7 @@ impl SlotScript {
                 refusal: None,
                 assessment: None,
                 escape: None,
+                prereq_allow: Default::default(),
             });
             ledger
                 .outbox
@@ -2384,7 +2628,9 @@ impl SlotScript {
     }
 
     /// The host calls this only while holding the slot's final dispatch fence.
-    /// Keep the bounded outbox's allocation for the next observed tick.
+    /// Keep the bounded outbox's allocation for the next observed tick. A
+    /// returned action leaves the slot's custody: the host dispatches it in
+    /// this pass, so it is not dropped unsent.
     pub fn take_native_action(&mut self) -> Option<crate::native::HostAction> {
         if !self.dispatch_open() && !self.completed_seat_dispatch_open() {
             return None;
@@ -2392,8 +2638,9 @@ impl SlotScript {
         if self.seat.is_some() {
             let completed = self.completed_seat_dispatch_open();
             self.dispatch_seat_rows();
-            while let Some(action) = self.seat_native_delivery.pop_front() {
+            while let Some(mut action) = self.seat_native_delivery.pop_front() {
                 if action.live() {
+                    action.release_custody();
                     return Some(action);
                 }
                 if let Some(seat) = &mut self.seat {
@@ -2407,18 +2654,31 @@ impl SlotScript {
         }
         let ledger = self.native_runtime.ledger.as_mut()?;
         while !ledger.outbox.is_empty() {
-            let action = ledger.outbox.remove(0);
+            let mut action = ledger.outbox.remove(0);
             if action.live() {
+                action.release_custody();
                 return Some(action);
             }
         }
         None
     }
 
+    /// Capture the effective grants before dispatching this native walk.
+    pub fn capture_native_walk_prereq_allow(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        allow: crate::native::PrereqAllow,
+    ) -> bool {
+        self.native_runtime
+            .ledger
+            .as_mut()
+            .is_some_and(|ledger| ledger.capture_walk_prereq_allow(authority, allow))
+    }
+
     pub fn complete_native_walk(
         &mut self,
         authority: &crate::native::HostAuthority,
-        receipt: crate::native::WalkReceipt,
+        mut receipt: crate::native::WalkReceipt,
     ) {
         if !authority.live()
             || authority.request_id().get() != receipt.request_id
@@ -2433,6 +2693,12 @@ impl SlotScript {
             owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
         }) {
             let request_id = receipt.request_id;
+            if let Some((_, allow)) = ledger
+                .walk_prereq_allow
+                .filter(|(request, _)| request.get() == request_id)
+            {
+                receipt.prereq_allow = Some(allow);
+            }
             ledger.walk = Some(receipt);
             // The native ledger uses a separate seat id from a Load walk
             // with the same request number. Its accepted terminal is the
@@ -2564,9 +2830,10 @@ impl SlotScript {
         batch: DecodedSeatBatch,
         observed_walk_outcome_seq: u64,
         machine_events: &[crate::native::seat_rows::SeatMachineEvent],
+        nav: Option<&nav_planner::contract::NavLease>,
     ) {
         if self.admit_seat_batch(&batch) {
-            self.apply_seat_batch(batch, observed_walk_outcome_seq, machine_events);
+            self.apply_seat_batch(batch, observed_walk_outcome_seq, machine_events, nav);
         }
     }
 
@@ -2578,7 +2845,7 @@ impl SlotScript {
         observed_walk_outcome_seq: u64,
         machine_events: &[crate::native::seat_rows::SeatMachineEvent],
     ) {
-        self.consume_seat_batch(batch, observed_walk_outcome_seq, machine_events);
+        self.consume_seat_batch(batch, observed_walk_outcome_seq, machine_events, None);
     }
 
     /// Preflight a batch before any of its rows reaches the seat. A
@@ -2632,6 +2899,7 @@ impl SlotScript {
         mut batch: DecodedSeatBatch,
         observed_walk_outcome_seq: u64,
         machine_events: &[crate::native::seat_rows::SeatMachineEvent],
+        nav: Option<&nav_planner::contract::NavLease>,
     ) {
         let execution = self
             .seat_fence
@@ -2726,7 +2994,7 @@ impl SlotScript {
                             self.start_api_combat(start.id.get(), &Arc::new(request));
                         }
                         SeatStartArgs::QuestProgress(name) => {
-                            self.start_api_progress(start.id.get(), &name);
+                            self.start_api_progress(start.id.get(), &name, nav.cloned());
                         }
                         SeatStartArgs::Bank(request) => {
                             self.start_bank(start.id, request);
@@ -2993,6 +3261,7 @@ impl SlotScript {
     fn consume_held_fold(
         &mut self,
         mut queued: crate::native::seat_rows::QueuedSeatBatch,
+        nav: Option<&nav_planner::contract::NavLease>,
     ) -> Option<crate::native::seat_rows::QueuedSeatBatch> {
         if !self.admit_seat_batch(&queued.batch) {
             return None;
@@ -3009,6 +3278,7 @@ impl SlotScript {
                     queued.batch,
                     queued.observed_walk_outcome_seq,
                     &queued.machine_events,
+                    nav,
                 );
                 return None;
             }
@@ -3139,20 +3409,71 @@ impl SlotScript {
             .map_or(0, |surface| surface.held_fold_len())
     }
 
+    /// An expired hold makes its queued interaction stale (finding N1 of
+    /// `HOLD-MODEL-AB`). This drain is the one place where the isolate's
+    /// output reaches dispatch, so the rule applies here, by identity: the
+    /// surface names the in-isolate owners whose interaction hold has expired
+    /// now, and every row of theirs that is not dispatched yet is dropped,
+    /// in the drained batches (also a batch that a closed dispatch carries
+    /// back) and in the seat's custody. No other row is touched, also not an
+    /// equal request of another family. The owner fails at its own next step
+    /// (the compatibility journal: `modal-timeout`) and its script's retry
+    /// applies. The drain reads the clock after the frame's hold sample, so a
+    /// hold that the sample saw expired is expired here too.
+    ///
+    /// The raw queue ([`Self::drain_interacts_stamped`]) carries no owner. An
+    /// execution-bound isolate (every production surface) sends all of its
+    /// tick output as seat batches; only an isolate without an execution,
+    /// which test hooks create, sends raw gameplay rows.
+    fn drop_expired_hold_rows(
+        &mut self,
+        batches: &mut [crate::native::seat_rows::QueuedSeatBatch],
+    ) {
+        let Some(surface) = self.surface.as_ref() else {
+            return;
+        };
+        let owners = surface.expired_hold_owners(Instant::now());
+        if owners == [None, None] {
+            return;
+        }
+        let mut dropped = 0;
+        for queued in batches.iter_mut() {
+            let before = queued.batch.reqs.len();
+            queued
+                .batch
+                .reqs
+                .retain(|row| row.mirror_owner.is_none() || !owners.contains(&row.mirror_owner));
+            dropped += before - queued.batch.reqs.len();
+        }
+        if let Some(seat) = self.seat.as_mut() {
+            for owner in owners.into_iter().flatten() {
+                seat.drop_expired_hold_rows(owner);
+            }
+            seat.count_dropped(dropped);
+        }
+        if dropped > 0 {
+            self.pending_logs.push(format!(
+                "dropped {dropped} queued row(s) whose interaction hold expired"
+            ));
+        }
+    }
+
     /// Drain one host frame's decoded isolate messages, separating the latest
     /// run-policy replacement from game/lifecycle interacts. The outer option
     /// is "an update was sent"; the inner option is replace versus clear.
     pub fn drain_host_interacts(
         &mut self,
+        nav: Option<&nav_planner::contract::NavLease>,
     ) -> (
         Option<Option<api::run_policy::RunPolicyOverride>>,
         Vec<crate::interact::QueuedInteract>,
         bool,
     ) {
-        let batches = self
+        let mut batches = self
             .surface
             .as_ref()
             .map_or_else(Vec::new, |surface| surface.drain_seat_batches());
+        self.drop_expired_hold_rows(&mut batches);
         let mut carried = Vec::new();
         // Set when the retained guardian-hold batch still has pages that
         // the seat cannot take in this frame.
@@ -3254,7 +3575,7 @@ impl SlotScript {
             }
             self.release_held_fold(&mut queued);
             if queued.held_fold {
-                if let Some(rest) = self.consume_held_fold(queued) {
+                if let Some(rest) = self.consume_held_fold(queued, nav) {
                     paging = true;
                     carried.push(rest);
                 }
@@ -3264,6 +3585,7 @@ impl SlotScript {
                 queued.batch,
                 queued.observed_walk_outcome_seq,
                 &queued.machine_events,
+                nav,
             );
         }
         if !carried.is_empty() {
@@ -3815,12 +4137,104 @@ impl SlotScript {
             let input_identity = self.native_input.lock().identity();
             isolate.on_snapshot_change_at(ctx.tick, input_identity);
             self.tick_api(ctx);
-            self.tick_bank(ctx);
+            self.tick_bank_scoped(ctx, bank_seat::BankPoll::All);
             self.capture_native_seat_rows();
             self.settle_api_seat_terminals();
             return;
         }
         self.poll_compiled_frame(ctx);
+    }
+
+    /// The `SeatAnswer` producer: an owed answer page on a seat that is not
+    /// held, for a slot whose surface can receive it. A held seat refuses a
+    /// prompt and a decision, and the bank loop turns a refused prompt into a
+    /// failed row, so nothing runs while held. A slot without a surface
+    /// (a compiled run) has nobody to dispatch to.
+    pub fn seat_answer_owed(&self) -> bool {
+        self.surface.is_some()
+            && self
+                .seat
+                .as_ref()
+                .is_some_and(|seat| !seat.held() && seat.answer_page_owed())
+    }
+
+    /// Poll only the owner runtime of each untaken seat answer, for that
+    /// request. Never dispatches a game tick, an evidence wake or a wait
+    /// settle. Returns whether observe may post the seat page and dispatch
+    /// `SeatPage`.
+    pub fn on_seat_answer(&mut self, ctx: &mut ScriptCtx<'_>) -> bool {
+        self.observe_lifecycle();
+        if !self.dispatch_open()
+            || ctx.compiled.hold
+            || self.surface.is_none()
+            || self.seat.as_ref().is_none_or(|seat| seat.held())
+            || trapped_failure(ctx).is_some()
+        {
+            return false;
+        }
+        if self
+            .seat
+            .as_ref()
+            .is_some_and(|seat| seat.has_untaken_answers())
+        {
+            self.tick_bank_scoped(ctx, bank_seat::BankPoll::Answered);
+            self.capture_native_seat_rows();
+        }
+        debug_assert!(
+            !self
+                .seat
+                .as_ref()
+                .is_some_and(|seat| seat.has_untaken_answers()),
+            "a seat answer has an owner runtime that on_seat_answer polls"
+        );
+        true
+    }
+
+    /// Dispatch the page that observe posted for a seat answer to the rows it
+    /// changed. `release_floor` is [`Self::seat_terminal_dispatched`] as of
+    /// the capture. Returns whether the surface accepted the dispatch.
+    pub fn on_seat_page_at(&self, snap_tick: u64, release_floor: u64) -> bool {
+        let identity = self.native_input.lock().identity();
+        self.surface
+            .as_ref()
+            .is_some_and(|surface| surface.on_seat_page_at(snap_tick, identity, release_floor))
+    }
+
+    /// The seat's answer-page change counter, for the capture before a post.
+    pub fn seat_answer_seq(&self) -> u64 {
+        self.seat.as_ref().map_or(0, |seat| seat.answer_seq())
+    }
+
+    /// The seat's newest result sequence, for the capture before a post.
+    pub fn seat_result_seq(&self) -> u64 {
+        self.seat.as_ref().map_or(0, |seat| seat.result_seq())
+    }
+
+    /// The release floor of the next seat page dispatch.
+    pub fn seat_terminal_dispatched(&self) -> u64 {
+        self.seat
+            .as_ref()
+            .map_or(0, |seat| seat.terminal_dispatched())
+    }
+
+    /// Record an accepted `SeatPage` dispatch: it carried every change up to
+    /// `carried` and every result up to `carried_terminal`.
+    pub fn mark_seat_answer_dispatched(&mut self, carried: u64, carried_terminal: u64) {
+        if let Some(seat) = &mut self.seat {
+            seat.mark_answer_dispatched(carried, carried_terminal);
+        }
+    }
+
+    /// Count one attempted `SeatPage` dispatch for the receipt line and
+    /// return the counts so far.
+    pub fn note_seat_page(
+        &mut self,
+        outcome: crate::native::seat::SeatPageOutcome,
+    ) -> crate::native::seat::SeatPageCounts {
+        self.seat.as_mut().map_or_else(Default::default, |seat| {
+            seat.note_seat_page(outcome);
+            seat.seat_page_counts()
+        })
     }
 
     /// Call only on observed server tick. Dispatches the JS isolate's
@@ -3855,7 +4269,7 @@ impl SlotScript {
                 return;
             }
             self.tick_api(ctx);
-            self.tick_bank(ctx);
+            self.tick_bank_scoped(ctx, bank_seat::BankPoll::All);
             self.capture_native_seat_rows();
             self.settle_api_seat_terminals();
             return;
@@ -3934,6 +4348,7 @@ impl SlotScript {
                 result
             }
         };
+        self.update_manual_route_run_from_fact_writer();
         if result.is_ok() {
             self.watchdog.stamp_scheduler(Instant::now());
         }
@@ -4018,6 +4433,10 @@ impl SlotScript {
                     self.compiled_interacts.clear();
                     self.compiled_interact_outcome_seqs.clear();
                 }
+                self.terminal_native_status = self
+                    .compiled
+                    .as_ref()
+                    .and_then(|run| run.output.status.as_ref().map(Arc::clone));
                 self.teardown_compiled(StopReason::Completed);
                 self.watchdog.cancel_clear();
                 self.state = RunState::Idle;
@@ -4050,6 +4469,13 @@ impl SlotScript {
                 .status
                 .as_ref()
                 .map_or_else(|| Arc::from([]), |status| Arc::clone(&status.fields)),
+            survival: run
+                .output
+                .status
+                .as_ref()
+                .map_or_else(crate::survival::SurvivalReport::default, |status| {
+                    status.survival
+                }),
             failure: Some(failure),
         };
         // Publish through the same change-only logging seam as card statuses.

@@ -201,7 +201,7 @@ pub fn select_line_of_sight_pairs(
 }
 
 pub fn parse_los_receipt_from_paint(
-    paint: &script::shim::ScriptPaint,
+    paint: &script::paint::ScriptPaint,
 ) -> Option<LineOfSightScriptReceipt> {
     paint.lines.iter().find_map(|line| {
         line.strip_prefix(LOS_RECEIPT_PREFIX)

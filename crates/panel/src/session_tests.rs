@@ -65,9 +65,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[path = "../../host-play/tests/support/map_fixture.rs"]
-pub(super) mod map_fixture;
-use map_fixture::MapFixture;
+use crate::test_support::map_fixture::MapFixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
 use upgrade_home::UpgradeHome;
@@ -98,6 +96,70 @@ fn hydrate_panel_preferences(session: &mut Session) {
     session.preferences.reload().unwrap();
     session.poll_panel_preferences();
     assert!(session.panel_preferences_ready());
+}
+
+#[test]
+fn old_vault_no_is_terminal_and_yes_returns_to_empty_vault_setup() {
+    use frontend_core::saved_data::{SavedDataChoice, SavedDataRefusal, SavedDataResolveError};
+
+    const PASS: &str = "test-passphrase-01";
+    for rename in [false, true] {
+        let root = TestDir::new(if rename {
+            "vault-format-yes"
+        } else {
+            "vault-format-no"
+        });
+        let path = root.join("vault");
+        let mut vault = VaultFixture::create(&path, PASS);
+        vault.put(frontend_core::test_support::session::with_settings_bag(
+            profile("alice", "pw", 274),
+            "compiled:old-card",
+            serde_json::Map::new(),
+        ));
+        drop(vault);
+        let original = std::fs::read(&path).unwrap();
+        let error = match host_play::open_vault(&path, PASS) {
+            Err(error) => error,
+            Ok(_) => panic!("a pre-envelope compiled setting must be refused"),
+        };
+        let refusal = SavedDataRefusal::from_vault_error(&error).unwrap();
+        let mut session = Session::new();
+        session.pass_scratch.push_str(PASS);
+        session.vault_saved_data = Some(super::VaultSavedData::Pending(refusal));
+
+        session.resolve_vault_refusal(if rename {
+            SavedDataChoice::Rename
+        } else {
+            SavedDataChoice::Keep
+        });
+
+        assert!(session.vault_refusal().is_none());
+        assert!(
+            !session.core.vault_open(),
+            "a move does not create a new vault"
+        );
+        if rename {
+            assert!(session.take_vault_failure().is_none());
+            assert!(
+                session.pass_scratch.is_empty(),
+                "new-vault setup starts empty"
+            );
+            assert!(!path.exists());
+            assert_eq!(
+                std::fs::read(root.join("vault.pre-0.2.8")).unwrap(),
+                original
+            );
+        } else {
+            let failure = session.take_vault_failure().unwrap();
+            assert!(matches!(failure, SavedDataResolveError::Declined(_)));
+            assert!(
+                session.take_vault_failure().is_none(),
+                "the exit settles once"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            assert!(!root.join("vault.pre-0.2.8").exists());
+        }
+    }
 }
 
 #[test]
@@ -210,7 +272,7 @@ fn memory_override_changes_spawn_profile_without_persisting_it() {
 
 use crate::nav_settings::{effective, NavSettings};
 
-fn checked_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
+fn profile_fixture(revision: u16) -> (TestDir, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
     let root = TestDir::new(&format!("session-profile-{revision}"));
@@ -228,8 +290,7 @@ fn checked_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
     ] {
         std::fs::copy(fixture.join(jag), cache.join(jag)).unwrap();
     }
-    let manifest = fixture.join(format!("manifest-{revision}.json"));
-    (root, cache, manifest)
+    (root, cache)
 }
 
 const JAG_SLOTS: [&str; 8] = [
@@ -294,6 +355,8 @@ fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
 }
 
 fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
+    use sha2::Digest;
+
     struct FixtureEntries(Vec<(i32, i32)>);
     impl client::unpack::EntrySource for FixtureEntries {
         fn request_entry(&mut self, archive: i32, file: i32) -> Result<(), String> {
@@ -323,8 +386,8 @@ fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let transfer = nav_planner::manifest::hash_bytes(versionlist);
-    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let transfer = format!("{:x}", sha2::Sha256::digest(versionlist));
+    let negotiated = format!("{:x}", sha2::Sha256::digest(&crc_body(packs)[..36]));
     let input = unpack.join("fixture-input");
     std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {
@@ -428,25 +491,16 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> FixtureCrcServer {
     }
 }
 
-fn runtime_profile_fixture(
-    revision: u16,
-) -> (TestDir, PathBuf, PathBuf, PathBuf, FixtureCrcServer) {
-    let (root, cache, _) = checked_profile_fixture(revision);
+fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, FixtureCrcServer) {
+    let (root, cache) = profile_fixture(revision);
     let packs = identity_packs();
     for (name, bytes) in &packs {
         std::fs::write(cache.join(name), bytes).unwrap();
     }
-    let manifest_path = root.join("cache-manifest.json");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec(&host_play::profile::CacheManifest::capture(revision, &cache).unwrap())
-            .unwrap(),
-    )
-    .unwrap();
     let unpack = root.join("unpack");
     plant_snapshot(&unpack, revision, &packs);
     let server = serve_fixture_crc(packs);
-    (root, cache, manifest_path, unpack, server)
+    (root, cache, unpack, server)
 }
 
 fn preparation_only_session() -> Session {
@@ -498,7 +552,7 @@ fn join_validation(session: &mut Session, generation: u64) -> ValidatedProfile {
 
 #[test]
 fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     session.ui.server_revision = 289;
     configure_isolated_profile(
@@ -506,7 +560,6 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
         ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(server.port()),
             ..ProfileOptions::default()
@@ -525,14 +578,13 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
 #[test]
 fn stale_profile_preparation_is_dropped_without_partial_session_state() {
     let _work_service_guard = crate::work_service_test_lock();
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
         ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(server.port()),
             ..ProfileOptions::default()
@@ -593,14 +645,13 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
 #[test]
 fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     let _work_service_guard = crate::work_service_test_lock();
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
         ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache.clone()),
-            cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(server.port()),
             vault_path: Some(root.join("prepared.vault")),
@@ -637,14 +688,13 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
 fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let _iso = IsolatedStores::enter("start-handle-loadouts");
     let _work_service_guard = crate::work_service_test_lock();
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
         ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(server.port()),
             vault_path: Some(root.join("prepared.vault")),
@@ -831,15 +881,18 @@ fn unlock_upgrade_home(template: &Arc<map_host::SharedClientTemplate>) -> Sessio
     session
 }
 
-/// A 0.1.9.x home keeps its v10 pack at the default path. The panel's play
-/// routes on the packaged v11 bundle's one shared world and leaves the old file
-/// alone; an explicit override to the old file still unlocks, with no world.
+/// A 0.1.9.x home keeps its v10 pack at the default path. The panel uses
+/// the packaged format-19 world. An explicit old-pack override fails decoding.
 #[test]
-fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
+fn panel_upgraded_from_v10_home_plays_on_the_packaged_v19_world() {
     let home = UpgradeHome::new();
     let _work_service_guard = crate::work_service_test_lock();
     let profile = home.bind(None);
-    assert!(profile.nav_origin().is_bundled());
+    assert_eq!(
+        profile.nav_pack(),
+        home.resources
+            .join(map_host::nav_assets::artifact_layout(289).relative_pack)
+    );
     let template = map_host::SharedClientTemplate::load(profile).unwrap();
     let session = unlock_upgrade_home(&template);
     let world = session
@@ -850,16 +903,27 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v11_world() {
     assert!(Arc::ptr_eq(&world, &template.world().unwrap()));
     assert!(home.old_pack_untouched());
 
-    let overridden = home.bind(Some(home.old_pack.clone()));
-    assert!(matches!(
-        overridden.nav_availability(),
-        map_host::profile::NavAvailability::Unavailable(message)
-            if message.contains("rebuild it with nav-pack")
-    ));
-    let template = map_host::SharedClientTemplate::load(overridden).unwrap();
-    let session = unlock_upgrade_home(&template);
-    assert!(session.error.is_none(), "{:?}", session.error);
-    assert!(session.core.play_for_test().unwrap().world().is_none());
+    let overridden = ProfileOptions {
+        profile: Some("local-289".into()),
+        cache_dir: Some(home.root.join("cache")),
+        nav_pack: Some(home.old_pack.clone()),
+        ..Default::default()
+    }
+    .resolve_with_env(
+        None,
+        &ProfileEnvironment {
+            home: Some(home.root.join("home")),
+            engine_dir: Some(home.root.join("engine")),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let Err(error) = overridden.bind() else {
+        panic!("v10 is not a supported pack");
+    };
+    assert!(error.contains("unsupported pack version 10"), "{error}");
     assert!(home.old_pack_untouched());
 }
 
@@ -873,13 +937,12 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     session.install_prepared_template(ProfileTemplate::from_host(template));
     let world = profile.world().unwrap();
     assert_eq!(profile.nav_load_counters().reach_reads, 1);
-    assert_eq!(profile.nav_load_counters().reach_hashes, 1);
     nav_planner::paint::reset_bake_reach_calls();
-    // An eager install would keep the old verified payload and paint it even
-    // after the file changes. First layer demand must instead fail closed.
+    // Installation retains only the header. A later truncated payload must
+    // fail when the first layer demand decodes the words.
     let path = profile.nav_pack().with_extension("navreach");
     let mut bytes = std::fs::read(&path).unwrap();
-    *bytes.last_mut().unwrap() ^= 1;
+    bytes.truncate(bytes.len() - 1);
     std::fs::write(path, bytes).unwrap();
     assert!(
         crate::picker::map_reach_bitset(&world).is_none(),
@@ -887,7 +950,6 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     );
     assert!(profile.reach().is_none());
     assert_eq!(profile.nav_load_counters().reach_reads, 2);
-    assert_eq!(profile.nav_load_counters().reach_hashes, 2);
     assert_eq!(nav_planner::paint::bake_reach_calls(), 0);
 }
 
@@ -901,7 +963,6 @@ fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
     session.install_prepared_template(ProfileTemplate::from_host(template));
     let world = profile.world().unwrap();
     assert_eq!(profile.nav_load_counters().reach_reads, 1);
-    assert_eq!(profile.nav_load_counters().reach_hashes, 1);
     nav_planner::paint::reset_bake_reach_calls();
     let map_bits = crate::picker::map_reach_bitset(&world).unwrap();
     assert_eq!(&*map_bits, &[0u64]);
@@ -1164,7 +1225,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     let _work_service_guard = crate::work_service_test_lock();
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
     let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
     let env = ProfileEnvironment {
@@ -1182,7 +1243,6 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
             ProfileArgs::from_host(ProfileOptions {
                 revision: None,
                 cache_dir: Some(cache),
-                cache_manifest: Some(manifest),
                 unpack_dir: Some(unpack),
                 http_port: Some(server.port()),
                 catalog_root: Some(catalog),
@@ -2125,11 +2185,10 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
     let flags = vec![0u32, 0, 0, 0];
     let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     crate::picker::drop_flags_sidecar();
     crate::picker::reset_flags_load_count();
-    crate::picker::set_navflags_binding(path, Some(digest), true);
+    crate::picker::set_navflags_binding(path);
 
     let mut c = paint_client();
     let world = walled_world();
@@ -2200,10 +2259,9 @@ fn remove_only_focused_drawing_slot_releases_flags() {
     let flags = vec![0u32, 0, 0, 0];
     let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     crate::picker::drop_flags_sidecar();
-    crate::picker::set_navflags_binding(path, Some(digest), true);
+    crate::picker::set_navflags_binding(path);
     crate::picker::ensure_flags_sidecar();
     assert_eq!(
         crate::picker::flags_sidecar_state(),
@@ -3560,7 +3618,19 @@ fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
 }
 
 #[test]
-fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
+fn restored_enabled_folder_loads_when_game_data_and_navigation_are_ready() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let nav_pack_default = NavWorld::default_pack_path();
+    let nav_pack_default = nav_pack_default.to_string_lossy();
+    let Some(nav_pack_path) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        &nav_pack_default,
+        "revision-289 navigation pack",
+    ) else {
+        return;
+    };
     let iso = IsolatedStores::enter("panel-quester-paths-startup");
     let folder = iso.dir().join("paths");
     std::fs::create_dir_all(&folder).unwrap();
@@ -3602,6 +3672,31 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
     .expect("selected data worker");
 
     session.advance_quester_paths_reload(Some(Arc::clone(&selected)));
+    assert!(
+        !session.quester_paths.is_running(),
+        "saved folder waits for its actual navigation catalog"
+    );
+    let world = NavWorld::load_pack(&nav_pack_path).unwrap_or_else(|error| {
+        panic!(
+            "could not load selected nav pack at {}: {error}",
+            nav_pack_path.display()
+        )
+    });
+    let fixture = MapFixture::new(&world, "public-289");
+    session.core.set_play(Some(fixture.play(Tile {
+        x: 2778,
+        z: 3401,
+        level: 0,
+    })));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !session.quester_paths.is_running() {
+        assert!(
+            Instant::now() < deadline,
+            "startup Path reload did not receive its navigation catalog"
+        );
+        session.advance_quester_paths_reload(Some(Arc::clone(&selected)));
+        thread::yield_now();
+    }
     assert!(
         session.quester_paths.is_running(),
         "saved folder starts a reload without a user action"
@@ -3749,6 +3844,187 @@ fn quest_paths_refuses_a_non_utf8_folder_instead_of_saving_it_lossy() {
 }
 
 #[test]
+fn start_fights_with_players_is_saved_through_its_command_and_follows_a_peer_write() {
+    let _isolated = IsolatedStores::enter("pvp-start-fights-row");
+    let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    assert!(!session.pvp_start_fights.shown(), "off by default");
+
+    // The panel row's click: the same `SetPvpStartFights` command the TUI sends.
+    session.set_pvp_start_fights(true);
+    assert!(session.pvp_start_fights.shown(), "the click shows at once");
+    let start = std::time::Instant::now();
+    loop {
+        session.refresh_walk_permissions();
+        // The row adopts the saved value on a refresh: wait for that, not
+        // for the document alone (the projection can trail it by a poll).
+        if !session.pvp_start_fights.pending()
+            && session.preferences.value("pvp") == Some(serde_json::json!({"start_fights": true}))
+        {
+            break;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(60),
+            "the write never became durable: {:?}",
+            session.preferences.value("pvp")
+        );
+        std::thread::yield_now();
+    }
+    assert_eq!(session.error, None);
+    assert!(session.pvp_start_fights.shown());
+    assert!(
+        frontend_core::pvp_start_fights(&session.preferences).unwrap(),
+        "the host's projection holds the saved value"
+    );
+
+    // The other front end turns it off: the panel row follows.
+    let peer = thread_preferences();
+    set_patiently(&peer, "pvp", serde_json::json!({"start_fights": false}));
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    assert!(
+        !session.pvp_start_fights.shown(),
+        "the row follows a peer write"
+    );
+}
+
+/// PVP-V1-R1 (review R3, R6): turning the setting off queues behind a busy
+/// disk and later fails. The row shows the click at once, then the saved value
+/// again with the failure reason, and a peer write stays visible afterwards. A
+/// later successful retry clears exactly that failure line.
+#[cfg(unix)]
+#[test]
+fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer() {
+    use std::os::unix::fs::PermissionsExt;
+    let _isolated = IsolatedStores::enter("pvp-start-fights-deferred-failure");
+    let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    let wait = |session: &mut Session, what: &str, done: &dyn Fn(&Session) -> bool| {
+        let start = std::time::Instant::now();
+        loop {
+            session.pump_status();
+            session.refresh_walk_permissions();
+            if done(session) {
+                return;
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(30),
+                "{what}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+
+    session.set_pvp_start_fights(true);
+    wait(&mut session, "the first save never settled", &|session| {
+        !session.pvp_start_fights.pending()
+    });
+    assert!(session.pvp_start_fights.shown());
+    assert_eq!(session.error, None);
+
+    // The disk is busy: the write that turns it off stays queued.
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .set_write_stall_for_test(std::sync::Arc::new(move || {
+            let _ = entered.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        }));
+    session.set_pvp_start_fights(false);
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the write reached the writer");
+    assert!(!session.pvp_start_fights.shown(), "the click shows at once");
+    session.pump_status();
+    session.refresh_walk_permissions();
+    assert!(
+        !session.pvp_start_fights.shown() && session.pvp_start_fights.pending(),
+        "still waiting for the save"
+    );
+
+    // The state directory refuses the write once the disk answers.
+    let state_dir = session.preferences.path().parent().unwrap().to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    wait(&mut session, "the failed write never settled", &|session| {
+        !session.pvp_start_fights.pending()
+    });
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(
+        session.pvp_start_fights.shown(),
+        "the failed write shows the saved value (on), not the attempted off"
+    );
+    assert!(
+        session
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("start fights with players")),
+        "{:?}",
+        session.error
+    );
+
+    // A peer turns it off: the row follows after the failure.
+    let peer = thread_preferences();
+    set_patiently(&peer, "pvp", serde_json::json!({"start_fights": false}));
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    assert!(
+        !session.pvp_start_fights.shown(),
+        "a peer write stays visible after the failure"
+    );
+
+    // The retry turns it on again and stays queued behind the busy disk. The
+    // failure line stays until the save resolves it, then goes.
+    session.set_pvp_start_fights(true);
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the retry reached the writer");
+    assert!(session.pvp_start_fights.pending(), "waiting for the retry");
+    assert!(
+        session
+            .error
+            .as_deref()
+            .is_some_and(frontend_core::is_start_fights_error),
+        "the failure stays until the retry succeeds: {:?}",
+        session.error
+    );
+    release.send(()).unwrap();
+    wait(&mut session, "the retry never settled", &|session| {
+        !session.pvp_start_fights.pending() && session.error.is_none()
+    });
+    assert!(session.pvp_start_fights.shown());
+    assert!(frontend_core::pvp_start_fights(&session.preferences).unwrap());
+    assert_eq!(
+        session.error, None,
+        "a successful save clears the failure it resolves"
+    );
+
+    // Another setting's error is not this save's to clear.
+    let other = "settings: walk permissions: the store is busy".to_string();
+    session.error = Some(other.clone());
+    release.send(()).unwrap();
+    session.set_pvp_start_fights(false);
+    wait(&mut session, "the second save never settled", &|session| {
+        !session.pvp_start_fights.pending()
+    });
+    // Let the save's settlement reach the view before looking at the error.
+    for _ in 0..40 {
+        session.pump_status();
+        session.refresh_walk_permissions();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(!session.pvp_start_fights.shown());
+    assert_eq!(session.error, Some(other), "an unrelated error stays");
+}
+
+#[test]
 fn walk_permissions_projection_follows_a_peer_write() {
     let _isolated = IsolatedStores::enter("walk-permissions-peer-refresh");
     let mut session = Session::new();
@@ -3796,6 +4072,21 @@ fn walk_permissions_projection_follows_a_peer_write() {
     assert!(
         session.ui.nav.allow_teleports,
         "the edit buffer follows the durable projection"
+    );
+    // A peer write to a default-on prerequisite grant lands the same way.
+    frontend_core::nav_prefs::write_nav_preference_for_test(
+        &peer,
+        frontend_core::NavPreference::AllowPrereqDialogue,
+        false,
+    )
+    .map(|()| false)
+    .unwrap();
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    assert!(!session.walk_permissions.globals().allow_prereq_dialogue());
+    assert!(
+        !session.ui.nav.allow_prereq_dialogue,
+        "the edit buffer follows the durable prerequisite projection"
     );
     assert_eq!(
         session.preferences.value("peer_marker"),
@@ -3855,7 +4146,11 @@ fn map_rows_settle_empty_release_and_wrong_state_decline_explicitly() {
     let _iso = iso;
 }
 
-fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFixture {
+fn bind_picker_session(
+    s: &mut Session,
+    world: &NavWorld,
+    origin: Tile,
+) -> (MapFixture, Arc<NavWorld>) {
     let fixture = MapFixture::new(world, "local-289");
     let play = fixture.play(origin);
     s.launcher
@@ -3863,7 +4158,9 @@ fn bind_picker_session(s: &mut Session, world: &NavWorld, origin: Tile) -> MapFi
     s.set_focus_for_test("alice");
     s.core.set_play(Some(play));
     s.statuses.refresh_from_play(&s.core);
-    fixture
+    // Facade identities belong to one world owner, not to equal map bytes.
+    let world = s.core.nav_world().expect("the checked fixture world");
+    (fixture, world)
 }
 
 /// Frontend vocabulary for a nav tile asserted against route state.
@@ -3876,9 +4173,9 @@ fn world_tile(tile: Tile) -> WorldTile {
 }
 
 fn confirm_map_walk(s: &mut Session, world: &NavWorld, origin: Tile, dest: Tile) -> bool {
-    let _fixture = bind_picker_session(s, world, origin);
-    s.select_picker_tile(world, dest);
-    s.confirm_picker_walk(world)
+    let (_fixture, world) = bind_picker_session(s, world, origin);
+    s.select_picker_tile(&world, dest);
+    s.confirm_picker_walk(&world)
 }
 
 #[test]
@@ -3906,7 +4203,7 @@ fn picker_walk_receipts_reach_process_and_slot_logs_once() {
     assert!(process.rows()[0].message().contains("refused=NoOrigin"));
     assert_eq!(process.rows()[0].slot(), None);
 
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     let name = "panel-walk-receipt";
     push_session_slot(&mut s, name, origin, None, true, true);
     s.statuses.refresh_from_play(&s.core);
@@ -3958,7 +4255,7 @@ fn picker_select_then_confirm_arms_once_and_advances_route_generation() {
         z: 2,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     let generation = s.route_gen();
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     assert_eq!(s.map_desk.walk_dest(), None);
@@ -4021,7 +4318,7 @@ fn picker_focus_switch_walks_the_newly_focused_bot() {
         z: 2,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4083,7 +4380,7 @@ fn picker_group_walk_several_slots_reports_like_start_all() {
         z: 2,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4174,7 +4471,7 @@ fn picker_group_walk_names_marked_bots_that_cannot_walk() {
         z: 2,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4233,7 +4530,7 @@ fn fleet_walk_opens_the_picker_in_group_mode_for_the_marks_only() {
         z: 1,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, _) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4282,7 +4579,7 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
         z: 1,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4347,7 +4644,7 @@ fn picker_group_walk_uses_fleet_marks_changed_while_open() {
         z: 2,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     push_session_slot(
         &mut s,
         "bob",
@@ -4472,7 +4769,7 @@ fn fifty_fps_choices_are_saved_and_restored() {
     s.set_focused_50(false);
     await_preference(&mut s, "sidecar_50", serde_json::json!(true));
     await_preference(&mut s, "focused_50", serde_json::json!(false));
-    let saved = crate::ui_state::load(&s.preferences);
+    let saved = crate::ui_state::load(&s.preferences).unwrap();
     assert!(
         saved.sidecar_50 && !saved.focused_50,
         "written to the preferences"
@@ -4540,6 +4837,9 @@ fn restored_50_fps_costs_nothing_for_slots_that_do_not_draw() {
 
 #[test]
 fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = open_world(3, 3);
     let fixture = MapFixture::new(&world, "public-289");
     let play = fixture.play(Tile {
@@ -4553,6 +4853,7 @@ fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
     s.set_focus_for_test("alice");
     s.core.set_play(Some(play));
     s.statuses.refresh_from_play(&s.core);
+    let world = s.core.nav_world().expect("the checked fixture world");
     s.select_picker_tile(
         &world,
         Tile {
@@ -4592,6 +4893,7 @@ fn picker_teleport_without_spawned_queue_is_no_focus() {
     s.set_focus_for_test("alice");
     s.core.set_play(Some(play));
     s.statuses.refresh_from_play(&s.core);
+    let world = s.core.nav_world().expect("the checked fixture world");
     assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
     assert!(!s.confirm_picker_teleport(&world));
     assert_eq!(
@@ -4615,6 +4917,9 @@ fn walkto_panel_state(session: &Session) -> (&'static [&'static str], (bool, boo
 
 #[test]
 fn picker_teleport_follows_profile_class() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let world = open_world(3, 3);
     let origin = Tile {
         x: 0,
@@ -4694,7 +4999,7 @@ fn picker_blocked_selection_refuses_walk_and_teleports_requested() {
         z: 1001,
         level: 1,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     assert_eq!(s.select_picker_tile(&world, blocked), None);
     let pending = s.map_model.pending().expect("miss still selects requested");
     assert_eq!(pending.requested(), blocked);
@@ -5306,7 +5611,7 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
         z: 1,
         level: 0,
     };
-    let _fixture = bind_picker_session(&mut s, &world, origin);
+    let (_fixture, world) = bind_picker_session(&mut s, &world, origin);
     s.core.fleet_mut().add("alice");
     s.pump_status();
     let before = s.core.fleet_view().rows_generation();
@@ -5435,7 +5740,10 @@ fn focus_first_prefers_last_focus() {
     s.focus_first_profile();
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
     assert_eq!(
-        crate::ui_state::load(&s.preferences).last_focus.as_deref(),
+        crate::ui_state::load(&s.preferences)
+            .unwrap()
+            .last_focus
+            .as_deref(),
         Some("bob")
     );
 }
@@ -6422,7 +6730,10 @@ fn live_prepare_script_does_not_write_last_focus() {
     let fleet = frontend_core::live::Scenario::get("nav_door").expect("nav_door");
     s.live_prepare_script(fleet).expect("prepare");
     assert_eq!(
-        crate::ui_state::load(&s.preferences).last_focus.as_deref(),
+        crate::ui_state::load(&s.preferences)
+            .unwrap()
+            .last_focus
+            .as_deref(),
         Some("alice"),
         "live boot must not clobber the operator last profile"
     );
@@ -6538,7 +6849,10 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
         );
         assert_eq!(runner.terminal_shot(), terminal_shot.as_deref());
         assert_eq!(session.nav_overlay.as_ref(), Some(&baseline));
-        assert_eq!(crate::ui_state::load(&session.preferences).nav, saved.nav);
+        assert_eq!(
+            crate::ui_state::load(&session.preferences).unwrap().nav,
+            saved.nav
+        );
     }
 }
 
@@ -6560,7 +6874,7 @@ fn live_force_layers_does_not_write_panel_ui() {
     );
     // A save/load roundtrip of the panel prefs must not persist the
     // overlay bools: `nav_overlay` is session-only.
-    let ui = crate::ui_state::load(&s.preferences);
+    let ui = crate::ui_state::load(&s.preferences).unwrap();
     assert!(
         !ui.nav.show_nav_path,
         "forced layers must never reach panel-ui.json"
@@ -6574,7 +6888,7 @@ fn live_force_layers_does_not_write_panel_ui() {
             .is_some_and(|n| n.show_nav_path && n.collision_fill && n.camera_follow),
         "nav scenario arms the live overlay"
     );
-    let ui = crate::ui_state::load(&s.preferences);
+    let ui = crate::ui_state::load(&s.preferences).unwrap();
     assert!(
         !ui.nav.show_nav_path,
         "live boot of a nav scenario never writes the prefs"
@@ -6705,10 +7019,10 @@ fn set_capture_persists_to_panel_ui() {
     let mut s = Session::new();
     s.set_capture(false);
     await_preference(&mut s, "capture", serde_json::json!(false));
-    assert!(!crate::ui_state::load(&s.preferences).capture);
+    assert!(!crate::ui_state::load(&s.preferences).unwrap().capture);
     s.set_capture(true);
     await_preference(&mut s, "capture", serde_json::json!(true));
-    assert!(crate::ui_state::load(&s.preferences).capture);
+    assert!(crate::ui_state::load(&s.preferences).unwrap().capture);
 }
 
 #[test]
@@ -8932,7 +9246,7 @@ fn chooser_row_load_still_focuses_the_member() {
 }
 
 #[test]
-#[ignore = "LIVE=1 Engine A: 5-bot Load all while one is focused"]
+#[ignore = "LIVE=1 and a local 289 engine at WORLD_GAME_PORT/WORLD_HTTP_PORT (Engine A 44594/1080 by default): 5-bot Load all while one is focused"]
 fn live_load_all_keeps_focus_on_engine_a() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
@@ -8963,8 +9277,8 @@ fn live_load_all_keeps_focus_on_engine_a() {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
+        port: Some(host_play::live_ports::game_port()),
+        http_port: Some(host_play::live_ports::http_port()),
         engine_dir: Some(engine),
         nav_pack: Some(nav_pack.clone()),
         nav_flags: Some(nav_pack.with_extension("navflags")),
@@ -9864,7 +10178,8 @@ fn background_ack_closes_when_the_last_other_bot_retires() {
 #[test]
 fn skip_lock_session_does_not_create_instance_lock() {
     let iso = IsolatedStores::enter("session-skip-lock");
-    let _s = Session::with_instance(InstancePermit::skip());
+    let _s = Session::with_instance(InstancePermit::skip())
+        .expect("isolated script settings are readable");
     assert!(!host_play::instance_lock_path().exists());
     let _iso = iso;
 }
@@ -9877,7 +10192,7 @@ fn locked_session_releases_the_instance_lock_on_drop() {
         Ok(Err(_)) => panic!("expected acquire"),
         Err(error) => panic!("expected acquire: {error}"),
     };
-    let session = Session::with_instance(permit);
+    let session = Session::with_instance(permit).expect("isolated script settings are readable");
     drop(session);
     match host_play::try_acquire_instance_lock(host_play::InstanceKind::Tui).unwrap() {
         host_play::InstanceLockResult::Acquired(_) => {}
@@ -9911,6 +10226,38 @@ fn background_count_ignores_terminal_status_rows() {
     s.set_focus_for_test("alice");
     assert_eq!(s.background_bot_count(), 0);
     let _iso = iso;
+}
+
+/// Close Profiles (its Close button and its ✕) shuts the window whether or
+/// not an edit form is open; only a form whose save is still being written
+/// asks first. With no form open the command used to be refused as not
+/// applicable and Profiles stayed open.
+#[test]
+fn close_profiles_closes_with_no_form_and_with_a_clean_form() {
+    let path = tmp_vault("close-profiles.vault");
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    s.core.set_spawn_workers(false);
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    install_vault(&mut s.core, vault);
+
+    s.wall.chooser_open = true;
+    assert!(!s.profile_editor.is_open());
+    assert!(
+        !s.request_cancel_edit(),
+        "form-only close is refused without an edit form"
+    );
+    assert!(s.wall.chooser_open, "the Profiles list is still open");
+    assert!(s.request_close_profiles(), "no form: nothing to confirm");
+    assert!(!s.wall.chooser_open);
+
+    s.wall.chooser_open = true;
+    s.begin_edit_profile(Some("alice"));
+    assert!(s.profile_editor.is_open() && !s.edit_dirty());
+    assert!(s.request_close_profiles(), "a clean form closes at once");
+    assert!(!s.wall.chooser_open);
+    assert!(!s.profile_editor.is_open(), "the form went with the window");
 }
 
 #[test]
@@ -11117,17 +11464,27 @@ fn settings_feedback_panel_requests_own_their_preview_and_failure_by_identity() 
             .unwrap();
     }
     s.ui.chrome.accent = "#334455".into();
+    // A's durable snapshot can publish just before its terminal. Wait for A's
+    // request identity so this assertion cannot race the cache publication.
+    let first_request = match &s.panel_preference_writes[0].update {
+        frontend_core::prefs::Update::Queued(update) => update.request_id(),
+        frontend_core::prefs::Update::Durable => panic!("A is queued behind the test writer"),
+    };
     disk.release_one();
-    // The first write is durable (the document now holds the value): the
-    // second request is still pending and still previews it.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while s.preferences.document().unwrap()["chrome"]["accent"] != "#334455" {
-        s.pump_status();
-        s.poll_panel_preferences();
-        assert!(Instant::now() < deadline, "the first request never landed");
-        thread::sleep(Duration::from_millis(2));
-    }
+    let service = s
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service");
+    assert_ne!(
+        service.wait_request(first_request, Duration::from_secs(30)),
+        host_play::local_state::RequestState::Pending,
+        "the first request never settled"
+    );
     s.poll_panel_preferences();
+    assert_eq!(
+        s.preferences.document().unwrap()["chrome"]["accent"],
+        "#334455"
+    );
     assert_eq!(s.panel_preference_writes_pending(), 1, "B is still pending");
     assert_eq!(s.ui.chrome.accent, "#334455");
     disk.release_one();
@@ -11521,14 +11878,13 @@ fn settings_feedback_launch_choices_take_effect_only_from_the_durable_value() {
 /// at the setting.
 #[test]
 fn settings_feedback_a_held_server_revision_binds_the_durable_revision_and_shows_the_choice() {
-    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let (root, cache, unpack, server) = runtime_profile_fixture(274);
     let mut s = Session::new();
     configure_isolated_profile(
         &mut s,
         ProfileOptions {
             revision: None,
             cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
             http_port: Some(server.port()),
             ..ProfileOptions::default()

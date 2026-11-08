@@ -16,9 +16,9 @@
 
 mod compat {
     use crate::machine::{Begin, Cx, Family, Step};
-    use crate::observed::{self, ItemRow, MakeProduct, Scene, Text};
+    use crate::scene::observed::{self, ItemRow, MakeProduct, Scene, Text};
+    use script::interact::InteractReq;
     use script::production::{MakeXCore, MakeXProduct, MakeXSelection, MakeXStep};
-    use script::shim::InteractReq;
     use serde::Deserialize;
     use serde_json::Value;
 
@@ -26,6 +26,14 @@ mod compat {
     pub const PANEL_WAIT_MS: u64 = 5_000;
     /// Frozen `ChatDialog.make` / `chooseOption` modal-change wait.
     pub const MODAL_WAIT_MS: u64 = 3_000;
+
+    // Open compat-track wait debt: Make-X retains 3s/3s/5s wall-clock waits,
+    // like the queued WaitChoiceAck and Main-doc 3000ms waits. The compat
+    // track must count them in observed ticks; this adapter proof does not
+    // fix them. Native Quester waits already use observed ticks.
+    const COUNT_OPEN_MS: u64 = 3_000;
+    const COUNT_CLOSE_MS: u64 = 3_000;
+    const MAKE_MENU_MS: u64 = 5_000;
 
     impl MakeXProduct for MakeProduct {
         fn object_id(&self) -> i32 {
@@ -287,7 +295,7 @@ mod compat {
             MakeXSelection::Click { component_id } => component_id,
         };
         cx.emit(InteractReq::IfButton { component_id });
-        cx.clock().arm(make_x.timeout_ms());
+        cx.clock().arm(COUNT_OPEN_MS);
         Begin::Run(ChatDialog {
             phase: Phase::MakeX,
             make_x,
@@ -385,12 +393,12 @@ mod compat {
                 ) {
                     MakeXStep::Wait => Step::Wait,
                     MakeXStep::AnswerCount { value } => {
-                        cx.clock().arm(self.make_x.timeout_ms());
+                        cx.clock().arm(COUNT_CLOSE_MS);
                         cx.emit(InteractReq::AnswerCount { value });
                         Step::Wait
                     }
                     MakeXStep::WaitMenuClose => {
-                        cx.clock().arm(self.make_x.timeout_ms());
+                        cx.clock().arm(MAKE_MENU_MS);
                         Step::Wait
                     }
                     MakeXStep::Complete => Step::Done(true),
@@ -445,9 +453,9 @@ mod compat {
     mod tests {
         use super::*;
         use crate::machine::Reply;
-        use crate::observed::MakeButton;
-        use crate::task_clock::InstantTaskClock;
-        use script::production::{MakeXPhase, COUNT_CLOSE_MS, COUNT_OPEN_MS, MAKE_MENU_MS};
+        use crate::scene::observed::MakeButton;
+        use crate::scene::task_clock::InstantTaskClock;
+        use script::production::MakeXPhase;
         use std::time::{Duration, Instant};
 
         fn product_with_id(object_id: i32, name: &str, buttons: &[(i32, i32)]) -> MakeProduct {
@@ -646,7 +654,7 @@ mod compat {
                 core.select(Some(&products), 1737, Some(28)),
                 MakeXSelection::Click { component_id: 8875 }
             );
-            assert_eq!(core.timeout_ms(), COUNT_OPEN_MS);
+            assert_eq!(core.phase(), MakeXPhase::WaitCountOpen);
             assert_eq!(core.step(false, true, false), MakeXStep::Wait);
             assert_eq!(
                 core.step(true, true, false),
@@ -668,12 +676,49 @@ mod compat {
                 core.step(true, true, false),
                 MakeXStep::AnswerCount { value: 20 }
             );
-            assert_eq!(core.timeout_ms(), COUNT_CLOSE_MS);
+            assert_eq!(core.phase(), MakeXPhase::WaitCountClose);
             assert_eq!(core.step(true, true, false), MakeXStep::Wait);
             assert_eq!(core.step(false, true, false), MakeXStep::WaitMenuClose);
-            assert_eq!(core.timeout_ms(), MAKE_MENU_MS);
+            assert_eq!(core.phase(), MakeXPhase::WaitMenuClose);
             assert_eq!(core.step(false, true, false), MakeXStep::Wait);
             assert_eq!(core.step(false, false, false), MakeXStep::Complete);
+        }
+
+        #[test]
+        fn make_x_adapter_keeps_the_frozen_count_and_menu_waits() {
+            let products = [product_with_id(1737, "Ball of wool", &[(-1, 8875)])];
+            let mut at = probe(&products, None, false, -1);
+            let mut ops = Vec::new();
+            let mut clock = InstantTaskClock::new();
+            let before = Instant::now();
+            let Begin::Run(mut machine) = begin_make_x(
+                &at,
+                "wool",
+                &serde_json::json!(6),
+                &mut Cx::test(&mut ops, &mut clock, None),
+            ) else {
+                panic!("the posted Make-X row must begin its count-dialog wait");
+            };
+            let deadline = clock.deadline.expect("the count-open wait is armed");
+            assert!(deadline >= before + Duration::from_millis(COUNT_OPEN_MS));
+            assert!(deadline <= Instant::now() + Duration::from_millis(COUNT_OPEN_MS));
+
+            at.count_dialog_open = true;
+            let before = Instant::now();
+            assert_eq!(
+                step(&mut machine, &mut clock, &at),
+                (None, vec![InteractReq::AnswerCount { value: 6 }])
+            );
+            let deadline = clock.deadline.expect("the count-close wait is armed");
+            assert!(deadline >= before + Duration::from_millis(COUNT_CLOSE_MS));
+            assert!(deadline <= Instant::now() + Duration::from_millis(COUNT_CLOSE_MS));
+
+            at.count_dialog_open = false;
+            let before = Instant::now();
+            assert_eq!(step(&mut machine, &mut clock, &at), (None, vec![]));
+            let deadline = clock.deadline.expect("the menu-close wait is armed");
+            assert!(deadline >= before + Duration::from_millis(MAKE_MENU_MS));
+            assert!(deadline <= Instant::now() + Duration::from_millis(MAKE_MENU_MS));
         }
 
         #[test]

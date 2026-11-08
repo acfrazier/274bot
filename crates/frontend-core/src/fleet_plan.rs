@@ -16,9 +16,8 @@
 use crate::bulk::BulkRow;
 use crate::command::CardKind;
 use crate::command::OperatorCommand;
-use crate::scripts::ScriptChoice;
+use crate::scripts::{QuesterStartZones, ScriptChoice};
 use crate::selection::{MarkedSelection, ProfileIdentity};
-
 /// A fleet button's action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FleetAction {
@@ -92,6 +91,35 @@ pub enum PlanScope {
     /// ([`crate::OperatorSession::stage_plan_target`]).
     One,
 }
+/// A Quester target's effective danger-zone list frozen for a Start plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QuesterStartDisclosure {
+    pub(crate) profile: ProfileIdentity,
+    pub(crate) name: String,
+    /// `None` means this target will not start Quester.
+    pub(crate) zones: Option<QuesterStartZones>,
+}
+
+/// Append the one shared per-bot disclosure to plan and result text.
+pub(crate) fn append_quester_start_disclosures(
+    text: &mut String,
+    disclosures: &[QuesterStartDisclosure],
+) {
+    if !disclosures
+        .iter()
+        .any(|disclosure| disclosure.zones.is_some())
+    {
+        return;
+    }
+    text.push_str("\n\nQuester danger-zone disclosures shown before Start:");
+    for disclosure in disclosures {
+        let Some(zones) = disclosure.zones.as_ref() else {
+            continue;
+        };
+        text.push('\n');
+        zones.append_plan_disclosure(&disclosure.name, text);
+    }
+}
 
 /// A fleet action frozen before it runs.
 #[derive(Debug)]
@@ -110,6 +138,10 @@ pub struct FleetPlan {
     pub(crate) interrupted: Vec<String>,
     /// Rows the plan skips, with the reason.
     pub(crate) skipped: Vec<BulkRow>,
+    /// Per-target Quester disclosures used to confirm or reject a Start.
+    pub(crate) quester_start_zones: Vec<QuesterStartDisclosure>,
+    /// Registry version used to build the frozen disclosures.
+    pub(crate) quester_registry_revision: Option<u64>,
     pub(crate) prompt: String,
     pub(crate) needs_confirm: bool,
     /// The catalog root staged with the click, for the Start or
@@ -191,6 +223,8 @@ pub struct FleetResult {
     pub(crate) action: FleetAction,
     /// Plan-time skips and profiles gone at run time.
     pub(crate) extra: Vec<BulkRow>,
+    /// Per-target Quester disclosures shown before the Start command.
+    pub(crate) quester_start_zones: Vec<QuesterStartDisclosure>,
     /// The report text, rebuilt when a member settles.
     pub(crate) text: String,
     pub(crate) settled: bool,

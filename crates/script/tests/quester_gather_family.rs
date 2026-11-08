@@ -50,6 +50,9 @@ fn id(selected: &SelectedGameData, alias: &str) -> i32 {
 
 #[test]
 fn quest_gather_compiles_selected_ores_and_karambwanji_with_exact_inventory_goals() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     for (skill, resource, alias) in [
         ("mining", "copper", "copper_ore"),
@@ -64,6 +67,9 @@ fn quest_gather_compiles_selected_ores_and_karambwanji_with_exact_inventory_goal
 
 #[test]
 fn quest_gather_compiles_the_content_derived_contest_north_spot_method() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     compile(json!({
         "skill":"fishing", "method":"fishing.0_41_53_sinisterfishspot.op1",
         "until":{"obj":"raw_giant_carp","qty":2}
@@ -73,6 +79,9 @@ fn quest_gather_compiles_the_content_derived_contest_north_spot_method() {
 
 #[test]
 fn quest_gather_rejects_an_unrelated_product_and_unbounded_or_ambiguous_arguments() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     for args in [
         json!({"skill":"mining","resource":"copper","until":{"obj":"tin_ore","qty":1}}),
         json!({"skill":"mining","resource":"copper","method":"mining.copper","until":{"obj":"copper_ore","qty":1}}),

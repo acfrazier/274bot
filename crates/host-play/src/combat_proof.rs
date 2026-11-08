@@ -3,8 +3,8 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use api::snapshot::{ActorKind, GameSnapshot, ItemContainer};
 use client::io::ClientProt289;
+use script::interact::InteractReq;
 use script::native::{HostAuthority, NativePhase, ScriptStatus, StatusValue};
-use script::shim::InteractReq;
 use serde_json::{json, Value};
 
 static CAPTURES: LazyLock<Mutex<HashMap<String, Arc<Mutex<CombatCapture>>>>> =
@@ -386,6 +386,7 @@ pub(crate) fn record_walk(
             "radius": request.radius,
             "protect": request.protect,
             "food_guard": request.food_guard,
+            "cure_guard": request.cure_guard,
             "allow": {
                 "prayer": request.allow.prayer,
                 "food": request.allow.food,

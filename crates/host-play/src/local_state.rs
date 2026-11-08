@@ -18,11 +18,8 @@
 //!   store: its leases and submissions answer [`ErrorCode::Failed`] with the
 //!   bounded reason, and the file is never written, until a later read
 //!   accepts it. A file whose content the service cannot hold whole is read
-//!   but never rewritten, in every domain. A loadouts file whose rows share
-//!   a name (an older editor could save one) is renamed apart by the read
-//!   that finds it, before any lease or write, under the file's lock and
-//!   losing nothing ([`Shared::dedupe_loadouts`]); while that cannot be
-//!   done the file is refused.
+//!   but never rewritten, in every domain. Loadouts with duplicate names
+//!   are refused whole because names cannot identify an individual row.
 //! - **Submissions** ([`LocalStatePort::submit`]) are nonblocking: a bank
 //!   hint replaces a queued hint of the same account (the replaced request
 //!   settles `Cancelled(Superseded)`, and the service remembers which
@@ -56,9 +53,8 @@
 //! - **Audit:** one `host_log!` info line ([`AuditCommit`]) per durable
 //!   write, after the bytes and their directory entries are durable and
 //!   read back; one `terminal` line per accepted write that ends any other
-//!   way (failed, conflicted, cancelled). A repair the service makes on its
-//!   own (a malformed preferences file moved aside, loadouts renamed apart)
-//!   has one info audit line of its own and a warning for the operator.
+//!   way (failed, conflicted, cancelled). Ordinary malformed-preferences
+//!   recovery has one info audit line of its own and a warning for the operator.
 //! - **Budget:** at most [`MAX_BANK_STORES`] bank-hint identities are held;
 //!   a new one evicts the least recently used idle one, or is refused
 //!   `Busy` when none is idle. A lease is one bounded snapshot.
@@ -116,7 +112,9 @@ mod files;
 mod frontend;
 
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
-pub use files::{StateRoot, HINT_SCHEMA_VERSION, MAX_PREFERENCES_BYTES};
+pub use files::{
+    StateRoot, HINT_SCHEMA_VERSION, MAX_HINT_BYTES, MAX_LOADOUTS_BYTES, MAX_PREFERENCES_BYTES,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use frontend::{transient_wait, wait_outcome, WaitOutcome};
 pub use frontend::{
@@ -185,11 +183,22 @@ pub type AuditHook = Arc<dyn Fn(&AuditCommit) + Send + Sync>;
 #[cfg(test)]
 pub(crate) type TerminalHook = Arc<dyn Fn(&str) + Send + Sync>;
 
-/// A test's witness of each line of a repair (a preferences quarantine,
-/// loadouts renamed apart): the operator's notice, the audit line, or why
-/// the repair could not be made. Called where the line is logged.
+/// A test's witness of each line the service logs for file recovery or
+/// refusal: the operator's notice, audit line, or why recovery could not be made.
 #[cfg(test)]
 pub(crate) type NoticeHook = Arc<dyn Fn(Level, &str) + Send + Sync>;
+
+fn emit_local_notice(
+    level: Level,
+    line: std::fmt::Arguments<'_>,
+    #[cfg(test)] hook: Option<&NoticeHook>,
+) {
+    host_log!(Category::Lifecycle, level, "{line}");
+    #[cfg(test)]
+    if let Some(hook) = hook {
+        hook(level, &line.to_string());
+    }
+}
 
 /// What one `Play` composes for its slots (§21 §4.2): the process service,
 /// the launch profile's namespace every account keys under, and the
@@ -422,6 +431,8 @@ struct Hooks {
     terminal: Option<TerminalHook>,
     #[cfg(test)]
     notice: Option<NoticeHook>,
+    #[cfg(test)]
+    read_refusal: Option<NoticeHook>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -831,6 +842,30 @@ impl LocalStateService {
         identity: &DomainIdentity,
         freshness: Duration,
     ) -> Result<crate::walk_permissions::WalkGlobals, PreferenceError> {
+        self.preferences_projection(identity, freshness, |projection| {
+            projection.walk_globals.clone()
+        })
+    }
+
+    pub(super) fn preferences_pvp_globals(
+        self: &Arc<Self>,
+        identity: &DomainIdentity,
+        freshness: Duration,
+    ) -> Result<script::native::PvpGlobals, PreferenceError> {
+        self.preferences_projection(identity, freshness, |projection| {
+            projection.pvp_globals.clone()
+        })
+    }
+
+    /// One worker-built projection of the cached preferences, read without
+    /// waiting for storage: a cold or refused store, or a projection the
+    /// worker could not build, is a typed error.
+    fn preferences_projection<T>(
+        self: &Arc<Self>,
+        identity: &DomainIdentity,
+        freshness: Duration,
+        pick: impl FnOnce(&files::PreferenceProjection) -> Result<T, Arc<str>>,
+    ) -> Result<T, PreferenceError> {
         if !self.is_open(identity.domain()) {
             return Err(self.shared.preference_not_ready.clone());
         }
@@ -839,7 +874,7 @@ impl LocalStateService {
         let Some(store) = state.stores.get(&key) else {
             return Err(self.shared.preference_not_ready.clone());
         };
-        let (walk_globals, stale) = match &store.file {
+        let (projected, stale) = match &store.file {
             FileState::Cold => return Err(self.shared.preference_not_ready.clone()),
             FileState::Rejected(rejection) => {
                 return Err(PreferenceError::from_cached(
@@ -856,16 +891,13 @@ impl LocalStateService {
                     .preferences
                     .as_ref()
                     .unwrap_or(&state.preference_default);
-                (
-                    projection.walk_globals.clone(),
-                    cached.refreshed_at.elapsed() >= freshness,
-                )
+                (pick(projection), cached.refreshed_at.elapsed() >= freshness)
             }
         };
         if stale {
             self.shared.request_readback(&mut state, &key);
         }
-        walk_globals.map_err(|cause| {
+        projected.map_err(|cause| {
             PreferenceError::from_cached(Arc::clone(&self.shared.preference_path), cause, None)
         })
     }
@@ -1983,12 +2015,15 @@ impl State {
                 }
             }
             Err(error) => {
-                host_log!(
-                    Category::Lifecycle,
+                emit_local_notice(
                     Level::Warn,
-                    "local state: {domain} file refused path={}: {error}; it is neither leased \
-                     nor written until it reads cleanly",
-                    path.display()
+                    format_args!(
+                        "local state: {domain} file refused path={}: {error}; it is neither leased \
+                         nor written until it reads cleanly",
+                        path.display()
+                    ),
+                    #[cfg(test)]
+                    self.hooks.read_refusal.as_ref(),
                 );
                 FileState::Rejected(Rejection {
                     reason: error.reason(),
@@ -2160,6 +2195,24 @@ fn collect_preference_audit_change<'a>(
     if old == new {
         return;
     }
+    // The first write of the PvP setting adds the whole `pvp` object (and
+    // clearing it removes the object): show the one member's old and new
+    // value, not "set" for the object.
+    if path.as_slice() == ["pvp"] && old.is_none() != new.is_none() {
+        let present = old.or(new).and_then(serde_json::Value::as_object);
+        if present.is_some_and(|object| object.len() == 1 && object.contains_key("start_fights")) {
+            path.push("start_fights");
+            collect_preference_audit_change(
+                old.and_then(|value| value.get("start_fights")),
+                new.and_then(|value| value.get("start_fights")),
+                path,
+                changes,
+                total,
+            );
+            path.pop();
+            return;
+        }
+    }
     if !(path.len() == 1
         && matches!(
             path[0],
@@ -2308,6 +2361,7 @@ fn preference_audit_scalar_kind(path: &[&str]) -> Option<PreferenceAuditScalarKi
         {
             Some(PreferenceAuditScalarKind::Boolean)
         }
+        ["pvp", "start_fights"] => Some(PreferenceAuditScalarKind::Boolean),
         ["quester_paths", "enabled"] => Some(PreferenceAuditScalarKind::Boolean),
         ["map_bake"] => Some(PreferenceAuditScalarKind::MapBake),
         ["server_revision"] => Some(PreferenceAuditScalarKind::ServerRevision),
@@ -2466,6 +2520,30 @@ mod preference_audit_tests {
             before.as_object().expect("an object"),
         )
         .is_none());
+    }
+
+    #[test]
+    fn summary_shows_the_pvp_setting_old_and_new() {
+        let before = json!({ "nav": { "allow_teleports": true } });
+        let after = json!({ "nav": { "allow_teleports": true }, "pvp": { "start_fights": true } });
+        let summary = preference_audit_summary(
+            before.as_object().expect("an object"),
+            after.as_object().expect("an object"),
+        )
+        .expect("a changed preference document");
+        assert!(
+            summary.text.contains("pvp.start_fights"),
+            "{}",
+            summary.text
+        );
+        assert!(summary.text.contains("true"), "{}", summary.text);
+        let off = json!({ "pvp": { "start_fights": false } });
+        let summary = preference_audit_summary(
+            after.as_object().expect("an object"),
+            off.as_object().expect("an object"),
+        )
+        .expect("a changed preference document");
+        assert!(summary.text.contains("pvp.start_fights: true -> false"));
     }
 
     #[test]
@@ -2679,19 +2757,10 @@ impl Shared {
         }
     }
 
-    /// Read `key`'s file, first repairing, under the file's
-    /// [`files::WriteLock`], what the service repairs rather than refuses:
-    /// a loadouts file whose rows share a name is renamed apart, on every
-    /// read ([`Self::dedupe_loadouts`]); a preferences file whose content is
-    /// malformed (not JSON, or JSON that is not an object) is quarantined
-    /// and started fresh, only on the read a save makes (`recover`,
-    /// [`LocalStateService::start_readback`];
-    /// [`Self::quarantine_preferences`]). The file is then read as the
-    /// repair left it. `held` is the lock when the caller (a write) holds it
-    /// already; otherwise the repair takes it. Every other refusal (owner,
-    /// mode, size, an I/O error, content the service cannot hold whole)
-    /// stands, and a repair that cannot be made leaves the file as it is,
-    /// refused, and says why.
+    /// Read `key`'s file. On a save-path read, malformed preferences content
+    /// is quarantined under the file's lock and started fresh
+    /// ([`Self::quarantine_preferences`]). Every other refusal, including an
+    /// unsupported saved format, stands and leaves the file unchanged.
     fn read_repairing(
         &self,
         key: &StoreKey,
@@ -2707,9 +2776,12 @@ impl Shared {
             }
         }
         let read = files::read(key, &self.root, read_at);
-        let Some(repair) = Repair::of(key, &read, recover) else {
+        if !matches!(
+            (key, &read),
+            (StoreKey::Preferences, Err(error)) if recover && error.is_malformed()
+        ) {
             return read;
-        };
+        }
         let path = key.path(&self.root);
         let _lock = if held.is_some() {
             None
@@ -2722,10 +2794,9 @@ impl Shared {
                 Err(error) => {
                     self.notice(
                         Level::Warn,
-                        format!(
-                            "local state: {}: its lock was not taken ({error:?}); it is left \
-                             as it is path={}",
-                            repair.unmade(),
+                        format_args!(
+                            "local state: preferences file is malformed but its lock was not \
+                             taken ({error:?}); it is left as it is path={}",
                             path.display()
                         ),
                     );
@@ -2733,129 +2804,21 @@ impl Shared {
                 }
             }
         };
-        let repaired = match repair {
-            Repair::Dedupe => self.dedupe_loadouts(key, &path),
-            Repair::Quarantine => self.quarantine_preferences(&path),
-        };
+        let repaired = self.quarantine_preferences(&path);
         match repaired {
             Ok(()) => files::read(key, &self.root, read_at),
             Err(error) => {
                 self.notice(
                     Level::Warn,
-                    format!(
-                        "local state: {}: {error}; it is left as it is path={}",
-                        repair.unmade(),
+                    format_args!(
+                        "local state: preferences file is malformed but could not be moved aside: \
+                         {error}; it is left as it is path={}",
                         path.display()
                     ),
                 );
                 read
             }
         }
-    }
-
-    /// Under the loadouts file's lock: when `path` still holds rows that
-    /// share a name, rename them apart in one publication that loses
-    /// nothing (the one-time repair of a file an older editor saved with
-    /// two loadouts of one name; names key the rows, so until then no edit
-    /// of it names one row). The file's exact bytes are kept first in a new
-    /// `loadouts.json.duplicates-<time>` beside it, read back, flushed, and
-    /// its directory entry flushed. Then the same rows, each with its
-    /// content and in its place, are published with every later row of a
-    /// name renamed `<name> (2)`, `(3)`, … ([`files::rename_apart`]), only
-    /// while the file still holds the bytes kept, and the directory entry
-    /// is flushed. The operator is told (a warning naming the copy and each
-    /// rename) and the repair is audited (one info line). A failure before
-    /// the publication leaves the file as it is (a copy already made stays,
-    /// holding the file's exact bytes), and the next read tries again.
-    fn dedupe_loadouts(&self, key: &StoreKey, path: &Path) -> std::io::Result<()> {
-        let Some((text, mut rows)) = files::loadouts_sharing_names(path)? else {
-            // Repaired or removed meanwhile: read it as it is.
-            return Ok(());
-        };
-        let renamed = files::rename_apart(&mut rows);
-        let bytes = files::loadouts_bytes(&rows).map_err(std::io::Error::other)?;
-        if bytes.len() as u64 > files::MAX_LOADOUTS_BYTES {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "renamed apart, its rows would take {} bytes, more than a loadouts file may \
-                     hold ({})",
-                    bytes.len(),
-                    files::MAX_LOADOUTS_BYTES
-                ),
-            ));
-        }
-        let quarantined = files::quarantine_copy(path, text.as_bytes(), "duplicates")?;
-        let kept_in = |error: std::io::Error, what: &str| {
-            std::io::Error::new(
-                error.kind(),
-                format!(
-                    "a copy is kept in {}, but {what}: {error}",
-                    quarantined.display()
-                ),
-            )
-        };
-        let dirs: Vec<PathBuf> = path.parent().map(Path::to_path_buf).into_iter().collect();
-        self.sync_dirs(&dirs).map_err(|error| {
-            kept_in(
-                error,
-                "its directory entry did not reach the disk, so the file was not replaced",
-            )
-        })?;
-        let kept = files::digest(text.as_bytes());
-        self.publish(path, &bytes, || {
-            if self.state.lock().abandoned {
-                return Err(std::io::Error::other(
-                    "the service passed its shutdown bound",
-                ));
-            }
-            if files::current_digest(key, &self.root)? == Some(kept) {
-                Ok(())
-            } else {
-                Err(std::io::Error::other(
-                    "the file changed while its loadouts were being renamed apart",
-                ))
-            }
-        })
-        .map_err(|error| kept_in(error, "the file was not replaced"))?;
-        let renames = renamed
-            .iter()
-            .map(|rename| format!("row {} {:?} → {:?}", rename.row + 1, rename.from, rename.to))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let told = format!(
-            "local state: loadouts file {} had loadouts that share a name; its bytes are kept in \
-             {}, and each later one was renamed, keeping its gear and its place: {renames}",
-            path.display(),
-            quarantined.display()
-        );
-        match self.sync_dirs(&dirs) {
-            Ok(()) => {
-                self.notice(Level::Warn, told);
-                self.notice(
-                    Level::Info,
-                    format!(
-                        "audit domain={} action=loadouts-dedupe path={} quarantined={} \
-                         renamed=[{renames}] at={}",
-                        LocalStateDomain::LoadoutsReferences,
-                        path.display(),
-                        quarantined.display(),
-                        DurableTimestamp::now().unix_seconds()
-                    ),
-                );
-            }
-            // The renamed rows are in place, and the copy is durable: a
-            // crash that loses this entry leaves the old file, and the next
-            // read renames it apart again.
-            Err(error) => self.notice(
-                Level::Warn,
-                format!(
-                    "{told}; but its directory entry did not reach the disk ({error}), so the \
-                     renames are not durable yet"
-                ),
-            ),
-        }
-        Ok(())
     }
 
     /// Under the preferences file's lock: if `path` still holds malformed
@@ -2898,7 +2861,7 @@ impl Shared {
         })?;
         self.notice(
             Level::Warn,
-            format!(
+            format_args!(
                 "local state: preferences file {} was not valid preferences JSON; its bytes are \
                  kept in {} and fresh preferences were started",
                 path.display(),
@@ -2907,7 +2870,7 @@ impl Shared {
         );
         self.notice(
             Level::Info,
-            format!(
+            format_args!(
                 "audit domain={} action=preferences-quarantine path={} quarantined={} at={}",
                 LocalStateDomain::Preferences,
                 path.display(),
@@ -2920,15 +2883,15 @@ impl Shared {
 
     /// Log one line of a repair (the operator's notice, the audit line, or
     /// why the repair could not be made), and hand it to a test's hook.
-    fn notice(&self, level: Level, line: String) {
-        host_log!(Category::Lifecycle, level, "{line}");
+    fn notice(&self, level: Level, line: std::fmt::Arguments<'_>) {
         #[cfg(test)]
-        {
-            let hook = self.state.lock().hooks.notice.clone();
-            if let Some(hook) = hook {
-                hook(level, &line);
-            }
-        }
+        let hook = self.state.lock().hooks.notice.clone();
+        emit_local_notice(
+            level,
+            line,
+            #[cfg(test)]
+            hook.as_ref(),
+        );
     }
 
     /// One write, as one transaction under the file's [`files::WriteLock`]:
@@ -3395,46 +3358,6 @@ enum LastCheck {
     Abandoned,
     #[error("the file could not be read before the rename: {0}")]
     Io(std::io::Error),
-}
-
-/// What a read repairs, under the file's lock, rather than refuses
-/// ([`Shared::read_repairing`]).
-#[derive(Debug, Clone, Copy)]
-enum Repair {
-    /// Loadout rows share a name: they are renamed apart
-    /// ([`Shared::dedupe_loadouts`]), on every read.
-    Dedupe,
-    /// A malformed preferences file, read for a save: it is moved aside
-    /// and fresh preferences are started ([`Shared::quarantine_preferences`]).
-    Quarantine,
-}
-
-impl Repair {
-    /// The repair a read of `key` that found `read` calls for, if any.
-    fn of(
-        key: &StoreKey,
-        read: &Result<Option<ReadDocument>, ReadError>,
-        recover: bool,
-    ) -> Option<Self> {
-        match (key, read) {
-            (StoreKey::Loadouts, Err(ReadError::SharedNames { .. })) => Some(Repair::Dedupe),
-            (StoreKey::Preferences, Err(error)) if recover && error.is_malformed() => {
-                Some(Repair::Quarantine)
-            }
-            _ => None,
-        }
-    }
-
-    /// What the file holds and that the repair was not made, for the line
-    /// saying why.
-    fn unmade(self) -> &'static str {
-        match self {
-            Repair::Dedupe => {
-                "loadouts file has loadouts that share a name, but they could not be renamed apart"
-            }
-            Repair::Quarantine => "preferences file is malformed but could not be moved aside",
-        }
-    }
 }
 
 fn io_failure(domain: LocalStateDomain) -> WriteSettlement {

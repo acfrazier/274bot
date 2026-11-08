@@ -1,6 +1,6 @@
-//! An operator home upgraded from 0.1.9.x: the old `274V10` pack (and its
-//! sidecar) still sits at the default `~/.274bot/289/274bot.navpack` while the
-//! installed app ships a packaged `274V16` bundle for the same cache. Shared by
+//! An operator home upgraded from 0.1.9.x: the old `274V10` pack still sits
+//! at the default `~/.274bot/289/274bot.navpack` while the installed app ships
+//! a format-19 bundle under its revision-keyed resource directory. Shared by
 //! host-play profile tests and the panel and TUI adapters.
 
 use std::path::{Path, PathBuf};
@@ -8,11 +8,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use api::snapshot::WorldTile;
-use host_play::profile::{CacheManifest, NavManifest, ProfileEnvironment};
+use host_play::profile::ProfileEnvironment;
 use host_play::progress::ProfileProgressObserver;
-use host_play::{BundledNavIdentity, ProfileOptions, ServerProfile};
+use host_play::{ProfileOptions, ServerProfile};
 use nav_planner::collision::{pack_walk, WorldCollision};
-use nav_planner::map::identity::Digest;
 use nav_planner::transport::TransportGraph;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -25,10 +24,8 @@ pub struct UpgradeHome {
     pub root: PathBuf,
     /// The stale user pack at the default home path.
     pub old_pack: PathBuf,
-    /// The install resource root holding the packaged v16 bundle.
+    /// The install resource root holding the packaged revision-keyed bundle.
     pub resources: PathBuf,
-    /// The compiled bundled identity row for that bundle.
-    pub table: [BundledNavIdentity; 1],
 }
 
 impl UpgradeHome {
@@ -51,38 +48,21 @@ impl UpgradeHome {
             "textures",
             "wordenc",
             "sounds",
-            "manifest-289.json",
         ] {
             std::fs::copy(source.join(name), cache.join(name)).unwrap();
         }
-        let cache_id = CacheManifest::capture(289, &cache).unwrap().identity();
 
-        // What 0.1.9.x left behind: the v10 pack and its matching sidecar.
+        // What 0.1.9.x left behind: the old external pack remains untouched.
         let old_pack = root.join("home/.274bot/289/274bot.navpack");
         std::fs::create_dir_all(old_pack.parent().unwrap()).unwrap();
         std::fs::write(&old_pack, V10_PACK).unwrap();
-        std::fs::write(
-            host_play::profile::nav_manifest_path(&old_pack),
-            serde_json::to_vec(&NavManifest {
-                revision: 289,
-                cache_id: cache_id.clone(),
-                content_id: None,
-                source_sha256: None,
-                nav_sha256: Digest::of(V10_PACK).to_string(),
-                flags_sha256: None,
-                reach_sha256: None,
-                canlight_sha256: None,
-                pois_sha256: None,
-                zone_count: 0,
-                zone_npc_count: 0,
-            })
-            .unwrap(),
-        )
-        .unwrap();
 
-        // What the new install ships: the same world as a v16 bundle.
+        // What the new install ships: a format-19 world and its data sidecars
+        // at the normal revision-keyed resource paths.
         let resources = root.join("Resources");
-        std::fs::create_dir_all(&resources).unwrap();
+        let layout = host_play::nav_assets::artifact_layout(289);
+        let pack = resources.join(&layout.relative_pack);
+        std::fs::create_dir_all(pack.parent().unwrap()).unwrap();
         let origin = WorldTile {
             x: 3200,
             z: 3200,
@@ -102,48 +82,30 @@ impl UpgradeHome {
             &[],
         )
         .unwrap();
-        std::fs::write(resources.join("274bot.navpack"), &bundle).unwrap();
-        let bundle_digest = Digest::of(&bundle).0;
-        let reach = nav_bake::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &bundle_digest);
-        std::fs::write(resources.join("274bot.navreach"), &reach).unwrap();
-        let policy = nav_planner::canlight::identity_digest(289, b"fixture-bank-zones", &[0u64]);
-        let canlight = nav_bake::pack::encode_canlight_sidecar(
-            origin,
-            2,
-            1,
-            &[0u64],
-            &nav_planner::canlight::header_binding(&bundle_digest, &policy),
-        );
-        std::fs::write(resources.join("274bot.navcanlight"), &canlight).unwrap();
-        let table = [BundledNavIdentity {
-            revision: 289,
-            cache_id,
-            content_id: None,
-            source_sha256: None,
-            format: nav_planner::pack::FORMAT_ID.into(),
-            nav_sha256: nav_planner::manifest::hash_bytes(&bundle),
-            flags_sha256: None,
-            reach_sha256: Some(nav_planner::manifest::hash_bytes(&reach)),
-            canlight_sha256: Some(nav_planner::manifest::hash_bytes(&canlight)),
-            canlight_identity: Some(nav_planner::pack::sha256_hex(&policy)),
-            pois_sha256: None,
-            relative_path: "274bot.navpack".into(),
-        }];
+        std::fs::write(&pack, &bundle).unwrap();
+        let flags = nav_bake::pack::encode_flags_sidecar(origin, 2, 1, &[0u32; 2]);
+        std::fs::write(resources.join(&layout.relative_flags), &flags).unwrap();
+        let reach = nav_bake::pack::encode_reach_sidecar(origin, 2, 1, &[0u64]);
+        std::fs::write(resources.join(&layout.relative_reach), &reach).unwrap();
+        let canlight = nav_bake::pack::encode_canlight_sidecar(origin, 2, 1, &[0u64]);
+        std::fs::write(resources.join(&layout.relative_canlight), &canlight).unwrap();
         Self {
             root,
             old_pack,
             resources,
-            table,
         }
     }
 
     /// Bind revision 289 against the upgraded home. `nav_pack` is the
-    /// `--nav-pack` / `NAV_PACK` override; `None` is the default launch.
+    /// `--nav-pack` / `NAV_PACK` override; `None` uses the staged bundle.
     pub fn bind(&self, nav_pack: Option<PathBuf>) -> Arc<ServerProfile> {
         ProfileOptions {
             profile: Some("local-289".into()),
             cache_dir: Some(self.root.join("cache")),
-            cache_manifest: Some(self.root.join("cache/manifest-289.json")),
+            host: Some("127.0.0.1".into()),
+            port: Some(9),
+            asset_host: Some("127.0.0.1".into()),
+            http_port: Some(9),
             nav_pack,
             ..Default::default()
         }
@@ -158,9 +120,8 @@ impl UpgradeHome {
             },
         )
         .unwrap()
-        .bind_with_nav_identities(
+        .bind_with_resource_root(
             &ProfileProgressObserver::default(),
-            &self.table,
             Some(self.resources.as_path()),
         )
         .unwrap()

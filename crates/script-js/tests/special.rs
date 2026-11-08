@@ -1,8 +1,13 @@
-use script::shim::InteractReq;
-use script_js::wire::{
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
     ItemRowInput, ReachViewInput, SideTabIfaceInput, SnapshotInput, TileInput, VarpInput,
 };
 use script_js::{LoadIsolate, LoadShape};
+
+#[path = "common/local_api_asset.rs"]
+mod local_api_asset;
+#[path = "common/local_game_data.rs"]
+mod local_game_data;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
@@ -186,6 +191,11 @@ export default class T extends LoopingBot {
         slot: 3,
     }];
     let tabs = [SideTabIfaceInput { index: 0, id: 2276 }];
+    if !crate::local_game_data::local_game_data_available(274)
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
     for (rev, selected) in [(274, data()), (289, data_289())] {
         let iso = LoadIsolate::spawn_with_game_data(
             src.to_string(),
@@ -218,6 +228,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn already_armed_is_idempotent() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let varps = energy_armed(1000, 1);
     let tabs = [SideTabIfaceInput { index: 0, id: 2276 }];
@@ -236,6 +249,9 @@ fn already_armed_is_idempotent() {
 
 #[test]
 fn no_bar_refuses_without_send() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let varps = energy_armed(1000, 0);
     let tabs = [SideTabIfaceInput { index: 0, id: 328 }];
@@ -254,6 +270,9 @@ fn no_bar_refuses_without_send() {
 
 #[test]
 fn arm_clicks_bar_then_posted_armed_state() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let idle = energy_armed(1000, 0);
     let tabs = [SideTabIfaceInput { index: 0, id: 2276 }];
@@ -281,6 +300,9 @@ fn arm_clicks_bar_then_posted_armed_state() {
 
 #[test]
 fn timeout_without_armed_returns_false() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let idle = energy_armed(1000, 0);
     let tabs = [SideTabIfaceInput { index: 0, id: 2276 }];
@@ -314,6 +336,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(src);
     let dagger = [ItemRowInput {
         name: Some("Dragon dagger"),
@@ -363,6 +388,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn pause_and_hold_freeze_mid_arm_without_late_click() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let idle = energy_armed(1000, 0);
     let tabs = [SideTabIfaceInput { index: 0, id: 2276 }];
@@ -418,6 +446,9 @@ fn pause_and_hold_freeze_mid_arm_without_late_click() {
 // the JS snapshot pages must not cross the seam.
 #[test]
 fn arm_reads_the_scene_not_the_js_side_tab_or_varp_pages() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(ARM);
     let idle = energy_armed(1000, 0);
     let tabs = [SideTabIfaceInput { index: 0, id: 2276 }];
@@ -457,6 +488,9 @@ export default class T extends LoopingBot {
     loop() { Special.energy(); }
 }
 "#;
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
     let iso = spawn(src);
     post_snapshot_input(&iso, &base_snapshot());
     iso.on_game_tick(1);

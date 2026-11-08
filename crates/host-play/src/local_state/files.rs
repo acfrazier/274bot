@@ -1,32 +1,27 @@
 //! The current files behind the state service (T5.2): the operator's
 //! `loadouts.json` and `panel-ui.json` preferences, and one
-//! `bank-hints/<profile>/<account>.json` per account. Each backend reads the
-//! file its old private reader read and writes the shape its old private
-//! writer wrote, so a file written before this service is read by it, and a
-//! file it writes is read by an older build.
+//! `bank-hints/<profile>/<account>.json` per account.
+//! Each backend reads and writes the shared saved format used by 0.2.8 and
+//! 0.2.9, whichever release wrote the bytes.
 //!
 //! No backend touches `HOME` or any default path: every path is derived
 //! from the explicit [`StateRoot`] and the durable identity.
 //!
 //! What a read refuses is never treated as an absent file: a refused file is
 //! a [`ReadError`], and the service keeps it refused (no lease, no write)
-//! until a later read accepts it. Two refusals the service repairs, under
-//! the file's lock, keeping the file's exact bytes first in a new copy
-//! beside it ([`quarantine_copy`]). A loadouts file whose rows share a name
-//! (an older editor could save one; names key the rows) is renamed apart
-//! once, losing nothing, before anything leases or writes it
-//! ([`loadouts_sharing_names`], [`rename_apart`]). A preferences file whose
-//! content is malformed (not JSON, or JSON that is not an object) is moved
-//! aside when a save reads it, and fresh preferences are started
-//! ([`corrupt_preferences`]); every other read refuses it. A file whose
-//! content the service cannot represent whole (a hint field it does not
-//! know, a loadout row it cannot write back as read, a preference it
-//! cannot hold as a row) is read but never rewritten ([`Rewrite::Refused`]),
-//! the same rule in every domain: for preferences the rule is lossless
-//! representability, so a member this build does not know (a version
-//! marker among them) is held and written back like any other. What a
-//! write publishes is durable before it is acknowledged: the bytes are
-//! flushed in their staging file, renamed over the target, and then the
+//! until a later read accepts it.
+//! Ordinary malformed preferences are quarantined on a save-path read
+//! ([`corrupt_preferences`]); every other refusal leaves the file unchanged.
+//! Duplicate loadout names are refused rather than renamed apart. Recognized
+//! pre-0.2.8 shapes are refused as a whole, never rewritten or partially
+//! loaded. The service logs each changed refusal with its file path.
+//! A file whose content the service cannot represent whole (a hint field it
+//! does not know, a loadout row it cannot write back as read, a preference
+//! it cannot hold as a row) is read but never rewritten
+//! ([`Rewrite::Refused`]). Preferences use lossless representability, so an
+//! unknown member (including a version marker) is held and written back.
+//! What a write publishes is durable before it is acknowledged: the bytes
+//! are flushed in their staging file, renamed over the target, and then the
 //! directory entries are flushed.
 //!
 //! Every writer this product runs holds the file's [`WriteLock`] across its
@@ -34,7 +29,7 @@
 //! processes on one `HOME`, or two compositions in one process) never
 //! interleave on one file.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -44,11 +39,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::walk_permissions::WalkGlobals;
 use api::bank_memory::{HintRowsError, MAX_HINT_ROWS};
 use api::identity::DurableTimestamp;
-use api::loadout::{parse_loadout, Loadout};
+use api::loadout::{loadouts_have_pre_0_2_8_shape, parse_loadout, Loadout};
 use api::local_state::{
     DomainIdentity, FailureReason, LeaseSnapshot, LoadoutEdit, LoadoutOp, LocalStateDomain,
     PreferenceChange, PreferenceRow,
 };
+use script::native::PvpGlobals;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -93,19 +89,17 @@ impl StateRoot {
     }
 }
 
-/// The on-disk hint format this build writes and the only one it reads.
-/// Since T5.2 r2 a written document also carries the content scope it was
-/// observed under (`revision`, `content`); readers before r2 ignore the two
-/// fields, and a document without them (written before r2) is read under
-/// the scope that asks for it.
+/// The schema-1 hint format this build writes and reads. Documents carry
+/// the content scope they were observed under (`revision`, `content`);
+/// unstamped pre-scope documents are unsupported.
 pub const HINT_SCHEMA_VERSION: u32 = 1;
 
 /// The largest hint file read: the row cap at the widest JSON a row takes
 /// plus the header, with room to spare.
-const MAX_HINT_BYTES: u64 = 64 * 1024;
+pub const MAX_HINT_BYTES: u64 = 64 * 1024;
 
 /// The largest loadouts file read, and the largest the service writes.
-pub(super) const MAX_LOADOUTS_BYTES: u64 = 4 * 1024 * 1024;
+pub const MAX_LOADOUTS_BYTES: u64 = 4 * 1024 * 1024;
 
 /// The most loadout rows an edit may leave in the file.
 pub(super) const MAX_LOADOUT_ROWS: usize = 512;
@@ -213,8 +207,9 @@ pub(super) enum Rewrite {
     /// Every row was read and writes back as it was read.
     Lossless,
     /// Some rows could not be read (`unreadable`) or would not write back
-    /// as they were read (`lossy`: unknown fields, a legacy shape): the
-    /// rows read are leased, but the service never rewrites the file.
+    /// as they were read (`lossy`: unknown fields or current values that do
+    /// not round-trip); the rows read are leased, but the service never
+    /// rewrites the file.
     Refused { unreadable: usize, lossy: usize },
 }
 
@@ -223,6 +218,9 @@ pub(super) enum Rewrite {
 pub(super) struct PreferenceProjection {
     pub(super) document: Arc<Map<String, Value>>,
     pub(super) walk_globals: Result<WalkGlobals, Arc<str>>,
+    /// The `pvp` member (`pvp.start_fights`): a non-object member or a
+    /// non-boolean value is a projection error, which readers treat as off.
+    pub(super) pvp_globals: Result<PvpGlobals, Arc<str>>,
 }
 
 impl Default for PreferenceProjection {
@@ -230,6 +228,7 @@ impl Default for PreferenceProjection {
         Self {
             document: Arc::default(),
             walk_globals: Ok(WalkGlobals::default()),
+            pvp_globals: Ok(PvpGlobals::default()),
         }
     }
 }
@@ -239,10 +238,29 @@ pub(super) fn project_preferences(document: Map<String, Value>) -> PreferencePro
         Some(value) => project_walk_globals(value).map_err(Arc::<str>::from),
         None => Ok(WalkGlobals::default()),
     };
+    let pvp_globals = match document.get("pvp") {
+        Some(value) => project_pvp_globals(value).map_err(Arc::<str>::from),
+        None => Ok(PvpGlobals::default()),
+    };
     PreferenceProjection {
         document: Arc::new(document),
         walk_globals,
+        pvp_globals,
     }
+}
+
+fn project_pvp_globals(value: &Value) -> Result<PvpGlobals, &'static str> {
+    let Some(pvp) = value.as_object() else {
+        return Err("pvp preferences must be an object");
+    };
+    Ok(PvpGlobals {
+        start_fights: walk_boolean(
+            pvp,
+            "start_fights",
+            PvpGlobals::default().start_fights,
+            "pvp.start_fights must be a boolean",
+        )?,
+    })
 }
 
 fn project_walk_globals(value: &Value) -> Result<WalkGlobals, &'static str> {
@@ -280,6 +298,18 @@ fn project_walk_globals(value: &Value) -> Result<WalkGlobals, &'static str> {
             "survivable_routing",
             defaults.survivable_routing,
             "nav.survivable_routing must be a boolean",
+        )?,
+        allow_prereq_dialogue: walk_boolean(
+            nav,
+            "allow_prereq_dialogue",
+            defaults.allow_prereq_dialogue,
+            "nav.allow_prereq_dialogue must be a boolean",
+        )?,
+        allow_quest_start: walk_boolean(
+            nav,
+            "allow_quest_start",
+            defaults.allow_quest_start,
+            "nav.allow_quest_start must be a boolean",
         )?,
     })
 }
@@ -331,6 +361,8 @@ pub(super) enum ReadError {
     NotAnArray,
     #[error("not a JSON object of preferences")]
     NotAnObject,
+    #[error("saved data is in a format from before 0.2.8")]
+    UnsupportedSavedFormat,
     #[error("schema_version {found} (this build reads {HINT_SCHEMA_VERSION})")]
     Schema { found: u32 },
     #[error("file names profile {profile:?} account {account:?}")]
@@ -345,10 +377,8 @@ pub(super) enum ReadError {
     },
     #[error("rows: {0}")]
     Rows(#[from] HintRowsError),
-    /// Loadout rows that share a name with an earlier row: names key the
-    /// rows, so no edit of such a file names one row. The service renames
-    /// them apart before it leases or writes the file, and refuses it while
-    /// that cannot be done.
+    /// Loadout names key the rows, so no edit can safely identify a row in
+    /// a file whose loadouts share a name. The file remains refused whole.
     #[error("{rows} loadout row(s) share a name with an earlier row")]
     SharedNames { rows: usize },
 }
@@ -359,6 +389,7 @@ impl ReadError {
     pub(super) fn reason(&self) -> FailureReason {
         match self {
             ReadError::Io(_) => FailureReason::Io,
+            ReadError::UnsupportedSavedFormat => FailureReason::UnsupportedSavedFormat,
             ReadError::Json(_)
             | ReadError::NotAnArray
             | ReadError::NotAnObject
@@ -377,7 +408,8 @@ impl ReadError {
         match self {
             ReadError::Json(_) | ReadError::NotAnArray | ReadError::NotAnObject => true,
             ReadError::Io(error) => error.kind() == io::ErrorKind::InvalidData,
-            ReadError::Schema { .. }
+            ReadError::UnsupportedSavedFormat
+            | ReadError::Schema { .. }
             | ReadError::Rows(_)
             | ReadError::Identity { .. }
             | ReadError::Scope { .. }
@@ -407,9 +439,7 @@ struct HintDocument {
 }
 
 /// Read `key`'s current file under `root`: `Ok(None)` when there is no
-/// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file. A
-/// loadouts file whose rows share a name is refused
-/// ([`ReadError::SharedNames`]): the service renames them apart first.
+/// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file.
 pub(super) fn read(
     key: &StoreKey,
     root: &StateRoot,
@@ -469,6 +499,15 @@ pub(super) fn read(
             content,
         } => {
             let value: Value = serde_json::from_str(&raw)?;
+            if let Some((found_profile, found_account)) = unversioned_hint_identity(&value) {
+                if found_profile != profile || found_account != account {
+                    return Err(ReadError::Identity {
+                        profile: found_profile.to_owned(),
+                        account: found_account.to_owned(),
+                    });
+                }
+                return Err(ReadError::UnsupportedSavedFormat);
+            }
             // A field this build does not know is content a rewrite would
             // drop: the hint is read, but never rewritten (the loadouts
             // rule).
@@ -493,9 +532,7 @@ pub(super) fn read(
             match (&document.revision, &document.content) {
                 (Some(found_revision), Some(found_content))
                     if found_revision == revision && found_content == content => {}
-                // Written before r2: no scope recorded. Read under the scope
-                // that asks; the first write stamps it.
-                (None, None) => {}
+                (None, None) => return Err(ReadError::UnsupportedSavedFormat),
                 _ => {
                     return Err(ReadError::Scope {
                         revision: document.revision,
@@ -524,6 +561,23 @@ pub(super) fn read(
         }
     }
 }
+/// Profile and account from a complete pre-schema hint document. This
+/// recognizes the old envelope without copying the JSON tree, so identity
+/// mismatches still take precedence over its unsupported format.
+fn unversioned_hint_identity(value: &Value) -> Option<(&str, &str)> {
+    let fields = value.as_object()?;
+    if fields.contains_key("schema_version")
+        || fields.contains_key("revision")
+        || fields.contains_key("content")
+    {
+        return None;
+    }
+    let profile = fields.get("profile")?.as_str()?;
+    let account = fields.get("account")?.as_str()?;
+    fields.get("observed_at_unix")?.as_u64()?;
+    fields.get("rows")?.as_array()?;
+    Some((profile, account))
+}
 
 /// The largest file of `key`'s kind the service reads.
 fn max_bytes(key: &StoreKey) -> u64 {
@@ -549,10 +603,12 @@ pub(super) fn current_digest(
 }
 
 /// The rows a loadouts document holds, and whether a rewrite keeps all of
-/// it. A row the old reader skipped (malformed) is skipped here too, so a
-/// file is never refused whole for one bad row; but then the rows read are
-/// not everything the file holds, and the service never rewrites it.
+/// it. Malformed current-schema rows are skipped; because the resulting
+/// rows are not everything the file holds, the service never rewrites it.
 fn loadout_rows(raw: &str) -> Result<(Vec<Loadout>, Rewrite), ReadError> {
+    if loadouts_have_pre_0_2_8_shape(raw.as_bytes()) {
+        return Err(ReadError::UnsupportedSavedFormat);
+    }
     let Value::Array(elements) = serde_json::from_str(raw)? else {
         return Err(ReadError::NotAnArray);
     };
@@ -583,94 +639,6 @@ fn shared_names(rows: &[Loadout]) -> usize {
     rows.iter()
         .filter(|row| !seen.insert(row.name.as_str()))
         .count()
-}
-
-/// The loadouts file at `path`, read again under its lock for the one-time
-/// rename of rows that share a name: its exact text and its rows. `None`
-/// when there is no file any more or every row has a name of its own
-/// (repaired meanwhile): it is read as it is. A file this build refuses,
-/// or one holding a row it cannot write back as read (a rewrite would lose
-/// that row), is an error: it is never rewritten.
-pub(super) fn loadouts_sharing_names(path: &Path) -> io::Result<Option<(String, Vec<Loadout>)>> {
-    let text = match read_private_file(path, MAX_LOADOUTS_BYTES) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let (rows, rewrite) = loadout_rows(&text)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
-    if shared_names(&rows) == 0 {
-        return Ok(None);
-    }
-    if let Rewrite::Refused { unreadable, lossy } = rewrite {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "the file also has {unreadable} unreadable row(s) and {lossy} row(s) that would \
-                 not write back as read, which a rewrite would lose"
-            ),
-        ));
-    }
-    Ok(Some((text, rows)))
-}
-
-/// One row [`rename_apart`] renamed: its index, its name before, and its
-/// name after.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct RenamedApart {
-    pub(super) row: usize,
-    pub(super) from: String,
-    pub(super) to: String,
-}
-
-/// Give every row whose name an earlier row already has a name of its own:
-/// the second row of a name becomes `<name> (2)`, the third `<name> (3)`,
-/// and so on, skipping a suffix another row (or an earlier rename) already
-/// has. The first row of each name keeps it; every row keeps its content
-/// and its place. The same rows always get the same names. A new name stays
-/// within the bound Remove and Rename accept ([`new_name_apart`]), so every
-/// renamed row can still be edited. The renames made, in row order.
-pub(super) fn rename_apart(rows: &mut [Loadout]) -> Vec<RenamedApart> {
-    let mut taken: HashSet<String> = rows.iter().map(|row| row.name.clone()).collect();
-    let mut kept = HashSet::with_capacity(rows.len());
-    // Per name, the next suffix to try: each search starts after the last
-    // one taken, so a long run of one name costs no more than its length.
-    let mut next: HashMap<String, u64> = HashMap::new();
-    let mut renamed = Vec::new();
-    for (row, loadout) in rows.iter_mut().enumerate() {
-        if kept.insert(loadout.name.clone()) {
-            continue;
-        }
-        let suffix = next.entry(loadout.name.clone()).or_insert(2);
-        let name = loop {
-            let candidate = new_name_apart(&loadout.name, *suffix);
-            *suffix += 1;
-            if taken.insert(candidate.clone()) {
-                break candidate;
-            }
-        };
-        renamed.push(RenamedApart {
-            row,
-            from: std::mem::replace(&mut loadout.name, name.clone()),
-            to: name,
-        });
-    }
-    renamed
-}
-
-/// `<name> (<n>)`, with the name's text shortened (on a character boundary)
-/// when needed so the result, trimmed as Remove and Rename trim it, fits
-/// [`api::local_state::MAX_PREF_KEY_CHARS`] bytes.
-pub(super) fn new_name_apart(name: &str, n: u64) -> String {
-    let suffix = format!(" ({n})");
-    let body = name.trim_start();
-    let lead = &name[..name.len() - body.len()];
-    let room = api::local_state::MAX_PREF_KEY_CHARS.saturating_sub(suffix.len());
-    let mut end = body.len().min(room);
-    while !body.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{lead}{}{suffix}", &body[..end])
 }
 
 /// The bytes of the preferences file at `path` when its content is

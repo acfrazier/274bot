@@ -4,7 +4,9 @@
 use std::env;
 use std::process::ExitCode;
 
+use host_play::local_state::StateRoot;
 use host_play::passphrase::{self, Purpose};
+use host_play::saved_data::{SavedDataChoice, SavedDataRefusal, SavedDataStartup};
 use host_play::{
     open_vault, parse_profile_args, profile_password, run_with_template, set_debug, ProfileOptions,
 };
@@ -27,7 +29,7 @@ fn usage() -> ! {
          [--revision 274|289] [--host HOST] [--port PORT] \
          [--asset-host HOST] [--http-port PORT] [--engine PATH] \
          [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
-         [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] \
+         [--content DIR] [--vault PATH] [--catalog DIR] \
          [--world-members true|false] \
          [--vault-pass-stdin] [--lowmem|--highmem] [--mainland] [--debug] \
          [--user USER]... (default user: test)"
@@ -74,6 +76,33 @@ where
 }
 
 fn main() -> ExitCode {
+    let args = match parse_args_from(env::args().skip(1)) {
+        Ok(args) => args,
+        Err(msg) => {
+            eprintln!("{msg}");
+            return ExitCode::FAILURE;
+        }
+    };
+    passphrase::warn_legacy_env("host-play");
+    let home = match client::operator_home() {
+        Ok(home) => home,
+        Err(error) => {
+            eprintln!("host-play: cannot resolve saved-data root: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let root = StateRoot::new(std::path::PathBuf::from(home).join(".274bot"));
+    let startup = match SavedDataStartup::check(&root) {
+        Ok(startup) => startup,
+        Err(error) => {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(error) = startup.resolve(SavedDataChoice::Keep) {
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+        return ExitCode::FAILURE;
+    }
     #[cfg(feature = "js")]
     {
         if let Err(error) = script_js::install_cards() {
@@ -85,14 +114,6 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
-    let args = match parse_args_from(env::args().skip(1)) {
-        Ok(args) => args,
-        Err(msg) => {
-            eprintln!("{msg}");
-            return ExitCode::FAILURE;
-        }
-    };
-    passphrase::warn_legacy_env("host-play");
     // Before any slot starts: macOS defaults the soft limit to 256 open files.
     if let Some(line) = host_play::fd_limit::raise_at_startup() {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Info, "{line}");
@@ -136,6 +157,12 @@ fn main() -> ExitCode {
     let mut vault = match open_vault(&vault_path, &pass) {
         Ok(vault) => vault,
         Err(e) => {
+            if let Some(refusal) = SavedDataRefusal::from_vault_error(&e) {
+                if let Err(error) = refusal.resolve(SavedDataChoice::Keep) {
+                    api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+                }
+                return ExitCode::FAILURE;
+            }
             match e {
                 VaultError::WrongPassphrase => eprintln!("host-play: wrong passphrase"),
                 VaultError::Corrupt(msg) => eprintln!("host-play: corrupt vault: {msg}"),

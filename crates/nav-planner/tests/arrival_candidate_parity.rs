@@ -6,6 +6,7 @@
 //! provider domain, including reads outside the filter's dense square.
 
 use std::future::Future;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
@@ -17,6 +18,7 @@ use client::dash3d::CollisionFlag;
 use nav_planner::collision::WorldCollision;
 use nav_planner::world::NavWorld;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 // The frozen T1.2 policy gives the complete Route family 192 MiB. An isolated
 // arrival phase cannot exceed that complete-job reservation.
@@ -142,6 +144,22 @@ fn ordered_tile_encoding_keeps_duplicates_and_signed_coordinates() {
     assert_eq!(decode_tiles(&encode_tiles(&tiles)), tiles);
 }
 
+fn pack_digest(path: &Path) -> String {
+    let mut file = std::fs::File::open(path).expect("open the real arrival-parity nav pack");
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .expect("read the real arrival-parity nav pack");
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    format!("{:x}", digest.finalize())
+}
+
 #[test]
 #[ignore = "real-content cooperative parity; set T5W_ARRIVAL_BASELINE_DIR, T5W_ARRIVAL_PARITY_DIR, and both navpack variables"]
 #[expect(
@@ -169,10 +187,7 @@ fn cooperative_real_arrival_matches_saved_ordered_corpus() {
         let world = NavWorld::load_pack(&pack).unwrap();
         let source = baseline.join(revision);
         let expected_pack = std::fs::read_to_string(source.join("pack.sha256")).unwrap();
-        assert_eq!(
-            nav_planner::manifest::hash_file(&pack).unwrap(),
-            expected_pack
-        );
+        assert_eq!(pack_digest(&pack), expected_pack);
         let destination = capture.join(revision);
         std::fs::create_dir(&destination).unwrap();
         std::fs::write(destination.join("pack.sha256"), expected_pack).unwrap();

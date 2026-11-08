@@ -2,8 +2,10 @@
 // JS marshals arguments and the pick projection, Rust owns identity, the
 // count-dialog wait and settlement, and a queued click is not a transfer.
 
-use script::shim::InteractReq;
-use script_js::wire::{ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
+use script::interact::InteractReq;
+use script::native::snapshot_source::{
+    ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
 

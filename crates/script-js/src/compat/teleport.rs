@@ -5,8 +5,8 @@
 //! queued click is not arrival.
 
 use crate::machine::{Begin, Cx, Family, Step};
-use crate::observed::{self, Scene};
-use script::shim::InteractReq;
+use crate::scene::observed::{self, Scene};
+use script::interact::InteractReq;
 use serde::Deserialize;
 
 /// Steps after the click before an unobserved arrival is a timeout.
@@ -65,8 +65,8 @@ impl Family for Teleport {
     /// Arrival observed (Magic XP gained and tile changed).
     type Output = bool;
     fn begin(args: TeleportArgs, cx: &mut Cx<'_>) -> Begin<Self> {
-        let Some(selected) = crate::supply_v2::selected_data() else {
-            return Begin::Refuse(crate::supply_v2::GAME_DATA_UNAVAILABLE.into());
+        let Some(selected) = crate::scene::supply_v2::selected_data() else {
+            return Begin::Refuse(crate::scene::supply_v2::GAME_DATA_UNAVAILABLE.into());
         };
         if selected.teleports().is_empty() {
             return Begin::Refuse("missing selected teleports".into());
@@ -133,6 +133,9 @@ mod tests {
 
     #[test]
     fn both_selected_caches_post_the_audited_teleports() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         for rev in [ClientRevision::R274, ClientRevision::R289] {
             let data = data(rev);
             let varrock = data.teleport("Varrock").expect("Varrock");
@@ -163,7 +166,10 @@ mod tests {
 
     #[test]
     fn missing_controls_do_not_invent_a_button() {
-        crate::supply_v2::configure(None);
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        crate::scene::supply_v2::configure(None);
         assert_eq!(
             machine::start("teleport", json!({ "name": "Varrock" }), Vec::new(), 0),
             Started::Refused(
@@ -171,7 +177,7 @@ mod tests {
                     .into()
             )
         );
-        crate::supply_v2::configure(Some(data(ClientRevision::R274)));
+        crate::scene::supply_v2::configure(Some(data(ClientRevision::R274)));
         assert_eq!(
             machine::start("teleport", json!({ "name": "Nowhere" }), Vec::new(), 0),
             Started::Settled(Outcome::Done(json!(false)))

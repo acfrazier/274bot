@@ -10,7 +10,9 @@
 mod facts;
 mod geometry;
 mod input;
+pub mod odds;
 mod replay;
+mod timeline;
 use api::condition::PoisonState;
 use api::WorldTile;
 pub(crate) use facts::poison_unknown_v_rows;
@@ -24,8 +26,8 @@ pub use geometry::{build_plan, RoutePath};
 pub use input::*;
 use nav_planner::contract::{BoundZoneKey, ContractError, PackId, ZoneKey, ZoneTableView};
 pub use replay::{
-    admission_passes, admission_passes_cooperative, assess, assess_cooperative, candidate_cost,
-    eat_line, estimated_floor, replay, Estimate, Grants, ReplayResult,
+    assess, assess_cooperative, candidate_cost, eat_line, estimated_floor, replay, Estimate,
+    Grants, PoisonTest, ReplayResult,
 };
 use std::future::Future;
 use std::sync::Arc;
@@ -95,19 +97,10 @@ pub fn assessment_heap_bounds() -> Option<RiskHeapBounds> {
     })
 }
 
-/// Worst-case total heap while admission retains an assessment and its
-/// temporary projected replay plan and crossing-obligation bitset. Projection
-/// uses exact capacities and cannot allocate a second store while shrinking.
+/// Worst-case total heap while the host retains an assessment. Admission no
+/// longer projects a second plan or crossing-obligation bitset.
 pub fn admission_peak_heap_bytes() -> Option<usize> {
-    let projected_rows = MAX_PLAN_ROWS.checked_mul(std::mem::size_of::<ZoneInterval>())?;
-    let projected_crossings = MAX_PLAN_ROWS.checked_mul(std::mem::size_of::<CrossingGeom>())?;
-    let projected_plan = projected_rows.checked_add(projected_crossings)?;
-    let mask_words = MAX_PLAN_ROWS.div_ceil(64);
-    let mask = mask_words.checked_mul(std::mem::size_of::<u64>())?;
-    assessment_heap_bounds()?
-        .peak_bytes
-        .checked_add(projected_plan)?
-        .checked_add(mask)
+    Some(assessment_heap_bounds()?.peak_bytes)
 }
 
 /// A facade refusal: the route, plan, key or exemption belongs to another
@@ -128,6 +121,10 @@ pub mod consts {
     pub const PACE_AHEAD: u16 = 2;
     pub const TOPUP_WINDOW: i32 = 30;
     pub const POISON_PERIOD: i32 = 30;
+    /// Admitted chance of death over one route (operator Q1, 2026-10-29).
+    pub const DEATH_BOUND: f64 = 0.01;
+    /// Shared cap for scheduled attacks, fixed hazards and poison pulses.
+    pub const MAX_EVENTS: usize = 2048;
 }
 
 /// A validated engine coordinate, preserving all supported world tiles in 4 B.
@@ -320,6 +317,10 @@ pub struct RouteAssessment {
     pub supplies: Box<[SupplyNeed]>,
     pub hp_after: u8,
     pub volley: u8,
+    /// Conservative no-action probability of death over the assessed timeline.
+    pub bound: f64,
+    /// How unknown poison affected the admission bound, if it was relevant.
+    pub poison_test: PoisonTest,
     pub input: RiskInput,
     pub generation: u64,
     pub reason: Arc<str>,

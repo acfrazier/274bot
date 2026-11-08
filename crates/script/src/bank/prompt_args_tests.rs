@@ -26,16 +26,16 @@
 //!   id 3473, `black_kiteshield_trim` id 2589, `black_kiteshield_gold`
 //!   id 2597, `agilityarena_ticket` id 2996. All five measure 20 bytes.
 //! - Bank object `Shantay chest` (13 bytes). Provenance:
-//!   `crates/api/data/game-data/bank-catalog.rs:19` (Shantay Pass object) and
+//!   `crates/api/data/game-data/bank-catalog.json` (Shantay Pass object) and
 //!   `289.json` `loc_names` id 2693 display `Shantay chest`. `Bank booth`
 //!   (10 bytes) with op `Use-quickly` (11 bytes) is the longest opener pair;
 //!   provenance `bank/seat_open.rs:1788-1790` defaults and fixtures such as
 //!   `crates/script/tests/named_bank_approach.rs:303-305`.
 //! - Banker `Gnome banker` (12 bytes). Provenance: `289.json` `npc_names`
 //!   id 166 display `Gnome banker` config `gnomebanker` ops Talk-to/Bank.
-//!   The frozen catalog bankers `Banker`/`Gundai` (`bank-catalog.rs:16-20`)
+//!   The frozen catalog bankers `Banker`/`Gundai` (`bank-catalog.json`)
 //!   are shorter (6 bytes) and also covered.
-//! - Counter stand `(3308, 3120)`. Provenance: `bank-catalog.rs:19` Shantay
+//! - Counter stand `(3308, 3120)`. Provenance: `bank-catalog.json` Shantay
 //!   Pass tile `(3308, 3120, 0)`; any real 4-digit bank tile encodes the same.
 //!
 //! Measured largest: 72 bytes encoded for the stepping-to-counter log with a
@@ -75,7 +75,7 @@ const LONGEST_ITEMS: &[&str] = &[
 const LONGEST_ITEM_ID: i32 = 3472;
 
 /// Longest frozen-catalog bank object name (13 bytes).
-/// Provenance: `bank-catalog.rs:19` and `289.json` `loc_names` id 2693.
+/// Provenance: `bank-catalog.json` Shantay Pass and `289.json` `loc_names` id 2693.
 const LONGEST_BANK_OBJECT: &str = "Shantay chest";
 
 /// Default booth name/op pair (10 + 11 bytes); longest opener combination.
@@ -89,7 +89,7 @@ const BOOTH_OP: &str = "Use-quickly";
 const LONGEST_BANKER: &str = "Gnome banker";
 
 /// Real Shantay Pass stand from the frozen catalog.
-/// Provenance: `bank-catalog.rs:19` tile `(3308, 3120, 0)`.
+/// Provenance: `bank-catalog.json` Shantay Pass tile `(3308, 3120, 0)`.
 const STAND_X: i32 = 3308;
 
 const STAND_Z: i32 = 3120;

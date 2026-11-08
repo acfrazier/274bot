@@ -18,7 +18,7 @@ impl Gatherer {
             && (self.retained.recovery != RecoveryState::Idle || !self.retained.haul_since_death);
         self.cancel_active();
         self.trip = TripStep::Idle;
-        self.selected_bank = None;
+        self.scratch.selected_bank = None;
         self.scratch.withdrawals = None;
         self.supply_missing = None;
         self.observed_progress = None;
@@ -31,6 +31,7 @@ impl Gatherer {
         self.respawn_settle = None;
         self.proving_runs = 0;
         self.recovery_reprovisions = 0;
+        self.scratch.return_stall_recovery.reset();
         self.needs_validate = true;
         self.retained.deaths = self.retained.deaths.saturating_add(1);
         self.retained.haul_since_death = false;
@@ -46,6 +47,43 @@ impl Gatherer {
                 "death observed; Start again after reviewing recovery settings",
             );
         }
+    }
+
+    // Keep recovery's prepared-food bite separate so an unmet need cannot stop its supply trip.
+    fn begin_recovery_eat(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        let Some(food) = &self.prepared.supply.food else {
+            return false;
+        };
+        let snapshot = tick.cx.snapshot();
+        let (Some(stats), Some(inventory)) = (snapshot.stats(), snapshot.inventory()) else {
+            return false;
+        };
+        let Some(hp) = stats.value.iter().find(|stat| stat.index == 3) else {
+            return false;
+        };
+        let below = if self.settings().eat_below == 0 {
+            hp.base.saturating_add(1) / 2
+        } else {
+            self.settings().eat_below
+        };
+        let held = inventory
+            .value
+            .iter()
+            .filter(|row| row.def.id == food.id)
+            .map(|row| row.count)
+            .sum::<i32>();
+        if hp.effective > below || held == 0 || !self.fence.reserve(1) {
+            return false;
+        }
+        let args = OneOpArgs::eat(&food.name, food.id, held);
+        match tick.actions.begin::<OneOp>(args, &mut tick.cx) {
+            Ok(handle) => {
+                self.active = Active::Tend(handle);
+                self.set_event("eating at boundary");
+            }
+            Err(error) => self.action_failure(error),
+        }
+        true
     }
 
     pub(super) fn poll_recovery(&mut self, tick: &mut NativeTick<'_>) {
@@ -111,7 +149,7 @@ impl Gatherer {
         if self.failure.is_some() {
             return;
         }
-        if self.begin_eat(tick) {
+        if self.begin_recovery_eat(tick) {
             return;
         }
         match step {

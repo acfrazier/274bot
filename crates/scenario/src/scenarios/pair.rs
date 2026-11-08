@@ -105,12 +105,116 @@ struct ClueSlotWitness {
     returned: bool,
 }
 
+/// The clue solver's reward-bank record, in the snapshot ticks of the host log
+/// (`seat-page tick=`, `native-packet ... tick=`), so each field lines up with
+/// the host's receipts. The reward ids are the pack's new items when the casket
+/// opened; every other id of the solver's initial pack is its equipment.
+/// Read-only reporting state: no witness latch reads it.
+#[derive(Default)]
+struct ClueBankRecord {
+    /// The bank counts of the watched ids at the previous loaded observation.
+    banked: Vec<(i32, i32)>,
+    baselined: bool,
+    bank_opened: Option<u32>,
+    reward_first: Option<u32>,
+    reward_last: Option<u32>,
+    reward_rises: u32,
+    equipment_first: Option<u32>,
+    equipment_last: Option<u32>,
+    equipment_rises: u32,
+    /// The first observation of the bank closed after a reward deposit.
+    closed: Option<u32>,
+    /// The first tick of the trailing status wait.
+    status_from: Option<u32>,
+}
+
+impl ClueBankRecord {
+    /// One observation of the solver at `tick`: `open` is whether a bank modal
+    /// is up, `bank` reads the open and loaded bank's count of an id (`None`:
+    /// no loaded bank).
+    fn observe(
+        &mut self,
+        tick: u32,
+        open: bool,
+        bank: Option<&dyn Fn(i32) -> i32>,
+        reward_ids: &[i32],
+        initial: &[(i32, i32)],
+    ) {
+        if let Some(bank) = bank {
+            self.bank_opened.get_or_insert(tick);
+            let equipment = initial.iter().map(|(id, _)| *id);
+            let watched: Vec<i32> = reward_ids
+                .iter()
+                .copied()
+                .chain(equipment.filter(|id| !reward_ids.contains(id)))
+                .collect();
+            for id in watched {
+                let now = bank(id);
+                let before = self
+                    .banked
+                    .iter()
+                    .find(|(seen, _)| *seen == id)
+                    .map(|(_, count)| *count);
+                match self.banked.iter_mut().find(|(seen, _)| *seen == id) {
+                    Some((_, count)) => *count = now,
+                    None => self.banked.push((id, now)),
+                }
+                // The first loaded observation is the baseline, never a
+                // deposit: a bank may hold older stock.
+                if !self.baselined || before.is_none_or(|before| now <= before) {
+                    continue;
+                }
+                if reward_ids.contains(&id) {
+                    self.reward_first.get_or_insert(tick);
+                    self.reward_last = Some(tick);
+                    self.reward_rises += 1;
+                } else {
+                    self.equipment_first.get_or_insert(tick);
+                    self.equipment_last = Some(tick);
+                    self.equipment_rises += 1;
+                }
+            }
+            self.baselined = true;
+        }
+        if !open && self.reward_first.is_some() {
+            self.closed.get_or_insert(tick);
+        }
+    }
+
+    /// The trailing status wait: `true` once `ticks` observed ticks have
+    /// passed since its first call. It starts when the oracle's own close
+    /// step has ended, so it counts from the observed close and needs no
+    /// latch of the record to be set.
+    fn status_wait_done(&mut self, tick: u32, ticks: u32) -> bool {
+        let from = *self.status_from.get_or_insert(tick);
+        tick >= from + ticks
+    }
+
+    fn summary(&self, reward_ids: &[i32]) -> String {
+        let tick = |tick: Option<u32>| tick.map_or_else(|| "none".to_owned(), |t| t.to_string());
+        format!(
+            "clue bank record (snapshot ticks): reward_ids={reward_ids:?} bank_opened={} \
+             reward_deposit first={} last={} rises={} equipment_deposit first={} last={} \
+             rises={} bank_closed={}",
+            tick(self.bank_opened),
+            tick(self.reward_first),
+            tick(self.reward_last),
+            self.reward_rises,
+            tick(self.equipment_first),
+            tick(self.equipment_last),
+            self.equipment_rises,
+            tick(self.closed),
+        )
+    }
+}
+
 #[derive(Default)]
 struct ClueFleetWitness {
     started: bool,
     slots: [ClueSlotWitness; 2],
     reward_ids: Vec<i32>,
     reward_banked: bool,
+    bank: ClueBankRecord,
 }
 
 impl ClueFleetWitness {
@@ -189,6 +293,24 @@ impl ClueFleetWitness {
         if slot_index == 0 && snap.bank_component_id() >= 0 && snap.bank_loaded() {
             self.reward_banked |= self.reward_ids.iter().any(|id| pair_bank_id(snap, *id) > 0);
         }
+        if slot_index == 0 {
+            let in_bank = |id| pair_bank_id(snap, id);
+            let open = snap.bank_component_id() >= 0;
+            let bank_loaded = open && snap.bank_loaded();
+            self.bank.observe(
+                snap.tick(),
+                open,
+                bank_loaded.then_some(&in_bank as &dyn Fn(i32) -> i32),
+                &self.reward_ids,
+                &self.slots[0].initial_inv,
+            );
+        }
+    }
+
+    /// The solver's bank record for the receipt (deferred-acceptance item 7
+    /// of the native seat answer wake): read-only, never a gate.
+    fn terminal_summary(&self) -> String {
+        self.bank.summary(&self.reward_ids)
     }
 
     fn identities_ready(&self) -> bool {
@@ -1039,7 +1161,10 @@ pub(crate) fn script_trade_scenario() -> Scenario {
             profile: 1,
             per_frame: {
                 let mut slot = TradeAcceptSlot::default();
-                Box::new(move |c| trade_acceptor_frame(c, &mut slot))
+                Box::new(move |c| {
+                    trade_acceptor_frame(c, &mut slot);
+                    false
+                })
             },
         }],
         settings: ScenarioSettings {
@@ -1190,6 +1315,10 @@ struct PairCompanionSlot {
     kq_witness: Option<Arc<Mutex<KqFleetWitness>>>,
     prep_barrier: Option<PairPrepBarrier>,
     tutorial_reseed: Option<crate::tutorial::PostRelogTutorial>,
+    /// This frame pressed the logout; the host must post the slot's explicit
+    /// Login because a bot with no script stays parked after its exit. The
+    /// companion hook returns it once and clears it.
+    login_wanted: bool,
 }
 
 impl PairCompanionSlot {
@@ -1210,6 +1339,7 @@ impl PairCompanionSlot {
             kq_witness: None,
             prep_barrier: None,
             tutorial_reseed: None,
+            login_wanted: false,
         }
     }
 }
@@ -1248,6 +1378,10 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
                     slot.logout_session = c.gens.session;
                     slot.last_action = now;
                     slot.stage = PairPrepStage::WaitRelog;
+                    // The companion has no script during prep, so the
+                    // approved scriptless policy parks it after this exit.
+                    // Ask the host for the operator's explicit Login.
+                    slot.login_wanted = true;
                 }
             }
         }
@@ -1802,12 +1936,21 @@ fn pair_watch_settings_with_deadline(
     }
 }
 
+/// Box the pair companion's client-cycle hook and surface its one-shot host
+/// login request (the prep relog's logout needs the operator Login).
+fn pair_companion_hook(mut slot: PairCompanionSlot) -> Box<dyn FnMut(&mut Client) -> bool + Send> {
+    Box::new(move |c| {
+        pair_companion_frame(c, &mut slot);
+        std::mem::take(&mut slot.login_wanted)
+    })
+}
+
 fn pair_companion(kind: PairCompanionKind) -> Companion {
     Companion {
         profile: 1,
         per_frame: {
-            let mut slot = PairCompanionSlot::new(kind);
-            Box::new(move |c| pair_companion_frame(c, &mut slot))
+            let slot = PairCompanionSlot::new(kind);
+            pair_companion_hook(slot)
         },
     }
 }
@@ -1817,7 +1960,7 @@ fn pair_prep_companion(kind: PairCompanionKind, prep_barrier: PairPrepBarrier) -
         per_frame: {
             let mut slot = PairCompanionSlot::new(kind);
             slot.prep_barrier = Some(prep_barrier);
-            Box::new(move |c| pair_companion_frame(c, &mut slot))
+            pair_companion_hook(slot)
         },
     }
 }
@@ -1831,7 +1974,7 @@ fn clue_witness_companion(
             let mut slot = PairCompanionSlot::new(PairCompanionKind::ClueHelper);
             slot.clue_witness = Some(witness);
             slot.prep_barrier = Some(prep_barrier);
-            Box::new(move |c| pair_companion_frame(c, &mut slot))
+            pair_companion_hook(slot)
         },
     }
 }
@@ -1849,7 +1992,7 @@ fn kq_witness_companion(
             slot.kq_has_pass = profile <= 1;
             slot.kq_witness = Some(witness);
             slot.prep_barrier = Some(prep_barrier);
-            Box::new(move |c| pair_companion_frame(c, &mut slot))
+            pair_companion_hook(slot)
         },
     }
 }
@@ -2360,21 +2503,52 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.complete()
             }),
-            summary: None,
+            summary: clue_terminal_summary(&witness),
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
             budget_ticks: 900,
         },
     });
+    // The close step sends nothing to the game. It is a `Repeat` so that the
+    // solver's pack and bank are still observed once per game tick until the
+    // bank closes; the arm and the 120-tick budget are the oracle's own.
+    let close_witness = Arc::clone(&witness);
     steps.push(Step {
         name: "watch ClueSolver close the reward bank",
-        kind: StepKind::Perform {
-            send: Box::new(|_, _| true),
+        kind: StepKind::Repeat {
+            send: Box::new(move |_, snap| {
+                close_witness
+                    .lock()
+                    .expect("clue witness mutex")
+                    .observe(0, snap);
+                true
+            }),
         },
         wait: Wait {
             arm: Proof::BankClosed,
             budget_ticks: 120,
+        },
+    });
+    // Contract item 7 asks for ClueSolver's next status after the close. The
+    // script moves on in the game tick that follows the close, so the run
+    // observes three more game ticks (the host log prints the status the
+    // script paints). It gates nothing: the oracle is the close above.
+    let status_witness = Arc::clone(&witness);
+    steps.push(Step {
+        name: "observe ClueSolver's next status after the bank closes",
+        kind: StepKind::Await {
+            evidence: "clue_solver_next_status_after_close",
+            ready: Box::new(move |snap| {
+                let mut witness = status_witness.lock().expect("clue witness mutex");
+                witness.observe(0, snap);
+                witness.bank.status_wait_done(snap.tick(), 3)
+            }),
+            summary: clue_terminal_summary(&witness),
+        },
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks: 30,
         },
     });
     Scenario {
@@ -2405,6 +2579,21 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
             ..Default::default()
         },
     }
+}
+
+/// The clue witness step's read-only terminal summary: the solver's reward
+/// deposits and equipment deposits in snapshot ticks, read at terminal time
+/// only, on a pass and on a failure alike.
+fn clue_terminal_summary(
+    witness: &Arc<Mutex<ClueFleetWitness>>,
+) -> Option<Box<dyn Fn() -> String + Send + Sync>> {
+    let witness = Arc::clone(witness);
+    Some(Box::new(move || {
+        witness
+            .lock()
+            .expect("clue witness mutex")
+            .terminal_summary()
+    }))
 }
 
 /// The KQ witness steps' read-only terminal summary closure: one
@@ -2763,7 +2952,7 @@ mod prep_barrier_tests {
 
 #[cfg(test)]
 mod clue_witness_tests {
-    use super::ClueFleetWitness;
+    use super::{ClueBankRecord, ClueFleetWitness};
     use api::snapshot::GameSnapshot;
     use client::client::{Client, ClientPlayer};
     use client::io::ServerProt;
@@ -2810,6 +2999,91 @@ mod clue_witness_tests {
         assert!(!witness.slots[0].saw_peer, "a stranger is not the helper");
         witness.observe(0, &seen("Solver", &["Stranger", "helper one"]));
         assert!(witness.slots[0].saw_peer, "the helper by its own name");
+    }
+
+    /// One solver observation at `tick`: `bank` is the loaded bank's rows
+    /// (`None`: no loaded bank, the modal closed). Counts are by id.
+    fn record(
+        record: &mut ClueBankRecord,
+        tick: u32,
+        bank: Option<&[(i32, i32)]>,
+        reward_ids: &[i32],
+        initial: &[(i32, i32)],
+    ) {
+        let count = |rows: &[(i32, i32)], id: i32| {
+            rows.iter()
+                .filter(|(row, _)| *row == id)
+                .map(|(_, n)| *n)
+                .sum::<i32>()
+        };
+        match bank {
+            Some(rows) => {
+                let in_bank = |id| count(rows, id);
+                record.observe(tick, true, Some(&in_bank), reward_ids, initial);
+            }
+            None => record.observe(tick, false, None, reward_ids, initial),
+        }
+    }
+
+    /// Contract item 7 (native seat answer wake): the record separates the
+    /// first reward deposit from the final one, and both from the initial
+    /// equipment's deposits, in snapshot ticks; an older bank stock is a
+    /// baseline, never a deposit.
+    #[test]
+    fn the_bank_record_separates_reward_deposits_from_equipment_deposits() {
+        const COINS: i32 = 995;
+        const DAGGER: i32 = 1231;
+        const SHORTBOW: i32 = 861;
+        const RUNE_DAGGER: i32 = 1213;
+        let initial = [(COINS, 1_000), (DAGGER, 1)];
+        let rewards = [SHORTBOW, RUNE_DAGGER];
+        let mut bank = ClueBankRecord::default();
+        // No loaded bank: nothing is recorded.
+        record(&mut bank, 30, None, &rewards, &initial);
+        assert!(bank.summary(&rewards).contains("bank_opened=none"));
+        // Older stock of a watched id is the baseline of the first loaded
+        // observation, never a deposit.
+        record(&mut bank, 40, Some(&[(DAGGER, 3)]), &rewards, &initial);
+        record(&mut bank, 41, Some(&[(DAGGER, 4)]), &rewards, &initial);
+        record(
+            &mut bank,
+            42,
+            Some(&[(DAGGER, 4), (SHORTBOW, 1)]),
+            &rewards,
+            &initial,
+        );
+        let summary = bank.summary(&rewards);
+        assert!(summary.contains("bank_opened=40"), "{summary}");
+        assert!(
+            summary.contains("reward_deposit first=42 last=42 rises=1"),
+            "{summary}"
+        );
+        record(
+            &mut bank,
+            45,
+            Some(&[(DAGGER, 4), (SHORTBOW, 1), (RUNE_DAGGER, 1)]),
+            &rewards,
+            &initial,
+        );
+        let summary = bank.summary(&rewards);
+        assert!(
+            summary.contains("reward_deposit first=42 last=45 rises=2"),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("equipment_deposit first=41 last=41 rises=1"),
+            "{summary}"
+        );
+        assert!(summary.contains("reward_ids=[861, 1213]"), "{summary}");
+        // The close before any reward deposit was not a close of the reward
+        // bank; the first one after it is.
+        assert!(summary.contains("bank_closed=none"), "{summary}");
+        record(&mut bank, 47, None, &rewards, &initial);
+        record(&mut bank, 48, None, &rewards, &initial);
+        assert!(bank.summary(&rewards).contains("bank_closed=47"));
+        assert!(!bank.status_wait_done(48, 2), "the wait starts at tick 48");
+        assert!(!bank.status_wait_done(49, 2));
+        assert!(bank.status_wait_done(50, 2));
     }
 
     #[test]

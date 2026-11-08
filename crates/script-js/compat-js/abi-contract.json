@@ -13126,7 +13126,7 @@
         "opts"
       ],
       "reason": "Native walker defaults its options while retaining the frozen typed option fields.",
-      "runtime": "crates/script-js/src/shim/traversal.js:51",
+      "runtime": "crates/script-js/src/shim/traversal.js:57",
       "family_id": "walking",
       "nav_consuming": true
     },
@@ -13640,7 +13640,7 @@
       "selector": "Traversal.remaining",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/traversal.js:93",
+      "runtime": "crates/script-js/src/shim/traversal.js:105",
       "async": false,
       "family_id": "walking",
       "nav_consuming": true
@@ -13651,7 +13651,7 @@
       "selector": "Traversal.requestRepath",
       "operation": "not-impl",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-      "runtime": "crates/script-js/src/shim/traversal.js:99",
+      "runtime": "crates/script-js/src/shim/traversal.js:111",
       "async": false,
       "family_id": "walking",
       "nav_consuming": true
@@ -23590,7 +23590,7 @@
       "selector": "Traversal.remaining",
       "module": "api/walking/Traversal.js",
       "state": "not-impl",
-      "source": "crates/script-js/src/shim/traversal.js:93",
+      "source": "crates/script-js/src/shim/traversal.js:105",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
       "overlay_id": "not-impl:api/walking/Traversal.js:Traversal.remaining"
     },
@@ -23600,7 +23600,7 @@
       "selector": "Traversal.requestRepath",
       "module": "api/walking/Traversal.js",
       "state": "not-impl",
-      "source": "crates/script-js/src/shim/traversal.js:99",
+      "source": "crates/script-js/src/shim/traversal.js:111",
       "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
       "overlay_id": "not-impl:api/walking/Traversal.js:Traversal.requestRepath"
     },

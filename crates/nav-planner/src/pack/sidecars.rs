@@ -1,5 +1,4 @@
 use super::*;
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::sync::Arc;
 
@@ -16,11 +15,11 @@ pub const VERSION_FLAGS: u8 = 1;
 /// Flags sidecar magic.
 pub const MAGIC_FLAGS: &[u8; 4] = b"274F";
 /// Paint-reach sidecar format version.
-pub const VERSION_REACH: u8 = 1;
+pub const VERSION_REACH: u8 = 2;
 /// Paint-reach sidecar magic.
 pub const MAGIC_REACH: &[u8; 4] = b"274R";
 /// Static canlight sidecar format version.
-pub const VERSION_CANLIGHT: u8 = 1;
+pub const VERSION_CANLIGHT: u8 = 2;
 /// Static canlight sidecar magic.
 pub const MAGIC_CANLIGHT: &[u8; 4] = b"274L";
 
@@ -50,11 +49,8 @@ pub fn decode_flags_sidecar_arc(
 ///
 /// Peak owned memory is the decoded word buffer (plus a small read chunk and
 /// the final Arc), not a full-file `Vec<u8>` living beside a decoded `Vec<u32>`
-/// and a third Arc copy. When `hash` is true, content SHA-256 is accumulated
-/// during the same pass so external identity checks do not re-read the file.
-/// Trusted bundled callers pass `hash: false` and skip the 260 MB digest
-/// entirely (bake-time identity already bound the path).
-pub fn read_flags_sidecar(path: &Path, hash: bool) -> Result<FlagsSidecarLoad, PackError> {
+/// and a third Arc copy.
+pub fn read_flags_sidecar(path: &Path) -> Result<FlagsSidecarLoad, PackError> {
     let mut file = fs::File::open(path).map_err(PackError::Io)?;
     let file_len = file.metadata().map_err(PackError::Io)?.len() as usize;
     if file_len < FLAGS_HEADER_LEN {
@@ -69,10 +65,6 @@ pub fn read_flags_sidecar(path: &Path, hash: bool) -> Result<FlagsSidecarLoad, P
         return Err(PackError::Truncated);
     }
     let word_count = payload_len / 4;
-    let mut digest = hash.then(Sha256::new);
-    if let Some(d) = digest.as_mut() {
-        d.update(header);
-    }
 
     // One payload-sized allocation: stream LE bytes straight into u32 words.
     let mut words = Vec::with_capacity(word_count);
@@ -83,16 +75,12 @@ pub fn read_flags_sidecar(path: &Path, hash: bool) -> Result<FlagsSidecarLoad, P
         let n = remaining.min(FLAGS_READ_CHUNK);
         file.read_exact(&mut chunk[..n])
             .map_err(|_| PackError::Truncated)?;
-        if let Some(d) = digest.as_mut() {
-            d.update(&chunk[..n]);
-        }
         for word in chunk[..n].as_chunks::<4>().0 {
             words.push(u32::from_le_bytes(*word));
         }
         remaining -= n;
     }
     debug_assert_eq!(words.len(), word_count);
-    let content_sha256 = digest.map(|d| format!("{:x}", d.finalize()));
     // Wrap the sole payload buffer; Arc owns the Vec header and shares the
     // existing word allocation (no second payload-sized copy into Arc<[u32]>).
     let flags = Arc::new(words);
@@ -101,7 +89,6 @@ pub fn read_flags_sidecar(path: &Path, hash: bool) -> Result<FlagsSidecarLoad, P
         width,
         height,
         flags,
-        content_sha256,
     })
 }
 
@@ -113,8 +100,6 @@ pub struct FlagsSidecarLoad {
     pub height: usize,
     /// Single resident payload; Arc shares the Vec without re-copying words.
     pub flags: Arc<Vec<u32>>,
-    /// Lowercase hex SHA-256 of the on-disk bytes when `hash` was requested.
-    pub content_sha256: Option<String>,
 }
 
 fn flags_header_and_payload(bytes: &[u8]) -> Result<(WorldTile, usize, usize, &[u8]), PackError> {
@@ -178,16 +163,13 @@ pub(super) fn decode_u32le_words(payload: &[u8]) -> Vec<u32> {
     flags
 }
 
-/// Decoded paint-reach sidecar: geometry, word count, pack-identity binding
-/// and the `bake_reach` bitset. Geometry alone is not identity — the binding
-/// is the SHA-256 of the pack that produced the bits.
+/// Decoded paint-reach sidecar: geometry, word count and the `bake_reach` bitset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReachSidecar {
     pub origin: WorldTile,
     pub width: usize,
     pub height: usize,
     pub word_count: usize,
-    pub binding: [u8; 32],
     pub bits: Vec<u64>,
 }
 
@@ -198,24 +180,22 @@ pub struct ReachSidecarLoad {
     pub width: usize,
     pub height: usize,
     pub word_count: usize,
-    pub binding: [u8; 32],
     pub bits: Arc<[u64]>,
 }
 
-/// Validated bitset geometry and binding, without retaining payload words.
+/// Validated bitset geometry and word count, without retaining payload words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReachSidecarHeader {
     pub origin: WorldTile,
     pub width: usize,
     pub height: usize,
     pub word_count: usize,
-    pub binding: [u8; 32],
 }
 
 /// Static canlight uses the same streaming result layout as paint reach.
 pub type CanlightSidecarLoad = ReachSidecarLoad;
 
-/// Hex form of a 32-byte SHA-256 (lowercase), matching [`crate::manifest::hash_bytes`].
+/// Hex form of a 32-byte SHA-256 digest.
 pub fn sha256_hex(bytes: &[u8; 32]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(64);
@@ -241,8 +221,7 @@ pub fn sha256_from_hex(hex: &str) -> Result<[u8; 32], String> {
 
 /// Deserialize a paint-reach sidecar, validating magic, version, grid
 /// header, word count and that the trailing payload is exactly that many
-/// `u64le` words. Binding bytes are not interpreted here — the caller
-/// compares them to the pack identity.
+/// `u64le` words.
 pub fn decode_reach_sidecar(bytes: &[u8]) -> Result<ReachSidecar, PackError> {
     decode_bitset_sidecar(bytes, MAGIC_REACH, VERSION_REACH)
 }
@@ -256,15 +235,14 @@ pub fn read_reach_sidecar(
     read_bitset_sidecar(reader, length, MAGIC_REACH, VERSION_REACH)
 }
 
-/// Read and validate paint-reach metadata and exact payload length, leaving
-/// the reader at the payload. Callers must consume/hash the remaining bytes
-/// before trusting the content identity.
+/// Read and validate paint-reach geometry and payload length, leaving the
+/// reader at the payload for a later lazy load.
 pub fn read_reach_sidecar_header(
     reader: &mut impl BufRead,
     length: usize,
 ) -> Result<ReachSidecarHeader, PackError> {
     let mut r = BoundedReader::new(reader, length);
-    let (origin, width, height, word_count, binding) =
+    let (origin, width, height, word_count) =
         read_bitset_header(&mut r, MAGIC_REACH, VERSION_REACH)?;
     if r.remaining() != word_count.checked_mul(8).ok_or(PackError::Truncated)? {
         return Err(PackError::Truncated);
@@ -274,16 +252,13 @@ pub fn read_reach_sidecar_header(
         width,
         height,
         word_count,
-        binding,
     })
 }
 
-/// Decoded static canlight sidecar. Same geometry as [`ReachSidecar`]; the
-/// binding is pack+policy identity, not pack SHA alone.
+/// Decoded static canlight sidecar. Same geometry as [`ReachSidecar`].
 pub type CanlightSidecar = ReachSidecar;
 
-/// Deserialize a static canlight sidecar. Binding bytes are not interpreted
-/// here — the caller compares them to pack+policy identity.
+/// Deserialize a static canlight sidecar using its ordinary format checks.
 pub fn decode_canlight_sidecar(bytes: &[u8]) -> Result<CanlightSidecar, PackError> {
     decode_bitset_sidecar(bytes, MAGIC_CANLIGHT, VERSION_CANLIGHT)
 }
@@ -302,7 +277,7 @@ pub(super) fn decode_bitset_sidecar(
     expected_version: u8,
 ) -> Result<ReachSidecar, PackError> {
     let mut r = Cursor::new(bytes);
-    let (origin, width, height, word_count, binding) =
+    let (origin, width, height, word_count) =
         read_bitset_header(&mut r, expected_magic, expected_version)?;
     let payload = &bytes[r.position() as usize..];
     let payload_len = word_count.checked_mul(8).ok_or(PackError::Truncated)?;
@@ -314,7 +289,6 @@ pub(super) fn decode_bitset_sidecar(
         width,
         height,
         word_count,
-        binding,
         bits: decode_u64le_words(payload),
     })
 }
@@ -326,7 +300,7 @@ fn read_bitset_sidecar(
     expected_version: u8,
 ) -> Result<ReachSidecarLoad, PackError> {
     let mut r = BoundedReader::new(reader, length);
-    let (origin, width, height, word_count, binding) =
+    let (origin, width, height, word_count) =
         read_bitset_header(&mut r, expected_magic, expected_version)?;
     let payload_len = word_count.checked_mul(8).ok_or(PackError::Truncated)?;
     if r.remaining() != payload_len {
@@ -356,7 +330,6 @@ fn read_bitset_sidecar(
         width,
         height,
         word_count,
-        binding,
         bits,
     })
 }
@@ -365,7 +338,7 @@ fn read_bitset_header<R: PackRead>(
     r: &mut R,
     expected_magic: &[u8; 4],
     expected_version: u8,
-) -> Result<(WorldTile, usize, usize, usize, [u8; 32]), PackError> {
+) -> Result<(WorldTile, usize, usize, usize), PackError> {
     let mut magic = [0u8; 4];
     r.read_bytes_exact(&mut magic)?;
     if &magic != expected_magic {
@@ -388,9 +361,7 @@ fn read_bitset_header<R: PackRead>(
         )));
     }
     let word_count = read_u32(r)? as usize;
-    let mut binding = [0u8; 32];
-    r.read_bytes_exact(&mut binding)?;
-    Ok((origin, width, height, word_count, binding))
+    Ok((origin, width, height, word_count))
 }
 
 /// Bulk little-endian `u64` words from a length-checked payload (`len % 8 == 0`).

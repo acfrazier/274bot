@@ -7,15 +7,18 @@ use api::identity::RequestId;
 use api::script_contract::ChildOrigin;
 
 use script::bank::request::BankSeatOperation;
+use script::interact::InteractReq;
 use script::native::request::NativeKind;
 use script::native::seat::SeatEntry;
 use script::native::NativePhase;
-use script::shim::InteractReq;
-use script_js::wire::{
-    BankApproachInput, BankStandInput, ItemRowInput, NativeFactsInput, ReachViewInput,
-    SeatLiveDetails, SeatPageInput, SeatStartArgs, SnapshotInput, StatInput, TileInput,
-};
 use script_js::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
+use {
+    script::native::seat_rows::{SeatLiveDetails, SeatPageInput, SeatStartArgs},
+    script::native::snapshot_source::{
+        BankApproachInput, BankStandInput, ItemRowInput, NativeFactsInput, ReachViewInput,
+        SnapshotInput, StatInput, TileInput,
+    },
+};
 
 fn example(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -47,6 +47,14 @@
         }
       ]
     },
+    "prereq": {
+      "$ref": "#/$defs/PathPrereqDocument",
+      "description": "Request-level prerequisite overrides applied to every walk in this Path.",
+      "default": {
+        "dialogue": null,
+        "quest_start": null
+      }
+    },
     "quest": {
       "anyOf": [
         {
@@ -150,6 +158,28 @@
         "Phoenix",
         "BlackArm"
       ]
+    },
+    "PathPrereqDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dialogue": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "None or false adds no path-level grant; true grants dialogue on every walk.",
+          "default": null
+        },
+        "quest_start": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "None or false adds no path-level grant; true grants quest starts on every walk.",
+          "default": null
+        }
+      }
     },
     "QuestHeaderDocument": {
       "type": "object",
@@ -505,12 +535,20 @@
           "description": "Override inherited Wilderness permission for this movement.",
           "default": null
         },
-        "allow_danger_zones": {
+        "allow_prereq_dialogue": {
           "type": [
             "boolean",
             "null"
           ],
-          "description": "Override inherited danger-zone permission for this movement.",
+          "description": "Additive dialogue permission; false is a request-level Forbid.",
+          "default": null
+        },
+        "allow_quest_start": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Additive quest-start permission; false is a request-level Forbid.",
           "default": null
         }
       },
@@ -1819,6 +1857,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -1834,6 +1882,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "TalkArgs": {
@@ -1897,6 +1953,11 @@
         "strict": {
           "type": "boolean",
           "description": "Refuse missing or ambiguous answer text instead of choosing a fallback.\nAdopted pages always require authored answers, even when this is false.",
+          "default": false
+        },
+        "answer_once": {
+          "type": "boolean",
+          "description": "Skip a `prefer` entry that already answered a page in this\nconversation, so a repeated menu can be answered once and left.\n`line_rules` and `choose` are unaffected. With this option on,\n`prefer` holds at most 32 entries; a longer list fails compilation.",
           "default": false
         },
         "gap_ticks": {
@@ -2004,6 +2065,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2020,6 +2091,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "InteractArgs": {
@@ -2063,6 +2142,15 @@
           "default": null,
           "minimum": 1,
           "description": "Optional settle-window override in milliseconds; must be at least 1."
+        },
+        "max_ticks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null,
+          "minimum": 1,
+          "description": "Total observed game-tick budget for a ground-item Take, including spawn wait.\nWith this field, the step completes only after the inventory gains the item."
         },
         "dialogue": {
           "anyOf": [
@@ -2237,6 +2325,11 @@
           "description": "Refuse missing or ambiguous answer text instead of choosing a fallback.",
           "default": false
         },
+        "answer_once": {
+          "type": "boolean",
+          "description": "Skip a `prefer` entry that already answered a page in this\nconversation, so a repeated menu can be answered once and left.\n`line_rules` and `choose` are unaffected. With this option on,\n`prefer` holds at most 32 entries; a longer list fails compilation.",
+          "default": false
+        },
         "gap_ticks": {
           "type": [
             "integer",
@@ -2294,6 +2387,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2310,6 +2413,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "UseOnArgs": {
@@ -2483,6 +2594,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2499,6 +2620,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "AcquireArgs": {
@@ -2549,6 +2678,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2564,6 +2703,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "WaitArgs": {
@@ -2615,6 +2762,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2630,6 +2787,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "BankArgs": {
@@ -2734,6 +2899,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2749,6 +2924,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "BuyArgs": {
@@ -2832,6 +3015,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2847,6 +3040,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "MakeArgs": {
@@ -2854,12 +3055,26 @@
       "additionalProperties": false,
       "properties": {
         "loc": {
-          "$ref": "#/$defs/MakeLoc",
-          "description": "Location action used to start production."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MakeLoc"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional loc trigger. With `op`, click that operation; without `op`,\nuse the menu item on the loc. When omitted, the menu must already be open."
         },
         "anchor": {
-          "$ref": "#/$defs/AnchorArg",
-          "description": "Authored approach anchor with a source citation."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnchorArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Required with `loc`; the authored approach anchor and its source."
         },
         "product": {
           "type": "string",
@@ -2874,21 +3089,19 @@
               "type": "null"
             }
           ],
-          "description": "Optional production menu choice."
+          "description": "Optional production-menu row, when it differs from the product."
         },
         "qty": {
           "$ref": "#/$defs/QuantityDocument",
-          "description": "Fixed or journal-count-backed production quantity."
+          "description": "Held-target quantity after this production step."
         },
         "make_x": {
           "type": "boolean",
-          "description": "Use the game's make-X option when available.",
+          "description": "Allow Make-X only when the exact fixed quantity is not posted.",
           "default": false
         }
       },
       "required": [
-        "loc",
-        "anchor",
         "product",
         "qty"
       ]
@@ -2902,13 +3115,16 @@
           "description": "Symbolic location config name."
         },
         "op": {
-          "type": "string",
-          "description": "Location operation used to start production."
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional loc operation. Omit it to use the menu item on this loc.",
+          "default": null
         }
       },
       "required": [
-        "name",
-        "op"
+        "name"
       ]
     },
     "MakeMenu": {
@@ -2921,7 +3137,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Source citation for the menu option."
+          "description": "Source citation for the menu option.",
+          "pattern": "\\S"
         }
       },
       "required": [
@@ -2954,6 +3171,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -2970,6 +3197,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "EquipArgs": {
@@ -3016,6 +3251,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3031,6 +3276,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "step.unequip.v1": {
@@ -3058,6 +3311,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3073,6 +3336,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "step.loadout.v1": {
@@ -3100,6 +3371,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3115,6 +3396,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "step.setting.v1": {
@@ -3142,6 +3431,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3157,6 +3456,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "CombatArgs": {
@@ -3188,8 +3495,19 @@
             "string",
             "null"
           ],
-          "description": "Optional named loadout for the encounter.",
+          "description": "Optional named loadout for the encounter: the loadout of the opening\n`tactic.style`.",
           "default": null
+        },
+        "loadouts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyleLoadoutsArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional named loadout per combat style. The machine wears the\nloadout of a style when it switches to that style in the middle of a\nfight (when the opponent protects against the opening style, when\nammunition or runes run out, and when the opponent stays out of melee\nreach). A style with no loadout is never a switch target. Naming the\nopening style here and in `loadout` is refused."
         },
         "spells": {
           "type": [
@@ -3251,6 +3569,11 @@
           "minimum": 0,
           "maximum": 255
         },
+        "pvp": {
+          "type": "boolean",
+          "description": "Opt in to START a fight with the named `target.player`. The global\noperator setting `pvp.start_fights` also opts in; without either the\nstep is refused (`pvp-not-allowed`). Fighting back needs neither.",
+          "default": false
+        },
         "kill_budget_ticks": {
           "type": "integer",
           "description": "Maximum game ticks to spend on a combat attempt.",
@@ -3298,6 +3621,17 @@
           ],
           "description": "Optional success predicate that ends the combat loop when true.",
           "default": null
+        },
+        "until_drop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UntilDropArgs"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Loot one selected item until held, re-engaging up to `max_kills`."
         }
       },
       "required": [
@@ -3334,7 +3668,11 @@
           "description": "Select NPCs or players that are already attacking the player."
         },
         "player": {
-          "description": "Player targeting is represented in the wire format but is unsupported.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A named player to fight. Where the game allows player combat (the\nWilderness and a duel pen) and the step or the global setting opts in.",
           "default": null
         },
         "not_targeting_others": {
@@ -3469,6 +3807,37 @@
         "controlled"
       ]
     },
+    "StyleLoadoutsArg": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "melee": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or Path-qualified name of the melee loadout.",
+          "default": null
+        },
+        "ranged": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or Path-qualified name of the ranged loadout.",
+          "default": null
+        },
+        "mage": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name or Path-qualified name of the magic loadout.",
+          "default": null
+        }
+      },
+      "description": "The named loadout of each combat style (PVP-DESIGN-1026 §4.1)."
+    },
     "AreaArg2": {
       "anyOf": [
         {
@@ -3592,6 +3961,11 @@
           "description": "Refuse missing or ambiguous answer text instead of choosing a fallback.",
           "default": false
         },
+        "answer_once": {
+          "type": "boolean",
+          "description": "Skip a `prefer` entry that already answered a page in this\nconversation, so a repeated menu can be answered once and left.\n`line_rules` and `choose` are unaffected. With this option on,\n`prefer` holds at most 32 entries; a longer list fails compilation.",
+          "default": false
+        },
         "max_ticks": {
           "type": "integer",
           "description": "Positive game-tick budget for the complete transformation and dialogue.",
@@ -3603,6 +3977,33 @@
         "max_ticks"
       ],
       "description": "Dialogue which completes the post-combat transformation phase."
+    },
+    "UntilDropArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "obj": {
+          "type": "string",
+          "description": "Selected item alias to loot and hold."
+        },
+        "max_kills": {
+          "type": "integer",
+          "description": "Maximum confirmed kills, including the kill whose loot is collected.",
+          "minimum": 1
+        },
+        "stop": {
+          "type": "string",
+          "description": "Authored stop name reported when the kill budget is spent without the item.",
+          "minLength": 1,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "obj",
+        "max_kills",
+        "stop"
+      ],
+      "description": "Item and confirmed-kill budget for a combat step that waits for its drop."
     },
     "step.combat.v1": {
       "type": "object",
@@ -3629,6 +4030,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3645,6 +4056,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "Args": {
@@ -3758,6 +4177,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3773,6 +4202,14 @@
         "skip_if",
         "settle"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "Args2": {
@@ -3897,6 +4334,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -3913,6 +4360,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "Args3": {
@@ -4005,6 +4460,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4021,6 +4486,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "Args4": {
@@ -4095,6 +4568,16 @@
         "advances": {
           "type": "boolean"
         },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
         "skip_if": {
           "$ref": "#/$defs/PredicateDocument"
         },
@@ -4111,6 +4594,14 @@
         "settle",
         "advances"
       ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ]
+      },
       "additionalProperties": false
     },
     "QuestBankDocument": {
@@ -4424,6 +4915,15 @@
           "$ref": "#/$defs/SequenceOrder",
           "default": "authored"
         },
+        "cross": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RequiredZoneDocument"
+          },
+          "description": "Stable navigation identities the stage may cross.",
+          "maxItems": 8,
+          "default": []
+        },
         "steps": {
           "type": "array",
           "items": {
@@ -4457,6 +4957,29 @@
         }
       ],
       "description": "How a sequence picks its next step at each step boundary."
+    },
+    "RequiredZoneDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "reason"
+      ]
     }
   }
 }

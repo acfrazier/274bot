@@ -433,6 +433,7 @@ fn production_start(selected: Arc<SelectedGameData>, quests: Arc<QuestCatalog>) 
                     &quests,
                     cap,
                     &script::local_state::OperatorLoadouts::absent(),
+                    None,
                 )
             }
         })
@@ -580,6 +581,9 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
 #[test]
 #[ignore = "requires LIVE=1, the shared local 289 engine, a fixed QUESTER_LIVE_ACCOUNT and a HOME kept across the four variants; see the module doc"]
 fn live_quester_hint() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
     assert_eq!(
         std::env::var("QUESTER_LIVE_KEEP_HOME").as_deref(),

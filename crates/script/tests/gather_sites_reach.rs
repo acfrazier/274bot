@@ -43,7 +43,7 @@ use api::quest_progress::{EvidenceStamp, QuestListEvidenceProvider};
 use api::selected::{ClientRevision, RunKey};
 use api::snapshot::{GameSnapshot, QuestStatusView, SnapshotView};
 use api::WorldTile;
-use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::quest_gates::QuestEvidence;
 use nav_planner::router::{find_many_with, FindOptions, TargetError};
 use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
@@ -62,11 +62,20 @@ const COIN_STACK: i32 = 1_000_000;
 const QUEST_NOT_STARTED_COLOUR: i32 = 0xF80000;
 /// Tiles beside a region's resource spots that a gatherer can stand on.
 const MARGIN: i32 = 1;
-
-/// The sites published in 0.2.0 (id -> region), saved with the generator tests.
-const SITES_0_2_0: &str = include_str!("../../../tools/game-data/gather-sites-0.2.0.json");
-/// The hidden sites' regions per revision, written by the generator.
-const SITES_HIDDEN: &str = include_str!("../../../tools/game-data/gather-sites-hidden.json");
+fn local_fixture(relative: &str, description: &str) -> Option<String> {
+    let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(relative);
+    let candidate = candidate.to_str().expect("workspace fixture path is UTF-8");
+    let path = api::test_support::local_asset_path("", candidate, description)?;
+    Some(std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "failed to read {} at {}: {error}",
+            description,
+            path.display()
+        )
+    }))
+}
 
 /// The worn items a site declares it needs. Skill and quest requirements are
 /// already met by the maxed character.
@@ -84,17 +93,10 @@ fn worn_for(site: &GatherSiteOption) -> Vec<i32> {
     worn
 }
 
-fn quest_evidence(world: &NavWorld, incomplete_quest: Option<&str>) -> QuestEvidence {
+fn quest_evidence(incomplete_quest: Option<&str>) -> QuestEvidence {
     let selected = game_data::for_revision(ClientRevision::R289).expect("289 selected data");
-    let (facts, identity) = selected
-        .quest_identity_for_bake()
-        .expect("verified quest family");
-    let catalog = QuestCatalog::from_identity(Some(&facts)).expect("selected quest catalog");
-    let family = QuestFamilyId::new(identity.sha256, identity.schema);
-    world
-        .graph
-        .admit_quest_family(&family)
-        .expect("selected nav quest family");
+    let catalog =
+        QuestCatalog::from_identity(selected.quest_identity()).expect("selected quest catalog");
     let stamp = EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -132,16 +134,14 @@ fn quest_evidence(world: &NavWorld, incomplete_quest: Option<&str>) -> QuestEvid
     snapshot.seed_quest_statuses(statuses, true);
     let provider = QuestListEvidenceProvider::from_snapshot(
         &catalog,
-        Some(identity),
-        Some(identity),
         SnapshotView::new(Some(&snapshot), stamp),
     );
-    QuestEvidence::new(Arc::new(provider), family, stamp)
+    QuestEvidence::new(Arc::new(provider), stamp)
 }
 
 /// Complete journals from the selected revision through the production provider.
-fn completed_quests(world: &NavWorld) -> QuestEvidence {
-    quest_evidence(world, None)
+fn completed_quests() -> QuestEvidence {
+    quest_evidence(None)
 }
 
 /// The maxed account, with only the site's declared worn items left to the caller.
@@ -195,8 +195,20 @@ fn origins(world: &NavWorld, state: &WorldState) -> Vec<WorldTile> {
 }
 
 /// The 289 nav pack for the ignored reachability test, from `NAV_PACK`.
-fn real_nav_pack() -> PathBuf {
-    PathBuf::from(std::env::var_os("NAV_PACK").expect("set NAV_PACK to the real 289 nav pack"))
+fn real_nav_pack() -> Option<PathBuf> {
+    let pack = api::test_support::local_asset_path(
+        "NAV_PACK",
+        "",
+        "real R289 nav pack (generate with `python tools/local-data/build.py`)",
+    )?;
+    let flags = pack.with_extension("navflags");
+    let flags = flags.to_str().expect("NAV_PACK sidecar path is UTF-8");
+    api::test_support::local_asset_path(
+        "",
+        flags,
+        "real R289 navflags sidecar (generate with `python tools/local-data/build.py`)",
+    )?;
+    Some(pack)
 }
 
 /// The real pack with its flags, without the danger-zone table.
@@ -308,9 +320,9 @@ fn reached<'a>(world: &NavWorld, state: &WorldState, targets: &[Target<'a>]) -> 
 
 /// The regions of the sites the generator hides (id -> `[min_x, min_z, max_x,
 /// max_z, level]`), for the 289 revision.
-fn hidden_sites() -> Vec<(String, SceneRegionInput)> {
+fn hidden_sites(json: &str) -> Vec<(String, SceneRegionInput)> {
     let mut by_revision: BTreeMap<String, BTreeMap<String, [i32; 5]>> =
-        serde_json::from_str(SITES_HIDDEN).expect("hidden site snapshot");
+        serde_json::from_str(json).expect("hidden site snapshot");
     by_revision
         .remove("289")
         .expect("289 hidden sites")
@@ -333,21 +345,35 @@ fn hidden_sites() -> Vec<(String, SceneRegionInput)> {
 #[test]
 #[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn every_published_gather_site_is_reachable_and_every_hidden_one_is_not() {
+    let Some(pack) = real_nav_pack() else {
+        return;
+    };
+    let Some(sites_0_2_0) = local_fixture(
+        "tools/game-data/gather-sites-0.2.0.json",
+        "gather site 0.2.0 snapshot (generate with `python tools/local-data/build.py`)",
+    ) else {
+        return;
+    };
+    let Some(sites_hidden) = local_fixture(
+        "tools/game-data/gather-sites-hidden.json",
+        "hidden gather site snapshot (generate with `python tools/local-data/build.py`)",
+    ) else {
+        return;
+    };
     let selected = game_data::for_revision(ClientRevision::R289).expect("289 selected data");
-    let pack = real_nav_pack();
     let world = load_world(&pack);
     let started = Instant::now();
-    let quests = completed_quests(&world);
+    let quests = completed_quests();
 
     let published = selected.gather_sites();
-    let hidden = hidden_sites();
+    let hidden = hidden_sites(&sites_hidden);
     let line = |id: &str, label: &str, worn: &[i32], region: &SceneRegionInput| {
         format!("{id} \"{label}\" worn {worn:?} region {region:?}")
     };
 
     // A retired id is never reused: every 0.2.0 id is published or hidden, and never both.
     let old: HashSet<String> =
-        serde_json::from_str::<BTreeMap<String, BTreeMap<String, serde_json::Value>>>(SITES_0_2_0)
+        serde_json::from_str::<BTreeMap<String, BTreeMap<String, serde_json::Value>>>(&sites_0_2_0)
             .expect("0.2.0 site snapshot")
             .remove("289")
             .expect("289 snapshot")
@@ -446,7 +472,9 @@ fn every_published_gather_site_is_reachable_and_every_hidden_one_is_not() {
 #[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn lower_mine_returns_no_path_when_only_the_tourist_trap_is_incomplete() {
     let selected = game_data::for_revision(ClientRevision::R289).expect("289 selected data");
-    let pack = real_nav_pack();
+    let Some(pack) = real_nav_pack() else {
+        return;
+    };
     let world = load_world(&pack);
     let site = selected
         .gather_site("mining", "mining.desert_mining_camp.underground")
@@ -456,7 +484,7 @@ fn lower_mine_returns_no_path_when_only_the_tourist_trap_is_incomplete() {
         GatherSiteRequirement::Quest { name } if name == "The Tourist Trap"
     )));
 
-    let quests = quest_evidence(&world, Some("The Tourist Trap"));
+    let quests = quest_evidence(Some("The Tourist Trap"));
     let mut state = maxed_state(&world, quests);
     state.quests.remove("The Tourist Trap");
     let worn = worn_for(site);

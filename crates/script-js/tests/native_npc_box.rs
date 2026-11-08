@@ -1,8 +1,12 @@
-use script_js::wire::{
-    decode_snapshot, encode_snapshot_delta_with_native, encode_snapshot_with_native,
-    NativeFactsInput, NpcBoxInput, ReachViewInput, SnapshotInput, TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        NativeFactsInput, NpcBoxInput, ReachViewInput, SnapshotInput, TileInput,
+    },
+    script_js::wire::{
+        decode_snapshot, encode_snapshot_delta_with_native, encode_snapshot_with_native,
+    },
+};
 
 mod common;
 

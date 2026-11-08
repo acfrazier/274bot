@@ -32,7 +32,7 @@ pub(super) fn packed_self_target(snapshot: &GameSnapshot) -> (i32, i32) {
 }
 
 pub(super) fn parse_actor_receipt_from_paint(
-    paint: &script::shim::ScriptPaint,
+    paint: &script::paint::ScriptPaint,
 ) -> Option<ActorObservationScriptReceipt> {
     paint.lines.iter().find_map(|line| {
         line.strip_prefix(ACTOR_RECEIPT_PREFIX)

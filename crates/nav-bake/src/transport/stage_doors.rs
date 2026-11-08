@@ -46,9 +46,13 @@ mod keys;
 // - An `if` whose branches only print (or drop items) is skipped without
 //   reading its condition; of two operands that both decide an `|`/`&`,
 //   the one with the cheaper requirement is kept.
-// - Anything else on the path — a dialog, an NPC lookup, a key taken,
-//   a varp written, a queue, a random roll, a `switch`/`while`, an
-//   unknown proc — stops the evaluation and no crossing is emitted.
+// - A side-effect proc may precede the crossing only when its whole body
+//   matches a pinned passability proof. The Black Knights' aggro proc only
+//   selects NPCs, speaks and sets their attack target. It does not gate or
+//   move the player. Other NPC mode changes remain uncertified.
+// - Anything else on the path — a dialog, an unresolved NPC lookup, a key
+//   taken, a varp written, a queue, a random roll, a `switch`/`while`, or an
+//   unknown proc — stops evaluation and no crossing is emitted.
 // - After the terminal call the rest of the path may print or talk but
 //   must not move the player again or jump anywhere.
 //
@@ -79,6 +83,23 @@ struct OpenProc {
 /// A proc is modelled only while the content's body of it and of its whole
 /// call closure equals this text (comments and whitespace aside).
 pub(super) const ENGINE_DOOR_PROCS: &str = include_str!("engine_door_procs.rs2");
+
+/// `quest_blackknight/scripts/quest_blackknight.rs2:159-170`. Unlike the
+/// general non-moving proof, this exact body permits NPC aggression.
+/// `NpcOps.ts:206-248` changes the NPC's target, not player passability.
+/// The pack has no per-edge danger field, so this proof adds no metadata.
+const PASSABILITY_SIDE_EFFECT_PROCS: &str = r#"
+[proc,black_knights_aggro](coord $first_search_coord, coord $all_search_coord)
+if (npc_find($first_search_coord, aggressive_black_knight, 5, 0) = true) {
+    npc_say("Die intruder!!!");
+}
+npc_findall($all_search_coord, aggressive_black_knight, 5, 0);
+while (npc_findnext = true) {
+    if (npc_getmode ! opplayer2) {
+        npc_setmode(opplayer2);
+    }
+}
+"#;
 
 const fn single(name: &'static str) -> OpenProc {
     OpenProc {
@@ -356,12 +377,91 @@ fn retain_quest_upper_bounds(
     }
 }
 
+/// Content-proven bounds for a quest signal. Journal authority is separate:
+/// a shared journal row cannot prove which underlying signal is complete.
+#[derive(Debug, Clone, Copy)]
+struct QuestStageFacts {
+    colour_authoritative: bool,
+    stage_domain: Option<api::selected::InclusiveRange>,
+    transmission: api::game_data::Transmission,
+}
+fn authoritative_stage_domain(facts: QuestStageFacts, complete: i32) -> Option<(i32, i32)> {
+    if facts.transmission != api::game_data::Transmission::NotTransmitted || complete <= 0 {
+        return None;
+    }
+    let domain = facts.stage_domain?;
+    let (Some(min), Some(max)) = (domain.min, domain.max) else {
+        return None;
+    };
+    (min == 0 && max >= complete).then_some((min, max))
+}
+
+/// The exact interval on which a comparison has the selected branch value.
+/// A disjoint complement (for an interior `=`/`!`) has no single safe window.
+fn comparison_window(
+    op: CmpOp,
+    branch_value: bool,
+    threshold: i32,
+    domain_min: i32,
+    domain_max: i32,
+) -> Option<api::selected::InclusiveRange> {
+    let except_threshold = || {
+        if threshold < domain_min || threshold > domain_max {
+            Some((domain_min, domain_max))
+        } else if threshold == domain_min {
+            Some((domain_min.checked_add(1)?, domain_max))
+        } else if threshold == domain_max {
+            Some((domain_min, domain_max.checked_sub(1)?))
+        } else {
+            None
+        }
+    };
+    let interval = match (op, branch_value) {
+        (CmpOp::Eq, true) | (CmpOp::Ne, false) => Some((threshold, threshold)),
+        (CmpOp::Eq, false) | (CmpOp::Ne, true) => except_threshold(),
+        (CmpOp::Lt, true) => Some((domain_min, threshold.checked_sub(1)?)),
+        (CmpOp::Lt, false) => Some((threshold, domain_max)),
+        (CmpOp::Le, true) => Some((domain_min, threshold)),
+        (CmpOp::Le, false) => Some((threshold.checked_add(1)?, domain_max)),
+        (CmpOp::Gt, true) => Some((threshold.checked_add(1)?, domain_max)),
+        (CmpOp::Gt, false) => Some((domain_min, threshold)),
+        (CmpOp::Ge, true) => Some((threshold, domain_max)),
+        (CmpOp::Ge, false) => Some((domain_min, threshold.checked_sub(1)?)),
+    }?;
+    let (min, max) = (interval.0.max(domain_min), interval.1.min(domain_max));
+    (min <= max).then_some(api::selected::InclusiveRange {
+        min: Some(min),
+        max: Some(max),
+    })
+}
+
+fn comparison_value(op: CmpOp, min: i32, max: i32, threshold: i32) -> Option<bool> {
+    match op {
+        CmpOp::Eq if min == max => Some(min == threshold),
+        CmpOp::Eq if threshold < min || threshold > max => Some(false),
+        CmpOp::Ne if min == max => Some(min != threshold),
+        CmpOp::Ne if threshold < min || threshold > max => Some(true),
+        CmpOp::Lt if max < threshold => Some(true),
+        CmpOp::Lt if min >= threshold => Some(false),
+        CmpOp::Le if max <= threshold => Some(true),
+        CmpOp::Le if min > threshold => Some(false),
+        CmpOp::Gt if min > threshold => Some(true),
+        CmpOp::Gt if max <= threshold => Some(false),
+        CmpOp::Ge if min >= threshold => Some(true),
+        CmpOp::Ge if max < threshold => Some(false),
+        _ => None,
+    }
+}
+
 /// The script facts an opener evaluation reads.
 struct Sources {
     oplocs: [HashMap<String, Vec<Option<Block>>>; 5],
     oplocu: HashMap<String, Vec<Option<Block>>>,
-    quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
     quest_complete: HashMap<String, (api::selected::FactKey, i32)>,
+    quest_stage: HashMap<String, QuestStageFacts>,
+    /// Selected quest identity for each unambiguous named progress signal,
+    /// including quests whose completion value is not positive.
+    quest_signals: HashMap<String, api::selected::FactKey>,
     /// Varp names whose every possible source write is bounded by completion.
     quest_exact: HashSet<String>,
     labels: HashMap<String, Vec<Option<Block>>>,
@@ -392,6 +492,21 @@ impl Sources {
         let mut timers: HashMap<String, Vec<Option<Block>>> = HashMap::new();
         let mut procs: HashMap<String, Vec<ProcDef>> = HashMap::new();
         let constants = script_constants(content_root);
+        let mut quest_signals = HashMap::new();
+        for row in quests
+            .into_iter()
+            .flat_map(|quests| &quests.facts.rows)
+            .filter(|row| !row.varp.is_empty() && row.varp_id >= 0)
+        {
+            quest_signals
+                .entry(row.varp.clone())
+                .and_modify(|identity| *identity = None)
+                .or_insert_with(|| Some(api::selected::FactKey::new(&row.id)));
+        }
+        let quest_signals = quest_signals
+            .into_iter()
+            .filter_map(|(signal, identity)| identity.map(|quest| (signal, quest)))
+            .collect();
         let quest_complete: HashMap<_, _> = quests
             .into_iter()
             .flat_map(|quests| &quests.facts.rows)
@@ -400,6 +515,21 @@ impl Sources {
                 (
                     row.varp.clone(),
                     (api::selected::FactKey::new(&row.id), row.complete),
+                )
+            })
+            .collect();
+        let quest_stage: HashMap<_, _> = quests
+            .into_iter()
+            .flat_map(|quests| &quests.facts.rows)
+            .filter(|row| !row.varp.is_empty() && row.varp_id >= 0 && row.complete > 0)
+            .map(|row| {
+                (
+                    row.varp.clone(),
+                    QuestStageFacts {
+                        colour_authoritative: row.colour_authoritative,
+                        stage_domain: row.stage_domain,
+                        transmission: row.transmission,
+                    },
                 )
             })
             .collect();
@@ -469,8 +599,9 @@ impl Sources {
         let worn_slots = worn_slot_facts(content_root, &objs, &constants);
         Self {
             oplocs,
-            quest_family: quests.map(|quests| quests.family),
             quest_complete,
+            quest_stage,
+            quest_signals,
             quest_exact,
             oplocu,
             labels,
@@ -485,9 +616,9 @@ impl Sources {
         }
     }
 
-    /// The [`ENGINE_DOOR_PROCS`] procs this content defines exactly once
-    /// with the pinned body, whose whole pinned call closure does too, and
-    /// how many it defines with a drifted body.
+    /// Pinned crossing and passability-side-effect procs this content defines
+    /// exactly once with the pinned body and full pinned call closure, plus
+    /// the count of definitions whose bodies have drifted.
     fn supported_procs(&self) -> (HashSet<String>, usize) {
         let pinned = pinned_procs();
         let matches = |name: &str| match (self.procs.get(name).map(Vec::as_slice), pinned.get(name))
@@ -603,7 +734,7 @@ impl Sources {
 /// this declaration agrees with the script's slot. Missing, unresolved or
 /// conflicting declarations prove nothing; secondary coverage slots do
 /// not contain the object and are deliberately not admitted.
-fn worn_slot_facts(
+pub(super) fn worn_slot_facts(
     content_root: &Path,
     objs: &HashMap<String, i32>,
     constants: &HashMap<String, i32>,
@@ -668,10 +799,11 @@ fn proc_identity(params: &[String], body: &str) -> String {
     format!("({}){}", params.join(","), normalized_body(body))
 }
 
-/// [`ENGINE_DOOR_PROCS`] as proc name → (identity, procs its body calls).
+/// Pinned movement and passability proofs, with their complete proc closure.
 fn pinned_procs() -> HashMap<String, (String, Vec<String>)> {
     header_blocks(ENGINE_DOOR_PROCS)
         .into_iter()
+        .chain(header_blocks(PASSABILITY_SIDE_EFFECT_PROCS))
         .filter(|(kind, ..)| kind == "proc")
         .map(|(_, name, params, body)| {
             let calls = lex(&body)
@@ -691,7 +823,7 @@ fn pinned_procs() -> HashMap<String, (String, Vec<String>)> {
 /// (`[oploc1,herodoor_l] @open_heroes_guild(^left);`) and parameter lists
 /// (`[label,open_legends_door](int $side)`), which `script_blocks` cannot
 /// see. Returns `(kind, name, parameter names, body)`.
-fn header_blocks(text: &str) -> Vec<(String, String, Vec<String>, String)> {
+pub(super) fn header_blocks(text: &str) -> Vec<(String, String, Vec<String>, String)> {
     super::script_text::collect_script_blocks(text, |line| {
         let Some(header) = super::script_text::parse_script_header(
             line,
@@ -743,7 +875,6 @@ struct Needs {
     items: Vec<(i32, i32)>,
     worn: Vec<(i32, i32)>,
     quests: Vec<api::selected::QuestGate>,
-    quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
     forbidden_held: Vec<i32>,
     forbidden_worn: Vec<i32>,
     members: bool,
@@ -756,7 +887,6 @@ impl Needs {
         self.items.extend(other.items);
         self.worn.extend(other.worn);
         self.quests.extend(other.quests);
-        self.quest_family = self.quest_family.or(other.quest_family);
         self.forbidden_held.extend(other.forbidden_held);
         self.forbidden_worn.extend(other.forbidden_worn);
         self.members |= other.members;
@@ -1017,9 +1147,21 @@ impl Eval<'_> {
         }
     }
 
-    /// A `~proc(…)` statement: one of the supported crossing procs with
-    /// the entering flag this stand needs, or a refusal.
+    /// A supported crossing or pinned passability side effect.
+    /// Every other proc remains a refusal.
     fn open(&mut self, proc: &str, args: &[Expr], env: &Env) -> Flow {
+        if proc == "black_knights_aggro" {
+            return if self.supported.contains(proc)
+                && matches!(args, [first, all]
+                    if matches!(self.value(first, env), Some(Val::Coord(_)))
+                        && matches!(self.value(all, env), Some(Val::Coord(_))))
+            {
+                self.relative_landing_safe = false;
+                Flow::Next
+            } else {
+                Flow::Refused
+            };
+        }
         if proc == "climb_ladder" {
             return self.climb(args, env);
         }
@@ -1237,6 +1379,43 @@ impl Eval<'_> {
                 let (Some(&id), Val::Int(c)) = (self.src.varps.get(&w[1..]), rhs_val) else {
                     return Cond::unknown();
                 };
+                if let (Some((quest, complete)), Some(facts)) = (
+                    self.src.quest_complete.get(&w[1..]),
+                    self.src.quest_stage.get(&w[1..]),
+                ) {
+                    if let Some((min, max)) = authoritative_stage_domain(*facts, *complete) {
+                        let value = if op == CmpOp::Eq && c != 0 {
+                            true
+                        } else {
+                            past_threshold(op, c).0
+                        };
+                        let Some(values) = comparison_window(op, value, c, min, max) else {
+                            return Cond::unknown();
+                        };
+                        // A green journal row is canonical only when the
+                        // authoritative domain makes completion exact.
+                        let gate = if facts.colour_authoritative
+                            && max == *complete
+                            && values.min == Some(*complete)
+                            && values.max == Some(*complete)
+                        {
+                            api::selected::QuestGate::Complete(quest.clone())
+                        } else {
+                            api::selected::QuestGate::Window(api::selected::StageWindow {
+                                quest: quest.clone(),
+                                signal: api::selected::FactKey::new(&w[1..]),
+                                values,
+                            })
+                        };
+                        return Cond {
+                            value: Some(value),
+                            needs: Needs {
+                                quests: vec![gate],
+                                ..Needs::default()
+                            },
+                        };
+                    }
+                }
                 let (value, min) = past_threshold(op, c);
                 Cond {
                     value: Some(value),
@@ -1808,13 +1987,8 @@ fn gated_edge(
 ) -> TransportEdge {
     let worn = max_per_key(&needs.worn);
     let quest_gates = (!needs.quests.is_empty()).then(|| {
-        nav_planner::quest_gates::QuestGates::new(
-            needs
-                .quest_family
-                .expect("quest predicate carries its family"),
-            needs.quests,
-        )
-        .expect("content-derived complete gates")
+        nav_planner::quest_gates::QuestGates::new(needs.quests)
+            .expect("content-derived complete gates")
     });
     TransportEdge {
         kind,

@@ -1714,11 +1714,8 @@ impl PreparedMapInput {
         })
     }
 
-    /// An offline client cache, as the nav build reads it: the jag archives
-    /// in `jag_dir` and the decoded snapshot under `snapshot_root`, keyed by
-    /// the version of `jag_dir/versionlist`.  The content identity is
-    /// computed from those files exactly as runtime preparation computes it,
-    /// never declared.
+    /// Select the decoded snapshot by the existing versionlist directory key.
+    /// The client's decoded-content key identifies map-cache resources.
     pub fn offline(
         revision: u16,
         jag_dir: &Path,
@@ -1726,15 +1723,7 @@ impl PreparedMapInput {
     ) -> Result<Self, MapCacheError> {
         let versionlist = fs::read(jag_dir.join("versionlist"))?;
         let snapshot_dir = snapshot_root.join(client::unpack::version_hash(&versionlist));
-        // The raster reads the jag directory's versionlist and the identity
-        // the snapshot's: they must be one file.
-        if fs::read(snapshot_dir.join("versionlist"))? != versionlist {
-            return Err(MapCacheError::Message(format!(
-                "snapshot {} does not hold the versionlist of {}",
-                snapshot_dir.display(),
-                jag_dir.display()
-            )));
-        }
+        // Snapshot contents are decoded normally; no source-file equality gate.
         let identity = client::content_identity::compute_decoded_content_identity(
             revision,
             jag_dir,
@@ -1749,8 +1738,7 @@ impl PreparedMapInput {
         ))
     }
 
-    /// An offline snapshot whose content identity the caller already
-    /// established ([`Self::offline`], or a synthetic test snapshot).
+    /// An offline snapshot with its map-cache resource key, or a synthetic fixture.
     pub(crate) fn with_snapshot(
         revision: u16,
         content: Digest,

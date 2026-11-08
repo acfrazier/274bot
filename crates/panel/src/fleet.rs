@@ -29,7 +29,7 @@ use frontend_core::{
 use crate::fleet_columns::{self, FleetColumn};
 use crate::fleet_toolbar::{self, label_width, tri_state_box, tri_state_op, tri_state_tooltip};
 use crate::session::Session;
-use crate::theme::{scale_px, scale_size, WARN};
+use crate::theme::{scale_px, scale_size, ACCENT, WARN};
 
 /// The Fleet window's smallest size at scale 1: wide enough for its longest
 /// button, so nothing runs past the edge however narrow it is dragged.
@@ -47,7 +47,8 @@ const PROFILE_DND: &str = "274bot-profile";
 
 /// Make the last item a drag source for the profile `identity`; the drag
 /// tooltip shows `name`. Returns whether this item is being dragged now.
-/// Call it only while the fleet shows Load order.
+/// Call it only where a drop may reorder: the Fleet in Load order, or the
+/// Profiles list (always the saved order).
 pub(crate) fn profile_drag_source(ui: &Ui, identity: ProfileIdentity, name: &str) -> bool {
     match ui
         .drag_drop_source_config(PROFILE_DND)
@@ -61,15 +62,94 @@ pub(crate) fn profile_drag_source(ui: &Ui, identity: ProfileIdentity, name: &str
     }
 }
 
-/// Make the last item a drop target for a dragged profile. Returns the
-/// dropped profile's [`ProfileIdentity::raw`] on the frame the button is
-/// released over it. Call it only while the fleet shows Load order.
-pub(crate) fn profile_drop_target(ui: &Ui) -> Option<u64> {
+/// What a profile drag does on its target this frame: it hovers there
+/// (the caller draws the insertion marker for the placement its drop
+/// would make), or the button was released there and the drop lands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProfileDrop {
+    /// The dragged profile's [`ProfileIdentity::raw`], still held.
+    Hover(u64),
+    /// The dropped profile's [`ProfileIdentity::raw`].
+    Dropped(u64),
+}
+
+impl ProfileDrop {
+    /// The dropped profile's raw value, on the delivery frame only.
+    pub(crate) fn dropped(self) -> Option<u64> {
+        match self {
+            Self::Dropped(raw) => Some(raw),
+            Self::Hover(_) => None,
+        }
+    }
+}
+
+/// Make the last item a drop target for a dragged profile. The payload
+/// is accepted before delivery, so a hover reports [`ProfileDrop::Hover`]
+/// and the release frame [`ProfileDrop::Dropped`]. Same call sites as
+/// [`profile_drag_source`].
+pub(crate) fn profile_drop_target(ui: &Ui) -> Option<ProfileDrop> {
     let target = ui.drag_drop_target()?;
-    match target.accept_payload::<u64, _>(PROFILE_DND, DragDropTargetFlags::NONE) {
-        Some(Ok(payload)) if payload.delivery => Some(payload.data),
+    match target.accept_payload::<u64, _>(PROFILE_DND, DragDropTargetFlags::BEFORE_DELIVERY) {
+        Some(Ok(payload)) if payload.delivery => Some(ProfileDrop::Dropped(payload.data)),
+        Some(Ok(payload)) => Some(ProfileDrop::Hover(payload.data)),
         _ => None,
     }
+}
+
+/// Where a drop would land, from the move it asks for: `Some(true)` lands
+/// before its target (the marker goes on the target's top edge),
+/// `Some(false)` after it (the bottom edge). `None` moves nothing.
+pub(crate) fn insertion_before(op: Option<&ReorderOp>) -> Option<bool> {
+    match op {
+        Some(ReorderOp::Move {
+            to: Placement::Before(_),
+            ..
+        }) => Some(true),
+        Some(ReorderOp::Move {
+            to: Placement::After(_),
+            ..
+        }) => Some(false),
+        _ => None,
+    }
+}
+
+/// The insertion marker of a profile drag hovering its target: a line
+/// across the target item's rect (`min`..`max`), on its top edge when
+/// the drop would land before it and on its bottom edge when after it.
+pub(crate) fn profile_insertion_marker(ui: &Ui, min: [f32; 2], max: [f32; 2], before: bool) {
+    let y = if before { min[1] } else { max[1] };
+    ui.get_window_draw_list()
+        .add_line([min[0], y], [max[0], y], ACCENT)
+        .thickness(scale_px(ui, 2.0))
+        .build();
+    #[cfg(test)]
+    DROP_MARKERS.with_borrow_mut(|markers| markers.push((before, min, max)));
+}
+
+/// One drawn insertion marker, recorded for tests: whether the drop
+/// would land before its target, and the target item's rect.
+#[cfg(test)]
+type DropMarker = (bool, [f32; 2], [f32; 2]);
+
+#[cfg(test)]
+thread_local! {
+    /// Every insertion marker drawn on this test thread.
+    static DROP_MARKERS: RefCell<Vec<DropMarker>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Take the insertion markers drawn so far on this test thread. The
+/// recording buffer keeps its capacity (grown once), so recording a
+/// marker on a warm frame allocates nothing either.
+#[cfg(test)]
+pub(crate) fn take_drop_markers() -> Vec<DropMarker> {
+    DROP_MARKERS.with_borrow_mut(|markers| {
+        if markers.capacity() < 64 {
+            markers.reserve(64 - markers.capacity());
+        }
+        let taken = markers.clone();
+        markers.clear();
+        taken
+    })
 }
 
 /// The move a drop of profile `moving` (a [`ProfileIdentity::raw`]) onto the
@@ -449,12 +529,29 @@ fn table(ui: &Ui, session: &mut Session) {
                     if clicked && on_name && row.loaded() {
                         name_click = Some(index);
                     }
+                    let (rect_min, rect_max) = (ui.item_rect_min(), ui.item_rect_max());
                     if row.loaded() {
                         ui.set_item_tooltip("click to focus; drag to reorder");
                     }
                     profile_drag_source(ui, marked_id, row.name());
-                    if let Some(moving) = profile_drop_target(ui) {
-                        dropped = Some((moving, index));
+                    match profile_drop_target(ui) {
+                        Some(ProfileDrop::Dropped(moving)) => dropped = Some((moving, index)),
+                        Some(ProfileDrop::Hover(moving)) => {
+                            // The line marks where the drop would land. It
+                            // draws on the table's background channel: this
+                            // cell's own draw channel is clipped to the
+                            // Profile column, so a plain window-draw-list
+                            // line would stop at that column's edge instead
+                            // of crossing the row.
+                            if let Some(before) =
+                                insertion_before(drop_op(model, moving, index).as_ref())
+                            {
+                                ui.with_table_background_channel(|| {
+                                    profile_insertion_marker(ui, rect_min, rect_max, before);
+                                });
+                            }
+                        }
+                        None => {}
                     }
                 }
                 #[cfg(test)]
@@ -557,7 +654,7 @@ fn table(ui: &Ui, session: &mut Session) {
     }
     if let Some((moving, target)) = dropped {
         if let Some(op) = drop_op(&session.fleet_model, moving, target) {
-            session.reorder_profiles(op);
+            session.reorder_profiles(op, frontend_core::ReorderSurface::Fleet);
         }
     }
     let row_name = |session: &Session, index: usize| {
