@@ -609,6 +609,11 @@ mod tests {
 
     #[test]
     fn revision_377_requires_its_selected_tables_before_creating_a_run() {
+        crate::require_local_game_data_for_test!(ClientRevision::R377);
+        let source = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../api/data/game-data/377.json"),
+        )
+        .expect("read local revision-377 game data");
         let complete = api::game_data::for_revision(ClientRevision::R377).unwrap();
         assert!(admit_revision(&complete).is_ok());
         assert!(!requires_pairs(&SettingsBag::new(), &complete).unwrap());
@@ -619,9 +624,7 @@ mod tests {
                 ("npc_names", "NPC identity"),
                 ("loc_names", "loc identity"),
             ] {
-                let mut wire: serde_json::Value =
-                    serde_json::from_slice(include_bytes!("../../../api/data/game-data/377.json"))
-                        .unwrap();
+                let mut wire: serde_json::Value = serde_json::from_slice(&source).unwrap();
                 wire[field] = if field == "items" {
                     serde_json::json!([])
                 } else {
