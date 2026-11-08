@@ -911,6 +911,11 @@ fn run_cell() -> Result<(), String> {
         let script_lifecycle = play.script_lifecycle_receipt(&account);
         let script_error = play.script_last_error(&account);
         let mut state = state.lock().unwrap();
+        if state.runner.take_relog_login() {
+            if let Some(arm) = play.arm(&account) {
+                arm.arm_explicit_login();
+            }
+        }
         if case == CoreCase::HerbCleanerEmptyBank {
             if let (Some(witness), Some(receipt)) =
                 (state.witness.as_mut(), script_lifecycle.clone())
