@@ -3977,6 +3977,15 @@ impl<Io> OperatorSession<Io> {
     pub fn set_resource_probe(&mut self, probe: fn() -> crate::resources::ProcessProbe) {
         self.resources = Resources::with_probe(probe);
     }
+    /// Number of process probes published by the resource-meter worker.
+    pub fn resource_probe_generation(&self) -> u64 {
+        self.resources.probe_generation()
+    }
+
+    /// Whether the resource meter is still waiting for its worker's result.
+    pub fn resource_probe_in_flight(&self) -> bool {
+        self.resources.probe_in_flight()
+    }
 
     /// Rows re-derived since the session started (their facts changed).
     #[cfg(test)]

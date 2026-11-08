@@ -228,7 +228,13 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
         let arms = WalkArms::default();
         let admission = host_play::admission::Admission::manual(
             command.options(),
-            host_play::admission::capture(&snapshot, state.map_members, Default::default(), false),
+            host_play::admission::capture(
+                &snapshot,
+                state.map_members,
+                Default::default(),
+                false,
+                None,
+            ),
             0,
             host_play::WalkGlobals::default(),
         );

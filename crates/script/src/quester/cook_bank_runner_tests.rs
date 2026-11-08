@@ -1169,7 +1169,8 @@ fn r1_finish_is_emitted_after_trace_event_cap() {
 fn r1_bundled_non_inventory_paths_reach_first_root_from_empty_pack() {
     // Bundled gather Paths compile against the prepared catalog; keep it
     // alive for the whole loop.
-    let Some(lease) = super::super::compile::real_nav_lease() else {
+    let Some(lease) = super::super::compile::real_nav_lease(api::selected::ClientRevision::R289)
+    else {
         return;
     };
     let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();

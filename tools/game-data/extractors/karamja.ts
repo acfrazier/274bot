@@ -212,11 +212,13 @@ export function extractKaramjaFacts(
     npcNames: { rows: IdentityRow[] },
     locNames: { rows: IdentityRow[] },
     npcPlacements: { rows: PlacementRow[] },
+    revision = 289,
 ): { facts: KaramjaFacts } {
     const luthasScript = requireGatherText(content, SOURCES.luthas);
     const crateScript = requireGatherText(content, SOURCES.banana_crate);
     const treeScript = requireGatherText(content, SOURCES.banana_tree);
-    const plantation = requireGatherText(content, SOURCES.plantation);
+    const plantationSource = revision === 377 ? 'scripts/_unpack/377/all.loc' : SOURCES.plantation;
+    const plantation = requireGatherText(content, plantationSource);
     const luthasConfig = onlyHandlerConfig(luthasScript, /^\[opnpc1,([^\]]+)\]$/gm, 'Luthas NPC');
     const crateConfig = onlyHandlerConfig(crateScript, /^\[oploc1,([^\]]+)\]$/gm, 'banana crate loc');
     const treeConfigs = bananaTreeConfigs(plantation, treeScript);

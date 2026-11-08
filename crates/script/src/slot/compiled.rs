@@ -17,6 +17,7 @@ pub(super) fn selected_revision(
     match selected.revision() {
         274 => Ok(ClientRevision::R274),
         289 => Ok(ClientRevision::R289),
+        377 => Ok(ClientRevision::R377),
         _ => Err(StartError::Unavailable(
             "selected game-data revision is unsupported".into(),
         )),
@@ -1190,7 +1191,7 @@ impl SlotScript {
             .ok_or_else(|| StartError::Unavailable(format!("not ported: {}", id.0).into()))?;
         if id == crate::CompiledId("Quester")
             && self.quest_pairs.is_none()
-            && crate::quester::card::requires_pairs(&bag).map_err(StartError::Config)?
+            && crate::quester::card::requires_pairs(&bag, &selected).map_err(StartError::Config)?
         {
             return Err(StartError::Unavailable(
                 "partner capability is not installed in this Play".into(),

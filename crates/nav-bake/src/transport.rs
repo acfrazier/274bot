@@ -218,7 +218,14 @@ fn derive_transports_with_audit(
         collision,
         &mut skipped,
     );
-    boat_edges(&mut graph, &gates, &mut audit, game_data);
+    boat_edges(
+        content_root,
+        &mut graph,
+        &gates,
+        &mut audit,
+        game_data,
+        &mut skipped,
+    );
     cart_edges(
         &mut graph,
         gates.completed_quest_name("zombiequeen", "zombiequeen_complete"),
@@ -289,6 +296,16 @@ fn derive_transports_with_audit(
         &mut graph,
         &mut skipped,
     );
+    if game_data.is_some_and(|data| data.revision() == 377) {
+        supplemental_edges_377(
+            content_root,
+            &ids,
+            &positions,
+            loc_defs,
+            &mut graph,
+            &mut skipped,
+        );
+    }
     teleport_edges(content_root, &mut graph, &mut skipped);
     // After every producer: the members gate each edge's source handler
     // declares, read once for every kind.
@@ -586,6 +603,16 @@ const EXTRA_TICKS: &[(&str, i32)] = &[
     ("spiralstairsmiddle", 0),
     ("spiralstairstop", 0),
     ("spiralstairs_wooden", 0),
+    // Revision 377 stairs.rs2 names the Lumbridge spiral staircase by id.
+    // These handlers have no p_arrivedelay or p_delay, like spiralstairs above.
+    ("scenery_1738", 0),
+    ("scenery_1739", 0),
+    ("scenery_1740", 0),
+    // Revision 377 stairs.rs2:1175-1201: Wizard's Tower's direct
+    // p_telejump handlers have no arrival delay or p_delay.
+    ("fai_wiztower_spiralstairs", 0),
+    ("fai_wiztower_spiralstairs_middle", 0),
+    ("fai_wiztower_spiralstairstop", 0),
     // Miscellania castle: the same `p_arrivedelay; p_telejump(movecoord(
     // coord, 0, ±1, 0))` Climb-up/-down bodies as `spiralstairsmiddle`.
     ("spiralstairsmiddle_wooden", 0),

@@ -113,8 +113,8 @@ function requiredParamDefault(definitions: ReadonlyMap<string, { type?: string; 
     return requiredParamInt(definition.default, `${name} ${file} default`);
 }
 
-/** Parse the pinned engine's six positional NPC stat defaults. */
-export function parseNpcFiles(content: string, revision: 274 | 289, engineNpcTypeSource: string) {
+/** Parse the selected engine's six positional NPC stat defaults. */
+export function parseNpcFiles(content: string, revision: 274 | 289 | 377, engineNpcTypeSource: string) {
     const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
     const stats = parseNpcStatDefaults(engineNpcTypeSource, revision);
     const npcDefinitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/npc_combat.param'));
@@ -316,7 +316,7 @@ export function extractNpcNamesFacts(
     scripts: CombatScripts = parseCombatScripts(content),
     maxHits = buildSpellMaxHits(content),
 ) {
-    if (revision !== 274 && revision !== 289) throw new Error(`npc_names: unsupported revision ${revision}`);
+    if (revision !== 274 && revision !== 289 && revision !== 377) throw new Error(`npc_names: unsupported revision ${revision}`);
     const pack = parsePack(requireGatherText(content, 'pack/npc.pack'));
     if (pack.size === 0) throw new Error('npc_names: empty pack/npc.pack');
     const { blocks, files, stats, combatDefaults } = parseNpcFiles(content, revision, engineNpcTypeSource);
@@ -329,11 +329,11 @@ export function extractNpcNamesFacts(
             // Stat levels use parsed NpcType.ts defaults; tether defaults remain revision-specific.
             const wanderrange = block?.wanderrange ?? 5;
             let maxrange = block?.maxrange ?? (revision === 274 ? 7 : -1);
-            if (revision === 289) {
+            if (revision !== 274) {
                 if (maxrange === -1) maxrange = wanderrange + 2;
                 maxrange = Math.max(maxrange, wanderrange);
             }
-            const combat = extractNpcCombatFacts(config, block?.category ?? null, scripts, maxHits);
+            const combat = extractNpcCombatFacts(config, block?.category ?? null, scripts, maxHits, revision);
             const poisonSeverityFact = block?.poison_severity ?? combatDefaults.poison_severity;
             const ordinaryMelee = combat.ordinary_melee
                 && block !== undefined

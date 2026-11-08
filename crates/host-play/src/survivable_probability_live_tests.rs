@@ -513,6 +513,7 @@ fn prepare(
             rig.members,
             rig.navs.lock().unwrap()[name].condition.current(),
             false,
+            None,
         );
         input.hp == hp && input.hp_max == hp && input.defence == 40 && !input.missing_facts()
     });
@@ -521,6 +522,7 @@ fn prepare(
         rig.members,
         rig.navs.lock().unwrap()[name].condition.current(),
         false,
+        None,
     );
     assert_eq!(input.worn_defence, [188, 202, 198, 190]);
     assert_eq!(
@@ -1004,6 +1006,7 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
             rig.members,
             rig.navs.lock().unwrap()[&rig.name].condition.current(),
             false,
+            None,
         );
         let tables = super::tables(&rig.world).unwrap();
         let (origin, geometry) = poison_start(
@@ -1035,6 +1038,7 @@ fn exercise(rig: &mut Rig, mut cell: Cell, receipt: &mut Value) {
         rig.members,
         rig.navs.lock().unwrap()[&rig.name].condition.current(),
         false,
+        None,
     );
     let admission = Admission {
         input,

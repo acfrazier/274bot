@@ -1541,6 +1541,175 @@ fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {
 }
 
 #[test]
+fn admission_capture_uses_bound_377_food_and_preserves_unavailable_binding() {
+    script::require_local_game_data_for_test!(api::selected::ClientRevision::R377);
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected revision 377 facts");
+    let food = selected.item_by_alias("cooked_chompy").unwrap();
+    let mut rig = open_rig(false);
+    let world = rig.world.as_ref().unwrap();
+    crate::admission::bind_377_tables(world, Some(Arc::clone(&selected))).unwrap();
+    seed_protect_frame(&mut rig.snapshot, 43);
+    let mut player = rig.snapshot.local_player().unwrap().clone();
+    player.player.combat_level = 40;
+    rig.snapshot.seed_local_player(player);
+    rig.snapshot.seed_varps(vec![api::snapshot::VarpView {
+        index: 173,
+        value: 0,
+    }]);
+    rig.snapshot.seed_inventory(
+        vec![api::snapshot::ItemView {
+            def: api::ItemDefView {
+                id: food.id,
+                name: food.name.clone(),
+                stackable: false,
+                members: true,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            slot: 0,
+            count: 2,
+            container: api::snapshot::ItemContainer::Inventory,
+            action_family: api::snapshot::ItemActionFamily::Held,
+            actions: vec![Some("Eat".into())],
+            component_id: 3214,
+        }],
+        28,
+    );
+
+    let input = crate::admission::capture(&rig.snapshot, true, None, false, Some(world));
+    assert_eq!(input.food_iter().collect::<Vec<_>>(), [(food.id, 2)]);
+    assert!(!input.missing_facts(), "selected food is a known 377 fact");
+    assert!(input.map_members());
+
+    let legacy = crate::admission::capture(&rig.snapshot, true, None, false, None);
+    assert!(legacy.missing_facts(), "R289 has no cooked-chompy food row");
+    assert_eq!(legacy.food_iter().count(), 0);
+
+    let unavailable_world = open_world(1, 1);
+    crate::admission::bind_377_tables(&unavailable_world, None).unwrap();
+    let unavailable =
+        crate::admission::capture(&rig.snapshot, true, None, false, Some(&unavailable_world));
+    assert!(unavailable.missing_facts());
+    assert_eq!(unavailable.food_iter().count(), 0);
+    assert_eq!(unavailable.hp, 0, "no fallback capture with legacy tables");
+}
+
+#[test]
+fn native_food_guard_uses_bound_377_tables_for_condition_and_food_rows() {
+    script::require_local_game_data_for_test!(api::selected::ClientRevision::R377);
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected revision 377 facts");
+    let food = selected
+        .item_by_alias("cooked_chompy")
+        .expect("revision 377 cooked chompy");
+    let food_id = food.id;
+    let mut rig = open_rig(false);
+    let world = Arc::clone(rig.world.as_ref().expect("native walk world"));
+    crate::admission::bind_377_tables(&world, Some(Arc::clone(&selected)))
+        .expect("bind revision 377 combat tables");
+    assert!(
+        script::combat::guard::shared_tables()
+            .expect("legacy tables")
+            .food(food_id)
+            .is_none(),
+        "the R289 table does not admit the revision-377 cooked-chompy row"
+    );
+
+    rig.shared.lock().food_guard = true;
+    seed_protect_frame(&mut rig.snapshot, 43);
+    let mut stats = rig.snapshot.stats().to_vec();
+    stats
+        .iter_mut()
+        .find(|stat| stat.index == 3)
+        .expect("hitpoints stat")
+        .effective = 1;
+    rig.snapshot.seed_stats(stats);
+    rig.snapshot.seed_inventory(
+        vec![api::snapshot::ItemView {
+            def: api::ItemDefView {
+                id: food_id,
+                name: food.name.clone(),
+                stackable: false,
+                members: true,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            slot: 0,
+            count: 1,
+            container: api::snapshot::ItemContainer::Inventory,
+            action_family: api::snapshot::ItemActionFamily::Held,
+            actions: vec![Some("Eat".into())],
+            component_id: 3214,
+        }],
+        28,
+    );
+    rig.snapshot
+        .seed_inventory_packet_generations(Some(1), None);
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+
+    let (combat, poison_unknown_v) =
+        crate::admission::condition_tables(&world).expect("bound condition tables");
+    assert_eq!(combat.selected().revision(), 377);
+    assert!(Arc::ptr_eq(combat.selected(), &selected));
+    assert_eq!(
+        combat
+            .food(food_id)
+            .expect("selected cooked-chompy row")
+            .heal,
+        selected
+            .consumable("cooked_chompy")
+            .expect("selected food fact")
+            .fixed_hp_heal()
+            .expect("fixed food heal")
+    );
+
+    let drain = host::DrainResult {
+        player_info: true,
+        npc_rows_coherent: true,
+        session_changed: false,
+        gens: Default::default(),
+        dirty: Default::default(),
+    };
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").expect("native walk bot");
+        bot.cure_poison = script::survival::CurePoison::Never;
+        bot.condition
+            .session_started(1, 0, Some((combat, poison_unknown_v)));
+        bot.condition.observe_frame(&rig.snapshot, &drain, false);
+        // An empty safe route does not eat for low HP alone. Make food due,
+        // as in the legacy host regression, without enabling poison cures.
+        rig.snapshot.seed_tick(2);
+        rig.snapshot
+            .seed_chat_lines(vec![api::snapshot::ChatLineView {
+                type_: 0,
+                username: None,
+                text: "You have been poisoned!".into(),
+                sequence: 1,
+            }]);
+        bot.condition.observe_frame(&rig.snapshot, &drain, false);
+        assert!(matches!(
+            bot.condition.current().unwrap().poison,
+            api::condition::PoisonState::Onset { .. }
+        ));
+        assert!(
+            bot.walk_guard.is_some(),
+            "the native food-only guard must be armed"
+        );
+    }
+    rig.step();
+    assert_eq!(rig.driver.held_ops, 1, "the selected food is admitted");
+    assert_eq!(rig.driver.held_item_ids, [food_id]);
+}
+
+#[test]
 fn exhausted_escape_host_walk_neither_uses_nor_fetches_food() {
     if !api::test_support::game_data_available() {
         return;
