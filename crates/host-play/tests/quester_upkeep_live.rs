@@ -1371,15 +1371,36 @@ fn check_step_player_info_lines(
     }
 }
 
+/// True when an applied lobster Eat explains this frame's heal. The status
+/// decision is the survival step's last report and lags the snapshot by one
+/// poll (`crates/script/src/survival/step.rs:200-243` sets it when the bite
+/// runs; the receipt pairs it with the polling snapshot, see
+/// `observability_limits`). So the frame that first shows the heal still reads
+/// Eating. The explaining evidence is a lobster drop on this poll or the poll
+/// before, and an applied Eat end on that drop's tick for the same item and
+/// count.
+fn applied_eat_explains_frame(receipt: &C0Receipt, frame: &C0Frame) -> bool {
+    receipt.drops.iter().any(|drop| {
+        let near = drop.at.poll == frame.at.poll || drop.at.poll.saturating_add(1) == frame.at.poll;
+        near && drop.to == drop.from - 1
+            && receipt.survival_op_events.iter().any(|end| {
+                end.event == (SurvivalOpEventKind::End { applied: true })
+                    && end.player_info == drop.at.tick
+                    && parse_eat_kind(&end.kind) == Some((LOBSTER_ID, drop.from))
+            })
+    })
+}
+
 fn check_o3_eating_at_high_hp(receipt: &C0Receipt, failures: &mut Vec<String>) {
     for frame in &receipt.frames {
         if frame.decision == Some(Decision::Eating)
             && frame.hitpoints > 15
             && !(frame.hit_kind1.is_some() && frame.hitpoints <= 20)
             && !frame.npc_facing_or_attacking
+            && !applied_eat_explains_frame(receipt, frame)
         {
             failures.push(format!(
-                "O3: Eating decision at HP {} without a damage-hit window or NPC on tick {}",
+                "O3: Eating decision at HP {} without a damage-hit window or NPC or an applied Eat on tick {}",
                 frame.hitpoints, frame.at.tick
             ));
         }
@@ -2133,6 +2154,117 @@ mod tests {
             &valid_hazard_logs(),
             "post-L0 drain send",
         );
+    }
+
+    /// A receipt whose phase-S drop frame (poll 60) is replaced by the heal
+    /// frame the way the live runs saw it: HP 26 with the decision still Eating.
+    fn receipt_with_eating_heal_frame(poll: u64) -> C0Receipt {
+        let mut receipt = valid_receipt(3, 2, 9, 16, 2, 20);
+        let s_drop = receipt.s_drop.as_ref().unwrap().at;
+        assert_eq!(s_drop.poll, 60);
+        receipt
+            .frames
+            .retain(|frame| frame.at != s_drop || frame.lobsters != 6);
+        let mut heal = frame(
+            Mark {
+                tick: s_drop.tick,
+                poll,
+            },
+            6,
+            26,
+        );
+        heal.decision = Some(Decision::Eating);
+        receipt.frames.push(heal);
+        receipt.frames.sort_by_key(|frame| frame.at);
+        receipt
+    }
+
+    fn o3_failures(receipt: &C0Receipt) -> Vec<String> {
+        c0_acceptance_failures(receipt, &valid_hazard_logs())
+            .into_iter()
+            .filter(|failure| failure.starts_with("O3:"))
+            .collect()
+    }
+
+    #[test]
+    fn o3_accepts_the_heal_frame_on_the_drop_poll_or_the_poll_after_it() {
+        // The status decision lags the applied Eat by one poll: the frame that
+        // first shows the heal can still read Eating.
+        for poll in [60, 61] {
+            let receipt = receipt_with_eating_heal_frame(poll);
+            assert!(
+                o3_failures(&receipt).is_empty(),
+                "poll {poll}: {:?}",
+                o3_failures(&receipt)
+            );
+            c0_acceptance_oracle(&receipt, &valid_hazard_logs()).unwrap();
+        }
+    }
+
+    #[test]
+    fn o3_flags_eating_at_high_hp_when_no_eat_was_applied_around_it() {
+        // Two polls after the drop is outside the one-poll lag.
+        let late = receipt_with_eating_heal_frame(62);
+        assert_eq!(o3_failures(&late).len(), 1, "{:?}", o3_failures(&late));
+
+        // Before the drop is outside it too: the heal cannot precede its Eat.
+        let early = receipt_with_eating_heal_frame(59);
+        assert_eq!(o3_failures(&early).len(), 1, "{:?}", o3_failures(&early));
+
+        // A lobster drop on the same poll without an applied Eat end on its tick
+        // (for example the item was dropped) does not explain the frame.
+        let mut no_applied_eat = receipt_with_eating_heal_frame(60);
+        no_applied_eat.survival_op_events.retain(|event| {
+            !(event.event == (SurvivalOpEventKind::End { applied: true })
+                && event.player_info == no_applied_eat.s_drop.as_ref().unwrap().at.tick)
+        });
+        assert_eq!(
+            o3_failures(&no_applied_eat).len(),
+            1,
+            "{:?}",
+            o3_failures(&no_applied_eat)
+        );
+
+        // An applied Eat of another count does not match the drop either.
+        let mut wrong_count = receipt_with_eating_heal_frame(60);
+        for event in &mut wrong_count.survival_op_events {
+            if event.player_info == wrong_count.s_drop.as_ref().unwrap().at.tick {
+                event.kind = format!("Eat {{ item_id: {LOBSTER_ID}, before_count: 5 }}");
+            }
+        }
+        assert_eq!(
+            o3_failures(&wrong_count).len(),
+            1,
+            "{:?}",
+            o3_failures(&wrong_count)
+        );
+
+        // No drop at all: the original rule applies.
+        let mut no_drop = receipt_with_eating_heal_frame(60);
+        no_drop.drops.retain(|drop| drop.from != 7);
+        assert_eq!(
+            o3_failures(&no_drop).len(),
+            1,
+            "{:?}",
+            o3_failures(&no_drop)
+        );
+    }
+
+    #[test]
+    fn live3_receipt_passes_every_check_with_the_o3_lag_ruling() {
+        // Live3 (head 486df6435, prefix dcp3): HP 7 to 19 and the lobster drop
+        // 7 to 6 first show on poll 280 (tick 89) with the decision still Eating;
+        // the decision clears on poll 281.
+        let text = include_str!("fixtures/c0-receipts/live3-heal-frame-lag.json");
+        assert_eq!(replay_c0_receipt(text).unwrap(), Vec::<String>::new());
+
+        // Move the drop three polls away from the heal frame: O3 must flag it,
+        // and nothing else may change.
+        let mut value: Value = serde_json::from_str(text).unwrap();
+        value["food_drops"][1]["at"]["client_poll"] = json!(270);
+        let failures = replay_c0_receipt(&value.to_string()).unwrap();
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(failures[0].starts_with("O3:"), "{failures:?}");
     }
 
     #[test]
