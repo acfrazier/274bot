@@ -72,7 +72,7 @@ fn real_289_profile_bound_nav_state_stays_inside_its_total_tripwire() {
 fn real_377_profile_bound_nav_state_stays_inside_its_total_tripwire() {
     let default_pack = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/local-data/nav/377/274bot.navpack");
-    let Some(path) = api::test_support::local_asset_path(
+    let Some(path) = api::test_support::local_asset_path_377(
         "NAV_377_PACK",
         &default_pack.to_string_lossy(),
         "revision-377 navigation pack",
