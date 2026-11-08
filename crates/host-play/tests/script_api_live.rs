@@ -559,6 +559,7 @@ fn start_fixture_at(
             )
             .expect("Script API engine content should be preflighted"),
         ),
+        ..ProfileOptions::default()
     };
     let template = options
         .resolve(None)
