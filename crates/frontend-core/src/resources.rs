@@ -486,6 +486,17 @@ impl Resources {
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
+    /// Number of process probes published by the worker (test support).
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn probe_generation(&self) -> u64 {
+        self.shared.finished.load(Ordering::Acquire)
+    }
+
+    /// Whether the worker's latest requested probe is still pending.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn probe_in_flight(&self) -> bool {
+        self.in_flight
+    }
 
     /// Take a finished process probe (one atomic load when there is none)
     /// and, once per [`SAMPLE_PERIOD`], ask for the next one and count the
