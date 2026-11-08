@@ -726,8 +726,10 @@ fn make_loc(script: &Quester) -> LocView {
         .selected
         .loc_by_config("furnace1")
         .expect("selected furnace1 config");
+    // Beside the player (seed_frame stands at 3200,3200); the real furnace
+    // footprint refuses an arrival from inside it.
     let at = WorldTile {
-        x: 3200,
+        x: 3201,
         z: 3200,
         level: 0,
     };
@@ -3698,6 +3700,21 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
     let product_id = bar_id(&script);
     let mut client = make_client(product_id, "Bronze bar");
     let loc = make_loc(&script);
+    // The make step walks until the player provably stands where the furnace
+    // footprint can be operated from, which needs an observed scene: an open
+    // 10 x 10 floor with the furnace tile blocked.
+    let mut scene = api::snapshot::SceneView {
+        available: true,
+        base_x: 3195,
+        base_z: 3195,
+        level: 0,
+        width: 10,
+        height: 10,
+        collision_flags: vec![0; 100],
+    };
+    let furnace = ((loc.tile.x - scene.base_x) * scene.height + loc.tile.z - scene.base_z) as usize;
+    scene.collision_flags[furnace] = client::dash3d::CollisionFlag::SQ_BLOCKED;
+    snapshot.seed_scene(scene);
     snapshot.seed_locs(vec![loc]);
     let mut ledger = None;
     let mut output = CapturedOutput::default();
@@ -3970,7 +3987,12 @@ fn make_step_restarts_with_the_remaining_quantity_after_a_survival_cancel() {
         },
         &mut output,
     );
-    assert!(script.settling, "the real MakeMachine completed a partial production receipt while the authored total remains unmet");
+    // A partial receipt (four of five bars) does not complete the Make step:
+    // the production step re-triggers instead of settling.
+    assert!(
+        !script.settling && script.cursor == 0,
+        "a partial production receipt must not settle while the authored total remains unmet"
+    );
     set_inventory(&script, &mut snapshot, 5, 0, 0);
     drive(
         &mut script,

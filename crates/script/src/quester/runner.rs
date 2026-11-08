@@ -5572,7 +5572,11 @@ mod tests {
     #[test]
     fn quester_struct_fits_the_per_bot_budget() {
         let bytes = std::mem::size_of::<Quester>();
-        assert_eq!(bytes, 3640, "Quester changed its measured per-bot layout");
+        // 3640 B before the dev 900f2dccd merge. Dev's revision-377 journal work
+        // added `layout: Layout` to `quest_journal::native::JournalMachine`
+        // (192 -> 200 B); the Quester holds two `ActionHandle<JournalMachine>`
+        // (`journal`, `gang_reader`), +8 B each. No Quester field of this input grew.
+        assert_eq!(bytes, 3656, "Quester changed its measured per-bot layout");
         assert!(
             std::mem::size_of::<crate::survival::SurvivalStep>() <= 192,
             "SurvivalStep={} exceeds its 192 B bound",
