@@ -727,6 +727,13 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
     let hook_shared = Arc::clone(&shared);
     let hook_partner = Arc::clone(&partner_state);
     let hook_walk_set = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // The fixture relogs scriptless bots before any script starts, so each
+    // account owns the arm that posts the operator Login after its own logout.
+    let arms = [
+        SlotArm::new(274_279_501, true),
+        SlotArm::new(274_279_502, true),
+    ];
+    let hook_arms = [Arc::clone(&arms[0]), Arc::clone(&arms[1])];
     let mut play = run_with_template(
         template,
         false,
@@ -746,7 +753,15 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
             } else {
                 &fighter_ready
             };
-            frame(client, &mut state, cheats, &[protect_varp], ready, anchor);
+            frame(
+                client,
+                &hook_arms[*index],
+                &mut state,
+                cheats,
+                &[protect_varp],
+                ready,
+                anchor,
+            );
             if state.ready {
                 duel_step(
                     client,
@@ -786,7 +801,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
             },
             None,
             None,
-            None,
+            Some(Arc::clone(&arms[index])),
         )
         .expect("spawn fresh pvp account");
     }

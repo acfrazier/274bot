@@ -62,6 +62,16 @@ frames or wall-clock seconds. A fixed 30-second deadline bounds the whole
 shutdown, including Stop. A forced worker close is not a clean logout.
 
 
+## Quarantined ignored live tests
+
+These ignored tests are not map cells. Each fails or flakes on the 0.2.9 batch base `3226e1e7c` as well as on `dev`, for a test defect, not a product defect. Do not use a failure of one of them as evidence about a product change until its oracle or fixture is repaired. The 2026-11-08 sweep (RELEASE-029-HELD, one run each on aubaine; repeats noted) found:
+
+| Test | Defect | Evidence |
+|---|---|---|
+| `walk_guard_live_tests::live_walk_guard_eat_crossing` | Fixture. The `real_content` mode stages no attacker (`walk_guard_live_tests.rs:1459`) and relies on a Death Plateau thrower striking the account during the walk. None does on Engine L (`attacker_staged: false`, `hp_drop_observed: false`, arrival at tick 45), so the cell can never record an Eat. It is a gate on a chance outcome, which AGENTS.md forbids. | Fails the same on the base. Follow-up (not done): seed the account's own HP below the eat line instead of waiting for a thrower. |
+| `walk_guard_live_tests::live_walk_guard_w1_protected_crossing` | Needs the isolated local R289 engine and `BOT_COMBAT_CACHE_SNAPSHOT`; with the lab's Engine L ports it stops at "update server /crc: connection problem". | Not runnable on the lab hosts. |
+| `quester_queue_live::quester_queue` | Oracle expects four completed quests. The fourth row, Imp Catcher, ends `Blocked` by the product's danger admission, not because it is a draft: `search_result=Refusal; the model's upper bound on the chance of death is 0.0%; at most 1% is admitted; NoWayOut: ends inside Lesser demon (L82)` at the Wizards' Tower stairs, because the Imp guide declares no `cross` zone for that crossing. The oracle's id/display pairing check (`quester_queue_live.rs:248`) then rejects the Blocked row, which carries `quest_id` and no `display`. | Same failure on the base (`completed: 3`, `quest_id: imp`). Repair: drop `imp` from `EXPECTED_QUESTS` (`quester_queue_live.rs:18`) and the queue it seeds, or make the Imp guide declare the crossing, and let a Blocked row without `display` pass the pairing check. |
+
 ## Cell hosts
 
 The map format has no host field. This table assigns each live cell to a host.

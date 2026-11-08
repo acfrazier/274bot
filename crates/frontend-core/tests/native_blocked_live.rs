@@ -212,6 +212,12 @@ fn gatherer_blocked_stops_with_shared_status() {
     let deadline = Instant::now() + Duration::from_secs(240);
     let result = (|| -> Result<(), String> {
         loop {
+            let relog_login = state.lock().unwrap().runner.take_relog_login();
+            if relog_login {
+                if let Some(arm) = play.arm(&account) {
+                    arm.arm_explicit_login();
+                }
+            }
             match state.lock().unwrap().runner.status() {
                 RunnerStatus::Passed => break,
                 RunnerStatus::Failed(reason) => return Err(reason),

@@ -1023,9 +1023,14 @@ fn run_live_sequence(
 
     while Instant::now() < deadline {
         {
-            let state = live.lock().unwrap_or_else(|error| error.into_inner());
+            let mut state = live.lock().unwrap_or_else(|error| error.into_inner());
             if let Some(error) = &state.callback_error {
                 return Err(format!("live frame callback failed: {error}"));
+            }
+            if state.runner.take_relog_login() {
+                if let Some(arm) = play.arm(account) {
+                    arm.arm_explicit_login();
+                }
             }
             if let scenario::RunnerStatus::Failed(error) = state.runner.status() {
                 return Err(format!("original thiever scenario failed: {error}"));

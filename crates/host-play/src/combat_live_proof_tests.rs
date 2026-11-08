@@ -8383,6 +8383,16 @@ fn run_case(case: Case) {
     let mut terminal_error = None;
     let mut abort_observation_end = None;
     loop {
+        let relog_login = state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .runner
+            .take_relog_login();
+        if relog_login {
+            if let Some(arm) = play.arm(&account) {
+                arm.arm_explicit_login();
+            }
+        }
         if let Some(status) = play.script_native_status(&account) {
             combat_proof::record_status(&account, &status, None);
         }

@@ -349,10 +349,24 @@ fn local_family_reads_real_content() {
     .expect("spawn fresh Engine A account");
     let deadline = Instant::now() + Duration::from_secs(240);
     if seed_config.is_some() {
+        // The seed logs its scriptless bot out once to complete the tutorial;
+        // the approved scriptless policy then parks it, so post the operator's
+        // explicit Login once after that logout.
+        let mut login_posted = false;
         loop {
             let state = prep.lock().unwrap();
             if let Some(error) = state.error.as_ref() {
                 panic!("gather seed preparation failed: {error}");
+            }
+            if matches!(
+                state.phase,
+                Some(PrepPhase::WaitLogout | PrepPhase::WaitRelog)
+            ) && !login_posted
+            {
+                login_posted = true;
+                if let Some(arm) = play.arm(account) {
+                    arm.arm_explicit_login();
+                }
             }
             if state.phase == Some(PrepPhase::Ready) {
                 break;
