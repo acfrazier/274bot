@@ -118,6 +118,7 @@ impl Probe<'_> {
         let revision = match self.selected.revision() {
             274 => ClientRevision::R274,
             289 => ClientRevision::R289,
+            377 => ClientRevision::R377,
             revision => panic!("unsupported selected revision {revision}"),
         };
         let evidence = probe_stamp();

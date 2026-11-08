@@ -55,6 +55,43 @@ fn report(end: CombatEnd) -> CombatReport {
 }
 
 #[test]
+fn combat_table_preparation_retains_each_selected_revision() {
+    let progress = CompiledProgress {
+        binding: FactKey::new("journal:combat_revision"),
+        role: None,
+        colour_not_started: FactKey::new("combat_revision:0"),
+        colour_in_progress: FactKey::new("combat_revision:1"),
+        colour_complete: FactKey::new("combat_revision:2"),
+        stage_keys: Arc::from([]),
+        rules: Arc::from([]),
+        flags: Arc::from([]),
+        monotonic: false,
+    };
+    let areas = HashMap::new();
+    let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
+    let recipes = HashMap::new();
+    let path = FactKey::new("combat_revision");
+    for revision in [
+        ClientRevision::R274,
+        ClientRevision::R289,
+        ClientRevision::R377,
+    ] {
+        if revision == ClientRevision::R377
+            && !crate::native::has_local_game_data_for_test(revision)
+        {
+            continue;
+        }
+        let data = api::game_data::for_revision(revision).unwrap();
+        let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+        let cx = fixture_compile_context(
+            &data, &quests, &progress, &areas, &loadouts, &recipes, &path,
+        );
+        let tables = build_tables(&cx).expect("prepare the selected revision's combat tables");
+        assert!(Arc::ptr_eq(tables.selected(), &data), "{revision:?}");
+    }
+}
+
+#[test]
 fn open_tactic_defaults_auto_retaliate_on() {
     let args: TacticArgs = serde_json::from_value(serde_json::json!({
         "kind": "open",

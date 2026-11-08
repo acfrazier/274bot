@@ -1,0 +1,577 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "cook",
+  "display_name": "Cook's Assistant",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 1,
+    "requirements": [],
+    "items": [
+      {
+        "obj": "pot_flour",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": "acquire:flour",
+        "from_stage": "cook:1"
+      },
+      {
+        "obj": "egg",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": "acquire:egg",
+        "from_stage": "cook:1"
+      },
+      {
+        "obj": "bucket_milk",
+        "qty": 1,
+        "kind": "acquirable",
+        "acquire": "acquire:milk",
+        "from_stage": "cook:1"
+      }
+    ],
+    "acquire": {
+      "acquire:egg": [
+        {
+          "id": "take-egg",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "egg" },
+            "op": "Take",
+            "anchor": {
+              "tile": [3226, 3301, 0],
+              "source": "C maps/m50_51.jm2:7985 (OBJ 1944 at 0 26 37); pack/obj.pack:1945 (1944=egg)"
+            },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "egg" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "egg" } } }
+        }
+      ],
+      "acquire:milk": [
+        {
+          "id": "take-bucket",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "bucket_empty" },
+            "op": "Take",
+            "anchor": {
+              "tile": [3225, 3294, 0],
+              "source": "C maps/m50_51.jm2:7984 (OBJ 1925 at 0 25 30); pack/obj.pack:1926 (1925=bucket_empty)"
+            },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_empty" } } }
+        },
+        {
+          "id": "milk-cow",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "bucket_empty",
+            "target": { "loc": "fat_cow" },
+            "anchor": {
+              "tile": [3252, 3275, 0],
+              "source": "C maps/m50_51.jm2:7329 (LOC 8689 at 0 52 11); pack/loc.pack:8690 (8689=fat_cow); all.loc:53381-53394 (Dairy Cow, Milk); cow_milking.rs2:19-50"
+            },
+            "radius": 4,
+            "product": "bucket_milk"
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } }
+        }
+      ],
+      "acquire:flour": [
+        {
+          "id": "take-pot",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "ground": "pot_empty" },
+            "op": "Take",
+            "anchor": {
+              "tile": [3209, 3214, 0],
+              "source": "C maps/m50_50.jm2:10731 (OBJ 1931 at 0 9 14); pack/obj.pack:1932 (1931=pot_empty)"
+            },
+            "radius": 2,
+            "wait_if_missing": true
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_empty" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_empty" } } }
+        },
+        {
+          "id": "pick-wheat",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "wheat_small" },
+            "op": "Pick",
+            "anchor": {
+              "tile": [3157, 3299, 0],
+              "source": "C maps/m49_51.jm2:5275 (LOC 5584 at 0 21 35); pack/loc.pack:5585 (5584=wheat_small); all.loc:39429-39441; pickables.rs2:14-29"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": ["you put the grain in the hopper", "there is already grain in the hopper"],
+                    "clear": ["the grain slides down the chute", "the empty hopper"]
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"],
+                    "clear": ["you fill a pot with", "flour bin is already empty"]
+                  }
+                }
+              }
+            ]
+          },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } }
+        },
+        {
+          "id": "walk-mill-ladder-ground",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3164, 3307, 0],
+            "source": "C maps/m49_51.jm2:5584,7067,7305; pack/loc.pack:12965-12967; qip_cook_ladder levels 0-2 at local 28 43",
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 0], "radius": 6 } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"],
+                    "clear": ["you fill a pot with", "flour bin is already empty"]
+                  }
+                }
+              }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 0], "radius": 2 } } }
+        },
+        {
+          "id": "climb-lumbridge-mill-ground-to-middle",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "qip_cook_ladder" },
+            "op": "Climb-up",
+            "anchor": {
+              "tile": [3164, 3307, 0],
+              "source": "C maps/m49_51.jm2:5584; pack/loc.pack:12965; all.loc:90004-90014; ladders.rs2:159-162"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 1], "radius": 2 } } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 2], "radius": 2 } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"],
+                    "clear": ["you fill a pot with", "flour bin is already empty"]
+                  }
+                }
+              }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 1], "radius": 2 } } }
+        },
+        {
+          "id": "climb-lumbridge-mill-middle-to-top",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "qip_cook_ladder_middle" },
+            "op": "Climb-up",
+            "anchor": {
+              "tile": [3164, 3307, 1],
+              "source": "C maps/m49_51.jm2:7067; pack/loc.pack:12966; all.loc:90016-90028; ladders.rs2:163-168"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 2], "radius": 2 } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"],
+                    "clear": ["you fill a pot with", "flour bin is already empty"]
+                  }
+                }
+              }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 2], "radius": 2 } } }
+        },
+        {
+          "id": "walk-mill-top-controls",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3166, 3305, 2],
+            "source": "C maps/m49_51.jm2:7316 (hopperlevers1 at 2 30 41); pack/loc.pack:2719; all.loc:19341-19350",
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3305, 2], "radius": 6 } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"],
+                    "clear": ["you fill a pot with", "flour bin is already empty"]
+                  }
+                }
+              }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3305, 2], "radius": 2 } } }
+        },
+        {
+          "id": "fill-lumbridge-hopper",
+          "kind": "use_on",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "item": "grain",
+            "target": { "loc": "hopper_lumbridge" },
+            "anchor": {
+              "tile": [3166, 3307, 2],
+              "source": "C maps/m49_51.jm2:7318 (LOC 2714 at 2 30 43); pack/loc.pack:2715 (2714=hopper_lumbridge); windmills.rs2:85-97"
+            },
+            "radius": 8,
+            "settle_ms": 20000
+          },
+          "skip_if": {
+            "Any": [
+              { "Not": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } } },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": ["you put the grain in the hopper", "there is already grain in the hopper"],
+                    "clear": ["the grain slides down the chute", "the empty hopper"]
+                  }
+                }
+              },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"],
+                    "clear": ["you fill a pot with", "flour bin is already empty"]
+                  }
+                }
+              }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "message",
+              "version": 1,
+              "args": {
+                "any": ["you put the grain in the hopper", "there is already grain in the hopper"]
+              }
+            }
+          }
+        },
+        {
+          "id": "operate-lumbridge-hopper-controls",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "hopperlevers1" },
+            "op": "Operate",
+            "anchor": {
+              "tile": [3166, 3305, 2],
+              "source": "C maps/m49_51.jm2:7316 (LOC 2718 at 2 30 41); pack/loc.pack:2719 (2718=hopperlevers1); all.loc:19341-19350; windmills.rs2:99-123"
+            },
+            "radius": 8,
+            "settle_ms": 20000
+          },
+          "skip_if": {
+            "Any": [
+              {
+                "All": [
+                  { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "grain" } } },
+                  {
+                    "Not": {
+                      "Fact": {
+                        "kind": "message_state",
+                        "version": 1,
+                        "args": {
+                          "set": ["you put the grain in the hopper", "there is already grain in the hopper"],
+                          "clear": ["the grain slides down the chute", "the empty hopper"]
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "Fact": {
+                  "kind": "message_state",
+                  "version": 1,
+                  "args": {
+                    "set": ["the grain slides down the chute", "flour bin downstairs is full", "flour bin downstairs is now full"],
+                    "clear": ["you fill a pot with", "flour bin is already empty"]
+                  }
+                }
+              },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+            ]
+          },
+          "settle": {
+            "Fact": {
+              "kind": "message",
+              "version": 1,
+              "args": {
+                "any": [
+                  "you operate the hopper. the grain slides down the chute.",
+                  "the flour bin downstairs is full, i should empty it first.",
+                  "the flour bin downstairs is now full."
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": "climb-lumbridge-mill-top-to-middle",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "qip_cook_ladder_top" },
+            "op": "Climb-down",
+            "anchor": {
+              "tile": [3164, 3307, 2],
+              "source": "C maps/m49_51.jm2:7305; pack/loc.pack:12967; all.loc:90030-90040; ladders.rs2:174-176"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 1], "radius": 2 } } },
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 0], "radius": 2 } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 1], "radius": 2 } } }
+        },
+        {
+          "id": "climb-lumbridge-mill-middle-to-ground",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "qip_cook_ladder_middle" },
+            "op": "Climb-down",
+            "anchor": {
+              "tile": [3164, 3307, 1],
+              "source": "C maps/m49_51.jm2:7067; pack/loc.pack:12966; all.loc:90016-90028; ladders.rs2:170-172"
+            },
+            "radius": 2
+          },
+          "skip_if": {
+            "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 0], "radius": 2 } }
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3164, 3307, 0], "radius": 2 } } }
+        },
+        {
+          "id": "walk-mill-base",
+          "kind": "walk",
+          "version": 1,
+          "args": {
+            "tile": [3166, 3306, 0],
+            "source": "C maps/m49_51.jm2:5645 (LOC 1781 at 0 30 42); pack/loc.pack:1782 (1781=millbase); all.loc:12407-12450",
+            "radius": 2
+          },
+          "skip_if": {
+            "Any": [
+              { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 0], "radius": 6 } } },
+              { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+            ]
+          },
+          "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3166, 3306, 0], "radius": 2 } } }
+        },
+        {
+          "id": "empty-millbase",
+          "kind": "interact",
+          "version": 1,
+          "advances": false,
+          "args": {
+            "target": { "loc": "millbase" },
+            "op": "Empty",
+            "anchor": {
+              "tile": [3166, 3306, 0],
+              "source": "C maps/m49_51.jm2:5645 (placed LOC 1781=millbase); all.loc:12407-12450 (Empty on placed base and visible flour face); windmills.rs2:21-69"
+            },
+            "radius": 8,
+            "settle_ms": 15000
+          },
+          "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+          "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+        }
+      ]
+    },
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:pot_empty", "obj:grain", "obj:bucket_empty", "obj:egg"],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:cook",
+      "progress": {
+        "colour": { "not_started": "cook:0", "in_progress": "cook:1", "complete": "cook:2" },
+        "rules": [],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "cook:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "cook",
+                "anchor": {
+                  "tile": [3209, 3215, 0],
+                  "source": "C maps/m50_50.jm2:10644 (NPC 278 at 0 9 15); pack/npc.pack:279 (278=cook); area_lumbridge/cook.rs2:7-12"
+                },
+                "leash": 6,
+                "prefer": ["What's wrong?", "Yes, I'll help you."]
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "cook", "is": "in_progress" } } }
+            }
+          ]
+        },
+        {
+          "stage": "cook:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "egg",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:egg" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "egg" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "egg" } } }
+            },
+            {
+              "id": "milk",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:milk" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "bucket_milk" } } }
+            },
+            {
+              "id": "flour",
+              "kind": "acquire",
+              "version": 1,
+              "args": { "recipe": "acquire:flour" },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "pot_flour" } } }
+            },
+            {
+              "id": "hand-in",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "cook",
+                "anchor": {
+                  "tile": [3209, 3215, 0],
+                  "source": "C maps/m50_50.jm2:10644 (NPC 278 at 0 9 15); pack/npc.pack:279 (278=cook); area_lumbridge/cook.rs2:10-12; quest_cook.rs2:42-91"
+                },
+                "leash": 6,
+                "prefer": []
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "cook", "is": "complete" } } }
+            }
+          ]
+        },
+        {
+          "stage": "cook:2",
+          "required": [],
+          "terminal": true,
+          "recovery_entry": null,
+          "steps": []
+        }
+      ]
+    }
+  ]
+}

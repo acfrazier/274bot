@@ -2339,6 +2339,17 @@ impl Quester {
         if self.path.progress_reader.is_some() {
             return self.read_custom_stage(tick, retarget);
         }
+        if self.journal.is_some()
+            && tick.cx.revision() == api::selected::ClientRevision::R377
+            && self.selected.revision() == 377
+            && quest_colour(&self.path, &self.quests, tick.cx.snapshot())
+                == Some(QuestListStatus::Complete)
+        {
+            // Queued 377 completion can overtake a stage-journal click.
+            // Drop revokes that obsolete read and its quiet lease without
+            // closing the scroll; the normal colour resolver owns completion.
+            self.journal = None;
+        }
         if self.poll_journal_drain(tick) {
             return false;
         }

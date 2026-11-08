@@ -75,6 +75,17 @@ pub trait Driver {
         forceapproach: i32,
         r#type: i32,
     ) -> bool;
+    /// Emit the already-validated cardinal step after opening a door, without
+    /// consulting local collision before the server's door update arrives.
+    /// Revision 377 requires the native client's encoder; unbound drivers deny.
+    fn send_pending_door_step(&mut self, x: i32, z: i32) -> bool {
+        if self.revision() == ClientRevision::R377 {
+            return false;
+        }
+        Send::move_gameclick(false, x, z, &[])
+            .and_then(|send| self.send_packet(&send))
+            .is_ok()
+    }
     /// The route origin tile (local player), in the client's build-area
     /// (scene-relative) space, as `route_x[0]`/`route_z[0]`.
     fn local_route(&self) -> Option<(i32, i32)>;
@@ -207,6 +218,15 @@ impl Driver for Client {
         )
     }
 
+    fn send_pending_door_step(&mut self, x: i32, z: i32) -> bool {
+        if self.revision() == ClientRevision::R377 {
+            return self.write_pending_door_step_377(x, z);
+        }
+        Send::move_gameclick(false, x, z, &[])
+            .and_then(|send| self.send_packet(&send))
+            .is_ok()
+    }
+
     fn local_route(&self) -> Option<(i32, i32)> {
         self.local_player
             .as_ref()
@@ -253,6 +273,7 @@ impl Driver for Client {
         let Some(bytes) = self.out.data().get(checkpoint.start..self.out.pos) else {
             return false;
         };
+        let revision = Client::revision(self);
         let mut cursor = 0;
         while cursor < bytes.len() {
             let random = checkpoint
@@ -261,22 +282,10 @@ impl Driver for Client {
                 .map_or(0, |cipher| cipher.next_int());
             let opcode = bytes[cursor].wrapping_sub(random as u8);
             cursor += 1;
-            let row = crate::prot::LEGAL_SEND
-                .iter()
-                .map(|row| {
-                    client::io::map_client_prot(
-                        Client::revision(self),
-                        client::io::ClientProt {
-                            id: row.id,
-                            length: row.length,
-                        },
-                    )
-                })
-                .find(|row| row.id == i32::from(opcode));
-            let Some(row) = row else {
+            let Some(metadata) = crate::prot::packet_metadata(revision, opcode) else {
                 return false;
             };
-            let length = match row.length {
+            let length = match metadata.length {
                 length if length >= 0 => length as usize,
                 -1 => {
                     let Some(&length) = bytes.get(cursor) else {
@@ -284,6 +293,21 @@ impl Driver for Client {
                     };
                     cursor += 1;
                     usize::from(length)
+                }
+                -2 => {
+                    let Some(end) = cursor.checked_add(2).filter(|&end| end <= bytes.len()) else {
+                        return false;
+                    };
+                    let length =
+                        usize::from(u16::from_be_bytes([bytes[cursor], bytes[cursor + 1]]));
+                    if crate::prot::PacketLength::VarShort
+                        .validate(length)
+                        .is_err()
+                    {
+                        return false;
+                    }
+                    cursor = end;
+                    length
                 }
                 _ => return false,
             };

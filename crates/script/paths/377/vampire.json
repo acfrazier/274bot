@@ -1,0 +1,286 @@
+{
+  "$schema": "../path.schema.json",
+  "schema": 3,
+  "id": "vampire",
+  "display_name": "Vampire Slayer",
+  "required": [],
+  "tested_stats": null,
+  "partner": null,
+  "quest": {
+    "members": false,
+    "quest_points": 3,
+    "requirements": [],
+    "items": [
+      { "obj": "garlic", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "vampire:2" },
+      { "obj": "stake", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "vampire:2" },
+      { "obj": "hammer", "qty": 1, "kind": "acquirable", "acquire": null, "from_stage": "vampire:2" }
+    ],
+    "acquire": {},
+    "bank": "nearest",
+    "coin_float": 0,
+    "loadouts": {},
+    "areas": {},
+    "tools": ["obj:garlic", "obj:stake", "obj:hammer", "obj:beer", "obj:coins"],
+    "owns_inventory": false
+  },
+  "roles": [
+    {
+      "role": null,
+      "progress_binding": "journal:vampire",
+      "progress": {
+        "colour": { "not_started": "vampire:0", "in_progress": "vampire:1", "complete": "vampire:3" },
+        "rules": [
+          { "stage": "vampire:3", "all": ["quest complete!"], "varp": 3 },
+          { "stage": "vampire:2", "all": ["i have spoken to dr harlow"], "varp": 2 },
+          { "stage": "vampire:1", "all": ["i need to speak to dr harlow"], "varp": 1 },
+          { "stage": "vampire:0", "all": ["i can start this quest"], "varp": 0 }
+        ],
+        "flags": [],
+        "monotonic": false
+      },
+      "prelude": [],
+      "sequences": [
+        {
+          "stage": "vampire:0",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "start-morgan",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "morgan",
+                "anchor": { "tile": [3098, 3268, 0], "source": "maps/m48_51.jm2:7323; morgan.rs2:16" },
+                "leash": 6,
+                "prefer": ["Ok, I'm up for an adventure."]
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "vampire", "any": ["vampire:1"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "vampire:1",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "ask-harlow",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "npc": "dr_harlow",
+                "anchor": { "tile": [3222, 3397, 0], "source": "maps/m50_53.jm2:12938; harlow.rs2:11-22" },
+                "leash": 6,
+                "prefer": ["Morgan needs your help"]
+              },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "stake" } } },
+              "settle": { "Fact": { "kind": "stage_in", "version": 1, "args": { "quest": "vampire", "any": ["vampire:2"] } } }
+            }
+          ]
+        },
+        {
+          "stage": "vampire:2",
+          "required": [],
+          "terminal": false,
+          "recovery_entry": null,
+          "steps": [
+            {
+              "id": "climb-morgan-stairs",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [3102, 3266, 1],
+                "source": "ladders+stairs/scripts/stairs.rs2:7: stairs LOC 1722 at maps/m48_51.jm2:5291 telejumps to 1_48_51_30_2; navigation owns the climb and its upstairs arrival",
+                "radius": 1
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "garlic" } } },
+                { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3096, 3269, 1], "radius": 4 } } },
+                { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3102, 3266, 1], "radius": 1 } } }
+              ] },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3102, 3266, 1], "radius": 1 } } }
+            },
+            {
+              "id": "open-garlic-cupboard",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "garliccupboardshut" },
+                "op": "Open",
+                "anchor": { "tile": [3096, 3269, 1], "source": "maps/m48_51.jm2:7074 (LOC 2612 at 1 24 5); all.loc forceapproach=east; cupboards.rs2:34" },
+                "radius": 3,
+                "settle_ms": 20000
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "garlic" } } },
+                { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "garliccupboardopen" } } }
+              ] },
+              "settle": { "Fact": { "kind": "loc_present", "version": 1, "args": { "loc": "garliccupboardopen" } } }
+            },
+            {
+              "id": "search-garlic-cupboard",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "garliccupboardopen" },
+                "op": "Search",
+                "anchor": { "tile": [3096, 3269, 1], "source": "cupboards.rs2:18,24,34,71-76" },
+                "radius": 3,
+                "settle_ms": 20000
+              },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "garlic" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "garlic" } } }
+            },
+            {
+              "id": "take-hammer-coins",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "ground": "coins" },
+                "op": "Take",
+                "anchor": { "tile": [3232, 3500, 0], "source": "maps/m50_54.jm2:12022-12023 (OBJ 995 qty 3/4); maps/m50_154.jm2:7787 ladder_1755 and ladders.rs2:90-97 provide the alcove route" },
+                "radius": 6,
+                "wait_if_missing": true,
+                "until": { "obj": "coins", "qty": 1 },
+                "settle_ms": 300000
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hammer" } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 1 } } }
+              ] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 1 } } }
+            },
+            {
+              "id": "buy-hammer",
+              "kind": "buy",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "shop": {
+                  "npc": "generalshopkeeper2",
+                  "anchor": {
+                    "tile": [3218, 3415, 0],
+                    "source": "maps/m50_53.jm2:12934 (NPC 522); scripts/_unpack/377/all.npc:13305,13309 (Trade, owned_shop generalshop2); packed server/inv.dat generalshop2 has hammer stock 5"
+                  }
+                },
+                "obj": "hammer",
+                "qty": 1,
+                "est_gp": 1
+              },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hammer" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "hammer" } } }
+            },
+            {
+              "id": "take-beer-coins",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "ground": "coins" },
+                "op": "Take",
+                "anchor": { "tile": [3232, 3500, 0], "source": "maps/m50_54.jm2:12022-12023 (OBJ 995 qty 3/4); maps/m50_154.jm2:7787 ladder_1755 and ladders.rs2:90-97 provide the alcove route" },
+                "radius": 6,
+                "wait_if_missing": true,
+                "until": { "obj": "coins", "qty": 2 },
+                "settle_ms": 300000
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "beer" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "stake" } } },
+                { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 2 } } }
+              ] },
+              "settle": { "Fact": { "kind": "item_count_at_least", "version": 1, "args": { "obj": "coins", "qty": 2 } } }
+            },
+            {
+              "id": "buy-beer",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "rustyanchor_bartender",
+                "anchor": { "tile": [3045, 3257, 0], "source": "maps/m47_50.jm2:11918; bartender.rs2:10,39-40" },
+                "leash": 6,
+                "prefer": ["Could I buy a beer please?"]
+              },
+              "skip_if": { "Any": [
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "beer" } } },
+                { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "stake" } } }
+              ] },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "beer" } } }
+            },
+            {
+              "id": "take-stake",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "npc": "dr_harlow",
+                "anchor": { "tile": [3222, 3397, 0], "source": "harlow.rs2:25-50" },
+                "leash": 6,
+                "prefer": ["Ok mate."]
+              },
+              "skip_if": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "stake" } } },
+              "settle": { "Fact": { "kind": "has_item", "version": 1, "args": { "obj": "stake" } } }
+            },
+            {
+              "id": "enter-crypt",
+              "kind": "walk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "tile": [3077, 9771, 0],
+                "source": "ladders+stairs/scripts/stairs.rs2:366-370: cryptstairsdown LOC 2616 at maps/m48_52.jm2:8258 telejumps to 0_48_152_5_43; navigation owns the descent and its crypt arrival",
+                "radius": 1
+              },
+              "skip_if": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3077, 9771, 0], "radius": 8 } } },
+              "settle": { "Fact": { "kind": "near", "version": 1, "args": { "tile": [3077, 9771, 0], "radius": 4 } } }
+            },
+            {
+              "id": "open-coffin",
+              "kind": "interact",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "target": { "loc": "coffin_2614" },
+                "op": "Open",
+                "anchor": { "tile": [3077, 9775, 0], "source": "maps/m48_152.jm2:6754; quest_vampire.rs2:1,9-27; all.loc op1=Open" },
+                "radius": 4,
+                "settle_ms": 20000
+              },
+              "skip_if": { "Fact": { "kind": "npc_present", "version": 1, "args": { "npc": "count_draynor" } } },
+              "settle": { "Fact": { "kind": "npc_present", "version": 1, "args": { "npc": "count_draynor" } } }
+            },
+            {
+              "id": "kill-count",
+              "kind": "combat",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "target": { "npc": "count_draynor", "not_targeting_others": true, "pick": "nearest" },
+                "tactic": { "kind": "open", "style": "melee", "engage_radius": 8, "auto_retaliate": true },
+                "stand": { "tile": [3077, 9771, 0], "source": "quest_vampire.rs2:27 spawn 0_48_152_6_46; count_draynor.rs2:57-73" },
+                "lost_radius": 12,
+                "kill_budget_ticks": 400,
+                "loadout": null,
+                "win": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "vampire", "is": "complete" } } }
+              },
+              "skip_if": { "Any": [] },
+              "settle": { "Fact": { "kind": "quest_colour", "version": 1, "args": { "quest": "vampire", "is": "complete" } } }
+            }
+          ]
+        },
+        { "stage": "vampire:3", "required": [], "terminal": true, "recovery_entry": null, "steps": [] }
+      ]
+    }
+  ]
+}

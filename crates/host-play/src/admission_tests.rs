@@ -29,6 +29,115 @@ fn selected_combat() -> Arc<CombatTables> {
     Arc::clone(&TABLES)
 }
 
+#[test]
+fn explicit_377_tables_keep_selected_food_prayer_dose_and_condition_identity() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
+    let selected =
+        api::game_data::for_revision(ClientRevision::R377).expect("selected revision 377 facts");
+    let world = NavWorld::from_parts(
+        open_corridor(1, 1, 0),
+        TransportGraph::default(),
+        Vec::new(),
+    );
+    bind_377_tables(&world, Some(Arc::clone(&selected))).expect("bind revision 377 tables");
+
+    let cached = tables(&world).expect("bound combat and risk tables");
+    assert_eq!(cached.combat.selected().revision(), 377);
+    assert!(Arc::ptr_eq(cached.combat.selected(), &selected));
+
+    let food = selected
+        .consumable("cooked_chompy")
+        .expect("revision 377 cooked chompy");
+    let food_fact = cached
+        .combat
+        .food(food.item.id)
+        .expect("selected food table contains cooked chompy");
+    assert_eq!(
+        food_fact.heal,
+        food.fixed_hp_heal().expect("fixed food heal")
+    );
+    assert!(
+        script::combat::guard::shared_tables()
+            .expect("legacy tables")
+            .food(food.item.id)
+            .is_none(),
+        "the legacy R289 table has no cooked-chompy food row"
+    );
+
+    let prayer = selected
+        .prayer_by_name("Protect from Melee")
+        .expect("revision 377 melee prayer");
+    let selected_prayer = cached
+        .combat
+        .prayer(script::combat::tables::PrayerRole::Protect, 2)
+        .expect("selected protect-from-melee row");
+    assert!(std::ptr::eq(prayer, selected_prayer));
+
+    let dose_fact = selected
+        .consumable("1doseantipoison")
+        .expect("revision 377 one-dose antipoison");
+    let selected_dose = cached
+        .combat
+        .potion(script::combat::tables::PotionKind::Antipoison)
+        .expect("selected antipoison family")
+        .doses[0]
+        .expect("selected one-dose antipoison stage");
+    let next_id = selected
+        .item_by_alias(dose_fact.next_stage.as_deref().expect("selected next dose"))
+        .expect("selected next-dose item")
+        .id;
+    assert_eq!(selected_dose.id, dose_fact.item.id);
+    assert_eq!(
+        selected_dose.doses,
+        dose_fact.dose_count.expect("dose count")
+    );
+    assert_eq!(selected_dose.next_id, next_id);
+
+    let (condition_combat, poison_unknown_v) =
+        condition_tables(&world).expect("condition uses bound tables");
+    assert!(Arc::ptr_eq(&cached.combat, &condition_combat));
+    assert_eq!(poison_unknown_v, cached.risks.poison_unknown_v);
+    let (again, _) = condition_tables(&world).expect("condition tables stay warm");
+    assert!(Arc::ptr_eq(&condition_combat, &again));
+}
+
+#[test]
+fn unavailable_explicit_377_tables_do_not_fall_back_to_289() {
+    let world = NavWorld::from_parts(
+        open_corridor(1, 1, 0),
+        TransportGraph::default(),
+        Vec::new(),
+    );
+    bind_377_tables(&world, None).expect("unavailable selected facts are a closed binding");
+
+    assert!(tables(&world).is_none());
+    assert!(condition_tables(&world).is_none());
+    assert_eq!(
+        script::combat::guard::shared_tables()
+            .expect("legacy tables")
+            .selected()
+            .revision(),
+        289,
+        "the available legacy table is not selected for the explicitly bound world"
+    );
+}
+
+#[test]
+fn unbound_world_keeps_the_legacy_r289_table_default() {
+    let world = NavWorld::from_parts(
+        open_corridor(1, 1, 0),
+        TransportGraph::default(),
+        Vec::new(),
+    );
+    let legacy = script::combat::guard::shared_tables().expect("legacy tables");
+    let (first, _) = condition_tables(&world).expect("legacy default table");
+    let (again, _) = condition_tables(&world).expect("cached legacy default table");
+
+    assert_eq!(first.selected().revision(), 289);
+    assert!(Arc::ptr_eq(&legacy, &first));
+    assert!(Arc::ptr_eq(&first, &again));
+}
+
 fn ice_kind(combat: &CombatTables) -> ZoneKind {
     let npc = combat
         .selected()
@@ -1795,7 +1904,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     });
 
     let snapshot = api::snapshot::GameSnapshot::new();
-    let _ = capture(&snapshot, false, None, false);
+    let _ = capture(&snapshot, false, None, false, None);
     let publish_world = empty_corridor();
     let publish_from = tile(0, 1);
     let publish_to = tile(8, 1);
@@ -2938,7 +3047,7 @@ mod compact_final_route_tests {
         assert_eq!(bot.admission.as_deref().unwrap().input, after.input);
         assert_eq!(
             after.input,
-            capture(&snapshot, false, bot.condition.current(), false)
+            capture(&snapshot, false, bot.condition.current(), false, None)
         );
         assert_eq!(after.input.hp, 70);
         assert!(after.input.food_ids.contains(&379));
@@ -2970,7 +3079,7 @@ mod compact_final_route_tests {
         assert!(!Arc::ptr_eq(&before, after));
         assert_eq!(
             after.input,
-            capture(&snapshot, false, bot.condition.current(), false)
+            capture(&snapshot, false, bot.condition.current(), false, None)
         );
         assert!(
             after.input.missing_facts(),

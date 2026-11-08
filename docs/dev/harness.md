@@ -19,6 +19,45 @@ ownership, prefer the tracked suite entrypoint
 record — not automatic script qualification. Captures that require human
 readback stay `pending_visual_review`; raw failures stay preserved.
 
+## Revision 377 Cook's Assistant (Route A)
+
+The `cook_377` scenario is a bespoke Fairy Ring content check. It does not
+establish historical accuracy and does not change the production revision.
+It starts with an untouched quest, zero quest points and zero Cooking XP.
+The only seeds bypass this account's tutorial and teleport its position for
+commutes. Each commute has a `SEED position:` step label. No ingredient,
+mill variable, quest stage, XP or quest point is seeded.
+
+The cell talks to the Cook, takes the kitchen pot, farm egg and bucket,
+uses the bucket on the dairy cow, picks wheat, climbs both mill ladders,
+fills and operates the hopper, descends and empties the flour bin. It
+hands in through the Cook's dialogue. Read-only `getvar` replies prove
+server `cookquest=0→1→2`, `qp=0→1` and the mill writes. These steps are
+labelled `SERVER READBACK`; the Cook quest variable is not transmitted
+as a client varp. Client-visible checks require the red→yellow→green
+quest-list row, the quest-point display, completion interface, exactly
+300 Cooking XP gained from zero, and consumed ingredients.
+A refused or unavailable interaction fails its named step. The cell does
+not replace an unavailable action with a state seed.
+
+Revision-377 loc observations resolve morph forms only for name, description
+and actions. Size, oriented footprint, collision flags, active status,
+force-approach, animation ID and map icons remain those of the placed base
+config, even when its selected form is absent. This follows Java 377's
+separate menu/Examine and placement/routing paths; 274/289 are unchanged.
+
+The ignored `cook::cook_377_route_a` test in `revision_377_live` runs this
+registered scenario through the host pump and selected 377 client. Supply
+the resource variables listed in that test's parent module, `LIVE=1`,
+`BOT_LIVE_NAME_PREFIX` (1–4 characters), and an absolute `ROUTE_A_EVIDENCE_DIR`. Run it
+through `isohome` with
+`cargo test -p host-play --features live-harness,test-support,debug-catalog --test revision_377_live -- --ignored --exact cook::cook_377_route_a --nocapture --test-threads=1`.
+Each fresh account produces a JSONL trace with seed labels, server
+readbacks, step names, dialogue, inventory, quest-list colours,
+transmitted quest-point total, completion-interface reward text and Cooking XP.
+The mainland fixture includes a clean relog to unlock the quest tab,
+as in the TS runner. Neither the cell nor the fixture changes world speed.
+
 ## Live entry points
 
 Live cells need a local engine and cache, run one at a time
@@ -739,6 +778,47 @@ Sequence, Stop/restart and death assertions belong to the live cell. Additional
 bank stock or auxiliary quest flags may be inserted into the pre-Start setup,
 never into the gameplay proof. Shared world entities must remain real content.
 
+## Revision-377 combat, Survival and clue cells
+
+The ignored `revision_377_live::machines` cells use the same production
+template and resource inputs as the revision-377 Gatherer cells below.
+Run with `BOT_LIVE_NAME_PREFIX=f377` through `isohome`.
+Set an absolute `MACHINES_377_EVIDENCE_DIR`.
+Use `machines_377_` with `--ignored --nocapture --test-threads=1`.
+Enable `debug-catalog,live-harness,test-support`. Clue cells also require `js`.
+
+Each cell uses a fresh account and the normal mainland logout/login.
+All account fixtures finish before the native machine starts:
+
+- Route admission receives five cooked chompy foods and Hitpoints 40.
+  Capture must retain all five foods without missing facts.
+  An advisory must retain a known assessment with those foods.
+  A native walk must then arrive at (3218,3245,0).
+  This food is absent from the legacy revision-289 combat table.
+- Cow combat receives Attack, Strength, Defence and Hitpoints 40, one bronze
+  sword, and five lobsters. It starts inside the real Lumbridge cow pasture.
+  The native Combat action must report a kill and a swing.
+  Combat XP must increase. Native Reach waits for the death drop, then takes
+  a new cowhide.
+- Survival eating receives Hitpoints 15, takes 12 HP of pre-Start damage
+  through the supported `~hit` fixture, and receives five lobsters.
+  Poison severity 50 supplies the poison line before Start.
+  Cure policy remains `never`. A native food-guarded walk must move, consume
+  food, and increase observed HP.
+- Survival cure receives Hitpoints 40, five lobsters, and one single-dose
+  antipoison. Poison severity 50 supplies the poison line before Start.
+  A native food-guarded walk must move and produce the drink message,
+  dose-to-vial inventory change, and owner-observed immunity.
+- Sherlock receives one selected Hans clue, either easy `simple005` or hard
+  `riddle012`. Its handoff must remove that clue and produce another clue or
+  casket. This does not qualify the rest of the generated trail.
+  The cell installs the canonical `script-js` card slice, as the host binary does.
+
+The cells seed no scene entities, loot, replacement clues or post-Start actions.
+They capture prepared and result frames from the real client renderer.
+These finite witnesses do not establish general combat safety, every cure,
+search/dig clues, or complete treasure trails.
+
 ## Gatherer live cells
 
 Gatherer cells live in `crates/host-play/tests/gatherer_live.rs`. Each uses an
@@ -881,6 +961,36 @@ including the free-world refusal window, start at the actual Knife dispatch.
 All fixtures seed only the tested account before Start. Shared spots, rocks and
 trees remain real content. Each case stops the script and logs out its account,
 including on assertion failure.
+
+### Revision 377
+
+The ignored `revision_377_live::gatherer` cells run the native Gatherer through
+the canonical revision-377 production template. They select generated methods
+and named sites rather than the older live harness's revision-289 profile.
+The cells chop normal trees near Lumbridge and net shrimp at Draynor.
+Both use the selected Draynor bank, return to the resource area, and require
+fresh yield after the return. Lumbridge has no named bank in this data.
+The current selected placements do not provide a Lumbridge-swamp shrimp site.
+
+Run these cells through `isohome` with `LIVE=1`, an owned
+`BOT_LIVE_NAME_PREFIX`, and absolute `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`,
+`CLIENT_UNPACK_DIR`, `NAV_PACK`, and `NAV_FLAGS` paths.
+Set `GATHERER_377_EVIDENCE_DIR` to the evidence output directory.
+Use the test filter `gatherer_377_` with `--ignored --nocapture --test-threads=1`.
+Keep `TMPDIR` and the isolated home outside the operator's normal home.
+
+The fixture makes the mainland hop, then logs out and back in before preparing tools.
+Each fresh account receives one inventory tool and skill level 40 before Start.
+Fishing also receives Defence 60 and waits for combat level 18 in the live
+appearance. This exceeds the selected Draynor wizard zone's combat cap of 14.
+Danger-zone permission remains disabled.
+The fixture clears its inventory, equipment and bank, then positions the player.
+It never seeds resources, NPCs, booths, proof products or post-Start XP.
+The proof requires an observed empty bank page, at least 27 deposited products,
+a completed native trip, and renewed gathering with the tool retained.
+Fishing also requires banked shrimp, not only anchovies.
+The real client renderer records prepared, banked and returned frames with
+snapshot sidecars. These finite cases do not establish every site's access.
 
 ### Target switching
 

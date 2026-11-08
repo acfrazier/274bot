@@ -37,8 +37,22 @@ pub fn has_local_game_data_for_test(revision: ClientRevision) -> bool {
         .join("../api/data/game-data")
         .join(format!("{}.json", revision.as_i32()));
     let path = path.to_string_lossy();
-    api::test_support::local_asset_path("", &path, &format!("R{} game data", revision.as_i32()))
-        .is_some()
+    let description = format!("R{} game data", revision.as_i32());
+    if revision == ClientRevision::R377 {
+        if api::test_support::local_asset_path_377("", &path, &description).is_none() {
+            return false;
+        }
+        match api::game_data::for_revision(revision) {
+            Ok(_) => true,
+            Err(api::game_data::GameDataError::LocalDataUnavailable) => {
+                eprintln!("Skipping R377 tests: optional local game data was not embedded");
+                false
+            }
+            Err(error) => panic!("load {description}: {error}"),
+        }
+    } else {
+        api::test_support::local_asset_path("", &path, &description).is_some()
+    }
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
