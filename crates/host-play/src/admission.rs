@@ -421,9 +421,10 @@ fn assess_view(
             admission,
         );
     };
-    let (Ok(Some(zones)), Ok(wilderness)) = (
+    let (Ok(Some(zones)), Ok(wilderness), Ok(multiway)) = (
         producer::zones_view(world),
         producer::wilderness_view(world),
+        producer::multiway_view(world),
     ) else {
         return unknown_assessment(
             UnknownWhy::NavIdentity,
@@ -443,6 +444,7 @@ fn assess_view(
         &Estimate {
             zones: Some(zones),
             wilderness,
+            multiway,
             grants: Some(risk::Grants::request(named, wilderness)),
             risks: &tables.risks,
             combat: &tables.combat,
@@ -540,9 +542,10 @@ where
             admission,
         );
     };
-    let (Ok(Some(zones)), Ok(wilderness)) = (
+    let (Ok(Some(zones)), Ok(wilderness), Ok(multiway)) = (
         producer::zones_view(world),
         producer::wilderness_view(world),
+        producer::multiway_view(world),
     ) else {
         return unknown_assessment(
             UnknownWhy::NavIdentity,
@@ -562,6 +565,7 @@ where
         &Estimate {
             zones: Some(zones),
             wilderness,
+            multiway,
             grants: Some(risk::Grants::request(named, wilderness)),
             risks: &tables.risks,
             combat: &tables.combat,

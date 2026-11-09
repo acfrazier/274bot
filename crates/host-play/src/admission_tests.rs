@@ -2670,6 +2670,7 @@ fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison(
             &Estimate {
                 zones: Some(zones),
                 wilderness: producer::wilderness_view(&world).unwrap(),
+                multiway: producer::multiway_view(&world).unwrap(),
                 grants: Some(risk::Grants::named(
                     producer::bind_exempt(zones, grants).unwrap(),
                 )),

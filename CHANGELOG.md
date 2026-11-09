@@ -94,6 +94,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   solver the clue-scroll puzzles use, and clicks one piece per observed move,
   then waits for the cutscene that follows. A bounded number of moves, stalled
   clicks and cutscene ticks fails the step.
+- The survival check counts single-way combat. Where the map is not
+  multi-combat, one NPC at a time can attack the player, so overlapping NPCs of
+  one kind no longer add up. A walk past the Black Knights' Fortress knights is
+  no longer refused with a 61% chance of death for a combat-40 account. Mort'ton's
+  Loar Shadows now have combat facts, so a walk in Mort'ton is judged on its
+  numbers instead of being refused as unknown.
 
 ### Memory diagnostics
 

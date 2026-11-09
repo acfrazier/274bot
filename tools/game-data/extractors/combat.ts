@@ -27,6 +27,8 @@ export type CombatNpcFacts = {
     dragonfire: DragonfireKind | null;
     bespoke: boolean;
     ordinary_melee: boolean;
+    /** The pinned Mort'ton shade attack: a shared melee roll that records combat variables only on a hit. */
+    shade_melee: boolean;
     counter_protect: boolean;
 };
 
@@ -288,7 +290,15 @@ export function extractNpcCombatTransformTarget(
     config: string,
     category: string | null,
     scripts: CombatScripts,
+    params: ReadonlyMap<string, string> = new Map(),
 ): NpcCombatTransformTarget | null {
+    // The pinned shade handler wakes a shadow as its own `next_npc_type`
+    // shade; a shade has none and attacks in place.
+    const attackHandlers = matchingTriggers(config, category, scripts).filter(({ section }) => AI_KINDS.has(section.kind));
+    if (isShadeFamily(attackHandlers, scripts)) {
+        const next = params.get('next_npc_type')?.trim().replace(/^\^/, '');
+        return next === undefined || next === '' || next === 'null' ? null : { kind: 'known', config: next };
+    }
     const handlers = matchingTriggers(config, category, scripts)
         .filter(({ section }) => section.kind === 'ai_applayer2' || section.kind === 'ai_opplayer2');
     let found = false;
@@ -592,6 +602,42 @@ function ordinaryMeleeAttackHandlers(relevant: { script: CombatScript; section: 
 }
 
 
+// Mort'ton's shade family (`minigames/game_mortton/scripts/mortton_shades.rs2`)
+// attacks through its own routines. They roll exactly the shared melee attack
+// (`npc_melee_attack_roll`, `npc_melee_maxhit`, uniform damage on a hit, the
+// protect-melee check, the NPC's `attackrate`), but record the player's combat
+// variables only on a hit, so they are not bespoke damage. The normalized
+// bodies pin the complete semantics: a changed routine fails closed to bespoke.
+const SHADE_PINNED_PROCEDURES: ReadonlyArray<readonly [string, string]> = [
+    ['shade_attack', 'if (%npc_action_delay > map_clock) { return; } if (~npc_check_notcombat = false) { npc_changetype(npc_param(shadeshadow), ^max_32bit_int); npc_setmode(null); %npc_int2 = 0; if (npc_type ! shadeshadow_level1) { npc_statheal(hitpoints, 0, 100); } return; } if (~npc_check_notcombat_self = false) { return; } anim(%com_defendanim, 0); npc_anim(npc_param(attack_anim), 0); if (npc_param(attack_sound) ! null) { sound_synth(npc_param(attack_sound), 1, 0); } ~shade_meleeattack;'],
+    ['shade_meleeattack', 'def_int $attack_roll = ~npc_melee_attack_roll; def_int $defence_roll = ~player_defence_roll_specific(npc_param(damagetype)); def_int $maxhit = ~npc_melee_maxhit; def_int $damage = 0; def_boolean $hit = false; if (randominc($attack_roll) > randominc($defence_roll)) { $damage = randominc($maxhit); $hit = true; } ~shade_playerhit($damage, npc_param(attackrate), $hit);'],
+    ['shade_playerhit', '(int $damage, int $delay, boolean $hit) if_close; %npc_action_delay = add(map_clock, $delay); if (npc_stat(hitpoints) = 0) { return; } if ($hit = true) { ~npc_set_attack_vars; queue*(playerhit_n_retaliate, 0)(npc_uid); } if (~check_protect_prayer(^melee_style) = true) { $damage = 0; } queue(combat_damage_player, 0, $damage); if ($damage > 0) { spotanim_pl(shade_attack, 0, 0); if (random(20) = 0) { stat_sub(strength, 1, 0); mes("You feel weakened."); } }'],
+    ['npc_melee_attack_roll', '()(int) def_int $attackbonus = npc_param(attackbonus); def_int $effective_attack = ~combat_effective_stat(npc_stat(attack), 100); $effective_attack = add($effective_attack, 9); return(~combat_stat($effective_attack, $attackbonus));'],
+];
+// The `_shade` opplayer handler: a shadow (`next_npc_type` set) wakes as that
+// shade and attacks; a shade (no `next_npc_type`) attacks.
+const SHADE_HANDLER_BODY = 'if(npc_param(next_npc_type) = null) { ~shade_attack; } else { if (npc_stat(hitpoints) = 0) { return; } if(%npc_aggressive_player ! uid & testbit(%morttonmulti, ^shadeattack) = ^false) { .npc_findall(npc_coord, npc_type, 10, ^vis_lineofsight); while (.npc_findnext = true) { if(.npc_getmode = wander) { .npc_setmode(opplayer2); .%npc_aggressive_player = uid; } } } %morttonmulti = setbit(%morttonmulti, ^shadeattack); clearqueue(shadeattack_reset); longqueue(shadeattack_reset, 100, 0, ^accelerate); sound_synth(shade_appear, 1, 0); npc_changetype(npc_param(next_npc_type), 500); %npc_attacking_uid = uid; npc_queue(14, 0, 95); ~shade_attack; }';
+
+function normalizedBody(body: string) {
+    return body.replace(/\s+/g, ' ').trim();
+}
+
+function shadeRoutinesAreContent(scripts: CombatScripts) {
+    return standardMeleeRoutineExists(scripts)
+        && SHADE_PINNED_PROCEDURES.every(([name, pinned]) => {
+            const routines = scripts.procedures.get(name) ?? [];
+            return routines.length === 1 && normalizedBody(routines[0]!.body) === pinned;
+        });
+}
+
+/** True when the NPC's only attack handler is the pinned shade handler. */
+function isShadeFamily(relevant: { script: CombatScript; section: ScriptSection }[], scripts: CombatScripts) {
+    return relevant.length === 1
+        && relevant[0]!.section.kind === 'ai_opplayer2'
+        && normalizedBody(relevant[0]!.section.body) === SHADE_HANDLER_BODY
+        && shadeRoutinesAreContent(scripts);
+}
+
 export function extractNpcCombatFacts(config: string, category: string | null, scripts: CombatScripts, maxHits: ReadonlyMap<string, number>, revision: number = 289): CombatNpcFacts {
     const matched = matchingTriggers(config, category, scripts);
     const relevant = matched.filter(({ section }) => AI_KINDS.has(section.kind));
@@ -641,7 +687,13 @@ export function extractNpcCombatFacts(config: string, category: string | null, s
         && dragonfire === null
         && !counterProtect
         && ordinaryMeleeAttackHandlers(relevant, scripts);
-    return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke, ordinary_melee: ordinaryMelee, counter_protect: counterProtect };
+    const shadeMelee = bespoke
+        && attackKind === null
+        && forced.length === 0
+        && dragonfire === null
+        && !counterProtect
+        && isShadeFamily(relevant, scripts);
+    return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke, ordinary_melee: ordinaryMelee, shade_melee: shadeMelee, counter_protect: counterProtect };
 }
 
 function sourceValueId(value: string | number | undefined, pack: ReadonlyMap<string, number>, label: string): number | null {

@@ -568,6 +568,7 @@ fn poison_start(
     let (combat, risks) = tables;
     let zones = producer::zones_view(world).unwrap().unwrap();
     let wilderness = producer::wilderness_view(world).unwrap();
+    let multiway = producer::multiway_view(world).unwrap();
     // The poison cells exercise a timing contract, not a particular NPC.
     // Derive their first crossing from any real route in this search region;
     // the separate rock-crab cell keeps its exact authored endpoints.
@@ -688,6 +689,7 @@ fn poison_start(
                     &Estimate {
                         zones: Some(zones),
                         wilderness,
+                        multiway,
                         grants: None,
                         risks,
                         combat,

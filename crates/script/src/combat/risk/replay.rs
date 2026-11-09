@@ -11,7 +11,7 @@ use api::snapshot::{
     ActorView, CombatView, HitmarkView, ItemActionFamily, ItemContainer, ItemView, LocalPlayerView,
     PlayerView, WorldStateView,
 };
-use nav_planner::contract::{BoundZoneExempt, LegView, RouteView, WildernessView};
+use nav_planner::contract::{BoundZoneExempt, LegView, MultiwayView, RouteView, WildernessView};
 use std::fmt::{self, Write};
 use std::future::Future;
 
@@ -22,6 +22,9 @@ use std::future::Future;
 pub struct Estimate<'a> {
     pub zones: Option<ZoneTableView<'a>>,
     pub wilderness: WildernessView<'a>,
+    /// Multi-combat map cells. [`MultiwayView::none`] keeps every attacker
+    /// summed (an absent table never grants a single-way claim).
+    pub multiway: MultiwayView<'a>,
     pub risks: &'a RiskTables,
     pub combat: &'a CombatTables,
     pub allow: WalkAllow,
@@ -930,7 +933,32 @@ fn timeline_bound(
     poison: super::timeline::PoisonCharge,
 ) -> Result<(super::timeline::TimelineSummary, super::odds::DeathBound), UnknownWhy> {
     super::timeline::with_event_buffer(|events| {
-        let summary = super::timeline::build_timeline(
+        // Single-way combat (content `npc_combat.rs2:372-389`) lets one
+        // attacker at a time hit the player. The schedule that counts it is
+        // an upper bound of the real process, and so is the all-summed
+        // schedule; the smaller of the two bounds is still an upper bound.
+        let single = super::timeline::build_single_way_timeline(
+            path,
+            plan,
+            input,
+            context.combat,
+            context.risks,
+            poison,
+            context.multiway,
+            events,
+        );
+        let single = match single {
+            Ok(summary) if summary.single_way_rows == 0 => {
+                // Nothing collapsed: this schedule is the all-summed one.
+                let bound = scheduled_bound(events.events(), path, plan, input, context)?;
+                return Ok((summary, bound));
+            }
+            Ok(summary) => scheduled_bound(events.events(), path, plan, input, context)
+                .map(|bound| (summary, bound))
+                .ok(),
+            Err(_) => None,
+        };
+        let summed = super::timeline::build_timeline(
             path,
             plan,
             input,
@@ -938,59 +966,73 @@ fn timeline_bound(
             context.risks,
             poison,
             events,
-        )?;
-        let bound = if context.allow.food && input.food_len == 1 && !input.more_food() {
-            let id = input.food_ids[0];
-            if let Some(food) = context.combat.food(id).filter(|food| ordinary(food)) {
-                let heal = u8::try_from(food.heal).map_err(|_| UnknownWhy::Overflow)?;
-                super::guarded_bound(
-                    events.events(),
-                    input.hp,
-                    input.hp_max,
-                    super::Food {
-                        item: id,
-                        heal,
-                        count: input.food_counts[0],
-                    },
-                    |tick| {
-                        let tick = i32::from(tick);
-                        let mut danger = 0i32;
-                        for row in &plan.intervals {
-                            if exposure(path, row)
-                                .is_ok_and(|(start, end)| tick >= start && tick < end)
-                            {
-                                danger = danger.saturating_add(i32::from(row.max_hit));
-                            }
-                        }
-                        for live in input.live_iter() {
-                            if origin_duration(live, context.combat)
-                                .is_ok_and(|end| tick < end)
-                            {
-                                danger = danger.saturating_add(i32::from(live.max_hit));
-                            }
-                        }
-                        let point = (0..path.len())
-                            .filter_map(|index| u16::try_from(index).ok())
-                            .filter_map(|index| path.point(index))
-                            .take_while(|point| point.tick <= tick)
-                            .last();
-                        super::GuardTick {
-                            danger: Some(danger),
-                            poison_fire: poison_pulse_now(
-                                input.poison, context.risks.poison_unknown_v,
-                            ),
-                            input_locked: point.is_some_and(|point| point.input_held(tick)),
-                        }
-                    },
-                )?
+        )
+        .and_then(|summary| {
+            scheduled_bound(events.events(), path, plan, input, context).map(|bound| (summary, bound))
+        });
+        match (single, summed) {
+            (Some(single), Ok(summed)) => Ok(if score(single.1) <= score(summed.1) {
+                single
             } else {
-                super::odds::death_bound(events.events(), input.hp)?
-            }
-        } else {
-            super::odds::death_bound(events.events(), input.hp)?
-        };
-        Ok((summary, bound))
+                summed
+            }),
+            (Some(single), Err(_)) => Ok(single),
+            (None, summed) => summed,
+        }
     })
+}
+
+fn scheduled_bound(
+    events: &[super::odds::Event],
+    path: RoutePath<'_>,
+    plan: &RoutePlan,
+    input: &RiskInput,
+    context: &Estimate<'_>,
+) -> Result<super::odds::DeathBound, UnknownWhy> {
+    if !context.allow.food || input.food_len != 1 || input.more_food() {
+        return super::odds::death_bound(events, input.hp);
+    }
+    let id = input.food_ids[0];
+    let Some(food) = context.combat.food(id).filter(|food| ordinary(food)) else {
+        return super::odds::death_bound(events, input.hp);
+    };
+    super::guarded_bound(
+        events, input.hp, input.hp_max,
+        super::Food {
+            item: id,
+            heal: u8::try_from(food.heal).map_err(|_| UnknownWhy::Overflow)?,
+            count: input.food_counts[0],
+        },
+        |tick| {
+            let tick = i32::from(tick);
+            let mut danger = 0i32;
+            for row in &plan.intervals {
+                if exposure(path, row).is_ok_and(|(start, end)| tick >= start && tick < end) {
+                    danger = danger.saturating_add(i32::from(row.max_hit));
+                }
+            }
+            for live in input.live_iter() {
+                if origin_duration(live, context.combat).is_ok_and(|end| tick < end) {
+                    danger = danger.saturating_add(i32::from(live.max_hit));
+                }
+            }
+            let point = (0..path.len())
+                .filter_map(|index| u16::try_from(index).ok())
+                .filter_map(|index| path.point(index))
+                .take_while(|point| point.tick <= tick)
+                .last();
+            super::GuardTick {
+                danger: Some(danger),
+                poison_fire: poison_pulse_now(input.poison, context.risks.poison_unknown_v),
+                input_locked: point.is_some_and(|point| point.input_held(tick)),
+            }
+        },
+    )
+}
+
+/// The admission statistic of a bound: the closed form plus its rounding guard.
+fn score(bound: super::odds::DeathBound) -> f64 {
+    bound.bound + f64::from(bound.visits) * f64::EPSILON
 }
 
 async fn timeline_bound_cooperative<F, U>(

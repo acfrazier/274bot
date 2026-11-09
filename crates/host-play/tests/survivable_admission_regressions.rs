@@ -655,3 +655,77 @@ fn real_pack_display_overflow_is_judged_numerically_by_enforcing_avoid() {
         assert!(!permitted);
     }
 }
+
+/// The two walks of the 289 Quester campaign (QUEST-CAMPAIGN-1109) that the
+/// survival check refused although a combat-40 account can make them: the
+/// Black Knights' Fortress grill-door walk (seven knights; 61.3% before, with
+/// every attacker summed) and a walk through Mort'ton (every Loar Shadow was
+/// `MissingFacts`). Each walk declares its crossing, as the guide does, and the
+/// account has no armour bonus and no food credit.
+#[test]
+#[ignore = "needs WORLD_NAV_PACK (a real 289 pack)"]
+fn real_pack_fortress_and_mortton_walks_of_a_base_40_account_are_admitted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let Some(path) = api::test_support::local_asset_path(
+        "WORLD_NAV_PACK",
+        "",
+        "real 289 navigation pack for survivability regression",
+    ) else {
+        return;
+    };
+    let world = NavWorld::load_pack(&path).unwrap();
+    assert!(
+        !world.graph.multiway.is_empty(),
+        "the pack carries the multiway table"
+    );
+    let state = WorldState::default().with_map_members(true);
+    let level = |x, z, level| WorldTile { x, z, level };
+    for (name, from, to) in [
+        ("fortress", level(3016, 3517, 0), level(3025, 3511, 1)),
+        ("mortton", level(3483, 3295, 0), level(3481, 3279, 0)),
+    ] {
+        let route = find_with_avoid(
+            &world.collision,
+            &world.graph,
+            from,
+            to,
+            FindOptions {
+                zones: ZoneExempt::all(),
+                ..FindOptions::default()
+            },
+            &state,
+            &[],
+        )
+        .expect("real router route");
+        let mut risk_input = input(40, PoisonState::Clear);
+        risk_input.pos = from;
+        risk_input.hp_max = 40;
+        risk_input.defence = 40;
+        risk_input.combat = Some(40);
+        let request = Admission {
+            policy: RiskPolicy::Avoid,
+            enforce: true,
+            grants: ZoneExempt::all(),
+            ..default_admission(risk_input)
+        };
+        let assessment = admission::assess(&route, &world, &request);
+        assert!(assessment.plan.complete, "{name}: {}", assessment.reason);
+        assert_eq!(
+            assessment.verdict,
+            Verdict::Survivable,
+            "{name}: {}",
+            assessment.reason
+        );
+        assert!(
+            assessment.bound <= script::combat::risk::consts::DEATH_BOUND,
+            "{name}: bound {}",
+            assessment.bound
+        );
+        assert!(
+            admission::permits(&route, &world, &request, &assessment),
+            "{name}"
+        );
+    }
+}

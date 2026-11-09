@@ -962,6 +962,7 @@ mod tests {
             attackrate: Some(4),
             bespoke: false,
             counter_protect: false,
+            combat_vars_on_hit: false,
             poison_severity: None,
             forcemulti: false,
             combat_transform: None,
