@@ -42,11 +42,10 @@ impl DangerLevel {
     ///   a named crossing (`crossing_requested`: a Quester stage or step
     ///   `cross`, or a compat `crossZones`).
     ///
-    /// A permitted walk may cross any zone. Its admission mode is `Proceed`
-    /// (the walk goes, the bound is logged) for the override, a card setting
-    /// or an `Allow` option, and `Avoid` for a named crossing alone: the
-    /// survival check (death bound) stays enforced. Without permission the
-    /// held middle level reads `Inherit`; otherwise `Avoid`.
+    /// A permitted walk may cross any zone and runs in admission mode
+    /// `Proceed`: the walk goes, the survival model's bound is logged, and the
+    /// walk's own food guard, protection and escape stay on. Without
+    /// permission the held middle level reads `Inherit`; otherwise `Avoid`.
     /// A walk option `Forbid` never narrows danger permission.
     pub fn decide(
         self,
@@ -54,21 +53,21 @@ impl DangerLevel {
         walk: WalkOptions,
         crossing_requested: bool,
     ) -> DangerDecision {
-        let requested = script.allow_danger_zones || walk.allow_danger_zones == WalkBit::Allow;
-        let proceeds = self == Self::Always || requested;
-        let policy = if proceeds {
+        let requested = script.allow_danger_zones
+            || walk.allow_danger_zones == WalkBit::Allow
+            || crossing_requested;
+        let permitted = self == Self::Always || requested;
+        let policy = if permitted {
             RiskPolicy::Proceed
-        } else if crossing_requested {
-            RiskPolicy::Avoid
         } else if self == Self::WhenSurvivable {
             RiskPolicy::Inherit
         } else {
             RiskPolicy::Avoid
         };
         DangerDecision {
-            permitted: proceeds || crossing_requested,
+            permitted,
             policy,
-            enforce: NET_AVAILABLE || requested || crossing_requested,
+            enforce: NET_AVAILABLE || requested,
         }
     }
 }
@@ -1701,12 +1700,13 @@ mod tests {
                     };
                     for crossing in [false, true] {
                         let decision = level.decide(script, walk, crossing);
-                        let override_or_option = level == DangerLevel::Always
+                        let permitted = level == DangerLevel::Always
                             || script_grant
-                            || walk_bit == WalkBit::Allow;
-                        let expected = if override_or_option {
+                            || walk_bit == WalkBit::Allow
+                            || crossing;
+                        let expected = if permitted {
                             RiskPolicy::Proceed
-                        } else if crossing || level == DangerLevel::Never {
+                        } else if level == DangerLevel::Never {
                             RiskPolicy::Avoid
                         } else {
                             RiskPolicy::Inherit
@@ -1715,11 +1715,7 @@ mod tests {
                             "level={level:?}, script={script_grant}, walk={walk_bit:?}, crossing={crossing}"
                         );
                         assert_eq!(decision.policy, expected, "{context}");
-                        assert_eq!(
-                            decision.permitted,
-                            override_or_option || crossing,
-                            "{context}"
-                        );
+                        assert_eq!(decision.permitted, permitted, "{context}");
                     }
                 }
             }
@@ -1763,8 +1759,8 @@ mod tests {
         let crossing =
             globals.danger_decision(WalkPermissions::default(), WalkOptions::default(), true);
         assert!(crossing.permitted);
-        // A named crossing keeps the survival check.
-        assert_eq!(crossing.policy, RiskPolicy::Avoid);
+        // The request runs like the override: the walk proceeds.
+        assert_eq!(crossing.policy, RiskPolicy::Proceed);
         assert!(crossing.enforce);
         let (options, policy, enforce) = resolve_native_admission(
             globals,
@@ -1773,7 +1769,7 @@ mod tests {
             true,
         );
         assert!(options.zones.is_all());
-        assert_eq!((policy, enforce), (RiskPolicy::Avoid, true));
+        assert_eq!((policy, enforce), (RiskPolicy::Proceed, true));
         // A native script's card setting and its walk option.
         let card = WalkPermissions {
             allow_danger_zones: true,

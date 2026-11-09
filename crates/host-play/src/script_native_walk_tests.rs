@@ -6876,48 +6876,6 @@ mod s2b_admission_contract {
     }
 
     #[test]
-    fn first_native_crossing_with_a_named_request_keeps_a_bounded_poison_hold() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let mut rig = rig(Some(Arc::new(ice_world())), false);
-        rig.shared.lock().cross_first = vec![Arc::from("ice@120,0,0")];
-        observed_loadout(&mut rig.snapshot);
-        rig.shared.lock().target = Some(tile(120));
-        rig.observe(1);
-        rig.wait_routed();
-        let until_index = {
-            let bots = rig.navs.lock().unwrap();
-            let bot = &bots["alice"];
-            let assessment = bot.assessment.as_ref().unwrap();
-            assert_eq!(assessment.verdict, Verdict::Survivable);
-            assert!(assessment.bound <= script::combat::risk::consts::DEATH_BOUND);
-            assert!(matches!(
-                assessment.input.poison,
-                PoisonState::Unknown { .. }
-            ));
-            let script::combat::risk::PoisonTest::WaitForClear { until_index, .. } =
-                assessment.poison_test
-            else {
-                panic!("expected a clear-passing, charged-failing route: {assessment:?}");
-            };
-            assert!(bot.risk_refusal.is_none());
-            assert!(bot.has_route() && bot.bank_fetch.is_none());
-            until_index
-        };
-        rig.step();
-        assert!(rig
-            .driver
-            .walked
-            .is_some_and(|(x, _)| x <= i32::from(until_index)));
-        assert_eq!(
-            rig.end(),
-            None,
-            "the crossing waits, rather than refusing Unknown alone"
-        );
-    }
-
-    #[test]
     fn first_native_safe_only_walk_keeps_the_poison_exemption_and_assessment() {
         if !api::test_support::game_data_available() {
             return;

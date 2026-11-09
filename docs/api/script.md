@@ -1851,13 +1851,10 @@ the same permission to every walk with no request.
 
 Host walking returns the estimate through the same admission seam for native,
 v2 and manual callers. The decision is `permitted = global override || script
-request`. The global level `Always`, a script's card setting and a walk-local
-Allow are Proceed. A walk-local Forbid has no danger effect. A walk that
-names `cross` alone is Avoid with the all-zone grant: it is enforcing even
-while activation is held, so the death-bound check and the poison test still
-judge its crossings. Hard teleport/wilderness/avoid/quest authority is never
-broadened. Known granted damage still affects later crossings; a granted
-Unknown kind does not make an overlapping ungranted crossing safe.
+request`. The global level `Always`, a script's card setting, a walk-local
+Allow and a non-empty `cross` all permit the walk, and a permitted walk is
+Proceed. A walk-local Forbid has no danger effect. Hard
+teleport/wilderness/avoid/quest authority is never broadened.
 
 `WalkReceipt` retains `assessment: Option<Arc<RouteAssessment>>`, typed
 `refusal`, and optional passive `escape` data. `Refused` and `Aborted` map to

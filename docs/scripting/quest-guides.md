@@ -96,8 +96,9 @@ covers avoids danger zones, and a route whose only path crosses one is refused.
 
 A walk that a declaration covers may cross any danger zone, not only the declared
 ones. The food guard is armed for the whole walk when a route uses a declared
-crossing. Protection runs only where a step requests it. With the global setting
-off, the survival check (death bound) stays on for a walk that crosses by request.
+crossing. Protection runs only where a step requests it. A permitted walk
+proceeds like a walk under the global setting: the survival model's bound is
+logged, and the walk's own food guard, protection and escape stay on.
 
 ## Steps
 
