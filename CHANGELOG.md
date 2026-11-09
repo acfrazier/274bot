@@ -75,7 +75,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Quester. With it on, every Quester walk may cross danger zones, declared or
   not. A guide asks for the crossings it needs with `cross`; a walk that a
   declaration covers may cross danger zones even when the global setting is
-  off, and keeps its survival check and food guard. The limit of eight zones
+  off, and keeps its food guard. The limit of eight zones
   per route is gone: a guide can declare any number. Start still lists the
   zones a guide declares. A walk option that forbids danger zones no longer
   overrides the global setting.

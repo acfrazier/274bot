@@ -2610,8 +2610,9 @@ fn real_squire_walk(
 /// The headed Knight's Sword stall (DIAG-SURVIVABLE-POISON): squire's own
 /// `ice-walk-1-entry` step from the ice-dungeon ladder, then the rest of the
 /// ice chain from each previous stand, all with Unknown poison.
-/// Every step names its crossings, so each walk is a script request: the router
-/// may cross any zone, and the survival check judges the whole route.
+/// Every step names its crossings, so each walk is a script request and the
+/// router may cross any zone. The test judges each route with an enforced
+/// admission and the all-zone grant, the strictest check, which must admit it.
 #[test]
 #[ignore = "requires WORLD_NAV_PACK pointing to the real 289 nav pack"]
 fn real_squire_ice_chain_admits_named_and_destination_zones_with_unknown_poison() {

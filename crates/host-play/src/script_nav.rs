@@ -6356,9 +6356,6 @@ impl ScriptWalkArm {
                     .flatten()
             })
         };
-        // Zones the host already granted (global override or card setting),
-        // before this walk's named crossings are resolved.
-        let zones_before_request = opts.zones;
         let mut state = self.state.take();
         if state
             .as_ref()
@@ -6545,9 +6542,7 @@ impl ScriptWalkArm {
                         .flatten()
                 })
                 .unwrap_or_else(|| crate::admission::Admission {
-                    // A named crossing alone (no global override, card or
-                    // option permission) keeps the survival check.
-                    policy: if bot.compat_v1 || zones_before_request.is_all() {
+                    policy: if bot.compat_v1 || opts.zones.is_all() {
                         script::native::RiskPolicy::Proceed
                     } else {
                         script::native::RiskPolicy::Avoid

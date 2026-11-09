@@ -1582,6 +1582,9 @@ fn run_cells(
     for cell in &mut cells {
         cell.scenario.settings.nav.engine_speed_ms = None;
     }
+    let global_danger = cells
+        .iter()
+        .any(|cell| cell.scenario.settings.nav.allow_danger_zones);
     if apply_fast_settings {
         scenario::quester::apply_quester_fast_settings(&mut cells[0].scenario, fast_settings);
     }
@@ -2168,6 +2171,14 @@ fn run_cells(
         },
     )?;
 
+    if global_danger {
+        // The user's global Danger routing setting, as the panel publishes it.
+        play.set_walk_globals(host_play::WalkGlobals {
+            allow_danger_zones: true,
+            survivable_routing: false,
+            ..host_play::WalkGlobals::default()
+        });
+    }
     let start_handle = play.script_start_handle();
     {
         let mut state = shared.lock().map_err(|_| "live state poisoned")?;
