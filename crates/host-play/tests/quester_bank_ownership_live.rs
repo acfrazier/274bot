@@ -668,6 +668,7 @@ fn step(
         advances: Some(advances),
         max_attempts: None,
         stop: None,
+        failure_signal: None,
         skip_if,
         settle,
         hazard: None,

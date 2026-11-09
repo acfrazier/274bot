@@ -37,6 +37,8 @@ Hard poll failures (`Blocked`, `CombatInterrupted`, or `NeedsEvidence`) and user
 
 After a settle timeout, an advancing step rereads progress before it retries.
 
+Optional `failure_signal` (a predicate document, valid only with `max_attempts` and `stop`) names what the content shows when one attempt ran and failed without changing anything the watchdog tracks, for example a `message` fact on the content's failure text. It is checked on the chat since the step began, when a settle timeout closes an attempt whose step ran to its end (its operation was sent). A timeout with the signal counts as progress for the no-progress watchdog, so `max_attempts` is the only bound on those retries. A timeout without the signal, or from a step that never ran to its end, still counts toward the watchdog's eight-observation park. Cite the content line that prints the signal in the step `comment`. Example: Dwarf Cannon's railing repair uses `{"Fact":{"kind":"message","version":1,"args":{"any":["but fail and cut yourself trying."]}}}` (`railings.rs2:78-91`).
+
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 
 Step ids must stay unique across recipes and the selected role's prelude, sequences, and `progress_reader`. A solo guide declares exactly one role. Paired guides declare one role per gang.
@@ -229,7 +231,7 @@ Use `ordered` for stages whose steps leave nothing observable behind, such as Ha
    The cursor can pass the last step while the `acquire` step's own `settle` and `skip_if` are still `False` (a burnt pie, a product lost on the way). The recipe then restarts from its first step, and every child `skip_if` is checked again. Only a pass that began a child restarts.
 
    The `acquire` step's optional `max_restarts` arg (default 8) bounds this; past it the step parks with `<recipe> gave up after <N> attempts: <settle> is still false`. A restart repeats every child whose `skip_if` is false, so guard buys, hand-ins and consumed items with a `skip_if` that holds once they are done.
-8. **Watchdog.** At step boundaries, the watchdog observes the stage, player tile, inventory, worn items, and total posted skill XP. Three unchanged observations warn; eight park for no progress. Journal flags, chat, and colour alone do not change its signature, so a flag-only transition is not watchdog progress.
+8. **Watchdog.** At step boundaries, the watchdog observes the stage, player tile, inventory, worn items, and total posted skill XP. Three unchanged observations warn; eight park for no progress. Journal flags, chat, and colour alone do not change its signature, so a flag-only transition is not watchdog progress. The one exception is a settle timeout that shows its step's declared `failure_signal` (see Retry limits): it clears the count.
 
 
 ## How a run gathers items

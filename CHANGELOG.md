@@ -63,6 +63,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 
 ### Quester
 
+- A Quester step can declare the content message that shows one of its failed
+  attempts (`failure_signal`). Such an attempt no longer counts toward the
+  no-progress park, so a chance step, such as Dwarf Cannon's railing repair,
+  can use its whole `max_attempts` budget.
 - Quester combat steps that need several chance drops keep fighting after a
   kill without the drop, up to a limit of 281 kills, instead of stopping. This
   fixes Doric's Quest stopping after the first iron ore. The step still fails

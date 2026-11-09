@@ -181,6 +181,7 @@ fn compiled_step(
         hazard,
         hazard_source: hazard.map(|_| Arc::from(RAILING_SOURCE)),
         attempt_budget: None,
+        failure_signal: None,
     }
 }
 
@@ -790,6 +791,7 @@ fn install_make_document(document: &mut PathDocument) {
         advances: Some(false),
         max_attempts: None,
         stop: None,
+        failure_signal: None,
         skip_if: PredicateDocument::Any(Vec::new()),
         settle: PredicateDocument::Fact {
             kind: "item_count_at_least".to_owned(),
