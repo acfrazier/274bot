@@ -1,5 +1,6 @@
 #![cfg(feature = "test-hooks")]
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 use api::native_input::NativeInputAuthority;
 
 use script::{

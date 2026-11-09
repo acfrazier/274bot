@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 #[repr(usize)]
-enum ClientAdapterObjectShape {
+pub(crate) enum ClientAdapterObjectShape {
     ItemRow,
     Modals,
     ChatOption,
@@ -29,6 +29,13 @@ enum ClientAdapterObjectShape {
     ModalCloseState,
     ModalCloseObservation,
     ItemIconPixels,
+    // Posted-snapshot objects (`runtime/snapshot.rs`): built from these templates so every row
+    // is born with fast properties.
+    SnapshotFacts,
+    SnapshotModalTexts,
+    SnapshotWidgetRow,
+    SnapshotProjectionScene,
+    SnapshotProjectionLoc,
 }
 
 const OBJECT_SHAPE_FIELDS: &[&[&str]] = &[
@@ -52,6 +59,81 @@ const OBJECT_SHAPE_FIELDS: &[&[&str]] = &[
     &["session_generation", "token"],
     &["session", "generation"],
     &["width", "height", "data"],
+    &[
+        "attached",
+        "map_build_base",
+        "server_tile",
+        "hint_tile_level",
+        "bank_com_id",
+        "chat_continue_component_id",
+        "chat_modal_texts",
+        "widgets",
+        "player_count",
+        "npc_count",
+        "run_on_com_id",
+        "run_off_com_id",
+        "login_message",
+        "menu_entries",
+        "last_walk_path_local",
+        "session_generation",
+        "modal_close_generation",
+        "projection_scene",
+    ],
+    &["root", "texts"],
+    &[
+        "component_id",
+        "root_component_id",
+        "parent_id",
+        "type_",
+        "button_type",
+        "client_code",
+        "x",
+        "y",
+        "width",
+        "height",
+        "model_type",
+        "model_id",
+        "script_opcode",
+        "script_varp",
+        "script_value",
+        "colour",
+        "hidden",
+        "inventory_ready",
+        "text",
+        "alternate_text",
+        "button_text",
+        "target_base",
+        "items",
+    ],
+    &[
+        "level",
+        "camera_x",
+        "camera_y",
+        "camera_z",
+        "sin_pitch",
+        "cos_pitch",
+        "sin_yaw",
+        "cos_yaw",
+        "heights",
+        "heights_above",
+        "link_below",
+        "locs",
+    ],
+    &[
+        "id",
+        "name",
+        "rank",
+        "level",
+        "min_tile_x",
+        "max_tile_x",
+        "min_tile_z",
+        "max_tile_z",
+        "scene_x",
+        "scene_z",
+        "half_width",
+        "half_length",
+        "top_height",
+    ],
 ];
 
 struct ClientAdapterObjectShapes {
@@ -89,7 +171,7 @@ fn object_template(
     Ok(v8::Global::new(scope, template))
 }
 
-fn new_object<'s>(
+pub(crate) fn new_object<'s>(
     scope: &mut v8::HandleScope<'s>,
     shape: ClientAdapterObjectShape,
 ) -> Result<v8::Local<'s, v8::Object>, String> {
@@ -108,6 +190,130 @@ fn new_object<'s>(
     template
         .new_instance(scope)
         .ok_or_else(|| "ClientAdapter object allocation failed".to_string())
+}
+
+/// JavaScript `String.prototype.trim` whitespace: WhiteSpace and LineTerminator.
+fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\u{9}'..='\u{d}'
+            | ' '
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+            | '\u{feff}'
+    )
+}
+
+fn json_null<'s>(scope: &mut v8::HandleScope<'s>) -> v8::Local<'s, v8::Value> {
+    v8::null(scope).into()
+}
+
+/// One ClientAdapter action decision. The posted snapshot decides whether the
+/// action may be queued and what it carries; the shim only queues the typed
+/// request this returns, or reports `false` for `null`.
+pub(super) fn action<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    method: v8::Local<'s, v8::Value>,
+    arg0: v8::Local<'s, v8::Value>,
+    arg1: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let method = js_to_string(scope, method)?;
+    let snapshot = snapshot(scope)?;
+    let facts = property(scope, snapshot, "client_adapter")?;
+    match method.as_str() {
+        // The trimmed text, once the client is attached.
+        "sayPublic" => {
+            let text = arg0
+                .to_string(scope)
+                .ok_or_else(|| PENDING.to_string())?
+                .to_rust_string_lossy(scope);
+            let text = text.trim_matches(is_js_space);
+            if text.is_empty() || !bool_property(scope, facts, "attached")? {
+                return Ok(json_null(scope));
+            }
+            v8_str(scope, text)
+        }
+        // The posted continue component, when there is one.
+        "continueDialog" => {
+            let component = property(scope, facts, "chat_continue_component_id")?;
+            match js_i32(scope, component)? {
+                Some(id) if id != -1 => Ok(v8::Integer::new(scope, id).into()),
+                _ => Ok(json_null(scope)),
+            }
+        }
+        // Whether any main or chat modal is open.
+        "closeModal" => {
+            let main = modal_id(scope, snapshot, "main_modal_id")?;
+            let chat = modal_id(scope, snapshot, "chat_modal_id")?;
+            Ok(v8::Boolean::new(scope, main != -1.0 || chat != -1.0).into())
+        }
+        // The world tile of a scene-local tile, when the scene is posted and
+        // contains it.
+        "walkTo" => walk_to_tile(scope, snapshot, arg0, arg1),
+        // Whether a count dialog is open and the count is a non-negative i32.
+        "answerCountDialog" => {
+            let valid = matches!(js_i32(scope, arg0)?, Some(value) if value >= 0);
+            let open = bool_property(scope, snapshot, "count_dialog_open")?;
+            Ok(v8::Boolean::new(scope, valid && open).into())
+        }
+        other => Err(format!("unsupported ClientAdapter action: {other}")),
+    }
+}
+
+/// A modal id as the shim read it: a number, else `-1`.
+fn modal_id<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    snapshot: v8::Local<'s, v8::Value>,
+    key: &str,
+) -> Result<f64, String> {
+    let value = property(scope, snapshot, key)?;
+    if value.is_number() {
+        value.number_value(scope).ok_or_else(|| PENDING.to_string())
+    } else {
+        Ok(-1.0)
+    }
+}
+
+fn walk_to_tile<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    snapshot: v8::Local<'s, v8::Value>,
+    lx: v8::Local<'s, v8::Value>,
+    lz: v8::Local<'s, v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let (Some(lx), Some(lz)) = (js_i32(scope, lx)?, js_i32(scope, lz)?) else {
+        return Ok(json_null(scope));
+    };
+    let reach = property(scope, snapshot, "reach")?;
+    if !bool_property(scope, reach, "available")? {
+        return Ok(json_null(scope));
+    }
+    let field = |scope: &mut v8::HandleScope<'s>, key: &str| -> Result<Option<i32>, String> {
+        let value = property(scope, reach, key)?;
+        js_i32(scope, value)
+    };
+    let (Some(base_x), Some(base_z), Some(level), Some(width), Some(height)) = (
+        field(scope, "base_x")?,
+        field(scope, "base_z")?,
+        field(scope, "level")?,
+        field(scope, "width")?,
+        field(scope, "height")?,
+    ) else {
+        return Ok(json_null(scope));
+    };
+    if width <= 0 || height <= 0 || lx < 0 || lz < 0 || lx >= width || lz >= height {
+        return Ok(json_null(scope));
+    }
+    let (Some(x), Some(z)) = (base_x.checked_add(lx), base_z.checked_add(lz)) else {
+        return Ok(json_null(scope));
+    };
+    let items = [x, z, level].map(|value| v8::Integer::new(scope, value).into());
+    Ok(v8::Array::new_with_elements(scope, &items).into())
 }
 
 pub(super) fn read<'s>(

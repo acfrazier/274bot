@@ -2479,6 +2479,45 @@ fn gatherer_counts_yield_observed_after_target_depletion() {
     slot.stop();
 }
 
+/// Every slot, native-only ones included, owns one `Arc<ScriptRuntimeContext>` from `SlotScript::new`
+/// (`slot.rs` `runtime_context`), the run-fenced projection `compiled.rs` reads for control requests
+/// and native input. The input authority is a lazy `OnceLock` inside it; it was one eager
+/// `Arc<NativeInputAuthority>` slot field before. So against dev 91d2ca897 an idle slot gains the
+/// context (240 B on Linux x86_64, 248 B on macOS aarch64), a run's own fresh context replaces it at
+/// start as it always did, and the authority allocation (Arc header plus the type: 40 B on Linux, 48 B on macOS)
+/// moves from slot construction to the first native-input use. The Gatherer and API-seat caps below
+/// subtract a shared baseline slot, so the delta they see is that allocation. This pins both sizes.
+#[test]
+fn the_slot_runtime_context_and_lazy_authority_have_known_sizes() {
+    let mut context = None;
+    let measured = allocation_counter::measure(|| {
+        context = Some(Arc::new(ScriptRuntimeContext::new(0)));
+    });
+    assert_eq!(measured.count_total, 1, "{measured:?}");
+    assert_eq!(
+        measured.bytes_total,
+        (2 * std::mem::size_of::<usize>() + std::mem::size_of::<ScriptRuntimeContext>()) as u64,
+        "{measured:?}"
+    );
+    let context = context.expect("context built");
+    let authority = allocation_counter::measure(|| {
+        let _ = context.native_input();
+    });
+    assert_eq!(authority.count_total, 1, "{authority:?}");
+    assert_eq!(
+        authority.bytes_total,
+        (2 * std::mem::size_of::<usize>()
+            + std::mem::size_of::<api::native_input::NativeInputAuthority>()) as u64,
+        "{authority:?}"
+    );
+    println!(
+        "ScriptRuntimeContext: {} B allocated (size_of {}); lazy authority {} B",
+        measured.bytes_total,
+        std::mem::size_of::<ScriptRuntimeContext>(),
+        authority.bytes_total
+    );
+}
+
 #[test]
 fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
     if !api::test_support::game_data_available() {
@@ -2673,11 +2712,13 @@ fn gatherer_exclusive_heap_stays_inside_the_measured_native_bound() {
     // The new private owner probe reproduces all three preparation totals
     // (3495/4052/4104); r2-tick-family-byte-probe-1/probe.stdout has each leaf.
     // Inline TickKit storage is already in Prepared; shared tables stay out.
-    // Compat finish adds one 40 B slot allocation (dev 91d2ca897 measures 9,938 / 9,990
-    // for the oak and Knife samples; the merge measures 9,978 / 10,030, so 10030 + 8 B
-    // headroom = 10038). macOS +40 B by the same allocation size, not measured (10166).
+    // Compat finish: the 40 B input authority is allocated on first use instead of eagerly in the
+    // slot (see `the_slot_runtime_context_and_lazy_authority_have_known_sizes`), and the shared
+    // baseline slot never uses it. Dev 91d2ca897 measures 9,938 / 9,990 for the oak and Knife
+    // samples; Linux now 9,978 / 10,030, so 10030 + 8 B headroom = 10038. macOS (merlot, aarch64)
+    // measures 9,621 / 10,178 / 10,230 for ordinary / oak Off / oak Knife; 10230 + 8 B = 10238.
     #[cfg(target_os = "macos")]
-    let exclusive_cap = 10166;
+    let exclusive_cap = 10238;
     #[cfg(not(target_os = "macos"))]
     let exclusive_cap = 10038;
     for (oak, knife, exclusive) in measurements {
@@ -3585,10 +3626,11 @@ mod api_gather_seat {
         // measured; macOS +24 B by the same allocation size, not measured).
         // Non-blocking follow-up: "Off" could use &'static str or a shared
         // static Arc instead of a separate allocation per bot.
-        // Compat finish adds one 40 B allocation to the slot (the allocation count rises
-        // by one against dev 91d2ca897: 9,995 B -> Linux 10,035 B; the slot's runtime
-        // context and native-input hand-off are the state it adds). macOS +40 B by the
-        // same allocation size, not measured.
+        // Compat finish, against dev 91d2ca897: Linux 9,995 B -> 10,035 B (+40 B, measured as one
+        // delta, not split; macOS measures 10,099 B on merlot: cap 10,099 + 8 B headroom). Two changes in the range can move this number: the 40 B input
+        // authority now allocated on first use (see
+        // `the_slot_runtime_context_and_lazy_authority_have_known_sizes`) and the CastNpcSeat the
+        // boxed ApiSeat now holds inline (`slot/api.rs`, `slot/cast_npc.rs`).
         #[cfg(target_os = "macos")]
         let exclusive_limit = 10107;
         #[cfg(target_os = "linux")]

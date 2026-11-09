@@ -1891,7 +1891,10 @@ fn loc_view(
         force_approach,
     }
 }
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one decoded loc row carries each geometry field the projection needs"
+)]
 fn projection_loc_view(
     cache: &Cache,
     typecode: i32,

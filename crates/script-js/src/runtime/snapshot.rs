@@ -5,6 +5,9 @@
 //! small V8 property helpers and native-event batch materialization used by
 //! the tick loop. Lifecycle/teardown stays in `isolate`.
 
+use crate::materialize::selected_facts_v8::client_adapter_v8::{
+    new_object, ClientAdapterObjectShape,
+};
 use flatbuffers::{ForwardsUOffset, Vector};
 use rustyscript::Runtime;
 
@@ -1442,7 +1445,7 @@ fn widget_fact_array<'s, 'a>(
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let array = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
     for (index, row) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
-        let object = v8::Object::new(scope);
+        let object = new_object(scope, ClientAdapterObjectShape::SnapshotWidgetRow)?;
         for (key, value) in [
             ("component_id", row.component_id()),
             ("root_component_id", row.root_component_id()),
@@ -1493,10 +1496,10 @@ fn client_adapter_facts_object<'s>(
     scope: &mut v8::HandleScope<'s>,
     facts: crate::wire::ClientAdapterFacts<'_>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let object = v8::Object::new(scope);
+    let object = new_object(scope, ClientAdapterObjectShape::SnapshotFacts)?;
     let attached = v8::Boolean::new(scope, facts.attached());
     set(scope, object, "attached", attached.into())?;
-    let base = v8::Object::new(scope);
+    let base = new_object(scope, ClientAdapterObjectShape::MapBuildBase)?;
     let base_x = num(scope, facts.map_build_base_x() as f64);
     set(scope, base, "x", base_x)?;
     let base_z = num(scope, facts.map_build_base_z() as f64);
@@ -1520,7 +1523,7 @@ fn client_adapter_facts_object<'s>(
         chat_continue_component_id,
     )?;
     if let Some(pair) = facts.chat_modal_texts() {
-        let modal = v8::Object::new(scope);
+        let modal = new_object(scope, ClientAdapterObjectShape::SnapshotModalTexts)?;
         let root = num(scope, pair.root() as f64);
         set(scope, modal, "root", root)?;
         let rows = pair.texts();
@@ -1599,7 +1602,7 @@ fn projection_scene_object<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
     scene: crate::wire::ProjectionScene<'a>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let object = v8::Object::new(scope);
+    let object = new_object(scope, ClientAdapterObjectShape::SnapshotProjectionScene)?;
     set_i32(scope, object, "level", scene.level())?;
     set_i32(scope, object, "camera_x", scene.camera_x())?;
     set_i32(scope, object, "camera_y", scene.camera_y())?;
@@ -1617,7 +1620,7 @@ fn projection_scene_object<'s, 'a>(
     let rows = scene.locs();
     let locs = v8::Array::new(scope, rows.as_ref().map_or(0, |rows| rows.len()) as i32);
     for (index, loc) in rows.into_iter().flat_map(|rows| rows.iter()).enumerate() {
-        let row = v8::Object::new(scope);
+        let row = new_object(scope, ClientAdapterObjectShape::SnapshotProjectionLoc)?;
         set_i32(scope, row, "id", loc.id())?;
         let name = loc
             .name()

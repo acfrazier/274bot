@@ -58,6 +58,8 @@ pub(crate) fn install(
     let result = (|| {
         callback_v8::install(runtime, "__rs2b0t_native_event_on", on)?;
         callback_v8::install(runtime, "__rs2b0t_native_event_off", off)?;
+        callback_v8::install(runtime, "__rs2b0t_bot_event_on", bot_on)?;
+        callback_v8::install(runtime, "__rs2b0t_bot_event_dispose", bot_dispose)?;
         callback_v8::install(
             runtime,
             "__rs2b0t_native_event_batch_dispatch",
@@ -174,25 +176,29 @@ pub(crate) fn clear_all() {
     });
 }
 
+const EVENT_NAMES: [&str; 8] = [
+    "chat.message",
+    "skill.xp",
+    "skill.level",
+    "inventory.changed",
+    "script.finish",
+    "tick",
+    "frame",
+    "__rs2b0t_internal_tick__",
+];
+
+/// Whether `event` is a string naming one of the events the host delivers.
+fn is_supported_event(scope: &mut v8::HandleScope<'_>, event: v8::Local<v8::Value>) -> bool {
+    event.is_string() && EVENT_NAMES.contains(&event.to_rust_string_lossy(scope).as_str())
+}
+
 fn on<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,
     rv: v8::ReturnValue,
 ) {
     let event = args.get(0);
-    if !event.is_string()
-        || !matches!(
-            event.to_rust_string_lossy(scope).as_str(),
-            "chat.message"
-                | "skill.xp"
-                | "skill.level"
-                | "inventory.changed"
-                | "script.finish"
-                | "tick"
-                | "frame"
-                | "__rs2b0t_internal_tick__"
-        )
-    {
+    if !is_supported_event(scope, event) {
         let error = callback_v8::type_error(scope, "events.on: unsupported event name");
         callback_v8::finish(scope, rv, Err(error));
         return;
@@ -200,6 +206,81 @@ fn on<'s>(
     let id = add_callback(scope, event, args.get(1));
     let value = v8::Number::new(scope, f64::from(id)).into();
     callback_v8::finish(scope, rv, Ok(value));
+}
+
+/// `LoopingBot.on(event, callback)`: register the listener and record its unsubscribe function
+/// in the bot's `subscriptions` list. A non-function callback is ignored.
+fn bot_on<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let (owner, event, callback) = (args.get(0), args.get(1), args.get(2));
+        if !callback.is_function() {
+            return Ok(v8::undefined(scope).into());
+        }
+        if !is_supported_event(scope, event) {
+            return Err(callback_v8::type_error(
+                scope,
+                "events.on: unsupported event name",
+            ));
+        }
+        let id = add_callback(scope, event, callback);
+        let data: v8::Local<v8::Value> = v8::Number::new(scope, f64::from(id)).into();
+        let unsubscribe = v8::Function::builder(unsubscribe)
+            .data(data)
+            .build(scope)
+            .ok_or_else(|| callback_v8::type_error(scope, "events.on: unsubscribe function"))?;
+        let subscriptions = callback_v8::get(scope, owner, "subscriptions")?;
+        callback_v8::call_method(
+            scope,
+            subscriptions,
+            "push",
+            &[unsubscribe.into()],
+            "this.subscriptions.push",
+        )?;
+        Ok(v8::undefined(scope).into())
+    })();
+    callback_v8::finish(scope, rv, result);
+}
+
+/// The unsubscribe function `bot_on` records: removes the listener whose id it carries.
+fn unsubscribe<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    if let Some(id) = callback_id(scope, args.data()) {
+        remove_callback(id);
+    }
+    rv.set(v8::undefined(scope).into());
+}
+
+/// `LoopingBot.disposeSubscriptions()`: call every recorded unsubscribe function in order, then
+/// reset the list. A throwing function stops the loop and leaves the list as it was.
+fn bot_dispose<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    let result = (|| {
+        let owner = args.get(0);
+        let subscriptions = callback_v8::get(scope, owner, "subscriptions")?;
+        if callback_v8::truthy(scope, subscriptions) {
+            let length = callback_v8::array_length(scope, subscriptions)?;
+            for index in 0..length {
+                let unsubscribe = callback_v8::get_index(scope, subscriptions, index)?;
+                let nothing = v8::undefined(scope).into();
+                callback_v8::call(scope, unsubscribe, nothing, &[], "unsubscribe")?;
+            }
+        }
+        let empty = v8::Array::new(scope, 0).into();
+        let key = callback_v8::string(scope, "subscriptions");
+        callback_v8::assign(scope, owner, key, empty)?;
+        Ok(v8::undefined(scope).into())
+    })();
+    callback_v8::finish(scope, rv, result);
 }
 
 fn off<'s>(

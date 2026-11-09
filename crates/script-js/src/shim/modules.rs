@@ -119,9 +119,7 @@ globalThis.LoopingBot = class LoopingBot {
             grindTargets() { return []; }
             ignoredRandoms() { return []; }
             on(event, cb) {
-                if (typeof cb !== 'function') return;
-                const id = globalThis.__rs2b0t_native_event_on(event, cb);
-                this.subscriptions.push(() => globalThis.__rs2b0t_native_event_off(id));
+                globalThis.__rs2b0t_bot_event_on(this, event, cb);
             }
     bindLog(sink) {
         this._logSink = typeof sink === 'function' ? sink : null;
@@ -153,8 +151,7 @@ globalThis.LoopingBot = class LoopingBot {
     }
     get delegated() { return !!this._finishSink; }
     disposeSubscriptions() {
-        for (const unsubscribe of this.subscriptions || []) unsubscribe();
-        this.subscriptions = [];
+        globalThis.__rs2b0t_bot_event_dispose(this);
     }
     get settings() {
         if (this._settings !== undefined) return this._settings;

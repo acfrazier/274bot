@@ -452,8 +452,7 @@ impl NativeMachine for Sort {
 /// The `BankSortResult` value as the seat terminal carries it. The bounded
 /// channel codec allows at most [`crate::channel::MAX_COLLECTION`] entries per
 /// array and a full 288-row bank can hold more unmatched ids, so `unmatched`
-/// travels as consecutive chunks; `bank_sort.js` joins them with one
-/// `Array.prototype.flat()`.
+/// travels as consecutive chunks that the isolate machine joins before it settles `sortBank`.
 fn sort_result(
     sorted: bool,
     moves: u32,

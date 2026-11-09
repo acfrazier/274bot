@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 #[path = "client_adapter_v8.rs"]
-mod client_adapter_v8;
+pub(crate) mod client_adapter_v8;
 
 const PENDING: &str = "__pending__";
 const OBJ_CATALOG_FIELDS: &[&str] = &["byId", "items", "aliases"];
@@ -142,6 +142,9 @@ fn run_selected_facts<'s>(
             args.get(5),
             args.get(6),
         ),
+        "client-adapter-action" => {
+            client_adapter_v8::action(scope, args.get(1), args.get(2), args.get(3))
+        }
         _ => Err(format!("unsupported selected facts operation: {op}")),
     }
 }

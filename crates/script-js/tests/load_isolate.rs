@@ -6223,7 +6223,7 @@ export default class T extends LoopingBot {
         "{sorted}; {actions} host actions"
     );
     let unmatched = sorted["unmatched"].as_array().expect("one flat array");
-    assert_eq!(unmatched.len(), 200);
+    assert_eq!(unmatched.len(), 200, "{sorted}");
     assert!(unmatched
         .iter()
         .zip(40_000..)

@@ -365,8 +365,9 @@ fn start_inner<'s>(
         "could not create ScriptActivity rejection callback",
     )?;
 
-    if let Err(message) = context.start_activity(activity_id) {
-        return Err(Throw::Value(error_value(scope, message)?));
+    if let Err(error) = context.start_activity(activity_id) {
+        // The message each variant carries is the text ScriptActivity scripts read.
+        return Err(Throw::Value(error_value(scope, &error.to_string())?));
     }
     if !context.begin_activity_start(activity_id) {
         context.clear_activity(activity_id);

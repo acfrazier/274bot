@@ -200,7 +200,10 @@ fn json_tile(value: Option<&serde_json::Value>) -> Option<api::WorldTile> {
 /// `@rs2b0t/api` bundle resolve to our modules; an import that does
 /// not name a shim module (e.g. `../../api/bank/Banking.js` before
 /// its task) fails the load honestly.
-#[allow(clippy::too_many_arguments)] // runtime wiring takes the isolate's per-run inputs
+#[expect(
+    clippy::too_many_arguments,
+    reason = "runtime wiring takes the isolate's per-run inputs"
+)]
 pub(super) fn wire_runtime(
     runtime: &mut Runtime,
     source: &str,

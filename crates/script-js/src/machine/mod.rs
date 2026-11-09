@@ -1813,6 +1813,8 @@ struct BankMirror {
     owner: Handle,
     /// The newest prompt sequence a page has carried for this mirror.
     prompt_seq_seen: u32,
+    /// `sortBank`: settles as a whole `BankSortResult` (see `sort_outcome`).
+    sort: bool,
 }
 
 /// One isolate-side continuation over an admitted native bank seat row.
@@ -1824,6 +1826,40 @@ pub(crate) struct NativeBankChild {
     awaiting_reply: Option<DecisionSequence>,
     cancel_on_drop: bool,
     finished: bool,
+    /// `sortBank`: its result carries `unmatched` as channel chunks and its refusal or abort is a
+    /// failed `BankSortResult`, not a thrown error.
+    sort: bool,
+}
+
+/// The failed `BankSortResult` a refused or aborted `sortBank` settles with.
+fn sort_failure(reason: &str) -> Value {
+    serde_json::json!({ "sorted": false, "moves": 0, "mode": null, "unmatched": [], "reason": reason })
+}
+
+/// Join the consecutive `unmatched` chunks the bounded seat channel carries into one array.
+fn join_sort_chunks(mut result: Value) -> Value {
+    if let Some(Value::Array(chunks)) = result.get_mut("unmatched") {
+        let joined: Vec<Value> = chunks
+            .drain(..)
+            .flat_map(|chunk| match chunk {
+                Value::Array(ids) => ids,
+                other => vec![other],
+            })
+            .collect();
+        *chunks = joined;
+    }
+    result
+}
+
+/// A `sortBank` seat terminal as the `BankSortResult` it settles with: chunks joined, a refusal or
+/// abort a failed result. Idempotent, so an embedded child's step may apply it again.
+fn sort_outcome(outcome: Outcome) -> Outcome {
+    match outcome {
+        Outcome::Done(value) => Outcome::Done(join_sort_chunks(value)),
+        Outcome::Aborted(reason) => Outcome::Done(sort_failure(reason.as_str())),
+        Outcome::Refused(reason) => Outcome::Done(sort_failure(&reason)),
+        failed @ Outcome::Failed(_) => failed,
+    }
 }
 
 fn bank_hook_indices(
@@ -1922,6 +1958,7 @@ fn enqueue_bank_child(
             orphaned: false,
             owner,
             prompt_seq_seen: 0,
+            sort: operation == script::bank::request::BankSeatOperation::Sort,
         });
         Ok(())
     })
@@ -1970,6 +2007,7 @@ impl NativeBankChild {
             awaiting_reply: None,
             cancel_on_drop: true,
             finished: false,
+            sort: operation == script::bank::request::BankSeatOperation::Sort,
         })
     }
 
@@ -1999,12 +2037,15 @@ impl NativeBankChild {
             self.finished = true;
             clear_bank_mirror(self.id);
             return match outcome {
+                Outcome::Done(value) if self.sort => Step::Done(join_sort_chunks(value)),
                 Outcome::Done(value) => Step::Done(value),
                 Outcome::Failed(thrown) => Step::Fail(thrown),
+                Outcome::Aborted(reason) if self.sort => Step::Done(sort_failure(reason.as_str())),
                 Outcome::Aborted(reason) => Step::Fail(Thrown::new(format!(
                     "native bank seat aborted: {}",
                     reason.as_str()
                 ))),
+                Outcome::Refused(reason) if self.sort => Step::Done(sort_failure(&reason)),
                 Outcome::Refused(reason) => {
                     Step::Fail(Thrown::new(format!("native bank seat refused: {reason}")))
                 }
@@ -3236,6 +3277,15 @@ fn settle_seat_result(host: &mut Host, id: RequestId, terminal_seq: u64, outcome
         return;
     };
     let handle = handle.get();
+    let outcome = if host
+        .bank_mirrors
+        .iter()
+        .any(|mirror| mirror.id == id && mirror.sort)
+    {
+        sort_outcome(outcome)
+    } else {
+        outcome
+    };
     let (orphaned, owner) =
         if let Some(mirror) = host.bank_mirrors.iter_mut().find(|row| row.id == id) {
             mirror.prompt = None;
@@ -3935,6 +3985,21 @@ fn start_bank_family(
     at: usize,
     parent: Option<Handle>,
 ) -> Started {
+    let sort = family == "bank_task" && value.get("kind").and_then(Value::as_str) == Some("sort");
+    match start_bank_family_inner(family, value, hooks, at, parent) {
+        // A refused `sortBank` settles as a failed result with the refusal as its reason.
+        Started::Refused(reason) if sort => Started::Settled(Outcome::Done(sort_failure(&reason))),
+        started => started,
+    }
+}
+
+fn start_bank_family_inner(
+    family: &'static str,
+    value: Value,
+    hooks: Vec<Hook>,
+    at: usize,
+    parent: Option<Handle>,
+) -> Started {
     flush_deferred_bank_cancels();
     let Some(descriptor) = bank_family_descriptor(family) else {
         return Started::Refused(format!("unknown bank family {family:?}"));
@@ -4024,6 +4089,7 @@ fn start_bank_family(
             awaiting_reply: None,
             cancel_on_drop: false,
             finished: false,
+            sort: operation == script::bank::request::BankSeatOperation::Sort,
         })),
         at,
     })

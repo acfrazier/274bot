@@ -256,6 +256,17 @@ pub struct ScriptRuntimeSnapshot {
     pub control_request: Option<RuntimeControlRequest>,
 }
 
+/// Why a script run could not register its one activity child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ActivityStartError {
+    /// The run has already ended.
+    #[error("Script run has ended")]
+    RunEnded,
+    /// The run already has an activity registered or in flight.
+    #[error("An activity is already running")]
+    AlreadyRunning,
+}
+
 /// Run-fenced state shared by the slot and its V8 isolate.
 ///
 /// The slot creates a fresh value for every isolate generation. The isolate
@@ -392,13 +403,13 @@ impl ScriptRuntimeContext {
     }
 
     /// Register the one child after the native factory has created it.
-    pub fn start_activity(&self, child_id: u64) -> Result<(), &'static str> {
+    pub fn start_activity(&self, child_id: u64) -> Result<(), ActivityStartError> {
         let mut current = self.lock();
         if current.state.aborted() {
-            return Err("Script run has ended");
+            return Err(ActivityStartError::RunEnded);
         }
         if current.activity.child_id.is_some() || current.activity.in_flight {
-            return Err("An activity is already running");
+            return Err(ActivityStartError::AlreadyRunning);
         }
         current.activity = RuntimeActivityState {
             child_id: Some(child_id),

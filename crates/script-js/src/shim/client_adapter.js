@@ -1,33 +1,14 @@
 // Thin ClientAdapter reader and action boundary. Readers use one typed native
 // projection from the latest posted snapshot; actions queue typed requests.
-import { snap, queue, proxy } from '../shim/_kernel.js';
+import { queue, proxy } from '../shim/_kernel.js';
 
 const nativeReader = (method, ...args) =>
     globalThis.__rs2b0t_selected_facts('client-adapter-reader', method, ...args);
 
-function finiteInt(value) {
-    return typeof value === 'number' && Number.isInteger(value);
-}
-
-function sceneReach() {
-    const reach = snap().reach;
-    if (!reach || reach.available !== true) return null;
-    if (
-        !finiteInt(reach.base_x) ||
-        !finiteInt(reach.base_z) ||
-        !finiteInt(reach.level) ||
-        !finiteInt(reach.width) ||
-        !finiteInt(reach.height)
-    ) {
-        return null;
-    }
-    if (reach.width <= 0 || reach.height <= 0) return null;
-    return reach;
-}
-
-function inScene(lx, lz, reach) {
-    return lx >= 0 && lz >= 0 && lx < reach.width && lz < reach.height;
-}
+// One native decision per action: it reads the posted snapshot and answers
+// with what to queue, or `null` when the action must not be queued.
+const nativeAction = (method, ...args) =>
+    globalThis.__rs2b0t_selected_facts('client-adapter-action', method, ...args);
 
 export const reader = proxy('reader', {
     worldTile: () => nativeReader('worldTile'),
@@ -126,22 +107,19 @@ export const reader = proxy('reader', {
 });
 export const actions = proxy('actions', {
     sayPublic(value) {
-        const text = String(value).trim();
-        if (text.length === 0 || nativeReader('attached') !== true) return false;
+        const text = nativeAction('sayPublic', value);
+        if (text === null) return false;
         queue({ op: 'say-public', text });
         return true;
     },
     continueDialog() {
-        const componentId = nativeReader('chatContinueComId');
-        if (!finiteInt(componentId) || componentId === -1) return false;
+        const componentId = nativeAction('continueDialog');
+        if (componentId === null) return false;
         queue({ op: 'continue', component_id: componentId });
         return true;
     },
     closeModal() {
-        const s = snap();
-        const main = typeof s.main_modal_id === 'number' ? s.main_modal_id : -1;
-        const chat = typeof s.chat_modal_id === 'number' ? s.chat_modal_id : -1;
-        if (main === -1 && chat === -1) return false;
+        if (nativeAction('closeModal') !== true) return false;
         queue({ op: 'close-modal' });
         return true;
     },
@@ -162,25 +140,17 @@ export const actions = proxy('actions', {
         return true;
     },
     walkTo(lx, lz) {
-        if (!finiteInt(lx) || !finiteInt(lz)) return false;
-        const reach = sceneReach();
-        if (!reach) return false;
-        if (!inScene(lx, lz, reach)) return false;
-        queue({
-            op: 'walk-to',
-            x: reach.base_x + lx,
-            z: reach.base_z + lz,
-            level: reach.level,
-        });
+        const tile = nativeAction('walkTo', lx, lz);
+        if (tile === null) return false;
+        const [x, z, level] = tile;
+        queue({ op: 'walk-to', x, z, level });
         return true;
     },
-    // Queue the existing host answer-count. Integer validation matches
-    // Interactions::answer_count (non-negative i32). No dialog, or a
-    // malformed count, returns false and queues nothing; Rust still
-    // owns stale/closed/logout refusal if a later tick dispatches.
+    // Queue the existing host answer-count. Rust validates the count and the
+    // open dialog (Interactions::answer_count: non-negative i32) and still owns
+    // stale/closed/logout refusal if a later tick dispatches.
     answerCountDialog(value) {
-        if (!finiteInt(value) || value < 0 || value > 2147483647) return false;
-        if (snap().count_dialog_open !== true) return false;
+        if (nativeAction('answerCountDialog', value) !== true) return false;
         queue({ op: 'answer-count', value });
         return true;
     },

@@ -58,6 +58,11 @@ required-features = ["test-hooks"]
 harness = false
 
 [[test]]
+name = "client_adapter_snapshot_shape"
+required-features = ["test-hooks"]
+harness = false
+
+[[test]]
 name = "paint_controls_shape"
 required-features = ["test-hooks"]
 harness = false
