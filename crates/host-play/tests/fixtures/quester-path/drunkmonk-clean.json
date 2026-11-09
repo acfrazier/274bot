@@ -1,0 +1,19 @@
+{
+  "stage": "drunkmonk:0",
+  "stand": [
+    2604,
+    3209,
+    0
+  ],
+  "loadout": null,
+  "extra_items": [
+    [
+      "coins",
+      5
+    ]
+  ],
+  "seed_vars": [],
+  "before_relog": [],
+  "expect": [],
+  "mode": "clean"
+}
