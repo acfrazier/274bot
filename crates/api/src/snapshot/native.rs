@@ -395,6 +395,18 @@ impl<'a> SnapshotView<'a> {
         })
     }
 
+    /// The open puzzle board: the identified piece container under the main
+    /// modal, its observed slot count, its session generation and its rows.
+    /// `component_id` is `-1` while no board is open. `None` only before the
+    /// first in-game frame.
+    pub fn puzzle_board(&self) -> Option<Observed<super::PuzzleBoardView<'a>>> {
+        let snapshot = self.snapshot?;
+        snapshot.ingame().then(|| Observed {
+            value: snapshot.puzzle_board(),
+            stamp: self.stamp,
+        })
+    }
+
     pub fn journal_widgets(
         &self,
         root: i32,

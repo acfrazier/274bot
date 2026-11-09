@@ -67,6 +67,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   kill without the drop, up to a limit of 281 kills, instead of stopping. This
   fixes Doric's Quest stopping after the first iron ore. The step still fails
   at the limit and reports the last combat result.
+- Quester guides can solve the Monkey Madness reinitialisation puzzle in the
+  Underground Glider Hangar. The new `x:mm:solve_reinitialisation` step reads
+  the 5 by 5 board from the open interface, solves it with the sliding-puzzle
+  solver the clue-scroll puzzles use, and clicks one piece per observed move,
+  then waits for the cutscene that follows. A bounded number of moves, stalled
+  clicks and cutscene ticks fails the step.
 
 ### Memory diagnostics
 

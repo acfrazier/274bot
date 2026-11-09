@@ -120,6 +120,7 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff (a guide-authoring reference; no bundled Beta 2 guide uses it). |
 | `gather` | Explicit | One finite Woodcutting, Mining, or Fishing goal (`skill`, one `resource` key or `method` id, `until` inventory goal, optional `anchor`/`radius`). |
 | `thieve` | Explicit | One finite pickpocket goal against a selected NPC (`target`, `until` inventory goal, optional `anchor`/`radius`). |
+| `x:mm:solve_reinitialisation` | Explicit | Monkey Madness: solve the open 5 by 5 reinitialisation board (`pieces`: the alias prefix of its 24 pieces, `reinitialisation`; `arrival`: the `tile` and `source` where the cutscene after the last piece leaves the player). Open the panel first with an `interact` step. The step reads the board the client holds, plans the slides with the shared sliding-puzzle solver and clicks one piece per observed move, then waits for the cutscene to reach `arrival`. It fails after three clicks that moved nothing, when the board closes unsolved, or when the cutscene does not arrive within 34 ticks. |
 
 ## Checks a guide can use
 
