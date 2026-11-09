@@ -2559,7 +2559,9 @@ mod survival_provisioning {
         assert!(status.need > 0 && status.need <= 28);
         assert_eq!(status.pack, 0);
         assert_eq!(status.bank, Some(0));
-        assert!(selected.items().any(|item| item.name.as_deref() == Some(missing.as_str())));
+        assert!(selected
+            .items()
+            .any(|item| item.name.as_deref() == Some(missing.as_str())));
         assert!(ledger
             .as_ref()
             .is_none_or(|ledger| ledger.outbox.is_empty()));
@@ -2578,18 +2580,16 @@ mod survival_provisioning {
             allow_danger_zones: global_override,
             ..Default::default()
         };
-        let walk = script::native::WalkOptions {
-            allow_danger_zones: script::native::WalkBit::Allow,
-            ..Default::default()
-        };
+        let decision = globals.danger_decision(Default::default(), Default::default(), true);
+        assert!(decision.permitted, "the guide declares this crossing");
         let grant = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
         let options = FindOptions {
             zones: grant,
             ..Default::default()
         };
         let request = Admission {
-            policy: globals.risk_policy(Default::default(), walk),
-            enforce: globals.enforces_risk(Default::default(), walk),
+            policy: decision.policy,
+            enforce: decision.enforce,
             grants: grant,
             allow: WalkAllow {
                 food: true,
@@ -2609,7 +2609,7 @@ mod survival_provisioning {
         assert!(matches!(admitted.outcome, crate::RouteOutcome::Routed(_)));
         assert!(matches!(
             admitted.assessment.as_ref().unwrap().verdict,
-            Verdict::Unsurvivable(_)
+            Verdict::Unsurvivable
         ));
         if global_override {
             assert_eq!(request.policy, RiskPolicy::Proceed);

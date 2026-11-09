@@ -1882,9 +1882,9 @@ fn bank_machine_and_acquire_run_size_of_pinned() {
     assert!(size_of::<AcquireRun>() <= 768);
     assert_eq!(size_of::<BankReceipt>(), 8);
     assert!(size_of::<crate::survival::SurvivalStep>() <= 192);
-    // Per-run inline state that had only a printed size. Measured 880 B and
-    // 224 B on the 64-bit CI targets; pinned at the reading plus 8 B.
-    assert!(size_of::<crate::quester::provision::Provisioner>() <= 888);
+    // Measured 912 B / 224 B on 64-bit targets, with an 8 B margin.
+    // Survival preparation adds a child run and two stage latches (32 B).
+    assert!(size_of::<crate::quester::provision::Provisioner>() <= 920);
     assert!(size_of::<AcquireRequest>() <= 232);
 }
 

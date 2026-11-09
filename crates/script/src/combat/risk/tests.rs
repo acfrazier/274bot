@@ -177,7 +177,7 @@ fn one_zone(tables: &CombatTables, spawn: i32, radius: u8) -> ZoneTable {
 /// Real-content crossing shared by the bank-check acceptance tests.
 pub(crate) fn provisioning_cross_fixture() -> (NavLease, String) {
     let tables = tables();
-    let fixture = Fixture::new(one_zone(&tables, 100, 10), WildernessRules::default());
+    let fixture = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
     let name = fixture
         .zones()
         .name(fixture.bound(ZoneKey::Zone(0)))
@@ -1982,7 +1982,7 @@ fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
 }
 
 #[test]
-fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
+fn r1_m2_mid_crossing_transport_only_credits_food_outside_the_hold() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -2040,10 +2040,9 @@ fn r1_m2_mid_crossing_transport_hold_never_credits_food() {
         !baseline.passed,
         "the max-hit replay still fails despite the probabilistic no-food admission"
     );
-    assert_eq!(
-        (assessment.verdict, assessment.bound),
-        (no_food_assessment.verdict, no_food_assessment.bound),
-        "inventory must not change P1-C's no-food bound"
+    assert!(
+        assessment.bound < no_food_assessment.bound,
+        "ordinary bites outside the transport lock receive food credit"
     );
     assert_eq!(assessment.verdict, Verdict::Survivable);
 }
@@ -3344,11 +3343,11 @@ fn assessment_crossing_passes_with_computed_carried_food() {
         return;
     }
     let tables = tables();
-    let fx = Fixture::new(one_zone(&tables, 100, 10), WildernessRules::default());
+    let fx = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
     let risks = RiskTables::build(&tables);
-    let walk = route(70, 135);
+    let walk = route(85, 125);
     let mut bare = input(20, 40, 0, &tables);
-    bare.pos = tile(70);
+    bare.pos = tile(85);
     let cx = context(&fx, &risks, &tables);
     let without = assess(fx.route(&walk), &cx, bare);
     assert_eq!(without.verdict, Verdict::Unsurvivable, "{}", without.reason);
@@ -3389,11 +3388,11 @@ fn assessment_content_lethal_opening_is_refused_even_with_food() {
         return;
     }
     let tables = tables();
-    let fx = Fixture::new(one_zone(&tables, 100, 10), WildernessRules::default());
+    let fx = Fixture::new(one_zone(&tables, 100, 6), WildernessRules::default());
     let risks = RiskTables::build(&tables);
-    let walk = route(70, 135);
+    let walk = route(85, 125);
     let mut carried = input(1, 40, 28, &tables);
-    carried.pos = tile(70);
+    carried.pos = tile(85);
     let result = assess(fx.route(&walk), &context(&fx, &risks, &tables), carried);
     assert_eq!(result.verdict, Verdict::Unsurvivable, "{}", result.reason);
     assert!(result.bound > consts::DEATH_BOUND);
@@ -3988,7 +3987,10 @@ fn t5w_assessment_yields_and_drops_geometry_and_timeline_state() {
 #[test]
 fn t5w_heap_bound_covers_one_assessment_without_projection() {
     let bounds = assessment_heap_bounds().expect("risk heap bound is representable");
-    assert_eq!(bounds.peak_bytes, bounds.retained_bytes);
+    assert_eq!(
+        bounds.peak_bytes,
+        bounds.retained_bytes + supplies::SCRATCH_HEAP_BYTES
+    );
     assert_eq!(admission_peak_heap_bytes(), Some(bounds.peak_bytes));
 }
 

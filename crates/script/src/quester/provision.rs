@@ -1170,7 +1170,10 @@ impl Provisioner {
         if let Some(ended) = self.end_session(cx) {
             return ended;
         }
-        if survival.is_some() || self.survival_stage != current.unwrap_or(usize::MAX) {
+        if survival.is_some()
+            || plan.survival.is_none()
+            || self.survival_stage != current.unwrap_or(usize::MAX)
+        {
             self.log_unmet(plan, needs.unmet());
         }
         if survival.is_some() {
@@ -1918,8 +1921,8 @@ mod tests {
                 "survival".into(),
                 super::super::path::QuestLoadoutDocument {
                     worn: [
-                        ("head", "Bronze full helm"),
-                        ("body", "Bronze platebody"),
+                        ("hat", "Bronze full helm"),
+                        ("torso", "Bronze platebody"),
                         ("legs", "Bronze platelegs"),
                         ("lefthand", "Bronze kiteshield"),
                         ("righthand", "Bronze sword"),
