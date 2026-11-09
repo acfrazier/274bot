@@ -2561,10 +2561,11 @@ mod survival_provisioning {
         assert_eq!(status.bank, Some(0));
         assert!(selected
             .items()
+            .iter()
             .any(|item| item.name.as_deref() == Some(missing.as_str())));
         assert!(ledger
             .as_ref()
-            .is_none_or(|ledger| ledger.outbox.is_empty()));
+            .is_none_or(|ledger| ledger.test_outbox().is_empty()));
 
         let view = SnapshotView::new(Some(&snapshot), evidence).with_bank_memory(Some(&memory));
         let frame = Frame::borrow(view).unwrap();
