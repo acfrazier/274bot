@@ -168,6 +168,14 @@ fn one_zone(tables: &CombatTables, spawn: i32, radius: u8) -> ZoneTable {
         &WildernessRules::default(),
     )
 }
+
+/// Real-content crossing shared by the bank-check acceptance tests.
+pub(crate) fn provisioning_cross_fixture() -> (NavLease, String) {
+    let tables = tables();
+    let fixture = Fixture::new(one_zone(&tables, 100, 10), WildernessRules::default());
+    let name = fixture.zones().name(fixture.bound(ZoneKey::Zone(0))).unwrap();
+    (fixture.lease, name)
+}
 /// Effective one-attacker fixture for the S3 hand-worked ice examples. This
 /// tests S2a replay arithmetic, not S3's unimplemented eligibility discount.
 fn corridor_plan(fx: &Fixture, tables: &CombatTables, prefix: u16) -> RoutePlan {
@@ -3364,7 +3372,7 @@ fn u9_risk_assessment_reuses_one_immutable_table() {
 }
 
 #[test]
-fn assessment_does_not_credit_food_or_report_fixable_with() {
+fn assessment_does_not_credit_food_when_the_guard_cannot_eat() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -3372,7 +3380,8 @@ fn assessment_does_not_credit_food_or_report_fixable_with() {
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
     let walk = route(88, 112);
-    let cx = context(&fx, &risk, &tables);
+    let mut cx = context(&fx, &risk, &tables);
+    cx.allow.food = false;
     let mut no_food = input(40, 40, 0, &tables);
     no_food.pos = tile(88);
     let mut carried_food = input(40, 40, 5, &tables);
@@ -3389,6 +3398,56 @@ fn assessment_does_not_credit_food_or_report_fixable_with() {
         .iter()
         .chain(with.supplies.iter())
         .all(|need| !matches!(need, SupplyNeed::Food { .. })));
+}
+
+#[test]
+fn assessment_crossing_passes_with_computed_carried_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 100, 10), WildernessRules::default());
+    let risks = RiskTables::build(&tables);
+    let walk = route(70, 135);
+    let mut bare = input(20, 40, 0, &tables);
+    bare.pos = tile(70);
+    let cx = context(&fx, &risks, &tables);
+    let without = assess(fx.route(&walk), &cx, bare);
+    assert_eq!(without.verdict, Verdict::Unsurvivable, "{}", without.reason);
+    let ident = known_kind(&tables).npc_id;
+    let exposure = SupplyExposure {
+        ident,
+        kind: *risks.npc(ident).unwrap(),
+        ticks: 70,
+    };
+    let heal = tables.food(bare.food_ids[0]).unwrap().heal as u8;
+    let count = (1..=28).find(|&count| {
+        supply_bound(
+            &[exposure], &bare, &tables, Food { item: bare.food_ids[0], heal, count },
+        ).unwrap().admits(consts::DEATH_BOUND)
+    }).expect("ordinary content food can cover this exposure");
+    let mut carried = bare;
+    carried.food_counts[0] = count;
+    let with = assert_assessment_equivalence(fx.route(&walk), &cx, carried);
+    assert_eq!(with.verdict, Verdict::Survivable, "{}", with.reason);
+    assert!(with.bound < consts::DEATH_BOUND);
+    assert!(without.bound > consts::DEATH_BOUND);
+}
+
+#[test]
+fn assessment_content_lethal_opening_is_refused_even_with_food() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let tables = tables();
+    let fx = Fixture::new(one_zone(&tables, 100, 10), WildernessRules::default());
+    let risks = RiskTables::build(&tables);
+    let walk = route(70, 135);
+    let mut carried = input(1, 40, 28, &tables);
+    carried.pos = tile(70);
+    let result = assess(fx.route(&walk), &context(&fx, &risks, &tables), carried);
+    assert_eq!(result.verdict, Verdict::Unsurvivable, "{}", result.reason);
+    assert!(result.bound > consts::DEATH_BOUND);
 }
 
 #[test]

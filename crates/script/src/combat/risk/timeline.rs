@@ -72,7 +72,7 @@ fn damage_type_index(name: &str) -> Option<usize> {
     }
 }
 
-fn npc_hit(
+pub(super) fn npc_hit(
     ident: i32,
     attack_roll: u32,
     input: &RiskInput,

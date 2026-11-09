@@ -939,7 +939,56 @@ fn timeline_bound(
             poison,
             events,
         )?;
-        let bound = super::odds::death_bound(events.events(), input.hp)?;
+        let bound = if context.allow.food && input.food_len == 1 && !input.more_food() {
+            let id = input.food_ids[0];
+            if let Some(food) = context.combat.food(id).filter(|food| ordinary(food)) {
+                let heal = u8::try_from(food.heal).map_err(|_| UnknownWhy::Overflow)?;
+                super::guarded_bound(
+                    events.events(),
+                    input.hp,
+                    input.hp_max,
+                    super::Food {
+                        item: id,
+                        heal,
+                        count: input.food_counts[0],
+                    },
+                    |tick| {
+                        let tick = i32::from(tick);
+                        let mut danger = 0i32;
+                        for row in &plan.intervals {
+                            if exposure(path, row)
+                                .is_ok_and(|(start, end)| tick >= start && tick < end)
+                            {
+                                danger = danger.saturating_add(i32::from(row.max_hit));
+                            }
+                        }
+                        for live in input.live_iter() {
+                            if origin_duration(live, context.combat)
+                                .is_ok_and(|end| tick < end)
+                            {
+                                danger = danger.saturating_add(i32::from(live.max_hit));
+                            }
+                        }
+                        let point = (0..path.len())
+                            .filter_map(|index| u16::try_from(index).ok())
+                            .filter_map(|index| path.point(index))
+                            .take_while(|point| point.tick <= tick)
+                            .last();
+                        super::GuardTick {
+                            danger: Some(danger),
+                            poison_fire: poison_pulse_now(
+                                input.poison, context.risks.poison_unknown_v,
+                            ),
+                            input_locked: point.is_some_and(|point| point.input_held(tick)),
+                        }
+                    },
+                )?
+            } else {
+                super::odds::death_bound(events.events(), input.hp)?
+            }
+        } else {
+            super::odds::death_bound(events.events(), input.hp)?
+        };
         Ok((summary, bound))
     })
 }
@@ -1399,7 +1448,7 @@ where
         Verdict::Unsurvivable => {
             let _ = write!(
                 reason,
-                "the model's upper bound on the chance of death is {:.1}%; at most {:.0}% is admitted (no eating, prayer or escape counted); ",
+                "the model's upper bound on the chance of death is {:.1}%; at most {:.0}% is admitted (carried ordinary food counted; no prayer or escape counted); ",
                 bound * 100.0,
                 super::consts::DEATH_BOUND * 100.0,
             );

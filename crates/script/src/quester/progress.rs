@@ -719,6 +719,7 @@ mod tests {
                 loadout_carry: Default::default(),
                 base_spillover_keep: Arc::from(Vec::new()),
                 recipes: Default::default(),
+                survival: None,
             },
             colour_not_started: FactKey::new("synthetic:0"),
             colour_in_progress: FactKey::new("synthetic:1"),

@@ -247,6 +247,7 @@ pub struct CompiledProvisioning {
     pub loadout_carry: HashMap<Arc<str>, Arc<[CompiledCarry]>>,
     pub base_spillover_keep: Arc<[i32]>,
     pub recipes: HashMap<Arc<str>, CompiledAcquireRecipe>,
+    pub survival: Option<Arc<super::survival::CompiledSurvival>>,
 }
 
 pub struct CompiledSequence {
@@ -383,6 +384,10 @@ pub trait StepPlan: Send + Sync {
         std::time::Duration::from_secs(8)
     }
     fn compile_warning(&self) -> Option<&'static str> {
+        None
+    }
+    /// Declared fights expose their immutable request to stage provisioning.
+    fn combat_request(&self) -> Option<&crate::combat::CombatRequest> {
         None
     }
     /// A copy of this plan that knows its step's own `skip_if` and `settle`.
@@ -1467,6 +1472,13 @@ pub(super) fn compile_uncached(
             }
         }
     }
+    let survival = super::survival::CompiledSurvival::compile(
+        &sequences,
+        &role.sequences,
+        header.loadouts.keys(),
+        &recipe_ctx,
+        zones,
+    )?;
     let provisioning_recipes: HashMap<Arc<str>, CompiledAcquireRecipe> = recipes
         .into_iter()
         .map(|(name, steps)| {
@@ -1501,6 +1513,7 @@ pub(super) fn compile_uncached(
         loadout_carry,
         base_spillover_keep,
         recipes: provisioning_recipes,
+        survival,
     };
     Ok(CompiledPath {
         id: document.id.clone(),

@@ -20,6 +20,7 @@ pub mod registry;
 pub mod runner;
 pub mod schema;
 pub mod select;
+mod survival;
 pub mod watchdog;
 
 pub use card::CARD;
