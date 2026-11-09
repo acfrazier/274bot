@@ -347,7 +347,7 @@ fn slot_size_matches_the_measured_linux_parent_layout() {
     println!("Prerequisite-aware SlotScript layout: {actual} bytes");
     // Measured composed layout: W1 boxed replay and the cold prerequisite handover.
     assert_eq!(
-        actual, 1592,
+        actual, 1600,
         "the surface slot changed from its measured size"
     );
 }

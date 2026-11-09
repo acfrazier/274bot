@@ -6737,7 +6737,8 @@ fn s2b_admission_per_bot_layouts() {
     // Compat finish: Walking adds 48 B to NavBot and 16 B to SlotScript;
     // Shop/Trade adds 8 B through `Option<Box<ShopSeat>>`, offset by the 8 B
     // reduction from thin `Arc<WildernessRules>`. The Linux x86_64 pin was
-    // measured after the merge with dev (4104 B / 1592 B); the macOS pin follows it
+    // measured after the merge with dev (4104 B / 1592 B); the wilderness seam is a
+    // fat `Arc<dyn WildernessLevels>` (+8 B, 1600 B); the macOS pin follows it
     // because the two have matched at every earlier measurement.
     #[cfg(all(
         target_os = "macos",
@@ -6752,7 +6753,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4104, 1592, 560, 264)
+        (4104, 1600, 560, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -6770,7 +6771,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (4104, 1592, 560, 264)
+        (4104, 1600, 560, 264)
     );
     // Linux Combat is 560 B: 552 B at 7ab903712 plus the single-way retarget
     // fields (`single_way_until: u16`, `hit_index: u16`, `hit_health: u8`, +8 B
