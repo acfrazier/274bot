@@ -668,7 +668,17 @@ mod tests {
         let quests = quests(&data);
         let document: PathDocument =
             serde_json::from_slice(path_bytes("drunkmonk").expect("released Path")).unwrap();
-        let compiled = compile_uncached_for_test(&document, &data, &quests).unwrap();
+        // Stage 10 declares its cave zones, so the compile needs the real zone catalog
+        // (the same NAV_PACK gate as the other real-pack tests; unset skips).
+        if std::env::var_os("NAV_PACK").is_none() {
+            return;
+        }
+        let lease = crate::gatherer::select::tests::test_real_nav_lease();
+        let zones = lease.zones().expect("real 289 zone catalog");
+        let compiled = crate::quester::compile::compile_uncached_for_test_with_zones(
+            &document, &data, &quests, zones,
+        )
+        .unwrap();
         let mut snapshot = inventory_snapshot(&data, &[]);
         snapshot.seed_local_player(crate::quester::families::tests::local_player(
             api::WorldTile {
