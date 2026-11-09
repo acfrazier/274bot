@@ -332,11 +332,29 @@ fn slot_io() -> SlotIo {
 /// arm, rail entry and slot io per name, the first focused. The workers are
 /// never spawned: tests publish status rows by hand.
 fn session_with_play(label: &str, names: &[&str]) -> (Session, TestDir) {
+    session_with_play_and_quester_settings(label, names, None)
+}
+
+/// [`session_with_play`] where the first profile carries `quester_settings`
+/// as its Quester card settings, so a test chooses the queue it discloses.
+fn session_with_play_and_quester_settings(
+    label: &str,
+    names: &[&str],
+    quester_settings: Option<serde_json::Map<String, serde_json::Value>>,
+) -> (Session, TestDir) {
     IsolatedStores::ensure_thread();
     let dir = TestDir::new(label);
     let mut vault = VaultFixture::create(&dir.join("v.vault"), "test-passphrase-01");
     for (i, name) in names.iter().enumerate() {
-        vault.put(FixtureProfile::new(name, "pw").uid(1 + i as i32));
+        let mut profile = FixtureProfile::new(name, "pw").uid(1 + i as i32);
+        if let (0, Some(settings)) = (i, quester_settings.as_ref()) {
+            profile = frontend_core::test_support::session::with_settings_bag(
+                profile,
+                &format!("compiled:{}", CompiledCardId::QUESTER.as_str()),
+                settings.clone(),
+            );
+        }
+        vault.put(profile);
     }
     let mut session = Session::new();
     session.core.set_spawn_workers(false);
@@ -1727,7 +1745,20 @@ fn a_preview_fold_shows_its_saving_and_failure_in_its_own_tile() {
 }
 #[test]
 fn panel_driver_shows_quester_zone_disclosure_before_start() {
-    let (mut session, _dir) = session_with_play("frame-quester-zone-disclosure", &["alice"]);
+    // The default queue lists every qualified guide first, so its first screen
+    // changes whenever a guide qualifies. This test chooses the Prince queue.
+    let quester_settings = serde_json::json!({
+        "schema_version": 3,
+        "values": { "quests": ["prince"], "include_draft_guides": true }
+    })
+    .as_object()
+    .expect("settings object")
+    .clone();
+    let (mut session, _dir) = session_with_play_and_quester_settings(
+        "frame-quester-zone-disclosure",
+        &["alice"],
+        Some(quester_settings),
+    );
     session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
     let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
         eprintln!(
