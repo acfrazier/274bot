@@ -402,6 +402,11 @@ fn make_fixture_with_seed_commands(
     let snapshot = Arc::new(Mutex::new(GameSnapshot::new()));
     let frame_snapshot = Arc::clone(&snapshot);
     let frame_seeded = Arc::clone(&seeded);
+    // Set by the frame when it logs the scriptless fixture account out; the
+    // approved scriptless policy then parks it, so the waiting thread posts the
+    // operator's explicit Login once.
+    let logged_out = Arc::new(AtomicBool::new(false));
+    let frame_logged_out = Arc::clone(&logged_out);
     let frame_name = seed_name.clone();
     let seed_errors = Arc::new(Mutex::new(Vec::<String>::new()));
     let frame_errors = Arc::clone(&seed_errors);
@@ -483,6 +488,7 @@ fn make_fixture_with_seed_commands(
                             );
                         }
                         *phase = FixtureSeedPhase::WaitLogout;
+                        frame_logged_out.store(true, Ordering::Release);
                     }
                     FixtureSeedPhase::WaitRelog
                         if snapshot
@@ -553,12 +559,19 @@ fn make_fixture_with_seed_commands(
     play.focus(&seed_name);
     play.set_walk_globals(live_globals(dialogue, quest_start));
 
+    let mut login_posted = false;
     wait_for(
         &play,
         &seed_name,
         "real server seed position",
         Duration::from_secs(240),
         |play| {
+            if logged_out.load(Ordering::Acquire) && !login_posted {
+                login_posted = true;
+                if let Some(arm) = play.arm(&seed_name) {
+                    arm.arm_explicit_login();
+                }
+            }
             let errors = seed_errors.lock().expect("seed error mutex");
             assert!(errors.is_empty(), "fixture seed errors: {errors:?}");
             if !seeded.load(Ordering::Acquire) {

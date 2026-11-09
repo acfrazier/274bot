@@ -40,6 +40,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   event walks on the same tile, and prepare adjacent resource positions before
   the measured Start. The free-world refusal window starts at its real arm.
 
+### Combat
+
+- When single-way combat refuses an attack on an NPC with "I'm already under
+  attack" because another NPC is hitting the bot, the fight now attacks the NPC
+  that hit it most recently if it may, or holds the attack for the game's
+  8-tick window. The first attack also takes an NPC that is already hitting the
+  bot over a nearer idle one. Refusals inside one 8-tick window count once;
+  after three windows in a row with a refusal and no hit landing on the target
+  (about 24 ticks), the fight ends with `single-way-blocked` instead of
+  repeating the click without end.
+
 ### API and native dispatch
 
 - Ordered input uses the raw Client `PLAYER_INFO` generation for both clock
@@ -108,6 +119,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   Saved-settings fixtures keep current envelopes and explicit malformed-format
   refusal checks.
   Picker fixtures use the decoded world owned by their checked profile.
+- The Quester's Tourist Trap guide no longer walks to the rocks of the slope
+  outside the cell. It sends the "Climb-to" action from where it stands, and
+  the game walks the player, as it does for a human player. Before, the guide
+  asked for a walk that cannot exist and stopped on the first rock.
+- Random-event detection avoids temporary lowercase names for non-matching
+  NPCs and hazard locs. Matching and event handling are unchanged.
 
 ### Not in this release
 
@@ -833,6 +850,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
   `talkThrough`) applies the same rule, so a script that talks to Sir Mordred
   or Morgan Le Faye no longer gets `false` from a conversation that ended
   normally.
+- The Quester now eats during quest steps with declared damage, including
+  the Tourist Trap cell climb and mine cart, not only in fights and on walks.
+  Each guide cites the game's own script for its damage bound.
+- The Quester waits for Hitpoints data before it checks if a step hazard is
+  survivable.
+- The Quester clears the old hazard after a run change, a death, a session end,
+  or when no step is selected.
 
 ### Fixed (panel)
 

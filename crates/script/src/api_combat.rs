@@ -700,6 +700,7 @@ fn abort_reason(reason: AbortReason) -> &'static str {
             "prep-readiness:style-echo-missing"
         }
         AbortReason::Unresponsive => "unresponsive",
+        AbortReason::SingleWayBlocked => "single-way-blocked",
         AbortReason::PvpRefused(refusal) => refusal.code(),
     }
 }
@@ -1270,6 +1271,11 @@ mod tests {
                 Some(expected)
             );
         }
+        report.end = crate::combat::CombatEnd::Aborted(AbortReason::SingleWayBlocked);
+        assert_eq!(
+            CombatSummary::from(&report).reason.as_deref(),
+            Some("single-way-blocked")
+        );
 
         report.end = crate::combat::CombatEnd::Killed;
         let summary = CombatSummary::from(&report);

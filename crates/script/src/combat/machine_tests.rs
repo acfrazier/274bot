@@ -6128,5 +6128,8 @@ mod magic_tests;
 #[path = "pvp_machine_tests.rs"]
 mod pvp_tests;
 
+#[path = "single_way_machine_tests.rs"]
+mod single_way_tests;
+
 #[path = "switch_machine_tests.rs"]
 mod switch_tests;

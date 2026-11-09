@@ -634,6 +634,9 @@ fn run_cell() -> Result<(), String> {
     let mut resume_a = None;
     let mut stop_a = None;
     let mut stop_b = None;
+    // Each slot's fixture logs its scriptless bot out itself; the idle-park
+    // policy keeps it logged out until the operator Login is posted.
+    let mut relog_login_posted = [false; 2];
     let outcome = loop {
         if let Some(error) = play.script_last_error(&names[0]) {
             break Err(format!("script error on {}: {error}", names[0]));
@@ -694,6 +697,14 @@ fn run_cell() -> Result<(), String> {
                 b_latest: pair.1.latest.clone(),
             }
         };
+        for (index, prep) in [snapshot.a_prep, snapshot.b_prep].into_iter().enumerate() {
+            if prep == Prep::WaitRelog && !relog_login_posted[index] {
+                if let Some(arm) = play.arm(&names[index]) {
+                    arm.arm_explicit_login();
+                    relog_login_posted[index] = true;
+                }
+            }
+        }
         let timed_out = Instant::now() >= deadline;
         match phase {
             Phase::Prep => {

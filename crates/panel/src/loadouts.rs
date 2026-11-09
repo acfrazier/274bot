@@ -810,12 +810,14 @@ mod tests {
         save_store_patiently(&mut other);
 
         session.loadouts.draft_mut().unwrap().name = "melee2".into();
-        // A load-slow worker answers with the bounded-wait timeout instead
-        // of the conflict: retry those, keep the first decisive answer.
+        // A load-slow worker answers with a bounded wait instead of the
+        // conflict: retry those, keep the first decisive answer. The
+        // conflict answer reads the store again, so a starved readback in
+        // it reports the typed NotReady wait too.
         let mut saved = save_draft(&mut session);
         let start = std::time::Instant::now();
         while !saved
-            && session.loadouts.status().contains("not durable within")
+            && crate::test_support::transient_text_wait(session.loadouts.status())
             && start.elapsed() < std::time::Duration::from_secs(60)
         {
             saved = save_draft(&mut session);
@@ -824,6 +826,14 @@ mod tests {
         assert!(
             session.loadouts.status().starts_with("Save failed:"),
             "got {:?}",
+            session.loadouts.status()
+        );
+        assert!(
+            session
+                .loadouts
+                .status()
+                .contains("changed since this list was loaded"),
+            "the decisive answer is the conflict, not a wait: {:?}",
             session.loadouts.status()
         );
         assert_eq!(session.loadouts.names(), ["melee", "tank"]);

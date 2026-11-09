@@ -156,6 +156,7 @@ fn a_parked_queue_row_publishes_its_stage_step_and_failure() {
         stop: None,
         skip_if: PredicateDocument::Any(vec![]),
         settle: PredicateDocument::Any(vec![]),
+        hazard: None,
     }];
     let path = crate::quester::compile::compile_uncached_for_test(
         &document,

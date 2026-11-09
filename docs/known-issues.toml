@@ -746,6 +746,47 @@ severity = "medium"
 owner = "upstream rs2b0t FireGiant / survival phase 3"
 
 [[item]]
+id = "quester-undeclared-step-damage"
+kind = "not-in-release"
+area = "Quester"
+text = """A quest step without a declared damage source uses only the fallback:
+  the bot eats at half its Hitpoints on the tick that the damage lands.
+  A first undeclared hit larger than its current Hitpoints is not prevented.
+  The Tourist Trap guide declares its cell climb and mine cart damage."""
+first = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "QUEST-TERRA (next backlog review)"
+
+[[item]]
+id = "survival-area-timer-damage"
+kind = "not-in-release"
+area = "Survival"
+text = """Damage from a game area while the bot stands in it is not a step
+  hazard. This includes the Underground Pass spear and spring traps, desert
+  heat, and Trollweiss cold. Outside fights and walks the bot does not eat
+  for this damage. A bot holding for food on such a tile keeps taking damage.
+  The Underground Pass guide is not covered by this release."""
+first = "0.2.9"
+target = "none"
+severity = "medium"
+owner = "SURVIVAL-P2-DESIGN (next backlog review)"
+
+[[item]]
+id = "quester-hazard-food-recovery"
+kind = "known-issue"
+area = "Quester"
+text = """Without food, the Quester holds at a step that can hurt it until
+  its Hitpoints recover enough to clear that step's eat line, then tries again.
+  Hitpoints recover at one point per 100 game ticks. It does not fetch food.
+  If a game page stays open for 24 ticks while it holds, it stops with a clear
+  reason instead of waiting."""
+first = "0.2.9"
+target = "none"
+severity = "low"
+owner = "SURVIVAL-P2-DESIGN"
+
+[[item]]
 id = "gnome-magic-chopper-full-pack-fruit"
 kind = "known-issue"
 area = "Scripts"

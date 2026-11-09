@@ -314,11 +314,22 @@ fn start_fixture(random_events: bool) -> LiveCell {
         account,
         fixture,
     };
+    // The fixture logs its scriptless bot out to complete the tutorial (phase
+    // 3); the approved scriptless policy then parks it, so post the operator's
+    // explicit Login once after that logout.
+    let mut login_posted = false;
     wait_until(&live, "fixture ready", Duration::from_secs(240), |live| {
-        live.fixture
+        let state = live
+            .fixture
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .ready
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.phase >= 3 && !login_posted {
+            login_posted = true;
+            if let Some(arm) = live.play.arm(&live.account) {
+                arm.arm_explicit_login();
+            }
+        }
+        state.ready
     });
     live
 }

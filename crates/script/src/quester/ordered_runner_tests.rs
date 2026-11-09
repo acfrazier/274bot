@@ -57,6 +57,7 @@ fn wait_step(id: &str, skip_if: PredicateDocument, settle: PredicateDocument) ->
         stop: None,
         skip_if,
         settle,
+        hazard: None,
     }
 }
 
@@ -445,6 +446,8 @@ impl Harness {
                 reads,
                 next: AtomicUsize::new(0),
             }),
+            hazard: None,
+            hazard_source: None,
         };
         path.progress_reader = Some(Box::new(reader));
     }
@@ -1189,6 +1192,7 @@ fn terminal_timed_ground_step_publishes_its_receipt() {
         stop: None,
         skip_if: never(),
         settle: has_egg(),
+        hazard: None,
     }];
     // Keep the real compiled timed-pickup plan; Harness::new replaces plans.
     let (mut script, mut snapshot) = status_fixture(document);

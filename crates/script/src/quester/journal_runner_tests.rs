@@ -1595,6 +1595,9 @@ fn completion_row_overtakes_377_journal_without_closing_the_scroll() {
         (ClientRevision::R377, false),
         (ClientRevision::R377, true),
     ] {
+        if revision == ClientRevision::R289 && !api::test_support::game_data_available() {
+            continue;
+        }
         if revision == ClientRevision::R377
             && !crate::native::has_local_game_data_for_test(revision)
         {
@@ -2736,6 +2739,7 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
             stop: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: bank_empty.clone(),
+            hazard: None,
         }],
     );
     header.acquire.insert(
@@ -2759,6 +2763,7 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
                 stop: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: bank_known,
+                hazard: None,
             },
             StepDocument {
                 id: FactKey::new("skip-until-empty-bank-is-known"),
@@ -2780,6 +2785,7 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
                 stop: None,
                 skip_if: bank_empty.clone(),
                 settle: bank_empty.clone(),
+                hazard: None,
             },
         ],
     );

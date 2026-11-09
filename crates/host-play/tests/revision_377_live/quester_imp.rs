@@ -353,6 +353,7 @@ fn quester_377_imp_native() -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(3600);
     let preparation_deadline = Instant::now() + Duration::from_secs(180);
     let mut started = false;
+    let mut relogin_requested = false;
     let mut complete = false;
     let mut last_status = String::new();
     let mut run_generation = None;
@@ -369,6 +370,14 @@ fn quester_377_imp_native() -> Result<(), String> {
         let mut state = state.lock().map_err(|_| "377 Quester witness poisoned")?;
         if let Some(error) = &state.error {
             return Err(error.clone());
+        }
+        if !relogin_requested && state.relog_detached {
+            drop(state);
+            if let Some(arm) = play.arm(&account) {
+                arm.arm_explicit_login();
+                relogin_requested = true;
+            }
+            continue;
         }
         if !started && state.baseline.is_some() {
             state.record(

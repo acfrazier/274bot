@@ -252,6 +252,118 @@ fn no_cooldown() -> CooldownMap {
     HashMap::new()
 }
 
+fn unmatched_scene_fixture() -> GameSnapshot {
+    let mut c = new_client();
+    for (slot, name) in [
+        "Fisherman",
+        "Man",
+        "Goblin",
+        "Chicken",
+        "Cow",
+        "Shopkeeper",
+        "Banker",
+        "Guard",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        plant_npc(&mut c, slot, name, 32768, None);
+    }
+    for (index, name) in [
+        "Chest",
+        "Rocks",
+        "Fishing spot",
+        "Table",
+        "Door",
+        "Chair",
+        "Bank booth",
+        "Tree",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        plant_loc(
+            &mut c,
+            1000 + index as i32,
+            name,
+            index as i32 % 4,
+            index as i32 / 4,
+        );
+    }
+    snap_at(&mut c)
+}
+
+#[test]
+fn lowercase_name_match_preserves_unicode_and_exactness() {
+    for (name, lowercase) in [
+        ("GENIE", "genie"),
+        ("Kelvin", "kelvin"),
+        ("İstanbul", "istanbul"),
+        ("Genie ", "genie"),
+    ] {
+        assert_eq!(
+            matches_lower_name(name, lowercase),
+            name.to_lowercase() == lowercase,
+            "{name:?} against {lowercase:?}"
+        );
+    }
+
+    let greek_lowercase = "ΟΣ".to_lowercase();
+    assert!(matches_lower_name("ΟΣ", &greek_lowercase));
+}
+
+#[test]
+fn scene_name_matching_allocates_only_for_a_matched_diagnostic_name() {
+    let unmatched = unmatched_scene_fixture();
+    let cooldown = no_cooldown();
+    let unmatched_allocations = allocation_counter::measure(|| {
+        assert!(detect_scene(&unmatched, 0, &cooldown).is_none());
+    });
+
+    let mut c = new_client();
+    plant_npc(&mut c, 0, "Genie", 32768, None);
+    let matched = snap_at(&mut c);
+    let mut event = None;
+    let matched_allocations = allocation_counter::measure(|| {
+        event = detect_scene(&matched, 0, &cooldown);
+    });
+    let event = event.expect("owned genie is detected");
+    eprintln!(
+        "guardian name-match allocations: unmatched={} ({} bytes), matched={} ({} bytes retained)",
+        unmatched_allocations.count_total,
+        unmatched_allocations.bytes_total,
+        matched_allocations.count_total,
+        matched_allocations.bytes_current,
+    );
+
+    assert_eq!(unmatched_allocations.count_total, 0);
+    assert_eq!(unmatched_allocations.bytes_current, 0);
+    assert_eq!(matched_allocations.count_total, 1);
+    assert!(matched_allocations.bytes_current > 0);
+    assert_eq!(event.kind, RandomKind::Dialog);
+    assert_eq!(event.name, "genie");
+}
+
+#[test]
+#[ignore = "manual CPU comparison for the guardian name-matching fixture"]
+fn guardian_name_matching_cpu_probe() {
+    const ITERATIONS: usize = 1_000_000;
+    let snapshot = unmatched_scene_fixture();
+    let cooldown = no_cooldown();
+    let start = std::time::Instant::now();
+    let mut matches = 0;
+    for _ in 0..ITERATIONS {
+        if detect_scene(&snapshot, 0, &cooldown).is_some() {
+            matches += 1;
+        }
+    }
+    eprintln!(
+        "guardian_name_matching_cpu_probe iterations={ITERATIONS} matches={matches} elapsed_ns={}",
+        start.elapsed().as_nanos()
+    );
+    assert_eq!(matches, 0);
+}
+
 #[test]
 fn overhead_greetings_with_local_name_is_dialog_ours() {
     let mut c = new_client();

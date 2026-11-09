@@ -71,6 +71,7 @@ fn combat_table_preparation_retains_each_selected_revision() {
     let loadouts = LoadoutOverlay::new(Arc::from([]), Arc::from([]));
     let recipes = HashMap::new();
     let path = FactKey::new("combat_revision");
+    let has_local_legacy_data = api::test_support::game_data_available();
     for revision in [
         ClientRevision::R274,
         ClientRevision::R289,
@@ -79,6 +80,9 @@ fn combat_table_preparation_retains_each_selected_revision() {
         if revision == ClientRevision::R377
             && !crate::native::has_local_game_data_for_test(revision)
         {
+            continue;
+        }
+        if revision != ClientRevision::R377 && !has_local_legacy_data {
             continue;
         }
         let data = api::game_data::for_revision(revision).unwrap();

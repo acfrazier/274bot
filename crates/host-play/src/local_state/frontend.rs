@@ -987,13 +987,14 @@ impl Preferences {
             Stage::Reading(_) => self.error(ErrorCode::NotReady {
                 domain: self.shared.identity.domain(),
             }),
-            Stage::Writing { .. } => self.wrap(io::Error::new(
+            Stage::Writing { .. } => io::Error::new(
                 io::ErrorKind::TimedOut,
-                format!(
-                    "the write was not durable within {FRONTEND_TIMEOUT:?}; it stays queued and \
-                     settles later"
-                ),
-            )),
+                PreferenceFailure::expired_wait(format!(
+                    "preferences: the write was not durable within {FRONTEND_TIMEOUT:?}; it stays \
+                     queued and settles later ({})",
+                    self.path().display()
+                )),
+            ),
         }
     }
 
@@ -1016,7 +1017,10 @@ impl Preferences {
     fn error(&self, code: ErrorCode) -> io::Error {
         io::Error::new(
             error_kind(code),
-            format!("preferences: {code} ({})", self.path().display()),
+            PreferenceFailure::store(
+                format!("preferences: {code} ({})", self.path().display()),
+                code,
+            ),
         )
     }
 
@@ -1024,7 +1028,7 @@ impl Preferences {
     fn wrap(&self, error: io::Error) -> io::Error {
         io::Error::new(
             error.kind(),
-            format!("preferences: {error} ({})", self.path().display()),
+            PreferenceFailure::other(format!("preferences: {error} ({})", self.path().display())),
         )
     }
 }
@@ -1296,3 +1300,100 @@ fn error_kind(code: ErrorCode) -> io::ErrorKind {
         ErrorCode::ProcessService(_) => io::ErrorKind::Other,
     }
 }
+
+/// A bounded wait that ended a fixture-only synchronous preference call:
+/// either a transient outcome a test retries, or a terminal verdict.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaitOutcome {
+    /// Typed [`ErrorCode::NotReady`]: the store was still hydrating when
+    /// the frontend's bounded read wait expired. It settles later.
+    NotReady,
+    /// The fixture's own bound expired on a queued write: it stays queued
+    /// and settles later.
+    WriteExpired,
+    /// Any other outcome: a refusal, a conflict, a store failure, a
+    /// cancellation, or an error the fixture did not mint.
+    Terminal,
+}
+
+/// Test fixture: what ended a synchronous preference helper's wait. The
+/// message and the error kind the helpers report are unchanged; this reads
+/// the typed outcome a test needs to retry `NotReady` like the write bound
+/// and to keep its fast verdict for every other failure.
+#[cfg(any(test, feature = "test-support"))]
+pub fn wait_outcome(error: &io::Error) -> WaitOutcome {
+    let Some(failure) = error
+        .get_ref()
+        .and_then(|cause| cause.downcast_ref::<PreferenceFailure>())
+    else {
+        return WaitOutcome::Terminal;
+    };
+    if failure.wait_expired {
+        WaitOutcome::WriteExpired
+    } else if matches!(failure.code, Some(ErrorCode::NotReady { .. })) {
+        WaitOutcome::NotReady
+    } else {
+        WaitOutcome::Terminal
+    }
+}
+
+/// Test fixture: whether a synchronous preference helper's error is a
+/// transient wait this suite retries: [`WaitOutcome::NotReady`] (the typed
+/// Reading-phase outcome) or [`WaitOutcome::WriteExpired`] (the Writing
+/// phase outlasting the frontend's bound). Both settle later.
+#[cfg(any(test, feature = "test-support"))]
+pub fn transient_wait(error: &io::Error) -> bool {
+    matches!(
+        wait_outcome(error),
+        WaitOutcome::NotReady | WaitOutcome::WriteExpired
+    )
+}
+
+/// A fixture-only synchronous failure: the message the helpers always
+/// reported, the store's typed code when the failure came from one, and
+/// whether the fixture's own bound, not a store outcome, ended the call.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug)]
+struct PreferenceFailure {
+    message: String,
+    code: Option<ErrorCode>,
+    wait_expired: bool,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl PreferenceFailure {
+    fn store(message: String, code: ErrorCode) -> Self {
+        Self {
+            message,
+            code: Some(code),
+            wait_expired: false,
+        }
+    }
+
+    fn other(message: String) -> Self {
+        Self {
+            message,
+            code: None,
+            wait_expired: false,
+        }
+    }
+
+    fn expired_wait(message: String) -> Self {
+        Self {
+            message,
+            code: None,
+            wait_expired: true,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl std::fmt::Display for PreferenceFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl std::error::Error for PreferenceFailure {}

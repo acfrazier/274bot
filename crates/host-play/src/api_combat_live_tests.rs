@@ -138,6 +138,7 @@ fn varp(snapshot: &api::snapshot::GameSnapshot, index: i32) -> i32 {
 /// wait until on the tile with `ready_check`.
 fn frame(
     client: &mut client::client::Client,
+    arm: &SlotArm,
     state: &mut Observed,
     cheats: &[String],
     watched: &[i32],
@@ -255,6 +256,10 @@ fn frame(
                 if !api::interact::logout(client, &ifaces) {
                     return Err("tutorial logout interface unavailable".into());
                 }
+                // The fixture has no script, so the approved scriptless policy
+                // parks this bot after its own logout: post the operator's
+                // explicit Login before waiting for the new session.
+                arm.arm_explicit_login();
                 state.step = 3;
             }
             3 if ingame
@@ -394,6 +399,10 @@ fn start_cell(
     let observed = Arc::new(Mutex::new(Observed::default()));
     let frame_observed = Arc::clone(&observed);
     let frame_account = account.clone();
+    // The fixture relogs a scriptless bot before its script starts, so it
+    // owns the arm that posts the operator Login after its own logout.
+    let arm = SlotArm::new(uid, true);
+    let frame_arm = Arc::clone(&arm);
     let play = run_with_template(
         template,
         false,
@@ -404,7 +413,9 @@ fn start_cell(
                 return;
             }
             let mut state = frame_observed.lock().expect("observed lock");
-            frame(client, &mut state, &cheats, &watched, &ready, COW_FIELD);
+            frame(
+                client, &frame_arm, &mut state, &cheats, &watched, &ready, COW_FIELD,
+            );
         },
     )
     .expect("start live Play");
@@ -426,7 +437,7 @@ fn start_cell(
             },
             None,
             None,
-            None,
+            Some(arm),
         )
         .expect("spawn fresh combat account");
     let deadline = started + CELL_DEADLINE;
