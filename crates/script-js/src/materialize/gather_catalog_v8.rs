@@ -577,6 +577,16 @@ fn whirlpool_ids<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, Value<'s>>
     set_of(scope, &items)
 }
 
+/// The constant table `op` as a build without local game data publishes it.
+fn unavailable_table<'s>(scope: &mut v8::HandleScope<'s>, op: i32) -> Value<'s> {
+    match op {
+        SHILO_VENDOR | GERRANT_VENDOR | HARRY_VENDOR | WHIRLPOOL_IDS => undefined(scope),
+        MINING_LABELS | SHOP_COSTS => v8::Object::new(scope).into(),
+        GERRANT_ONLY => v8::Set::new(scope).into(),
+        _ => array(scope, &[]),
+    }
+}
+
 fn dispatch<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: &v8::FunctionCallbackArguments<'s>,
@@ -588,6 +598,12 @@ fn dispatch<'s>(
     let op = operation.int32_value(scope).unwrap_or(-1);
     if op < MINING_LABEL {
         remember_tile(scope, args.get(1))?;
+        // A build without local game data loads every script that imports a catalog module:
+        // the constant tables are then empty (or `undefined` for a single row), and only a
+        // member that needs a table refuses.
+        if gather_camps::mining_camps().is_err() {
+            return Ok(unavailable_table(scope, op));
+        }
     }
     match op {
         WOODCUTTING_TABLE => woodcutting_table(scope),

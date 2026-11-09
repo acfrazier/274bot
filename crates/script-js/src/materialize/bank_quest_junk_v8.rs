@@ -26,7 +26,8 @@ fn quest_junk_table<'s>(
     rv: v8::ReturnValue,
 ) {
     let result = (|| {
-        let table = junk_table(scope)?;
+        // Without local game data the table is empty; `findQuestJunk` then finds nothing.
+        let table = quest_junk().unwrap_or(&[]);
         let array = v8::Array::new(scope, table.len() as i32);
         for (index, entry) in table.iter().enumerate() {
             let id = cb::num(scope, f64::from(entry.id));
@@ -38,13 +39,6 @@ fn quest_junk_table<'s>(
         Ok(array.into())
     })();
     cb::finish(scope, rv, result);
-}
-
-/// The quest-junk table, or a `TypeError` in a build without local game data.
-fn junk_table<'s>(
-    scope: &mut v8::HandleScope<'s>,
-) -> JsResult<'s, &'static [api::quest_junk::QuestJunkEntry]> {
-    quest_junk().map_err(|error| cb::type_error(scope, &format!("quest junk: {error:?}")))
 }
 
 /// `findQuestJunk(banked, statusOf)`: `held = new Set(banked.map(i => i.id))`,
@@ -98,7 +92,7 @@ fn find<'s>(
     let held = &held[..held_len];
     let out = v8::Array::new(scope, 0);
     let mut written = 0_u32;
-    for entry in junk_table(scope)? {
+    for entry in quest_junk().unwrap_or(&[]) {
         if !held.contains(&entry.id) {
             continue;
         }
