@@ -3,7 +3,7 @@
   "counts": {
     "api": {
       "clippy::too_many_arguments": {
-        "non_test": 5,
+        "non_test": 6,
         "test": 1
       },
       "clippy::type_complexity": {
@@ -181,6 +181,10 @@
       "dead_code": {
         "non_test": 1,
         "test": 0
+      },
+      "non_snake_case": {
+        "non_test": 0,
+        "test": 5
       }
     },
     "script-js": {
@@ -193,16 +197,20 @@
         "test": 0
       },
       "clippy::large_enum_variant": {
-        "non_test": 5,
+        "non_test": 3,
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 9,
+        "non_test": 13,
         "test": 0
       },
       "dead_code": {
-        "non_test": 3,
+        "non_test": 4,
         "test": 4
+      },
+      "non_snake_case": {
+        "non_test": 0,
+        "test": 97
       },
       "rustdoc::all": {
         "non_test": 1,

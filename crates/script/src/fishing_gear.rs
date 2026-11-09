@@ -233,13 +233,7 @@ mod tests {
 
     /// The refusal of a build without the fishing tables; the tests skip before they can meet it.
     #[derive(Debug)]
-    struct Fault(#[allow(dead_code)] FactError);
-
-    impl From<FactError> for Fault {
-        fn from(error: FactError) -> Self {
-            Self(error)
-        }
-    }
+    struct Fault;
 
     struct Gear {
         name: &'static str,
@@ -302,8 +296,8 @@ mod tests {
             Ok(table.get(name).copied().unwrap_or(0.0))
         }
 
-        fn facts(&mut self, error: FactError) -> Fault {
-            Fault(error)
+        fn facts(&mut self, _: FactError) -> Fault {
+            Fault
         }
 
         fn near(
