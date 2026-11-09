@@ -463,7 +463,11 @@ to choose a default quest. It reads embedded Paths by default. Set
 `QUESTER_PATH_DIR` to an absolute folder to use the existing folder registry;
 the requested Path must be served from that folder. `QUESTER_SEEDS` optionally
 names a JSON file in the `quester_path_live` seed format (`stage`, `stand`,
-`loadout`, `extra_items`, `seed_vars`, `before_relog`, `expect`, and `mode`).
+`loadout`, `extra_items`, `seed_vars`, `skills`, `before_relog`, `expect`, and `mode`).
+`skills` is a list of `["skill name", level]` pairs (level 1-99); each replaces
+the profile level for that skill, is part of the planned stats the Start check
+requires exactly, and is recorded as `seeded_skills` in the Start receipt. An
+unknown skill, a level outside 1-99 or a repeated skill is refused.
 `expect` and `mode` control the headless cell's settling; the headed scenario
 always watches native quest completion.
 When supplied, the seed file's `stand` selects the fixture's starting tile and

@@ -243,6 +243,7 @@ fn make_cell_with_requirements(
             stage: "cook:0",
             loadout,
             extra_items: items,
+            skills: &[],
             stand,
         },
         &[(identity.varp.as_str(), 0)],

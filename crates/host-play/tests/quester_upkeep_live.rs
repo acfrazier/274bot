@@ -487,6 +487,7 @@ fn build_cell(
     }
     let loadout = seeds.fixture_loadout()?;
     let extra_items = seeds.extra_item_refs();
+    let skills = seeds.skill_refs();
     let seed_vars = seeds.seed_var_refs();
     let before_relog = seeds.before_relog_steps();
     let mode = match seeds.mode.as_deref().unwrap_or("stage") {
@@ -502,6 +503,7 @@ fn build_cell(
         stage: Some(seeds.stage.as_str()),
         loadout,
         extra_items: &extra_items,
+        skills: &skills,
         seed_vars: &seed_vars,
         stand: WorldTile {
             x: seeds.stand[0],
