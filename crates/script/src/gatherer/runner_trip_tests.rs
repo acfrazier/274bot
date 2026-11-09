@@ -5,6 +5,7 @@
 //! the shared `AcquireRun`.
 use super::tests::{accept_last_interaction, antipoison_item, survival_condition, BaitFixture};
 use super::*;
+use crate::acquire::run::MAX_OPEN_ATTEMPTS;
 use crate::acquire::{Need, NeedKind, Presence, SourceSet};
 use crate::quester::families::tests::{def, with_tick};
 use api::condition::{FoodSummary, PoisonState};
@@ -965,7 +966,9 @@ fn gatherer_caps_timed_out_bank_open_attempts() {
     assert_eq!(failure.code.as_ref(), "bank-unavailable");
     assert_eq!(
         failure.message.as_ref(),
-        "bank-unavailable: bank did not open after 3 attempts; last reason: bank did not open"
+        format!(
+            "bank-unavailable: bank did not open after {MAX_OPEN_ATTEMPTS} attempts; last reason: bank did not open"
+        )
     );
 }
 

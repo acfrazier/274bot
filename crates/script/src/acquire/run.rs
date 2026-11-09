@@ -17,7 +17,7 @@ use api::snapshot::ItemView;
 use api::stock::Stock;
 use std::task::Poll;
 
-const MAX_OPEN_ATTEMPTS: u8 = 3;
+pub(crate) const MAX_OPEN_ATTEMPTS: u8 = 3;
 // AGENTS.md:131: an ordinary walk failure to the bank is information first. The
 // first recovery walks again from the observed position to the same stand; the
 // second picks again with the failed bank dropped where another is eligible. Two
@@ -427,9 +427,11 @@ impl AcquireRun {
                             .and_then(|state| state.last_reason.as_deref())
                         {
                             Some(reason) => Arc::from(format!(
-                                "bank-unavailable: bank did not open after 3 attempts; last reason: {reason}"
+                                "bank-unavailable: bank did not open after {MAX_OPEN_ATTEMPTS} attempts; last reason: {reason}"
                             )),
-                            None => Arc::from("bank-unavailable: bank did not open after 3 attempts"),
+                            None => Arc::from(format!(
+                                "bank-unavailable: bank did not open after {MAX_OPEN_ATTEMPTS} attempts"
+                            )),
                         };
                         return Poll::Ready(Err(ActionError::Failed(message)));
                     }

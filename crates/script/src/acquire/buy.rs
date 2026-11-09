@@ -300,6 +300,9 @@ pub struct BuyMachine {
     phase: Phase,
     open: OpenCore,
     walk_retry: WalkRetryState,
+    /// The last keeper-walk receipt's own reason, kept across the shared
+    /// retry budget so the terminal failure names how the walk failed.
+    last_walk_failure: Option<Arc<str>>,
     opening_trade: Option<OpeningTrade>,
     keeper_index: Option<i32>,
     pending: Option<Dispatch>,
@@ -341,6 +344,7 @@ impl NativeMachine for BuyMachine {
             phase,
             open: OpenCore::default(),
             walk_retry: WalkRetryState::default(),
+            last_walk_failure: None,
             opening_trade: None,
             keeper_index: None,
             pending: None,
@@ -463,6 +467,14 @@ impl NativeMachine for BuyMachine {
                         Poll::Ready(Ok(receipt)) => Some(receipt),
                         Poll::Ready(Err(_)) => None,
                     };
+                    if let Some(receipt) = receipt.as_ref() {
+                        self.last_walk_failure =
+                            if matches!(&receipt.end, crate::native::WalkEnd::Arrived) {
+                                None
+                            } else {
+                                Some(receipt.failure_detail_or_fallback())
+                            };
+                    }
                     if receipt.as_ref().is_some_and(|receipt| {
                         self.walk_retry
                             .observe_approach_failure(receipt, cx.evidence().tick)
@@ -477,9 +489,15 @@ impl NativeMachine for BuyMachine {
                     let facts = self.open_facts(cx);
                     let request = &self.request;
                     let keeper_index = self.keeper_index;
-                    let decision = self
-                        .open
-                        .walked(arrived, || Self::keeper(request, keeper_index, cx));
+                    // A failed walk is terminal only once the shared budget is
+                    // spent (or the failure is not retryable); its decision
+                    // keeps the last receipt's own reason.
+                    let decision = if arrived {
+                        self.open
+                            .walked(true, || Self::keeper(request, keeper_index, cx))
+                    } else {
+                        OpenCore::walk_failed(self.last_walk_failure.as_deref())
+                    };
                     self.phase = Phase::Open;
                     if std::task::ready!(self.act(decision, &facts, cx))? {
                         self.accept_page(cx)?;
@@ -823,7 +841,7 @@ impl BuyMachine {
         match decision {
             Decision::Wait => Poll::Ready(Ok(false)),
             Decision::Opened => Poll::Ready(Ok(true)),
-            Decision::Failed(reason) => Poll::Ready(Err(ActionError::Failed(Arc::from(reason)))),
+            Decision::Failed(reason) => Poll::Ready(Err(ActionError::Failed(reason))),
             Decision::Trade(keeper) => {
                 if self.opening_trade.is_some() {
                     self.phase =

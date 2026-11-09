@@ -2603,7 +2603,8 @@ fn open_attempt_cap_uses_observed_tick_deadlines_and_real_interactions() {
     assert!(matches!(
         poll_at(&mut run, &snapshot, None, &mut ledger, 26, OpenGate::Open),
         Poll::Ready(Err(ActionError::Failed(message)))
-            if message.as_ref() == "bank-unavailable: bank did not open after 3 attempts"
+            if message.as_ref()
+                == format!("bank-unavailable: bank did not open after {MAX_OPEN_ATTEMPTS} attempts")
     ));
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
 }

@@ -1609,3 +1609,77 @@ fn shop_keeper_walk_replans_after_a_failed_approach() {
         }) if name == "Shopkeeper" && action == "Trade"
     ));
 }
+
+/// A spent keeper-walk budget is terminal, and the terminal failure keeps the
+/// last receipt's own reason instead of only the shared core's fixed text.
+/// The shared budget is QUEST_WALK_MAX_ATTEMPTS requests in all: the initial
+/// one and two fresh plans from the observed position.
+#[test]
+fn shop_keeper_walk_terminal_failure_keeps_the_last_failure_detail() {
+    use crate::native::WalkEnd;
+    use crate::quester::families::tests::{local_player, post_walk_receipt, with_tick_reach};
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3190,
+        z: 3200,
+        level: 0,
+    };
+    let mut keeper = npc_row(7, 123, 0);
+    keeper.distance = 10;
+    let mut before = snapshot(&client, Vec::new(), vec![keeper]);
+    before.seed_local_player(local_player(origin));
+    let mut origin_reach = reach_from(origin);
+    origin_reach.step.fill(0);
+    let mut ledger = None;
+    let handle = start_machine(&before, &mut ledger, 2);
+
+    let first = with_tick_reach(&before, &origin_reach, &mut ledger, 2, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(first.is_pending());
+    post_walk_receipt(&mut ledger, 3, WalkEnd::NoPath, Some("first route failed"));
+
+    let moved = WorldTile { x: 3191, ..origin };
+    let mut after_failure = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 0)]);
+    after_failure.seed_local_player(local_player(moved));
+    let moved_reach = reach_from(moved);
+
+    // Attempt 1 of 3: one fresh plan is admitted on the next tick.
+    let failed = with_tick_reach(&after_failure, &moved_reach, &mut ledger, 3, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(failed.is_pending());
+    let retry = with_tick_reach(&after_failure, &moved_reach, &mut ledger, 4, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(retry.is_pending());
+    post_walk_receipt(&mut ledger, 5, WalkEnd::NoPath, Some("second route failed"));
+
+    // Attempt 2 of 3: the last admitted fresh plan.
+    let failed_again = with_tick_reach(&after_failure, &moved_reach, &mut ledger, 5, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(failed_again.is_pending());
+    let last = with_tick_reach(&after_failure, &moved_reach, &mut ledger, 6, |tick| {
+        tick.actions.poll(&handle, &mut tick.cx)
+    });
+    assert!(last.is_pending());
+    post_walk_receipt(&mut ledger, 7, WalkEnd::Failed, Some("third route failed"));
+
+    // Attempt 3 of 3 fails: the budget is spent, so the open is terminal and
+    // names the last receipt's reason.
+    let Poll::Ready(Err(ActionError::Failed(message))) =
+        with_tick_reach(&after_failure, &moved_reach, &mut ledger, 7, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        })
+    else {
+        panic!("a spent keeper-walk budget is terminal");
+    };
+    assert!(
+        message.contains("third route failed"),
+        "the terminal failure must name the last receipt: {message}"
+    );
+}

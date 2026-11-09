@@ -19,6 +19,7 @@
 use crate::reach_route;
 use api::query::ReachQueryView;
 use api::WorldTile;
+use std::sync::Arc;
 
 /// Existing bound on Trade requests for one shop open (rs2b0t contract).
 pub const OPEN_ATTEMPTS: u32 = 3;
@@ -319,7 +320,7 @@ pub enum Decision {
     /// [`OpenCore::walked`].
     Walk(WorldTile),
     /// The open failed for this reason.
-    Failed(&'static str),
+    Failed(Arc<str>),
 }
 
 /// The shop-open state of one call.
@@ -399,7 +400,7 @@ impl OpenCore {
                 self.state = State::Idle;
                 self.attempts_left = self.attempts_left.saturating_sub(1);
                 if self.attempts_left == 0 {
-                    return Decision::Failed("no usable shop after 3 Trade attempts");
+                    return Decision::Failed(Arc::from("no usable shop after 3 Trade attempts"));
                 }
             }
         }
@@ -411,12 +412,12 @@ impl OpenCore {
 
     fn next(&mut self, keeper: Option<Keeper>) -> Decision {
         let Some(keeper) = keeper else {
-            return Decision::Failed("the keeper is gone");
+            return Decision::Failed(Arc::from("the keeper is gone"));
         };
         match keeper.route {
-            KeeperRoute::Unreachable if self.walked => {
-                Decision::Failed("the keeper is still unreachable after the walk to it")
-            }
+            KeeperRoute::Unreachable if self.walked => Decision::Failed(Arc::from(
+                "the keeper is still unreachable after the walk to it",
+            )),
             KeeperRoute::Unreachable => {
                 self.walked = true;
                 self.state = State::Walking;
@@ -449,13 +450,26 @@ impl OpenCore {
     }
 
     /// The adapter's walk to the keeper ended. An arrival continues on the
-    /// same tick with a fresh keeper read. A failed walk fails the open.
+    /// same tick with a fresh keeper read. A failed walk fails the open with
+    /// [`Self::walk_failed`]'s stable message.
     pub fn walked(&mut self, arrived: bool, keeper: impl FnOnce() -> Option<Keeper>) -> Decision {
         if !arrived {
-            return Decision::Failed("the walk to the unreachable keeper failed");
+            return Self::walk_failed(None);
         }
         self.state = State::Idle;
         self.next(keeper())
+    }
+
+    /// The adapter's walk to the keeper did not arrive. The terminal failure
+    /// keeps the adapter's last receipt reason when it has one, so a spent
+    /// retry budget still names why the walk failed.
+    pub fn walk_failed(detail: Option<&str>) -> Decision {
+        match detail.filter(|detail| !detail.is_empty()) {
+            Some(detail) => Decision::Failed(Arc::from(format!(
+                "the walk to the unreachable keeper failed; last walk failure: {detail}"
+            ))),
+            None => Decision::Failed(Arc::from("the walk to the unreachable keeper failed")),
+        }
     }
 }
 
