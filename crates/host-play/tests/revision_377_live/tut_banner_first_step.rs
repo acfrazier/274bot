@@ -262,8 +262,7 @@ fn fresh_tutorial_reply(
         .iter()
         .filter(|line| line.sequence > chat_baseline)
         .filter_map(|line| {
-            scenario::tutorial::parse_tutorial_reply(&line.text)
-                .map(|value| (line.sequence, value))
+            scenario::tutorial::parse_tutorial_reply(&line.text).map(|value| (line.sequence, value))
         })
         .max_by_key(|&(sequence, _)| sequence)
         .map(|(sequence, value)| FreshTutorialReply {
@@ -312,9 +311,7 @@ fn read_tutorial_server(
             )
         },
         |_client, snapshot| {
-            if let Some(fresh) =
-                fresh_tutorial_reply(snapshot, chat_baseline, &modal_baseline)
-            {
+            if let Some(fresh) = fresh_tutorial_reply(snapshot, chat_baseline, &modal_baseline) {
                 reply = Some(fresh);
                 Ok(true)
             } else {
@@ -417,11 +414,7 @@ fn require_server_tutorial_step(
 }
 
 /// Client cache varp 281 is `scope=perm` and is not transmitted; use the fresh server readback for tutorial steps.
-fn require_progress_state(
-    state: &Observation,
-    progress: i32,
-    phase: &str,
-) -> Result<(), String> {
+fn require_progress_state(state: &Observation, progress: i32, phase: &str) -> Result<(), String> {
     require_in_game(state, phase)?;
     match state.progress {
         Some(value) if value == progress => {}
@@ -454,7 +447,6 @@ fn require_in_game(state: &Observation, phase: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
 
 fn require_banner(state: &Observation, hidden: bool, phase: &str) -> Result<(), String> {
     match state.banner_hidden {
@@ -1340,8 +1332,7 @@ fn tut_banner_first_step_377() -> Result<(), String> {
                 |_client, snapshot| {
                     Ok(snapshot.tick() > before.tick
                         && (snapshot.chat_modal_texts() != before.dialogue.as_slice()
-                            || snapshot.chat_continue_component_id()
-                                != before.continue_component))
+                            || snapshot.chat_continue_component_id() != before.continue_component))
                 },
             )?;
             let readback_phase = format!("guide_step_after_continue_{dialogue_pages}");
