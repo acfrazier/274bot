@@ -1933,6 +1933,20 @@ mod tests {
                     carry: Vec::new(),
                 },
             );
+            let fight = &mut document.roles[0].sequences[0].steps[0];
+            fight.kind = "combat".into();
+            fight.args = serde_json::json!({
+                "target": {
+                    "npc": "jailguard",
+                    "pick": "nearest",
+                    "not_targeting_others": true
+                },
+                "tactic": {"kind": "open", "style": "melee", "engage_radius": 12},
+                "lost_radius": 16,
+                "kill_budget_ticks": 400,
+                "loadout": "survival",
+                "until": {"Any": []}
+            });
         }
         if crossing {
             document.roles[0].sequences[0].cross = vec![super::super::path::RequiredZoneDocument {
@@ -2280,11 +2294,12 @@ mod tests {
                         complete_open_stand(&mut ledger, tick);
                         snapshot.seed_bank_observation(-1, tick, None, Vec::new());
                     }
-                    HostEffect::Interaction(
-                        crate::interact::InteractReq::SetNoteMode { .. }
-                        | crate::interact::InteractReq::Close,
-                    ) => {
+                    HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode { .. }) => {
                         complete_open_stand(&mut ledger, tick);
+                    }
+                    HostEffect::Interaction(crate::interact::InteractReq::Close) => {
+                        complete_open_stand(&mut ledger, tick);
+                        snapshot.seed_bank_observation(-1, tick, None, Vec::new());
                     }
                     _ => panic!("unexpected survival gear effect"),
                 }
