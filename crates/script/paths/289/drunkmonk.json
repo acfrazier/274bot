@@ -65,6 +65,11 @@
       },
       {
         "stage": "drunkmonk:10", "required": [], "terminal": false, "recovery_entry": null,
+        "cross": [
+          { "id": "hobgoblin_unarmed@2566,9632,0", "name": "Blanket cave hobgoblin (2566,9632,0)", "reason": "The blanket cave (ladder at 2561,3222, exit at 2561,9622) is the only way to the blanket, and the route passes this baked hobgoblin zone. Spawn: content maps/m40_150.jm2 NPC section, npc 122 (pack/npc.pack:123 hobgoblin_unarmed; _unpack/225/all.npc:3135-3150 vislevel 28, wanderrange 15, huntmode cowardly, huntrange 1)." },
+          { "id": "hobgoblin_unarmed@2573,9626,0", "name": "Blanket cave hobgoblin (2573,9626,0)", "reason": "The route to and from the blanket passes this baked hobgoblin zone. Spawn: content maps/m40_150.jm2 NPC section, npc 122 (pack/npc.pack:123 hobgoblin_unarmed; _unpack/225/all.npc:3135-3150 vislevel 28, wanderrange 15, huntmode cowardly)." },
+          { "id": "headthief_blanket@2569,9606,0", "name": "Blanket cave head thief (2569,9606,0)", "reason": "The childs_blanket lies at 2570,9604 beside the head thief. Spawn: content maps/m40_150.jm2 NPC section, npc 283 (pack/npc.pack:284 headthief_blanket; _unpack/225/all.npc:4862-4887 vislevel 26, huntmode cowardly, huntrange 1)." }
+        ],
         "steps": [
           {
             "id": "walk-to-ring-stones", "kind": "walk", "version": 1,
