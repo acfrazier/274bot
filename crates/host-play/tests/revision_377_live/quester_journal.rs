@@ -3,8 +3,10 @@ use super::*;
 use host_play::evidence_writer::{
     EvidenceJob, EvidenceRequest, EvidenceSidecar, EvidenceWriter, PngColor,
 };
+use scenario::quester::{FixtureLoadout, QuesterFixture, QuesterPathFixture};
 use script::native::NativePhase;
 use script::{ScriptLifecycleReceipt, ScriptTerminalState};
+use std::collections::{BTreeMap, HashSet};
 use std::io::Write;
 use std::sync::Mutex;
 use vault::{Profile, ProfileSettings};
@@ -70,25 +72,594 @@ const COMBAT_FOOD_SEED: CombatFoodSeed = CombatFoodSeed {
     receipt_label: "labelled combat-only area fixture: Attack/Strength/Defence/Hitpoints 43, combat at least 49, five trout; default danger policy",
     phase_label: "SEED own-account combat-only area fixture",
 };
-const SQUIRE_COMBAT_FOOD_SEED: CombatFoodSeed = CombatFoodSeed {
-    command: "give lobster 6",
-    item_id: 379,
-    count: 6,
-    receipt_label: "labelled Squire combat-only area and food fixture: Attack/Strength/Defence/Hitpoints 43, combat at least 49, six lobsters for blurite; default danger policy",
-    phase_label: "SEED own-account food: Squire blurite step (six lobsters)",
-};
 
-// The journal needs Mining 10, and the fresh pie recipe needs Cooking 10.
-// The Squire fixture supplies both the two-bar fast-path input and six lobsters
-// for its blurite step; the run still exercises the Path's other acquisition.
-// Sources: quest_squire/scripts/squire_journal.rs2:7-12;
-// skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17.
+// Squire uses the 377 Path's `ice` loadout for its armour, weapon and food.
+// The labelled bank seeds satisfy its two-bar fast path and the steel pickaxe
+// input selected by `acquire:best-pickaxe` at the seeded Mining 10 minimum.
+const SQUIRE_TEST_FOOD_ID: i32 = 379;
+const SQUIRE_TEST_FOOD_COUNT: i32 = 6;
 const SQUIRE_MINING_LEVEL: i32 = 10;
 const SQUIRE_SMITHING_LEVEL: i32 = 1;
 const SQUIRE_COOKING_LEVEL: i32 = 10;
 const SQUIRE_REQUIREMENT_FIXTURE: &[&str] = &["setstat mining 10", "setstat cooking 10"];
 const SQUIRE_BANK_SEED_LABEL: &str = "SEED own-account bank: Squire two-bar fast-path input";
 const SQUIRE_BANK_SEED_COMMAND: &str = "givebank iron_bar 2";
+const SQUIRE_PICKAXE_BANK_SEED_LABEL: &str =
+    "SEED own-account bank: Squire Path acquire:best-pickaxe input";
+const SQUIRE_PICKAXE_BANK_SEED_COMMAND: &str = "givebank steel_pickaxe 1";
+const SQUIRE_COMBAT_STATS_LABEL: &str = "SEED own-account combat stats: Attack/Strength/Defence/Hitpoints 43, combat at least 49; default danger policy";
+
+const SQUIRE_PATH_JSON: &str = include_str!("../../../script/paths/377/squire.json");
+const SQUIRE_PATH_LOADOUT: &str = "ice";
+
+#[derive(Clone, Debug)]
+struct PathItemSeed {
+    command: String,
+    label: String,
+}
+
+#[derive(Clone, Debug)]
+struct SquirePathLoadoutSeed {
+    items: Vec<PathItemSeed>,
+    inventory: Vec<(i32, i32)>,
+}
+
+fn build_squire_path_fixture(
+    selected: &api::game_data::SelectedGameData,
+    loadout: Option<FixtureLoadout<'_>>,
+    extra_items: &[(&str, i32)],
+) -> Result<QuesterFixture, String> {
+    let path: script::quester::path::PathDocument =
+        serde_json::from_str(SQUIRE_PATH_JSON).map_err(|error| error.to_string())?;
+    scenario::quester::build_quester_path_fixture(QuesterPathFixture {
+        name: "revision-377-squire",
+        quest_display: "The Knight's Sword",
+        path: &path,
+        selected,
+        stage: None,
+        loadout,
+        extra_items,
+        seed_vars: &[],
+        stand: WorldTile {
+            x: 3222,
+            z: 3218,
+            level: 0,
+        },
+        before_relog: Vec::new(),
+    })
+}
+
+fn resolve_squire_fixture_item(
+    selected: &api::game_data::SelectedGameData,
+    name: &str,
+) -> Result<(i32, String), String> {
+    let item = selected
+        .item_by_alias(name)
+        .or_else(|| {
+            selected.items().iter().find(|item| {
+                item.name
+                    .as_deref()
+                    .is_some_and(|known| known.eq_ignore_ascii_case(name))
+            })
+        })
+        .ok_or_else(|| format!("Squire fixture item {name:?} is not in selected 377 content"))?;
+    let alias = item
+        .alias
+        .as_deref()
+        .ok_or_else(|| format!("Squire fixture item {name:?} has no give alias"))?;
+    Ok((item.id, alias.to_owned()))
+}
+
+fn squire_path_loadout_seed(
+    selected: &api::game_data::SelectedGameData,
+) -> Result<SquirePathLoadoutSeed, String> {
+    let fixture = build_squire_path_fixture(
+        selected,
+        Some(FixtureLoadout::Path(SQUIRE_PATH_LOADOUT)),
+        &[],
+    )?;
+    let loadout = fixture
+        .seed
+        .loadout
+        .as_ref()
+        .ok_or("Squire Path fixture did not retain its selected loadout")?;
+    let mut items = Vec::with_capacity(loadout.worn.len() + loadout.carry.len());
+    let mut inventory = BTreeMap::<i32, i32>::new();
+    for (slot, name) in &loadout.worn {
+        let (item_id, alias) = resolve_squire_fixture_item(selected, name)?;
+        let command = format!("give {alias} 1");
+        if !fixture.seed_commands.iter().any(|seed| seed == &command) {
+            return Err(format!(
+                "Quester fixture omitted Path loadout seed {command:?}"
+            ));
+        }
+        items.push(PathItemSeed {
+            command,
+            label: format!(
+                "SEED own-account Squire Path loadout {SQUIRE_PATH_LOADOUT}: worn {slot} {name} x1"
+            ),
+        });
+        *inventory.entry(item_id).or_default() += 1;
+    }
+    for row in &loadout.carry {
+        let count = i32::try_from(row.qty).map_err(|_| "Squire loadout quantity overflow")?;
+        let (item_id, alias) = resolve_squire_fixture_item(selected, &row.item)?;
+        let command = format!("give {alias} {count}");
+        if !fixture.seed_commands.iter().any(|seed| seed == &command) {
+            return Err(format!(
+                "Quester fixture omitted Path loadout seed {command:?}"
+            ));
+        }
+        items.push(PathItemSeed {
+            command,
+            label: format!(
+                "SEED own-account Squire Path loadout {SQUIRE_PATH_LOADOUT}: carry {} x{count}",
+                row.item
+            ),
+        });
+        *inventory.entry(item_id).or_default() += count;
+    }
+    items.sort_by(|left, right| left.label.cmp(&right.label));
+    if items.is_empty() {
+        return Err("Squire Path loadout has no fixture seeds".into());
+    }
+    Ok(SquirePathLoadoutSeed {
+        items,
+        inventory: inventory.into_iter().collect(),
+    })
+}
+
+fn squire_item_count(items: &[(i32, i32)], item_id: i32) -> i32 {
+    items
+        .iter()
+        .filter(|(id, _)| *id == item_id)
+        .map(|(_, count)| count)
+        .sum()
+}
+
+fn merge_squire_item_counts(target: &mut BTreeMap<i32, i32>, source: BTreeMap<i32, i32>) {
+    for (item_id, count) in source {
+        let held = target.entry(item_id).or_default();
+        *held = (*held).max(count);
+    }
+}
+
+fn squire_settled_items(
+    selected: &api::game_data::SelectedGameData,
+    predicate: &script::quester::path::PredicateDocument,
+) -> Result<BTreeMap<i32, i32>, String> {
+    use script::quester::path::PredicateDocument;
+
+    match predicate {
+        PredicateDocument::All(children) => {
+            let mut result = BTreeMap::new();
+            for child in children {
+                merge_squire_item_counts(&mut result, squire_settled_items(selected, child)?);
+            }
+            Ok(result)
+        }
+        PredicateDocument::Any(children) => {
+            let Some((first, rest)) = children.split_first() else {
+                return Ok(BTreeMap::new());
+            };
+            let mut common = squire_settled_items(selected, first)?;
+            for child in rest {
+                let other = squire_settled_items(selected, child)?;
+                common.retain(|item_id, count| {
+                    if let Some(other_count) = other.get(item_id) {
+                        *count = (*count).min(*other_count);
+                        true
+                    } else {
+                        false
+                    }
+                });
+            }
+            Ok(common)
+        }
+        PredicateDocument::Not(_) => Ok(BTreeMap::new()),
+        PredicateDocument::Fact { kind, args, .. }
+            if matches!(kind.as_str(), "has_item" | "item_count_at_least" | "worn") =>
+        {
+            let alias = args
+                .get("obj")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("Squire item settle fact has no object: {kind}"))?;
+            let (item_id, _) = resolve_squire_fixture_item(selected, alias)?;
+            let count = if kind == "item_count_at_least" {
+                args.get("qty")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(i32::try_from)
+                    .transpose()
+                    .map_err(|_| format!("Squire item settle count overflows for {alias:?}"))?
+                    .unwrap_or(1)
+            } else {
+                1
+            };
+            Ok(BTreeMap::from([(item_id, count)]))
+        }
+        PredicateDocument::Fact { .. } => Ok(BTreeMap::new()),
+    }
+}
+
+fn squire_recipe_withdraws_seeded_output(
+    selected: &api::game_data::SelectedGameData,
+    steps: &[script::quester::path::StepDocument],
+    fixture_bank: &[(i32, i32)],
+    item_id: i32,
+    required: i32,
+) -> Result<bool, String> {
+    let mut withdrawal_quantity = 0_i32;
+    for step in steps {
+        if matches!(step.kind.as_str(), "kill" | "combat") {
+            break;
+        }
+        if step.kind != "bank"
+            || step.args.get("op").and_then(serde_json::Value::as_str) != Some("withdraw")
+        {
+            continue;
+        }
+        let Some(items) = step.args.get("items").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for item in items {
+            let Some(alias) = item.get("obj").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if resolve_squire_fixture_item(selected, alias)?.0 != item_id {
+                continue;
+            }
+            let Some(quantity) = item.get("qty").and_then(serde_json::Value::as_u64) else {
+                continue;
+            };
+            let quantity = i32::try_from(quantity)
+                .map_err(|_| format!("Squire bank withdrawal quantity overflows for {alias:?}"))?;
+            withdrawal_quantity = withdrawal_quantity.saturating_add(quantity);
+        }
+    }
+    Ok(squire_item_count(fixture_bank, item_id) >= required && withdrawal_quantity >= required)
+}
+
+struct SquirePathAudit<'a> {
+    selected: &'a api::game_data::SelectedGameData,
+    header: &'a script::quester::path::QuestHeaderDocument,
+    compiled: &'a script::quester::compile::CompiledPath,
+    fixture_inventory: &'a [(i32, i32)],
+    fixture_bank: &'a [(i32, i32)],
+    visited_recipes: HashSet<String>,
+    required_recipes: HashSet<String>,
+    reachable_recipes: HashSet<String>,
+    loadouts: HashSet<String>,
+    gather_items: HashSet<i32>,
+    deterministic_items: BTreeMap<i32, i32>,
+}
+
+impl<'a> SquirePathAudit<'a> {
+    fn new(
+        selected: &'a api::game_data::SelectedGameData,
+        header: &'a script::quester::path::QuestHeaderDocument,
+        compiled: &'a script::quester::compile::CompiledPath,
+        fixture_inventory: &'a [(i32, i32)],
+        fixture_bank: &'a [(i32, i32)],
+    ) -> Self {
+        Self {
+            selected,
+            header,
+            compiled,
+            fixture_inventory,
+            fixture_bank,
+            visited_recipes: HashSet::new(),
+            required_recipes: HashSet::new(),
+            reachable_recipes: HashSet::new(),
+            loadouts: HashSet::new(),
+            gather_items: HashSet::new(),
+            deterministic_items: BTreeMap::new(),
+        }
+    }
+
+    fn acquire_output_seeded(
+        &self,
+        recipe: &str,
+        settle: &script::quester::path::PredicateDocument,
+    ) -> Result<bool, String> {
+        let required = squire_settled_items(self.selected, settle)?;
+        if required.is_empty() {
+            return Ok(false);
+        }
+        let authored = self
+            .header
+            .acquire
+            .get(recipe)
+            .ok_or_else(|| format!("Squire Path omits acquire recipe {recipe:?}"))?;
+        for (item_id, count) in required {
+            let carried = squire_item_count(self.fixture_inventory, item_id).saturating_add(
+                self.deterministic_items
+                    .get(&item_id)
+                    .copied()
+                    .unwrap_or_default(),
+            );
+            if carried >= count {
+                continue;
+            }
+            if !squire_recipe_withdraws_seeded_output(
+                self.selected,
+                authored,
+                self.fixture_bank,
+                item_id,
+                count,
+            )? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn walk_steps(
+        &mut self,
+        steps: &[script::quester::path::StepDocument],
+        reachable: &mut bool,
+    ) -> Result<(), String> {
+        for step in steps {
+            if matches!(step.kind.as_str(), "kill" | "combat") {
+                // Combat loot is a chance outcome. Seeded bank outputs can bypass
+                // their containing acquire recipe before this point is reached.
+                *reachable = false;
+                continue;
+            }
+            if step.kind == "acquire" {
+                let recipe = step
+                    .args
+                    .get("recipe")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| format!("Squire acquire step {} has no recipe", step.id.0))?;
+                if self.acquire_output_seeded(recipe, &step.settle)? {
+                    continue;
+                }
+                self.required_recipes.insert(recipe.to_owned());
+                if self.visited_recipes.insert(recipe.to_owned()) {
+                    let authored =
+                        self.header.acquire.get(recipe).ok_or_else(|| {
+                            format!("Squire Path omits acquire recipe {recipe:?}")
+                        })?;
+                    let planned = self
+                        .compiled
+                        .provisioning
+                        .recipes
+                        .get(recipe)
+                        .ok_or_else(|| format!("Quester plan omits acquire recipe {recipe:?}"))?;
+                    if authored.len() != planned.steps.len()
+                        || authored
+                            .iter()
+                            .zip(planned.steps.iter())
+                            .any(|(source, compiled)| source.id != compiled.id)
+                    {
+                        return Err(format!("Quester plan for {recipe:?} differs from the Path"));
+                    }
+                    let was_reachable = *reachable;
+                    let mut recipe_reachable = was_reachable;
+                    self.walk_steps(authored, &mut recipe_reachable)?;
+                    if recipe_reachable {
+                        self.reachable_recipes.insert(recipe.to_owned());
+                    }
+                    if was_reachable {
+                        *reachable = recipe_reachable;
+                    }
+                }
+                if *reachable {
+                    let settled = squire_settled_items(self.selected, &step.settle)?;
+                    merge_squire_item_counts(&mut self.deterministic_items, settled);
+                }
+                continue;
+            }
+            if step.kind == "loadout" {
+                let name = step
+                    .args
+                    .get("loadout")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| format!("Squire loadout step {} has no loadout", step.id.0))?;
+                if !self.header.loadouts.contains_key(name) {
+                    return Err(format!("Squire Path omits loadout {name:?}"));
+                }
+                self.loadouts.insert(name.to_owned());
+                continue;
+            }
+            if step.kind == "gather" {
+                let alias = step
+                    .args
+                    .get("until")
+                    .and_then(|until| until.get("obj"))
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        format!("Squire gather step {} has no output item", step.id.0)
+                    })?;
+                self.gather_items
+                    .insert(resolve_squire_fixture_item(self.selected, alias)?.0);
+            }
+            if step.kind == "bank" {
+                // Bank withdrawals are available only from the seeded bank;
+                // their settle predicate alone cannot prove the item exists.
+                continue;
+            }
+
+            if *reachable {
+                let settled = squire_settled_items(self.selected, &step.settle)?;
+                merge_squire_item_counts(&mut self.deterministic_items, settled);
+            }
+        }
+        Ok(())
+    }
+}
+
+struct SquirePostSeedAudit {
+    missing: Vec<String>,
+    loadouts: HashSet<String>,
+    required_recipes: HashSet<String>,
+    reachable_recipes: HashSet<String>,
+}
+
+fn squire_post_seed_missing_items(
+    selected: &api::game_data::SelectedGameData,
+    path: &script::quester::path::PathDocument,
+    compiled: &script::quester::compile::CompiledPath,
+    seeded_stage: &str,
+    fixture_inventory: &[(i32, i32)],
+    fixture_bank: &[(i32, i32)],
+) -> Result<SquirePostSeedAudit, String> {
+    let header = path
+        .quest
+        .as_ref()
+        .ok_or("Squire Path has no quest header")?;
+    let start_index = compiled
+        .provisioning
+        .stages
+        .iter()
+        .position(|stage| stage.0.as_ref() == seeded_stage)
+        .ok_or_else(|| format!("Quester plan omits seeded stage {seeded_stage:?}"))?;
+    let role = path
+        .roles
+        .iter()
+        .find(|role| role.role == compiled.role)
+        .ok_or("Squire Path role is absent from the compiled plan")?;
+
+    let mut required_items = Vec::<(i32, i32, String)>::new();
+    for item in compiled.provisioning.items.iter().filter(|item| {
+        item.from_stage_index
+            .is_none_or(|stage_index| stage_index >= start_index)
+    }) {
+        let count = i32::try_from(item.qty)
+            .map_err(|_| format!("Squire item quantity overflows for {}", item.name))?;
+        required_items.push((item.id, count, format!("need {} x{count}", item.name)));
+    }
+
+    let mut audit =
+        SquirePathAudit::new(selected, header, compiled, fixture_inventory, fixture_bank);
+    let mut path_reachable = true;
+    for sequence in compiled.sequences.iter().skip(start_index) {
+        let authored = role
+            .sequences
+            .iter()
+            .find(|candidate| candidate.stage == sequence.stage)
+            .ok_or_else(|| format!("Squire Path omits stage {}", sequence.stage.0))?;
+        if authored.steps.len() != sequence.steps.len()
+            || authored
+                .steps
+                .iter()
+                .zip(sequence.steps.iter())
+                .any(|(source, compiled)| {
+                    source.id != compiled.id || source.kind.as_str() != compiled.kind.as_ref()
+                })
+        {
+            return Err(format!(
+                "Quester plan for stage {} does not match the Path steps",
+                sequence.stage.0
+            ));
+        }
+        audit.walk_steps(&authored.steps, &mut path_reachable)?;
+    }
+
+    for name in audit.loadouts.iter() {
+        let authored = header
+            .loadouts
+            .get(name)
+            .ok_or_else(|| format!("Squire Path omits loadout {name:?}"))?;
+        for (slot, alias) in &authored.worn {
+            let (item_id, _) = resolve_squire_fixture_item(selected, alias)?;
+            required_items.push((item_id, 1, format!("loadout {name} worn {slot} {alias}")));
+        }
+        let qualified = format!("{}/{}", path.id.0, name);
+        let carry = compiled
+            .provisioning
+            .loadout_carry
+            .get(qualified.as_str())
+            .ok_or_else(|| format!("Quester plan omits loadout carry {qualified:?}"))?;
+        for item in carry.iter() {
+            let count = item.qty;
+            required_items.push((
+                item.item.id,
+                count,
+                format!("loadout {name} carry {} x{count}", item.item.name),
+            ));
+        }
+    }
+
+    let gather_tool_ids = compiled
+        .provisioning
+        .gather_tool_needs
+        .iter()
+        .filter(|need| audit.gather_items.contains(&need.item_id))
+        .flat_map(|need| need.tools.iter().map(|tool| tool.id))
+        .collect::<HashSet<_>>();
+    for recipe in audit.required_recipes.iter() {
+        let plan = compiled
+            .provisioning
+            .recipes
+            .get(recipe.as_str())
+            .ok_or_else(|| format!("Quester plan omits acquire recipe {recipe:?}"))?;
+        for item in plan
+            .peak_items
+            .iter()
+            .filter(|item| !gather_tool_ids.contains(&item.item.id))
+        {
+            required_items.push((
+                item.item.id,
+                item.qty,
+                format!("acquire input {recipe}: {} x{}", item.item.name, item.qty),
+            ));
+        }
+    }
+
+    let available_count = |item_id| {
+        squire_item_count(fixture_inventory, item_id)
+            .saturating_add(squire_item_count(fixture_bank, item_id))
+            .saturating_add(
+                audit
+                    .deterministic_items
+                    .get(&item_id)
+                    .copied()
+                    .unwrap_or_default(),
+            )
+    };
+    let mut missing = Vec::new();
+    for (item_id, count, description) in required_items {
+        let available = available_count(item_id);
+        if available < count {
+            let name = selected
+                .items()
+                .iter()
+                .find(|item| item.id == item_id)
+                .and_then(|item| item.name.as_deref())
+                .unwrap_or("unknown item");
+            missing.push(format!(
+                "{description} (item {name}, held/seeded {available})"
+            ));
+        }
+    }
+    for item_id in audit.gather_items.iter() {
+        let need = compiled
+            .provisioning
+            .gather_tool_needs
+            .iter()
+            .find(|need| need.item_id == *item_id)
+            .ok_or_else(|| format!("Quester plan omits gather tool need for item {item_id}"))?;
+        if !need.tools.is_empty() && !need.tools.iter().any(|tool| available_count(tool.id) > 0) {
+            let resource = selected
+                .item_by_id(*item_id)
+                .and_then(|item| item.name.as_deref())
+                .unwrap_or("unknown resource");
+            missing.push(format!(
+                "gather tool input for {resource}: no planned tool is seeded or acquired"
+            ));
+        }
+    }
+
+    missing.sort();
+    missing.dedup();
+    Ok(SquirePostSeedAudit {
+        missing,
+        loadouts: audit.loadouts,
+        required_recipes: audit.required_recipes,
+        reachable_recipes: audit.reachable_recipes,
+    })
+}
 
 #[derive(Clone, Copy)]
 struct Quest {
@@ -101,13 +672,6 @@ struct Quest {
     xp_delta: i32,
     qp_delta: i32,
     qp_reward: &'static str,
-}
-fn combat_food_seed(quest: Quest) -> CombatFoodSeed {
-    if quest.key == "squire" {
-        SQUIRE_COMBAT_FOOD_SEED
-    } else {
-        COMBAT_FOOD_SEED
-    }
 }
 
 // quest_sheep.rs2:5 gives 150 XP. The fresh account also spins 20 balls:
@@ -316,26 +880,48 @@ impl Sample {
             && self.hitpoints == 43
             && self.safe_to_relog()
     }
-    fn combat_fixture_ready(&self, quest: Quest) -> bool {
-        let food = combat_food_seed(quest);
-        self.combat_can_relog()
-            && self
-                .inventory
+    fn combat_fixture_ready(
+        &self,
+        quest: Quest,
+        squire_loadout: Option<&SquirePathLoadoutSeed>,
+    ) -> bool {
+        if !self.combat_can_relog() {
+            return false;
+        }
+        if quest.key == "squire" {
+            let default_food = [(SQUIRE_TEST_FOOD_ID, SQUIRE_TEST_FOOD_COUNT)];
+            let required =
+                squire_loadout.map_or(&default_food[..], |seed| seed.inventory.as_slice());
+            required.iter().all(|(id, count)| {
+                self.inventory
+                    .iter()
+                    .filter(|(inventory_id, _)| inventory_id == id)
+                    .map(|(_, held)| held)
+                    .sum::<i32>()
+                    >= *count
+            })
+        } else {
+            self.inventory
                 .iter()
-                .filter(|(id, _)| *id == food.item_id)
+                .filter(|(id, _)| *id == COMBAT_FOOD_SEED.item_id)
                 .map(|(_, count)| count)
                 .sum::<i32>()
-                == food.count
+                == COMBAT_FOOD_SEED.count
+        }
     }
-    fn quest_fixture_ready(&self, quest: Quest) -> bool {
+    fn quest_fixture_ready_with_loadout(
+        &self,
+        quest: Quest,
+        squire_loadout: Option<&SquirePathLoadoutSeed>,
+    ) -> bool {
         match quest.key {
             "squire" => {
-                self.combat_fixture_ready(quest)
+                self.combat_fixture_ready(quest, squire_loadout)
                     && self.mining_level == SQUIRE_MINING_LEVEL
                     && self.level == SQUIRE_SMITHING_LEVEL
                     && self.cooking_level == SQUIRE_COOKING_LEVEL
             }
-            key if needs_combat_fixture(key) => self.combat_fixture_ready(quest),
+            key if needs_combat_fixture(key) => self.combat_fixture_ready(quest, None),
             _ => true,
         }
     }
@@ -416,14 +1002,26 @@ fn native_run_completed(receipt: Option<&ScriptLifecycleReceipt>, generation: Op
 }
 
 fn witness_predicate(sample: &Sample, quest: Quest, base_xp: i32, baseline: bool) -> bool {
+    witness_predicate_with_loadout(sample, quest, base_xp, baseline, None)
+}
+
+fn witness_predicate_with_loadout(
+    sample: &Sample,
+    quest: Quest,
+    base_xp: i32,
+    baseline: bool,
+    squire_loadout: Option<&SquirePathLoadoutSeed>,
+) -> bool {
     if baseline {
         if quest.key == "vampire" {
             // The labelled combat fixture raises Attack, the reward skill.
             sample.qp == 0
                 && sample.quest_colour == Some(0xF80000)
-                && sample.combat_fixture_ready(quest)
+                && sample.combat_fixture_ready(quest, None)
         } else {
-            sample.fresh() && base_xp == sample.xp && sample.quest_fixture_ready(quest)
+            sample.fresh()
+                && base_xp == sample.xp
+                && sample.quest_fixture_ready_with_loadout(quest, squire_loadout)
         }
     } else {
         sample.complete(quest, base_xp)
@@ -579,8 +1177,10 @@ struct Witness {
     writer: Arc<EvidenceWriter>,
     jobs: Vec<EvidenceJob>,
     quest: Quest,
+    squire_loadout: Option<SquirePathLoadoutSeed>,
     relog_requested: bool,
     fixture_seeded: bool,
+    fixture_item_cursor: usize,
     relog_detached: bool,
     relogged: bool,
     baseline: Option<Sample>,
@@ -608,20 +1208,36 @@ impl Witness {
         let client::render::backend::FrameOutput::PixMap(pixels) = out else {
             return Err("377 Quester capture did not return CPU framebuffer".into());
         };
-        let mut seeds = vec!["own-account tutorial bypass and mainland position, then clean relog"];
-        if needs_combat_fixture(self.quest.key) {
-            seeds.push(combat_food_seed(self.quest).receipt_label);
-        }
+        let mut seeds =
+            vec!["own-account tutorial bypass and mainland position, then clean relog".to_owned()];
         if self.quest.key == "squire" {
-            seeds.push("labelled own-account quest minima: Mining 10 (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12) and Cooking 10 (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17); Smithing remains fresh at level 1 / 0 XP");
-            seeds.push(SQUIRE_BANK_SEED_LABEL);
+            seeds.push(SQUIRE_COMBAT_STATS_LABEL.to_owned());
+            let loadout = self
+                .squire_loadout
+                .as_ref()
+                .ok_or("Squire receipt has no Path loadout fixture")?;
+            seeds.extend(loadout.items.iter().map(|seed| seed.label.clone()));
+            seeds.push("labelled own-account quest minima: Mining 10 (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12) and Cooking 10 (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17); Smithing remains fresh at level 1 / 0 XP".to_owned());
+            seeds.push(SQUIRE_BANK_SEED_LABEL.to_owned());
+            seeds.push(SQUIRE_PICKAXE_BANK_SEED_LABEL.to_owned());
+        } else if needs_combat_fixture(self.quest.key) {
+            seeds.push(COMBAT_FOOD_SEED.receipt_label.to_owned());
         }
         let bank_seeds = if self.quest.key == "squire" {
-            json!([{"label":SQUIRE_BANK_SEED_LABEL,"item_alias":"iron_bar","count":2,"command":SQUIRE_BANK_SEED_COMMAND,"scope":"own-account bank"}])
+            json!([
+                {"label":SQUIRE_BANK_SEED_LABEL,"item_alias":"iron_bar","count":2,"command":SQUIRE_BANK_SEED_COMMAND,"scope":"own-account bank"},
+                {"label":SQUIRE_PICKAXE_BANK_SEED_LABEL,"item_alias":"steel_pickaxe","count":1,"command":SQUIRE_PICKAXE_BANK_SEED_COMMAND,"scope":"own-account bank"}
+            ])
         } else {
             json!([])
         };
-        let quest_item_seeds = if self.quest.key == "squire" { 2 } else { 0 };
+        let quest_item_seeds = if self.quest.key == "squire" {
+            self.squire_loadout
+                .as_ref()
+                .map_or(0, |seed| seed.inventory.len() + 2)
+        } else {
+            0
+        };
         let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"bank_seeds":bank_seeds,"quest_state_seeds":0,"quest_item_seeds":quest_item_seeds,"reward_xp_seeds":0,"quest_point_seeds":0});
         self.record(receipt.clone())?;
         self.jobs.push(self.writer.submit(EvidenceRequest {
@@ -680,25 +1296,26 @@ impl Witness {
                                 &[]
                             };
                             let bank_seed: &[&str] = if self.quest.key == "squire" {
-                                &[SQUIRE_BANK_SEED_COMMAND]
+                                &[SQUIRE_BANK_SEED_COMMAND, SQUIRE_PICKAXE_BANK_SEED_COMMAND]
                             } else {
                                 &[]
                             };
-                            let food_seed = combat_food_seed(self.quest);
-                            for command in COMBAT_STATS_FIXTURE
-                                .iter()
-                                .chain(std::iter::once(&food_seed.command))
-                                .chain(requirement_fixture.iter())
-                                .chain(bank_seed.iter())
-                            {
-                                let command = *command;
+                            let mut commands = COMBAT_STATS_FIXTURE.to_vec();
+                            if self.quest.key != "squire" {
+                                commands.push(COMBAT_FOOD_SEED.command);
+                            }
+                            commands.extend_from_slice(requirement_fixture);
+                            commands.extend_from_slice(bank_seed);
+                            for command in commands {
                                 if !interact::cheat(client, command).is_sent() {
                                     return Err(format!(
                                         "combat fixture command refused: {command}"
                                     ));
                                 }
-                                let phase = if command == food_seed.command {
-                                    food_seed.phase_label
+                                let phase = if command == COMBAT_FOOD_SEED.command
+                                    && self.quest.key != "squire"
+                                {
+                                    COMBAT_FOOD_SEED.phase_label
                                 } else {
                                     match command {
                                         "setstat mining 10" => {
@@ -708,10 +1325,17 @@ impl Witness {
                                             "SEED redberry-pie Cooking 10 minimum (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:201-212)"
                                         }
                                         SQUIRE_BANK_SEED_COMMAND => SQUIRE_BANK_SEED_LABEL,
+                                        SQUIRE_PICKAXE_BANK_SEED_COMMAND => {
+                                            SQUIRE_PICKAXE_BANK_SEED_LABEL
+                                        }
+                                        _ if self.quest.key == "squire" => SQUIRE_COMBAT_STATS_LABEL,
                                         _ => "SEED own-account combat-only area fixture",
                                     }
                                 };
-                                if command == SQUIRE_BANK_SEED_COMMAND {
+                                if matches!(
+                                    command,
+                                    SQUIRE_BANK_SEED_COMMAND | SQUIRE_PICKAXE_BANK_SEED_COMMAND
+                                ) {
                                     self.record(json!({"phase":phase,"command":command,"scope":"own-account bank"}))?;
                                 } else {
                                     self.record(json!({"phase":phase,"command":command}))?;
@@ -720,8 +1344,28 @@ impl Witness {
                             self.fixture_seeded = true;
                             return Ok(());
                         }
+                        if self.quest.key == "squire" {
+                            let seed = self
+                                .squire_loadout
+                                .as_ref()
+                                .ok_or("Squire run has no Path loadout fixture")?
+                                .items
+                                .get(self.fixture_item_cursor)
+                                .cloned();
+                            if let Some(seed) = seed {
+                                if !interact::cheat(client, &seed.command).is_sent() {
+                                    return Err(format!(
+                                        "Squire Path loadout seed refused: {}",
+                                        seed.command
+                                    ));
+                                }
+                                self.record(json!({"phase":seed.label,"command":seed.command,"scope":"own-account inventory"}))?;
+                                self.fixture_item_cursor += 1;
+                                return Ok(());
+                            }
+                        }
                         // Tutorial login has no inventory side tab yet. Squire's
-                        // skill minima and the food fixture are verified after relog.
+                        // Path loadout and skill minima are verified after clean relog.
                         if !s.quest_pre_relog_ready(self.quest) {
                             return Ok(());
                         }
@@ -740,10 +1384,16 @@ impl Witness {
         if self.baseline.is_none() {
             // The first post-relog frame can publish combat level and food
             // before named stat rows. Do not fail that partial frame.
-            if !s.quest_fixture_ready(self.quest) {
+            if !s.quest_fixture_ready_with_loadout(self.quest, self.squire_loadout.as_ref()) {
                 return Ok(());
             }
-            if !witness_predicate(&s, self.quest, s.xp, true) {
+            if !witness_predicate_with_loadout(
+                &s,
+                self.quest,
+                s.xp,
+                true,
+                self.squire_loadout.as_ref(),
+            ) {
                 return Err(format!("fresh-account quest conditions failed: {s:?}"));
             }
             self.base_xp = Some(s.xp);
@@ -797,6 +1447,15 @@ impl Witness {
 fn run_quest(q: Quest) -> Result<(), String> {
     let bound = load_bound_377()?;
     resource_record(&bound);
+    let squire_loadout = if q.key == "squire" {
+        let selected = bound
+            .profile
+            .game_data()
+            .ok_or("377 selected game data unavailable for Squire Path fixture")?;
+        Some(squire_path_loadout_seed(&selected)?)
+    } else {
+        None
+    };
     let account = host_play::mint_live_names(1).remove(0);
     let directory = required_path("QUESTER_377_EVIDENCE_DIR")?.join(&account);
     fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
@@ -811,10 +1470,12 @@ fn run_quest(q: Quest) -> Result<(), String> {
         writer: writer.clone(),
         jobs: Vec::new(),
         quest: q,
+        squire_loadout,
         relog_requested: false,
         relog_detached: false,
         relogged: false,
         fixture_seeded: false,
+        fixture_item_cursor: 0,
         baseline: None,
         latest: None,
         base_xp: None,
@@ -1030,6 +1691,14 @@ fn batch2_witness_accepts_the_377_scroll_and_rejects_a_red_row() {
 
 #[test]
 fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 data");
+    let loadout = squire_path_loadout_seed(&selected).expect("Squire Path ice loadout");
+    let lobster_id = selected.item_by_alias("lobster").expect("377 lobster").id;
+    let rune_full_helm_id = selected
+        .item_by_alias("rune_full_helm")
+        .expect("377 Rune full helm")
+        .id;
     let baseline = Sample {
         tick: 1,
         tile: Some((3000, 3150, 0)),
@@ -1039,7 +1708,7 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
         cooking_level: SQUIRE_COOKING_LEVEL,
         qp: 0,
         quest_colour: Some(0xF80000),
-        inventory: vec![(379, 6)],
+        inventory: loadout.inventory.clone(),
         main_root: 0,
         main_text: vec![],
         dialogue: vec![],
@@ -1051,18 +1720,33 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
         local_index: Some(1),
         nearby_npcs: vec![],
     };
-    assert!(witness_predicate(&baseline, SQUIRE, baseline.xp, true));
+    let ready = |sample: &Sample| {
+        witness_predicate_with_loadout(sample, SQUIRE, baseline.xp, true, Some(&loadout))
+    };
+    assert!(ready(&baseline));
     let mut five_trout = baseline.clone();
     five_trout.inventory = vec![(333, 5)];
     assert!(
-        !witness_predicate(&five_trout, SQUIRE, baseline.xp, true),
-        "Squire requires its lobster food, not the other combat fixture's trout"
+        !ready(&five_trout),
+        "Squire requires its Path ice loadout, not the other combat fixture's trout"
     );
     let mut short_lobster_seed = baseline.clone();
-    short_lobster_seed.inventory = vec![(379, 5)];
+    *short_lobster_seed
+        .inventory
+        .iter_mut()
+        .find(|(id, _)| *id == lobster_id)
+        .expect("Path loadout includes lobsters") = (lobster_id, 5);
     assert!(
-        !witness_predicate(&short_lobster_seed, SQUIRE, baseline.xp, true),
+        !ready(&short_lobster_seed),
         "Squire's blurite step requires six lobsters"
+    );
+    let mut missing_helm = baseline.clone();
+    missing_helm
+        .inventory
+        .retain(|(item_id, _)| *item_id != rune_full_helm_id);
+    assert!(
+        !ready(&missing_helm),
+        "Squire's Path ice loadout requires its Rune full helm"
     );
     let mut pre_relog = baseline.clone();
     pre_relog.level = 1;
@@ -1185,6 +1869,112 @@ fn squire_witness_rejects_invalid_baseline_and_partial_product_evidence() {
 }
 
 #[test]
+fn squire_post_seed_path_audit_rejects_the_old_lobster_fixture() {
+    let Some(nav_pack) = api::test_support::local_asset_path_377(
+        "NAV_377_PACK",
+        "",
+        "revision-377 navigation pack for the Squire Path audit",
+    ) else {
+        return;
+    };
+    let world = nav_planner::world::NavWorld::load_pack(&nav_pack)
+        .expect("decode real revision-377 navigation pack");
+    let zones = nav_planner::producer::zones_view(&world)
+        .expect("read 377 nav identity")
+        .expect("377 Squire Path needs its zone catalog");
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R377)
+        .expect("selected 377 data");
+    let selected_for_gathering = Arc::clone(&selected);
+    script::quester::compile::prepare_for_test(move |worker| {
+        selected_for_gathering.prepare_gathering(worker)
+    })
+    .expect("prepare 377 gather catalog");
+    let path: script::quester::path::PathDocument =
+        serde_json::from_str(SQUIRE_PATH_JSON).expect("377 Squire Path");
+    let quests = api::quest_facts::QuestCatalog::from_identity(selected.quest_identity())
+        .expect("377 quest catalog");
+    let compiled = script::quester::compile::compile_uncached_for_test_with_zones(
+        &path, &selected, &quests, zones,
+    )
+    .unwrap_or_else(|error| panic!("compile 377 Squire Path: {}", error.code));
+
+    let lobster_id = selected.item_by_alias("lobster").expect("377 lobster").id;
+    let iron_bar_id = selected.item_by_alias("iron_bar").expect("377 iron bar").id;
+    let steel_pickaxe_id = selected
+        .item_by_alias("steel_pickaxe")
+        .expect("377 steel pickaxe")
+        .id;
+    let old_fixture_inventory = [(lobster_id, SQUIRE_TEST_FOOD_COUNT)];
+    let old_bank_seed = [(iron_bar_id, 2)];
+    let path_bank_seed = [(iron_bar_id, 2), (steel_pickaxe_id, 1)];
+    let old_audit = squire_post_seed_missing_items(
+        &selected,
+        &path,
+        &compiled,
+        "squire:6",
+        &old_fixture_inventory,
+        &old_bank_seed,
+    )
+    .expect("audit old Squire fixture");
+    assert!(
+        old_audit
+            .missing
+            .iter()
+            .any(|item| item.contains("Rune full helm")),
+        "old lobster-only fixture should miss the stage-six Path helm: {:?}",
+        old_audit.missing
+    );
+    assert!(
+        old_audit
+            .missing
+            .iter()
+            .any(|item| item.contains("gather tool input")),
+        "old fixture should miss the unseeded Path gather tool: {:?}",
+        old_audit.missing
+    );
+    assert!(
+        old_audit.loadouts.contains(SQUIRE_PATH_LOADOUT),
+        "audit should inspect the Path loadout: {:?}",
+        old_audit.loadouts
+    );
+    assert!(
+        old_audit.reachable_recipes.contains("acquire:blurite"),
+        "audit should walk the deterministic blurite recipe after the seeded bar route: {:?}",
+        old_audit.reachable_recipes
+    );
+    assert!(
+        !old_audit.required_recipes.contains("acquire:iron_bars"),
+        "the two-bar bank seed should bypass the chance-based dwarf-drop recipe"
+    );
+
+    let path_fixture = squire_path_loadout_seed(&selected).expect("FixtureLoadout::Path(\"ice\")");
+    let new_audit = squire_post_seed_missing_items(
+        &selected,
+        &path,
+        &compiled,
+        "squire:6",
+        &path_fixture.inventory,
+        &path_bank_seed,
+    )
+    .expect("audit Path-backed Squire fixture");
+    assert!(
+        new_audit.missing.is_empty(),
+        "Path-backed Squire fixture leaves unsatisfied stage-six requirements: {:?}",
+        new_audit.missing
+    );
+    assert!(
+        new_audit.loadouts.contains(SQUIRE_PATH_LOADOUT),
+        "audit should inspect the Path loadout: {:?}",
+        new_audit.loadouts
+    );
+    assert!(
+        new_audit.reachable_recipes.contains("acquire:blurite"),
+        "blurite must remain reachable without a chance outcome: {:?}",
+        new_audit.reachable_recipes
+    );
+}
+
+#[test]
 #[ignore = "requires LIVE=1, owned qc4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_hetty_native() -> Result<(), String> {
     run_quest(HETTY)
@@ -1206,7 +1996,7 @@ fn quester_377_demon_native() -> Result<(), String> {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, owned qc4 prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
+#[ignore = "requires LIVE=1, owned frsq prefix, canonical 377 inputs and QUESTER_377_EVIDENCE_DIR"]
 fn quester_377_squire_native() -> Result<(), String> {
     run_quest(SQUIRE)
 }
