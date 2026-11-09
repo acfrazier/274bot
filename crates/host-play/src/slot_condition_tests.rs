@@ -1770,6 +1770,10 @@ fn warmed_tick_frame_allocations_gate(revision: client::io::ClientRevision) {
             );
         }
     });
+    // The snapshot publishes this client's cache through a process-wide weak handle. Drop it
+    // before this test's client dies, so no later measured frame of a sibling test frees a dead
+    // client's allocation (the handle is replaced on every frame of a different client).
+    api::snapshot::clear_client_adapter_cache_for_tests(&client.cache);
     assert_eq!(
         measured.bytes_total, 0,
         "1,000 unchanged tick frames allocate nothing: {measured:?}"
