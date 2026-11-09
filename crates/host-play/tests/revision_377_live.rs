@@ -83,6 +83,34 @@ impl ScratchHome {
             .map_err(|error| format!("create private profile home {}: {error}", path.display()))?;
         Ok(Self(path))
     }
+
+    fn set_local_377_endpoints(&self, game_port: u16, asset_port: u16) -> Result<(), String> {
+        let mut servers = host_play::Servers::builtins();
+        let profile = servers
+            .servers
+            .iter_mut()
+            .find(|profile| profile.name == "local-377")
+            .ok_or_else(|| "built-in local-377 profile is missing".to_owned())?;
+        let world = profile
+            .worlds
+            .first_mut()
+            .ok_or_else(|| "built-in local-377 world is missing".to_owned())?;
+        world.port = game_port;
+        world.asset_port = asset_port;
+
+        let bot_dir = self.0.join(".274bot");
+        fs::create_dir_all(&bot_dir).map_err(|error| {
+            format!(
+                "create private profile directory {}: {error}",
+                bot_dir.display()
+            )
+        })?;
+        let bytes = serde_json::to_vec_pretty(&servers)
+            .map_err(|error| format!("encode private server profiles: {error}"))?;
+        fs::write(bot_dir.join("servers.json"), bytes)
+            .map_err(|error| format!("write private server profiles: {error}"))?;
+        Ok(())
+    }
 }
 
 impl Drop for ScratchHome {
@@ -160,6 +188,7 @@ fn load_bound_377_with_ports(game_port: u16, asset_port: u16) -> Result<Bound377
     path_is_file(&nav_flags, "NAV_FLAGS")?;
 
     let home = ScratchHome::new()?;
+    home.set_local_377_endpoints(game_port, asset_port)?;
     let environment = ProfileEnvironment {
         home: Some(home.0.clone()),
         engine_dir: Some(engine_dir.clone()),
@@ -168,6 +197,8 @@ fn load_bound_377_with_ports(game_port: u16, asset_port: u16) -> Result<Bound377
         nav_flags: Some(nav_flags.clone()),
         ..ProfileEnvironment::default()
     };
+    // Keep live endpoints in the private named profile; explicit endpoint
+    // flags disable local-377 game-data qualification.
     let options = ProfileOptions {
         revision: Some(REVISION.to_string()),
         engine_dir: Some(engine_dir.clone()),
@@ -175,8 +206,6 @@ fn load_bound_377_with_ports(game_port: u16, asset_port: u16) -> Result<Bound377
         unpack_dir: Some(unpack_dir.clone()),
         nav_pack: Some(nav_pack.clone()),
         nav_flags: Some(nav_flags.clone()),
-        port: Some(game_port),
-        http_port: Some(asset_port),
         ..ProfileOptions::default()
     };
     let selection = options.resolve_with_env(None, &environment)?;
