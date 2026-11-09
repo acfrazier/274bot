@@ -4377,3 +4377,267 @@ fn bank_select_cancel_during_second_journal_read_does_not_retry_or_reissue() {
     assert_no_kitchen_bank_reissue(&ledger, first_authority.request_id().get());
     assert!(state.prereq_snapshot().facts().is_empty());
 }
+
+// The quest-tab text the Priest in Peril journal shows at each stage, copied
+// from content/scripts/quests/quest_priestperil/scripts/priestperil_journal.rs2
+// (the line of each branch is named beside it). `|` is the content's line break.
+const PRIEST_HEAD: &str = "@str@I spoke to King Roald who asked me to investigate why his|@str@friend Priest Drezel has stopped communicating with him.|";
+const PRIEST_LOCKED: &str = "@str@I headed to the temple where Drezel lives, but it was all|@str@locked shut. I spoke through the locked door to Drezel.|";
+const PRIEST_DOG: &str = "@str@He told me that there was an annoying dog below the|@str@temple, and asked me to kill it, which I did easily.|";
+const PRIEST_FURIOUS: &str = "@str@When I told Roald what I had done, he was furious. The|@str@person who told me to kill the dog wasn't Drezel at all!|";
+const PRIEST_CELL: &str = "@str@I returned to the temple and found the real Drezel locked|@str@in a makeshift cell upstairs, guarded by a vampire.|";
+const PRIEST_WATER: &str = "@str@I used a key from the monument to open the cell door and|@str@used Holy Water to trap the vampire in his coffin.|";
+const PRIEST_WATER_AND: &str = "@str@I used a key from the monument to open the cell door and|@str@and used Holy Water to trap the vampire in his coffin.|";
+const PRIEST_CONTAMINATED: &str = "@str@I followed Drezel downstairs only to find that the Salve|@str@had been contaminated and now needed purifying.|";
+
+fn priestperil_journal(stage: i32) -> Vec<&'static str> {
+    match stage {
+        // priestperil_journal.rs2:6-7
+        0 => vec!["@dbl@I can start this quest by speaking to @dre@King Roald@dbl@ in @dre@Varrock Palace||@dbl@I must be able to defeat a @dre@level 30 enemy"],
+        // :9-11
+        1 => vec![
+            "@str@I spoke to King Roald who asked me to investigate why his|@str@friend Priest Drezel has stopped communicating with him.||",
+            "@dre@Drezel@dbl@ lives in a @dre@temple@dbl@ to the @dre@east@dbl@ of Varrock Palace. I should head there and @dre@investigate@dbl@ what's happened to him",
+        ],
+        // :13-16
+        2 => vec![
+            PRIEST_HEAD,
+            PRIEST_LOCKED,
+            "@dbl@He told me that there was an annoying @dre@dog@dbl@ below the temple, and has asked me to @dre@kill it@dbl@ for him",
+        ],
+        // :18-22
+        3 => vec![
+            PRIEST_HEAD,
+            PRIEST_LOCKED,
+            "@str@He told me that there was an annoying dog below the|@str@temple, and asked me to kill it, which I did easily.||",
+            "@dbl@I should tell @dre@King Roald@dbl@ everything's fine with @dre@Drezel@dbl@ now I have killed that @dre@dog@dbl@ for him, and claim my @dre@reward",
+        ],
+        // :24-29
+        4 => vec![
+            PRIEST_HEAD,
+            PRIEST_LOCKED,
+            PRIEST_DOG,
+            "@str@When I told Roald what I had done, he was furious. The|@str@person who told me to kill the dog wasn't Drezel at all!||",
+            "@dbl@I must return to the @dre@temple@dbl@ and find out what happened to the real @dre@Drezel@dbl@, or the King will have me executed!",
+        ],
+        // :31-37
+        5 => vec![
+            PRIEST_HEAD,
+            PRIEST_LOCKED,
+            PRIEST_DOG,
+            PRIEST_FURIOUS,
+            "@str@I returned to the temple and found the real Drezel locked|@str@in a makeshift cell upstairs, guarded by a vampire.||",
+            "@dbl@I need to find the @dre@key@dbl@ to his cell and free him!|",
+        ],
+        // :48-55
+        6 => vec![
+            PRIEST_HEAD,
+            PRIEST_LOCKED,
+            PRIEST_DOG,
+            PRIEST_FURIOUS,
+            PRIEST_CELL,
+            "@str@I used a key from the monument to open the cell door|",
+            "@dbl@but I still have to do something about that @dre@vampire||",
+        ],
+        // :65-72
+        7 => vec![
+            PRIEST_HEAD,
+            PRIEST_LOCKED,
+            PRIEST_DOG,
+            PRIEST_FURIOUS,
+            PRIEST_CELL,
+            PRIEST_WATER,
+            "@dbl@I should speak to @dre@Drezel@dbl@ again",
+        ],
+        // :74-81
+        8 => vec![
+            PRIEST_HEAD,
+            PRIEST_LOCKED,
+            PRIEST_DOG,
+            PRIEST_FURIOUS,
+            PRIEST_CELL,
+            PRIEST_WATER_AND,
+            "@dbl@I should head downstairs to the @dre@monument@dbl@ like @dre@Drezel@dbl@ asked me to, and assess what @dre@damage@dbl@ has been done",
+        ],
+        // :83-91, stages 10 to 59 (^priestperil_begin_bring_essence to below
+        // ^priestperil_end_bring_essence)
+        10..=59 => vec![
+            PRIEST_HEAD,
+            PRIEST_LOCKED,
+            PRIEST_DOG,
+            PRIEST_FURIOUS,
+            PRIEST_CELL,
+            PRIEST_WATER_AND,
+            PRIEST_CONTAMINATED,
+            "@dbl@I need to bring Drezel @dre@fifty rune essences@dbl@ to undo the damage done by the Zamorakians and @dre@purify the Salve",
+        ],
+        // :93-104, the final else: stage 9 (unused) and stages 60 and 61
+        _ => vec![
+            PRIEST_HEAD,
+            PRIEST_LOCKED,
+            PRIEST_DOG,
+            PRIEST_FURIOUS,
+            PRIEST_CELL,
+            PRIEST_WATER_AND,
+            PRIEST_CONTAMINATED,
+            "@str@I brought Drezel fifty rune essences and the contaminants|@str@were dissolved from the Salve, and Drezel rewarded me|",
+            "@str@for all of my help with an ancient holy weapon to fight|@str@with.||",
+            "@red@QUEST COMPLETE!",
+        ],
+    }
+}
+
+fn priestperil_window(min: i32, max: i32) -> api::selected::StageWindow {
+    api::selected::StageWindow {
+        quest: api::selected::FactKey::new("priestperil"),
+        signal: api::selected::FactKey::new("priestperil"),
+        values: InclusiveRange {
+            min: Some(min),
+            max: Some(max),
+        },
+    }
+}
+
+/// The rules of the Priest journal row whose needles all occur in the page.
+fn priestperil_matching_rules(
+    rules: &[api::prereq_steps::JournalRule],
+    stage: i32,
+) -> Vec<InclusiveRange> {
+    let lines: Vec<Arc<str>> = priestperil_journal(stage)
+        .into_iter()
+        .map(Arc::from)
+        .collect();
+    let text = crate::quester::progress::normalize_journal(&lines);
+    rules
+        .iter()
+        .filter(|rule| rule.all.iter().all(|needle| text.contains(needle.as_ref())))
+        .map(|rule| rule.proves)
+        .collect()
+}
+
+fn priestperil_range(min: i32, max: i32) -> InclusiveRange {
+    InclusiveRange {
+        min: Some(min),
+        max: Some(max),
+    }
+}
+
+#[test]
+fn priestperil_journal_each_stage_matches_only_its_own_rule() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (_, journal) = CATALOG
+        .for_journal(&QuestGate::Window(priestperil_window(5, 61)))
+        .expect("the Priest journal row establishes the mausoleum ladders");
+    assert_eq!(journal.id.as_ref(), "priestperil:mausoleum-progress");
+    for stage in 0..=61 {
+        let expected = match stage {
+            // Stages 0 to 4 are before the mausoleum ladders: no rule claims them.
+            0..=4 => vec![],
+            5..=8 => vec![priestperil_range(stage, stage)],
+            10..=59 => vec![priestperil_range(10, 59)],
+            // Stage 9 is never written; the content shows the completed page.
+            _ => vec![priestperil_range(9, 61)],
+        };
+        let matched = priestperil_matching_rules(&journal.rules, stage);
+        assert_eq!(matched, expected, "stage {stage}");
+        for proves in &matched {
+            assert_eq!(
+                proves.test(&priestperil_range(stage, stage)),
+                Truth::True,
+                "stage {stage} is inside the range its rule proves"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_old_priestperil_journal_row_cannot_witness_an_in_progress_stage() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (_, journal) = CATALOG
+        .for_journal(&QuestGate::Window(priestperil_window(5, 61)))
+        .expect("the Priest journal row establishes the mausoleum ladders");
+    // The old row: the completed-quest rule alone.
+    let old = &journal.rules[..1];
+    assert_eq!(
+        old[0]
+            .all
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<&str>>(),
+        [
+            "i brought drezel fifty rune essences and the contaminants",
+            "for all of my help with an ancient holy weapon to fight",
+            "quest complete!",
+        ]
+    );
+    for stage in [5, 6, 7, 8, 10, 35, 59] {
+        assert!(
+            priestperil_matching_rules(old, stage).is_empty(),
+            "the old row witnesses nothing at stage {stage}"
+        );
+    }
+    assert_eq!(
+        priestperil_matching_rules(old, 60),
+        [priestperil_range(9, 61)]
+    );
+}
+
+fn priestperil_journal_gate(min: i32) -> ActionableGate {
+    use api::prereq_steps::{CrossingId, CrossingKind};
+    // The mausoleum crypt gate, loc 3444 (gates.rs2:1-3 opens it from stage 5).
+    let tile = |z| WorldTile {
+        x: 3405,
+        z,
+        level: 0,
+    };
+    ActionableGate {
+        gate: QuestGate::Window(priestperil_window(min, 61)),
+        truth: Truth::Unknown,
+        leg: 0,
+        crossing: CrossingId {
+            loc_id: 3444,
+            option: 1,
+            at: tile(9895),
+            takeoff: tile(9894),
+            to: tile(9895),
+            kind: CrossingKind::Door,
+        },
+    }
+}
+
+#[test]
+fn priestperil_in_progress_journal_is_read_end_to_end() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    // Stage 10, the third essence batch that blocked live run 2.
+    journal_observation(
+        priestperil_journal_gate(5),
+        "Priest in Peril",
+        "Priest in Peril",
+        0x00f800,
+        &priestperil_journal(10),
+        Some(Truth::True),
+    );
+    // Stage 5 satisfies a stage-5 ladder but not a stage-8 ladder.
+    journal_observation(
+        priestperil_journal_gate(5),
+        "Priest in Peril",
+        "Priest in Peril",
+        0x00f800,
+        &priestperil_journal(5),
+        Some(Truth::True),
+    );
+    journal_observation(
+        priestperil_journal_gate(8),
+        "Priest in Peril",
+        "Priest in Peril",
+        0x00f800,
+        &priestperil_journal(5),
+        Some(Truth::False),
+    );
+}
