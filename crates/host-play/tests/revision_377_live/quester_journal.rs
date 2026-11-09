@@ -79,14 +79,16 @@ const SQUIRE_COMBAT_FOOD_SEED: CombatFoodSeed = CombatFoodSeed {
 };
 
 // The journal needs Mining 10, and the fresh pie recipe needs Cooking 10.
-// Squire receives six lobsters for its blurite step but no iron bars, so the
-// Path's own iron-bar route is exercised.
+// The Squire fixture supplies both the two-bar fast-path input and six lobsters
+// for its blurite step; the run still exercises the Path's other acquisition.
 // Sources: quest_squire/scripts/squire_journal.rs2:7-12;
 // skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17.
 const SQUIRE_MINING_LEVEL: i32 = 10;
 const SQUIRE_SMITHING_LEVEL: i32 = 1;
 const SQUIRE_COOKING_LEVEL: i32 = 10;
 const SQUIRE_REQUIREMENT_FIXTURE: &[&str] = &["setstat mining 10", "setstat cooking 10"];
+const SQUIRE_BANK_SEED_LABEL: &str = "SEED own-account bank: Squire two-bar fast-path input";
+const SQUIRE_BANK_SEED_COMMAND: &str = "givebank iron_bar 2";
 
 #[derive(Clone, Copy)]
 struct Quest {
@@ -612,8 +614,15 @@ impl Witness {
         }
         if self.quest.key == "squire" {
             seeds.push("labelled own-account quest minima: Mining 10 (content/scripts/quests/quest_squire/scripts/squire_journal.rs2:7-12) and Cooking 10 (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17); Smithing remains fresh at level 1 / 0 XP");
+            seeds.push(SQUIRE_BANK_SEED_LABEL);
         }
-        let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"bank_seeds":[],"quest_state_seeds":0,"quest_item_seeds":0,"reward_xp_seeds":0,"quest_point_seeds":0});
+        let bank_seeds = if self.quest.key == "squire" {
+            json!([{"label":SQUIRE_BANK_SEED_LABEL,"item_alias":"iron_bar","count":2,"command":SQUIRE_BANK_SEED_COMMAND,"scope":"own-account bank"}])
+        } else {
+            json!([])
+        };
+        let quest_item_seeds = if self.quest.key == "squire" { 2 } else { 0 };
+        let receipt = json!({"account":self.account,"phase":phase,"revision":377,"quest":self.quest.key,"sample":sample,"baseline":self.baseline,"driver":"production Play.script_start(Quester), bundled 377 quest path","renderer":"real Client CpuPix3D framebuffer","seeds":seeds,"bank_seeds":bank_seeds,"quest_state_seeds":0,"quest_item_seeds":quest_item_seeds,"reward_xp_seeds":0,"quest_point_seeds":0});
         self.record(receipt.clone())?;
         self.jobs.push(self.writer.submit(EvidenceRequest {
             png_path: self.directory.join(format!("{phase}.png")),
@@ -670,11 +679,17 @@ impl Witness {
                             } else {
                                 &[]
                             };
+                            let bank_seed: &[&str] = if self.quest.key == "squire" {
+                                &[SQUIRE_BANK_SEED_COMMAND]
+                            } else {
+                                &[]
+                            };
                             let food_seed = combat_food_seed(self.quest);
                             for command in COMBAT_STATS_FIXTURE
                                 .iter()
                                 .chain(std::iter::once(&food_seed.command))
                                 .chain(requirement_fixture.iter())
+                                .chain(bank_seed.iter())
                             {
                                 let command = *command;
                                 if !interact::cheat(client, command).is_sent() {
@@ -692,10 +707,15 @@ impl Witness {
                                         "setstat cooking 10" => {
                                             "SEED redberry-pie Cooking 10 minimum (content/scripts/skill_cooking/configs/cooking_inv/configs/pies/pies.struct:13-17; content/scripts/skill_cooking/configs/cooking_source/cooking_generic.dbrow:201-212)"
                                         }
+                                        SQUIRE_BANK_SEED_COMMAND => SQUIRE_BANK_SEED_LABEL,
                                         _ => "SEED own-account combat-only area fixture",
                                     }
                                 };
-                                self.record(json!({"phase":phase,"command":command}))?;
+                                if command == SQUIRE_BANK_SEED_COMMAND {
+                                    self.record(json!({"phase":phase,"command":command,"scope":"own-account bank"}))?;
+                                } else {
+                                    self.record(json!({"phase":phase,"command":command}))?;
+                                }
                             }
                             self.fixture_seeded = true;
                             return Ok(());
