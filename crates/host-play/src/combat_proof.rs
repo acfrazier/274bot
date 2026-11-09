@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, LazyLock, Mutex};
 
-#[cfg(not(feature = "test-support"))]
-use api::interact::Driver;
 use api::snapshot::{ActorKind, GameSnapshot, ItemContainer};
+#[cfg(all(feature = "live-harness", feature = "test-support"))]
 use client::client::Client;
 use client::io::ClientProt289;
 use script::interact::InteractReq;
@@ -822,6 +821,7 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
 /// encrypted sink peaked at 4 packets per PLAYER_INFO tick, so five keeps one
 /// packet of headroom (`GATHERER-SHOP/buy-reply/README.md:59`; the same bound
 /// is stated in `docs/dev/harness.md:710`).
+#[cfg(all(feature = "live-harness", feature = "test-support"))]
 pub(crate) const MAX_DRIVER_PACKETS_PER_TICK: usize = 5;
 
 #[derive(Default)]
@@ -913,23 +913,23 @@ impl DriverPacketCounts {
         }
     }
 
+    #[cfg(all(feature = "live-harness", feature = "test-support"))]
     pub(crate) fn observe(&mut self, client: &Client, tick: u32) {
-        #[cfg(feature = "test-support")]
         let count = client
             .out
             .has_observer()
             .then(api::interact::classified_driver_packet_count_for_test);
-        #[cfg(not(feature = "test-support"))]
-        let count = Driver::packet_commit_count(client);
         self.record_count(count, tick);
     }
 
+    #[cfg(all(feature = "live-harness", feature = "test-support"))]
     pub(crate) fn begin(&mut self, client: &Client, tick: u32) {
         if !self.started() {
             self.observe(client, tick);
         }
     }
 
+    #[cfg(all(feature = "live-harness", feature = "test-support"))]
     pub(crate) fn started(&self) -> bool {
         self.started
     }

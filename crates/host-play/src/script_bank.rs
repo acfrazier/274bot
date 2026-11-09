@@ -65,6 +65,8 @@ pub(super) struct NativeServicePickInput {
     pub(super) request: ServicePickRequest,
     pub(super) authority: HostAuthority,
     pub(super) evidence: EvidenceStamp,
+    /// The slot's session walk permissions, admitted with the request.
+    pub(super) session_permissions: Option<script::native::WalkPermissions>,
 }
 
 #[derive(Default)]
@@ -2508,10 +2510,6 @@ pub(super) fn queue_native_bank_pick_scoped(
     );
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "bank walking captures the gating state and the current quest observation"
-)]
 pub(super) fn queue_native_service_pick_scoped(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
@@ -2520,13 +2518,13 @@ pub(super) fn queue_native_service_pick_scoped(
     state: Option<&Arc<WorldState>>,
     snapshot: &GameSnapshot,
     input: NativeServicePickInput,
-    session_permissions: Option<script::native::WalkPermissions>,
 ) {
     if !input.authority.live() {
         return;
     }
     let from = input.request.from;
     let request_id = input.authority.request_id().get();
+    let session_permissions = input.session_permissions;
     let mut options = super::walk_permissions::native_admission(
         navs,
         name,

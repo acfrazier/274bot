@@ -2169,8 +2169,8 @@ where
                                         request,
                                         authority,
                                         evidence,
+                                        session_permissions: slot.api_gather_walk_permissions(),
                                     },
-                                    slot.api_gather_walk_permissions(),
                                 );
                             }
                         }

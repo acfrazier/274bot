@@ -2997,6 +2997,7 @@ mod bank_pick_capture {
                 request,
                 authority,
                 evidence,
+                session_permissions: None,
             },
         )
     }
@@ -3302,7 +3303,6 @@ mod bank_pick_capture {
             Some(&Arc::new(WorldState::empty())),
             &GameSnapshot::new(),
             empty_input,
-            None,
         );
         let empty = navs
             .lock()
@@ -3397,7 +3397,6 @@ mod bank_pick_capture {
                 Some(&Arc::new(WorldState::empty())),
                 &GameSnapshot::new(),
                 input,
-                None,
             );
             let receipt = navs
                 .lock()
