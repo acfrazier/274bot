@@ -285,6 +285,9 @@ fn every_census_selector_has_an_oracle_case() {
 /// export refuses by name instead of publishing an empty set.
 #[test]
 fn whirlpool_ids_follow_the_selected_content_and_refuse_without_it() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let oracle = oracle();
     let ids = ["WHIRLPOOL_IDS.table"];
     for revision in [ClientRevision::R274, ClientRevision::R289] {
