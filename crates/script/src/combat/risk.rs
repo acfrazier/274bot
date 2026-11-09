@@ -30,10 +30,10 @@ pub use replay::{
     assess, assess_cooperative, candidate_cost, eat_line, estimated_floor, replay, Estimate,
     Grants, PoisonTest, ReplayResult,
 };
-pub use supplies::{guarded_bound, Food, GuardTick};
 use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
+pub use supplies::{guarded_bound, Food, GuardTick};
 
 pub(super) async fn checkpoint<F, U>(checkpoint: &mut F)
 where
@@ -361,7 +361,9 @@ pub fn supply_bound(
         events.clear();
         let mut start = 0u16;
         let (mut poison, mut poison_first) = match timeline::known_poison_charge(
-            input.poison, input.tick, tables.unknown_poison_pulse(),
+            input.poison,
+            input.tick,
+            tables.unknown_poison_pulse(),
         )? {
             timeline::PoisonCharge::Known { per_tick, first } => (per_tick, first),
             timeline::PoisonCharge::None | timeline::PoisonCharge::Unknown { .. } => (0, u16::MAX),

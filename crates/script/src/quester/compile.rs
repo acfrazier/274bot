@@ -250,6 +250,8 @@ pub struct CompiledProvisioning {
     pub survival: Option<Arc<super::survival::CompiledSurvival>>,
 }
 
+const _: () = assert!(std::mem::size_of::<CompiledProvisioning>() <= 384);
+
 pub struct CompiledSequence {
     pub stage: FactKey,
     pub terminal: bool,
@@ -1478,6 +1480,8 @@ pub(super) fn compile_uncached(
         header.loadouts.keys(),
         &recipe_ctx,
         zones,
+        &prelude,
+        &role.prelude,
     )?;
     let provisioning_recipes: HashMap<Arc<str>, CompiledAcquireRecipe> = recipes
         .into_iter()

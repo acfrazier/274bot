@@ -3159,3 +3159,272 @@ fn poison_deadline_without_world_preserves_the_typed_refusal() {
         Some(expected_detail.as_str())
     );
 }
+
+mod survival_provisioning {
+    use super::*;
+    use script::native::{HostFrame, NativeOutput, ScriptStatus};
+    use script::quester::compile::{self, StepContext};
+    use script::quester::provision::{ProvisionEvent, ProvisionPhase, Provisioner};
+    use std::task::Poll;
+    use std::time::{Duration, Instant};
+
+    #[derive(Default)]
+    struct Output(Vec<String>);
+
+    impl NativeOutput for Output {
+        fn status(&mut self, _: ScriptStatus) {}
+        fn paint(&mut self, _: Arc<script::paint::ScriptPaint>) {}
+        fn log(&mut self, _: api::hostlog::Level, message: &str) {
+            self.0.push(message.to_owned());
+        }
+        fn settings_applied(&mut self, _: u64) {}
+    }
+
+    fn snapshot(from: WorldTile) -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(api::snapshot::LocalPlayerView {
+            player: api::snapshot::PlayerView {
+                index: 0,
+                network: from,
+                actor: api::snapshot::ActorView {
+                    name: Some("survival-shortfall".into()),
+                    actions: Vec::new(),
+                    tile: from,
+                    distance: 0,
+                    animation: -1,
+                    animation_frame: 0,
+                    pose_animation: -1,
+                    orientation: 0,
+                    target_orientation: 0,
+                    overhead_text: None,
+                    spot_animation: -1,
+                    spot_animation_stamp: 0,
+                    health: 1,
+                    total_health: 40,
+                    face_entity: -1,
+                    target: None,
+                    moving: false,
+                    running: false,
+                    in_combat: false,
+                },
+                combat_level: 50,
+                skill_level: 1,
+                headicons: 0,
+                weapon: None,
+            },
+            energy: 100,
+            weight: 0,
+            animation_update: None,
+        });
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_stats(
+            [
+                (3, "hitpoints", 1, 40),
+                (1, "defence", 1, 1),
+                (5, "prayer", 1, 1),
+            ]
+            .into_iter()
+            .map(|(index, name, effective, base)| api::snapshot::StatView {
+                index,
+                name: name.into(),
+                effective,
+                base,
+                xp: 0,
+                used: true,
+            })
+            .collect(),
+        );
+        snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+            marks: [api::snapshot::HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            members: true,
+            cycle: 1,
+            ..Default::default()
+        });
+        snapshot.seed_varps(vec![api::snapshot::VarpView {
+            index: 173,
+            value: 0,
+        }]);
+        snapshot.seed_bank_observation(1, 1, Some(Vec::new()), Vec::new());
+        snapshot
+    }
+
+    fn shortfall_reaches_admission(global_override: bool) {
+        let world = known_corridor(&[12]);
+        let combat = selected_combat();
+        let selected = combat.selected();
+        let quests =
+            api::quest_facts::QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+        let zones = producer::zones_view(&world).unwrap().unwrap();
+        let zone_key = producer::bind_key(zones, ZoneKey::Zone(0)).unwrap();
+        let mut document = compile::decode_cook().unwrap();
+        let header = document.quest.as_mut().unwrap();
+        header.items.clear();
+        header.tools.clear();
+        header.coin_float = 0;
+        header.loadouts.clear();
+        header.owns_inventory = false;
+        document.roles[0].sequences[0].cross = vec![script::quester::path::RequiredZoneDocument {
+            id: zones.name(zone_key).unwrap(),
+            name: "Ice warrior crossing".into(),
+            reason: "Carry the real provisioning shortfall to route admission.".into(),
+        }];
+        let mut path =
+            compile::compile_uncached_for_test_with_zones(&document, selected, &quests, zones)
+                .unwrap();
+        Arc::get_mut(&mut path).unwrap().provisioning.bank = None;
+
+        let from = tile(0, 1);
+        let to = tile(23, 1);
+        let snapshot = snapshot(from);
+        let mut memory = api::bank_memory::BankMemory::default();
+        memory.track(&snapshot, 1);
+        assert_eq!(memory.origin(), api::bank_memory::Origin::Session);
+        let evidence = api::quest_progress::EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let frame = HostFrame::for_test(
+            Some((from.x, from.z, from.level)),
+            Some(&snapshot),
+            None,
+            script::CompiledTick {
+                selected: Some(selected),
+                bank_memory: Some(&memory),
+                ..Default::default()
+            },
+        );
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut output = Output::default();
+        let prepared = script::native::with_test_tick(
+            frame,
+            evidence,
+            ClientRevision::R289,
+            (Duration::from_millis(600), Instant::now()),
+            &mut ledger,
+            &mut output,
+            |native| {
+                let mut cx = StepContext {
+                    tick: native,
+                    quests: &quests,
+                    progress: &[],
+                    required_after: evidence,
+                    banks: &banks,
+                    choices: &script::quester::choices::QuestChoices::default(),
+                };
+                provisioner.poll(
+                    &mut cx,
+                    &path.provisioning,
+                    None,
+                    Some(&path.provisioning.stages[0]),
+                )
+            },
+        );
+        assert!(
+            matches!(prepared, Poll::Ready(Ok(ProvisionEvent::Ready))),
+            "{prepared:?}"
+        );
+        let status = provisioner.status();
+        assert_eq!(status.phase, ProvisionPhase::Ready);
+        let missing = status
+            .item
+            .expect("the unmet survival food stays visible")
+            .to_owned();
+        assert!(status.need > 0 && status.need <= 28);
+        assert_eq!(status.pack, 0);
+        assert_eq!(status.bank, Some(0));
+        assert!(output.0.iter().any(|line| line.contains(&missing)));
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+
+        let view = SnapshotView::new(Some(&snapshot), evidence).with_bank_memory(Some(&memory));
+        let frame = Frame::borrow(view).unwrap();
+        let risk_input = RiskInput::capture(
+            &frame,
+            &combat,
+            &ThreatSet::default(),
+            PoisonState::Clear,
+            false,
+        );
+        assert_eq!(risk_input.food_counts.iter().sum::<u8>(), 0);
+        let globals = crate::WalkGlobals {
+            allow_danger_zones: global_override,
+            ..Default::default()
+        };
+        let walk = script::native::WalkOptions {
+            allow_danger_zones: script::native::WalkBit::Allow,
+            ..Default::default()
+        };
+        let grant = ZoneExempt::named(&[ZoneKey::Zone(0)]).unwrap();
+        let options = FindOptions {
+            zones: grant,
+            ..Default::default()
+        };
+        let request = Admission {
+            policy: globals.risk_policy(Default::default(), walk),
+            enforce: globals.enforces_risk(Default::default(), walk),
+            grants: grant,
+            allow: WalkAllow {
+                food: true,
+                ..Default::default()
+            },
+            ..make_admission(RiskPolicy::Inherit, risk_input)
+        };
+        assert_eq!(request.enforce, !global_override);
+        let state = WorldState::default();
+        let admitted = route(
+            &world,
+            &request,
+            options,
+            |opts| real_search(&world, from, to, opts, &state, &[]),
+            || real_witness(&world, from, to, options, &state, &[]),
+        );
+        assert!(matches!(admitted.outcome, crate::RouteOutcome::Routed(_)));
+        assert!(matches!(
+            admitted.assessment.as_ref().unwrap().verdict,
+            Verdict::Unsurvivable(_)
+        ));
+        if global_override {
+            assert_eq!(request.policy, RiskPolicy::Proceed);
+            assert!(
+                admitted.refusal.is_none(),
+                "a global override proceeds despite {missing}"
+            );
+        } else {
+            assert!(matches!(admitted.refusal, Some(WalkRefusal::Unsurvivable)));
+        }
+        assert_eq!(
+            provisioner.status().item,
+            Some(missing.as_str()),
+            "admission does not erase the named survival shortfall"
+        );
+    }
+
+    #[test]
+    fn global_override_proceeds_after_provisioning_reports_missing_survival_food() {
+        script::require_local_game_data_for_test!(ClientRevision::R289);
+        shortfall_reaches_admission(true);
+    }
+
+    #[test]
+    fn request_only_crossing_refuses_after_provisioning_reports_missing_survival_food() {
+        script::require_local_game_data_for_test!(ClientRevision::R289);
+        shortfall_reaches_admission(false);
+    }
+}

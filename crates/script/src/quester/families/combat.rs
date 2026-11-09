@@ -838,7 +838,10 @@ fn compile_kits(
     Ok(kits)
 }
 
-pub(crate) fn compile_kit(name: &str, cx: &CompileContext<'_>) -> Result<Arc<CompiledKit>, CompileError> {
+pub(crate) fn compile_kit(
+    name: &str,
+    cx: &CompileContext<'_>,
+) -> Result<Arc<CompiledKit>, CompileError> {
     if name.trim().is_empty() {
         return Err(CompileError::code("unknown-loadout"));
     }

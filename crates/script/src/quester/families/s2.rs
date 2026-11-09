@@ -1,7 +1,7 @@
 //! Bank, shop, production, equipment and loadout compiled families.
 use super::{begin_approach_walk, reach, walk_step_evidence, NoArgs};
 use crate::acquire::run::AcquireRun;
-use crate::acquire::{AcquireOutcome, AcquirePlan, AcquireRequest, OpenGate};
+use crate::acquire::{AcquireOutcome, AcquirePlan, AcquireRequest, DepositSpec, OpenGate};
 use crate::combat::RaisedPrayers;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions};
 use crate::native_bank::{BankAction, BankItem, BankReceipt};
@@ -1251,7 +1251,7 @@ impl StepPlan for LoadoutPlan {
         let snapshot = cx.tick.cx.snapshot();
         if snapshot.inventory().is_none() || snapshot.equipment().is_none() {
             return Ok(Box::new(LoadoutObservationWait {
-                plan: self.clone(),
+                plan: LoadoutStartPlan::Authored(self.clone()),
                 run: None,
                 deadline: cx.tick.cx.active_now() + LOADOUT_OBSERVATION_TIMEOUT,
             }));
@@ -1393,12 +1393,87 @@ impl LoadoutPlan {
             exclusive: self.exclusive,
             removing: false,
             receipt: None,
+            survival: None,
+            survival_attempted: None,
         })
     }
 }
 
+#[derive(Clone)]
+enum LoadoutStartPlan {
+    Authored(LoadoutPlan),
+    Survival {
+        bank: Option<api::named_banks::NamedBank>,
+        bank_required: bool,
+        items: Arc<[BankItem]>,
+        keep_ids: Arc<[i32]>,
+    },
+}
+
+impl LoadoutStartPlan {
+    fn begin_observed(&self, cx: &mut StepContext<'_, '_>) -> Result<LoadoutRun, ActionError> {
+        match self {
+            Self::Authored(plan) => plan.begin_observed(cx),
+            Self::Survival {
+                bank,
+                bank_required,
+                items,
+                keep_ids,
+            } => Ok(LoadoutRun {
+                bank: None,
+                worn: Arc::from(Vec::<Arc<[BankItem]>>::new()),
+                worn_index: 0,
+                equipment: None,
+                keep_ids: Arc::clone(keep_ids),
+                strip: false,
+                stripped: false,
+                exclusive: false,
+                removing: false,
+                receipt: None,
+                survival: Some(SurvivalLoadout {
+                    bank: *bank,
+                    bank_required: *bank_required,
+                    items: Arc::clone(items),
+                }),
+                survival_attempted: None,
+            }),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SurvivalLoadout {
+    bank: Option<api::named_banks::NamedBank>,
+    bank_required: bool,
+    items: Arc<[BankItem]>,
+}
+
+pub(crate) fn begin_survival_loadout(
+    items: &[BankItem],
+    bank: Option<api::named_banks::NamedBank>,
+    bank_required: bool,
+    keep_ids: Arc<[i32]>,
+    cx: &mut StepContext<'_, '_>,
+) -> Result<Box<dyn StepRun>, ActionError> {
+    let plan = LoadoutStartPlan::Survival {
+        bank,
+        bank_required,
+        items: Arc::from(items),
+        keep_ids,
+    };
+    let snapshot = cx.tick.cx.snapshot();
+    if snapshot.inventory().is_none() || snapshot.equipment().is_none() {
+        return Ok(Box::new(LoadoutObservationWait {
+            plan,
+            run: None,
+            deadline: cx.tick.cx.active_now() + LOADOUT_OBSERVATION_TIMEOUT,
+        }));
+    }
+    Ok(Box::new(plan.begin_observed(cx)?))
+}
+
 struct LoadoutObservationWait {
-    plan: LoadoutPlan,
+    plan: LoadoutStartPlan,
     run: Option<LoadoutRun>,
     deadline: Duration,
 }
@@ -1479,6 +1554,8 @@ struct LoadoutRun {
     exclusive: bool,
     removing: bool,
     receipt: Option<Arc<dyn FamilyReceipt>>,
+    survival: Option<SurvivalLoadout>,
+    survival_attempted: Option<usize>,
 }
 impl LoadoutRun {
     fn begin_equipment(
@@ -1493,6 +1570,94 @@ impl LoadoutRun {
                 .begin::<EquipmentMachine>(request, &mut cx.tick.cx)?,
         );
         Ok(())
+    }
+
+    /// Acquire one missing piece, let the shared equipment machine observe it
+    /// worn, and only then consider the next piece.
+    fn poll_survival(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        loop {
+            let Some(survival) = self.survival.as_ref() else {
+                unreachable!("survival polling requires survival loadout state");
+            };
+            let Some(item) = survival.items.get(self.worn_index) else {
+                return Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence: cx.tick.cx.evidence(),
+                    receipt: self.receipt.take(),
+                }));
+            };
+            let snapshot = cx.tick.cx.snapshot();
+            let Some(equipment) = snapshot.equipment() else {
+                return Poll::Pending;
+            };
+            let Some(inventory) = snapshot.inventory() else {
+                return Poll::Pending;
+            };
+            if equipment
+                .value
+                .iter()
+                .any(|row| row.count > 0 && row.def.id == item.id)
+            {
+                self.worn_index += 1;
+                continue;
+            }
+            if inventory
+                .value
+                .iter()
+                .any(|row| row.count > 0 && row.def.id == item.id)
+            {
+                self.begin_equipment(
+                    EquipmentRequest::Wear {
+                        id: item.id,
+                        name: Arc::clone(&item.name),
+                    },
+                    cx,
+                )?;
+                return Poll::Pending;
+            }
+            let stock = snapshot.stock();
+            // Session memory is authoritative: the caller can report this
+            // optional kit piece as unmet instead of blocking provisioning.
+            if stock.banked_origin() == Origin::Session
+                && stock.banked(item.id).is_some_and(|count| count <= 0)
+            {
+                self.worn_index += 1;
+                continue;
+            }
+            if self.survival_attempted == Some(self.worn_index) {
+                return Poll::Ready(Err(ActionError::Failed(Arc::from(
+                    "withdrawn loadout tier is not held",
+                ))));
+            }
+            let Some(free_slots) = stock.free_slots() else {
+                return Poll::Pending;
+            };
+            let mut request = AcquireRequest::bank_actions(
+                survival.bank,
+                survival.bank_required,
+                Arc::from([BankAction::Withdraw {
+                    item: item.clone(),
+                    qty: 1,
+                }]),
+                false,
+                cx.required_after,
+            );
+            if free_slots < 1 {
+                request.deposit = Some(DepositSpec::Capacity {
+                    keep: Arc::clone(&self.keep_ids),
+                    slots: 1,
+                });
+            }
+            self.bank = Some(
+                AcquireRun::new(request, AcquirePlan::authored(), cx.banks, &cx.tick.cx)
+                    .with_quester_walk_retries(),
+            );
+            self.survival_attempted = Some(self.worn_index);
+            return Poll::Pending;
+        }
     }
 }
 impl StepRun for LoadoutRun {
@@ -1531,6 +1696,9 @@ impl StepRun for LoadoutRun {
                     ))));
                 }
             }
+        }
+        if self.survival.is_some() {
+            return self.poll_survival(cx);
         }
         // Exclusive stripping follows the trip without a separate Close. On
         // 289, Unequip/Strip is accepted while open and closes the bank itself.

@@ -816,7 +816,8 @@ pub fn with_test_tick<R>(
     let mut budget = ledger::TickBudget::default();
     budget.observe(evidence.tick);
     let mut actions = NativeActions { _private: () };
-    let snapshot = SnapshotView::new(frame.snapshot(), evidence);
+    let snapshot = SnapshotView::new(frame.snapshot(), evidence)
+        .with_bank_memory(frame.compiled().bank_memory);
     let eligible = !frame.compiled().hold;
     let mut tick = NativeTick {
         walk_danger: None,

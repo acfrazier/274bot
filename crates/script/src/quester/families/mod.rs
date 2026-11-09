@@ -13,6 +13,8 @@ pub mod setting;
 pub mod thieve;
 pub mod timed_ground;
 
+pub(crate) use s2::begin_survival_loadout;
+
 use super::compile::{
     AcquisitionTraceOutcome, CompileContext, CompileError, PredicateContext, PredicatePlan,
     StepContext, StepGoal, StepOutcome, StepPlan, StepRun, StepTraceEvent,

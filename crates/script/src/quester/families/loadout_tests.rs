@@ -1170,9 +1170,281 @@ fn exclusive_strip_follows_the_trip_without_a_separate_close() {
 }
 
 #[test]
+fn survival_loadout_wears_each_piece_before_withdrawing_the_next() {
+    let items = [
+        BankItem {
+            id: 3001,
+            name: Arc::from("Survival helm"),
+        },
+        BankItem {
+            id: 3002,
+            name: Arc::from("Survival body"),
+        },
+        BankItem {
+            id: 3003,
+            name: Arc::from("Survival boots"),
+        },
+    ];
+    let (bank, banks) = bank_facts();
+    let mut bank_rows = items
+        .iter()
+        .map(|item| bank_item(item.id, item.name.as_ref(), 1))
+        .collect::<Vec<_>>();
+    let inventory = (0..27)
+        .map(|slot| held_item(2000 + slot, "Pack filler", 1, ItemContainer::Inventory))
+        .collect();
+    let mut snapshot = snapshot(inventory, Vec::new(), Some(bank_rows.clone()), Vec::new());
+    let bank_counts = items.iter().map(|item| (item.id, 1)).collect::<Vec<_>>();
+    let mut memory = BankMemory::seeded(&bank_counts, Origin::Session);
+    memory.track(&snapshot, 1);
+
+    let mut ledger_state = None;
+    let mut run = with_step_bank(
+        &snapshot,
+        Some(&memory),
+        &mut ledger_state,
+        1,
+        &banks,
+        |cx| {
+            begin_survival_loadout(&items, Some(bank), false, Arc::from([2000]), cx)
+                .expect("survival loadout begins")
+        },
+    );
+    let mut events = Vec::new();
+    let mut withdrawals = 0;
+    let mut completed = false;
+
+    for now in 2..=96 {
+        memory.track(&snapshot, now);
+        match with_step_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger_state,
+            now,
+            &banks,
+            |cx| run.poll(cx),
+        ) {
+            Poll::Ready(Ok(_)) => {
+                completed = true;
+                break;
+            }
+            Poll::Ready(Err(error)) => panic!("survival loadout failed: {error:?}"),
+            Poll::Pending => {}
+        }
+
+        while let Some(action) = ledger_state
+            .as_mut()
+            .and_then(|ledger| (!ledger.outbox.is_empty()).then(|| ledger.outbox.remove(0)))
+        {
+            let authority = action.authority();
+            match &action.effect {
+                HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
+                    name,
+                    count,
+                    bank_item_id,
+                    ..
+                }) => {
+                    let expected = items
+                        .get(withdrawals)
+                        .expect("one withdrawal per survival item");
+                    assert_eq!(*bank_item_id, expected.id);
+                    assert_eq!(name.as_str(), expected.name.as_ref());
+                    assert_eq!(*count, 1);
+                    assert_eq!(
+                        snapshot
+                            .inventory()
+                            .iter()
+                            .filter(|row| row.count > 0)
+                            .count(),
+                        27,
+                        "each next piece starts with one available pack slot"
+                    );
+                    let worn = snapshot
+                        .equipment()
+                        .iter()
+                        .filter(|row| row.count > 0)
+                        .map(|row| row.def.id)
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        worn,
+                        items[..withdrawals]
+                            .iter()
+                            .map(|item| item.id)
+                            .collect::<Vec<_>>(),
+                        "the prior piece must be observed worn before the next withdrawal"
+                    );
+                    events.push(('w', expected.id));
+                    withdrawals += 1;
+                    ledger_state.as_mut().unwrap().complete_interaction(
+                        &authority,
+                        InteractionReceipt {
+                            request_id: authority.request_id().get(),
+                            evidence: EvidenceStamp {
+                                run: authority.run(),
+                                tick: now,
+                                sequence: now,
+                            },
+                            accepted: true,
+                            chat_since: 0,
+                        },
+                    );
+                    let mut held = snapshot.inventory().to_vec();
+                    held.push(held_item(
+                        expected.id,
+                        name,
+                        *count,
+                        ItemContainer::Inventory,
+                    ));
+                    snapshot.seed_inventory(held, 28);
+                    let bank_row = bank_rows
+                        .iter_mut()
+                        .find(|row| row.def.id == expected.id)
+                        .expect("withdrawn item remains in the bank table");
+                    bank_row.count -= *count;
+                    snapshot.seed_bank_observation(100, now, Some(bank_rows.clone()), vec![]);
+                }
+                HostEffect::Interaction(crate::interact::InteractReq::Wear { name }) => {
+                    let expected = items
+                        .get(events.len() / 2)
+                        .expect("wear follows its selected withdrawal");
+                    assert_eq!(name.as_str(), expected.name.as_ref());
+                    assert!(
+                        !snapshot
+                            .equipment()
+                            .iter()
+                            .any(|row| row.count > 0 && row.def.id == expected.id),
+                        "the Wear request precedes its equipment observation"
+                    );
+                    events.push(('e', expected.id));
+                    ledger_state.as_mut().unwrap().complete_interaction(
+                        &authority,
+                        InteractionReceipt {
+                            request_id: authority.request_id().get(),
+                            evidence: EvidenceStamp {
+                                run: authority.run(),
+                                tick: now,
+                                sequence: now,
+                            },
+                            accepted: true,
+                            chat_since: 0,
+                        },
+                    );
+                    let mut held = snapshot.inventory().to_vec();
+                    let index = held
+                        .iter()
+                        .position(|row| row.def.id == expected.id)
+                        .expect("worn piece is held before Wear");
+                    let equipped = held.remove(index);
+                    let mut worn = snapshot.equipment().to_vec();
+                    worn.push(held_item(
+                        expected.id,
+                        name,
+                        equipped.count,
+                        ItemContainer::Equipment,
+                    ));
+                    snapshot.seed_inventory(held, 28);
+                    snapshot.seed_equipment(worn);
+                }
+                HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode { .. }) => {
+                    ledger_state.as_mut().unwrap().complete_interaction(
+                        &authority,
+                        InteractionReceipt {
+                            request_id: authority.request_id().get(),
+                            evidence: EvidenceStamp {
+                                run: authority.run(),
+                                tick: now,
+                                sequence: now,
+                            },
+                            accepted: true,
+                            chat_since: 0,
+                        },
+                    );
+                }
+                _ => panic!("unexpected survival loadout effect"),
+            }
+        }
+    }
+
+    assert!(completed, "survival loadout did not finish");
+    assert_eq!(withdrawals, items.len());
+    assert_eq!(
+        events,
+        items
+            .iter()
+            .flat_map(|item| [('w', item.id), ('e', item.id)])
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(snapshot.inventory().len(), 27);
+    assert_eq!(
+        snapshot
+            .equipment()
+            .iter()
+            .filter(|row| row.count > 0)
+            .map(|row| row.def.id)
+            .collect::<Vec<_>>(),
+        items.iter().map(|item| item.id).collect::<Vec<_>>()
+    );
+    assert!(
+        items
+            .iter()
+            .all(|item| !snapshot.inventory().iter().any(|row| row.def.id == item.id)),
+        "worn survival gear does not occupy pack slots"
+    );
+}
+
+#[test]
+fn survival_loadout_skips_a_session_known_absent_item() {
+    let item = BankItem {
+        id: 3004,
+        name: Arc::from("Absent survival shield"),
+    };
+    let (bank, banks) = bank_facts();
+    let snapshot = snapshot(Vec::new(), Vec::new(), Some(Vec::new()), Vec::new());
+    let memory = BankMemory::seeded(&[], Origin::Session);
+    let mut ledger_state = None;
+    let mut run = with_step_bank(
+        &snapshot,
+        Some(&memory),
+        &mut ledger_state,
+        1,
+        &banks,
+        |cx| {
+            begin_survival_loadout(
+                std::slice::from_ref(&item),
+                Some(bank),
+                false,
+                Arc::from([]),
+                cx,
+            )
+            .expect("survival loadout begins")
+        },
+    );
+
+    assert!(matches!(
+        with_step_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger_state,
+            2,
+            &banks,
+            |cx| { run.poll(cx) }
+        ),
+        Poll::Ready(Ok(_))
+    ));
+    assert!(
+        ledger_state
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()),
+        "a session-known absent item is skipped without a bank action"
+    );
+}
+
+#[test]
 fn loadout_acquisition_owner_stays_within_one_kibibyte() {
     let run = std::mem::size_of::<LoadoutRun>();
     let wait = std::mem::size_of::<LoadoutObservationWait>();
-    eprintln!("LoadoutRun={run} LoadoutObservationWait={wait}");
+    let survival = std::mem::size_of::<SurvivalLoadout>();
+    eprintln!("LoadoutRun={run} LoadoutObservationWait={wait} SurvivalLoadout={survival}");
     assert!(run <= 1024, "LoadoutRun is {run} bytes");
+    assert!(survival <= 128, "SurvivalLoadout is {survival} bytes");
 }

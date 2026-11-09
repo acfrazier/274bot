@@ -280,7 +280,7 @@ Closing the bank:
 
 ### Bank memory and inventory space
 
-Bank memory has three states. A bank never seen (`Unknown`) costs one scan trip. A shortage known only from an earlier login (`Hint`) costs one verifying trip. Only a shortage in a bank seen open this login (`Session`) blocks in place. The Quester keeps no other bank record.
+Bank memory has three states. A bank never seen (`Unknown`) costs one scan trip. A shortage known only from an earlier login (`Hint`) costs one verifying trip. Only a required-item shortage in a bank seen open this login (`Session`) blocks in place. The Quester keeps no other bank record.
 
 Preparation preserves the guide's record items, tools and floats. There is no unconditional inventory freshen or deposit sweep.
 
@@ -291,6 +291,31 @@ Available bank hints are withdrawn only when they fit alongside the active recip
 An unmeetable speculative peak does not itself park the guide. Preparation falls back to immediate withdrawals while still requiring room for the active acquisition's final item. Later inventory pressure is left to the running family.
 
 Provisioner's bank scan, capacity deposit and withdrawal boundaries are included in the stage's bounded run trace; the terminal `finish` line is emitted even if that trace reaches its event cap.
+
+### Survival supplies
+
+Before a risky stage, the bank check prices the stage's declared NPC fights and
+permitted `cross` zones with the shared survival model. It selects from the
+guide's combat loadouts and ordinary food the account holds or banks.
+
+The existing loadout run withdraws and wears gear first, one piece at a time.
+Worn gear uses no inventory slots. Required quest items reserve their space
+next. Food then fills the remaining space, up to the model's target.
+
+The food calculation uses the live food guard's threshold and content timing.
+Only carried, homogeneous ordinary food receives route-admission credit.
+There is no prayer, regeneration, or escape credit.
+
+A supply shortfall does not itself stop preparation. Status and the unmet-need
+log name the item, target quantity, and quantity obtained. Actual route
+admission remains the decision point: a script-requested crossing must pass the
+1% death bound. A global danger override or compatibility walk can proceed
+without passing that bound, with its food guard armed.
+
+If combat facts or a future attacker are unknown, preparation does not claim a
+passing target. It takes available ordinary food within the same slot limit
+and reports the unavailable assessment.
+
 
 ## Rules of thumb
 

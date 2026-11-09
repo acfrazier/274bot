@@ -32,8 +32,8 @@ const PHASE_HEAL_DUE: usize = 1;
 const PHASE_COOLDOWN_3: usize = 3;
 /// Maximum boxed backing bytes allocated once per worker thread, excluding the
 /// fixed-size wrapper that lives inline in thread-local storage.
-pub const SCRATCH_HEAP_BYTES: usize = 2 * STATE_CELLS * std::mem::size_of::<f64>()
-    + MAX_EVENTS * std::mem::size_of::<Event>();
+pub const SCRATCH_HEAP_BYTES: usize =
+    2 * STATE_CELLS * std::mem::size_of::<f64>() + MAX_EVENTS * std::mem::size_of::<Event>();
 const _: () = assert!(std::mem::size_of::<[f64; STATE_CELLS]>() == 118_784);
 const _: () = assert!(std::mem::size_of::<[Event; MAX_EVENTS]>() == 16_384);
 const _: () = assert!(SCRATCH_HEAP_BYTES == 253_952);
@@ -68,8 +68,7 @@ struct Scratch {
     ordered: Box<[Event]>,
 }
 
-const _: () =
-    assert!(std::mem::size_of::<Scratch>() == 3 * std::mem::size_of::<Box<[f64]>>());
+const _: () = assert!(std::mem::size_of::<Scratch>() == 3 * std::mem::size_of::<Box<[f64]>>());
 impl Scratch {
     fn new() -> Self {
         Self {
@@ -115,7 +114,7 @@ fn add_mass(
     add_visits(visits, 1)
 }
 
-fn event_key(event: &Event) -> (u16, u8, u8, u32) {
+fn event_key(event: &Event) -> (u16, u8, u8, u64) {
     let kind = match event.kind {
         EventKind::Attack => 0,
         EventKind::Certain => 1,
@@ -200,36 +199,18 @@ fn apply_event(
                     };
                     let target = state_index(target_hp, food, phase);
                     add_mass(next, target, mass, 1.0, visits)?;
-                    update_ready_min(
-                        &mut ready_min,
-                        target_hp,
-                        food,
-                        phase,
-                        next[target],
-                        hp_max,
-                    );
+                    update_ready_min(&mut ready_min, target_hp, food, phase, next[target], hp_max);
                     continue;
                 }
                 for damage in 0..=amount {
-                    let probability = if damage == 0 {
-                        hit_zero
-                    } else {
-                        hit_positive
-                    };
+                    let probability = if damage == 0 { hit_zero } else { hit_positive };
                     if probability == 0.0 {
                         continue;
                     }
                     let target_hp = hp.saturating_sub(damage);
                     let target = state_index(target_hp, food, phase);
                     add_mass(next, target, mass, probability, visits)?;
-                    update_ready_min(
-                        &mut ready_min,
-                        target_hp,
-                        food,
-                        phase,
-                        next[target],
-                        hp_max,
-                    );
+                    update_ready_min(&mut ready_min, target_hp, food, phase, next[target], hp_max);
                 }
             }
         }
@@ -262,14 +243,7 @@ fn advance_phase(
                 if next_phase != 0 {
                     phase_mask |= 1 << next_phase;
                 }
-                update_ready_min(
-                    &mut ready_min,
-                    hp,
-                    food,
-                    next_phase,
-                    next[target],
-                    hp_max,
-                );
+                update_ready_min(&mut ready_min, hp, food, next_phase, next[target], hp_max);
             }
         }
     }
@@ -395,7 +369,8 @@ pub fn guarded_bound(
     validate_attacks(events)?;
 
     SCRATCH.with(|scratch| {
-        let mut scratch = scratch.borrow_mut();
+        let mut borrowed = scratch.borrow_mut();
+        let scratch = &mut *borrowed;
         scratch.current.fill(0.0);
         scratch.next.fill(0.0);
         for (slot, event) in events.iter().copied().enumerate() {
@@ -426,8 +401,7 @@ pub fn guarded_bound(
                 phase_mask = new_phase_mask;
             }
 
-            while event_index < events.len()
-                && u32::from(scratch.ordered[event_index].tick) == tick
+            while event_index < events.len() && u32::from(scratch.ordered[event_index].tick) == tick
             {
                 let event = scratch.ordered[event_index];
                 let old_min = ready_min;
@@ -439,8 +413,7 @@ pub fn guarded_bound(
                     max_food,
                     &mut visits,
                 )?;
-                if event.amount != 0
-                    && (event.kind != EventKind::Attack || event.hit.get() != 0.0)
+                if event.amount != 0 && (event.kind != EventKind::Attack || event.hit.get() != 0.0)
                 {
                     std::mem::swap(&mut scratch.current, &mut scratch.next);
                     ready_min = new_min;

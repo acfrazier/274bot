@@ -188,7 +188,10 @@ fn one_zone(tables: &CombatTables, spawn: i32, radius: u8) -> ZoneTable {
 pub(crate) fn provisioning_cross_fixture() -> (NavLease, String) {
     let tables = tables();
     let fixture = Fixture::new(one_zone(&tables, 100, 10), WildernessRules::default());
-    let name = fixture.zones().name(fixture.bound(ZoneKey::Zone(0))).unwrap();
+    let name = fixture
+        .zones()
+        .name(fixture.bound(ZoneKey::Zone(0)))
+        .unwrap();
     (fixture.lease, name)
 }
 /// Effective one-attacker fixture for the S3 hand-worked ice examples. This
@@ -3437,11 +3440,22 @@ fn assessment_crossing_passes_with_computed_carried_food() {
         ticks: 70,
     };
     let heal = tables.food(bare.food_ids[0]).unwrap().heal as u8;
-    let count = (1..=28).find(|&count| {
-        supply_bound(
-            &[exposure], &bare, &tables, Food { item: bare.food_ids[0], heal, count },
-        ).unwrap().admits(consts::DEATH_BOUND)
-    }).expect("ordinary content food can cover this exposure");
+    let count = (1..=28)
+        .find(|&count| {
+            supply_bound(
+                &[exposure],
+                &bare,
+                &tables,
+                Food {
+                    item: bare.food_ids[0],
+                    heal,
+                    count,
+                },
+            )
+            .unwrap()
+            .admits(consts::DEATH_BOUND)
+        })
+        .expect("ordinary content food can cover this exposure");
     let mut carried = bare;
     carried.food_counts[0] = count;
     let with = assert_assessment_equivalence(fx.route(&walk), &cx, carried);

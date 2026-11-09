@@ -968,7 +968,8 @@ fn timeline_bound(
             events,
         )
         .and_then(|summary| {
-            scheduled_bound(events.events(), path, plan, input, context).map(|bound| (summary, bound))
+            scheduled_bound(events.events(), path, plan, input, context)
+                .map(|bound| (summary, bound))
         });
         match (single, summed) {
             (Some(single), Ok(summed)) => Ok(if score(single.1) <= score(summed.1) {
@@ -997,7 +998,9 @@ fn scheduled_bound(
         return super::odds::death_bound(events, input.hp);
     };
     super::guarded_bound(
-        events, input.hp, input.hp_max,
+        events,
+        input.hp,
+        input.hp_max,
         super::Food {
             item: id,
             heal: u8::try_from(food.heal).map_err(|_| UnknownWhy::Overflow)?,
@@ -1023,7 +1026,10 @@ fn scheduled_bound(
                 .last();
             super::GuardTick {
                 danger: Some(danger),
-                poison_fire: poison_pulse_now(input.poison, context.risks.poison_unknown_v),
+                poison_fire: i32::from(poison_pulse_now(
+                    input.poison,
+                    context.risks.poison_unknown_v,
+                )),
                 input_locked: point.is_some_and(|point| point.input_held(tick)),
             }
         },
