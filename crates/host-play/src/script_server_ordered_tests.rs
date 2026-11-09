@@ -2405,6 +2405,7 @@ fn ordered_advanced_cheat_without_shared_catalog_refuses_the_whole_request() {
 
 fn knife_npc_request(rig: &mut Rig, type_id: usize, operation: u8) -> ServerOrderedRequest {
     {
+        api::snapshot::clear_client_adapter_cache_for_tests(&rig.client.cache);
         let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
         cache
             .npcs

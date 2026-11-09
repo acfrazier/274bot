@@ -422,16 +422,6 @@ fn required(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is required"))
 }
 
-fn catalog_port(name: &str, default: u16) -> Result<u16, String> {
-    match std::env::var(name) {
-        Ok(value) => value
-            .parse()
-            .map_err(|_| format!("{name} must be a valid TCP port")),
-        Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(error) => Err(format!("read {name}: {error}")),
-    }
-}
-
 fn selected_profile(
     revision: u16,
     nav_pack: PathBuf,
