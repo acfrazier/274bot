@@ -81,6 +81,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.8` 
 - Quester guides can answer a numeric count dialog (`answer_count`) and press
   an interface button once it is shown (`if_button`), so a guide can play
   content such as Death Plateau's dice game.
+- Quester guides can solve the Monkey Madness reinitialisation puzzle in the
+  Underground Glider Hangar. The new `x:mm:solve_reinitialisation` step reads
+  the 5 by 5 board from the open interface, solves it with the sliding-puzzle
+  solver the clue-scroll puzzles use, and clicks one piece per observed move,
+  then waits for the cutscene that follows. A bounded number of moves, stalled
+  clicks and cutscene ticks fails the step.
 
 ### Memory diagnostics
 

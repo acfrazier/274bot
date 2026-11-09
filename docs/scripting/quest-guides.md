@@ -123,6 +123,7 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `thieve` | Explicit | One finite pickpocket goal against a selected NPC (`target`, `until` inventory goal, optional `anchor`/`radius`). |
 | `answer_count` | Explicit | Answer the numeric count dialog (content `p_countdialog`) with `value`. Waits at most `max_ticks` observed ticks for the dialog, sends one answer, and ends when the dialog is closed. `source` cites the content. |
 | `if_button` | Explicit | Press one interface component (`component`, the content pack id) once it and every layer above it are shown. Waits at most `max_ticks` observed ticks, sends one press, and ends on the host's receipt. A `buttontype=pause` component sends the resume press that `p_pausebutton` waits for. `source` cites the content. |
+| `x:mm:solve_reinitialisation` | Explicit | Monkey Madness: solve the open 5 by 5 reinitialisation board (`pieces`: the alias prefix of its 24 pieces, `reinitialisation`; `arrival`: the `tile` and `source` where the cutscene after the last piece leaves the player). Open the panel first with an `interact` step. The step reads the board the client holds, plans the slides with the shared sliding-puzzle solver and clicks one piece per observed move, then waits for the cutscene to reach `arrival`. It fails after three clicks that moved nothing, when the board closes unsolved, or when the cutscene does not arrive within 34 ticks. |
 
 ### Count dialogs and interface buttons
 

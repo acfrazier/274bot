@@ -585,6 +585,16 @@ impl GameSnapshot {
         self.widgets = widgets;
     }
 
+    /// Offline fixture seed for the observed puzzle board: the identified
+    /// piece container, its observed slot count and its session generation.
+    /// The rows come from the seeded widget with this `component_id`, as the
+    /// decode path reads them.
+    pub fn seed_puzzle_board(&mut self, component_id: i32, size: i32, generation: u64) {
+        self.puzzle_board_component_id = component_id;
+        self.puzzle_board_size = size;
+        self.puzzle_session_generation = generation;
+    }
+
     pub fn seed_npcs(&mut self, rows: Vec<NpcView>) {
         self.npc = rows;
     }
