@@ -688,7 +688,7 @@ fn poison_start(
                     &Estimate {
                         zones: Some(zones),
                         wilderness,
-                        grants: None,
+                        permitted: false,
                         risks,
                         combat,
                         allow: Default::default(),

@@ -301,9 +301,7 @@ struct RoutePreflights {
 }
 
 fn route_search_options(request: &ScriptRouteRequest) -> FindOptions {
-    if request.admission.compat_v1
-        || request.admission.policy == crate::admission::RiskPolicy::Proceed
-    {
+    if request.admission.policy == crate::admission::RiskPolicy::Proceed {
         FindOptions {
             zones: ZoneExempt::all(),
             ..request.opts
@@ -5747,8 +5745,27 @@ impl ScriptWalkArm {
                 return false;
             }
         }
+        let (mut options, policy, enforce) = super::walk_permissions::native_admission(
+            &self.navs,
+            &self.name,
+            request.options,
+            session_permissions,
+            !request.cross.is_empty(),
+        );
+        // Every permitted native danger crossing arms the walk's food guard,
+        // whether the permission is the global override, a card request or a
+        // Path `cross`. Eating refuses nothing. A compat v1 walk keeps its
+        // frozen behavior: no guard.
+        let compat_v1 = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .is_some_and(|bot| bot.compat_v1);
+        let danger_guard =
+            super::walk_permissions::walk_arms_danger_food_guard(options.zones, compat_v1);
         let protect = request.protect;
-        let guard = if protect || request.food_guard || request.cure_guard {
+        let guard = if protect || request.food_guard || request.cure_guard || danger_guard {
             let view = SnapshotView::new(
                 Some(snapshot),
                 EvidenceStamp {
@@ -5784,27 +5801,19 @@ impl ScriptWalkArm {
         } else {
             None
         };
-        let (mut options, policy, enforce) = super::walk_permissions::native_admission(
-            &self.navs,
-            &self.name,
-            request.options,
-            session_permissions,
-            !request.cross.is_empty(),
-        );
         if let Some(allow) = manual_bank_fetch {
             options.allow_bank_fetch = allow;
         }
         // A v1 card keeps frozen danger routing on the machine-owned native
         // walks too (Banking.open's stand walk), as on its compiled walks.
-        let (off_debt, compat_v1, condition, compat_policy) = self
+        let (off_debt, condition, compat_policy) = self
             .navs
             .lock()
             .unwrap()
             .get(&self.name)
-            .map_or((false, false, None, None), |bot| {
+            .map_or((false, None, None), |bot| {
                 (
                     bot.walk_guard_off.is_some(),
-                    bot.compat_v1,
                     bot.condition.current().copied(),
                     bot.compat_walk_native_policy(authority.run()),
                 )
@@ -5817,6 +5826,10 @@ impl ScriptWalkArm {
             options.allow_bank_fetch = original.allow_bank_fetch;
             options.zones = original.zones;
         }
+        // A compat walk's own request (`crossZones`) widens the zones after the
+        // decision. Without the override, that request is enforced.
+        let enforce =
+            enforce || (options.zones.is_all() && policy != script::native::RiskPolicy::Proceed);
         let admission = crate::admission::Admission {
             policy,
             enforce,
@@ -6535,6 +6548,12 @@ impl ScriptWalkArm {
                     && bot.native_walk.is_none()
                     && bot.walk_request_id == request_id
                     && bot.requested_route == Some(key));
+            // The danger decision's override: the global `Always` level, or a
+            // compat v1 slot. Any other all-zone grant is a script's request
+            // (a card setting or `crossZones`); admission enforces the bound.
+            let overridden = super::walk_permissions::globals_for(Some(&*bot))
+                .effective_danger_level()
+                == super::walk_permissions::DangerLevel::Always;
             let mut admission = request_admission
                 .or_else(|| {
                     same_owner
@@ -6542,13 +6561,14 @@ impl ScriptWalkArm {
                         .flatten()
                 })
                 .unwrap_or_else(|| crate::admission::Admission {
-                    policy: if bot.compat_v1 || opts.zones.is_all() {
+                    policy: if overridden {
                         script::native::RiskPolicy::Proceed
                     } else {
                         script::native::RiskPolicy::Avoid
                     },
-                    enforce: super::walk_permissions::NET_AVAILABLE
-                        || opts.zones != ZoneExempt::NONE,
+                    enforce: !overridden
+                        && (super::walk_permissions::NET_AVAILABLE
+                            || opts.zones != ZoneExempt::NONE),
                     grants: opts.zones,
                     allow: script::native::WalkAllow {
                         prayer: !bot.compat_v1,
@@ -7413,17 +7433,12 @@ impl ScriptRouteRequest {
             ..
         } = output;
         let outcome = Self::project_route_job_outcome(outcome, opts, bank_avoid_copy, &world);
-        let tried = match &refusal {
-            Some(script::native::WalkRefusal::NoRouteWithinBounds { tried, .. }) => *tried,
-            _ => 0,
-        };
         (
             crate::admission::RouteAdmission {
                 outcome,
                 assessment,
                 refusal,
                 blocked,
-                tried,
             },
             targets,
             opts,
@@ -7474,12 +7489,12 @@ impl NavBot {
         };
         options.allow_teleports = script::native::WalkBit::from(Some(key.2));
         options.allow_wilderness = script::native::WalkBit::from(Some(key.3));
-        // Only a permission is carried. The named crossings travel in `cross`.
-        options.allow_danger_zones = match admission.policy {
-            script::native::RiskPolicy::Proceed => script::native::WalkBit::Allow,
-            script::native::RiskPolicy::Inherit | script::native::RiskPolicy::Avoid => {
-                script::native::WalkBit::Inherit
-            }
+        // Only a permission is carried: any all-zone grant (the override or a
+        // request) is `Allow`, and the decision re-derives which one it was.
+        options.allow_danger_zones = if admission.grants != ZoneExempt::NONE {
+            script::native::WalkBit::Allow
+        } else {
+            script::native::WalkBit::Inherit
         };
         let exclusions = self.requested_exclusions.clone();
         let (avoid, cross) = exclusions.as_ref().map_or_else(

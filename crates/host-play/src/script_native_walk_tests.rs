@@ -144,19 +144,9 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
     let shared = Arc::new(parking_lot::Mutex::new(Walker {
         blocked,
         walks: 1,
-        // These pre-admission geometry/guard fixtures intentionally use a
-        // legacy no-zone grid. Only explicit Proceed can arm that grid now.
-        options: script::native::WalkOptions {
-            allow_danger_zones: if world
-                .as_ref()
-                .is_some_and(|world| world.graph.zones.is_none())
-            {
-                script::native::WalkBit::Allow
-            } else {
-                script::native::WalkBit::Inherit
-            },
-            ..Default::default()
-        },
+        // These pre-admission geometry/guard fixtures use a legacy no-zone
+        // grid with no danger permission: the walk is inherited.
+        options: script::native::WalkOptions::default(),
         ..Walker::default()
     }));
     let slot = script_slot_or_insert(&scripts, "alice");
@@ -1808,6 +1798,46 @@ fn food_disallowed_without_an_explicit_guard_starts_no_host_guard() {
     assert!(rig.driver.move_calls > 0);
 }
 
+/// Every permitted native danger crossing arms the walk's food guard, whether
+/// the permission is the global override or the script's own request. These
+/// walks set no `food_guard`, no `protect` and no `cross`. (A `cross` request
+/// is covered by `native_cross_request_is_scoped_to_one_walk`.)
+#[test]
+fn a_permitted_native_danger_walk_arms_the_food_guard_whichever_permission_it_has() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use script::native::WalkBit;
+    for (global, bit) in [(true, WalkBit::Inherit), (true, WalkBit::Allow)] {
+        let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        rig.navs
+            .lock()
+            .unwrap()
+            .entry("alice".into())
+            .or_default()
+            .walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+            allow_danger_zones: global,
+            ..Default::default()
+        })));
+        rig.shared.lock().options.allow_danger_zones = bit;
+        rig.observe(1);
+        assert!(rig.wait_for_route(5_000, || {
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| !bot.route_work_pending())
+        }));
+        let navs = rig.navs.lock().unwrap();
+        let bot = &navs["alice"];
+        assert!(bot.has_route(), "global={global}, walk={bit:?}");
+        assert!(
+            bot.walk_guard.is_some(),
+            "a permitted crossing must arm the food guard (global={global}, walk={bit:?})"
+        );
+    }
+}
+
 fn seed_guard_poison_onset(rig: &mut Rig, policy: script::survival::CurePoison) {
     let drain = host::DrainResult {
         player_info: true,
@@ -3048,6 +3078,17 @@ fn a_native_walk_refused_by_an_in_flight_route_gets_a_refused_receipt() {
         return;
     }
     let mut rig = open_rig(false);
+    // The host walk's all-zone grant comes from the global override (this
+    // fixture's grid has no zone table, so a mere request could not be judged).
+    rig.navs
+        .lock()
+        .unwrap()
+        .entry("alice".into())
+        .or_default()
+        .walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+        allow_danger_zones: true,
+        ..Default::default()
+    })));
     // A host walk to the same destination is already in flight under the
     // legacy request id; the distinct native id is refused, not coalesced.
     assert!(host_walk(&rig, 4, false));
@@ -3201,6 +3242,10 @@ fn native_cross_request_is_scoped_to_one_walk() {
             "a walk that asks to cross receives permission for any zone"
         );
         let assessment = bot.assessment.as_ref().expect("first route assessment");
+        assert!(
+            bot.walk_guard.is_some(),
+            "a requested crossing arms the food guard even when the script set no guard flag"
+        );
         assert!(bot.risk_refusal.is_none());
         assert_eq!(
             assessment.verdict,
@@ -3277,13 +3322,17 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid_has_no_effect(
         return;
     }
     use script::native::WalkBit;
-    for (global, bit, permitted) in [
-        (false, WalkBit::Inherit, false),
-        (false, WalkBit::Allow, true),
-        (false, WalkBit::Forbid, false),
-        (true, WalkBit::Inherit, true),
-        (true, WalkBit::Allow, true),
-        (true, WalkBit::Forbid, true),
+    // `permitted`: the decision grants every zone. `routed`: the walk is
+    // admitted. A walk-option request with the global override off is
+    // permitted but judged by the 1% bound: this fixture's default player
+    // cannot pass it, so the walk is refused. The override proceeds.
+    for (global, bit, permitted, routed) in [
+        (false, WalkBit::Inherit, false, false),
+        (false, WalkBit::Allow, true, false),
+        (false, WalkBit::Forbid, false, false),
+        (true, WalkBit::Inherit, true, true),
+        (true, WalkBit::Allow, true, true),
+        (true, WalkBit::Forbid, true, true),
     ] {
         // With no inherited grant the original router cannot cross this
         // barrier. Holding assessment authority off does not widen routing.
@@ -3300,17 +3349,22 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid_has_no_effect(
             .or_default()
             .walk_globals = Some(globals);
         rig.shared.lock().options.allow_danger_zones = bit;
+        let admitted_options = crate::walk_permissions::native_admission(
+            &rig.navs,
+            "alice",
+            rig.shared.lock().options,
+            None,
+            false,
+        )
+        .0;
         assert!(
-            !crate::walk_permissions::native_admission(
-                &rig.navs,
-                "alice",
-                rig.shared.lock().options,
-                None,
-                false,
-            )
-            .0
-            .allow_bank_fetch,
+            !admitted_options.allow_bank_fetch,
             "global fetch stays manual-only at the native admission"
+        );
+        assert_eq!(
+            admitted_options.zones.is_all(),
+            permitted,
+            "global={global}, walk={bit:?}"
         );
         rig.observe(1);
         assert!(rig.wait_for_route(5_000, || {
@@ -3323,13 +3377,17 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid_has_no_effect(
         {
             let all = rig.navs.lock().unwrap();
             let bot = &all["alice"];
-            assert_eq!(bot.has_route(), permitted, "global={global}, walk={bit:?}");
+            assert_eq!(bot.has_route(), routed, "global={global}, walk={bit:?}");
             assert!(
                 bot.bank_fetch.is_none(),
                 "native walks never use BankBudget"
             );
-            if permitted {
+            if routed {
                 assert!(!bot.requested_route.unwrap().4);
+                assert!(
+                    bot.walk_guard.is_some(),
+                    "a permitted danger crossing arms the food guard"
+                );
             } else {
                 assert!(bot.native_walk_failure.is_some());
                 assert!(
@@ -3337,12 +3395,8 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid_has_no_effect(
                     "a failed admission retires its route request"
                 );
             }
-            assert!(
-                bot.walk_guard.is_none(),
-                "danger crossing does not start protection"
-            );
         }
-        if !permitted {
+        if !routed {
             rig.observe(2);
             assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
         }
@@ -4086,12 +4140,15 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
                 .get("alice")
                 .is_some_and(|bot| !bot.route_work_pending())
         }));
+        // The card's request alone is permitted but judged by the 1% bound,
+        // which this fixture's default player cannot pass.
+        let routed = global;
         assert_eq!(
-        rig.navs.lock().unwrap()["alice"].has_route(),
-        permitted,
-        "the actual native Walk crosses the same denied zone under global={global}, card={card}"
-    );
-        if !permitted {
+            rig.navs.lock().unwrap()["alice"].has_route(),
+            routed,
+            "the actual native Walk crosses the same denied zone under global={global}, card={card}"
+        );
+        if !routed {
             rig.observe(2);
             assert_eq!(rig.end(), Some(Ok(WalkEnd::Refused)));
         }
@@ -4183,7 +4240,7 @@ fn native_admission_teleport_and_wilderness_forbids_override_global_grants() {
         rig.shared.lock().options = script::native::WalkOptions {
             allow_teleports: bit,
             allow_wilderness: bit,
-            allow_danger_zones: WalkBit::Allow,
+            allow_danger_zones: WalkBit::Inherit,
             allow_prereq_dialogue: WalkBit::Inherit,
             allow_quest_start: WalkBit::Inherit,
         };
@@ -4266,13 +4323,17 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
         slot.state() == script::RunState::Running
     }));
     let permissions = slot.native_walk_permissions().unwrap();
-    for compiled in [true, false] {
+    // The card's request alone is permitted but judged by the 1% bound, which
+    // this fixture's default player cannot pass; only the global override
+    // proceeds.
+    for (compiled, global) in [(true, false), (true, true), (false, false), (false, true)] {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
         let mut all = rig.navs.lock().unwrap();
         let bot = all.entry("alice".into()).or_default();
         bot.native_permissions = compiled.then_some(permissions);
         bot.walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
             allow_bank_fetch: true,
+            allow_danger_zones: global,
             ..Default::default()
         })));
         drop(all);
@@ -4284,7 +4345,7 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
         assert_eq!(options.allow_teleports, compiled);
         assert_eq!(options.allow_wilderness, compiled);
         assert!(!options.allow_bank_fetch);
-        assert_eq!(options.zones.is_all(), compiled);
+        assert_eq!(options.zones.is_all(), compiled || global);
         assert!(dispatch_script_interact(
             &mut rig.client,
             &rig.snapshot,
@@ -4317,10 +4378,16 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
         }));
         let all = rig.navs.lock().unwrap();
         let bot = &all["alice"];
-        assert_eq!(bot.has_route(), compiled);
-        if compiled {
+        let routed = global;
+        assert_eq!(
+            bot.has_route(),
+            routed,
+            "compiled={compiled}, global={global}"
+        );
+        if routed {
             let request = bot.requested_route.unwrap();
-            assert!(request.2 && request.3 && request.5.is_all());
+            assert_eq!((request.2, request.3), (compiled, compiled));
+            assert!(request.5.is_all());
             assert!(!request.4);
         } else {
             assert!(bot.requested_route.is_none());
@@ -7083,10 +7150,7 @@ mod s2b_admission_contract {
                 radius: 0,
                 arrival: Default::default(),
                 loc_id: None,
-                options: script::native::WalkOptions {
-                    allow_danger_zones: WalkBit::Allow,
-                    ..Default::default()
-                },
+                options: Default::default(),
                 required_after,
                 evidence: None,
                 cross: Box::new([]),
@@ -7341,10 +7405,7 @@ mod s2b_admission_contract {
                 radius: 0,
                 arrival: Default::default(),
                 loc_id: None,
-                options: script::native::WalkOptions {
-                    allow_danger_zones: WalkBit::Allow,
-                    ..Default::default()
-                },
+                options: Default::default(),
                 required_after,
                 evidence: None,
                 cross: Box::new([]),

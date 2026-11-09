@@ -1,12 +1,10 @@
-use super::replay::{candidate_cost, Estimate, Grants};
+use super::replay::{candidate_cost, Estimate};
 use super::*;
 use crate::combat::tables::CombatTables;
 use crate::native::WalkAllow;
 use api::selected::ClientRevision;
 use api::WorldTile;
-use nav_planner::contract::{
-    BoundZoneExempt, BoundZoneKey, NavLease, RouteView, WildernessView, ZoneTableView,
-};
+use nav_planner::contract::{BoundZoneKey, NavLease, RouteView, WildernessView, ZoneTableView};
 use nav_planner::router::{Leg, Route};
 use nav_planner::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
 use nav_planner::zones::{Zone, ZoneClass, ZoneKind, ZoneTable};
@@ -75,16 +73,6 @@ impl Fixture {
                 .resolve(self.table.groups()[usize::from(index)].id.as_ref())
                 .expect("a group resolves by its id"),
         }
-    }
-    fn exempt(&self, keys: &[ZoneKey]) -> BoundZoneExempt {
-        let bound: Vec<BoundZoneKey> = keys.iter().map(|key| self.bound(*key)).collect();
-        self.zones().exempt(&bound).unwrap()
-    }
-    fn exempt_all(&self) -> BoundZoneExempt {
-        self.zones().exempt_all()
-    }
-    fn none(&self) -> BoundZoneExempt {
-        self.exempt(&[])
     }
 }
 fn tile(x: i32) -> WorldTile {
@@ -215,7 +203,7 @@ fn context<'a>(fx: &'a Fixture, risk: &'a RiskTables, tables: &'a CombatTables) 
         wilderness: fx.wilderness(),
         allow: WalkAllow::default(),
         generation: 7,
-        grants: None,
+        permitted: false,
     }
 }
 
@@ -605,7 +593,7 @@ fn admission_no_grants_passes_through_estimate() {
     let fx = Fixture::new(wolf_zone(&tables, &[100], 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);
     let cx = context(&fx, &risk, &tables);
-    assert!(cx.grants.is_none());
+    assert!(!cx.permitted);
 
     let walk = route(90, 108);
     let assessment = assess(fx.route(&walk), &cx, wolf_input(40, 40, &tables));
@@ -624,9 +612,9 @@ fn admission_granted_unsurvivable_crossing_is_refused() {
     let risk = RiskTables::build(&tables);
     let walk = route(90, 108);
     let mut cx = context(&fx, &risk, &tables);
-    cx.grants = Some(Grants::named(fx.exempt(&[ZoneKey::Zone(0)])));
+    cx.permitted = true;
 
-    // Old: a grant could bypass risk; new: it affects only named NoWayOut zones.
+    // Permission never bypasses the death bound; it only waives NoWayOut.
     let assessment = assess(fx.route(&walk), &cx, input(1, 1, 0, &tables));
     assert_eq!(assessment.verdict, Verdict::Unsurvivable);
     assert!(assessment.bound > consts::DEATH_BOUND);
@@ -655,7 +643,7 @@ fn admission_declared_no_way_out_endpoint_is_judged_on_the_walk() {
 }
 
 #[test]
-fn admission_endpoint_completion_grant_keeps_no_way_out_refusal() {
+fn admission_permitted_walk_waives_no_way_out_but_not_the_death_bound() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -664,34 +652,7 @@ fn admission_endpoint_completion_grant_keeps_no_way_out_refusal() {
     let risk = RiskTables::build(&tables);
     let walk = transport_entering_walk(100, 101);
     let mut cx = context(&fx, &risk, &tables);
-    cx.grants = Some(Grants::request(fx.none(), fx.wilderness()));
-    assert!(cx.grants.unwrap().endpoint.is_some());
-
-    // Old: endpoint completion waived NoWayOut; new: only named zones waive it.
-    let assessment = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
-    assert_eq!(assessment.plan.crossings.len(), 1);
-    assert!(!assessment.plan.crossings[0].has_way_out());
-    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
-    assert!(assessment.reason.contains("NoWayOut"));
-
-    cx.grants = Some(Grants::request(fx.exempt_all(), fx.wilderness()));
-    let covered = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
-    assert_eq!(covered.verdict, Verdict::Survivable, "{}", covered.reason);
-    assert!(!covered.reason.contains("NoWayOut"));
-}
-
-#[test]
-fn admission_all_zone_grant_waives_no_way_out_but_not_the_death_bound() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    let tables = tables();
-    let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
-    let risk = RiskTables::build(&tables);
-    let walk = transport_entering_walk(100, 101);
-    let mut cx = context(&fx, &risk, &tables);
-    cx.grants = Some(Grants::named(fx.exempt_all()));
-    assert!(cx.grants.unwrap().endpoint.is_none());
+    cx.permitted = true;
 
     let covered = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
     assert_eq!(covered.plan.crossings.len(), 1);
@@ -706,51 +667,7 @@ fn admission_all_zone_grant_waives_no_way_out_but_not_the_death_bound() {
 }
 
 #[test]
-fn named_grants_must_cover_every_zone_in_no_way_out_crossing() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    let tables = tables();
-    let w = WildernessRules::default();
-    let fx = Fixture::new(
-        zone_table(
-            vec![
-                Zone::npc(tile(100), 1, ZoneClass::Always, u16::MAX, 0),
-                Zone::npc(tile(101), 1, ZoneClass::Always, u16::MAX, 0),
-            ],
-            vec![known_kind(&tables)],
-            vec![],
-            vec![],
-            &w,
-        ),
-        w,
-    );
-    let risk = RiskTables::build(&tables);
-    let walk = transport_entering_walk(100, 101);
-    let mut cx = context(&fx, &risk, &tables);
-    cx.grants = Some(Grants::named(fx.exempt(&[ZoneKey::Zone(0)])));
-    // Old: one exemption could bypass the whole crossing; new: all rows are named.
-    let partial = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
-    assert_eq!(partial.plan.crossings.len(), 1);
-    assert_eq!(partial.plan.intervals.len(), 2);
-    assert_eq!(partial.verdict, Verdict::Unsurvivable);
-    assert!(partial.reason.contains("NoWayOut"));
-
-    cx.grants = Some(Grants::named(
-        fx.exempt(&[ZoneKey::Zone(0), ZoneKey::Zone(1)]),
-    ));
-    let all_named = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
-    assert_eq!(
-        all_named.verdict,
-        Verdict::Survivable,
-        "{}",
-        all_named.reason
-    );
-    assert!(!all_named.reason.contains("NoWayOut"));
-}
-
-#[test]
-fn admission_named_grant_never_bypasses_unknown_facts() {
+fn admission_permission_never_bypasses_unknown_facts() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -778,11 +695,11 @@ fn admission_named_grant_never_bypasses_unknown_facts() {
     );
     let risk = RiskTables::build(&tables);
     let mut cx = context(&fx, &risk, &tables);
-    cx.grants = Some(Grants::named(fx.exempt(&[ZoneKey::Zone(0)])));
+    cx.permitted = true;
     let walk = transport_entering_walk(100, 101);
     let assessment = assess(fx.route(&walk), &cx, input(90, 90, 0, &tables));
 
-    // Old: naming a zone bypassed unknown risk; new: grants only waive NoWayOut.
+    // Permission only waives NoWayOut; unknown facts still refuse.
     assert_eq!(
         assessment.verdict,
         Verdict::Unknown(UnknownWhy::MissingFacts)
@@ -3860,13 +3777,6 @@ fn t5_1_assessment_refuses_another_pack() {
     assert_eq!(
         assessment.plan.intervals[0].key(other.zones()),
         Err(UnknownWhy::NavIdentity)
-    );
-    let mut foreign_grant = context(&fx, &risk, &tables);
-    foreign_grant.grants = Some(Grants::named(other.exempt_all()));
-    let mismatched = assess(fx.route(&walk), &foreign_grant, value);
-    assert_eq!(
-        mismatched.verdict,
-        Verdict::Unknown(UnknownWhy::NavIdentity)
     );
 }
 fn yielding_checkpoint(
