@@ -8689,8 +8689,9 @@ fn executor_state_size_pins() {
         std::mem::size_of::<FollowRun>()
     );
     // Route indices: the same +48 B as the NavBot reason in host-play/src/script_native_walk_tests.rs.
-    assert_eq!(std::mem::size_of::<Traveller>(), 1104);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 1064);
+    // The walk-packet budget's +8 B reaches both through the active follow.
+    assert_eq!(std::mem::size_of::<Traveller>(), 1112);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 1072);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,
