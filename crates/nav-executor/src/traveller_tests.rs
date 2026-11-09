@@ -62,6 +62,18 @@ fn scene_client() -> Client {
     c
 }
 
+/// The fixture client's cache for a test edit. A snapshot rebuild publishes
+/// a `Weak` of the client's cache to the process-wide ClientAdapter handle
+/// (`api::snapshot` `client_adapter_cache.rs`, `publish`), and `Arc::get_mut`
+/// refuses while any `Weak` exists. That handle holds one cache for the whole
+/// process, so a parallel test's own rebuild replaced it at random: a test that
+/// edited the cache after its own rebuild passed or panicked by scheduling.
+/// Release this client's registration first so the edit never depends on it.
+fn cache_mut(c: &mut Client) -> &mut client::config::Cache {
+    api::snapshot::clear_client_adapter_cache_for_tests(&c.cache);
+    Arc::get_mut(&mut c.cache).expect("sole cache owner")
+}
+
 /// Plant the local player at scene (x, z); the actor's world tile lands
 /// on (3200 + x, 3200 + z).
 fn plant_player(c: &mut Client, x: i32, z: i32) {
@@ -138,7 +150,7 @@ fn snapshot_fixture_counts_player_info_not_rebuilds_or_polls() {
 fn plant_ladder(c: &mut Client, op: Option<&str>) {
     let typecode = 0x4000_0000 + (1 << 14) + 3 + (4 << 7);
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = cache_mut(c);
         while cache.locs.len() <= 1 {
             cache.locs.push(LocType::default());
         }
@@ -187,7 +199,7 @@ fn plant_wizard_npc(c: &mut Client, type_id: usize, x: i32, z: i32) {
 /// labels (one per action slot).
 fn plant_npc_ops(c: &mut Client, type_id: usize, x: i32, z: i32, name: &str, ops: &[&str]) {
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = cache_mut(c);
         while cache.npcs.len() <= type_id {
             cache.npcs.push(NpcType::default());
         }
@@ -323,7 +335,7 @@ fn plant_glider_map(c: &mut Client, dest_com: i32) {
 fn plant_door_at(c: &mut Client, open: bool, scene_x: i32, scene_z: i32) {
     let id = if open { 1531 } else { 1530 };
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = cache_mut(c);
         while cache.locs.len() <= 1531 {
             cache.locs.push(LocType::default());
         }
@@ -379,7 +391,7 @@ fn plant_loc_sized(
     geometry: LocGeometry,
 ) {
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = cache_mut(c);
         while cache.locs.len() <= id as usize {
             cache.locs.push(LocType::default());
         }
@@ -5152,7 +5164,7 @@ fn plant_inv_item(c: &mut Client, obj_id: i32) {
 /// Inventory tab (side 3) carrying `count` of `obj_id` (stored `obj_id + 1`).
 fn plant_inv_stack(c: &mut Client, obj_id: i32, count: i32) {
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = cache_mut(c);
         while cache.objs.len() <= obj_id as usize {
             cache.objs.push(ObjType::default());
         }
@@ -5205,7 +5217,7 @@ fn clear_inventory_item(c: &mut Client) {
 
 fn plant_equipment_item(c: &mut Client, obj_id: i32) {
     {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        let cache = cache_mut(c);
         while cache.objs.len() <= obj_id as usize {
             cache.objs.push(ObjType::default());
         }
