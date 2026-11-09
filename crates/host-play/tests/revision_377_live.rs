@@ -39,6 +39,9 @@ mod quester_doric;
 #[path = "revision_377_live/quester_journal.rs"]
 mod quester_journal;
 
+#[path = "revision_377_live/tut_banner_first_step.rs"]
+mod tut_banner_first_step;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -140,6 +143,10 @@ fn path_is_file(path: &Path, name: &str) -> Result<(), String> {
 }
 
 fn load_bound_377() -> Result<Bound377, String> {
+    load_bound_377_with_ports(GAME_PORT, ASSET_PORT)
+}
+
+fn load_bound_377_with_ports(game_port: u16, asset_port: u16) -> Result<Bound377, String> {
     require_live_guard()?;
     let engine_dir = required_path("ENGINE_DIR")?;
     let cache_dir = required_path("CLIENT_377_CACHE_DIR")?;
@@ -168,22 +175,26 @@ fn load_bound_377() -> Result<Bound377, String> {
         unpack_dir: Some(unpack_dir.clone()),
         nav_pack: Some(nav_pack.clone()),
         nav_flags: Some(nav_flags.clone()),
+        port: Some(game_port),
+        http_port: Some(asset_port),
         ..ProfileOptions::default()
     };
     let selection = options.resolve_with_env(None, &environment)?;
     if selection.revision() != ClientRevision::R377
         || selection.profile_class() != ProfileClass::Local
         || selection.game_host() != GAME_HOST
-        || selection.game_port() != GAME_PORT
+        || selection.game_port() != game_port
         || selection.asset_host() != GAME_HOST
-        || selection.asset_port() != ASSET_PORT
+        || selection.asset_port() != asset_port
         || selection.engine_dir() != engine_dir.as_path()
         || selection.cache_dir() != cache_dir.as_path()
         || selection.unpack_dir() != unpack_dir.as_path()
         || selection.nav_pack() != nav_pack.as_path()
         || selection.nav_flags() != nav_flags.as_path()
     {
-        return Err("resolved profile differs from the canonical 377 localhost resources".into());
+        return Err(format!(
+            "resolved profile differs from the canonical 377 localhost resources at game {game_port} / assets {asset_port}"
+        ));
     }
 
     let template = selection.prepare_template()?;
@@ -198,16 +209,18 @@ fn load_bound_377() -> Result<Bound377, String> {
         || profile.profile_class() != ProfileClass::Local
         || profile.client().revision() != ClientRevision::R377
         || profile.client().game_host() != GAME_HOST
-        || profile.client().game_port() != GAME_PORT
+        || profile.client().game_port() != game_port
         || profile.client().asset_host() != GAME_HOST
-        || profile.client().asset_port() != ASSET_PORT
+        || profile.client().asset_port() != asset_port
         || profile.client().cache_dir() != prepared.jag_dir.as_path()
         || profile.client().unpack_dir() != prepared.unpack_root()
         || profile.nav_pack() != nav_pack.as_path()
         || profile.nav_flags() != nav_flags.as_path()
         || profile.nav_availability() != &NavAvailability::Bound
     {
-        return Err("bound profile lost the explicit 377 resources or navigation world".into());
+        return Err(format!(
+            "bound profile lost the explicit 377 resources or navigation world at game {game_port} / assets {asset_port}"
+        ));
     }
     let data = profile.game_data().ok_or_else(|| {
         format!(
