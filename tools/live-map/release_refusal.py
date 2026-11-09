@@ -47,25 +47,54 @@ def mapped_draft_ids(config: dict[str, Any]) -> list[str]:
     return sorted(Path(path).stem for path in paths)
 
 
-def qualified_ids(index: dict[str, Any]) -> list[str]:
-    """Ids of every guide whose release-index status is qualified."""
-    ids = [path["id"] for path in index["paths"] if path.get("status") == "qualified"]
-    if len(set(ids)) != len(ids):
-        raise ProofError("the release index names a qualified guide twice")
-    if "priest" not in ids:
+def index_lists(index: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    """Release-index ids as (qualified, draft, unavailable); each row is exactly one."""
+    qualified: list[str] = []
+    drafts: list[str] = []
+    unavailable: list[str] = []
+    seen: set[str] = set()
+    for path in index["paths"]:
+        id = path["id"]
+        if id in seen:
+            raise ProofError(f"the release index names {id} twice")
+        seen.add(id)
+        if path.get("unavailable"):
+            unavailable.append(id)
+        elif path.get("status") == "qualified":
+            qualified.append(id)
+        elif path.get("status") == "draft":
+            drafts.append(id)
+        else:
+            raise ProofError(f"release index row {id} is neither qualified, draft nor unavailable")
+    if "priest" not in qualified:
         raise ProofError("the qualified Priest guide is missing from the release index")
-    return sorted(ids)
+    return sorted(qualified), sorted(drafts), sorted(unavailable)
 
 
-def probe_arguments(drafts: list[str], qualified: list[str]) -> list[str]:
-    """Arguments of the external consumer: one `draft:` or `qualified:` per guide."""
-    stale = sorted(set(drafts) & set(qualified))
+def probe_arguments(mapped: list[str], index: dict[str, Any]) -> list[str]:
+    """Arguments of the external consumer: one `draft:`, `unavailable:` or `qualified:` per row.
+
+    Refused plus admitted must be the whole index: every index draft is in the
+    refusal map and the map names nothing else.
+    """
+    qualified, drafts, unavailable = index_lists(index)
+    unmapped = sorted(set(drafts) - set(mapped))
+    if unmapped:
+        raise ProofError(
+            "index drafts missing from the refusal map (neither refused nor admitted): "
+            + ", ".join(unmapped)
+        )
+    stale = sorted(set(mapped) - set(drafts))
     if stale:
         raise ProofError(
-            "a qualified guide must leave refusal coverage and gain its own real cell: "
-            + ", ".join(stale)
+            "the refusal map names rows that are not index drafts; a qualified guide must "
+            "leave refusal coverage and gain its own real cell: " + ", ".join(stale)
         )
-    return [*(f"draft:{id}" for id in drafts), *(f"qualified:{id}" for id in qualified)]
+    return [
+        *(f"draft:{id}" for id in drafts),
+        *(f"unavailable:{id}" for id in unavailable),
+        *(f"qualified:{id}" for id in qualified),
+    ]
 
 
 def release_artifact(messages: list[dict[str, Any]]) -> dict[str, Any]:
@@ -110,7 +139,7 @@ def refusal_compile_command(artifact: dict[str, Any], executable: Path) -> list[
 
 def prove_release_refusal() -> int:
     ids = mapped_draft_ids(load_map())
-    qualified = qualified_ids(json.loads(INDEX.read_text()))
+    arguments = probe_arguments(ids, json.loads(INDEX.read_text()))
     evidence = os.environ.get("LIVE_EVIDENCE_DIR")
     if not evidence:
         raise ProofError("LIVE_EVIDENCE_DIR must name the cell's evidence directory")
@@ -139,7 +168,7 @@ def prove_release_refusal() -> int:
             cwd=ROOT,
             check=True,
         )
-        subprocess.run([str(executable), *probe_arguments(ids, qualified)], cwd=ROOT, check=True)
+        subprocess.run([str(executable), *arguments], cwd=ROOT, check=True)
     return 0
 
 
@@ -217,29 +246,48 @@ class ReleaseRefusalTests(unittest.TestCase):
         with self.assertRaises(ProofError):
             mapped_draft_ids({"cover": []})
 
-    def test_qualified_ids_come_from_the_index_status(self) -> None:
+    def test_index_rows_split_into_qualified_draft_and_unavailable(self) -> None:
         index = {"paths": [
             {"id": "cook", "status": "qualified"},
             {"id": "prince", "status": "draft"},
-            {"id": "unmarked"},
+            {"id": "hauntedmine", "unavailable": "Not on this server"},
             {"id": "priest", "status": "qualified"},
         ]}
-        self.assertEqual(qualified_ids(index), ["cook", "priest"])
+        self.assertEqual(
+            index_lists(index), (["cook", "priest"], ["prince"], ["hauntedmine"])
+        )
         for paths in [
             [{"id": "cook", "status": "qualified"}],
             [{"id": "priest", "status": "qualified"}, {"id": "priest", "status": "qualified"}],
             [{"id": "priest", "status": "draft"}],
+            [{"id": "priest", "status": "qualified"}, {"id": "unmarked"}],
         ]:
             with self.subTest(paths=paths), self.assertRaises(ProofError):
-                qualified_ids({"paths": paths})
+                index_lists({"paths": paths})
 
-    def test_probe_arguments_tag_every_guide_and_refuse_a_qualified_draft(self) -> None:
+    def test_probe_arguments_tag_every_row_and_fail_on_an_unlisted_one(self) -> None:
+        index = {"paths": [
+            {"id": "cook", "status": "qualified"},
+            {"id": "prince", "status": "draft"},
+            {"id": "hunt", "status": "draft"},
+            {"id": "hauntedmine", "unavailable": "Not on this server"},
+            {"id": "priest", "status": "qualified"},
+        ]}
         self.assertEqual(
-            probe_arguments(["prince", "hunt"], ["cook", "priest"]),
-            ["draft:prince", "draft:hunt", "qualified:cook", "qualified:priest"],
+            probe_arguments(["prince", "hunt"], index),
+            [
+                "draft:hunt", "draft:prince", "unavailable:hauntedmine",
+                "qualified:cook", "qualified:priest",
+            ],
         )
-        with self.assertRaises(ProofError):
-            probe_arguments(["prince", "cook"], ["cook", "priest"])
+        # An index draft that the refusal map omits is in neither list.
+        with self.assertRaisesRegex(ProofError, "hunt"):
+            probe_arguments(["prince"], index)
+        # A qualified guide, or an id the index lacks, must not stay in the map.
+        with self.assertRaisesRegex(ProofError, "cook"):
+            probe_arguments(["prince", "hunt", "cook"], index)
+        with self.assertRaisesRegex(ProofError, "ghost"):
+            probe_arguments(["prince", "hunt", "ghost"], index)
 
 
 def main() -> int:

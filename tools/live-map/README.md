@@ -165,7 +165,13 @@ requires success and that the guide is the next candidate. The default queue mus
 pick exactly the qualified guides. The caller reads the qualified ids from
 `index.json` and the consumer requires that the production library's bundled
 index names the same set, so a guide that is qualified in one and not the other
-fails the cell. This uses the external-library proof pattern in
+fails the cell. A row the index marks unavailable (it has no status and no
+guide file) is refused with its own reason by an explicit pick and is never
+picked by the default queue. Refused plus admitted is the whole index: the
+caller requires every index draft to be in the refusal map and the map to name
+nothing else, and the consumer requires every row of the bundled index to be in
+exactly one of the draft, unavailable and qualified lists. A new index row that
+nobody classified fails the cell. This uses the external-library proof pattern in
 `tools/architecture/nav_clippy.py`; no probe crate or product API is added.
 
 The second part runs the real shared picker model against every bundled draft.
